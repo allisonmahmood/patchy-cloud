@@ -52,7 +52,9 @@ export class PendingLogin extends Schema.Class<PendingLogin>("PendingLogin")({
   verificationUrl: Schema.String,
   verificationUrlBare: Schema.String,
   interval: Schema.Number.check(Schema.isGreaterThan(0)),
-  expiresAt: Schema.String
+  expiresAt: Schema.String,
+  /** The setup line this login was started from, so a rerun with another line starts afresh. */
+  setupLink: Schema.optionalKey(Schema.String)
 }) {}
 const decodePendingLogin = Schema.decodeUnknownEffect(PendingLogin);
 

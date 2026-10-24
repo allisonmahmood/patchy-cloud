@@ -8,13 +8,23 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
-import { MachineTokens, pageResponse, RequireSession, Session, SetupPrompts } from "@patchy/auth";
+import {
+  MachineTokens,
+  pageResponse,
+  RequireSession,
+  Session,
+  SetupLinks,
+  SetupPrompts
+} from "@patchy/auth";
 import { ago, copyScript, copyScriptPath, escapeHtml } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
+import { Limits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 import { InvocationLog } from "@patchy/runtime";
 import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
 import {
@@ -280,23 +290,70 @@ const render = Effect.fn("PortalPages.render")(function* (
 const watchWindow = 30 * 60 * 1_000;
 
 /**
- * Where the viewer's setup stands: waiting until they have a live machine token, then connected,
- * and live once one of their live keys published something that is still live. Attribution is by
- * the publishing key, so a patch reassigned to them later never counts.
+ * Where the viewer's setup stands. With a live machine token they are connected, and live once one
+ * of their live keys published something still live, preferring the key their setup line made;
+ * attribution is by the publishing key, so a patch reassigned to them never counts. Without one,
+ * the line's link says how far the agent got and how its login ended.
  */
 const setupState = Effect.fn("PortalPages.setupState")(function* () {
   const { viewer, access } = yield* context;
   const machines = yield* (yield* MachineTokens.MachineTokens).list(viewer.user.id);
-  if (machines.length === 0) return { connected: false, state: { kind: "waiting" } as SetupState };
-  const patches = yield* Patches.Patches;
-  const published = yield* patches.publishedWith(machines.map((machine) => machine.id));
-  const [row] = Option.isSome(published)
-    ? yield* patches.read({ ...access, state: "all", patchRef: published.value })
-    : [];
-  return {
-    connected: true,
-    state: (row === undefined ? { kind: "connected" } : { kind: "live", row }) as SetupState
-  };
+  const link = yield* SetupLinks.status(viewer.user.id);
+  const setupLink = Option.isSome(link) && link.value.live ? link.value.value : undefined;
+  if (machines.length > 0) {
+    const bound = Option.isSome(link)
+      ? machines.find((machine) => machine.id === link.value.machineTokenId)
+      : undefined;
+    const patches = yield* Patches.Patches;
+    const published = yield* patches.publishedWith(
+      bound === undefined ? machines.map((machine) => machine.id) : [bound.id]
+    );
+    const [row] = Option.isSome(published)
+      ? yield* patches.read({ ...access, state: "all", patchRef: published.value })
+      : [];
+    const state: SetupState = row === undefined ? { kind: "connected" } : { kind: "live", row };
+    return { connected: true, setupLink, state };
+  }
+  const now = yield* Clock.currentTimeMillis;
+  const state = Option.match(link, {
+    onNone: (): SetupState => ({ kind: "waiting" }),
+    onSome: (line): SetupState =>
+      !line.live
+        ? { kind: "fallback", reason: "ran_out" }
+        : line.outcome === "pending" &&
+            line.loginExpiresAt !== null &&
+            line.loginExpiresAt.getTime() <= now
+          ? { kind: "fallback", reason: "expired" }
+          : line.outcome === null
+            ? { kind: line.pickedUp ? "picked_up" : "waiting" }
+            : line.outcome === "pending"
+              ? line.loginState === "pending"
+                ? { kind: "login_pending" }
+                : line.loginState === "confirmed"
+                  ? { kind: "confirming" }
+                  : {
+                      kind: "fallback",
+                      reason: line.loginState === "denied" ? "denied" : "expired"
+                    }
+              : line.outcome === "connected"
+                ? { kind: "fallback", reason: "ran_out" }
+                : { kind: "fallback", reason: line.outcome }
+  });
+  return { connected: false, setupLink, state };
+});
+
+/** The viewer's live setup line, made for the panel when they have none; a new one is reported. */
+const setupLine = Effect.fn("PortalPages.setupLine")(function* () {
+  const { viewer } = yield* context;
+  const line = yield* SetupLinks.current(viewer.user.id);
+  if (line.created)
+    yield* (yield* Analytics.Analytics).track({
+      name: "setup.line_shown",
+      principalId: viewer.user.id,
+      companyId: viewer.company.id,
+      properties: { setupId: line.setupId }
+    });
+  return line.value;
 });
 
 /**
@@ -346,7 +403,8 @@ const home = Effect.fn("PortalPages.home")(function* () {
         ...(machine === null && prompt.show
           ? {
               overlay: renderFinalStep({
-                state: { kind: "waiting" },
+                state: (yield* setupState()).state,
+                setupLink: yield* setupLine(),
                 viewer,
                 publicBaseUrl: session.publicBaseUrl,
                 mode: "modal"
@@ -372,7 +430,13 @@ const guidePage = Effect.fn("PortalPages.guidePage")(function* () {
     {
       title: "Final step",
       heading: "",
-      body: renderFinalStep({ state, viewer, publicBaseUrl: session.publicBaseUrl, mode: "page" }),
+      body: renderFinalStep({
+        state,
+        setupLink: yield* setupLine(),
+        viewer,
+        publicBaseUrl: session.publicBaseUrl,
+        mode: "page"
+      }),
       styles: styles + finalStepStyles,
       app: { viewer, section: "home" }
     },
@@ -388,10 +452,15 @@ const guideSteps = Effect.fn("PortalPages.guideSteps")(function* () {
   const { viewer, session } = yield* context;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const watching = new URL(request.url, session.publicBaseUrl).searchParams.get("mode") === "watch";
-  const { state } = yield* setupState();
+  const { state, setupLink } = yield* setupState();
   const html = watching
     ? `<div data-guide-steps data-state="${state.kind}">${state.kind === "live" ? renderLiveNote(state.row, viewer, session.publicBaseUrl) : ""}</div>`
-    : renderSetupSteps({ state, viewer, publicBaseUrl: session.publicBaseUrl });
+    : renderSetupSteps({
+        state,
+        viewer,
+        publicBaseUrl: session.publicBaseUrl,
+        ...(setupLink === undefined ? {} : { setupLink })
+      });
   return HttpServerResponse.text(html, {
     contentType: "text/html",
     headers: {
@@ -420,6 +489,35 @@ const guideLater = Effect.fn("PortalPages.guideLater")(function* () {
     );
   yield* SetupPrompts.later(viewer.user.id, signedIn.sid);
   return HttpServerResponse.redirect("/", {
+    status: 303,
+    headers: { "cache-control": "private, no-store" }
+  });
+});
+
+/** Get a new line: the live one retires and the panel's next render makes a fresh one. */
+const guideNewLine = Effect.fn("PortalPages.guideNewLine")(function* () {
+  const { viewer } = yield* context;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = new URLSearchParams(
+    yield* request.text.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(1_024))
+    )
+  );
+  if (form.get("user") !== viewer.user.id)
+    return yield* errorPage(
+      409,
+      "Signed in as someone else",
+      "This page was open for another account. Nothing changed."
+    );
+  const limit = yield* (yield* Limits.Limits).consume({
+    key: `setup-line:${viewer.user.id}`,
+    limit: registry["rate.setupLine.perMinute"].default,
+    window: "1 minute"
+  });
+  if (!limit.allowed)
+    return yield* errorPage(429, "Too many new lines", "Wait a minute, then get a new line.");
+  yield* SetupLinks.retire(viewer.user.id);
+  return HttpServerResponse.redirect("/guide", {
     status: 303,
     headers: { "cache-control": "private, no-store" }
   });
@@ -890,6 +988,8 @@ export const layer: Layer.Layer<
       | MachineTokens.MachineTokens
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore
+      | Analytics.Analytics
+      | Limits.Limits
       | SqlClient.SqlClient
     >
 > = HttpRouter.use((router) =>
@@ -945,6 +1045,11 @@ export const layer: Layer.Layer<
       "GET",
       "/guide/steps",
       errors(RequireSession.withViewer(guideSteps().pipe(pageErrors)))
+    );
+    yield* router.add(
+      "POST",
+      "/guide/new-line",
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(guideNewLine().pipe(pageErrors))))
     );
     yield* router.add(
       "POST",

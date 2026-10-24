@@ -307,7 +307,12 @@ name, an email address, a URL or free text.
 
 The events, by area:
 
-- Machine tokens: `token.minted`, once the login poll that minted the token commits.
+- Machine tokens: `token.minted`, once the login poll that minted the token commits,
+  with the `setupId` of the setup line the login was started from, when it had one.
+- Setup lines: `setup.line_shown` when the Final step panel makes a person a line,
+  and `setup.picked_up` when an agent first fetches its `/llms.txt`. Both carry a
+  `setupId`, a separate random id, never the line's link, so one person's setup
+  joins up with `token.minted` and that token's publishes.
 - Patches: `patch.created`, `patch.updated`, `patch.deleted`, `patch.purged`. A
   publish reports once, when the version it records commits; a retry with the
   same publish key replays the answer and reports nothing.

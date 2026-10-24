@@ -195,7 +195,9 @@ export class StartDeviceLoginRequest extends Schema.Class<StartDeviceLoginReques
   "StartDeviceLoginRequest"
 )({
   machineNameHint: Schema.String,
-  previousMachineTokenId: Schema.optionalKey(Schema.String)
+  previousMachineTokenId: Schema.optionalKey(Schema.String),
+  /** The `?s=` of the Final step panel's setup line, so the person's panel follows this login. */
+  setupLink: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64)))
 }) {}
 
 export class DeviceLoginStarted extends Schema.Class<DeviceLoginStarted>("DeviceLoginStarted")(

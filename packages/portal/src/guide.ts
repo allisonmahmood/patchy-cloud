@@ -2,15 +2,34 @@ import type { RequireSession } from "@patchy/auth";
 import { copyLine, copyScriptPath, escapeAttribute, escapeHtml, isWelcomePage } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 
+/** Why a setup line can't finish on the panel; each says what happened, and all offer a new line. */
+export type Fallback = "contested" | "denied" | "expired" | "other_account" | "ran_out";
+
 /**
- * Where a person stands on connecting their agent, from what Patchy already records: no live
- * machine token yet, connected, or connected with a patch of theirs published since. Nothing
- * about setup is stored.
+ * Where a person stands on connecting their agent, from what Patchy records: their setup line's
+ * link (picked up, a login bound to it and how it ended), their live machine tokens, and what they
+ * published since. Nothing else about setup is stored.
  */
 export type SetupState =
   | { readonly kind: "waiting" }
+  | { readonly kind: "picked_up" }
+  | { readonly kind: "login_pending" }
+  | { readonly kind: "confirming" }
+  | { readonly kind: "fallback"; readonly reason: Fallback }
   | { readonly kind: "connected" }
   | { readonly kind: "live"; readonly row: Patches.ReadPatch };
+
+/** One key per state the script compares, so a fallback's reason counts as a change. */
+export const stateKey = (state: SetupState): string =>
+  state.kind === "fallback" ? `fallback-${state.reason}` : state.kind;
+
+const fallbackLines: Record<Fallback, string> = {
+  contested: "Two computers used this line, so it can’t finish here.",
+  denied: "That login was denied, so nothing was connected.",
+  expired: "Your agent’s code ran out before it was confirmed.",
+  other_account: "A different account confirmed that login, so it isn’t yours.",
+  ran_out: "This line ran out."
+};
 
 /** Where the portal serves `guideScript`; "assets" is a reserved company handle. */
 export const guideScriptPath = "/assets/guide.js";
@@ -24,6 +43,10 @@ const companyHome = (viewer: RequireSession.Viewer["Service"]) => escapeHtml(vie
 /** What a screen reader hears when the panel moves to each state, once. */
 const announcements: Record<SetupState["kind"], string> = {
   waiting: "",
+  picked_up: "Your agent opened the line.",
+  login_pending: "Check your agent: it shows a link and a code to confirm.",
+  confirming: "Confirmed. Your agent is collecting its key.",
+  fallback: "This setup line can’t finish here.",
   connected: "You’re set. Your computer is connected.",
   live: "Your first publication is live."
 };
@@ -63,24 +86,47 @@ export const renderSetupSteps = (input: {
   readonly state: SetupState;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly publicBaseUrl: string;
+  /** The `?s=` of the person's setup line; without one the line is the plain one. */
+  readonly setupLink?: string;
 }): string => {
   const base = input.publicBaseUrl.replace(/\/+$/u, "");
-  const setup = `Set up Patchy using ${base}/llms.txt`;
+  const setup = `Set up Patchy using ${base}/llms.txt${input.setupLink === undefined ? "" : `?s=${input.setupLink}`}`;
   const { state, viewer } = input;
+  const opened = `<p class="supporting-text">Your agent opened the line.</p>`;
+  const lineCard = (status: string) =>
+    `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any agent that can run commands on your computer.</p>${status}<details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back: this step waits for you here.</p></details></div>`;
+  const confirmLater = `<p class="supporting-text">Your agent sends a link and a code. Open it, check the code, confirm. This page moves on by itself.</p>`;
   const steps =
     state.kind === "waiting"
       ? `${step(
           "current",
           "1",
           "Give your agent this line",
-          `<div class="step-card">${copyLine(setup, "Setup line, select to copy")}<p class="supporting-text">Paste it into Claude Code, Codex, Cursor or any agent that can run commands on your computer.</p><p class="note note-info final-step-copied" role="status" hidden><strong>Now paste it into your agent.</strong> This page moves on by itself when your computer connects.</p><details><summary>Don’t have an agent yet?</summary><p>An agent is an AI assistant that works on your computer, like Claude Code or Codex. Install one, then come back: this step waits for you here.</p></details></div>`
-        )}${step(
-          "upcoming",
-          "2",
-          "Confirm it’s you",
-          `<p class="supporting-text">Your agent sends a link and a code. Open it, check the code, confirm. This page moves on by itself.</p>`
-        )}`
-      : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
+          lineCard(
+            `<p class="note note-info final-step-copied" role="status" hidden><strong>Now paste it into your agent.</strong> This page moves on by itself when your agent opens the line.</p>`
+          )
+        )}${step("upcoming", "2", "Confirm it’s you", confirmLater)}`
+      : state.kind === "picked_up"
+        ? `${step(
+            "current",
+            "1",
+            "Give your agent this line",
+            lineCard(
+              `<p class="note note-info" role="status"><strong>Your agent opened the line.</strong></p>`
+            )
+          )}${step("upcoming", "2", "Confirm it’s you", confirmLater)}`
+        : state.kind === "login_pending" || state.kind === "confirming" || state.kind === "fallback"
+          ? `${step("done", "✓", "Give your agent this line", opened)}${step(
+              "current",
+              "2",
+              "Confirm it’s you",
+              state.kind === "login_pending"
+                ? `<p>Check your agent: it shows a link and a code to confirm.</p>`
+                : state.kind === "confirming"
+                  ? `<p>Confirmed. Your agent is collecting its key.</p>`
+                  : `<section class="note note-warn" role="status"><span class="note-title">${fallbackLines[state.reason]}</span><p>Finish with the link your agent shows you, or get a new line.</p><form method="post" action="/guide/new-line"><input type="hidden" name="user" value="${escapeAttribute(viewer.user.id)}"><button class="btn" type="submit">Get a new line</button></form></section>`
+            )}`
+          : `${step("done", "✓", "Give your agent this line", "")}${step("done", "✓", "Confirm it’s you", `<p class="supporting-text">Your computer is connected.</p>`)}`;
   const go = `<a class="btn" href="/">Go to ${companyHome(viewer)}</a>`;
   const after =
     state.kind === "connected"
@@ -88,7 +134,7 @@ export const renderSetupSteps = (input: {
       : state.kind === "live"
         ? `${renderLiveNote(state.row, viewer, input.publicBaseUrl)}<div class="actions">${go}</div>`
         : "";
-  return `<div class="final-step-steps" data-guide-steps data-state="${state.kind}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
+  return `<div class="final-step-steps" data-guide-steps data-state="${stateKey(state)}" data-announce="${escapeAttribute(announcements[state.kind])}"><ol class="steps final-step-list">${steps}</ol>${after}</div>`;
 };
 
 /**
@@ -100,6 +146,7 @@ export const renderFinalStep = (input: {
   readonly state: SetupState;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly publicBaseUrl: string;
+  readonly setupLink?: string;
   readonly mode: "modal" | "page";
 }): string => {
   const company = escapeHtml(input.viewer.company.name);

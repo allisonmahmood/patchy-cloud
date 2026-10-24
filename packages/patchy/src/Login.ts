@@ -41,6 +41,9 @@ export const notWaitingBecause = Effect.gen(function* () {
   return (yield* stdio.stdinIsTerminal) ? null : "stdin is not a terminal";
 });
 
+const abandonedNotice =
+  "Started a new login for this setup line; the earlier code no longer applies.";
+
 const agentNextSteps =
   "Show the person the URL and the code and ask them to confirm it in a browser where they are signed in. Do not open a browser yourself. Then run the next command; it waits up to a minute and says pending if they have not confirmed yet.";
 const nextCommand = Effect.fn("Login.nextCommand")(function* (login: State.PendingLogin) {
@@ -175,9 +178,17 @@ export const login = Effect.fn("Login.login")(function* (options: {
   readonly complete: boolean;
   readonly code: Option.Option<string>;
   readonly wait: number;
+  /** The setup line's `?s=`, which binds the login to the person's Final step panel. */
+  readonly setup?: Option.Option<string>;
 }) {
+  const setup = options.setup ?? Option.none<string>();
   if (!Number.isFinite(options.wait) || options.wait < 0) {
     return yield* new LocalError({ message: "--wait must be a non-negative number of seconds." });
+  }
+  if (options.complete && Option.isSome(setup)) {
+    return yield* new LocalError({
+      message: "--setup starts a login and doesn't go with --complete. Run: patchy login --complete"
+    });
   }
   if (!options.complete && Option.isSome(options.code)) {
     return yield* new LocalError({
@@ -203,7 +214,12 @@ export const login = Effect.fn("Login.login")(function* (options: {
   if (Option.isSome(yield* Instance.ApiUrlFlag)) yield* state.saveConfigUrl(apiUrl);
   const reason = yield* notWaitingBecause;
   let current: State.PendingLogin;
-  if (Option.isSome(pending)) {
+  // A pending login from another setup line, or from none, can't bind to this one's panel:
+  // it is abandoned and a fresh one starts. Without --setup a rerun resumes as before.
+  const otherLine =
+    Option.isSome(pending) && Option.isSome(setup) && pending.value.setupLink !== setup.value;
+  if (otherLine) yield* state.forgetPendingLogin(apiUrl);
+  if (Option.isSome(pending) && !otherLine) {
     current = pending.value;
     // A rerun resumes rather than creating a second code, even after local expiry.
     if (reason !== null) return yield* poll(current, 0);
@@ -218,15 +234,20 @@ export const login = Effect.fn("Login.login")(function* (options: {
       .startDeviceLogin({
         payload: new StartDeviceLoginRequest({
           machineNameHint: hostname(),
-          ...(previousMachineTokenId === undefined ? {} : { previousMachineTokenId })
+          ...(previousMachineTokenId === undefined ? {} : { previousMachineTokenId }),
+          ...(Option.isSome(setup) ? { setupLink: setup.value } : {})
         })
       })
       .pipe(Effect.catch((error) => Api.classify(error, "Login could not start.")));
-    current = new State.PendingLogin(started);
+    current = new State.PendingLogin({
+      ...started,
+      ...(Option.isSome(setup) ? { setupLink: setup.value } : {})
+    });
     yield* state.savePendingLogin(apiUrl, current);
   }
   const next = yield* nextCommand(current);
   const expires = yield* expiryLine(current.expiresAt);
+  const abandoned = otherLine ? [abandonedNotice] : [];
   yield* Output.report(
     {
       ok: true,
@@ -237,10 +258,11 @@ export const login = Effect.fn("Login.login")(function* (options: {
       expiresAt: current.expiresAt,
       interval: current.interval,
       next,
-      agentNextSteps,
+      agentNextSteps: [...abandoned, agentNextSteps].join(" "),
       notWaitingBecause: reason
     },
     [
+      ...abandoned,
       `Sign in: ${current.verificationUrl}`,
       `Code: ${current.userCode}`,
       expires,

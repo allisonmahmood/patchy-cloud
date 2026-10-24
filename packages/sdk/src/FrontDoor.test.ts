@@ -52,3 +52,58 @@ it.layer(layer)("the front door", (it) => {
     })
   );
 });
+
+const live = "abcdefghijklmnopqrstuvwxyz";
+const picked: string[] = [];
+const withPickup = HttpRouter.serve(
+  FrontDoor.layer.pipe(
+    Layer.provide(
+      Layer.succeed(FrontDoor.SetupPickup)(
+        FrontDoor.SetupPickup.of({
+          pickUp: (value) =>
+            value === "boom"
+              ? Effect.die(new Error("down"))
+              : Effect.sync(() => {
+                  picked.push(value);
+                  return value === live;
+                })
+        })
+      )
+    )
+  ),
+  { disableLogger: true, disableListenLog: true }
+).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provide(NodeServices.layer),
+  Layer.provide(
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example/" })
+    )
+  )
+);
+
+it.layer(withPickup)("the front door with a setup line", (it) => {
+  it.effect("puts a live line's value in its login commands and keeps every other page plain", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const page = (query: string) =>
+        client.get(`/llms.txt${query}`).pipe(Effect.flatMap((r) => r.text));
+      const linked = yield* page(`?s=${live}`);
+      assert.include(
+        linked,
+        `patchy login --api-url 'https://patchy.example' --setup '${live}' --json`
+      );
+      assert.include(
+        linked,
+        `patchy.cmd login --api-url 'https://patchy.example' --setup '${live}' --json`
+      );
+      assert.deepStrictEqual(picked, [live]);
+      // Unknown, expired or failing lines get the plain page, so setup never breaks.
+      for (const query of ["?s=unknown", "?s=boom", ""]) {
+        const plain = yield* page(query);
+        assert.include(plain, "patchy login --api-url 'https://patchy.example' --json");
+        assert.notInclude(plain, "--setup");
+      }
+    })
+  );
+});

@@ -16,6 +16,7 @@ import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
 import * as MachineTokens from "./MachineTokens.js";
+import * as SetupLinks from "./SetupLinks.js";
 
 const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 const LIFETIME_MS = 10 * 60 * 1_000;
@@ -74,7 +75,8 @@ const LoginRow = Schema.Struct({
   oldTokenId: Schema.NullOr(Schema.String),
   userId: Schema.NullOr(Schema.String),
   machineName: Schema.NullOr(Schema.String),
-  expiresAt: Schema.Date
+  expiresAt: Schema.Date,
+  setupLinkId: Schema.NullOr(Schema.String)
 });
 
 export const PendingLogin = Schema.Struct({
@@ -106,6 +108,8 @@ export class DeviceLogins extends Context.Service<
     readonly start: (input: {
       readonly machineNameHint: string;
       readonly previousMachineTokenId?: string;
+      /** The `?s=` from the panel's setup line, binding this login to the person's panel. */
+      readonly setupLink?: string;
     }) => Effect.Effect<
       {
         readonly deviceCode: string;
@@ -142,7 +146,7 @@ export const make = Effect.gen(function* () {
   const analytics = yield* Analytics.Analytics;
   const columns = sql`user_code AS "userCode", state, machine_name_hint AS "machineNameHint",
     old_token_id AS "oldTokenId", user_id AS "userId", machine_name AS "machineName",
-    expires_at AS "expiresAt"`;
+    expires_at AS "expiresAt", setup_link_id AS "setupLinkId"`;
   const byUserCode = SqlSchema.findOneOption({
     Request: Schema.String,
     Result: LoginRow,
@@ -199,11 +203,24 @@ export const make = Effect.gen(function* () {
   });
 
   const start = Effect.fn("DeviceLogins.start")(
-    (input: { readonly machineNameHint: string; readonly previousMachineTokenId?: string }) =>
+    (input: {
+      readonly machineNameHint: string;
+      readonly previousMachineTokenId?: string;
+      readonly setupLink?: string;
+    }) =>
       sql.withTransaction(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expires = now + LIFETIME_MS;
+          // Lines whose bound login runs out unanswered end expired before the login goes. The
+          // logins lock first, in one order, as every answer locks its login before its line.
+          const ran = yield* sql<{ readonly setup_link_id: string | null }>`
+            SELECT setup_link_id FROM device_logins
+            WHERE expires_at <= to_timestamp(${now / 1_000})
+            ORDER BY user_code FOR UPDATE`;
+          yield* SetupLinks.expired(
+            ran.flatMap((row) => (row.setup_link_id === null ? [] : [row.setup_link_id]))
+          ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
           yield* sql`DELETE FROM device_logins WHERE expires_at <= to_timestamp(${now / 1_000})`;
           while (true) {
             let code = "";
@@ -220,6 +237,16 @@ export const make = Effect.gen(function* () {
               to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))
             ON CONFLICT DO NOTHING RETURNING user_code`;
             if (inserted.length !== 0) {
+              // The first login a live setup line starts binds to it; a later one contests it.
+              const link = SetupLinks.parse(input.setupLink);
+              if (
+                link !== null &&
+                (yield* SetupLinks.bind(link, userCode).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql)
+                ))
+              )
+                yield* sql`UPDATE device_logins SET setup_link_id = ${link}
+                  WHERE user_code = ${userCode}`;
               return {
                 deviceCode,
                 userCode,
@@ -286,8 +313,12 @@ export const make = Effect.gen(function* () {
     yield* consumeLookup(userId);
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        yield* readPending(userCode);
+        const row = yield* readPending(userCode);
         yield* sql`UPDATE device_logins SET state = 'denied' WHERE user_code = ${userCode}`;
+        if (row.setupLinkId !== null)
+          yield* SetupLinks.denied(row.setupLinkId).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql)
+          );
       })
     );
   });
@@ -309,6 +340,10 @@ export const make = Effect.gen(function* () {
         const row = found.value;
         const remove = sql`DELETE FROM device_logins WHERE user_code = ${row.userCode}`;
         if (row.expiresAt.getTime() <= (yield* Clock.currentTimeMillis)) {
+          if (row.setupLinkId !== null)
+            yield* SetupLinks.expired([row.setupLinkId]).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql)
+            );
           yield* remove;
           return { reply: new DeviceLoginExpired({}) };
         }
@@ -357,6 +392,14 @@ export const make = Effect.gen(function* () {
           // an owned expired or already-revoked predecessor still counts.
           replaced = old !== null;
         }
+        const setupId =
+          row.setupLinkId === null
+            ? Option.none()
+            : yield* SetupLinks.minted({
+                linkId: row.setupLinkId,
+                tokenId: minted.id,
+                userId: row.userId
+              }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
         yield* remove;
         return {
           reply: {
@@ -371,7 +414,12 @@ export const make = Effect.gen(function* () {
             name: "token.minted",
             principalId: row.userId,
             companyId: identity.companyId,
-            properties: { tokenId: minted.id, replaced, ...(yield* Analytics.CurrentCli) }
+            properties: {
+              tokenId: minted.id,
+              replaced,
+              ...(Option.isSome(setupId) ? { setupId: setupId.value } : {}),
+              ...(yield* Analytics.CurrentCli)
+            }
           }
         };
       }),

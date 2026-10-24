@@ -1109,6 +1109,27 @@ export const registry = {
     refusal: "rate_limited",
     overridable: false
   },
+  "rate.setupLine.perMinute": {
+    kind: "operating",
+    configuration: "legacy",
+    default: 10,
+    unit: "attempts/minute",
+    scope: "viewer",
+    measure: "New setup lines per user from the Final step panel; deployment-wide configuration",
+    refusal: "rate_limited",
+    overridable: false
+  },
+  "rate.setupPickup.perMinute": {
+    kind: "operating",
+    configuration: "legacy",
+    default: 30,
+    unit: "attempts/minute",
+    scope: "host",
+    measure:
+      "llms.txt fetches carrying a setup line per source address per host replica; past it the page is the plain one",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "rate.deviceLookup.perMinute": {
     kind: "operating",
     configuration: "legacy",

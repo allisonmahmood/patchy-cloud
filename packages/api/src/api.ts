@@ -171,6 +171,9 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "(`PATCHY_DEVICE_LOGIN_RATE_LIMIT_PER_MINUTE`, default 5). On a re-login, send the " +
           "stored machine token's id as `previousMachineTokenId`; the old key stays live until " +
           "the completing poll replaces it, and only when it belongs to the confirming user. " +
+          "Send the setup line's `?s=` value as `setupLink` so the person's Final step panel " +
+          "follows this login; the first login a live line starts binds to it, and a later one " +
+          "proceeds as an ordinary login. An unknown or expired value is ignored. " +
           "The JSON body is limited to 4096 bytes: a declared overflow answers 413; " +
           "overflow while streaming aborts the connection before parsing."
       )

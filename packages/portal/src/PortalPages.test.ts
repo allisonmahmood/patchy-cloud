@@ -23,7 +23,8 @@ import {
   type HandlerDescriptors
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
-import { MachineTokens, RequireSession, Session } from "@patchy/auth";
+import { Limits } from "@patchy/limits";
+import { DeviceLogins, MachineTokens, RequireSession, Session, SetupLinks } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
@@ -68,7 +69,8 @@ const services = Layer.mergeAll(
   Companies.layer,
   Users.layer,
   InvocationLog.layer,
-  MachineTokens.layer
+  MachineTokens.layer,
+  Limits.layer
 ).pipe(
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(
@@ -359,6 +361,9 @@ const readUser = Effect.fn("PortalPagesTest.readUser")(function* (person: Person
   return user!;
 });
 const cardPath = (name: string) => `/patches/${name}`;
+/** The setup line a page shows, as its copy line's text. */
+const lineOf = (html: string) =>
+  text(html.match(/<code aria-label="Setup line, select to copy">([^<]*)<\/code>/)?.[1] ?? "");
 /** The guide's steps as `[state, title]`, in order. */
 const steps = (html: string) =>
   [
@@ -545,9 +550,14 @@ it.layer(layer)("portal pages on a socket", (it) => {
         ["current", "Give your agent this line"],
         ["upcoming", "Confirm it’s you"]
       ]);
-      const setup = `Set up Patchy using ${PUBLIC_BASE_URL}/llms.txt`;
-      assert.include(html, `<code aria-label="Setup line, select to copy">${setup}</code>`);
+      // The line carries the person's setup link, kept across reloads.
+      const setup = lineOf(html);
+      assert.match(
+        setup,
+        new RegExp(`^Set up Patchy using ${PUBLIC_BASE_URL}/llms\\.txt\\?s=[a-z2-7]{26}$`)
+      );
       assert.include(html, `data-copy="${setup}"`);
+      assert.strictEqual(lineOf(yield* (yield* request("/", workspace.owner)).text), setup);
       assert.include(html, '<script defer src="/assets/guide.js"></script>');
       assert.include(html, '<form class="final-step-later" method="post" action="/guide/later">');
       // Home's own way back stays while nothing is connected.
@@ -679,6 +689,82 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.notInclude(watch, 'class="steps"');
       assert.include(text(watch), "Your welcome page is live");
     })
+  );
+
+  it.effect("follows the setup line's link through the agent's fetch, login and key", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.owner.id}`;
+      const value = lineOf(yield* (yield* request("/", workspace.owner)).text).split("?s=")[1]!;
+      assert.lengthOf(
+        events.filter(
+          (event) => event.name === "setup.line_shown" && event.principalId === workspace.owner.id
+        ),
+        1
+      );
+      const state = Effect.gen(function* () {
+        const html = yield* (yield* request("/guide/steps", workspace.owner)).text;
+        return [html.match(/data-state="([a-z_-]+)"/)?.[1], text(html)] as const;
+      });
+      assert.strictEqual((yield* state)[0], "waiting");
+      yield* SetupLinks.pickUp(value);
+      const [picked, pickedText] = yield* state;
+      assert.strictEqual(picked, "picked_up");
+      assert.include(pickedText, "Your agent opened the line.");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: value });
+      const [pending, pendingText] = yield* state;
+      assert.strictEqual(pending, "login_pending");
+      assert.include(pendingText, "Check your agent: it shows a link and a code to confirm.");
+      yield* logins.confirm({
+        userCode: login.userCode,
+        userId: workspace.owner.id,
+        machineName: "Laptop"
+      });
+      assert.strictEqual((yield* state)[0], "confirming");
+      yield* logins.poll(login.deviceCode);
+      assert.strictEqual((yield* state)[0], "connected");
+
+      // A second login with a fresh line contests it; Get a new line starts over.
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${workspace.admin.id}`;
+      const first = lineOf(yield* (yield* request("/guide", workspace.admin)).text);
+      const link = first.split("?s=")[1]!;
+      yield* logins.start({ machineNameHint: "laptop", setupLink: link });
+      yield* logins.start({ machineNameHint: "elsewhere", setupLink: link });
+      const contested = yield* (yield* request("/guide/steps", workspace.admin)).text;
+      assert.include(contested, 'data-state="fallback-contested"');
+      assert.include(text(contested), "Two computers used this line");
+      assert.strictEqual(
+        (yield* request("/guide/new-line", workspace.admin, { user: workspace.admin.id })).status,
+        403
+      );
+      assert.strictEqual(
+        (yield* post("/guide/new-line", workspace.admin, { user: workspace.owner.id })).status,
+        409
+      );
+      const renewed = yield* post("/guide/new-line", workspace.admin, { user: workspace.admin.id });
+      assert.strictEqual(renewed.status, 303);
+      assert.strictEqual(renewed.headers.location, "/guide");
+      const next = lineOf(yield* (yield* request("/guide", workspace.admin)).text);
+      assert.notStrictEqual(next, first);
+      assert.include(
+        yield* (yield* request("/guide/steps", workspace.admin)).text,
+        'data-state="waiting"'
+      );
+
+      // A login left unanswered shows as expired once it runs out, with no poll or start after.
+      yield* logins.start({ machineNameHint: "laptop", setupLink: next.split("?s=")[1]! });
+      assert.include(
+        yield* (yield* request("/guide/steps", workspace.admin)).text,
+        'data-state="login_pending"'
+      );
+      yield* TestClock.adjust("11 minutes");
+      assert.include(
+        yield* (yield* request("/guide/steps", workspace.admin)).text,
+        'data-state="fallback-expired"'
+      );
+    }).pipe(Effect.provide(DeviceLogins.layer))
   );
 
   it.effect("celebrates the first patch on Home for a day", () =>

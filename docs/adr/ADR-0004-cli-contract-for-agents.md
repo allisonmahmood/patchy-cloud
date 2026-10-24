@@ -202,9 +202,14 @@ commands that spend them fail closed on that local-state error instead.
 
 ### Device login and logout
 
-`patchy login [--complete [code]] [--wait <seconds>]` sends the hostname as a
+`patchy login [--complete [code]] [--wait <seconds>] [--setup <link>]` sends the hostname as a
 machine-name hint. Only a predecessor saved by login contributes its machine id
-on re-login; environment, `auth set` and seeded keys do not.
+on re-login; environment, `auth set` and seeded keys do not. `--setup` sends the
+setup line's link, which `/llms.txt` prints in its login command, and the pending
+login keeps it. A rerun with the same link resumes; with a different link, or a
+link when the pending login had none, the pending login is forgotten and a new
+one starts, since it could never bind to that line. Without `--setup` a rerun
+resumes whatever is pending. `--setup` with `--complete` is a local refusal.
 
 Login waits automatically only when stdin is a terminal, `--json` is absent,
 and none of `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`,

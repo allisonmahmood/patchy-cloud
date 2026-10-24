@@ -66,8 +66,15 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
   });
   return {
     files,
-    login: (wait: number, { complete = true, json = true } = {}) =>
-      Login.login({ complete, code: Option.none(), wait }).pipe(
+    login: (
+      wait: number,
+      {
+        complete = true,
+        json = true,
+        setup
+      }: { complete?: boolean; json?: boolean; setup?: string } = {}
+    ) =>
+      Login.login({ complete, code: Option.none(), wait, setup: Option.fromNullishOr(setup) }).pipe(
         Effect.provide(State.layer),
         Effect.provide(fs),
         Effect.provide(Path.layer),
@@ -126,6 +133,58 @@ it.effect(
         }
       }
     })
+);
+
+it.effect("starts afresh for a different setup line and resumes the same one", () =>
+  Effect.gen(function* () {
+    const starts: Array<unknown> = [];
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        if (request.url.endsWith("/token"))
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ ok: true, status: "pending" })
+          );
+        if (request.body._tag === "Uint8Array")
+          starts.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ ok: true, ...pendingLogin, userCode: "LMNP-QRST" }, { status: 201 })
+        );
+      })
+    );
+    const { files, login } = makeLoginHarness(client);
+    const pending = () =>
+      JSON.parse(files.get("/state/device-login.json")!).hosts[apiUrl] as { setupLink?: string };
+    const abandoned = TestConsole.logLines.pipe(
+      Effect.map((lines) =>
+        String(JSON.parse(String(lines.at(-1))).agentNextSteps).startsWith(
+          "Started a new login for this setup line; the earlier code no longer applies."
+        )
+      )
+    );
+    // The harness's pending login came from no line, so a line's --setup can't resume it.
+    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuvwxyz" });
+    assert.strictEqual(starts.length, 1);
+    assert.include(starts[0] as object, { setupLink: "abcdefghijklmnopqrstuvwxyz" });
+    assert.strictEqual(pending().setupLink, "abcdefghijklmnopqrstuvwxyz");
+    assert.isTrue(yield* abandoned);
+    // The same line resumes; another line starts again and says the earlier code is gone.
+    yield* login(0, { complete: false, setup: "abcdefghijklmnopqrstuvwxyz" });
+    assert.strictEqual(starts.length, 1);
+    yield* login(0, { complete: false, setup: "zyxwvutsrqponmlkjihgfedcba" });
+    assert.strictEqual(starts.length, 2);
+    assert.strictEqual(pending().setupLink, "zyxwvutsrqponmlkjihgfedcba");
+    assert.isTrue(yield* abandoned);
+    // Without --setup a rerun resumes whatever is pending, as before.
+    yield* login(0, { complete: false });
+    assert.strictEqual(starts.length, 2);
+    // --setup starts a login, so it never goes with --complete.
+    const refused = yield* Effect.result(
+      login(0, { complete: true, setup: "abcdefghijklmnopqrstuvwxyz" })
+    );
+    assert.isTrue(Result.isFailure(refused));
+  }).pipe(Effect.provide(TestConsole.layer))
 );
 
 it.effect("gives the handoff's expiry as minutes left and the clock time in the current zone", () =>
