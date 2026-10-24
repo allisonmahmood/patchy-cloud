@@ -260,6 +260,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const expires = now + LIFETIME_MS;
+          // The terminal's hint prefills the name, so it keeps the 64 characters a name may have:
+          // a longer one could push the confirmation's Deny past the form's size cap.
+          const hint = Array.from(input.machineNameHint).slice(0, 64).join("");
           // Lines whose bound login runs out unanswered end expired before the login goes. The
           // logins lock first, in one order, as every answer locks its login before its line.
           const ran = yield* sql<{ readonly setup_link_id: string | null }>`
@@ -280,7 +283,7 @@ export const make = Effect.gen(function* () {
             const inserted = yield* sql`
             INSERT INTO device_logins (user_code, device_code_hash, state, machine_name_hint,
               old_token_id, expires_at, created_at)
-            VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${input.machineNameHint},
+            VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${hint},
               (SELECT id FROM machine_tokens WHERE id = ${input.previousMachineTokenId ?? null}),
               to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))
             ON CONFLICT DO NOTHING RETURNING user_code`;
@@ -378,12 +381,14 @@ export const make = Effect.gen(function* () {
         const row = yield* readPending(input.userCode);
         yield* MachineTokens.validateMachineName(input.machineName);
         yield* sql`SELECT id FROM users WHERE id = ${input.userId} FOR SHARE`;
+        // Lock the line, then check it: the wait for its lock can outlast the line, and now()
+        // stays at the transaction's start.
+        yield* sql`SELECT 1 FROM setup_links WHERE id = ${input.setupLink} FOR UPDATE`;
         const line = yield* sql`
           SELECT 1 FROM setup_links
           WHERE id = ${input.setupLink} AND user_id = ${input.userId}
             AND user_code = ${input.userCode} AND outcome = 'pending'
-            AND retired_at IS NULL AND expires_at > now()
-          FOR UPDATE`;
+            AND retired_at IS NULL AND expires_at > clock_timestamp()`;
         if (line.length === 0 || row.setupLinkId !== input.setupLink)
           return yield* new SetupLineChanged({});
         yield* sql`

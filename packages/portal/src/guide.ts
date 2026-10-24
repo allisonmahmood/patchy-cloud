@@ -216,7 +216,8 @@ export const guideScript = `(() => {
   const limit = 30 * 60 * 1000;
   const started = Date.now();
   let region = document.querySelector("[data-guide-steps]");
-  if (region === null) return;
+  // Without the account it was rendered for, a reply can't be checked against it.
+  if (region === null || !region.dataset.viewer) return;
   const watching = region.dataset.mode === "watch";
   const modal = document.querySelector("[data-guide-modal]");
   const panel = modal ?? document.querySelector(".final-step");

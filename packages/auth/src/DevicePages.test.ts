@@ -337,6 +337,32 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
     })
   );
 
+  it.effect("keeps a long name hint to 64 characters, so Deny still fits the form", () =>
+    Effect.gen(function* () {
+      const owner = yield* account("long-hint");
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const login = yield* logins.start({ machineNameHint: "&".repeat(1_400) });
+      const page = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
+      const html = yield* Effect.promise(() => page.text());
+      assert.include(html, `name="machineName" value="${"&amp;".repeat(64)}"`);
+      // What the browser posts for Deny with that prefill is answered, not refused for size.
+      const denied = yield* send(
+        "/login/device",
+        post(owner.cookie, {
+          userId: owner.user.id,
+          action: "deny",
+          code: login.userCode,
+          machineName: "&".repeat(64)
+        })
+      );
+      assert.strictEqual(denied.status, 200);
+      assert.strictEqual(
+        (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
+        "DeviceLoginDenied"
+      );
+    })
+  );
+
   it.effect("denies without requiring a name and renders the dead-code answer", () =>
     Effect.gen(function* () {
       const owner = yield* account("deny");

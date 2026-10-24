@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
@@ -32,6 +33,17 @@ const addUser = Effect.fn("SetupLinks.test.addUser")(function* (suffix: string) 
     VALUES (${id}, ${`user_setup_${suffix}`}, ${DEV_SEED.companyId},
       ${`${suffix}@setup.test`}, ${suffix}, 'member')`;
   return id;
+});
+/** Until another transaction on this database is waiting for a lock. */
+const someoneWaits = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  for (let attempt = 0; attempt < 2_000; attempt++) {
+    yield* sql`SELECT pg_stat_clear_snapshot()`;
+    const waiting = yield* sql`SELECT 1 FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if (waiting.length > 0) return;
+  }
+  return yield* Effect.die(new Error("nothing waited for the lock"));
 });
 const outcome = (userId: string) =>
   SetupLinks.status(userId).pipe(Effect.map(Option.map((status) => status.outcome)));
@@ -180,16 +192,6 @@ it.layer(layer)("SetupLinks", (it) => {
       const line = yield* SetupLinks.current(userId);
       const login = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
       yield* TestClock.adjust("11 minutes");
-      /** Until another transaction on this database is waiting for a lock. */
-      const someoneWaits = Effect.gen(function* () {
-        for (let attempt = 0; attempt < 2_000; attempt++) {
-          yield* sql`SELECT pg_stat_clear_snapshot()`;
-          const waiting = yield* sql`SELECT 1 FROM pg_stat_activity
-            WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-          if (waiting.length > 0) return;
-        }
-        return yield* Effect.die(new Error("start never waited for the login"));
-      });
       const locked = yield* Deferred.make<void>();
       // An answer's order, the login and then its line, held open until start's cleanup waits.
       const answer = yield* Effect.forkChild(
@@ -206,6 +208,46 @@ it.layer(layer)("SetupLinks", (it) => {
       yield* logins.start({ machineNameHint: "elsewhere" });
       yield* Fiber.join(answer);
       assert.deepStrictEqual(yield* outcome(userId), Option.some("expired"));
+    }).pipe(withDeviceLogins)
+  );
+
+  it.effect("refuses an inline confirmation whose line ran out while it waited for it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const sql = yield* SqlClient.SqlClient;
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const userId = yield* addUser("late-confirm");
+      const line = yield* SetupLinks.current(userId);
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: line.value });
+      yield* sql`UPDATE setup_links SET expires_at = clock_timestamp() + interval '1 second'
+        WHERE id = ${line.value}`;
+      const locked = yield* Deferred.make<void>();
+      // Another transaction holds the line, unchanged, past its last second.
+      const holder = yield* Effect.forkChild(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT 1 FROM setup_links WHERE id = ${line.value} FOR UPDATE`;
+            yield* Deferred.succeed(locked, undefined);
+            yield* someoneWaits;
+            yield* sql`SELECT pg_sleep(1.5)`;
+          })
+        )
+      );
+      yield* Deferred.await(locked);
+      const answered = yield* Effect.result(
+        logins.confirmInline({
+          userCode: login.userCode,
+          userId,
+          machineName: "Laptop",
+          setupLink: line.value
+        })
+      );
+      yield* Fiber.join(holder);
+      assert.isTrue(Result.isFailure(answered) && answered.failure._tag === "SetupLineChanged");
+      assert.deepStrictEqual(
+        yield* sql`SELECT state FROM device_logins WHERE user_code = ${login.userCode}`,
+        [{ state: "pending" }]
+      );
     }).pipe(withDeviceLogins)
   );
 
