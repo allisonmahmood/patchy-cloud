@@ -885,6 +885,14 @@ export class Patches extends Context.Service<
      * rows: owners and admins see only the visit count.
      */
     readonly opens: (userId: string) => Effect.Effect<ReadonlyArray<Open>, SqlError>;
+    /**
+     * The earliest live patch whose current version was published with one of these machine
+     * tokens, by its id: the Final step panel's first publication, attributed to the publisher's
+     * key rather than to whoever owns the patch now.
+     */
+    readonly publishedWith: (
+      machineTokenIds: ReadonlyArray<string>
+    ) => Effect.Effect<Option.Option<string>, SqlError>;
     readonly retire: (
       patchId: string,
       actor: Actor,
@@ -2526,6 +2534,23 @@ export const make = Effect.gen(function* () {
     }));
   }, Effect.catchTags(dieOnSchemaError));
 
+  const publishedWithRows = SqlSchema.findAll({
+    Request: Schema.Array(Schema.String),
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: (tokenIds) => sql`
+      SELECT p.id FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
+      WHERE v.created_by_machine_token_id IN ${sql.in(tokenIds)}
+        AND p.deleted_at IS NULL AND p.retired_at IS NULL AND p.disabled_at IS NULL
+      ORDER BY v.created_at, p.id LIMIT 1`
+  });
+  const publishedWith = Effect.fn("Patches.publishedWith")(function* (
+    machineTokenIds: ReadonlyArray<string>
+  ) {
+    if (machineTokenIds.length === 0) return Option.none<string>();
+    const [row] = yield* publishedWithRows(machineTokenIds);
+    return Option.fromNullishOr(row?.id);
+  }, Effect.catchTags(dieOnSchemaError));
+
   const listDeleted = Effect.fn("Patches.listDeleted")(function* (limit: number) {
     if (limit <= 0) return [];
     const rows = yield* listDeletedRows({ nowMillis: yield* Clock.currentTimeMillis, limit });
@@ -2615,6 +2640,7 @@ export const make = Effect.gen(function* () {
     recordVisit,
     recordOpen,
     opens,
+    publishedWith,
     retire,
     restore,
     rollback,

@@ -85,13 +85,16 @@ export interface HomeInput {
   readonly query: string;
   /** "Your first patch is live", while it applies. */
   readonly note?: string;
+  /** Whether the viewer has a live machine token; without one Home offers Connect your agent. */
+  readonly connected: boolean;
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
 }
 
 /**
- * Home at `/`: search, the viewer's usual patches, the company's tools and its pages. The caller
- * renders the guide instead when nothing is live and the viewer owns nothing.
+ * Home at `/`: search, the viewer's usual patches, the company's tools and its pages. Until the
+ * viewer connects an agent it offers Connect your agent, and the caller may lay the Final step
+ * panel over it.
  */
 export const renderHome = (input: HomeInput): string => {
   const { viewer, opens, now, query } = input;
@@ -153,9 +156,9 @@ export const renderHome = (input: HomeInput): string => {
     `<div class="home-shelf-head"><h2 class="section-heading">${escapeHtml(title)}${count === null ? "" : ` <span class="count">${count}</span>`}</h2>${aside}</div>`;
   const more = (count: number, shown: number, href: string, label: string) =>
     count > shown ? `<p><a href="${escapeAttribute(href)}">${escapeHtml(label)}</a></p>` : "";
-  const placeholder = ownsAny
+  const placeholder = input.connected
     ? ""
-    : '<a class="tile-row tile-row-placeholder" href="/guide"><span class="mono mono-placeholder" aria-hidden="true">+</span><span class="tile-body"><span class="tile-name">Make your own</span><span class="tile-text">Ask your agent; the guide shows you how</span></span></a>';
+    : '<a class="tile-row tile-row-placeholder" href="/guide"><span class="mono mono-placeholder" aria-hidden="true">+</span><span class="tile-body"><span class="tile-name">Connect your agent</span><span class="tile-text">One line to paste into your AI agent</span></span></a>';
 
   const search = `<div class="home-top">${searchField({
     action: "/",
@@ -183,7 +186,11 @@ export const renderHome = (input: HomeInput): string => {
 
   if (live.length === 0 && query === "")
     return page(
-      `<section class="home-shelf"><h1 class="page-heading">Nothing is live</h1><p>None of ${escapeHtml(company)}’s patches is live right now.${off > 0 ? " Retired and deleted patches can be restored from All patches." : ""}</p></section>`
+      `<section class="home-shelf">${
+        input.rows.length === 0
+          ? `<h1 class="page-heading">Nothing here yet</h1><p>${escapeHtml(company)}’s tools and pages show up here as people publish them.</p>`
+          : `<h1 class="page-heading">Nothing is live</h1><p>None of ${escapeHtml(company)}’s patches is live right now.${off > 0 ? " Retired and deleted patches can be restored from All patches." : ""}</p>`
+      }${placeholder ? `<div class="home-tools">${placeholder}</div>` : ""}</section>`
     );
 
   const tools = live.filter((row) => row.tier >= 1);
@@ -197,7 +204,7 @@ export const renderHome = (input: HomeInput): string => {
     const summary = `<p class="supporting-text home-matches">${plural(total, "match", "matches")} for “${escapeHtml(query)}” · <a href="/">Clear search</a></p>`;
     if (total === 0)
       return page(
-        `${summary}<div class="home home-solo"><section class="note note-warn" aria-labelledby="miss-title"><span class="note-title" id="miss-title">Nothing at ${escapeHtml(company)} matches “${escapeHtml(query)}”</span><p>Hand this to your agent and it can build one:</p>${copyLine(`Build us a Patchy tool for ${query}`, "Request for your agent, select to copy")}<p class="supporting-text">${ownsAny ? "" : 'No agent set up yet? <a href="/guide">Make your first patch</a> · '}<a href="${escapeAttribute(`/patches?show=off&q=${encoded}`)}">Search retired and deleted</a></p></section></div>`
+        `${summary}<div class="home home-solo"><section class="note note-warn" aria-labelledby="miss-title"><span class="note-title" id="miss-title">Nothing at ${escapeHtml(company)} matches “${escapeHtml(query)}”</span><p>Hand this to your agent and it can build one:</p>${copyLine(`Build us a Patchy tool for ${query}`, "Request for your agent, select to copy")}<p class="supporting-text">${input.connected ? "" : 'No agent connected yet? <a href="/guide">Connect your agent</a> · '}<a href="${escapeAttribute(`/patches?show=off&q=${encoded}`)}">Search retired and deleted</a></p></section></div>`
       );
     const toolShelf = foundTools.length
       ? `<section class="home-shelf">${shelfHead("Tools", foundTools.length, "")}<div class="home-tools">${foundTools.slice(0, TOOLS).map(toolRow).join("")}</div>${more(foundTools.length, TOOLS, `/patches?show=tools&q=${encoded}`, `All ${foundTools.length} matching tools`)}</section>`

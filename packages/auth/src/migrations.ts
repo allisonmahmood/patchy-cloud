@@ -2,8 +2,9 @@
  * Machine credentials and device-login state, id 2 in the global migration
  * sequence; Companies owns their user foreign keys. Squashed into one baseline
  * before launch; id 19 records when a person's credentials ended and when each
- * device login was confirmed, id 22 adds agent connections and their tokens, and id 23 the
- * codes a consent's approval issues.
+ * device login was confirmed, id 22 adds agent connections and their tokens, id 23 the
+ * codes a consent's approval issues, and id 26 the sign-ins Home has seen for the Final step
+ * panel.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -96,5 +97,17 @@ export const migrations: Migrations = {
     `CREATE INDEX agent_consents_user_id_idx ON agent_consents(user_id)`,
     `CREATE INDEX agent_consents_unexchanged_idx
     ON agent_consents(expires_at) WHERE connection_id IS NULL`
+  ),
+  // The sign-ins (Clerk session ids) that reached Home, so the Final step panel knows a
+  // person's first few and remembers Later for each. Kept for the first four and any in the
+  // person's first week, connected or not; nothing reads them for anything else.
+  "0026_setup_prompt_sign_ins": ddl(
+    `CREATE TABLE setup_prompt_sign_ins (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    sid TEXT NOT NULL CHECK (char_length(sid) BETWEEN 1 AND 128),
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    later_at TIMESTAMPTZ,
+    PRIMARY KEY (user_id, sid)
+    )`
   )
 };

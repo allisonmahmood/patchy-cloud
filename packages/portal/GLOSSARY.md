@@ -9,7 +9,7 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. With nothing live and nothing of the viewer's own, Home is the guide. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.
+The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Your usual**:
@@ -33,7 +33,7 @@ The card's tab at `/patches/<name>/log` for its current owner and admins: its lo
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:
-**Your first patch** at `/guide`, reached from Home's **Make your own** while the viewer owns no patch, and Home itself while nothing is live: what Patchy is, then the steps from the setup line to a first publish, each with a preview of what the agent will say. Its progress comes from the viewer's live machine tokens and owned patches, never a stored checklist, and owning any patch ends it: `/guide` then sends its owner Home.
+The **Final step** panel: connecting an agent, the last step between a person and Patchy, in two steps, giving the agent the setup line and confirming its code. It sits over Home until the viewer has a live machine token, for their first week or first three sign-ins, whichever lasts longer, with **Later** for the rest of a sign-in; Home's **Connect your agent** leads to it as a page at `/guide`. Its progress comes from the viewer's live machine tokens and their patches' publications, never a stored checklist; connected, `/guide` sends them Home.
 _Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
 
 **Settings**:
