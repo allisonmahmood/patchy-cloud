@@ -2309,7 +2309,10 @@ it.layer(layer)("all patches on a socket", (it) => {
       const nothing = yield* (yield* request("/patches?q=zebra", workspace.owner)).text;
       assert.include(text(nothing), "No patches match “zebra”.");
       const index = yield* (yield* request("/", workspace.member)).text;
-      assert.isTrue(links(index).some((link) => link.href === "/patches"));
+      const main = index.slice(index.indexOf("<main"));
+      assert.isTrue(
+        links(main).some((link) => link.href === "/patches" && link.text === "All patches")
+      );
     })
   );
 

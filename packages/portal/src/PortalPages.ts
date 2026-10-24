@@ -106,7 +106,7 @@ const errorPage = Effect.fn("PortalPages.errorPage")(function* (
     {
       title,
       status,
-      body: `<p>${escapeHtml(message)}</p><p><a href="/">Return to patches</a></p>`,
+      body: `<p>${escapeHtml(message)}</p><p><a href="/">Back to Home</a></p>`,
       app: { viewer, section: "patches" }
     },
     session
@@ -297,7 +297,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
         heading: "",
         body,
         styles: styles + homeStyles,
-        app: { viewer, section: "patches" }
+        app: { viewer, section: "home" }
       },
       session
     );
@@ -337,7 +337,7 @@ const guidePage = Effect.fn("PortalPages.guidePage")(function* () {
       heading: "",
       body: yield* guideBody(),
       styles,
-      app: { viewer, section: "patches" }
+      app: { viewer, section: "home" }
     },
     session
   );

@@ -287,8 +287,11 @@ export interface AppShell {
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
   };
-  /** `whats-new` is reached from the bell, not a section link, so no link is current. */
-  readonly section: "patches" | "company" | "connections" | "machines" | "whats-new";
+  /**
+   * `home` is reached from the brand and `whats-new` from the bell, not a section link, so on
+   * those no link is current.
+   */
+  readonly section: "home" | "patches" | "company" | "connections" | "machines" | "whats-new";
 }
 
 /** A change's kind as a pill: New green, Improved blue, Fixed plain. */
@@ -324,7 +327,7 @@ function whatsNewBell(seen: number): string {
 function appBody(app: AppShell, body: string): string {
   const link = (href: string, label: string, section: AppShell["section"]) =>
     `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"><header class="app-bar"><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><nav class="app-nav" aria-label="Primary">${link("/", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
+  return `<div class="app-card"><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>`;
 }
 
 /**
@@ -411,6 +414,7 @@ export function htmlPage(options: {
       color: var(--ink);
       font-size: 1.05rem;
       font-weight: 900;
+      text-decoration: none;
     }
 
 
