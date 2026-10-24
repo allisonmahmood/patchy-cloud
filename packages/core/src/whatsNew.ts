@@ -52,6 +52,44 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 18,
+    date: "2026-10-24",
+    through: "b23e6ad8fec8d052263a6f940d525428d7222de2",
+    changes: [
+      {
+        kind: "New",
+        title: "A Final step to connect your AI agent",
+        detail:
+          "Until your agent is connected, Home opens with a short Final step: give your agent one line, then confirm it's you. It follows along as your agent works, showing when it opened the line, when it's waiting for you and when it's connected, and if something goes wrong it says what happened and gives you a new line. It comes back each time you sign in, for your first week or your first three sign-ins, whichever lasts longer, and Later puts it away until next time.",
+        prs: [916, 917]
+      },
+      {
+        kind: "New",
+        title: "Confirm your computer without leaving Home",
+        detail:
+          "When your agent asks to connect, the Final step shows its code and asks if it's yours. Check it against the code your agent shows, then confirm right there, with no second tab. If you didn't start it, Not me turns it away and nothing is connected.",
+        prs: [918]
+      },
+      {
+        kind: "Improved",
+        title: "Setting up ends with your first page",
+        detail:
+          "When you set Patchy up with your AI agent, it now finishes by publishing a welcome page in your company's look, so you have something live straight away. Then it suggests a first tool to build, based on what it knows about your work.",
+        prs: [914]
+      },
+      {
+        kind: "Improved",
+        title: "The logo takes you Home",
+        detail:
+          "Clicking the Patchy logo at the top of any page now takes you to Home, and Patches opens the full list of your company's patches.",
+        prs: [913]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy now notices the first time someone opens a colleague's tool, so we can tell whether new people find something useful in their first week."
+    ]
+  },
+  {
     id: 17,
     date: "2026-10-23",
     through: "5dd94f381d3fae4c6957e76beceeb66b0ebec467",
