@@ -113,7 +113,7 @@ One successful serving of a patch from the instance, at its latest or a version 
 _Avoid_: view, hit, page load (a visit is a serving that succeeded, not a request that arrived)
 
 **Open**:
-One member's record of opening a live patch's address while signed in: when they last opened it and a score where each open counts 1 and halves every week. Only the current version counts, so reading an older version leaves a newer one unread. It exists only to build that member's own Home; nobody else reads it, and owners and admins see only the visit count. Public patches are served without a session, so opening one records none.
+One member's record of opening a live patch's address while signed in: when they last opened it and a score where each open counts 1 and halves every week. Only the current version counts, so reading an older version leaves a newer one unread. It exists to build that member's own Home; nobody else reads it, and owners and admins see only the visit count. The first one a member records for someone else's patch is also reported to Patchy's own analytics as `patch.first_opened`, by ids, to count [activation](../analytics/GLOSSARY.md), and is shown to nobody. Public patches are served without a session, so opening one records none.
 _Avoid_: view history, recently viewed, tracking (it records the member's own use for the member)
 
 **Live patch**:

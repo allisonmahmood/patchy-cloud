@@ -331,6 +331,11 @@ The events, by area:
   the revision that is already current reports nothing.
 - Agent access: `agent_access.changed`, with `on`, after the change commits. Asking for the
   state it already has reports nothing.
+- Opens: `patch.first_opened`, the one event serving reports, when a member's first
+  recorded open of a colleague's patch has committed. Its distinct id is the member
+  who opened it; it adds `tier` and `welcomePage`. The owner's own opens, an older
+  version, opens recorded before the event existed and public patches, which record
+  no member's opens, report nothing. It feeds activation ([the product](product.md#analytics)).
 
 ## Clerk
 

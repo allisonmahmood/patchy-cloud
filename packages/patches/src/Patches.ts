@@ -874,12 +874,16 @@ export class Patches extends Context.Service<
     ) => Effect.Effect<Option.Option<{ patch: Patch; version: PatchVersion }>, SqlError>;
     /** Counts a visit to a serving patch without changing its lifecycle. */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
-    /** Records that a member opened `versionId` at a serving patch's address, while it is current. */
+    /**
+     * Records that a member opened `versionId` at a serving patch's address, while it is current.
+     * True only for the call that made the member's first record of the patch, which concurrent
+     * opens never share; a stale version or an off patch records nothing and answers false.
+     */
     readonly recordOpen: (
       userId: string,
       patchId: string,
       versionId: string
-    ) => Effect.Effect<void, SqlError>;
+    ) => Effect.Effect<boolean, SqlError>;
     /**
      * What one member has opened, for that member's own Home. Nobody else reads these
      * rows: owners and admins see only the visit count.
@@ -2499,24 +2503,45 @@ export const make = Effect.gen(function* () {
   const halving = (age: Statement.Fragment) =>
     sql`power(0.5::float8,
       LEAST(GREATEST(0, extract(epoch FROM ${age})::float8) / ${halfLifeSeconds}, 1000))`;
+  const upsertOpen = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      userId: Schema.String,
+      patchId: Schema.String,
+      versionId: Schema.String,
+      nowMillis: Schema.Number
+    }),
+    Result: Schema.Struct({ inserted: Schema.Boolean }),
+    execute: ({ userId, patchId, versionId, nowMillis }) => {
+      // Only while the served version is still current: a read of v1 that finishes after v2 is
+      // published must not mark v2 seen. Both opens decay to the later of the two instants, so a
+      // late-arriving earlier open never moves the last open back.
+      const latest = sql`GREATEST(patch_opens.last_opened_at, EXCLUDED.last_opened_at)`;
+      // `xmax = 0` only on a row this statement inserted: the conflict path locks the existing
+      // row before updating it, which stamps the new row's xmax. Concurrent inserts of one key
+      // wait on the primary key, so exactly one of them inserts.
+      return sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
+        SELECT ${userId}, patches.id, ${stamp(nowMillis)}, 1 FROM patches
+        WHERE patches.id = ${patchId} AND patches.current_version_id = ${versionId} AND ${serving}
+        ON CONFLICT (user_id, patch_id) DO UPDATE SET
+          score = patch_opens.score * ${halving(sql`${latest} - patch_opens.last_opened_at`)}
+            + ${halving(sql`${latest} - EXCLUDED.last_opened_at`)},
+          last_opened_at = ${latest}
+        RETURNING xmax = 0 AS inserted`;
+    }
+  });
   const recordOpen = Effect.fn("Patches.recordOpen")(function* (
     userId: string,
     patchId: string,
     versionId: string
   ) {
-    const at = yield* now;
-    // Only while the served version is still current: a read of v1 that finishes after v2 is
-    // published must not mark v2 seen. Both opens decay to the later of the two instants, so a
-    // late-arriving earlier open never moves the last open back.
-    const latest = sql`GREATEST(patch_opens.last_opened_at, EXCLUDED.last_opened_at)`;
-    yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
-      SELECT ${userId}, patches.id, ${at}, 1 FROM patches
-      WHERE patches.id = ${patchId} AND patches.current_version_id = ${versionId} AND ${serving}
-      ON CONFLICT (user_id, patch_id) DO UPDATE SET
-        score = patch_opens.score * ${halving(sql`${latest} - patch_opens.last_opened_at`)}
-          + ${halving(sql`${latest} - EXCLUDED.last_opened_at`)},
-        last_opened_at = ${latest}`;
-  });
+    const row = yield* upsertOpen({
+      userId,
+      patchId,
+      versionId,
+      nowMillis: yield* Clock.currentTimeMillis
+    });
+    return Option.isSome(row) && row.value.inserted;
+  }, Effect.catchTags(dieOnSchemaError));
   const openRows = SqlSchema.findAll({
     Request: Schema.Struct({ userId: Schema.String, nowMillis: Schema.Number }),
     Result: OpenRow,

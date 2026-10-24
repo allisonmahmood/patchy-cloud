@@ -58,6 +58,7 @@ Supporting packages rather than product contexts; their glossaries define only t
 - **Companies, Auth, Patches, Integrations → SQL**: persist their own domain data in the platform Postgres database
 - **Company database → SQL, Content store**: keeps placements in the platform database, inventories in each company database, and reclaims unreferenced file objects
 - **Auth, Companies, Patches, Integrations → Analytics**: report business events. Portal's deactivation and reactivation report through Patches' dependency-lock transaction, after its commit
+- **Serving → Analytics**: reports one business event, `patch.first_opened`, once Patches says a member's open of a colleague's patch was their first
 - **Hosting → Analytics**: opens a request event for every request outside the runtime path; Auth, Patches, Serving and Portal name its viewer, patch and version where they resolve them, and Patchy MCP its connection, revision and tool
 - **Auth → Companies**: relies on company membership, roles and deactivation to authenticate users and machines
 - **Hosting, Auth, Patches → Limits**: rely on shared rate limiting for API access, device login and publishing

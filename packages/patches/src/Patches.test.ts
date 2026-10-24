@@ -618,8 +618,9 @@ it.layer(
         Effect.map(service.opens(userId), (opens) =>
           opens.find((entry) => entry.patchId === patch.patchId)
         );
-      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
-      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      // Only the member's first open of the patch says so.
+      assert.isTrue(yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId));
+      assert.isFalse(yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId));
       assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
       assert.isUndefined(yield* open(quota.user.id));
 
@@ -637,14 +638,16 @@ it.layer(
       assert.closeTo(late.score, 2.5, 1e-9);
       assert.strictEqual(late.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
 
-      // Reading v1 while v2 is current records nothing.
+      // Reading v1 while v2 is current records nothing, so it isn't a first open either.
       const next = yield* update(patch.patchId);
-      yield* service.recordOpen(quota.user.id, patch.patchId, patch.versionId);
+      assert.isFalse(yield* service.recordOpen(quota.user.id, patch.patchId, patch.versionId));
       assert.isUndefined(yield* open(quota.user.id));
-      yield* service.recordOpen(quota.user.id, patch.patchId, next.versionId);
+      assert.isTrue(yield* service.recordOpen(quota.user.id, patch.patchId, next.versionId));
       assert.closeTo((yield* open(quota.user.id))!.score, 1, 1e-9);
 
       yield* service.retire(patch.patchId, administrator);
+      assert.isFalse(yield* service.recordOpen(admin.user.id, patch.patchId, next.versionId));
+      assert.isUndefined(yield* open(admin.user.id));
       yield* service.recordOpen(reader.user.id, patch.patchId, next.versionId);
       assert.closeTo((yield* open(reader.user.id))!.score, 2.5, 1e-9);
     })
@@ -665,6 +668,46 @@ it.layer(
       assert.isBelow(yield* scoreOf, 1e-6);
       yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
       assert.closeTo(yield* scoreOf, 1, 1e-9);
+    })
+  );
+
+  it.effect("lets exactly one of a member's racing opens be their first", () =>
+    Effect.gen(function* () {
+      const service = yield* Patches.Patches;
+      const sql = yield* SqlClient.SqlClient;
+      const patch = yield* create();
+      // An unsettled insert of the same row holds every open on the primary key until it rolls back.
+      const inserted = yield* Deferred.make<void>();
+      const rollBack = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO patch_opens (user_id, patch_id, last_opened_at, score)
+              VALUES (${reader.user.id}, ${patch.patchId}, now(), 1)`;
+            yield* Deferred.succeed(inserted, undefined);
+            yield* Deferred.await(rollBack);
+            return yield* Effect.fail("rolled back" as const);
+          })
+        )
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(inserted);
+      const opens = yield* Effect.all(
+        Array.from({ length: 3 }, () =>
+          service.recordOpen(reader.user.id, patch.patchId, patch.versionId)
+        ),
+        { concurrency: "unbounded" }
+      ).pipe(Effect.forkScoped);
+      yield* sql`SELECT pid FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+        Effect.repeat({ until: (rows) => rows.length === 3 })
+      );
+      yield* Deferred.succeed(rollBack, undefined);
+      yield* Fiber.join(holder);
+      assert.deepStrictEqual((yield* Fiber.join(opens)).filter(Boolean).length, 1);
+      const recorded = (yield* service.opens(reader.user.id)).find(
+        (entry) => entry.patchId === patch.patchId
+      );
+      assert.closeTo(recorded!.score, 3, 1e-9);
     })
   );
 
