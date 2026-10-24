@@ -62,8 +62,11 @@ export const current = Effect.fn("SetupLinks.current")(function* (userId: string
     Effect.gen(function* () {
       // The person's row lock keeps two loads of the panel from making two lines.
       yield* sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
-      yield* sql`DELETE FROM setup_links
-        WHERE user_id = ${userId} AND expires_at < now() - interval '1 day'`;
+      // A line a login still names waits for that login's cleanup: deleting it here would lock
+      // the login after the line, the reverse of every login path.
+      yield* sql`DELETE FROM setup_links l
+        WHERE l.user_id = ${userId} AND l.expires_at < now() - interval '1 day'
+          AND NOT EXISTS (SELECT 1 FROM device_logins d WHERE d.setup_link_id = l.id)`;
       const live = yield* sql`
         SELECT id AS value, analytics_id AS "setupId", false AS created FROM setup_links
         WHERE user_id = ${userId} AND retired_at IS NULL AND expires_at > now()

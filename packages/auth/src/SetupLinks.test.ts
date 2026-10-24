@@ -209,6 +209,24 @@ it.layer(layer)("SetupLinks", (it) => {
     }).pipe(withDeviceLogins)
   );
 
+  it.effect("prunes a day-old line only once no login names it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.UTC(2026, 0, 1));
+      const sql = yield* SqlClient.SqlClient;
+      const logins = yield* DeviceLogins.DeviceLogins;
+      const userId = yield* addUser("prune");
+      const old = yield* SetupLinks.current(userId);
+      const login = yield* logins.start({ machineNameHint: "laptop", setupLink: old.value });
+      yield* sql`UPDATE setup_links SET expires_at = now() - interval '2 days' WHERE id = ${old.value}`;
+      const lines = sql`SELECT id FROM setup_links WHERE id = ${old.value}`;
+      yield* SetupLinks.current(userId);
+      assert.lengthOf(yield* lines, 1);
+      yield* sql`DELETE FROM device_logins WHERE user_code = ${login.userCode}`;
+      yield* SetupLinks.current(userId);
+      assert.lengthOf(yield* lines, 0);
+    }).pipe(withDeviceLogins)
+  );
+
   it.effect("ends a denied login's line as denied", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.UTC(2026, 0, 1));
