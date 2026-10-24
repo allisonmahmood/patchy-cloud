@@ -2,12 +2,13 @@
 
 Agent-led first-time setup: log this machine in if it has no publishing key, offer to
 add Patchy to Claude Code's auto mode settings, set up or announce the company's look,
-then publish the person's welcome patch.
+publish the person's welcome patch, then suggest a first patch of their own.
 
 The person's own words for it are "my welcome page" — that is what to say out loud.
 _Welcome patch_ is the term for it here.
 
-Onboarding is always optional. It makes later publishing nicer; publishing works fine
+Onboarding is always optional, and so is each step: the person can skip any of it,
+the welcome page included. It makes later publishing nicer; publishing works fine
 without it.
 
 ## When to run
@@ -24,10 +25,9 @@ without it.
   existing company look alone: changing it is its own request (see the main skill's
   [Changing the look](../SKILL.md#changing-the-look)).
 - **Any other request to get this machine ready to use Patchy**, in the person's own
-  words or the portal's setup line, `Set up Patchy using <instance>/llms.txt`.
-  Once the machine is logged in, run [step 3, Claude Code's auto mode](#3-claude-codes-auto-mode)
-  and [step 4, the company look](#4-the-company-look), then close with
-  [step 6's sign-off](#6-sign-off).
+  words or the portal's setup line, `Set up Patchy using <instance>/llms.txt`. Run the
+  whole conversation below too: setup ends with the welcome page live and a suggestion
+  for what to build first.
 
 Those are the only triggers. Installing or wiring up the skill runs nothing, and there
 is no per-session first-run check.
@@ -275,10 +275,21 @@ local logout succeeded. A worktree can still publish with its seeded key, and
 `PATCHY_API_TOKEN` is not the CLI's to remove. This does not sign the browser
 out; **Sign out** on **Your machines** does that.
 
-### 6. Sign-off
+### 6. Suggest a first patch
 
-Close with what to say next time, in their words: "publish this with patchy", "publish
-this plan", "update my page", "take that page down". One line, not a manual.
+With the welcome page live, or skipped, suggest one or two first patches this person
+might want. First gather what you know about them: what they've told you, your own
+memory of them, the files in the folder you're working in (list it and skim anything
+that says what they do), their role, and what their company already has
+(`patchy list`). Tie each suggestion to something specific you found, and say why in a
+few words. Patchy keeps no list of suggestions:
+don't offer generic examples in their place. If you still know too little, ask one
+short question about their work, such as what they do and what's tedious this week,
+then suggest from their answer.
+
+Build whatever they pick, or whatever they ask for instead. Close with what to say next
+time, in their words: "publish this with patchy", "publish this plan", "update my
+page", "take that page down". One line, not a manual.
 
 ## Sample transcripts
 
@@ -310,15 +321,23 @@ actually gives you; never invent one, and never carry these into a real session.
 > for everyone at Greenfield Pottery. Their agents use it by default for new pages and
 > tools, with no setup on their side. Only admins can change it. Publishing your
 > welcome page now… Here it is: `https://pages.example.com/greenfield/welcome` — signed-in
-> colleagues in your company can open it. Next time, just say "publish this with
-> patchy".
+> colleagues in your company can open it.
+>
+> You've been pricing the spring kiln orders in this folder. A first tool could be an
+> order tracker the studio can update together: who ordered what, glaze, and pickup
+> date. Want me to build that, or is there something else Greenfield needs?
 
 ### Joining a company that has a look
 
 > **Agent**: You're publishing as sam@acme.example at Acme, from "Work laptop". Your
 > tools will use Acme's look. Publishing your welcome page now… Here it is:
 > `https://pages.example.com/acme/welcome` — signed-in colleagues in your company can
-> open it. Next time you want a page, just say "publish this with patchy".
+> open it. What do you do at Acme, and what's been tedious this week?
+>
+> **User**: I run payroll. Chasing everyone's timesheets every Friday.
+>
+> **Agent**: Then a timesheet board could be a good first tool: everyone marks their
+> week done, and you see who's left without chasing. Want me to build it?
 
 ### A webmail address
 

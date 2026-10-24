@@ -58,9 +58,9 @@ The installer downloads this instance's \`patchy\` release, checks it against th
 
 Login prints JSON with \`verificationUrl\`, \`userCode\` and \`next\`. Give the person both the URL and the code, and let them open it: never open a browser for them. They sign in, check the code and confirm this machine. Then run \`next\` with \`--json\` added; in PowerShell, call every \`patchy\` command as \`patchy.cmd\`. \`pending\` means they have not confirmed yet: say it is still waiting, and run the same command again when they are ready. Continue once the status is \`logged_in\`.
 
-## Next
+## Finish setup
 
-Read the installed skill before doing anything else with Patchy: the \`Skill:\` path the installer printed, also linked at \`~/.agents/skills/patchy/SKILL.md\`.
+Logging in is not the end of setup. Read the installed skill: the \`Skill:\` path the installer printed, also linked at \`~/.agents/skills/patchy/SKILL.md\`. Then follow its onboarding reference, \`references/onboarding.md\`, from where login leaves off. It publishes the person's welcome page in their company's look, unless they said they don't want one, and then has you suggest a first patch from what you know about them, either way. Read the skill before doing anything else with Patchy.
 `;
 
 const headers = { "cache-control": "no-store" };
