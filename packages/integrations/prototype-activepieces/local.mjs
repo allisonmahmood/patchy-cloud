@@ -29,6 +29,8 @@ const plan = JSON.parse(run(dev, ["--dry-run", "--json"]));
 if (plan.environment || new URL(plan.apiUrl).hostname !== "127.0.0.1")
   throw new Error("Use a plain loopback dev instance for this prototype.");
 const markerFile = join(state, "activepieces-mode.json");
+const slack = process.argv.includes("--slack");
+const mode = slack ? "slack-token" : "posthog-mock";
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -39,7 +41,7 @@ const alive = (pid) => {
 };
 if (plan.pids && alive(plan.pids.supervisor)) {
   const marker = existsSync(markerFile) ? JSON.parse(readFileSync(markerFile, "utf8")) : {};
-  if (marker.supervisor !== plan.pids.supervisor)
+  if (marker.supervisor !== plan.pids.supervisor || marker.mode !== mode)
     throw new Error(
       "A different dev instance is running. Stop it with pnpm dev stop before starting the prototype."
     );
@@ -48,19 +50,23 @@ if (plan.pids && alive(plan.pids.supervisor)) {
   run(join(root, "scripts/build-serving-broker.mjs"));
   writeFileSync(join(state, "plan.json"), JSON.stringify(plan));
   const log = openSync(join(state, "activepieces-launcher.log"), "a", 0o600);
-  const child = spawn(process.execPath, [...args, join(here, "localSupervisor.ts")], {
-    cwd: root,
-    env: baseEnv,
-    detached: true,
-    stdio: ["ignore", log, log]
-  });
+  const child = spawn(
+    process.execPath,
+    [...args, join(here, "localSupervisor.ts"), ...(slack ? ["--slack"] : [])],
+    {
+      cwd: root,
+      env: baseEnv,
+      detached: true,
+      stdio: ["ignore", log, log]
+    }
+  );
   child.unref();
   closeSync(log);
   writeFileSync(
     join(state, "plan.json"),
     JSON.stringify({ ...plan, pids: { supervisor: child.pid } })
   );
-  writeFileSync(markerFile, JSON.stringify({ supervisor: child.pid }));
+  writeFileSync(markerFile, JSON.stringify({ supervisor: child.pid, mode }));
 }
 let ready = false;
 for (let attempt = 0; attempt < 480; attempt++) {
@@ -76,8 +82,25 @@ for (let attempt = 0; attempt < 480; attempt++) {
 }
 if (!ready)
   throw new Error(`Local startup failed. See ${state}/dev.log and activepieces-launcher.log`);
-console.log("Local Patchy is running. Seeding the two simulated customer connections…");
-run(join(here, "localSeed.ts"));
+console.log(
+  slack
+    ? "Local Patchy is running. Preparing two test companies…"
+    : "Local Patchy is running. Seeding the two simulated customer connections…"
+);
+run(join(here, "localSeed.ts"), slack ? ["--slack"] : []);
+if (slack) {
+  console.log(
+    "Slack bot-token connections inside local Patchy (REAL provider requests; no tokens preloaded):"
+  );
+  for (const customer of customers)
+    console.log(
+      `${customer.name}: ${plan.apiUrl}/dev/sign-in?as=${encodeURIComponent(customer.email)}&return=${encodeURIComponent("/company/connections/community/slack")}`
+    );
+  console.log(
+    "Paste an existing installed app's bot token in Patchy. Separate browser profiles keep companies signed in independently."
+  );
+  process.exit(0);
+}
 const cli = join(root, "packages/patchy/src/index.ts");
 mkdirSync(join(state, "activepieces-patches"), { recursive: true });
 for (const customer of customers) {

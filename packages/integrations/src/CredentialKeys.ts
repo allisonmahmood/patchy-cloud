@@ -1,5 +1,4 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { Integration } from "@patchy/api";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -46,7 +45,8 @@ export type CredentialError = CredentialEncryptionFailed | CredentialDecryptionF
 export interface Identity {
   readonly companyId: string;
   readonly id: string;
-  readonly integration: Integration;
+  /** Stable integration identity, also used by locally loaded community modules. */
+  readonly integration: string;
 }
 
 export interface EncryptedCredentials {

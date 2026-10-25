@@ -1,7 +1,8 @@
 # Activepieces module prototype
 
-Local, throwaway milestone 1, based on Patchy main at
-`e4243ff54d2acbbc88b60eeb0cf9b82a26dc9d5d`. This directory is outside the
+Local, throwaway milestone 1. `prototype/activepieces-slack-token` starts from
+the pushed `prototype/activepieces` and is rebased onto main at `8a278cb4`.
+This directory is outside the
 integration package's production `src`. A separate local server entrypoint
 composes the adapter; normal server startup, releases, migrations and the SDK
 keep their existing behavior. No Nango branch code was incorporated.
@@ -9,7 +10,74 @@ keep their existing behavior. No Nango branch code was incorporated.
 The question: can a shared adapter run an existing community action while
 Patchy owns connections, secrets and authorization? **Yes for this one action,
 against simulated provider responses.** This does not prove catalog compatibility
-or a successful real PostHog call.
+or a successful real provider call. The Slack mode below is wired for real
+requests, but needs your existing bot token to demonstrate provider success.
+
+## Slack inside local Patchy
+
+```sh
+npm --prefix packages/integrations/prototype-activepieces ci --ignore-scripts --no-audit --no-fund
+npm --prefix packages/integrations/prototype-activepieces run local:slack
+```
+
+Open the printed Customer A link. You are inside Patchy's signed-in Connections
+area. Paste an **existing installed app's `xoxb-` bot token**, then choose
+**Test and connect**. This runs the module's existing `auth.test` validator.
+Choose **List public channels** to run its unchanged `slack_list_channels`
+action, limited to `public_channel` and excluding archived channels. The bot
+needs `channels:read`. No Slack app is registered and no OAuth redirect occurs.
+No messages are sent. Do not paste a token into chat, a source file or a URL.
+
+The normal Connections page links to this local Slack page. Replace token,
+disconnect (which erases the saved token), reconnect, delete a disconnected
+connection, and recent call outcomes are available there. The two test companies
+start with **no Slack connections**. Use Customer B's link in another browser
+profile and a separate token to try a second real connection. With one browser
+profile, the latest sign-in changes every tab to that company.
+
+This mode uses **real Slack requests**; it never substitutes fake successful
+responses. The automated `slack.test.ts` is different: it loads the same pinned
+module but redirects its HTTP transport to a loopback **mock Slack provider**.
+It verifies two companies' credential selection, rejected cross-company ids,
+admin checks, same-origin checks, encryption, safe failures and call logs. These
+tests do **not** establish that a real Slack workspace has connected.
+
+The adapter selects `CUSTOM_AUTH` explicitly from the piece's OAuth/custom-auth
+array, runs its validator, and maps the saved token into the existing action's
+`{ type: "CUSTOM_AUTH", props: { botToken } }` auth shape. The worker keeps TLS
+certificate validation enabled despite an upstream helper's attempt to disable
+it. Tokens travel over private IPC, not process arguments or environment.
+
+The local service reuses the existing `connections` table under integration
+`activepieces:slack`, AES-GCM `CredentialKeys` (including company/id/integration
+binding), `RequireSession` membership/admin checks and `RuntimeLog`. Native
+stores already filter unknown integration kinds. No migrations, production
+entrypoint, public API schema, CLI or SDK contract are changed. Saved tokens
+are never returned in HTML, action output or call logs. Calls run as an admin
+from the connection page; **Slack is not yet callable from generated patch
+clients or declared patch runtime operations**. That runtime contract remains a
+separate milestone; the inherited PostHog mock demonstrates those surfaces only
+for PostHog. This proof does not create schema snapshots for community actions.
+
+Provider-specific work still includes auth shape/field mapping, scopes, admitted
+actions and properties, result schemas, timeouts/pagination, rate limits and
+any additional Activepieces context capabilities. OAuth, triggers, webhooks,
+background execution and general catalog discovery are outside this milestone.
+One connector's compatibility says nothing about the rest of the catalog.
+
+**Permission boundary:** an authorized local/internal test with an existing
+token does not need Patchy to register a provider app or use a hosted auth broker.
+The token still carries the Slack app's existing permissions and any workspace
+admin restrictions. It is not a workaround for Slack's commercial distribution
+rules: [Slack's API terms](https://slack.com/terms-of-service/api), effective
+October 10, 2025, require a separate agreement for commercial distribution,
+including apps connecting to paid products and custom app templates (with a
+single-third-party exception). Do not treat this prototype as clearance to ship
+a commercial Slack integration without resolving that blocker.
+
+To switch modes, stop this worktree's instance first with `local:stop`, then run
+`local:slack` for real Slack or `local` for the inherited PostHog mock below.
+State survives restart; `pnpm dev down` deletes this worktree's local instance.
 
 ## Run
 
@@ -27,7 +95,7 @@ no provider account, real credentials, Activepieces server, subscription or Dock
 Dependency installation downloads the pinned npm package; this is not a runtime
 dependency on Activepieces Cloud.
 
-## Try it in a browser
+## Inherited PostHog mock in a browser
 
 From the worktree root:
 

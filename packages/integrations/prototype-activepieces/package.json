@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "local": "node --import tsx --conditions=development local.mjs",
+    "local:slack": "node --import tsx --conditions=development local.mjs --slack",
     "local:status": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts status",
     "local:logs": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts logs",
     "local:stop": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts stop",
@@ -11,6 +12,7 @@
     "typecheck": "../../../node_modules/.bin/tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@activepieces/piece-posthog": "0.7.1"
+    "@activepieces/piece-posthog": "0.7.1",
+    "@activepieces/piece-slack": "0.23.1"
   }
 }

@@ -4,6 +4,8 @@ import { fork } from "node:child_process";
 export interface Module {
   readonly modulePath: string;
   readonly exportName: string;
+  /** Explicit selection for pieces that offer both OAuth and API-key authentication. */
+  readonly authType?: "CUSTOM_AUTH" | "SECRET_TEXT";
 }
 interface Metadata {
   readonly authType: string;
@@ -17,12 +19,15 @@ interface Metadata {
  */
 const execute = (
   module: Module,
-  invocation?: { name: string; auth: unknown; propsValue: unknown }
+  invocation?:
+    | { kind: "run"; name: string; auth: unknown; propsValue: unknown }
+    | { kind: "validate"; auth: unknown },
+  testPreload?: string
 ) =>
   new Promise<unknown>((resolve, reject) => {
     const child = fork(new URL("./worker.cjs", import.meta.url), [], {
       env: {},
-      execArgv: [],
+      execArgv: testPreload ? ["--require", testPreload] : [],
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       timeout: 5_000
     });
@@ -50,8 +55,13 @@ const execute = (
     });
   });
 
-export async function loadPiece(module: Module, allowedActions: ReadonlyArray<string>) {
-  const metadata = (await execute(module)) as Metadata;
+export async function loadPiece(
+  module: Module,
+  allowedActions: ReadonlyArray<string>,
+  testPreload?: string
+) {
+  // A host-only test preload redirects provider transport to a loopback double. Never a wire input.
+  const metadata = (await execute(module, undefined, testPreload)) as Metadata;
   if (metadata.authType !== "CUSTOM_AUTH" && metadata.authType !== "SECRET_TEXT") {
     throw new Error("Prototype supports API-key authentication only.");
   }
@@ -60,10 +70,12 @@ export async function loadPiece(module: Module, allowedActions: ReadonlyArray<st
   }
   return {
     actions: metadata.actions,
+    validate: async (auth: unknown) =>
+      (await execute(module, { kind: "validate", auth }, testPreload)) === true,
     run: (name: string, auth: unknown, propsValue: Readonly<Record<string, unknown>>) => {
       if (!allowedActions.includes(name))
         return Promise.reject(new Error("Action not enabled by host."));
-      return execute(module, { name, auth, propsValue });
+      return execute(module, { kind: "run", name, auth, propsValue }, testPreload);
     }
   };
 }

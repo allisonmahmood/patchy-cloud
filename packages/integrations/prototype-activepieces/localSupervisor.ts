@@ -9,6 +9,12 @@ NodeRuntime.runMain(
   Effect.gen(function* () {
     const root = new URL("../../../", import.meta.url).pathname;
     const plan = Option.getOrThrow(yield* readPlan(`${root}.local/dev`));
-    yield* supervise(plan, new URL("./localServer.ts", import.meta.url).pathname);
+    yield* supervise(
+      plan,
+      new URL(
+        process.argv.includes("--slack") ? "./slackServer.ts" : "./localServer.ts",
+        import.meta.url
+      ).pathname
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
 );

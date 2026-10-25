@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import type * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
@@ -8,13 +9,19 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
-import { escapeHtml } from "@patchy/core";
+import { escapeAttribute, escapeHtml } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
 import * as ConnectionsView from "./ConnectionsView.js";
 
 type Params = Readonly<Record<string, string | undefined>>;
+
+/** Optional navigation supplied by isolated local harnesses; absent in the production server. */
+export const extraNavigation = Context.Reference<{
+  readonly href: string;
+  readonly label: string;
+} | null>("@patchy/integrations/ConnectionPages/extraNavigation", { defaultValue: () => null });
 
 /**
  * Renders a page in the app shell or follows a change's redirect. A connection that cannot be
@@ -32,6 +39,7 @@ const serve = <R>(
     const session = yield* Session.Session;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const query = new URL(request.url, session.publicBaseUrl).searchParams;
+    const extra = yield* extraNavigation;
     return yield* page(viewer, yield* HttpRouter.params, query).pipe(
       Effect.map((content) =>
         content.redirect
@@ -42,6 +50,11 @@ const serve = <R>(
           : pageResponse(
               {
                 ...content,
+                body:
+                  content.body +
+                  (extra
+                    ? `<p><a href="${escapeAttribute(extra.href)}">${escapeHtml(extra.label)}</a></p>`
+                    : ""),
                 heading: "",
                 styles: ConnectionsView.styles,
                 app: { viewer, section: "connections" }

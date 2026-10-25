@@ -20,6 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
 import {
@@ -346,11 +347,15 @@ const app = Layer.mergeAll(
 );
 
 /** Serve and sweep in one scope, with an alternate source for isolated local harnesses. */
-export const withPostHogSource = <E, R>(source: Layer.Layer<PostHogSource.Source, E, R>) =>
+export const withPostHogSource = <E, R, ExtraE = never>(
+  source: Layer.Layer<PostHogSource.Source, E, R>,
+  extraRoutes?: Layer.Layer<never, ExtraE, HttpRouter.HttpRouter | SqlClient.SqlClient>
+) =>
   Layer.mergeAll(
-    HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-      Layer.provide(ownedPatches)
-    ),
+    HttpRouter.serve(Layer.merge(app, extraRoutes ?? Layer.empty), {
+      disableLogger: true,
+      disableListenLog: true
+    }).pipe(Layer.provide(ownedPatches)),
     sweeper,
     Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
   ).pipe(Layer.provide(services), Layer.provide(source));

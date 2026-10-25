@@ -7,7 +7,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/http/HttpServer";
-import { DevPersonas } from "@patchy/auth";
+import { ClientDocumentNetwork, DevPersonas } from "@patchy/auth";
 import * as Sql from "@patchy/sql";
 import * as Server from "../../../apps/server/src/Server.js";
 import * as LocalSource from "./localSource.js";
@@ -39,6 +39,7 @@ NodeRuntime.runMain(
       ).pipe(
         Layer.provide(Server.withPostHogSource(LocalSource.layer)),
         Layer.provide(Sql.layer),
+        Layer.provide(ClientDocumentNetwork.layer),
         Layer.provide(http)
       )
     );
