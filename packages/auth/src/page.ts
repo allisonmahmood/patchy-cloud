@@ -63,6 +63,9 @@ export function sessionScripts({ clerk }: SessionShell): string {
   return `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeAttribute(clerk.publishableKey)}" src="https://${escapeAttribute(clerk.frontendApiHost)}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"></script><script defer src="/auth/session.js"></script>`;
 }
 
+/** Marks a page that showed its viewer's receipt, so `withViewer` knows to clear it; never sent. */
+export const RECEIPT_SHOWN = "x-patchy-receipt-shown";
+
 export function pageResponse(
   page: Page,
   shell?: SessionShell
@@ -110,5 +113,9 @@ export function pageResponse(
         ].join("; ")
       }
     }
+  ).pipe((response) =>
+    page.app?.viewer.receipt === undefined
+      ? response
+      : HttpServerResponse.setHeader(response, RECEIPT_SHOWN, "1")
   );
 }

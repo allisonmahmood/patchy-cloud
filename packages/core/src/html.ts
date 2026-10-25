@@ -837,6 +837,8 @@ export function htmlPage(options: {
     .count { color: var(--muted); font-weight: 650; font-variant-numeric: tabular-nums; }
     .tabs a[aria-current="page"] .count { color: var(--ink); }
     /* btn-icon: a square button holding one icon, named by its aria-label. */
+    /* btn-quiet btn-danger: a destructive action kept out of the way, such as Disconnect everything: no frame, danger ink. */
+    .btn-quiet.btn-danger { background: transparent; color: var(--danger); }
     .btn-icon { width: 44px; padding: 0; }
     .btn-icon svg { width: 18px; height: 18px; }
     .btn-quiet:has(+ .menu:popover-open) { background: color-mix(in srgb, var(--blue) 10%, transparent); }
@@ -959,13 +961,20 @@ export function htmlPage(options: {
     .app-page { min-width: 0; max-width: 1240px; padding: 34px 44px 48px; overflow-wrap: anywhere; }
     /* app-receipt: what the person's last form did, once, above the page it landed on. */
     .app-receipt { margin: 0 0 20px; font-weight: 650; }
+    /* A Menu opened on a phone stays open in the top layer if the window widens; it then sits where
+       the in-place menu would, under the brand, until dismissed. */
+    @media (min-width: 900px) {
+      .app-menu:popover-open { position: fixed; inset: 64px auto 0 0; width: 248px; height: auto; padding: 0 14px 14px; overflow-y: auto; border: 0; border-right: 1.5px solid var(--line-strong); background: var(--white); }
+      .app-menu::backdrop { background: transparent; }
+    }
     @media (max-width: 899px) {
-      .app { grid-template-columns: minmax(0, 1fr); }
+      .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: max-content minmax(0, 1fr); }
       .app-side { position: sticky; top: 0; z-index: 2; border-right: 0; border-bottom: 1.5px solid var(--line-strong); }
       .app-side-inner { position: static; flex-direction: row; align-items: center; justify-content: space-between; height: auto; padding: 10px 14px; overflow: visible; }
       .app-menu-button { display: inline-flex; gap: 6px; text-decoration: none; }
       .app-menu:not(:popover-open) { display: none; }
-      .app-menu:popover-open { position: fixed; inset: 0 0 0 auto; width: min(320px, 100vw); height: 100dvh; padding: 18px 14px 14px; overflow-y: auto; border-left: 2px solid var(--ink); background: var(--white); }
+      /* The gutter left of the sheet is the backdrop a tap lands on to close it, even at 320px. */
+      .app-menu:popover-open { position: fixed; inset: 0 0 0 auto; width: min(320px, calc(100vw - 48px)); height: 100dvh; padding: 18px 14px 14px; overflow-y: auto; border-left: 2px solid var(--ink); background: var(--white); }
       .app-menu::backdrop { background: rgba(18, 17, 15, .32); }
       .app-page { padding: 24px 18px 36px; }
     }
