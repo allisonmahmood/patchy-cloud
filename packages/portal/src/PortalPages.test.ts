@@ -8,9 +8,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import { TestClock } from "effect/testing";
+import * as Cookies from "effect/http/Cookies";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -178,7 +180,8 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
     contentHash: contentHash(String(ordinal)),
     fileSize: 1,
     filename: "patch.html",
-    title: "A useful office tool",
+    // Lists and the card show the title; a title equal to the name keeps most cases about the name.
+    title: name,
     description: "Find the right person. Includes the whole company.",
     repoOrg: null,
     repoName: null,
@@ -309,6 +312,17 @@ const request = Effect.fn("PortalPagesTest.request")(function* (
 });
 const post = (path: string, person: Person, fields: FormFields) =>
   request(path, person, fields, { origin: PUBLIC_BASE_URL });
+/** The receipt a form's redirect leaves, as the page it lands on shows it, once. */
+const receiptAfter = Effect.fn("PortalPagesTest.receiptAfter")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+  person: Person
+) {
+  const page = yield* request(response.headers.location!, person, undefined, {
+    cookie: `${sessionCookie(person)}; ${Cookies.toCookieHeader(response.cookies)}`
+  });
+  const html = yield* page.text;
+  return text(html.match(/<p class="note note-ok app-receipt"[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "");
+});
 const text = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
@@ -371,8 +385,8 @@ const steps = (html: string) =>
       /<li class="step(?: step-(done|current))?"[^>]*>[\s\S]*?<h2 class="step-title">([\s\S]*?)<\/h2>/g
     )
   ].map((match) => [match[1] ?? "upcoming", text(match[2]!)]);
-/** The patch names one kind of Home link points at, in order: `tile-link` (Your usual), `tile-row` (Tools) or `home-page` (Pages). */
-const shelf = (html: string, kind: "tile-link" | "tile-row" | "home-page") =>
+/** The patch names one kind of Home link points at, in order: `tile-link` (Your usual), `home-tool` (Tools) or `home-page` (Pages). */
+const shelf = (html: string, kind: "tile-link" | "home-tool" | "home-page") =>
   [
     ...html.matchAll(
       new RegExp(`<a class="(?:tile-row tile-row-plain )?${kind}" href="/[^/"]+/([a-z0-9-]+)"`, "g")
@@ -387,6 +401,16 @@ const unread = (html: string) =>
   ]
     .filter((match) => match[2]!.includes("whats-new-dot"))
     .map((match) => match[1]!);
+/** The patch titles in All patches' table, in order; fixtures title a patch by its name. */
+const listed = (html: string) =>
+  [
+    ...(html.match(/<tbody>([\s\S]*)<\/tbody>/)?.[1] ?? "").matchAll(
+      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+    )
+  ].map((match) => match[1]!);
+/** The labels in one row's action menu, by its id: a patch's id, on Home after its shelf's. */
+const menuItems = (html: string, id: string) =>
+  text(html.match(new RegExp(`<div class="menu" id="menu-${id}"[\\s\\S]*?</div>`))?.[0] ?? "");
 const assertStale = (html: string, action: string) => {
   assert.include(
     text(html),
@@ -399,18 +423,25 @@ it.layer(layer)("portal pages on a socket", (it) => {
   it.effect("shows member, owner and admin views of one card and its retained versions", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const patch = yield* publish(workspace.owner, "office-map");
+      const patch = yield* publish(workspace.owner, "office-map", {
+        title: "A useful office tool"
+      });
       for (let version = 2; version <= 5; version++) {
         yield* TestClock.adjust(DAY);
-        yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
+        yield* publish(workspace.owner, patch.name, {
+          intent: "update",
+          patchId: patch.patchId,
+          title: "A useful office tool"
+        });
       }
       for (const person of [workspace.member, workspace.owner, workspace.admin]) {
         const response = yield* request(`${cardPath(patch.name)}`, person);
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
         const html = yield* response.text;
-        assert.strictEqual(heading(html), patch.name);
-        assert.include(text(html), "A useful office tool");
+        // The title leads; the name the address uses sits under it.
+        assert.strictEqual(heading(html), "A useful office tool");
+        assert.include(html, `</h1><p class="supporting-text"><code>${patch.name}</code></p>`);
         assert.include(text(html), "Find the right person. Includes the whole company.");
         assert.include(text(html), "Description edited by Priya");
         assert.include(text(html), "v5");
@@ -687,6 +718,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const watch = yield* (yield* request("/guide/steps?mode=watch", workspace.member)).text;
       assert.strictEqual(state(watch), "live");
       assert.notInclude(watch, 'class="steps"');
+      // Home's watch puts in Home's one-line note, not the panel's.
+      assert.include(watch, 'class="note note-ok note-inline"');
       assert.include(text(watch), "Your welcome page is live");
     })
   );
@@ -781,30 +814,26 @@ it.layer(layer)("portal pages on a socket", (it) => {
     }).pipe(Effect.provide(DeviceLogins.layer))
   );
 
-  it.effect("celebrates the first patch on Home for a day", () =>
+  it.effect("names the first patch on Home for a day, in one line", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       yield* publish(workspace.admin, "crm");
-      const mine = yield* publish(workspace.member, "lead-tracker");
+      const mine = yield* publish(workspace.member, "lead-tracker", { title: "Lead <tracker>" });
       const shipped = yield* (yield* request("/", workspace.member)).text;
-      assert.include(
-        text(shipped),
-        "Your first patch is live Signed-in people at Northwind can open it."
-      );
+      assert.include(shipped, "Lead &lt;tracker&gt; is live");
+      assert.notInclude(text(shipped), "Your first patch is live");
       assert.isTrue(
         links(shipped).some(
-          (link) => link.href === `/${workspace.handle}/lead-tracker` && link.text === "Open it"
+          (link) => link.href === `/${workspace.handle}/lead-tracker` && link.text === "Open"
         )
       );
+      assert.include(shipped, 'aria-label="Copy link to Lead &lt;tracker&gt;"');
       assert.notInclude(
         text(yield* (yield* request(cardPath(mine.name), workspace.member)).text),
-        "Your first patch is live"
+        "is live"
       );
       yield* TestClock.adjust(DAY);
-      assert.notInclude(
-        text(yield* (yield* request("/", workspace.member)).text),
-        "Your first patch is live"
-      );
+      assert.notInclude(text(yield* (yield* request("/", workspace.member)).text), "is live");
     })
   );
 
@@ -833,7 +862,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("fills Your usual from the viewer's own opens of the last 30 days, then visits", () =>
+  it.effect("fills Your usual from the viewer's own opens of the last 30 days alone", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const patches = yield* Patches.Patches;
@@ -851,10 +880,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
 
       // No opens: the company's most visited, by name after visits.
       const popular = yield* (yield* request("/", workspace.member)).text;
+      assert.strictEqual(heading(popular), "Home");
       assert.include(text(popular), "Popular at Northwind");
       assert.deepStrictEqual(shelf(popular, "tile-link"), ["echo", "delta", "alpha", "bravo"]);
 
-      // Opened 31 days ago, it has left; one open since leads, padded from visits.
+      // Opened 31 days ago, it has left; once they open anything, the company's picks give way.
       yield* open(workspace.member, charlie, 5);
       yield* TestClock.adjust(31 * DAY);
       yield* open(workspace.member, bravo);
@@ -862,9 +892,9 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* open(workspace.owner, alpha, 9);
       const usual = yield* (yield* request("/", workspace.member)).text;
       assert.include(text(usual), "Your usual");
-      assert.deepStrictEqual(shelf(usual, "tile-link"), ["bravo", "echo", "delta", "alpha"]);
-      assert.include(text(usual), "Opened just now");
-      assert.include(text(usual), "Popular at Northwind");
+      assert.deepStrictEqual(shelf(usual, "tile-link"), ["bravo"]);
+      assert.notInclude(text(usual), "Popular at Northwind");
+      assert.notInclude(text(usual), "Opened");
 
       // A rename keeps the opens; retiring takes the patch off every shelf.
       yield* publish(workspace.admin, "bravo-two", { intent: "update", patchId: bravo.patchId });
@@ -887,7 +917,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const mine = yield* publishSource(workspace.owner, "quiet-tool");
         const page = yield* publish(workspace.owner, "grows-up");
         const before = yield* (yield* request("/", workspace.owner)).text;
-        assert.deepStrictEqual(shelf(before, "tile-row"), [mine.name, theirs.name]);
+        assert.deepStrictEqual(shelf(before, "home-tool"), [mine.name, theirs.name]);
         assert.deepStrictEqual(shelf(before, "home-page"), [page.name]);
         // A republish at tier 1 makes the page a tool.
         yield* publish(workspace.owner, page.name, {
@@ -897,7 +927,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           manifest: { ...manifest, name: page.name, tier: 1 }
         });
         const after = yield* (yield* request("/", workspace.owner)).text;
-        assert.deepStrictEqual(shelf(after, "tile-row"), [page.name, mine.name, theirs.name]);
+        assert.deepStrictEqual(shelf(after, "home-tool"), [page.name, mine.name, theirs.name]);
         assert.deepStrictEqual(shelf(after, "home-page"), []);
       })
   );
@@ -940,8 +970,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
       yield* publish(workspace.owner, "rota", { description: "Who covers the December reports." });
       yield* publish(workspace.owner, "lunch", { title: "Team lunch REPORT" });
       const found = yield* (yield* request("/?q=report", workspace.member)).text;
+      assert.strictEqual(heading(found), "Home");
+      // The sidebar's search keeps what was searched.
+      assert.include(found, 'id="app-search" type="search" name="q" value="report"');
       assert.include(text(found), "16 matches for “report”");
-      assert.strictEqual(shelf(found, "tile-row").length, 12);
+      assert.strictEqual(shelf(found, "home-tool").length, 12);
       assert.isTrue(
         links(found).some(
           (link) =>
@@ -1020,23 +1053,27 @@ it.layer(layer)("portal pages on a socket", (it) => {
       })
   );
 
-  it.effect("offers Settings in a tile's menu only to its owner and admins", () =>
+  it.effect("offers About on every Home shelf's menu, and Settings only to owners and admins", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const patch = yield* publish(workspace.owner, "office-map");
+      const page = yield* publish(workspace.owner, "office-map");
+      const tool = yield* publishSource(workspace.owner, "desk-booker");
       for (const [person, shown] of [
         [workspace.member, false],
         [workspace.owner, true],
         [workspace.admin, true]
       ] as const) {
         const html = yield* (yield* request("/", person)).text;
-        const menu = text(
-          html.match(
-            new RegExp(`<div class="menu" id="menu-${patch.patchId}"[\\s\\S]*?</div>`)
-          )?.[0] ?? ""
-        );
-        assert.include(menu, "About this patch");
-        assert.strictEqual(menu.includes("Settings"), shown);
+        for (const [shelfName, patch] of [
+          ["usual", page],
+          ["pages", page],
+          ["tools", tool]
+        ] as const) {
+          const menu = menuItems(html, `${shelfName}-${patch.patchId}`);
+          assert.include(menu, "Open in a new tab Copy link About this patch", shelfName);
+          assert.strictEqual(menu.includes("Settings"), shown, shelfName);
+        }
+        assert.isTrue(links(html).some((link) => link.href === cardPath(tool.name)));
       }
     })
   );
@@ -1057,29 +1094,47 @@ it.layer(layer)("portal pages on a socket", (it) => {
   );
 
   // render.test.ts owns the clause table; this pins the card and Home wiring.
-  it.effect("shows only a distinct secondary title and cuts only Home's descriptions", () =>
+  it.effect("calls a patch by its title wherever it is listed, its name under it on the card", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      for (const [name, title, shown] of [
-        ["distinct-title", "A different headline", true],
-        ["office-map", "Office Map", false]
-      ] as const) {
-        const patch = yield* publish(workspace.owner, name, { title });
-        const html = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
-        assert.strictEqual(heading(html), name);
-        const secondary = html.match(/<\/h1><p class="supporting-text">([^<]*)<\/p>/)?.[1] ?? "";
-        assert.strictEqual(secondary, shown ? title : "");
-      }
       const description = "Find a desk. Keep the second sentence on the card.";
-      const cut = yield* publish(workspace.owner, "period-cut", { description });
-      const home = yield* (yield* request("/", workspace.owner)).text;
-      assert.include(text(home), "period-cut You Find a desk");
+      const titled = yield* publish(workspace.owner, "office-map", {
+        title: "Office <map>",
+        description
+      });
+      const untitled = yield* publish(workspace.owner, "blank-title", {
+        title: "",
+        description: ""
+      });
+
+      const card = yield* (yield* request(cardPath(titled.name), workspace.member)).text;
+      assert.strictEqual(heading(card), "Office &lt;map&gt;");
+      assert.include(card, '</h1><p class="supporting-text"><code>office-map</code></p>');
+      assert.include(text(card.split(/<\/h1>/)[1] ?? ""), description);
+      const bare = yield* (yield* request(cardPath(untitled.name), workspace.member)).text;
+      assert.strictEqual(heading(bare), "blank-title");
+      assert.notInclude(bare, "</h1><p");
+      assert.include(text(bare), "No description");
+
+      // Home's tiles, rows and menus, and All patches, all say the title; Home cuts the description.
+      const home = yield* (yield* request("/", workspace.member)).text;
+      assert.include(home, '<span class="tile-name">Office &lt;map&gt;</span>');
+      assert.include(menuItems(home, `pages-${titled.patchId}`), "Office &lt;map&gt;");
+      assert.include(text(home), "Office &lt;map&gt; Find a desk");
       assert.notInclude(text(home), "Keep the second sentence");
-      const html = yield* (yield* request(cardPath(cut.name), workspace.owner)).text;
-      assert.include(text(html.split(/<\/h1>/)[1] ?? ""), description);
-      const blank = yield* publish(workspace.owner, "blank-description", { description: "" });
-      const blankHtml = yield* (yield* request(cardPath(blank.name), workspace.member)).text;
-      assert.include(text(blankHtml), "No description");
+      const all = yield* (yield* request("/patches", workspace.member)).text;
+      assert.include(
+        all,
+        `<a href="/${workspace.handle}/office-map"><strong>Office &lt;map&gt;</strong></a>`
+      );
+      assert.include(all, "<strong>blank-title</strong>");
+
+      // Search finds the name behind a title, and says so.
+      const byTitle = yield* (yield* request("/?q=MAP", workspace.member)).text;
+      assert.include(byTitle, "Office &lt;<mark>map</mark>&gt;");
+      const byName = yield* (yield* request("/?q=office-m", workspace.member)).text;
+      assert.deepStrictEqual(shelf(byName, "home-page"), ["office-map"]);
+      assert.include(byName, '<span class="tile-meta"><mark>office-m</mark>ap</span>');
     })
   );
 
@@ -1098,6 +1153,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
       });
       assert.strictEqual(response.status, 303);
       assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/settings`);
+      assert.strictEqual(
+        yield* receiptAfter(response, workspace.owner),
+        "Saved description-save’s description"
+      );
       const saved = yield* readPatch(workspace.owner, patch.patchId);
       assert.strictEqual(saved.patch.description, "Find a desk <quickly>");
       assert.strictEqual(saved.currentVersion, 1);
@@ -1107,18 +1166,91 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("changes who can open a patch without publishing a version", () =>
+  it.effect("names what each act did on the page it lands on, and nothing for a refusal", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
-      const patch = yield* publish(workspace.owner, "scope-save");
-      const before = yield* readPatch(workspace.owner, patch.patchId);
-      const response = yield* post(`${cardPath(patch.name)}/scope`, workspace.admin, {
-        expectedPatchId: patch.patchId,
-        scope: "public",
-        expectedScope: "company"
+      const patch = yield* publish(workspace.owner, "receipt-trail", { title: "Receipt trail" });
+      yield* publish(workspace.owner, patch.name, {
+        intent: "update",
+        patchId: patch.patchId,
+        title: "Receipt trail"
       });
+      const path = (action: string) => `${cardPath(patch.name)}/${action}`;
+      const expectedPatchId = patch.patchId;
+      const current = yield* readPatch(workspace.owner, patch.patchId);
+      const acts = [
+        [
+          workspace.owner,
+          "rollback",
+          { versionNumber: "1", expectedCurrentVersionId: current.patch.currentVersionId! },
+          "Receipt trail now serves v1"
+        ],
+        [
+          workspace.admin,
+          "reassign",
+          { expectedOwnerUserId: workspace.owner.id, user: workspace.member.id },
+          "Receipt trail now belongs to Alex"
+        ],
+        [workspace.member, "retire", { expectedState: "live" }, "Retired Receipt trail"],
+        [workspace.member, "restore", { expectedState: "retired" }, "Restored Receipt trail"],
+        [
+          workspace.member,
+          "delete",
+          { expectedState: "not-deleted", confirm: patch.name },
+          "Deleted Receipt trail; it can be restored for 30 days"
+        ]
+      ] as const;
+      for (const [person, action, fields, receipt] of acts) {
+        const response = yield* post(path(action), person, { expectedPatchId, ...fields });
+        assert.strictEqual(response.status, 303, action);
+        assert.strictEqual(yield* receiptAfter(response, person), receipt);
+      }
+      // Priya no longer owns it, so her restore is refused and claims nothing.
+      const refused = yield* post(path("restore"), workspace.owner, {
+        expectedPatchId,
+        expectedState: "deleted"
+      });
+      assert.strictEqual(refused.status, 403);
+      assert.strictEqual(Cookies.toCookieHeader(refused.cookies), "");
+    })
+  );
+
+  it.effect("asks before a patch goes public, then shares it without publishing a version", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "scope-save", { title: "Scope <save>" });
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const scopePath = `${cardPath(patch.name)}/scope`;
+      const fields = { expectedPatchId: patch.patchId, scope: "public", expectedScope: "company" };
+
+      // Saving public, even posted straight at the route, only asks.
+      const asked = yield* post(scopePath, workspace.admin, fields);
+      assert.strictEqual(asked.status, 200);
+      const confirm = yield* asked.text;
+      assert.strictEqual(heading(confirm), "Make Scope &lt;save&gt; public?");
+      assert.include(text(confirm), "Anyone with the link can open it without signing in.");
+      assert.include(confirm, 'aria-label="Make Scope &lt;save&gt; public">Make public</button>');
+      assert.deepStrictEqual(formFields(confirm, scopePath), { ...fields, confirm: "public" });
+      assert.isTrue(
+        links(confirm).some(
+          (link) => link.href === `${cardPath(patch.name)}/settings` && link.text === "Cancel"
+        )
+      );
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+      assert.deepStrictEqual(reported(patch.patchId), []);
+
+      // A member can't answer it.
+      const refused = yield* post(scopePath, workspace.member, formFields(confirm, scopePath));
+      assert.strictEqual(refused.status, 403);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+
+      const response = yield* post(scopePath, workspace.admin, formFields(confirm, scopePath));
       assert.strictEqual(response.status, 303);
       assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/settings`);
+      assert.strictEqual(
+        yield* receiptAfter(response, workspace.admin),
+        "Scope &lt;save&gt; is open to anyone on the internet"
+      );
       const saved = yield* readPatch(workspace.owner, patch.patchId);
       assert.strictEqual(saved.patch.scope, "public");
       assert.deepStrictEqual(reported(patch.patchId), [
@@ -1141,6 +1273,22 @@ it.layer(layer)("portal pages on a socket", (it) => {
         text(yield* (yield* request(cardPath(patch.name), workspace.member)).text),
         "Anyone on the internet. No sign-in."
       );
+
+      // The same answer again is stale now, and back to the company needs no step.
+      const stale = yield* post(scopePath, workspace.admin, formFields(confirm, scopePath));
+      assert.strictEqual(stale.status, 409);
+      assert.include(text(yield* stale.text), "This patch changed while you had this page open");
+      const back = yield* post(scopePath, workspace.owner, {
+        expectedPatchId: patch.patchId,
+        scope: "company",
+        expectedScope: "public"
+      });
+      assert.strictEqual(back.status, 303);
+      assert.strictEqual(
+        yield* receiptAfter(back, workspace.owner),
+        "Scope &lt;save&gt; is open to people at Northwind"
+      );
+      assert.strictEqual((yield* readPatch(workspace.owner, patch.patchId)).patch.scope, "company");
     })
   );
 
@@ -1169,11 +1317,21 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.strictEqual(refused.status, 422);
       assert.include(yield* refused.text, 'role="alert"');
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+      // Its answer is refused too, without a step in between.
+      const answered = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
+        expectedPatchId: patch.patchId,
+        scope: "public",
+        expectedScope: "company",
+        confirm: "public"
+      });
+      assert.strictEqual(answered.status, 422);
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       yield* (yield* Patches.Patches).rollback(patch.patchId, actor(workspace.owner), 1);
       const shared = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
         expectedPatchId: patch.patchId,
         scope: "public",
-        expectedScope: "company"
+        expectedScope: "company",
+        confirm: "public"
       });
       assert.strictEqual(shared.status, 303);
       assert.strictEqual((yield* readPatch(workspace.owner, patch.patchId)).patch.scope, "public");
@@ -2472,17 +2630,6 @@ const seedOf = (companyId: string, recorded: Patches.Recorded): Seed => ({
 });
 const logPath = (name: string, query = "") => `${cardPath(name)}/log${query}`;
 
-/** The patch names in All patches' table, in order. */
-const listed = (html: string) =>
-  [
-    ...(html.match(/<tbody>([\s\S]*)<\/tbody>/)?.[1] ?? "").matchAll(
-      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
-    )
-  ].map((match) => match[1]!);
-/** The labels in one row's action menu. */
-const menuItems = (html: string, patchId: string) =>
-  text(html.match(new RegExp(`<div class="menu" id="menu-${patchId}"[\\s\\S]*?</div>`))?.[0] ?? "");
-
 it.layer(layer)("all patches on a socket", (it) => {
   it.effect("lists every patch in tabs, searched within the tab and sorted by visits", () =>
     Effect.gen(function* () {
@@ -2528,35 +2675,42 @@ it.layer(layer)("all patches on a socket", (it) => {
       assert.include(text(off), "Retired by Priya");
       const nothing = yield* (yield* request("/patches?q=zebra", workspace.owner)).text;
       assert.include(text(nothing), "No patches match “zebra”.");
-      const index = yield* (yield* request("/", workspace.member)).text;
-      const main = index.slice(index.indexOf("<main"));
-      assert.isTrue(
-        links(main).some((link) => link.href === "/patches" && link.text === "All patches")
-      );
     })
   );
 
-  it.effect("offers each viewer only the acts they may perform from a row's menu", () =>
+  it.effect("opens a live patch from its name and offers each viewer only their acts", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "office-map");
+      const shelved = yield* publish(workspace.owner, "old-map");
+      yield* (yield* Patches.Patches).retire(shelved.patchId, actor(workspace.owner));
       const menus = new Map<Person, string>();
       for (const person of [workspace.member, workspace.owner, workspace.admin])
         menus.set(
           person,
           menuItems(yield* (yield* request("/patches", person)).text, patch.patchId)
         );
-      assert.strictEqual(menus.get(workspace.member), "office-map Open Copy link About this patch");
-      assert.strictEqual(
-        menus.get(workspace.owner),
-        "office-map Open Copy link About this patch Settings Retire… Delete…"
-      );
+      const opening = "office-map Open in a new tab Copy link About this patch";
+      assert.strictEqual(menus.get(workspace.member), opening);
+      assert.strictEqual(menus.get(workspace.owner), `${opening} Settings Retire… Delete…`);
       assert.strictEqual(
         menus.get(workspace.admin),
-        "office-map Open Copy link About this patch Settings Reassign… Retire… Delete…"
+        `${opening} Settings Reassign… Retire… Delete…`
       );
       const html = yield* (yield* request("/patches", workspace.admin)).text;
       assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
+      assert.include(html, `<a href="/${workspace.handle}/office-map"><strong>office-map</strong>`);
+      // The viewer's own patches say so in Owner, without a badge.
+      const mine = yield* (yield* request("/patches", workspace.owner)).text;
+      assert.include(mine, "<span>You</span>");
+      assert.notInclude(mine, '<span class="tag">You</span>');
+      // An off patch can't be opened, so its name goes to its card.
+      const off = yield* (yield* request("/patches?show=off", workspace.owner)).text;
+      assert.include(off, `<a href="${cardPath(shelved.name)}"><strong>old-map</strong>`);
+      assert.strictEqual(
+        menuItems(off, shelved.patchId),
+        "old-map About this patch Settings Restore Delete…"
+      );
     })
   );
 
@@ -2670,12 +2824,24 @@ it.layer(layer)("patch health on a socket", (it) => {
       for (const person of [workspace.member, workspace.admin])
         assert.notInclude(text(yield* (yield* request("/", person)).text), "is failing");
 
-      // All patches: health beside the tier 2 rows the viewer manages, and a reason to look.
+      // All patches: failures beside the tier 2 rows the viewer manages, and a reason to look.
+      // None recorded is blank, never OK; a row with no calls to count has a dash.
+      const health = (html: string, name: string) =>
+        html.match(
+          new RegExp(
+            `<tr>(?:(?!</tr>)[\\s\\S])*<strong>${name}</strong>(?:(?!</tr>)[\\s\\S])*<td>((?:(?!</td>)[\\s\\S])*)</td><td class="portal-list-actions">`
+          )
+        )?.[1];
       for (const person of [workspace.owner, workspace.admin]) {
         const all = yield* (yield* request("/patches", person)).text;
         assert.include(text(all), "Health");
-        assert.include(text(all), "3 failed");
-        assert.include(all, '<span class="pill pill-done">OK</span>');
+        assert.strictEqual(
+          health(all, failing.name),
+          `<a href="/patches/client-health/log?outcome=failed">3 failed today</a>`
+        );
+        assert.strictEqual(health(all, fine.name), "");
+        assert.strictEqual(health(all, page.name), '<span class="supporting-text">—</span>');
+        assert.notInclude(all, '<span class="pill pill-done">OK</span>');
         const attention = yield* (yield* request("/patches?show=attention", person)).text;
         assert.deepStrictEqual(listed(attention), [failing.name]);
         assert.include(text(attention), "3 calls failed in the last day");
@@ -2776,7 +2942,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
         );
         assert.include(panel, "Search the pipeline for &lt;b&gt;open&lt;/b&gt; deals.");
         assert.deepStrictEqual(links(panel), [
-          { href: "/machines#connect-an-agent", text: "Connect your agent" }
+          { href: "/machines?agent=claude#connect-an-agent", text: "Connect your agent" }
         ]);
         assert.notInclude(panel, "note-warn");
       }
@@ -2894,7 +3060,7 @@ it.layer(layer)("patch log on a socket", (it) => {
       assert.strictEqual(response.headers["cache-control"], "private, no-store");
       const html = yield* response.text;
       const page = text(html);
-      assert.strictEqual(heading(html), "sales-crm");
+      assert.strictEqual(heading(html), "Sales CRM");
       assert.include(page, "This is an attribution record, not an access audit.");
       assert.include(page, "Log lines are written by the patch itself.");
       assert.notInclude(page, "secret.export");

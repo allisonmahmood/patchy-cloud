@@ -14,6 +14,7 @@ import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
 import {
   MachineTokens,
   pageResponse,
+  Receipt,
   RequireSession,
   Session,
   SetupLinks,
@@ -33,12 +34,11 @@ import {
   guideScript,
   guideScriptPath,
   renderFinalStep,
-  renderLiveNote,
   renderSetupSteps,
   renderWatch,
   type SetupState
 } from "./guide.js";
-import { homeStyles, renderHome } from "./home.js";
+import { homeStyles, renderHome, renderPublishedNote } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   type CardTab,
@@ -48,8 +48,10 @@ import {
   renderCardFrame,
   renderConfirmation,
   renderOverview,
+  renderPublicConfirmation,
   renderSettings,
   renderVersions,
+  patchTitle,
   styles
 } from "./render.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
@@ -142,7 +144,7 @@ const logNames = Effect.fn("PortalPages.logNames")(function* (
   return {
     people: new Map(members.map((member) => [member.id, member.name])),
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
-    patch: card.patch.title.trim() || card.patch.name,
+    patch: patchTitle(card.patch),
     connections: new Map<string, string>()
   } satisfies LogNames;
 });
@@ -265,7 +267,7 @@ const render = Effect.fn("PortalPages.render")(function* (
   const panel = tab === "overview" ? yield* agentPanel(card) : "";
   return pageResponse(
     {
-      title: `${card.patch.name}${tab === "overview" ? "" : ` ${tab}`}`,
+      title: `${patchTitle(card.patch)}${tab === "overview" ? "" : ` ${tab}`}`,
       heading: "",
       body: renderCardFrame({
         card,
@@ -366,9 +368,10 @@ const setupLine = Effect.fn("PortalPages.setupLine")(function* () {
 });
 
 /**
- * Home at `/`: search, the viewer's usual patches, the company's tools and pages. Until the viewer
- * connects an agent, the Final step panel sits over it at each sign-in for their first week or
- * first three sign-ins, whichever lasts longer, unless they pressed Later.
+ * Home at `/`: the viewer's usual patches, the company's tools and pages, or what `?q=` finds,
+ * which the sidebar's search keeps. Until the viewer connects an agent, the Final step panel sits
+ * over it at each sign-in for their first week or first three sign-ins, whichever lasts longer,
+ * unless they pressed Later.
  */
 const home = Effect.fn("PortalPages.home")(function* () {
   const { viewer, session, access } = yield* context;
@@ -401,14 +404,14 @@ const home = Effect.fn("PortalPages.home")(function* () {
         publicBaseUrl: session.publicBaseUrl,
         query,
         connected: machine !== null,
-        note:
-          first === undefined ? undefined : renderLiveNote(first, viewer, session.publicBaseUrl),
+        note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
         failures: yield* recentFailures(rows)
       })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
       styles: styles + homeStyles + finalStepStyles,
       app: {
         viewer,
         section: "home",
+        query,
         ...(machine === null && prompt.show
           ? {
               overlay: renderFinalStep({
@@ -463,7 +466,7 @@ const guideSteps = Effect.fn("PortalPages.guideSteps")(function* () {
   const watching = new URL(request.url, session.publicBaseUrl).searchParams.get("mode") === "watch";
   const { state, setupLink } = yield* setupState();
   const html = watching
-    ? `<div data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${state.kind}">${state.kind === "live" ? renderLiveNote(state.row, viewer, session.publicBaseUrl) : ""}</div>`
+    ? `<div data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${state.kind}">${state.kind === "live" ? renderPublishedNote(state.row, session.publicBaseUrl) : ""}</div>`
     : renderSetupSteps({
         state,
         viewer,
@@ -689,7 +692,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const { viewer, access } = yield* context;
+  const { viewer, session, access } = yield* context;
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const selected = rows.find((row) => row.patch.name === name);
@@ -738,6 +741,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           selectedOwnerId: form.user ?? "",
           acknowledged: form.ack === "1"
         });
+  const title = patchTitle(selected.patch);
+  // A done act lands on its tab with a receipt naming what it did, from the patch as read.
+  const landed = (receipt: string) =>
+    Receipt.set(
+      HttpServerResponse.redirect(
+        `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`,
+        { status: 303, headers: { "cache-control": "private, no-store" } }
+      ),
+      { userId: viewer.user.id, text: receipt, publicBaseUrl: session.publicBaseUrl }
+    );
   const run = Effect.gen(function* () {
     switch (action) {
       case "description": {
@@ -748,12 +761,34 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           fields.description,
           fields.expectedDescriptionUpdatedAt || null
         );
-        break;
+        return landed(`Saved ${title}’s description`);
       }
       case "scope": {
         const fields = yield* decodeScope(form);
+        // Going public asks first, but only for a save that would apply; one setScope would
+        // refuse (stale, off or tier 2) is refused as before. The answer re-runs every check.
+        if (
+          fields.scope === "public" &&
+          form.confirm !== "public" &&
+          fields.expectedScope !== "public" &&
+          selected.patch.scope === fields.expectedScope &&
+          selected.patch.state === "live" &&
+          selected.tier < 2
+        )
+          return pageResponse(
+            {
+              title: `Make ${title} public?`,
+              heading: "",
+              body: renderPublicConfirmation(selected.patch),
+              styles,
+              app: { viewer, section: "patches" }
+            },
+            session
+          );
         yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
-        break;
+        return landed(
+          `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
+        );
       }
       case "rollback": {
         const fields = yield* decodeRollback(form);
@@ -764,17 +799,17 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           fields.expectedCurrentVersionId || null
         );
         yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
-        break;
+        return landed(`${patchTitle(rolledBack.patch)} now serves v${rolledBack.currentVersion}`);
       }
       case "restore": {
         const fields = yield* decodeRestore(form);
         yield* patches.restore(selected.patch.id, actor, form.ack === "1", fields.expectedState);
-        break;
+        return landed(`Restored ${title}`);
       }
       case "retire": {
         yield* decodeRetire(form);
         yield* patches.retire(selected.patch.id, actor, form.ack === "1");
-        break;
+        return landed(`Retired ${title}`);
       }
       case "delete": {
         const fields = yield* decodeDelete(form);
@@ -783,18 +818,16 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           return yield* redisplay(422, message, message);
         }
         yield* patches.delete(selected.patch.id, actor, form.ack === "1");
-        break;
+        return landed(`Deleted ${title}; it can be restored for 30 days`);
       }
       case "reassign": {
         const fields = yield* decodeReassign(form);
         yield* patches.reassign(selected.patch.id, actor, fields.user, fields.expectedOwnerUserId);
-        break;
+        const members = yield* (yield* Users.Users).list(viewer.company.id);
+        const owner = members.find((member) => member.id === fields.user)?.name ?? "them";
+        return landed(`${title} now belongs to ${owner}`);
       }
     }
-    return HttpServerResponse.redirect(
-      `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`,
-      { status: 303, headers: { "cache-control": "private, no-store" } }
-    );
   });
   // A refused description keeps the person's draft, whatever refused it.
   const draft = action === "description" ? { submittedDescription: form.description ?? "" } : {};

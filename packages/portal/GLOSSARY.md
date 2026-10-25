@@ -9,23 +9,23 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, for opening patches rather than managing them: a search over every live patch, **Your usual**, **Tools** and **Pages**, with a way to All patches and to what is off. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.
+The signed-in landing at `/`, for opening patches rather than managing them: **Your usual**, **Tools** and **Pages**, each patch called by its title and opened by it, with About this patch in its menu, and a way to what is off. The sidebar's search lands here with `?q=` over every live patch; below 900px, where the sidebar folds into Menu, Home shows the same search itself. For a day after someone's first publication a one-line note names it, with Open and Copy link. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Your usual**:
-Home's first shelf: the four live patches the viewer opened most in the last 30 days, by their opens' halving score, padded with the company's most-visited. With no opens yet it is titled "Popular at" the company. Its tiles carry only the mark and name, since the viewer already knows them. It reads only the viewer's own opens.
+Home's first shelf: up to four live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. Its tiles carry only the mark and title, since the viewer already knows them. It reads only the viewer's own opens.
 _Avoid_: favourites, pinned (pins are not built), recent
 
 **Tools** and **Pages**:
-Home's split of live patches by their current version's tier: **Tools** are tiers 1 and 2, opened and used; **Pages** are tier 0, read and passed around. A republish that changes the tier moves the patch. Pages **new to you** are a colleague's company-scope pages published in the last week that the viewer hasn't opened since; a public page never claims to be unread, since opening it records nothing.
+Home's split of live patches by their current version's tier: **Tools** are tiers 1 and 2, opened and used; **Pages** are tier 0, read and passed around. Each heading leads to its tab on All patches. A republish that changes the tier moves the patch. Pages **new to you** are a colleague's company-scope pages published in the last week that the viewer hasn't opened since, listed first with a dot; a public page never claims to be unread, since opening it records nothing.
 _Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
 
 **All patches**:
-The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it. For the tier 2 patches a viewer manages, a **Health** column shows the last day's failed calls, counted as the log's Failed filter counts them, and Needs attention lists any that failed.
+The table at `/patches` of every patch the viewer can open: tabs for All, Tools (tiers 1 and 2), Pages (tier 0), Yours, Needs attention and Retired and deleted, a search over name, title, description and owner, and each row's acts in its menu, About this patch among them. A live patch's title opens it, as on Home; an off one's leads to its card. Owner says You for the viewer's own. **Needs attention** lists a patch only to its owner and admins: an admin sees live patches whose owner is deactivated, and both see deletions within a week of reclamation, each with the act that resolves it. For the tier 2 patches a viewer manages, a **Health** column names the last day's failed calls ("2 failed today"), counted as the log's Failed filter counts them and linked to them; blank means none recorded, and a dash marks a row with no calls to count. Needs attention lists any that failed.
 _Avoid_: dashboard, directory, admin list
 
 **Card**:
-One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Beside the Overview of a live patch whose current version has agent tools, a panel shows everyone **what agents can do**: each tool, whether it reads or changes, and what it says it does. Its header leads with Open, or Restore for a manager while an off patch can be restored. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
+One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Its heading is the patch's title, with the name its address uses under it, and leads with Open, or Restore for a manager while an off patch can be restored. Beside the Overview of a live patch whose current version has agent tools, a panel shows everyone **what agents can do**: each tool, whether it reads or changes, and what it says it does. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Log**:
@@ -37,11 +37,11 @@ The **Final step** panel: connecting an agent, the last step between a person an
 _Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
 
 **Settings**:
-The card's tab at `/patches/<name>/settings` for its owner and admins: the owner with admin-only Reassign…, the description, who can open it, and Retire… and Delete…. The served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources and reassign lead to confirmation pages. A refused form shows the tab it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
+The card's tab at `/patches/<name>/settings` for its owner and admins: the owner with admin-only Reassign…, the description, who can open it, and Retire… and Delete…. The served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources and reassign lead to confirmation pages, and saving Anyone on the internet asks once before it applies. A done act lands with a receipt naming it. A refused form shows the tab it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
 _Avoid_: manage, admin panel, edit mode
 
 **Confirmation page**:
-The page for an act that breaks another tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. Patch management confirmations live under the card's URL; deactivation and reactivation confirmations follow the user's pick page and describe the exact selection.
+The page for an act that breaks another tool, that the actor cannot undo alone, or that opens a patch to the internet: the consequence, what breaks, the acknowledgement and the way back. Patch management confirmations live under the card's URL; deactivation and reactivation confirmations follow the user's pick page and describe the exact selection.
 _Avoid_: modal, dialog, are-you-sure
 
 **Acknowledgement**:
@@ -57,7 +57,7 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for the portal, Company, Connections and Your machines: the header bar with sections, the What's new bell, viewer and sign-out, over the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
+The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, the places, What's new and the account menu, beside the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:
