@@ -1192,12 +1192,12 @@ const endCredentials = async (
         `Collecting an approved device login answered ${collected.status ?? collected.code}.`
       );
     const deviceCode = await approveDeviceLogin(page, apiUrl, "Rehearsal server");
+    // Releases before Your agents hold the form on /machines; later ones on its confirm page.
+    const everything = 'form[action="/machines/revoke-all"]';
     await page.goto(`${apiUrl}/machines`);
-    await press(
-      page,
-      'form[action="/machines/revoke-all"] button[type="submit"]',
-      "Disconnect everything"
-    );
+    if ((await page.locator(everything).count()) === 0)
+      await page.goto(`${apiUrl}/machines/revoke-all`);
+    await press(page, `${everything} button[type="submit"]`, "Disconnect everything");
     const me = await get(`${apiUrl}/api/me`, 15_000, {
       authorization: `Bearer ${collected.token}`
     });

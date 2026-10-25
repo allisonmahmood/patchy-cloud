@@ -275,7 +275,7 @@ export const login = Effect.fn("Login.login")(function* (options: {
 });
 
 const courtesyWarning =
-  "Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your machines.";
+  "Logged out on this machine. The key could not be revoked; it expires on its own after 30 idle days, or revoke it now on Your agents.";
 
 export const logout = Effect.fn("Login.logout")(function* (cwd: string) {
   const instance = yield* Instance.Instance;

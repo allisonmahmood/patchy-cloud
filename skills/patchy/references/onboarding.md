@@ -121,7 +121,7 @@ it was saved. Say:
 
 > This machine is logged in to `<company.name>` as `<user.email>`, named
 > "`<machine.name>`". Its publishing key is saved here. It lasts 90 days or
-> 30 idle days, whichever comes first; you can revoke it on Your machines
+> 30 idle days, whichever comes first; you can revoke it on Your agents
 > at `/machines`.
 
 After the main skill's identity check confirms the intended publisher, name
@@ -273,7 +273,7 @@ To undo the machine login, run `patchy logout`: it forgets the stored key and
 pending login before courtesy revocation. Relay its warnings even though the
 local logout succeeded. A worktree can still publish with its seeded key, and
 `PATCHY_API_TOKEN` is not the CLI's to remove. This does not sign the browser
-out; **Sign out** on **Your machines** does that.
+out; **Sign out** in the account menu does that.
 
 ### 6. Suggest a first patch
 

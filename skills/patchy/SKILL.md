@@ -370,7 +370,7 @@ machine token, not the browser's sign-in. Say **sign in** for the person in thei
 browser and **log this machine in** for publishing. Signing in uses Google,
 Microsoft or an emailed code. The poll mints the key after browser confirmation;
 it works for 90 days or 30 idle days, whichever comes first, and can be revoked
-on **Your machines** at `/machines`. Re-login replaces the saved login key only
+on **Your agents** at `/machines`. Re-login replaces the saved login key only
 when it belongs to the same user, without changing ownership of their pages.
 
 To log this machine out, run `patchy logout`. It forgets the stored publishing key
@@ -378,7 +378,7 @@ and pending login first, then tries to revoke only that deleted key. A failed
 courtesy revocation is exit 0 with a warning, not a failed logout. Relay warnings:
 a worktree still publishes with its seeded key, and an environment key is not the
 CLI's to remove. `logout --json` returns `{ ok, instanceUrl, revoked, warnings }`;
-browser sign-out is a separate control on **Your machines**.
+browser sign-out is a separate control, **Sign out** in the account menu.
 
 ### Publishing behavior
 
