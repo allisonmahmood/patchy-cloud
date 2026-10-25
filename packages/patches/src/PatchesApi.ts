@@ -451,7 +451,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           access.on
             ? []
             : [
-                `Agent access is off at ${company.name}, so no agent can use these agent tools yet. An admin turns it on at ${publicBaseUrl.replace(/\/+$/, "")}/company.`
+                `Agent access is off at ${company.name}, so no agent can use these agent tools yet. An admin turns it on at ${publicBaseUrl.replace(/\/+$/, "")}/company/agent-access.`
               ]
         ),
         Effect.catchTags({

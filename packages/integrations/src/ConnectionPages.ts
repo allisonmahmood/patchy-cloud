@@ -56,7 +56,7 @@ const serve = <R>(
               pageResponse(
                 {
                   title: "Connection unavailable",
-                  body: `<div class="note note-refused" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Return to connections</a> and try again.</p>${signOutForm()}`,
+                  body: `<div class="note note-refused" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="/company/connections">Back to Integrations</a></p>${signOutForm()}`,
                   status: error.status
                 },
                 session

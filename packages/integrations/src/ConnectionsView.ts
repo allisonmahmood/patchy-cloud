@@ -188,10 +188,7 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows: ReadonlyArray<Row>, admin
     .join("")}</ul>`;
 /** Where a company tells Patchy what it would use; the company's contact for now. */
 const contact = "mailto:allison@patchyhq.com";
-const onRequest = `<p class="supporting-text">Need a source we don't connect yet? <a href="${contact}">Tell us</a> what you'd use.</p>`;
-
-const lead =
-  "Sources your company's patches can read. An admin connects one once; any patch can then declare it, and Patchy keeps the credentials.";
+const onRequest = `<p class="supporting-text"><a href="${contact}">Request an integration</a></p>`;
 
 /** Rows the filters keep; a member's view never narrows to Unused. */
 const matches = (row: Row, filters: Filters) =>
@@ -217,7 +214,7 @@ const controls = (rows: ReadonlyArray<Row>, filters: Filters, admin: boolean) =>
     ["attention", "Needs attention", rows.filter((row) => row.status !== "connected").length],
     ...(admin ? [["unused", "Unused", rows.filter((row) => !row.declared).length] as const] : [])
   ];
-  return `<form class="connections-filters" method="get" action="${indexPath}">${filters.view === "all" ? "" : hidden("view", filters.view)}<div><label class="field-label" for="connections-q">Search</label><input class="field" type="search" id="connections-q" name="q" value="${escapeAttribute(filters.q)}" placeholder="Name or description" maxlength="100"></div><div><label class="field-label" for="connections-source">Source</label><select class="field" id="connections-source" name="source"><option value="">All sources</option>${options}</select></div><div><button class="btn" type="submit">Filter</button></div></form><nav class="connections-views" aria-label="Show">${views
+  return `<form class="connections-filters" method="get" action="${indexPath}">${filters.view === "all" ? "" : hidden("view", filters.view)}<div><label class="field-label" for="connections-q">Search</label><input class="field" type="search" id="connections-q" name="q" value="${escapeAttribute(filters.q)}" placeholder="Name or description" maxlength="100"></div><div><label class="field-label" for="connections-source">Integration</label><select class="field" id="connections-source" name="source"><option value="">All integrations</option>${options}</select></div><div><button class="btn" type="submit">Filter</button></div></form><nav class="connections-views" aria-label="Show">${views
     .map(
       ([view, label, count]) =>
         `<a class="btn${view === filters.view ? "" : " btn-quiet"}" href="${escapeAttribute(filterPath({ ...filters, view }))}"${view === filters.view ? ' aria-current="page"' : ""}>${escapeHtml(`${label} ${count}`)}</a>`
@@ -257,10 +254,10 @@ export const renderIndex = (input: {
   const { admin, rows } = input;
   const all = [...rows].sort((a, b) => name(a).localeCompare(name(b)));
   if (all.length === 0) {
-    const head = `<h1 class="page-heading">Connections</h1><p>${escapeHtml(lead)}</p>${notice(input.notice)}`;
+    const head = `<h1 class="page-heading">Integrations</h1>${notice(input.notice)}`;
     return admin
-      ? `${head}<section class="section"><h2 class="section-heading">Connect your first source</h2><p>Pick what your patches should read. Patchy tests the credentials and finds what's inside before saving anything.</p>${catalogue(input.offers, all, true)}${onRequest}</section>`
-      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only admins can connect sources.${input.admins.length === 0 ? "" : ` At ${input.company} that's ${listed(input.admins)}.`} Once one is connected, ask your agent to add it to a patch.`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
+      ? `${head}<section class="section"><h2 class="section-heading">Connect an integration</h2>${catalogue(input.offers, all, true)}${onRequest}</section>`
+      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only admins can connect integrations.${input.admins.length === 0 ? "" : ` At ${input.company} that's ${listed(input.admins)}.`}`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
   }
   const many = all.length >= CONTROLS_AT;
   // A member's link to Unused shows everything rather than a view they cannot choose.
@@ -269,7 +266,7 @@ export const renderIndex = (input: {
       ? { ...input.filters, view: "all" as const }
       : input.filters;
   const integrations = new Set(all.map((row) => row.integration.key)).size;
-  const head = `<div class="connections-head"><div><h1 class="page-heading">Connections</h1><p>${escapeHtml(many ? `${plural(all.length, "source")} from ${plural(integrations, "integration")}. Any patch can declare one; Patchy keeps the credentials.` : lead)}</p></div>${admin ? `<a class="btn btn-primary" href="${cataloguePath}">Connect a source</a>` : ""}</div>`;
+  const head = `<div class="connections-head"><div><h1 class="page-heading">Integrations</h1>${many ? `<p class="supporting-text">${escapeHtml(`${plural(all.length, "connection")} from ${plural(integrations, "integration")}`)}</p>` : ""}</div>${admin ? `<a class="btn btn-primary" href="${cataloguePath}">Connect an integration</a>` : ""}</div>`;
   const shown = all.filter((row) => matches(row, filters));
   const filtered = filters.q !== "" || filters.source !== undefined || filters.view !== "all";
   const clear = `<a href="${indexPath}">Clear filters</a>`;
@@ -281,13 +278,13 @@ export const renderIndex = (input: {
   return `${head}${notice(input.notice)}${admin ? attention(all) : ""}${many ? controls(all, filters, admin) : ""}${list}`;
 };
 
-/** `/company/connections/connect`: every integration Patchy offers, behind one "Connect a source". */
+/** `/company/connections/connect`: every integration Patchy offers, behind one "Connect an integration". */
 export const renderCatalogue = (input: {
   readonly admin: boolean;
   readonly rows: ReadonlyArray<Row>;
   readonly offers: ReadonlyArray<Offer>;
 }): string =>
-  `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a></p><h1 class="page-heading">Connect a source</h1><p>Patchy tests the credentials and finds what's inside before saving anything. Every member can read a company-wide source through any patch that declares it.</p>${input.admin ? "" : '<p class="supporting-text">Only admins can connect sources.</p>'}${catalogue(input.offers, input.rows, input.admin)}${onRequest}</article>`;
+  `<article class="connections-subpage"><p><a href="${indexPath}">Integrations</a></p><h1 class="page-heading">Connect an integration</h1>${input.admin ? "" : '<p class="supporting-text">Only admins can connect integrations.</p>'}${catalogue(input.offers, input.rows, input.admin)}${onRequest}</article>`;
 
 /** One step of a connect walkthrough that happens outside the form. */
 export interface Step {
@@ -311,7 +308,8 @@ const step = (
 
 /**
  * An integration's connect form inside the shared frame; the integration supplies the fields. With
- * a walkthrough, the form is the open step between what to do first and what comes after.
+ * a walkthrough, the form is the open step between what to do first and what comes after. Cancel
+ * goes `back` to where the person chose the integration.
  */
 export const renderConnect = (input: {
   readonly integration: Integration;
@@ -319,8 +317,9 @@ export const renderConnect = (input: {
   readonly fields: string;
   readonly walkthrough?: Walkthrough;
   readonly notice?: Notice;
+  readonly back: string;
 }): string => {
-  const form = `<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}" novalidate>${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${cataloguePath}">Cancel</a></div></form>`;
+  const form = `<form method="post" action="${escapeAttribute(connectPath(input.integration.key))}" novalidate>${input.fields}<div class="actions"><button class="btn btn-primary" type="submit">Test and connect</button><a class="btn btn-quiet" href="${escapeAttribute(input.back)}">Cancel</a></div></form>`;
   const walkthrough = input.walkthrough;
   const body =
     walkthrough === undefined
@@ -344,7 +343,7 @@ export const renderConnect = (input: {
             )
           )
         ].join("")}</ol>`;
-  return `<article class="connections-subpage"><p><a href="${indexPath}">Connections</a> / <a href="${cataloguePath}">Connect a source</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}${body}</article>`;
+  return `<article class="connections-subpage"><p><a href="${indexPath}">Integrations</a> / <a href="${cataloguePath}">Connect an integration</a></p><h1 class="page-heading">Connect ${escapeHtml(input.integration.label)}</h1><p>${escapeHtml(input.intro)}</p>${notice(input.notice)}${body}</article>`;
 };
 
 // ---------- one connection ----------
@@ -526,7 +525,7 @@ export const renderConnection = (input: {
       : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
   }</section>`;
   const facts = `<dl class="facts">${connection.facts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}<dt>Added by</dt><dd>${escapeHtml(connection.addedBy)}</dd><dt>Used by</dt><dd>${usedByFact(connection)}</dd></dl>`;
-  return `<p><a href="${indexPath}">Connections</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
+  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
 };
 
 // ---------- confirmations ----------

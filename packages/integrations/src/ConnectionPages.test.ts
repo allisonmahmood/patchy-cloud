@@ -967,7 +967,8 @@ it.layer(services)("company connection pages", (it) => {
           return { status: response.status, html: yield* Effect.promise(() => response.text()) };
         });
         const admin = yield* read(owner.user, "/company/connections");
-        assert.include(admin.html, "Connect your first source");
+        assert.include(admin.html, '<h1 class="page-heading">Integrations</h1>');
+        assert.include(admin.html, '<h2 class="section-heading">Connect an integration</h2>');
         assert.include(admin.html, `href="${connectPath}"`);
         const empty = yield* read(member, "/company/connections");
         assert.include(empty.html, "Nothing is connected yet");
@@ -987,6 +988,25 @@ it.layer(services)("company connection pages", (it) => {
         assert.strictEqual(
           (yield* read(owner.user, "/company/connections/connect/gmail")).status,
           404
+        );
+        // Cancel returns to where the integration was chosen: the empty Integrations page, which
+        // lists them, and once something is connected, the catalogue behind its button.
+        const cancel = (html: string) =>
+          html.match(/<a class="btn btn-quiet" href="([^"]+)">Cancel<\/a>/)?.[1];
+        assert.strictEqual(cancel(form.html), "/company/connections");
+        yield* connect(owner.user, "warehouse");
+        assert.strictEqual(
+          cancel((yield* read(owner.user, connectPath)).html),
+          "/company/connections/connect"
+        );
+        const refused = yield* send(
+          connectPath,
+          post(owner.user, { handle: "x", description: "", credentials })
+        );
+        assert.strictEqual(refused.status, 400);
+        assert.strictEqual(
+          cancel(yield* Effect.promise(() => refused.text())),
+          "/company/connections/connect"
         );
       })
   );

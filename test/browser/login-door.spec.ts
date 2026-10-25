@@ -62,7 +62,8 @@ test("login-door: portal handshake, session renewal and company isolation", asyn
   expect(await missing!.text()).toBe(refusedBody);
   // Observe successful enrollment through its public page, not a database side channel.
   expect((await outsider.goto(`${live.origin}/company`))?.status()).toBe(200);
+  await expect(outsider.getByRole("heading", { name: "People", exact: true })).toBeVisible();
   await expect(
-    outsider.getByRole("heading", { name: "Browser outsider company", exact: true })
+    outsider.getByRole("link", { name: "Browser outsider company", exact: true })
   ).toBeVisible();
 });

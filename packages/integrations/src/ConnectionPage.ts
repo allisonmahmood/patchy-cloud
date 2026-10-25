@@ -191,7 +191,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
         )
       : [];
   return {
-    title: "Connections",
+    title: "Integrations",
     body: View.renderIndex({
       admin,
       company: viewer.company.name,
@@ -212,7 +212,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
 ) {
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   return {
-    title: "Connect a source",
+    title: "Connect an integration",
     body: View.renderCatalogue({
       admin: viewer.role === "admin",
       rows: connections.map((connection) => row(connection, new Map())),
@@ -221,12 +221,18 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   } satisfies Page;
 });
 
-const connectForm = (
+/**
+ * An integration's connect form. Cancel returns to where it was chosen: Integrations itself while
+ * the company has no connections, since that empty page lists the integrations; else the catalogue.
+ */
+const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
+  viewer: RequireSession.Viewer["Service"],
   integration: Integration,
   submitted: Submitted = {},
   notice?: View.Notice
-): Page => {
+) {
   const page = pages[integration];
+  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   return {
     title: `Connect ${page.integration.label}`,
     body: View.renderConnect({
@@ -234,11 +240,12 @@ const connectForm = (
       intro: page.connectIntro,
       fields: page.connectFields(submitted, notice),
       ...(page.walkthrough === undefined ? {} : { walkthrough: page.walkthrough }),
-      notice
+      notice,
+      back: connections.length === 0 ? View.indexPath : View.cataloguePath
     }),
     status: notice?.status
-  };
-};
+  } satisfies Page;
+});
 
 /** One connection in the pages' words: its integration's facts, usage and who added it. */
 const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
@@ -393,7 +400,7 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
           lookup: { integration: target.integration, handle: "" }
         });
       if (!admin) return yield* index(viewer, new URLSearchParams(), forbidden);
-      return connectForm(target.integration);
+      return yield* connectForm(viewer, target.integration);
     case "view":
       return yield* connectionPage(viewer, target.id, done);
     case "confirm":
@@ -466,15 +473,16 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
   // A refused connect keeps what was typed, except the credentials.
   const refused = (notice: View.Notice) =>
     connectForm(
+      viewer,
       integration,
       submitted,
       atField(page, notice, ["handle", "description", "credentials", "region", "project", "key"])
     );
-  if (form === null) return refused(unreadable);
+  if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {
     const fields = yield* decodeConnect(form);
     const credentials = page.credentials(submitted);
-    if (!Redacted.isRedacted(credentials)) return refused(credentials);
+    if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
     const connection = yield* (yield* ConnectionStore.ConnectionStore).connect(
       {
         integration,
@@ -487,14 +495,12 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       yield* reporter(viewer, "connection.connected")
     );
     return {
-      title: "Connections",
+      title: "Integrations",
       body: "",
       redirect: `${View.connectionPath(connection.id)}?result=connect`
     } satisfies Page;
   }).pipe(
-    Effect.catch((error) =>
-      Effect.succeed(refused(error._tag === "SchemaError" ? incomplete : refusal(error)))
-    )
+    Effect.catch((error) => refused(error._tag === "SchemaError" ? incomplete : refusal(error)))
   );
 });
 
@@ -556,7 +562,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       yield* store[kind](input);
     }
     return {
-      title: "Connections",
+      title: "Integrations",
       body: "",
       redirect: `${kind === "delete" ? View.indexPath : View.connectionPath(id)}?result=${kind}`
     } satisfies Page;

@@ -474,7 +474,7 @@ it.layer(harness)("the door", (it) => {
               code: "agent_access_off",
               from: "patchy",
               message:
-                "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at https://cloud.example/company. Acme's admins are Ada Lovelace and Priya Shah; tell the person to ask one of them."
+                "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at https://cloud.example/company/agent-access. Acme's admins are Ada Lovelace and Priya Shah; tell the person to ask one of them."
             });
             assert.strictEqual(at(response.json, "result.content.0.text"), error["message"]);
             for (const leak of [

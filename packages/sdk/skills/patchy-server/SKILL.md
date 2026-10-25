@@ -362,7 +362,7 @@ and 1 have no agent area. Agent tools are for agents only; the page can't call
 them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent
-access is a company switch an admin turns on at `<instance>/company`; a publish
+access is a company switch an admin turns on at `<instance>/company/agent-access`; a publish
 with agent tools warns while it is off, and says nothing when it is on. Each
 person connects their own agent with the steps at
 `<instance>/machines#connect-an-agent` on Your machines, which also lists the
