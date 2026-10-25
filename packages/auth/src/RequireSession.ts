@@ -46,13 +46,14 @@ export function door(
   session: Session.Session["Service"],
   path: string,
   failed = false,
-  status = 401
+  status = 401,
+  purpose: "company" | "shared" = "company"
 ) {
   const url = session.signInUrl(path);
   const signIn = `<a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a>`;
   const { waitlistUrl } = session;
   const setup =
-    !failed && new URL(path, session.publicBaseUrl).pathname === "/"
+    purpose === "company" && !failed && new URL(path, session.publicBaseUrl).pathname === "/"
       ? `<p class="supporting-text">Setting up with an agent? Tell it: <code>Set up Patchy using ${escapeHtml(new URL("/llms.txt", session.publicBaseUrl).href)}</code></p>`
       : "";
   return pageResponse({
@@ -60,7 +61,7 @@ export function door(
     body: failed
       ? `<p>Try signing in again.</p><div class="actions">${signIn}</div>`
       : waitlistUrl === undefined
-        ? `<p>Continue to your company.</p>${setup}<div class="actions">${signIn}</div>`
+        ? `<p>${purpose === "shared" ? "Sign in to open patches shared with your account." : "Continue to your company."}</p>${setup}<div class="actions">${signIn}</div>`
         : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p>${setup}<div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
     status
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));

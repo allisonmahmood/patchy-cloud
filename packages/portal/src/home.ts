@@ -16,7 +16,8 @@ import { firstClause, patchTitle } from "./render.js";
 
 /** Home's layout; components come from the shell. */
 export const homeStyles = `
-  .home-search { margin-top: 20px; }
+  .home-search, .shared-search { margin-top: 20px; }
+  .home-tools { display: grid; gap: 12px; }
   /* From 900px the sidebar holds the search; below it the sidebar folds into Menu, so Home keeps its own. */
   @media (min-width: 900px) {
     .home-search { display: none; }
@@ -83,6 +84,57 @@ export const renderPublishedNote = (row: Patches.ReadPatch, publicBaseUrl: strin
   const url = `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   const named = escapeAttribute(title);
   return `<section class="note note-ok note-inline" role="status"><span class="note-title">${isWelcomePage({ name: patch.name, tier: row.tier }) ? "Your welcome page is live" : `${escapeHtml(title)} is live`}</span><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(patchAddress(patch))}" aria-label="Open ${named}">Open</a><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-label="Copy link to ${named}" aria-live="polite" hidden>Copy link</button></div></section>`;
+};
+
+/** Only invitation metadata and content the caller has authorized for this identity. */
+export interface SharedPatch {
+  readonly id: string;
+  readonly name: string;
+  readonly title: string;
+  readonly company: string;
+  readonly handle: string;
+  readonly subject: string | null;
+}
+
+/** Personal Home uses the same search, shelves, marks and tiles as company Home. */
+export const renderSharedHome = (
+  shares: readonly SharedPatch[],
+  query: string,
+  action = "/"
+): string => {
+  const matching = shares.filter((share) =>
+    [share.name, share.title, share.company].some((value) =>
+      value.toLowerCase().includes(query.toLowerCase())
+    )
+  );
+  const groups = new Map<string, SharedPatch[]>();
+  for (const share of matching)
+    groups.set(share.handle, [...(groups.get(share.handle) ?? []), share]);
+  const search = searchField({
+    action,
+    id: "home-search",
+    query,
+    placeholder: "Search patches shared with you",
+    label: "Search shared patches",
+    className: "shared-search"
+  });
+  const shelves = [...groups.values()]
+    .map(
+      (entries) =>
+        `<section class="home-shelf"><div class="home-shelf-head"><h2 class="section-heading">${highlight(entries[0]!.company, query)} <span class="count">${entries.length}</span></h2></div><div class="home-tools">${entries
+          .map((share) => {
+            const patch = `${patchMark(share.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(share.name, query)}</span><span class="tile-text">${highlight(share.title, query)}</span><span class="tile-meta">${share.subject === null ? "Invitation · Can read this page" : "Can read this page"}</span></span>`;
+            return share.subject === null
+              ? `<div class="tile-row">${patch}<form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form></div>`
+              : `<a class="tile-row" href="/${escapeAttribute(share.handle)}/${escapeAttribute(share.name)}">${patch}</a>`;
+          })
+          .join("")}</div></section>`
+    )
+    .join("");
+  const empty = query
+    ? `<p>No shared patches match “${escapeHtml(query)}”. <a href="${escapeAttribute(action)}">Clear search</a></p>`
+    : "<p>Nothing has been shared with you yet. Invitations and accepted patches appear here.</p>";
+  return `<h1 class="page-heading">Shared with you</h1><p class="supporting-text">Patches shared with your account, across companies.</p><div class="home-top">${search}</div><div class="home home-solo"><div class="home-main">${shelves || empty}</div></div>`;
 };
 
 export interface HomeInput {

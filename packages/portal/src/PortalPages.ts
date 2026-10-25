@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
@@ -55,6 +56,11 @@ import {
   styles
 } from "./render.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
+
+/** The local sharing experiment supplies this when a personal inbox is available. */
+export const SharedInbox = Context.Reference<boolean>("@patchy/portal/SharedInbox", {
+  defaultValue: () => false
+});
 
 const isName = Schema.is(PatchName);
 const maxNameLength = 32;
@@ -396,7 +402,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
     {
       title: "Home",
       heading: "",
-      body: `${renderHome({
+      body: `${(yield* SharedInbox) ? '<div class="actions"><a class="btn" href="/shared">Shared with you</a></div>' : ""}${renderHome({
         rows,
         viewer,
         opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
