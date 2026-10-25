@@ -6,6 +6,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import {
+  ago,
   avatar,
   dateLabel,
   escapeAttribute,
@@ -27,8 +28,12 @@ interface Viewer {
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
   readonly role: Users.Role;
 }
+/** `view` reads People and `view-agent-access` reads Agent access; the rest are admins' forms. */
 export type Action =
-  | { readonly kind: "view" | "invite" | "agent-access" }
+  | { readonly kind: "view" }
+  | { readonly kind: "view-agent-access" }
+  | { readonly kind: "invite" }
+  | { readonly kind: "agent-access" }
   | {
       readonly kind: "revoke" | "resend" | "role";
       readonly id: string;
@@ -39,6 +44,8 @@ export interface Page {
   readonly body: string;
   readonly status?: number;
   readonly redirect?: string;
+  /** With a redirect, one line naming what the form did, read from server state; Auth shows it once. */
+  readonly receipt?: string;
 }
 
 /**
@@ -53,11 +60,19 @@ export const OwnedPatches = Context.Reference<
   | undefined
 >("@patchy/companies/CompanyPage/OwnedPatches", { defaultValue: () => undefined });
 
-/** The page's layout; components come from the shell. */
+/** The pages' layout; components come from the shell. */
 export const styles = `
-    .company-invite-row { display: grid; grid-template-columns: minmax(0, 1fr) 10rem auto; gap: 10px; align-items: start; }
-    .company-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; }
+    .company-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
     .company-search { width: min(100%, 300px); }
+    /* An open invite takes its own line under the search and tabs, its button kept at the right. */
+    .company-invite { margin-left: auto; }
+    .company-invite[open] { flex-basis: 100%; text-align: right; }
+    .company-invite > summary { list-style: none; }
+    .company-invite > summary::-webkit-details-marker { display: none; }
+    .company-invite-form { max-width: 560px; margin: 12px 0 0 auto; text-align: left; }
+    .company-invite-form > :first-child { margin-top: 0; }
+    .company-invite-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+    .company-invite-row > select { width: 10rem; }
     .company-matches { margin-top: 12px; }
     .company-table { overflow-x: auto; }
     /* Cells keep words whole, so on a phone the table scrolls here rather than splitting "Member". */
@@ -66,9 +81,11 @@ export const styles = `
     .company-table .company-row-actions { text-align: right; white-space: nowrap; }
     .company-person { display: flex; align-items: center; gap: 12px; }
     .company-actions { display: inline-flex; align-items: center; gap: 6px; }
+    .agent-access-state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     @media (max-width: 640px) {
-      .company-invite-row { grid-template-columns: minmax(0, 1fr) auto; }
-      .company-invite-row > textarea { grid-column: 1 / -1; }
+      .company-invite { margin-left: 0; }
+      .company-invite[open] { text-align: left; }
+      .company-invite-form { margin-left: 0; }
     }
 `;
 
@@ -95,10 +112,17 @@ interface Draft {
   readonly problem?: string;
 }
 
+/** A refusal or a partial result above a page. The message is HTML: whoever builds it escapes what it interpolates. */
+interface Notice {
+  readonly message: string;
+  readonly status: number;
+}
+
 interface View {
   readonly filter?: Filter;
-  /** The message is HTML: whoever builds it escapes what it interpolates. */
-  readonly notice?: { readonly message: string; readonly status: number };
+  readonly notice?: Notice;
+  /** Opens the invite form, which a draft also opens. */
+  readonly inviting?: boolean;
   readonly draft?: Draft;
 }
 
@@ -130,11 +154,13 @@ interface Delivery {
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+const displayName = (user: Users.User) => user.name.trim() || user.email;
 
-const time = (date: Date) => {
-  const iso = date.toISOString();
-  return `<time datetime="${iso}">${escapeHtml(dateLabel(iso))}</time>`;
-};
+const time = (date: Date, label = dateLabel(date.toISOString())) =>
+  `<time datetime="${date.toISOString()}">${escapeHtml(label)}</time>`;
+
+const noticeHtml = (notice: Notice | undefined) =>
+  notice ? `<div class="note note-warn" role="alert">${notice.message}</div>` : "";
 
 const filterHref = (show: Show, query: string) => {
   const params = new URLSearchParams();
@@ -145,31 +171,49 @@ const filterHref = (show: Show, query: string) => {
 };
 
 /**
- * The foot of the page: agent access, its latest change, and for an admin the one button that
- * flips it. Members learn where to connect when it is on and whom to ask when it is off.
+ * `/company/agent-access`: whether the company's agents can use patches, its latest change, and
+ * for an admin the one button that flips it. A member reads the same state and whom to ask.
  */
-const agentAccessSection = (
+const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
   viewer: Viewer,
-  access: Companies.AgentAccess,
-  admins: readonly string[]
-) => {
+  notice?: Notice
+): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
+  // The viewer's own company: it exists for as long as they can open this page.
+  const access = yield* (yield* Companies.Companies)
+    .agentAccess(viewer.company.id)
+    .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
   const company = escapeHtml(viewer.company.name);
+  const state = access.on
+    ? '<span class="pill pill-done">On</span>'
+    : '<span class="pill">Off</span>';
   const latest = access.latest
-    ? `<p class="supporting-text">Turned ${access.on ? "on" : "off"} by ${escapeHtml(access.latest.by.name)} on ${time(access.latest.at)}</p>`
+    ? `<span class="supporting-text">Turned ${access.on ? "on" : "off"} by ${escapeHtml(access.latest.by.name)} on ${time(access.latest.at)}</span>`
     : "";
-  const reach =
-    "Agents only reach the agent tools each patch’s builder added, and never do anything their person can’t.";
-  const text =
-    viewer.role === "admin"
-      ? access.on
-        ? `<p>Everyone at ${company} can connect their own agent, like Claude or Codex, to use the company’s patches as themselves. ${reach} Turning it off refuses every agent until it’s back on, without ending anyone’s connection.</p><form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="off"><button class="btn" type="submit">Turn off</button></form>`
-        : `<p>Turn it on to let everyone at ${company} connect their own agent, like Claude or Codex, to use the company’s patches as themselves. ${reach}</p><form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="on"><button class="btn btn-primary" type="submit">Turn on</button></form>`
-      : access.on
-        ? `<p>Your own agent, like Claude or Codex, can use ${company}’s patches as you, through the agent tools each patch’s builder added.</p><p class="supporting-text">Connect yours on <a href="/machines">Your machines</a>.</p>`
-        : `<p>Your own agent, like Claude or Codex, can use ${company}’s patches as you once an admin turns this on.</p><p class="supporting-text">At ${company} that’s ${sentenceList(admins)}.</p>`;
-  return `<section class="section" id="agent-access" aria-labelledby="agent-access-heading"><h2 class="section-heading" id="agent-access-heading">Agent access <span class="tag">${access.on ? "On" : "Off"}</span></h2>${latest}${text}</section>`;
-};
+  const consequence = access.on
+    ? `Anyone at ${company} can connect their own agent to use patches’ agent tools as themselves.`
+    : "Agents can’t use any patch; connections stay and work again when it’s on.";
+  let control: string;
+  if (viewer.role === "admin") {
+    const next = access.on ? "off" : "on";
+    control = `<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
+  } else {
+    const admins = (yield* (yield* Users.Users).list(viewer.company.id))
+      .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+      .map(displayName)
+      .sort((a, b) => a.localeCompare(b));
+    control = `<p class="supporting-text">Only an admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/machines">Connect your agent</a></div>' : ""}`;
+  }
+  return {
+    title: "Agent access",
+    body: `${noticeHtml(notice)}<p class="agent-access-state">${state}${latest}</p><p>${consequence}</p>${control}`,
+    status: notice?.status
+  };
+});
 
+/**
+ * `/company`, People: everyone in the company and its open invites, narrowed by a tab and a
+ * search. Admins invite from the toolbar and manage each row from its menu.
+ */
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
   view: View = {}
@@ -177,10 +221,6 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const companies = yield* Companies.Companies;
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* companies.listInvites(viewer.company.id);
-  // The viewer's own company: it exists for as long as they can open this page.
-  const access = yield* companies
-    .agentAccess(viewer.company.id)
-    .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -194,7 +234,6 @@ const render = Effect.fn("CompanyPage.render")(function* (
     a.name.localeCompare(b.name) || a.email.localeCompare(b.email);
   const active = users.filter((user) => user.deactivatedAt === null).sort(byName);
   const deactivated = users.filter((user) => user.deactivatedAt !== null).sort(byName);
-  const names = new Map(users.map((user) => [user.id, user.name.trim() || user.email]));
   const inviteState = (invite: Companies.Invite) =>
     invite.expiresAt.getTime() <= now
       ? "expired"
@@ -226,17 +265,23 @@ const render = Effect.fn("CompanyPage.render")(function* (
       ? entry.invite.email.toLowerCase().includes(needle)
       : `${entry.user.name}\n${entry.user.email}`.toLowerCase().includes(needle)
   );
+  // While every row is someone who joined, the column holds only dates and is named for them.
+  const joinedOnly = entries.every(
+    (entry) => entry.kind === "user" && entry.user.deactivatedAt === null
+  );
 
   const userRow = (user: Users.User) => {
     const path = `/company/users/${encodeURIComponent(user.id)}`;
-    const label = user.name.trim() || user.email;
+    const label = displayName(user);
     const you = user.id === viewer.user.id ? '<span class="tag">You</span>' : "";
     const second = user.name.trim()
       ? `<br><span class="supporting-text">${escapeHtml(user.email)}</span>`
       : "";
     const status = user.deactivatedAt
       ? `<span class="pill">Deactivated ${escapeHtml(dateLabel(user.deactivatedAt.toISOString()))}</span>`
-      : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
+      : joinedOnly
+        ? time(user.createdAt)
+        : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
     const role = user.role === "admin" ? "member" : "admin";
     const lifecycle = user.deactivatedAt
       ? menuLink(`${path}/reactivate`, "Reactivate…")
@@ -253,13 +298,12 @@ const render = Effect.fn("CompanyPage.render")(function* (
           ...(lifecycle ? ['<hr class="menu-rule">', lifecycle] : [])
         ])}</td>`
       : "";
-    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "<strong>Admin</strong>" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
+    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
   };
   const inviteRow = (invite: Companies.Invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
     const state = inviteState(invite);
-    const inviter = names.get(invite.invitedBy);
-    const sent = `Invited${inviter ? ` by ${escapeHtml(inviter)}` : ""} · ${time(invite.createdAt)}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
+    const sent = `Invited ${time(invite.createdAt, ago(invite.createdAt.toISOString(), now))}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
     const status =
       state === "expired"
         ? '<span class="pill">Expired</span>'
@@ -268,7 +312,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
           : '<span class="pill pill-progress">Invited</span>';
     const stuck = state !== "waiting";
     const actions = admin
-      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit">Resend</button></form>` : ""}${rowMenu(
+      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit" aria-label="${escapeAttribute(`Resend the invite to ${invite.email}`)}">Resend</button></form>` : ""}${rowMenu(
           invite.id,
           invite.email,
           [
@@ -279,7 +323,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
           ]
         )}</div></td>`
       : "";
-    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "<strong>Admin</strong>" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
+    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
   };
 
   const counts: Record<Show, number> = {
@@ -300,7 +344,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     action: "/company",
     id: "company-search",
     query,
-    placeholder: "Search name or email",
+    placeholder: "Search people",
     label: "Search people",
     keep: show === "all" ? {} : { show },
     className: "company-search"
@@ -314,31 +358,72 @@ const render = Effect.fn("CompanyPage.render")(function* (
       ? "<p>No open invites.</p>"
       : "<p>No one is deactivated.</p>";
   const table = entries.length
-    ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">Status</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${entries.map((entry) => (entry.kind === "invite" ? inviteRow(entry.invite) : userRow(entry.user))).join("")}</tbody></table></div>`
+    ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">${joinedOnly ? "Joined" : "Status"}</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${entries.map((entry) => (entry.kind === "invite" ? inviteRow(entry.invite) : userRow(entry.user))).join("")}</tbody></table></div>`
     : empty;
 
   const draft = view.draft;
-  const inviteForm = admin
-    ? `<form method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Invite people</label><div class="company-invite-row"><textarea class="field field-grow" id="invite-email" name="email" rows="1" required placeholder="Emails, separated by commas or new lines" aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea><select class="field" name="role" aria-label="Role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div>${draft?.problem ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>` : `<p class="field-hint" id="invite-email-note">Paste up to ${inviteBatch} at once. Each address gets its own email and has ${lifetimeDays} days to join.</p>`}</form>`
-    : "";
-  const notice = view.notice
-    ? `<div class="note note-warn" role="alert">${view.notice.message}</div>`
+  const inviteNote = draft?.problem
+    ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>`
+    : `<p class="field-hint" id="invite-email-note">Up to ${inviteBatch} at once. Invites expire after ${lifetimeDays} days.</p>`;
+  const invite = admin
+    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
     : "";
   const admins = active.filter((user) => user.role === "admin");
   return {
-    title: viewer.company.name,
-    body: `<p class="supporting-text">${escapeHtml(viewer.company.handle)} · ${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${notice}${inviteForm}<div class="company-tools"><nav class="tabs" aria-label="Show">${tabs}</nav>${search}</div>${matches}${table}${agentAccessSection(
-      viewer,
-      access,
-      admins.map((user) => user.name)
-    )}`,
+    title: "People",
+    body: `<p class="supporting-text">${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${noticeHtml(view.notice)}<div class="company-tools">${search}<nav class="tabs" aria-label="Show">${tabs}</nav>${invite}</div>${matches}${table}`,
     status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
   };
 });
 
-/** Re-renders the page with a plain-text refusal above it. */
+/** Re-renders People with a plain-text refusal above it. */
 const refuse = (viewer: Viewer, message: string, status: number, draft?: Draft) =>
   render(viewer, { notice: { message: escapeHtml(message), status }, draft });
+
+/** People again after a change, with the receipt naming it. */
+const done = (receipt: string): Page => ({
+  title: "People",
+  body: "",
+  redirect: "/company",
+  receipt
+});
+
+/** Turns agent access on or off; a refusal re-renders Agent access, which the form sat on. */
+const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer: Viewer) {
+  const refused = (message: string, status: number) =>
+    renderAgentAccess(viewer, { message: escapeHtml(message), status });
+  if (viewer.role !== "admin")
+    return yield* refused("Only an admin can turn agent access on or off.", 403);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = yield* decodeAgentAccess(Object.fromEntries(yield* request.urlParamsBody)).pipe(
+    Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
+  );
+  if (form === null) return yield* refused("Choose on or off.", 422);
+  const analytics = yield* Analytics.Analytics;
+  const change = (yield* Companies.Companies).setAgentAccess({
+    companyId: viewer.company.id,
+    on: form.state === "on",
+    by: viewer.user.id
+  });
+  // A stale form asking for the state it already has changes and reports nothing. The
+  // viewer's own company exists for as long as they can submit this form.
+  const { access } = yield* withReportedCommit(change, ({ changed, access }) =>
+    changed
+      ? analytics.track({
+          name: "agent_access.changed",
+          principalId: viewer.user.id,
+          companyId: viewer.company.id,
+          properties: { on: access.on }
+        })
+      : Effect.void
+  ).pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
+  return {
+    title: "Agent access",
+    body: "",
+    redirect: "/company/agent-access",
+    receipt: `Agent access is ${access.on ? "on" : "off"}`
+  } satisfies Page;
+});
 
 /** Auth supplies the viewer; Companies owns the forms and their company-scoped actions. */
 export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer, action: Action) {
@@ -348,37 +433,23 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     const params = new URL(request.url, "http://company.invalid").searchParams;
     const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
     return yield* render(viewer, {
-      filter: { show, query: (params.get("q") ?? "").trim().slice(0, 200) }
+      filter: { show, query: (params.get("q") ?? "").trim().slice(0, 200) },
+      inviting: params.get("invite") === "1"
     });
   }
+  if (action.kind === "view-agent-access") return yield* renderAgentAccess(viewer);
+  if (action.kind === "agent-access") return yield* setAgentAccess(viewer);
   if (viewer.role !== "admin")
     return yield* refuse(viewer, "Only an admin can manage this company.", 403);
+  // Narrowed here, so the effect below keeps the forms that remain.
+  const act = action;
   return yield* Effect.gen(function* () {
     const users = yield* Users.Users;
     const analytics = yield* Analytics.Analytics;
     // A refused action fails before its event. Invitations deliver uninterruptibly,
-    // so each reports in the same region; role and agent access changes report with their commit.
+    // so each reports in the same region; role changes report with their commit.
     const admin = { principalId: viewer.user.id, companyId: viewer.company.id };
-    if (action.kind === "agent-access") {
-      const form = yield* decodeAgentAccess(Object.fromEntries(yield* request.urlParamsBody)).pipe(
-        Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
-      );
-      if (form === null) return yield* refuse(viewer, "Choose on or off.", 422);
-      const on = form.state === "on";
-      const change = (yield* Companies.Companies).setAgentAccess({
-        companyId: viewer.company.id,
-        on,
-        by: viewer.user.id
-      });
-      yield* withReportedCommit(change, ({ changed }) =>
-        changed
-          ? analytics.track({ name: "agent_access.changed", ...admin, properties: { on } })
-          : Effect.void
-      );
-      // Back to the section the button sat in, at the foot of the page.
-      return { title: viewer.company.name, body: "", redirect: "/company#agent-access" };
-    }
-    if (action.kind === "invite") {
+    if (act.kind === "invite") {
       const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
       const text = fields.email ?? "";
       const role = yield* decodeRole(fields).pipe(
@@ -414,8 +485,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
             })
           ),
           Effect.uninterruptible,
-          Effect.map(({ mailFailed }): Delivery => ({
-            email,
+          Effect.map(({ invite, mailFailed }): Delivery => ({
+            email: invite.email,
             outcome: mailFailed ? "unsent" : "sent"
           })),
           Effect.catchTags({
@@ -433,7 +504,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       const invited = emails("invited");
       const failed = emails("failed");
       if (sent.length === outcomes.length)
-        return { title: viewer.company.name, body: "", redirect: "/company" };
+        return done(sent.length === 1 ? `Invited ${sent[0]}` : `Invited ${sent.length} people`);
+      // Anything short of every address sent is explained per address, not receipted.
       const lines = [
         sent.length ? `Invited ${sentenceList(sent)}.` : "",
         unsent.length
@@ -457,10 +529,10 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         draft: failed.length ? { text: failed.join("\n"), role } : undefined
       });
     }
-    if (action.kind === "revoke") {
+    if (act.kind === "revoke") {
       const result = yield* Invitations.revoke({
         companyId: viewer.company.id,
-        inviteId: action.id
+        inviteId: act.id
       }).pipe(
         Effect.tap(({ invite }) =>
           analytics.track({ name: "invite.revoked", ...admin, properties: { inviteId: invite.id } })
@@ -474,10 +546,12 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           "Invitation revoked in Patchy, but Clerk could not revoke the emailed link. It can no longer be used to join this company.",
           502
         );
-    } else if (action.kind === "resend") {
+      return done(`Revoked the invite to ${result.invite.email}`);
+    }
+    if (act.kind === "resend") {
       const result = yield* Invitations.resend({
         companyId: viewer.company.id,
-        inviteId: action.id
+        inviteId: act.id
       }).pipe(
         Effect.tap(({ invite, mailFailed }) =>
           analytics.track({
@@ -494,24 +568,20 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           "Invitation saved, but the email did not go out. Resend it to try again.",
           502
         );
-    } else if (action.kind === "role") {
-      const form = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
-      const change = users.setRole({
-        companyId: viewer.company.id,
-        userId: action.id,
-        role: form.role
-      });
-      yield* withReportedCommit(change, ({ changed }) =>
-        changed
-          ? analytics.track({
-              name: "user.role_changed",
-              ...admin,
-              properties: { userId: action.id, role: form.role }
-            })
-          : Effect.void
-      );
+      return done(`Sent a new invite to ${result.invite.email}`);
     }
-    return { title: viewer.company.name, body: "", redirect: "/company" };
+    const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
+    const change = users.setRole({ companyId: viewer.company.id, userId: act.id, role });
+    const { user } = yield* withReportedCommit(change, ({ changed }) =>
+      changed
+        ? analytics.track({
+            name: "user.role_changed",
+            ...admin,
+            properties: { userId: act.id, role }
+          })
+        : Effect.void
+    );
+    return done(`${displayName(user)} is now ${user.role === "admin" ? "an admin" : "a member"}`);
   }).pipe(
     Effect.catchTags({
       SchemaError: () => refuse(viewer, "Choose Member or Admin.", 422),

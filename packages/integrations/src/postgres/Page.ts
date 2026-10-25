@@ -11,7 +11,7 @@ type Connection = Extract<ConnectionStore.Connection, { readonly integration: "p
 export const integration = { key: "postgres", label: "Postgres" } as const;
 export const offer = {
   integration,
-  reads: "A database reachable over TLS: read-only queries through a role you supply.",
+  reads: "Queries against your own database, through a role you supply.",
   mode: "Company-wide · read-only"
 };
 export const actions = {
@@ -68,15 +68,32 @@ export const reads = (snapshot: typeof Snapshot.Type) => {
 };
 
 export const connectIntro =
-  "Patchy tests the connection and discovers its schema before saving anything. The database must be reachable from the internet over TLS with a verified certificate and hostname; superusers and roles with CREATEDB or CREATEROLE are refused.";
+  "Nothing is saved until Patchy has tested the connection and found its schema.";
+
+/** What to have in hand first, so the form is one paste for whoever holds the database's keys. */
+export const walkthrough: View.Walkthrough = {
+  before: [
+    {
+      title: "Get a read-only role",
+      text: "Ask whoever runs the database for a role that reads only what patches need. Superusers and roles with CREATEDB or CREATEROLE are refused."
+    }
+  ],
+  current: "Paste its connection string",
+  after: [
+    {
+      title: "Use it in a patch",
+      text: "Ask your agent to add it to a patch by its name, such as postgres/warehouse."
+    }
+  ]
+};
 
 /** The access note sits with the credentials field: it is about the role inside that string. */
-const promise = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member can query this database through any patch that declares it, as the role you supply.</p><p>Patchy sends constrained reads through the role you supplied, but a SELECT can still invoke functions and extensions, so this is not a promise that arbitrary SQL is harmless. Supply a dedicated, least-privileged role.</p></div>`;
+const promise = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member can query this database through any patch that declares it, as the role you supply.</p><p>Reads are constrained, but a SELECT can still call functions and extensions, so arbitrary SQL isn't guaranteed harmless. Supply a dedicated, least-privileged role.</p></div>`;
 const credentialsField = (refusal: View.Notice | undefined, note = "") => {
   const field = View.fieldNote(
     "connection-credentials",
     "credentials",
-    "A Postgres connection string with a password and sslmode=verify-full. Only host, port, database, user, password and sslmode are accepted. Credentials are encrypted and never shown again.",
+    "With a password and sslmode=verify-full, for a database reachable from the internet. Patchy encrypts it and never shows it again.",
     refusal
   );
   return `${note}<label class="field-label" for="connection-credentials">Connection string</label><input class="field" id="connection-credentials" type="password" name="credentials" required autocomplete="new-password" spellcheck="false"${field.attributes}>${field.note}`;
@@ -115,13 +132,13 @@ export const connectFields = (
   const handle = View.fieldNote(
     "connection-handle",
     "handle",
-    "3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare it by this name, which can't be changed later.",
+    "3–32 lowercase letters, digits or hyphens. Patches use this name, which can't be changed later.",
     refusal
   );
   const description = View.fieldNote(
     "connection-description",
     "description",
-    "One line telling builders what this database is for. With many connections, it's how people find the right one.",
+    "One line on what this database is for, so builders pick the right one.",
     refusal
   );
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">postgres/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${credentialsField(refusal, promise)}`;

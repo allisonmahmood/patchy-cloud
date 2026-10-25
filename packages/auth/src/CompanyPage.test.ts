@@ -95,8 +95,24 @@ const redirected = (response: Response) => {
 };
 const redirectedTo = (response: Response) => {
   assert.strictEqual(response.status, 303);
-  assert.strictEqual(response.headers.get("location"), "/company#agent-access");
+  assert.strictEqual(response.headers.get("location"), "/company/agent-access");
 };
+/** Follows a form's redirect as a browser would and returns the receipt the page shows, if any. */
+const landed = Effect.fn(function* (user: Users.User, response: Response) {
+  assert.strictEqual(response.status, 303);
+  const receipt = response.headers
+    .getSetCookie()
+    .find((line) => line.includes("patchy_receipt="))
+    ?.split(";")[0];
+  const page = yield* send(response.headers.get("location")!, {
+    headers: { cookie: [cookie(user), ...(receipt ? [receipt] : [])].join("; ") }
+  });
+  assert.strictEqual(page.status, 200);
+  const html = yield* Effect.promise(() => page.text());
+  return html.match(/<p class="note note-ok app-receipt" role="status">([^<]*)<\/p>/)?.[1];
+});
+/** The page's own content, after the sidebar, which names the company and its places. */
+const main = (html: string) => html.slice(html.indexOf("<main"));
 const deliveryFailed = Effect.fn(function* (response: Response) {
   assert.strictEqual(response.status, 502);
   assert.strictEqual(response.headers.get("location"), null);
@@ -621,10 +637,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(asked, [{ companyId: owner.company.id, userId: owner.user.id }]);
       assert.include(html, '<th scope="col">Patches</th>');
       assert.match(html, new RegExp(`${member.email}[\\s\\S]*?<td>Member</td><td>3</td>`));
-      assert.match(
-        html,
-        new RegExp(`${owner.user.email}[\\s\\S]*?<td><strong>Admin</strong></td><td>0</td>`)
-      );
+      assert.match(html, new RegExp(`${owner.user.email}[\\s\\S]*?<td>Admin</td><td>0</td>`));
     })
   );
 
@@ -704,34 +717,39 @@ it.layer(services)("company page and actions", (it) => {
   );
 
   it.effect(
-    "lets an admin turn agent access on and off at the foot of Company, stamped with who and when",
+    "shows agent access on its own page, where only an admin turns it on and off, stamped with who and when",
     () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("company-agent-access", "Brightline Studio");
         const second = yield* addUser(owner, "second", "admin", "Priya Shah");
         const member = yield* addUser(owner, "member");
         const page = Effect.fn(function* (viewer: Users.User) {
-          const response = yield* send("/company", { headers: { cookie: cookie(viewer) } });
+          const response = yield* send("/company/agent-access", {
+            headers: { cookie: cookie(viewer) }
+          });
           assert.strictEqual(response.status, 200);
           const html = yield* Effect.promise(() => response.text());
-          // The section is the page's last.
-          const section = html.slice(html.indexOf('<section class="section" id="agent-access"'));
-          assert.match(section, /^<section[^>]*>[\s\S]*?<\/section><\/main>/);
-          return section;
+          assert.include(
+            html,
+            '<a class="app-place" href="/company/agent-access" aria-current="page">'
+          );
+          return main(html);
         });
         const turn = (viewer: Users.User, state: string) =>
           send("/company/agent-access", post(viewer, { state }));
         const button = (state: "on" | "off") =>
-          new RegExp(
-            `<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${state}"><button class="btn${state === "on" ? " btn-primary" : ""}" type="submit">Turn ${state}</button></form>`
-          );
+          `<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${state}"><button class="btn${state === "on" ? " btn-primary" : ""}" type="submit">Turn ${state} agent access</button></form>`;
 
         // The starting Off has no latest change; an admin gets Turn on, a member the admins.
         const off = yield* page(owner.user);
-        assert.include(off, 'Agent access <span class="tag">Off</span>');
+        assert.include(off, '<h1 class="page-heading">Agent access</h1>');
+        assert.include(off, '<span class="pill">Off</span>');
         assert.notInclude(off, "Turned");
-        assert.include(off, "Turn it on to let everyone at Brightline Studio connect");
-        assert.match(off, button("on"));
+        assert.include(
+          off,
+          "Agents can’t use any patch; connections stay and work again when it’s on."
+        );
+        assert.include(off, button("on"));
         const offForMember = yield* page(member);
         assert.notInclude(offForMember, "<form");
         assert.notInclude(offForMember, "Turned");
@@ -739,22 +757,31 @@ it.layer(services)("company page and actions", (it) => {
           offForMember,
           "At Brightline Studio that’s company-agent-access Admin and Priya Shah."
         );
+        // People no longer carries the switch.
+        const people = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
+        assert.notInclude(
+          yield* Effect.promise(() => people.text()),
+          'action="/company/agent-access"'
+        );
 
         yield* TestClock.setTime(Date.parse("2026-10-12T09:00:00Z"));
         const turnedOn = yield* turn(owner.user, "on");
-        assert.strictEqual(turnedOn.status, 303);
-        assert.strictEqual(turnedOn.headers.get("location"), "/company#agent-access");
+        redirectedTo(turnedOn);
+        assert.strictEqual(yield* landed(owner.user, turnedOn), "Agent access is on");
         const on = yield* page(owner.user);
-        assert.include(on, 'Agent access <span class="tag">On</span>');
+        assert.include(on, '<span class="pill pill-done">On</span>');
         const stamp =
           'Turned on by company-agent-access Admin on <time datetime="2026-10-12T09:00:00.000Z">12 Oct 2026</time>';
         assert.include(on, stamp);
-        assert.include(on, "refuses every agent until it’s back on");
-        assert.match(on, button("off"));
+        assert.include(
+          on,
+          "Anyone at Brightline Studio can connect their own agent to use patches’ agent tools as themselves."
+        );
+        assert.include(on, button("off"));
         const onForMember = yield* page(member);
-        assert.include(onForMember, 'Agent access <span class="tag">On</span>');
+        assert.include(onForMember, '<span class="pill pill-done">On</span>');
         assert.include(onForMember, stamp);
-        assert.include(onForMember, 'Connect yours on <a href="/machines">Your machines</a>.');
+        assert.include(onForMember, '<a class="btn" href="/machines">Connect your agent</a>');
         assert.notInclude(onForMember, "<form");
 
         // A stale Turn on from another admin's tab changes nothing and reports nothing.
@@ -762,9 +789,10 @@ it.layer(services)("company page and actions", (it) => {
         assert.include(yield* page(owner.user), stamp);
 
         yield* TestClock.adjust("1 day");
-        redirectedTo(yield* turn(second, "off"));
+        const turnedOff = yield* turn(second, "off");
+        assert.strictEqual(yield* landed(second, turnedOff), "Agent access is off");
         const offAgain = yield* page(member);
-        assert.include(offAgain, 'Agent access <span class="tag">Off</span>');
+        assert.include(offAgain, '<span class="pill">Off</span>');
         assert.include(
           offAgain,
           'Turned off by Priya Shah on <time datetime="2026-10-13T09:00:00.000Z">13 Oct 2026</time>'
@@ -776,10 +804,195 @@ it.layer(services)("company page and actions", (it) => {
 
         const malformed = yield* turn(owner.user, "maybe");
         assert.strictEqual(malformed.status, 422);
-        assert.include(yield* Effect.promise(() => malformed.text()), 'role="alert"');
+        const malformedHtml = yield* Effect.promise(() => malformed.text());
+        assert.include(malformedHtml, 'role="alert"');
+        assert.include(malformedHtml, '<h1 class="page-heading">Agent access</h1>');
         assert.isFalse((yield* (yield* Companies.Companies).agentAccess(owner.company.id)).on);
         assert.lengthOf(reported(owner.company.id), 2);
       })
+  );
+
+  it.effect(
+    "keeps agent access to its own company's admins: members read it, others never reach it",
+    () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const owner = yield* createCompany("company-access-scope", "Scope Studio");
+        const member = yield* addUser(owner, "member");
+        const gone = yield* addUser(owner, "gone");
+        const foreign = yield* createCompany("company-access-foreign", "Foreign Co");
+        yield* companies.setAgentAccess({
+          companyId: owner.company.id,
+          on: true,
+          by: owner.user.id
+        });
+        const before = yield* companies.agentAccess(owner.company.id);
+        const read = Effect.fn(function* (viewer: Users.User) {
+          const response = yield* send("/company/agent-access", {
+            headers: { cookie: cookie(viewer) }
+          });
+          return { status: response.status, html: yield* Effect.promise(() => response.text()) };
+        });
+
+        // A member reads the state and its admins, with no way to change it, and a forged
+        // POST is refused on the same page.
+        const asMember = yield* read(member);
+        assert.strictEqual(asMember.status, 200);
+        assert.include(asMember.html, '<span class="pill pill-done">On</span>');
+        assert.notMatch(asMember.html, companyAction);
+        const forged = yield* send("/company/agent-access", post(member, { state: "off" }));
+        assert.strictEqual(forged.status, 403);
+        assert.strictEqual(forged.headers.get("location"), null);
+        const forgedHtml = yield* Effect.promise(() => forged.text());
+        assert.include(forgedHtml, "Only an admin can turn agent access on or off.");
+        assert.notMatch(forgedHtml, companyAction);
+
+        // Another company's admin sees and turns only their own company's switch.
+        const elsewhere = yield* read(foreign.user);
+        assert.strictEqual(elsewhere.status, 200);
+        assert.include(elsewhere.html, '<span class="pill">Off</span>');
+        assert.notInclude(elsewhere.html, owner.company.name);
+        assert.notInclude(elsewhere.html, owner.user.name);
+        redirectedTo(yield* send("/company/agent-access", post(foreign.user, { state: "on" })));
+        redirectedTo(yield* send("/company/agent-access", post(foreign.user, { state: "off" })));
+        assert.isFalse((yield* companies.agentAccess(foreign.company.id)).on);
+
+        // Signed out gets the door; deactivated gets the deactivated page, reading or writing.
+        const signedOut = yield* send("/company/agent-access");
+        assert.strictEqual(signedOut.status, 401);
+        assert.notInclude(yield* Effect.promise(() => signedOut.text()), "Turned on by");
+        const signedOutPost = yield* send("/company/agent-access", {
+          method: "POST",
+          headers: { origin },
+          body: new URLSearchParams({ state: "off" })
+        });
+        assert.strictEqual(signedOutPost.status, 401);
+        yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: gone.id });
+        const deactivated = yield* read(gone);
+        assert.strictEqual(deactivated.status, 403);
+        assert.match(deactivated.html, /deactivated/i);
+        assert.notInclude(deactivated.html, "Turned on by");
+        assert.strictEqual(
+          (yield* send("/company/agent-access", post(gone, { state: "off" }))).status,
+          403
+        );
+
+        assert.deepStrictEqual(yield* companies.agentAccess(owner.company.id), before);
+        assert.deepStrictEqual(reported(owner.company.id), []);
+        assert.deepStrictEqual(
+          reported(foreign.company.id).map((event) => event.properties),
+          [{ on: true }, { on: false }]
+        );
+      })
+  );
+
+  it.effect("names what each form did in a receipt on the page it lands on", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-receipts");
+      const member = yield* addUser(owner, "member", "member", "Dana Reyes");
+      const companies = yield* Companies.Companies;
+      const invite = (email: string) =>
+        send("/company/invites", post(owner.user, { email, role: "member" }));
+      assert.strictEqual(
+        yield* landed(owner.user, yield* invite("Solo@Example.com")),
+        "Invited solo@example.com"
+      );
+      assert.strictEqual(
+        yield* landed(owner.user, yield* invite("one@example.com two@example.com")),
+        "Invited 2 people"
+      );
+      const solo = (yield* companies.listInvites(owner.company.id)).find(
+        (entry) => entry.email === "solo@example.com"
+      )!;
+      assert.strictEqual(
+        yield* landed(
+          owner.user,
+          yield* send(`/company/invites/${solo.id}/resend`, post(owner.user))
+        ),
+        "Sent a new invite to solo@example.com"
+      );
+      assert.strictEqual(
+        yield* landed(
+          owner.user,
+          yield* send(`/company/invites/${solo.id}/revoke`, post(owner.user))
+        ),
+        "Revoked the invite to solo@example.com"
+      );
+      const role = (value: string) =>
+        send(`/company/users/${member.id}/role`, post(owner.user, { role: value }));
+      assert.strictEqual(
+        yield* landed(owner.user, yield* role("admin")),
+        "Dana Reyes is now an admin"
+      );
+      assert.strictEqual(
+        yield* landed(owner.user, yield* role("member")),
+        "Dana Reyes is now a member"
+      );
+      // The receipt is shown once; a refusal leaves none and keeps its own notice.
+      const again = yield* send("/company", { headers: { cookie: cookie(owner.user) } });
+      assert.notInclude(main(yield* Effect.promise(() => again.text())), "app-receipt");
+      const refused = yield* invite("one@example.com");
+      assert.strictEqual(refused.status, 409);
+      assert.isUndefined(
+        refused.headers.getSetCookie().find((line) => line.includes("patchy_receipt="))
+      );
+    })
+  );
+
+  it.effect("folds the invite form into the toolbar, open from ?invite=1 or after a refusal", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("company-invite-form");
+      const member = yield* addUser(owner, "member");
+      const html = Effect.fn(function* (response: Response) {
+        return main(yield* Effect.promise(() => response.text()));
+      });
+      const read = (viewer: Users.User, path: string) =>
+        send(path, { headers: { cookie: cookie(viewer) } }).pipe(Effect.flatMap(html));
+      const closed = yield* read(owner.user, "/company");
+      assert.include(closed, '<h1 class="page-heading">People</h1>');
+      assert.include(closed, "2 people · 1 admin");
+      assert.include(
+        closed,
+        '<details class="company-invite"><summary class="btn btn-primary">Invite people</summary>'
+      );
+      assert.include(closed, '<label class="field-label" for="invite-email">Emails</label>');
+      assert.include(closed, '<label class="field-label" for="invite-role">Role</label>');
+      assert.include(closed, "Up to 50 at once. Invites expire after 30 days.");
+      // Everyone listed has joined, so the column holds their dates.
+      assert.include(closed, '<th scope="col">Joined</th>');
+      assert.include(
+        yield* read(owner.user, "/company?invite=1"),
+        '<details class="company-invite" open>'
+      );
+      const refused = yield* html(
+        yield* send("/company/invites", post(owner.user, { email: "nope", role: "member" }))
+      );
+      assert.include(refused, '<details class="company-invite" open>');
+      assert.include(refused, 'aria-invalid="true" autofocus');
+      const asMember = yield* read(member, "/company?invite=1");
+      assert.notInclude(asMember, "<details");
+      assert.notInclude(asMember, "Invite people");
+
+      // An invite row says when it went out and when it lapses; the column is a status again.
+      yield* TestClock.setTime(Date.parse("2026-10-12T09:00:00Z"));
+      redirected(
+        yield* send(
+          "/company/invites",
+          post(owner.user, { email: "waiting-row@example.com", role: "member" })
+        )
+      );
+      yield* TestClock.adjust("2 days");
+      const listed = yield* read(owner.user, "/company");
+      assert.include(
+        listed,
+        'Invited <time datetime="2026-10-12T09:00:00.000Z">2 days ago</time> · expires <time datetime="2026-11-11T09:00:00.000Z">11 Nov 2026</time>'
+      );
+      assert.include(listed, '<th scope="col">Status</th>');
+      assert.include(
+        yield* read(owner.user, "/company?show=admins"),
+        '<th scope="col">Joined</th>'
+      );
+    })
   );
 
   it.effect("checks Origin on all company actions even with an administrator's valid session", () =>
