@@ -3269,7 +3269,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           payload: publishRequest({ html: html("Agent tools"), server, manifest })
         });
         assert.deepStrictEqual(created.warnings, [
-          `Agent access is off at ${uploader.company.name}, so no agent can use these agent tools yet. An admin turns it on at https://patchy.example/company.`,
+          `Agent access is off at ${uploader.company.name}, so no agent can use these agent tools yet. An admin turns it on at https://patchy.example/company/agent-access.`,
           undescribed
         ]);
         yield* companies.setAgentAccess({

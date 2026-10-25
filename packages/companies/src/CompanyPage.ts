@@ -195,7 +195,11 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
   let control: string;
   if (viewer.role === "admin") {
     const next = access.on ? "off" : "on";
-    control = `<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
+    // What the button does, before it is pressed: turning off refuses every agent but keeps connections.
+    const effect = access.on
+      ? `<p class="supporting-text">Turning it off refuses every agent at ${company} until it’s back on. Nobody’s connection ends.</p>`
+      : "";
+    control = `${effect}<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
   } else {
     const admins = (yield* (yield* Users.Users).list(viewer.company.id))
       .filter((user) => user.role === "admin" && user.deactivatedAt === null)
@@ -526,7 +530,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           message: lines.filter(Boolean).join(" "),
           status: failed.length ? 503 : unsent.length ? 502 : 409
         },
-        draft: failed.length ? { text: failed.join("\n"), role } : undefined
+        // The form stays open with the chosen role; only addresses that can be sent again stay in it.
+        draft: { text: failed.join("\n"), role }
       });
     }
     if (act.kind === "revoke") {

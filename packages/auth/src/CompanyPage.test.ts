@@ -476,6 +476,10 @@ it.layer(services)("company page and actions", (it) => {
       assert.include(html, "Invited first@example.com and second@example.com.");
       assert.include(html, `${member.email} is already in`);
       assert.include(html, "waiting@example.com already has an invite.");
+      // The form stays open with the chosen role, and keeps nothing that was sent or can't be.
+      assert.include(html, '<details class="company-invite" open>');
+      assert.include(html, '<option value="admin" selected>Admin</option>');
+      assert.match(html, /<textarea\b[^>]*id="invite-email"[^>]*><\/textarea>/);
       const invites = yield* companies.listInvites(owner.company.id);
       assert.deepStrictEqual(
         invites
@@ -777,7 +781,11 @@ it.layer(services)("company page and actions", (it) => {
           on,
           "Anyone at Brightline Studio can connect their own agent to use patches’ agent tools as themselves."
         );
-        assert.include(on, button("off"));
+        // Before Turn off, what it does: every agent refused, no connection ended.
+        assert.include(
+          on,
+          `<p class="supporting-text">Turning it off refuses every agent at Brightline Studio until it’s back on. Nobody’s connection ends.</p>${button("off")}`
+        );
         const onForMember = yield* page(member);
         assert.include(onForMember, '<span class="pill pill-done">On</span>');
         assert.include(onForMember, stamp);
