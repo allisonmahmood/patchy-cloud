@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Patchy · Try sharing one patch</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #fffdf4;
+        --white: #fffefa;
+        --ink: #12110f;
+        --muted: #69645a;
+        --line: #ddd9cf;
+        --blue: #1263e6;
+        --green: #2f6a17;
+        --danger: #963c22;
+        font:
+          15px/1.55 system-ui,
+          sans-serif;
+        color: var(--ink);
+        background: var(--paper);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: clamp(1.8rem, 4vw, 2.6rem);
+        line-height: 1.15;
+        letter-spacing: -0.04em;
+      }
+      h2 {
+        font-size: 1.2rem;
+        letter-spacing: -0.02em;
+      }
+      h3 {
+        font-size: 1rem;
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      small {
+        font-size: 0.85rem;
+      }
+      main {
+        max-width: 1180px;
+        margin: auto;
+        padding: 32px 24px 60px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 36px;
+        font-weight: 800;
+      }
+      .mark {
+        width: 26px;
+        height: 26px;
+        border: 2px solid var(--ink);
+        border-radius: 6px;
+        background: #64c83f;
+        box-shadow: 3px 3px var(--ink);
+        transform: rotate(-5deg);
+      }
+      .tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font-size: 0.75rem;
+        font-weight: 650;
+      }
+      .intro {
+        max-width: 760px;
+        display: grid;
+        gap: 14px;
+        margin-bottom: 24px;
+      }
+      .state {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        padding: 18px 22px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--white);
+      }
+      .state small {
+        display: block;
+      }
+      .columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+        margin-top: 22px;
+        align-items: start;
+      }
+      .card {
+        border: 1.5px solid var(--ink);
+        border-radius: 10px;
+        background: var(--white);
+        overflow: hidden;
+      }
+      .card-head {
+        padding: 20px 22px;
+        border-bottom: 1px solid var(--line);
+        background: #eaf5ff;
+      }
+      .card-body {
+        padding: 22px;
+        display: grid;
+        gap: 22px;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        font-weight: 750;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .btn {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 44px;
+        padding: 8px 14px;
+        border: 1.5px solid var(--ink);
+        border-radius: 7px;
+        background: var(--white);
+        font-weight: 650;
+        font-size: 0.9rem;
+        color: var(--ink);
+        text-decoration: none;
+      }
+      .btn:hover:not(:disabled) {
+        box-shadow: 2px 2px var(--ink);
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .primary {
+        background: var(--blue);
+        color: white;
+      }
+      .quiet {
+        background: transparent;
+        border-color: var(--line);
+      }
+      .danger {
+        color: var(--danger);
+      }
+      label {
+        font-size: 0.9rem;
+        font-weight: 650;
+      }
+      input,
+      select {
+        width: 100%;
+        min-height: 44px;
+        padding: 8px 11px;
+        border: 1px solid #a6a198;
+        border-radius: 6px;
+        background: white;
+        color: var(--ink);
+      }
+      .person {
+        padding: 14px 0;
+        border-top: 1px solid var(--line);
+      }
+      .person strong,
+      .person small {
+        display: block;
+        overflow-wrap: anywhere;
+      }
+      .pill {
+        color: var(--green);
+        background: #eff9e8;
+        border-radius: 20px;
+        padding: 3px 9px;
+        font-size: 0.75rem;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .pill.off {
+        color: var(--muted);
+        background: #f0eee8;
+      }
+      .notice {
+        padding: 14px 16px;
+        border-left: 4px solid var(--blue);
+        border-radius: 4px;
+        background: #eaf5ff;
+        font-size: 0.9rem;
+      }
+      .notice.ok {
+        border-color: var(--green);
+        background: #eff9e8;
+      }
+      .notice.refused {
+        border-color: var(--danger);
+        background: #fff7e4;
+      }
+      .address {
+        overflow-wrap: anywhere;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .patch {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 22px;
+        background: var(--paper);
+      }
+      .patch h2 {
+        font-size: 1.5rem;
+        margin: 8px 0 14px;
+      }
+      .patch ul {
+        padding-left: 20px;
+        margin-bottom: 0;
+      }
+      .empty {
+        border: 1px dashed #b9b4a9;
+        border-radius: 6px;
+        padding: 22px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .walkthrough {
+        margin-top: 30px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 16px 0;
+      }
+      .tabs button {
+        border: 0;
+        border-radius: 5px;
+        padding: 10px 12px;
+        background: transparent;
+        color: var(--muted);
+      }
+      .tabs button[aria-pressed="true"] {
+        color: var(--blue);
+        background: #eaf5ff;
+        font-weight: 700;
+      }
+      .steps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .steps .done {
+        background: #eff9e8;
+      }
+      .log {
+        display: grid;
+        gap: 0;
+        padding: 0;
+        margin: 14px 0 0;
+        list-style: none;
+      }
+      .log li {
+        border-top: 1px solid var(--line);
+        padding: 10px 0;
+        font-size: 0.85rem;
+      }
+      .log span {
+        font-weight: 750;
+        color: var(--green);
+      }
+      .log span.no {
+        color: var(--danger);
+      }
+      details {
+        margin-top: 24px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 650;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 7px 18px;
+        font-size: 0.88rem;
+      }
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      footer {
+        margin-top: 30px;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 24px 16px 40px;
+        }
+        .columns {
+          grid-template-columns: 1fr;
+        }
+        .state {
+          grid-template-columns: 1fr 1fr;
+        }
+        .card-head,
+        .card-body,
+        .walkthrough {
+          padding: 18px;
+        }
+        .row {
+          flex-wrap: wrap;
+        }
+        dl {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+        dd {
+          margin-bottom: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span> Patchy
+        <span class="tag">Sharing prototype</span>
+      </div>
+      <header class="intro">
+        <h1>One patch. Someone outside.</h1>
+        <p>
+          Can a named invitation give someone one patch, without bringing them into your company?
+          Try sharing Brightline’s project brief, then switch to the recipient and open it.
+        </p>
+        <p class="muted">
+          A throwaway model of a static page: sign-in, email and access checks are simulated in this
+          file. Nothing is sent or saved. This does not implement secure sharing.
+        </p>
+      </header>
+      <section class="state" aria-label="Current sharing state" id="state"></section>
+      <div class="columns">
+        <section class="card" aria-labelledby="owner-title">
+          <header class="card-head">
+            <div class="eyebrow">Owner’s browser · Ada at Brightline</div>
+            <h2 id="owner-title">Share project-brief</h2>
+          </header>
+          <div class="card-body">
+            <div class="stack">
+              <strong>Who can open this patch</strong>
+              <p class="muted">Everyone at Brightline, plus the people you invite below.</p>
+              <p class="address">cloud.patchyhq.com/brightline/project-brief</p>
+            </div>
+            <form id="invite-form" class="stack">
+              <label for="email">Invite someone outside Brightline</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                value="mia@example.com"
+                required
+                autocomplete="off"
+                list="contacts"
+                aria-describedby="share-hint"
+              />
+              <datalist id="contacts">
+                <option value="mia@example.com"></option>
+                <option value="jordan@northstar.example"></option>
+              </datalist>
+              <p id="share-hint">
+                <small
+                  >They can read everything on this page. No company membership, editing, or access
+                  to other tools.</small
+                >
+              </p>
+              <div><button class="btn primary" type="submit">Create invitation</button></div>
+            </form>
+            <div id="owner-notice" aria-live="polite"></div>
+            <div>
+              <h3>External access</h3>
+              <div id="grants"></div>
+            </div>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="recipient-title">
+          <header class="card-head">
+            <div class="eyebrow">Recipient’s browser</div>
+            <h2 id="recipient-title">Open what was shared</h2>
+          </header>
+          <div class="card-body">
+            <div class="stack">
+              <label for="person">Try as</label
+              ><select id="person"></select>
+              <div class="actions">
+                <button class="btn" id="sign-in">Sign in as this person</button
+                ><button class="btn quiet" id="sign-out">Sign out</button>
+              </div>
+              <p id="identity" class="muted"></p>
+            </div>
+            <div class="stack">
+              <label for="invitation">Invitation link</label
+              ><select id="invitation"></select>
+              <p class="muted">
+                <small
+                  >Choose any invitation to try forwarding its link to a different person.</small
+                >
+              </p>
+              <div><button class="btn primary" id="accept">Open invitation</button></div>
+            </div>
+            <div id="recipient-notice" aria-live="polite"></div>
+            <div id="document"></div>
+            <div class="stack">
+              <h3>Try another address</h3>
+              <div class="actions">
+                <button class="btn quiet" data-probe="patch">Shared patch</button
+                ><button class="btn quiet" data-probe="other">Private forecast</button
+                ><button class="btn quiet" data-probe="portal">Brightline portal</button
+                ><button class="btn quiet" data-probe="directory">Member directory</button
+                ><button class="btn quiet" data-probe="resources">Company resources</button
+                ><button class="btn quiet" data-probe="public">Public page</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <section class="walkthrough" aria-labelledby="walkthrough-title">
+        <div class="row">
+          <h2 id="walkthrough-title">Walk through an awkward case</h2>
+          <button class="btn quiet" id="reset">Reset everything</button>
+        </div>
+        <div class="tabs" aria-label="Walkthroughs" id="tabs"></div>
+        <p id="scenario-description" class="muted"></p>
+        <div id="steps" class="steps"></div>
+      </section>
+      <details open>
+        <summary>What the model knows</summary>
+        <div id="model"></div>
+        <h3>Recent access decisions</h3>
+        <ol class="log" id="log"></ol>
+      </details>
+      <footer>
+        Only a static patch is explored here. Dynamic tables, files, read versus write permissions,
+        customer-specific data views, company connections and shared dependencies remain undecided.
+        Removing an open page cannot retract content someone already saw or copied.
+      </footer>
+    </main>
+    <!-- Portable state model. No DOM, storage, network, or real authentication. -->
+    <script>
+      const Sharing = (() => {
+        const people = [
+          {
+            id: "mia",
+            name: "Mia Chen",
+            email: "mia@example.com",
+            company: null,
+            registered: false
+          },
+          {
+            id: "jordan",
+            name: "Jordan Lee",
+            email: "jordan@northstar.example",
+            company: "Northstar",
+            registered: true
+          },
+          {
+            id: "taylor",
+            name: "Taylor Reed",
+            email: "taylor@example.com",
+            company: null,
+            registered: true
+          }
+        ];
+        const initial = () => ({
+          people: structuredClone(people),
+          grants: [],
+          viewer: null,
+          document: null,
+          nextId: 1,
+          decisions: [],
+          ownerNotice: "",
+          recipientNotice: "",
+          refused: false
+        });
+        const record = (state, allowed, message) => {
+          state.decisions.unshift({ allowed, message });
+          state.decisions = state.decisions.slice(0, 10);
+          return state;
+        };
+        const decide = (state, target) => {
+          if (target === "public")
+            return { allowed: true, reason: "The public page needs no invitation or sign-in." };
+          if (!state.viewer)
+            return {
+              allowed: false,
+              reason: "Sign in first. An invitation link alone is not access."
+            };
+          if (target !== "patch")
+            return {
+              allowed: false,
+              reason: "No Brightline membership. This invitation grants only project-brief."
+            };
+          const grant = state.grants.find(
+            (g) => g.status === "active" && g.personId === state.viewer
+          );
+          return grant
+            ? {
+                allowed: true,
+                reason: "An active invitation grants this person project-brief only."
+              }
+            : { allowed: false, reason: "This person has no active access to project-brief." };
+        };
+        const reduce = (previous, action) => {
+          const state = structuredClone(previous);
+          if (action.type === "invite") {
+            const email = action.email.trim().toLowerCase();
+            if (state.grants.some((g) => g.email === email && g.status !== "revoked")) {
+              state.ownerNotice =
+                "That email already has an invitation or access. Revoke it to start again.";
+              return state;
+            }
+            let person = state.people.find((p) => p.email === email);
+            if (!person) {
+              person = {
+                id: `person-${state.nextId}`,
+                name: email.split("@")[0],
+                email,
+                company: null,
+                registered: false
+              };
+              state.people.push(person);
+            }
+            state.grants.push({
+              id: `invite-${state.nextId++}`,
+              email,
+              personId: null,
+              status: "pending"
+            });
+            state.ownerNotice = `Invitation ready for ${email}. In this demo, open it in the recipient’s browser on the right.`;
+            return record(
+              state,
+              true,
+              `Ada invited ${email} to project-brief. Company membership did not change.`
+            );
+          }
+          if (action.type === "sign-in") {
+            const person = state.people.find((p) => p.id === action.personId);
+            if (!person) return state;
+            const isNew = !person.registered;
+            person.registered = true;
+            state.viewer = person.id;
+            state.document = null;
+            state.recipientNotice = isNew
+              ? `${person.name} signed in for the first time. No company was created or joined.`
+              : `${person.name} signed in. ${person.company ? `Their company is still ${person.company}.` : "They have no company membership."}`;
+            state.refused = false;
+            return record(state, true, state.recipientNotice);
+          }
+          if (action.type === "sign-out") {
+            state.viewer = null;
+            state.document = null;
+            state.recipientNotice = "Signed out. The invitation is still bound to its recipient.";
+            state.refused = false;
+            return record(state, true, "Recipient signed out; the open document was removed.");
+          }
+          if (action.type === "accept") {
+            const grant = state.grants.find((g) => g.id === action.grantId);
+            const person = state.people.find((p) => p.id === state.viewer);
+            let refusal = null;
+            if (!person)
+              refusal = "Sign in to open this invitation. Its link alone grants nothing.";
+            else if (!grant || grant.status === "revoked")
+              refusal = "This invitation is unavailable. Ask the owner for a new invitation.";
+            else if (grant.status === "pending" && grant.email !== person.email)
+              refusal = `This invitation is for ${grant.email}. You are signed in as ${person.email}.`;
+            else if (grant.status === "active" && grant.personId !== person.id)
+              refusal =
+                "This invitation belongs to a different person. Forwarding it does not grant access.";
+            if (refusal) {
+              state.recipientNotice = refusal;
+              state.refused = true;
+              return record(state, false, refusal);
+            }
+            grant.status = "active";
+            grant.personId = person.id;
+            state.document = { kind: "patch", grantId: grant.id, personId: person.id };
+            state.recipientNotice = `You can open project-brief. ${person.company ? `You are still a member of ${person.company}.` : "You have not joined Brightline or created a company."}`;
+            state.refused = false;
+            return record(
+              state,
+              true,
+              `${person.name} opened project-brief with invitation ${grant.id}.`
+            );
+          }
+          if (action.type === "revoke") {
+            const grant = state.grants.find((g) => g.id === action.grantId);
+            if (!grant || grant.status === "revoked") return state;
+            grant.status = "revoked";
+            state.ownerNotice = `Access revoked for ${grant.email}. The invitation link no longer works.`;
+            if (state.document?.grantId === grant.id) {
+              state.document = null;
+              state.recipientNotice = "Your access was revoked. This open page has been closed.";
+              state.refused = true;
+            }
+            return record(
+              state,
+              true,
+              `Ada revoked ${grant.email}. Open document removed; subsequent opens are denied. Already copied content cannot be recalled.`
+            );
+          }
+          if (action.type === "probe") {
+            const decision = decide(state, action.target);
+            state.recipientNotice = decision.reason;
+            state.refused = !decision.allowed;
+            if (decision.allowed && action.target === "patch") {
+              const grant = state.grants.find(
+                (g) => g.status === "active" && g.personId === state.viewer
+              );
+              state.document = { kind: "patch", grantId: grant.id, personId: state.viewer };
+            }
+            if (decision.allowed && action.target === "public") state.document = { kind: "public" };
+            return record(state, decision.allowed, `${action.target}: ${decision.reason}`);
+          }
+          return state;
+        };
+        return { initial, reduce, decide };
+      })();
+    </script>
+    <!-- Throwaway demo shell. All identity and transport behavior below is simulated. -->
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const escape = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+        );
+      let state = Sharing.initial();
+      let selectedPerson = "mia";
+      let selectedInvitation = "";
+      let scenario = 0;
+      let step = 0;
+      const invite = (email) => ({ type: "invite", email });
+      const signIn = (personId) => ({ type: "sign-in", personId });
+      const accept = (grantId = "invite-1") => ({ type: "accept", grantId });
+      const revoke = (grantId = "invite-1") => ({ type: "revoke", grantId });
+      const probe = (target) => ({ type: "probe", target });
+      const scenarios = [
+        {
+          title: "Someone new",
+          description:
+            "Mia has never used Patchy. Watch her get one patch without the create-or-join step.",
+          steps: [
+            ["Invite Mia", invite("mia@example.com")],
+            ["Mia signs in", signIn("mia")],
+            ["Open the invitation", accept()],
+            ["Try Brightline’s portal", probe("portal")]
+          ]
+        },
+        {
+          title: "Another company",
+          description:
+            "Jordan already belongs to Northstar. Receiving a Brightline patch should not move Jordan between companies.",
+          steps: [
+            ["Invite Jordan", invite("jordan@northstar.example")],
+            ["Jordan signs in", signIn("jordan")],
+            ["Open the invitation", accept()],
+            ["Try another patch", probe("other")]
+          ]
+        },
+        {
+          title: "Forwarded link",
+          description:
+            "Mia forwards her invitation to Taylor. Knowing the link must not be enough to open the patch, before or after Mia accepts.",
+          steps: [
+            ["Invite Mia", invite("mia@example.com")],
+            ["Taylor signs in", signIn("taylor")],
+            ["Try Mia’s invitation", accept()],
+            ["Mia signs in", signIn("mia")],
+            ["Mia accepts", accept()],
+            ["Taylor signs in again", signIn("taylor")],
+            ["Try the accepted link", accept()]
+          ]
+        },
+        {
+          title: "Revoke an open page",
+          description:
+            "Mia already has the patch open. Removing access closes it in this model and refuses the old link, including after a fresh invitation is created.",
+          steps: [
+            ["Invite Mia", invite("mia@example.com")],
+            ["Mia signs in", signIn("mia")],
+            ["Open the patch", accept()],
+            ["Revoke Mia", revoke()],
+            ["Try opening again", probe("patch")],
+            ["Invite Mia again", invite("mia@example.com")],
+            ["Try the old invitation", accept()],
+            ["Accept the new one", accept("invite-2")]
+          ]
+        },
+        {
+          title: "Cancel before opening",
+          description:
+            "An owner can cancel a pending invitation. Signing in afterwards does not revive it. A public page remains public.",
+          steps: [
+            ["Invite Mia", invite("mia@example.com")],
+            ["Cancel the invitation", revoke()],
+            ["Mia signs in", signIn("mia")],
+            ["Try the cancelled link", accept()],
+            ["Open a public page", probe("public")]
+          ]
+        }
+      ];
+      const dispatch = (action) => {
+        const previousGrantCount = state.grants.length;
+        state = Sharing.reduce(state, action);
+        if (action.type === "invite" && state.grants.length > previousGrantCount) {
+          selectedInvitation = state.grants.at(-1)?.id ?? "";
+          selectedPerson =
+            state.people.find((p) => p.email === action.email.trim().toLowerCase())?.id ??
+            selectedPerson;
+        }
+        if (action.type === "sign-in") selectedPerson = action.personId;
+        if (action.type === "accept") selectedInvitation = action.grantId;
+        render();
+      };
+      const render = () => {
+        const person = state.people.find((p) => p.id === state.viewer);
+        const active = state.grants.filter((g) => g.status === "active").length;
+        const pending = state.grants.filter((g) => g.status === "pending").length;
+        $("state").innerHTML =
+          `<div><small>Patch</small><strong>project-brief · Static</strong></div><div><small>External access</small><strong>${active} active · ${pending} pending</strong></div><div><small>Recipient signed in</small><strong>${escape(person?.name ?? "Nobody")}</strong></div><div><small>Recipient’s company</small><strong>${escape(person?.company ?? "None")}</strong></div>`;
+        $("owner-notice").innerHTML = state.ownerNotice
+          ? `<div class="notice ok">${escape(state.ownerNotice)}</div>`
+          : "";
+        $("grants").innerHTML = state.grants.length
+          ? state.grants
+              .map(
+                (g) =>
+                  `<div class="person"><div class="row"><div><strong>${escape(g.email)}</strong><small>${g.status === "pending" ? "Invitation ready · not accepted" : g.status === "active" ? "Can read project-brief" : "Access ended"}</small></div><span class="pill ${g.status === "active" ? "" : "off"}">${escape(g.status)}</span></div>${g.status !== "revoked" ? `<div class="actions" style="margin-top:10px"><button class="btn quiet danger" data-revoke="${escape(g.id)}">${g.status === "pending" ? "Cancel invitation" : "Revoke access"}</button><button class="btn quiet" data-link="${escape(g.id)}">Try invitation</button></div>` : ""}</div>`
+              )
+              .join("")
+          : '<p class="muted" style="margin-top:10px">No outside people have access.</p>';
+        $("person").innerHTML = state.people
+          .map(
+            (p) =>
+              `<option value="${escape(p.id)}" ${p.id === selectedPerson ? "selected" : ""}>${escape(p.name)} · ${escape(p.company ?? (p.registered ? "No company" : "New to Patchy"))}</option>`
+          )
+          .join("");
+        $("identity").textContent = person
+          ? `Signed in: ${person.email} · ${person.company ?? "No company membership"}`
+          : "Signed out. Choose a person above to simulate sign-in.";
+        $("sign-out").disabled = !person;
+        $("invitation").innerHTML = state.grants.length
+          ? state.grants
+              .map(
+                (g) =>
+                  `<option value="${escape(g.id)}" ${g.id === selectedInvitation ? "selected" : ""}>${escape(g.email)} · ${escape(g.id)} · ${escape(g.status)}</option>`
+              )
+              .join("")
+          : '<option value="">Create an invitation first</option>';
+        $("accept").disabled = !state.grants.length;
+        $("recipient-notice").innerHTML = state.recipientNotice
+          ? `<div class="notice ${state.refused ? "refused" : "ok"}">${escape(state.recipientNotice)}</div>`
+          : "";
+        $("document").innerHTML =
+          state.document?.kind === "patch"
+            ? '<article class="patch"><div class="eyebrow">Brightline · Shared with you</div><h2>Project brief</h2><p>A short brief for our work together on the October launch.</p><ul><li>Kickoff: Monday, 10 am</li><li>First draft: Thursday</li><li>Contact: Ada, your project owner</li></ul><p style="margin-top:16px"><small>This is the entire static patch. Everyone admitted sees the same content.</small></p></article>'
+            : state.document?.kind === "public"
+              ? '<article class="patch"><div class="eyebrow">Public page</div><h2>Hello from Brightline</h2><p>Anyone can read this page. It grants no private access.</p></article>'
+              : '<div class="empty">No patch open in this browser.</div>';
+        $("tabs").innerHTML = scenarios
+          .map(
+            (s, i) =>
+              `<button data-scenario="${i}" aria-pressed="${i === scenario}">${escape(s.title)}</button>`
+          )
+          .join("");
+        $("scenario-description").textContent = scenarios[scenario].description;
+        $("steps").innerHTML =
+          scenarios[scenario].steps
+            .map(
+              ([label], i) =>
+                `<button class="btn ${i < step ? "done" : i === step ? "primary" : "quiet"}" data-step="${i}" ${i !== step ? "disabled" : ""}>${i < step ? "✓" : i + 1} ${escape(label)}</button>`
+            )
+            .join("") +
+          (step === scenarios[scenario].steps.length
+            ? '<span class="pill">Walkthrough complete · keep exploring above</span>'
+            : "");
+        $("model").innerHTML =
+          `<dl><dt>Owner</dt><dd>Ada · Brightline · may invite or revoke</dd><dt>Company audience</dt><dd>Brightline members retain their existing access</dd><dt>External permission</dt><dd>Read this static patch only · no publishing or resharing</dd><dt>Identity</dt><dd>${person ? escape(`${person.name} · ${person.id} · ${person.email}`) : "No authenticated recipient"}</dd><dt>Membership</dt><dd>${person?.company ? escape(person.company) : "None"} · unchanged by accepting a patch</dd><dt>Invitations</dt><dd>${state.grants.map((g) => escape(`${g.id}: ${g.email} → ${g.personId ?? "unclaimed"} (${g.status})`)).join("<br>") || "None"}</dd><dt>Open document</dt><dd>${state.document ? escape(state.document.kind === "patch" ? `${state.document.kind} · ${state.document.grantId} · ${state.document.personId}` : "Public page · no grant") : "None"}</dd></dl>`;
+        $("log").innerHTML = state.decisions.length
+          ? state.decisions
+              .map(
+                (d) =>
+                  `<li><span class="${d.allowed ? "" : "no"}">${d.allowed ? "ALLOWED" : "REFUSED"}</span> ${escape(d.message)}</li>`
+              )
+              .join("")
+          : '<li class="muted">Create an invitation, or start a walkthrough.</li>';
+      };
+      $("invite-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        dispatch(invite($("email").value));
+      });
+      $("person").addEventListener("change", (event) => {
+        selectedPerson = event.target.value;
+      });
+      $("invitation").addEventListener("change", (event) => {
+        selectedInvitation = event.target.value;
+      });
+      $("sign-in").addEventListener("click", () => dispatch(signIn(selectedPerson)));
+      $("sign-out").addEventListener("click", () => dispatch({ type: "sign-out" }));
+      $("accept").addEventListener("click", () =>
+        dispatch(accept(selectedInvitation || state.grants[0]?.id))
+      );
+      const reset = () => {
+        state = Sharing.initial();
+        selectedPerson = "mia";
+        selectedInvitation = "";
+        step = 0;
+        $("email").value = "mia@example.com";
+        render();
+      };
+      $("reset").addEventListener("click", reset);
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        if (button.dataset.revoke) dispatch(revoke(button.dataset.revoke));
+        if (button.dataset.link) {
+          selectedInvitation = button.dataset.link;
+          render();
+          $("invitation").focus();
+        }
+        if (button.dataset.probe) dispatch(probe(button.dataset.probe));
+        if (button.dataset.scenario !== undefined) {
+          scenario = Number(button.dataset.scenario);
+          reset();
+        }
+        if (button.dataset.step !== undefined && Number(button.dataset.step) === step) {
+          if (step === 0) reset();
+          const action = scenarios[scenario].steps[step][1];
+          step++;
+          dispatch(action);
+        }
+      });
+      render();
+    </script>
+  </body>
+</html>
