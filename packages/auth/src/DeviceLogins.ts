@@ -173,7 +173,7 @@ export class DeviceLogins extends Context.Service<
     /**
      * Not me, from the panel, by where the bound login actually is: a pending one is denied, a
      * confirmed one whose terminal hasn't collected its key is cancelled so no key is ever made,
-     * and one already minted is reported as connected, for the person to remove on Your machines.
+     * and one already minted is reported as connected, for the person to remove on Your agents.
      */
     readonly denyInline: (input: {
       readonly userCode: string;

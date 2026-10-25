@@ -72,6 +72,7 @@ test("patchy-login: browser confirmation logs the packed CLI in; browser revoke 
   });
   expect((await page.goto(`${live.origin}/machines`))?.status()).toBe(200);
   await page.getByRole("button", { name: `Revoke ${machineName}`, exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(`Revoked ${machineName}`);
   await expect(page.getByRole("heading", { name: machineName, exact: true })).toHaveCount(0);
   const revoked = await live.cli(["whoami", "--json"]);
   expect(revoked.status).toBe(2);

@@ -501,7 +501,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         "Do anything you can’t",
         "Every change it makes is logged as Patchy Dev via Agent.",
         "Your answer goes back to <strong>agent.example</strong>",
-        '<a href="/machines">Your machines</a>',
+        '<a href="/machines">Your agents</a>',
         "Use another account"
       ])
         assert.include(html, says);
