@@ -75,7 +75,7 @@ export interface Tokens {
   readonly expiresIn: number;
 }
 
-/** A live agent connection, as Your machines lists it. Times are ISO strings. */
+/** A live agent connection, as Your agents lists it. Times are ISO strings. */
 export interface Listed {
   readonly id: string;
   readonly clientName: string;
@@ -138,17 +138,18 @@ export class AgentConnections extends Context.Service<
     readonly refresh: (refreshToken: string) => Effect.Effect<Tokens, RefreshRefused | SqlError>;
     /** Drops every retry copy whose minute is up; the server runs it every few seconds. */
     readonly sweepRetries: Effect.Effect<void, SqlError>;
-    /** The person's live connections for Your machines, newest first. */
+    /** The person's live connections for Your agents, newest first. */
     readonly list: (userId: string) => Effect.Effect<ReadonlyArray<Listed>, SqlError>;
     /**
-     * Your machines' Disconnect: ends one of the person's own connections, so its next call and
-     * refresh are refused. Nobody ends another person's, an admin included. Disconnecting one
-     * that has already ended keeps when it first ended.
+     * Your agents' Disconnect: ends one of the person's own connections, so its next call and
+     * refresh are refused, and answers its client's name for the receipt. Nobody ends another
+     * person's, an admin included. Disconnecting one that has already ended keeps when it first
+     * ended.
      */
     readonly disconnect: (input: {
       readonly id: string;
       readonly userId: string;
-    }) => Effect.Effect<void, AgentConnectionNotFound | SqlError>;
+    }) => Effect.Effect<{ readonly clientName: string }, AgentConnectionNotFound | SqlError>;
   }
 >()("@patchy/auth/AgentConnections") {}
 
@@ -436,14 +437,21 @@ export const make = Effect.gen(function* () {
 
   // The UPDATE takes the connection's row, so a refresh rotating it finishes first, or waits and
   // then finds it ended.
+  const endOwned = SqlSchema.findOneOption({
+    Request: Schema.Struct({ id: Schema.String, userId: Schema.String }),
+    Result: Schema.Struct({ clientName: Schema.String }),
+    execute: ({ id, userId }) => sql`
+      UPDATE agent_connections SET revoked_at = COALESCE(revoked_at, clock_timestamp())
+      WHERE id = ${id} AND user_id = ${userId} RETURNING client_name AS "clientName"`
+  });
+
   const disconnect = Effect.fn("AgentConnections.disconnect")(function* (input: {
     readonly id: string;
     readonly userId: string;
   }) {
-    const rows = yield* sql`
-      UPDATE agent_connections SET revoked_at = COALESCE(revoked_at, clock_timestamp())
-      WHERE id = ${input.id} AND user_id = ${input.userId} RETURNING id`;
-    if (rows.length === 0) return yield* new AgentConnectionNotFound({ id: input.id });
+    const ended = yield* endOwned(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+    if (Option.isNone(ended)) return yield* new AgentConnectionNotFound({ id: input.id });
+    return ended.value;
   });
 
   return AgentConnections.of({
