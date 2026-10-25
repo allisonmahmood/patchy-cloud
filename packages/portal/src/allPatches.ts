@@ -147,29 +147,43 @@ export const patchAddress = (patch: Patches.Patch) =>
  * The ways to open a patch, then its card, as a row's menu starts on Home and All patches. Its
  * name already opens a live patch, so the menu offers a new tab, the link and About this patch.
  */
-export const openItems = (patch: Patches.Patch, publicBaseUrl: string) => [
-  ...(patch.state === "live"
-    ? [
-        `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener">Open in a new tab</a>`,
-        menuCopy(`${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`, "Copy link")
-      ]
-    : []),
-  menuLink(cardPath(patch), "About this patch")
-];
+export const openItems = (patch: Patches.Patch, publicBaseUrl: string) => {
+  const title = patchTitle(patch);
+  return [
+    ...(patch.state === "live"
+      ? [
+          `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`,
+          menuCopy(
+            `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,
+            "Copy link",
+            title
+          )
+        ]
+      : []),
+    menuLink(cardPath(patch), "About this patch", false, title)
+  ];
+};
 
 /** Every act on a patch the viewer may perform, each going to the route that already does it. */
 const actions = (row: Patches.ReadPatch, viewer: Viewer, publicBaseUrl: string, now: number) => {
   const { patch } = row;
   const items = openItems(patch, publicBaseUrl);
   if (!manages(row, viewer)) return rowMenu(patch.id, patchTitle(patch), items);
+  const title = patchTitle(patch);
   const manage = [
-    menuLink(cardPath(patch, "settings"), "Settings"),
-    ...(viewer.role === "admin" ? [menuLink(cardPath(patch, "reassign"), "Reassign…")] : []),
-    ...(patch.state === "live" ? [menuLink(cardPath(patch, "retire"), "Retire…", true)] : []),
-    ...(patch.state !== "live" && recoverable(patch, now)
-      ? [menuPost(cardPath(patch, "restore"), "Restore", restoreForm(patch))]
+    menuLink(cardPath(patch, "settings"), "Settings", false, title),
+    ...(viewer.role === "admin"
+      ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
       : []),
-    ...(patch.state !== "deleted" ? [menuLink(cardPath(patch, "delete"), "Delete…", true)] : [])
+    ...(patch.state === "live"
+      ? [menuLink(cardPath(patch, "retire"), "Retire…", true, title)]
+      : []),
+    ...(patch.state !== "live" && recoverable(patch, now)
+      ? [menuPost(cardPath(patch, "restore"), "Restore", restoreForm(patch), false, title)]
+      : []),
+    ...(patch.state !== "deleted"
+      ? [menuLink(cardPath(patch, "delete"), "Delete…", true, title)]
+      : [])
   ];
   return rowMenu(patch.id, patchTitle(patch), [...items, '<hr class="menu-rule">', ...manage]);
 };
@@ -270,7 +284,7 @@ export const renderAllPatches = (input: {
     if (failed === undefined) return '<td><span class="supporting-text">—</span></td>';
     return failed === 0
       ? "<td></td>"
-      : `<td><a href="${escapeAttribute(failedLog(row.patch))}">${escapeHtml(failed)} failed today</a></td>`;
+      : `<td><a href="${escapeAttribute(failedLog(row.patch))}">${escapeHtml(failed)} failed in the last day</a></td>`;
   };
   const columns =
     show === "attention"

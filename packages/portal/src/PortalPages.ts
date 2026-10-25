@@ -765,16 +765,19 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       }
       case "scope": {
         const fields = yield* decodeScope(form);
-        // Going public asks first, but only for a save that would apply; one setScope would
-        // refuse (stale, off or tier 2) is refused as before. The answer re-runs every check.
-        if (
-          fields.scope === "public" &&
-          form.confirm !== "public" &&
-          fields.expectedScope !== "public" &&
-          selected.patch.scope === fields.expectedScope &&
-          selected.patch.state === "live" &&
-          selected.tier < 2
-        )
+        // Going public asks first, and only the answer applies it, re-running every check. An
+        // unasked save to public never reaches setScope: what the snapshot says setScope would
+        // refuse is refused from the snapshot, so a change between this read and setScope's lock
+        // can't make it apply unasked.
+        if (fields.scope === "public" && form.confirm !== "public") {
+          if (selected.patch.scope !== fields.expectedScope)
+            return yield* new Patches.StaleAction({ patchId: selected.patch.id });
+          if (selected.patch.state !== "live")
+            return yield* new Patches.WrongState({ state: selected.patch.state });
+          if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
+          // Already public: nothing to change, so nothing to ask.
+          if (fields.expectedScope === "public")
+            return landed(`${title} is open to anyone on the internet`);
           return pageResponse(
             {
               title: `Make ${title} public?`,
@@ -785,6 +788,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
             },
             session
           );
+        }
         yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
         return landed(
           `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`

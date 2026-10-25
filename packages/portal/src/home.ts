@@ -201,7 +201,7 @@ export const renderHome = (input: HomeInput): string => {
     ? `<section class="note note-warn" role="status"><span class="note-title">${failing.length === 1 ? "One of your tools is failing" : "Some of your tools are failing"}</span><ul class="list list-compact">${failing
         .map(
           ({ row, failed }) =>
-            `<li class="list-row"><a href="${escapeAttribute(failedLog(row.patch))}">${escapeHtml(patchTitle(row.patch))}</a>: ${plural(failed, "call", "calls")} failed in the last day</li>`
+            `<li class="list-row"><a href="${escapeAttribute(patchAddress(row.patch))}">${escapeHtml(patchTitle(row.patch))}</a>: <a href="${escapeAttribute(failedLog(row.patch))}">${plural(failed, "call", "calls")} failed in the last day</a></li>`
         )
         .join("")}</ul></section>`
     : "";

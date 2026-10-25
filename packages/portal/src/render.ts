@@ -9,6 +9,7 @@ import {
   escapeAttribute,
   escapeHtml,
   patchMark,
+  patchTitle,
   renderOffPatch,
   sentenceList
 } from "@patchy/core";
@@ -53,12 +54,8 @@ export const firstClause = (description: string): string => {
   return points.length > 80 ? `${points.slice(0, 79).join("").trimEnd()}…` : clause;
 };
 
-/**
- * What lists, tiles, search results, menus and the card's heading call a patch: its title, else
- * its name. Addresses, and anything typed to confirm, use the name.
- */
-export const patchTitle = (patch: Pick<Patches.Patch, "name" | "title">): string =>
-  patch.title.trim() || patch.name;
+/** What lists, tiles, search results, menus and headings call a patch: core's `patchTitle`. */
+export { patchTitle };
 
 const cardPath = (patch: Patches.Patch, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
@@ -467,5 +464,6 @@ export const renderConfirmation = (input: {
     }
   }
 
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  const title = escapeHtml(patchTitle(patch));
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };

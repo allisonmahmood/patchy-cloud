@@ -2697,6 +2697,16 @@ it.layer(layer)("all patches on a socket", (it) => {
         menus.get(workspace.admin),
         `${opening} Settings Reassign… Retire… Delete…`
       );
+      // Each item says whose it is, its visible label first.
+      const named = yield* (yield* request("/patches", workspace.admin)).text;
+      for (const label of [
+        "Open in a new tab",
+        "Copy link",
+        "About this patch",
+        "Settings",
+        "Delete…"
+      ])
+        assert.include(named, `aria-label="${label}, office-map"`);
       const html = yield* (yield* request("/patches", workspace.admin)).text;
       assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
       assert.include(html, `<a href="/${workspace.handle}/office-map"><strong>office-map</strong>`);
@@ -2821,6 +2831,12 @@ it.layer(layer)("patch health on a socket", (it) => {
       assert.isTrue(
         links(home).some((link) => link.href === "/patches/client-health/log?outcome=failed")
       );
+      // The tool's title opens the tool, as everywhere on Home; the count opens its failures.
+      assert.isTrue(
+        links(home).some(
+          (link) => link.href.endsWith("/client-health") && link.text === "client-health"
+        )
+      );
       for (const person of [workspace.member, workspace.admin])
         assert.notInclude(text(yield* (yield* request("/", person)).text), "is failing");
 
@@ -2837,7 +2853,7 @@ it.layer(layer)("patch health on a socket", (it) => {
         assert.include(text(all), "Health");
         assert.strictEqual(
           health(all, failing.name),
-          `<a href="/patches/client-health/log?outcome=failed">3 failed today</a>`
+          `<a href="/patches/client-health/log?outcome=failed">3 failed in the last day</a>`
         );
         assert.strictEqual(health(all, fine.name), "");
         assert.strictEqual(health(all, page.name), '<span class="supporting-text">—</span>');
