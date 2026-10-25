@@ -250,7 +250,7 @@ still overridden; `whoami` verifies which credential the chain selects.
 
 Logout forgets the stored key and pending login first, then courtesy-revokes
 only the deleted key. An already-invalid 401 counts as revoked. Failure is exit
-0 with a warning to revoke the key on **Your machines** or let its 30-idle-day
+0 with a warning to revoke the key on **Your agents** or let its 30-idle-day
 expiry pass. `revoked` is false when there was no stored key or revocation failed.
 Logout warns about an environment key or worktree seed without revoking either.
 It does not sign the browser out. These device and browser boundaries are
