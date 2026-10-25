@@ -182,7 +182,7 @@ way back. A PR that adds a journey people rely on adds its entry here.
   door returns.
 - **Log a machine in.** `team`, Ada. `patchy login` prints a URL and a code;
   Ada confirms the code in the browser, and `patchy whoami` then names the
-  machine. Back: `patchy logout`, or revoke it on Your machines.
+  machine. Back: `patchy logout`, or revoke it on Your agents.
 - **Publish a page.** `team`, Ada and Ben. Ada's CLI publishes an HTML file;
   Ben opens it at its address and on Home. Back: `patchy retire` or
   `delete --yes` takes it off its address, and `restore` brings it back there.
