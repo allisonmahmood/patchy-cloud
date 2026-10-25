@@ -1,3 +1,4 @@
+import { avatar, searchField } from "./components.js";
 import { changesSince, type ChangeKind, latestRelease, tally } from "./whatsNew.js";
 
 /** Shared component subset for first-party pages and the served document's state notices. */
@@ -280,20 +281,41 @@ export const shellStyles = `
     }
 `;
 
+/**
+ * The sidebar's places, in order. Every role sees the same map: what a member can't change is
+ * read-only on its page, never missing here. The second group's label names the scope its places
+ * share; the company's name rides on the brand above.
+ */
+const places = [
+  {
+    label: undefined,
+    items: [
+      { href: "/", label: "Home", section: "home" },
+      { href: "/patches", label: "All patches", section: "patches" },
+      { href: "/machines", label: "Your agents", section: "agents" }
+    ]
+  },
+  {
+    label: "Company",
+    items: [
+      { href: "/company", label: "People", section: "people" },
+      { href: "/company/connections", label: "Integrations", section: "integrations" },
+      { href: "/company/agent-access", label: "Agent access", section: "agent-access" }
+    ]
+  }
+] as const;
+
 export interface AppShell {
   readonly viewer: {
-    readonly user: { readonly name: string };
+    readonly user: { readonly name: string; readonly email: string };
     readonly company: { readonly name: string };
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
   };
+  /** The place the page belongs to; `whats-new` is reached from its own button, so no place is lit there. */
+  readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new";
   /**
-   * `home` is reached from the brand and `whats-new` from the bell, not a section link, so on
-   * those no link is current.
-   */
-  readonly section: "home" | "patches" | "company" | "connections" | "machines" | "whats-new";
-  /**
-   * A modal panel over the page, such as Home's Final step: the app card behind it goes inert
+   * A modal panel over the page, such as Home’s Final step: the frame behind it goes inert
    * and blurs, and the panel carries its own role, label and ways out.
    */
   readonly overlay?: string;
@@ -306,11 +328,11 @@ export const whatsNewKind = (kind: ChangeKind): string =>
 const plural = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
 
 /**
- * The bell beside the viewer's name opens a panel of what shipped since their last visit, or
- * the latest few once they are caught up. Opening it clears the dot through `/whats-new/seen`;
- * the page loads that script only while there is a dot to clear.
+ * What's new, at the foot of the sidebar, opens a panel of what shipped since the viewer's last
+ * visit, or the latest few once they are caught up. Opening it clears the dot through
+ * `/whats-new/seen`; the page loads that script only while there is a dot to clear.
  */
-function whatsNewBell(seen: number): string {
+function whatsNewButton(seen: number, current: boolean): string {
   const unseen = changesSince(seen);
   const shown = unseen.length > 0 ? unseen.slice(0, 6) : changesSince(0).slice(0, 3);
   const label =
@@ -326,13 +348,43 @@ function whatsNewBell(seen: number): string {
     unseen.length > shown.length
       ? `<p class="supporting-text">and ${unseen.length - shown.length} more</p>`
       : "";
-  return `<button type="button" class="btn btn-quiet whats-new-bell" popovertarget="whats-new" aria-label="${label}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" stroke-linejoin="round"/><path d="M10 21h4" stroke-linecap="round"/></svg>${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="whats-new-panel" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><h2 class="section-heading" id="whats-new-heading">What’s new</h2><p class="supporting-text">${summary}</p>${list}${more}<a class="btn btn-primary" href="/whats-new">See all changes</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
+  return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="whats-new-panel" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><h2 class="section-heading" id="whats-new-heading">What’s new</h2><p class="supporting-text">${summary}</p>${list}${more}<a class="btn btn-primary" href="/whats-new">See all changes</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
+const chevron =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const menuIcon =
+  '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>';
+
+/** The signed-in person: their name opens a menu with who they are and Sign out. */
+function account(user: AppShell["viewer"]["user"]): string {
+  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${chevron}</button><div class="menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong><br>${escapeHtml(user.email)}</p><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button></form></div>`;
+}
+
+/**
+ * Every signed-in page's frame: a sidebar of `places` beside the page. On a phone the sidebar
+ * folds into a bar whose Menu button opens the same markup as a popover, so there is one nav and
+ * no script. A page's `overlay` sits over the whole frame, which goes inert behind it.
+ */
 function appBody(app: AppShell, body: string): string {
-  const link = (href: string, label: string, section: AppShell["section"]) =>
-    `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"${app.overlay === undefined ? "" : " inert"}><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  const place = (item: (typeof places)[number]["items"][number]) =>
+    `<a class="app-place" href="${item.href}"${item.section === app.section ? ' aria-current="page"' : ""}>${item.label}</a>`;
+  const nav = places
+    .map((group) =>
+      group.label === undefined
+        ? group.items.map(place).join("")
+        : `<div class="app-group" role="group" aria-labelledby="app-group-${group.label.toLowerCase()}"><p class="app-group-label" id="app-group-${group.label.toLowerCase()}">${group.label}</p>${group.items.map(place).join("")}</div>`
+    )
+    .join("");
+  const search = searchField({
+    action: "/",
+    id: "app-search",
+    query: "",
+    placeholder: "Search patches",
+    label: "Search patches",
+    className: "app-search"
+  });
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -607,7 +659,7 @@ export function htmlPage(options: {
       font-weight: 650;
     }
 
-    body:has(.auth-card, .app-card) { min-height: 100vh; display: flow-root; }
+    body:has(.auth-card, .app) { min-height: 100vh; display: flow-root; }
 
     .auth-card {
       width: min(520px, calc(100% - 32px));
@@ -683,7 +735,7 @@ export function htmlPage(options: {
     .list-tree { margin: 8px 0 12px 6px; padding-left: 16px; border-left: 1px solid var(--line-strong); }
     .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }
     .list-link:hover { background: var(--paper-blue); }
-    .list-link[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    .list-link[aria-current="page"] { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); }
     /* list-link-placeholder: a row standing in for something not made yet, such as the portal's "Your first patch". */
     .list-link-placeholder { border: 2px dashed var(--line-strong); }
     .list-link-placeholder:not([aria-current="page"]) { color: var(--muted); }
@@ -703,7 +755,7 @@ export function htmlPage(options: {
     .avatar-waiting { border-style: dashed; border-color: var(--line-strong); background: transparent; color: var(--muted); }
     .avatar-off { border-color: var(--line-strong); background: transparent; color: var(--muted); }
     /* agent-mark: an agent beside its name, as an avatar sits beside a person's: the guide's agent icon in an avatar's frame. */
-    .agent-mark { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-blue); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); }
+    .agent-mark { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-blue); color: var(--ink); }
     .agent-mark svg { width: 20px; height: 20px; }
     /* consent-strip: who meets whom when an agent asks to act as a person: the agent's mark, name and site, the
        consent-strip-ask, then the person's avatar, name and email, each in a consent-strip-party. */
@@ -721,7 +773,7 @@ export function htmlPage(options: {
     .can-list-no .list-row::before { content: "✕"; content: "✕" / ""; color: var(--danger); }
     /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
        mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
-    .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
+    .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
     .mono-blue { background: var(--tint-blue); }
     .mono-green { background: var(--tint-green); }
     .mono-amber { background: var(--tint-amber); }
@@ -734,8 +786,8 @@ export function htmlPage(options: {
        tile-row is the compact form for a longer shelf, with a line of what the patch does; tile-row-placeholder dashes
        one standing in for something to make. */
     .tile { position: relative; min-width: 0; }
-    .tile-link { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; height: 100%; padding: 16px 16px 14px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
-    .tile-link:hover { box-shadow: var(--shadow-hard); }
+    .tile-link { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; height: 100%; padding: 16px 16px 14px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); font-weight: 450; text-decoration: none; }
+    .tile-link:hover { border-color: var(--ink); background: var(--paper-blue); }
     .tile-link > :is(.mono, .page-mark) { margin-bottom: 10px; }
     /* A tile's mark is a size up from a row's, a page's sheet in the same footprint. */
     .tile-link > .mono { width: 44px; height: 44px; border-radius: 10px; font-size: .85rem; }
@@ -755,7 +807,7 @@ export function htmlPage(options: {
     .tile-row-plain { min-height: 0; padding: 8px; border-color: transparent; background: transparent; }
     .tile-row-plain .tile-text { white-space: normal; }
     /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
-    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); }
+    .side-panel { min-width: 0; padding: 18px 18px 8px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); }
     /* card-split: a patch's card with a side-panel to its right, such as what agents can do. On a narrow page the
        panel drops below the card. */
     .card-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px 28px; align-items: start; }
@@ -775,9 +827,9 @@ export function htmlPage(options: {
     .tag-new { border-color: var(--ink); background: var(--yellow); color: var(--ink); }
     /* tabs: links that narrow one list, the current one marked like the app nav, each label followed by its count. */
     .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
-    .tabs a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); font-size: .9rem; font-weight: 750; text-decoration: none; }
+    .tabs a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 12px; border: 0; border-radius: var(--field-radius); color: var(--ink); font-size: .9rem; font-weight: 750; text-decoration: none; }
     .tabs a:hover { background: var(--paper-blue); }
-    .tabs a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
+    .tabs a[aria-current="page"] { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); }
     .count { color: var(--muted); font-weight: 650; font-variant-numeric: tabular-nums; }
     .tabs a[aria-current="page"] .count { color: var(--ink); }
     /* btn-icon: a square button holding one icon, named by its aria-label. */
@@ -816,10 +868,10 @@ export function htmlPage(options: {
     .agent-preview-said { color: var(--green); }
     /* flow: boxes joined by arrows that say how something gets made. It stacks with down arrows where a row would crowd. */
     .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 30px; margin: 22px 0 0; padding: 0; list-style: none; }
-    .flow-node { position: relative; display: grid; align-content: start; justify-items: start; gap: 4px; padding: 12px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 3px 3px 0 var(--ink); color: var(--muted); font-size: .85rem; line-height: 1.35; }
+    .flow-node { position: relative; display: grid; align-content: start; justify-items: start; gap: 4px; padding: 12px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); color: var(--muted); font-size: .85rem; line-height: 1.35; }
     .flow-node strong { color: var(--ink); font-size: 1rem; line-height: 1.25; }
     .flow-node:not(:last-child)::after { content: "→"; position: absolute; top: 50%; right: -25px; color: var(--ink); font-size: 1.25rem; font-weight: 900; transform: translateY(-50%); }
-    .flow-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 4px; border: 2px solid var(--ink); border-radius: 10px; background: var(--white); box-shadow: 2px 2px 0 var(--ink); color: var(--ink); }
+    .flow-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 4px; border: 2px solid var(--ink); border-radius: 10px; background: var(--white); color: var(--ink); }
     .flow-icon svg { width: 22px; height: 22px; }
     .flow-icon-you { background: var(--yellow); transform: rotate(-4deg); }
     .flow-icon-agent { background: var(--paper-blue); transform: rotate(3deg); }
@@ -845,7 +897,7 @@ export function htmlPage(options: {
     .step-done, .step-current { color: var(--ink-soft); }
     .step-done .step-title, .step-current .step-title { color: var(--ink); }
     .step-title + p { margin: 0; }
-    .step-card { margin-top: 12px; padding: 18px 20px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow-hard); }
+    .step-card { margin-top: 12px; padding: 18px 20px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--paper); }
     .step-card > * { margin: 0; }
     .step-card > * + * { margin-top: 12px; }
     .step-card > * + .agent-preview { margin-top: 8px; }
@@ -853,7 +905,7 @@ export function htmlPage(options: {
     .step-card details p { margin: 6px 0 0; }
     /* modal-panel: a panel over an app page, which is inert and statically blurred behind it, never animated. It has
        no close button: its own actions are the ways out. On a phone it is a bottom sheet. */
-    .app-card[inert] { filter: blur(3px); user-select: none; }
+    .app[inert] { filter: blur(3px); user-select: none; }
     .modal-scrim { position: fixed; inset: 0; background: rgba(18, 17, 15, .32); }
     .modal-panel { position: fixed; top: 40px; left: 50%; width: min(640px, calc(100% - 32px)); max-height: calc(100dvh - 64px); overflow-y: auto; padding: 26px 28px 22px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: 6px 6px 0 var(--ink); transform: translateX(-50%); }
     .modal-panel .page-heading { margin-top: 0; }
@@ -874,23 +926,54 @@ export function htmlPage(options: {
     .facts dd { min-width: 0; margin: 0; }
     .confirmation-form { margin-top: 24px; }
     .confirmation-consequence { margin: 0 0 20px; }
-    .app-card { width: min(1180px, calc(100% - 32px)); margin: 32px auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); box-shadow: var(--shadow-hard); }
-    .app-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 14px 26px; border-bottom: 2px solid var(--ink); border-radius: var(--radius) var(--radius) 0 0; background: var(--white); }
-    .app-nav { display: flex; flex-wrap: wrap; gap: 4px; }
-    .app-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 12px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; font-size: .95rem; }
-    .app-nav a[aria-current="page"] { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
-    .app-who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
-    .app-page { min-width: 0; padding: 30px 34px 40px; overflow-wrap: anywhere; }
-    /* What's new: the bell, its panel, and a change the viewer has not seen yet. */
-    .whats-new-bell { position: relative; width: 44px; padding: 0; anchor-name: --whats-new; }
-    /* While its panel is open, the bell takes the nav's current-section look. */
-    .whats-new-bell:has(+ .whats-new-panel:popover-open) { border-color: var(--ink); background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
-    .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }
-    .whats-new-panel { position: fixed; inset: 76px 12px auto auto; width: min(400px, calc(100vw - 24px)); max-height: calc(100dvh - 96px); margin: 0; padding: 18px 20px 20px; overflow-y: auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); box-shadow: var(--shadow-hard); }
+    /* app: the signed-in frame, a sidebar of places beside the page. */
+    .app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+    .app-side { border-right: 1.5px solid var(--line-strong); background: var(--white); }
+    /* The sidebar's column runs the page's full height; its contents stay in view as the page scrolls. */
+    .app-side-inner { position: sticky; top: 0; display: flex; flex-direction: column; gap: 16px; height: 100vh; padding: 18px 14px 14px; overflow-y: auto; }
+    .app-side-inner > .brand { padding: 2px 8px; font-size: 1rem; overflow-wrap: anywhere; }
+    .app-side .glyph { width: 26px; height: 26px; }
+    .app-menu-button { display: none; }
+    /* app-menu: the search, places and foot. On a phone it is the Menu button's popover; wider, an author display
+       outranks the browser's rule hiding a closed popover, so the same markup shows in place. */
+    .app-menu { position: static; inset: auto; display: flex; flex: 1; flex-direction: column; gap: 16px; width: auto; height: auto; margin: 0; padding: 0; overflow: visible; border: 0; background: transparent; color: inherit; }
+    .app-search .field { min-height: 40px; }
+    .app-nav { display: grid; gap: 2px; }
+    /* app-place: one place in the sidebar, lit while the page belongs to it. The foot's buttons share its look. */
+    .app-place { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 6px 10px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink-soft); font: inherit; font-size: .92rem; font-weight: 650; text-align: left; text-decoration: none; cursor: pointer; }
+    .app-place:hover { background: var(--paper-blue); color: var(--ink); }
+    .app-place[aria-current="page"] { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); color: var(--ink); font-weight: 800; }
+    .app-group { display: grid; gap: 2px; margin-top: 14px; }
+    .app-group-label { margin: 0 10px 4px; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .app-foot { display: grid; gap: 2px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+    .app-account .avatar { width: 28px; height: 28px; border-width: 1.5px; border-radius: 50%; font-size: .66rem; }
+    .app-account-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .app-account-menu .menu-head strong { color: var(--ink); }
     @supports (position-area: bottom) {
-      .whats-new-panel { inset: auto; margin-top: 8px; position-anchor: --whats-new; position-area: bottom span-left; position-try-fallbacks: flip-inline; }
-      @media (max-width: 480px) {
-        .whats-new-panel { position-area: bottom span-all; justify-self: center; }
+      .app-account-menu { position-area: top span-right; position-try-fallbacks: flip-block; }
+    }
+    .app-page { min-width: 0; max-width: 1240px; padding: 34px 44px 48px; overflow-wrap: anywhere; }
+    @media (max-width: 899px) {
+      .app { grid-template-columns: minmax(0, 1fr); }
+      .app-side { position: sticky; top: 0; z-index: 2; border-right: 0; border-bottom: 1.5px solid var(--line-strong); }
+      .app-side-inner { position: static; flex-direction: row; align-items: center; justify-content: space-between; height: auto; padding: 10px 14px; overflow: visible; }
+      .app-menu-button { display: inline-flex; gap: 6px; text-decoration: none; }
+      .app-menu:not(:popover-open) { display: none; }
+      .app-menu:popover-open { position: fixed; inset: 0 0 0 auto; width: min(320px, 100vw); height: 100dvh; padding: 18px 14px 14px; overflow-y: auto; border-left: 2px solid var(--ink); background: var(--white); }
+      .app-menu::backdrop { background: rgba(18, 17, 15, .32); }
+      .app-page { padding: 24px 18px 36px; }
+    }
+    /* What's new: the bell, its panel, and a change the viewer has not seen yet. */
+    .whats-new-bell { anchor-name: --whats-new; }
+    /* While its panel is open, What's new takes a current place's look. */
+    .whats-new-bell:has(+ .whats-new-panel:popover-open) { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); color: var(--ink); }
+    .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }
+    .app-place > .whats-new-dot { position: static; width: 8px; height: 8px; margin-left: auto; border: 0; }
+    .whats-new-panel { position: fixed; inset: auto auto 16px 16px; width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: 0; padding: 18px 20px 20px; overflow-y: auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); box-shadow: var(--shadow-hard); }
+    @supports (position-area: bottom) {
+      .whats-new-panel { inset: auto; margin: 0 0 0 8px; position-anchor: --whats-new; position-area: right span-top; position-try-fallbacks: flip-block; }
+      @media (max-width: 899px) {
+        .whats-new-panel { inset: auto 8px 8px 8px; width: auto; margin: 0; position-area: none; }
       }
     }
     .whats-new-panel > .supporting-text { margin: 0 0 4px; }
@@ -911,8 +994,6 @@ export function htmlPage(options: {
     @media (max-width: 480px) {
       .whats-new-day .whats-new-change { grid-template-columns: minmax(0, 1fr); gap: 6px; }
       .auth-card { padding: 24px; }
-      .app-bar { padding: 14px; }
-      .app-page { padding: 24px 18px; }
       .facts { grid-template-columns: minmax(0, 1fr); gap: 4px; }
       .facts dd { margin-bottom: 8px; }
     }

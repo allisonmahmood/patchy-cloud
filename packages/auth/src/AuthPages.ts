@@ -57,7 +57,7 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
         headers: { "cache-control": "private, no-store" }
       })
     : pageResponse(
-        { ...page, styles: CompanyPage.styles, app: { viewer, section: "company" } },
+        { ...page, styles: CompanyPage.styles, app: { viewer, section: "people" } },
         session
       );
 });
@@ -214,6 +214,21 @@ export const layer: Layer.Layer<
         "GET",
         "/company",
         errors(RequireSession.withViewer(company({ kind: "view" })))
+      );
+      // The sidebar's Agent access place; the switch still sits on the company page.
+      yield* router.add(
+        "GET",
+        "/company/agent-access",
+        errors(
+          RequireSession.withViewer(
+            Effect.succeed(
+              HttpServerResponse.redirect("/company#agent-access", {
+                status: 303,
+                headers: { "cache-control": "private, no-store" }
+              })
+            )
+          )
+        )
       );
       for (const [path, kind] of [
         ["/company/invites", "invite"],

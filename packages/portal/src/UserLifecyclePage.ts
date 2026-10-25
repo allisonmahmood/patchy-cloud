@@ -118,7 +118,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
         body,
         styles,
         status,
-        app: { viewer, section: "company" }
+        app: { viewer, section: "people" }
       },
       session
     );

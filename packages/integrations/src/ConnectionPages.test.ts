@@ -514,7 +514,10 @@ it.layer(services)("company connection pages", (it) => {
           assert.notInclude(html, "page-secret-escaped");
           assert.include(html, 'action="/logout"');
           for (const document of [list, html])
-            assert.include(document, '<a href="/company/connections" aria-current="page">');
+            assert.include(
+              document,
+              '<a class="app-place" href="/company/connections" aria-current="page">'
+            );
           const rotate = yield* send(`${path}/rotate`, { headers: { cookie: cookie(viewer) } });
           const rotateHtml = yield* Effect.promise(() => rotate.text());
           if (viewer.role === "admin") {
@@ -672,7 +675,10 @@ it.layer(services)("company connection pages", (it) => {
         assert.strictEqual(badConnect.status, 503);
         const connectHtml = yield* Effect.promise(() => badConnect.text());
         assert.include(connectHtml, "source_unavailable");
-        assert.include(connectHtml, '<a href="/company/connections" aria-current="page">');
+        assert.include(
+          connectHtml,
+          '<a class="app-place" href="/company/connections" aria-current="page">'
+        );
         assert.notInclude(connectHtml, "page-secret-rejected");
         assert.notInclude(connectHtml, "driver rejected");
         assert.include(connectHtml, `action="${connectPath}"`);

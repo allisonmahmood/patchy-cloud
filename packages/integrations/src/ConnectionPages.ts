@@ -44,7 +44,7 @@ const serve = <R>(
                 ...content,
                 heading: "",
                 styles: ConnectionsView.styles,
-                app: { viewer, section: "connections" }
+                app: { viewer, section: "integrations" }
               },
               session
             )

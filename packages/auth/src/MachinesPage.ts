@@ -170,7 +170,7 @@ const render = (view: View): Page => {
   const company = escapeHtml(viewer.company.name);
   return {
     title: "Your machines",
-    app: { viewer, section: "machines" },
+    app: { viewer, section: "agents" },
     body: `<p>Machines publishing and agents using patches at <strong>${company}</strong> as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>.</p>${connectSection(view)}<section class="section" aria-labelledby="agents-heading"><h2 class="section-heading" id="agents-heading">Agents</h2><p class="supporting-text">Agents using ${company}’s patches as you, through Patchy’s MCP. A disconnected agent can’t be brought back: connecting it again makes a new connection.</p>${connections.length === 0 ? "<p>No agents are connected.</p>" : `<ul class="list">${connections.map((connection) => connectionRow(connection, now)).join("")}</ul>`}</section><section class="section" aria-labelledby="machines-heading"><h2 class="section-heading" id="machines-heading">Machines</h2><p class="supporting-text">Computers publishing as you with <code>patchy</code>.</p>${machines.length === 0 ? "<p>No machines are logged in.</p>" : `<ul class="list">${machines.map((machine) => machineRow(machine, now)).join("")}</ul>`}</section><section class="section" aria-labelledby="lost-heading"><h2 class="section-heading" id="lost-heading">Lost a laptop?</h2><p>Disconnect everything ends every agent and machine above, and any approval not yet collected. Connect each one again afterwards.</p><form class="actions" method="post" action="/machines/revoke-all"><button class="btn btn-danger" type="submit">Disconnect everything</button></form></section>`
   };
 };
