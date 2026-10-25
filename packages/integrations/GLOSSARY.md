@@ -17,8 +17,8 @@ The member-readable list of the company's connections and their state, with decl
 _Avoid_: connection administration
 
 **Catalogue**:
-The integrations Patchy offers a company, each with what it reads, how it connects (company-wide or personal) and how many connections the company already has. Admins connect a source from it; it is not a list of the company's connections.
-_Avoid_: marketplace, app directory, integrations page
+The integrations Patchy offers a company, each with what it reads, how it connects (company-wide or personal) and how many connections the company already has. Admins reach it from the Integrations page, which lists the company's connections, through Connect an integration; it is not that list.
+_Avoid_: marketplace, app directory
 
 **Unused**:
 A connection no stored version of any company patch declares, which is exactly when it can be deleted. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.

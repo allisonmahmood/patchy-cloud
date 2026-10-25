@@ -14,6 +14,7 @@ import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
 import * as MachinesPage from "./MachinesPage.js";
 import type * as MachineTokens from "./MachineTokens.js";
+import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
@@ -47,19 +48,29 @@ const join = Effect.gen(function* () {
       );
 });
 
+/** People at `/company` and Agent access at `/company/agent-access`, with their forms. */
 const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const page: CompanyPage.Page = yield* CompanyPage.handle(viewer, action);
-  return page.redirect
-    ? HttpServerResponse.redirect(page.redirect, {
-        status: 303,
-        headers: { "cache-control": "private, no-store" }
-      })
-    : pageResponse(
-        { ...page, styles: CompanyPage.styles, app: { viewer, section: "people" } },
-        session
-      );
+  if (page.redirect) {
+    const response = HttpServerResponse.redirect(page.redirect, {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    });
+    return page.receipt === undefined
+      ? response
+      : Receipt.set(response, {
+          userId: viewer.user.id,
+          text: page.receipt,
+          publicBaseUrl: session.publicBaseUrl
+        });
+  }
+  const section =
+    action.kind === "view-agent-access" || action.kind === "agent-access"
+      ? "agent-access"
+      : "people";
+  return pageResponse({ ...page, styles: CompanyPage.styles, app: { viewer, section } }, session);
 });
 
 /**
@@ -215,20 +226,10 @@ export const layer: Layer.Layer<
         "/company",
         errors(RequireSession.withViewer(company({ kind: "view" })))
       );
-      // The sidebar's Agent access place; the switch still sits on the company page.
       yield* router.add(
         "GET",
         "/company/agent-access",
-        errors(
-          RequireSession.withViewer(
-            Effect.succeed(
-              HttpServerResponse.redirect("/company#agent-access", {
-                status: 303,
-                headers: { "cache-control": "private, no-store" }
-              })
-            )
-          )
-        )
+        errors(RequireSession.withViewer(company({ kind: "view-agent-access" })))
       );
       for (const [path, kind] of [
         ["/company/invites", "invite"],
