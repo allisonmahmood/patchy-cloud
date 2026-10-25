@@ -113,6 +113,11 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           try: () => resolveStamps(unresolved, index.contents),
           catch: configFailure
         });
+        if (Object.values(manifest.uses).some((declaration) => declaration.kind === "community"))
+          return yield* new LocalError({
+            message:
+              "Community connections currently run in published local prototype pages. patchy dev is not wired for them."
+          });
         const metadata = generated.metadata;
         if (
           Object.keys(metadata.postgres).length +

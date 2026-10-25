@@ -299,6 +299,13 @@ export const members = () => ({ kind: "members" as const });
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
   | { readonly kind: "posthog"; readonly handle: string }
+  | {
+      readonly kind: "community";
+      readonly piece: string;
+      readonly handle: string;
+      readonly version: string;
+      readonly actions: ReadonlyArray<string>;
+    }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

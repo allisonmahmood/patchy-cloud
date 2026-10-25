@@ -447,6 +447,34 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect("refuses community generation when the host has no community adapter", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.execute(
+        HttpClientRequest.post("/api/sdk/generate").pipe(
+          HttpClientRequest.bearerToken(identity.machine.id),
+          HttpClientRequest.bodyJsonUnsafe(
+            generateRequest({
+              ...Fixtures.manifest,
+              tier: 1,
+              uses: {
+                external: {
+                  kind: "community",
+                  piece: "slack",
+                  handle: "workspace",
+                  version: "0.23.1",
+                  actions: ["slack_get_thread_replies"]
+                }
+              }
+            })
+          )
+        )
+      );
+      assert.strictEqual(response.status, 503);
+      assert.include(yield* response.json, { code: "source_unavailable" });
+    })
+  );
+
   it.effect("refuses module paths and invalid stems before generating imports", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;

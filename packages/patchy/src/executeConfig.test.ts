@@ -39,6 +39,30 @@ afterEach(async () => {
 });
 
 describe("executeConfig", () => {
+  it("binds a community declaration and refuses changed module versions or actions", async () => {
+    const declaration = {
+      kind: "community",
+      piece: "slack",
+      handle: "workspace",
+      version: "0.23.1",
+      actions: ["slack_get_thread_replies"]
+    };
+    const bound = { ...declaration, id: "company-connection", revision: 1 };
+    for (const change of [{}, { version: "0.24.0" }, { actions: ["list_channels"] }]) {
+      const path = await fixture(
+        `export default defineConfig(${JSON.stringify({ name: "community-test", tier: 1, uses: { external: { ...declaration, ...change } } })});`,
+        {
+          release: RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          uses: [{ alias: "external", id: bound.id, revision: bound.revision, declaration: bound }]
+        }
+      );
+      if (Object.keys(change).length > 0)
+        await expect(executeConfig(path)).rejects.toMatchObject({ code: "stale_generated" });
+      else expect((await executeConfig(path)).uses.external).toEqual(bound);
+    }
+  });
+
   it("executes TypeScript locally and round-trips all definitions and real stamps through the API schema", async () => {
     const path = await fixture(
       `

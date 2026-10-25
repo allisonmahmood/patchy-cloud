@@ -503,6 +503,19 @@ export const PostHogDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("posthog")
 });
+/** Experimental community modules are available only on a host that supplies their adapter. */
+export const CommunityIdentifier = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/)
+);
+export const CommunityDeclaration = Schema.Struct({
+  kind: Schema.Literal("community"),
+  piece: CommunityIdentifier,
+  handle: NonEmptyText,
+  version: NonEmptyText,
+  actions: Schema.Array(CommunityIdentifier).check(Schema.isMinLength(1)),
+  id: NonEmptyText,
+  revision: Revision
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
@@ -591,6 +604,7 @@ export const Manifest = Schema.Struct({
     Schema.Union([
       PostgresDeclaration,
       PostHogDeclaration,
+      CommunityDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -606,6 +620,11 @@ export const GenerationManifest = Schema.Struct({
   uses: definitions(
     Schema.Union([
       MembersDeclaration,
+      Schema.Struct({
+        ...CommunityDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
       Schema.Struct({
         ...PostgresDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),

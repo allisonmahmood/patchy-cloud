@@ -152,7 +152,7 @@ type FactoryResults<F extends Factories> = {
 };
 type Aliases<
   C extends Config,
-  Kind extends "postgres" | "posthog" | "sharedTable" | "sharedStore"
+  Kind extends "postgres" | "posthog" | "community" | "sharedTable" | "sharedStore"
 > = {
   [N in keyof C["uses"]]: C["uses"][N]["kind"] extends Kind ? N : never;
 }[keyof C["uses"]];
@@ -277,7 +277,7 @@ export function createClient<
   options: {
     readonly transport?: Transport;
     readonly shared: S & Record<Aliases<C, "sharedTable" | "sharedStore">, Factory>;
-    readonly connections: P & Record<Aliases<C, "postgres" | "posthog">, Factory>;
+    readonly connections: P & Record<Aliases<C, "postgres" | "posthog" | "community">, Factory>;
   }
 ): Client<C, S, P> {
   const transport = options.transport ?? createPostMessageTransport();
@@ -397,7 +397,7 @@ export function createClient<
     tables,
     files,
     shared: instantiate(options.shared, ["sharedTable", "sharedStore"]),
-    connections: instantiate(options.connections, ["postgres", "posthog"]),
+    connections: instantiate(options.connections, ["postgres", "posthog", "community"]),
     ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
     download: createDownload(call),

@@ -22,7 +22,7 @@ import {
   refuse
 } from "@patchy/api";
 import type { Looks } from "@patchy/companies";
-import type { ConnectionStore } from "@patchy/integrations";
+import { CommunitySupport, type ConnectionStore } from "@patchy/integrations";
 import type { Patches } from "@patchy/patches";
 import * as Artifact from "./Artifact.js";
 import * as Generation from "./Generation.js";
@@ -64,6 +64,7 @@ export const layer: Layer.Layer<
 > = HttpApiBuilder.group(PatchyApi, "sdk", (handlers) =>
   Effect.gen(function* () {
     const artifact = yield* Artifact.Artifact;
+    const community = yield* CommunitySupport.CommunitySupport;
     return handlers
       .handle("release", () =>
         Effect.succeed(
@@ -91,6 +92,7 @@ export const layer: Layer.Layer<
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const result = yield* Generation.generate(identity.company.id, payload).pipe(
+            Effect.provideService(CommunitySupport.CommunitySupport, community),
             Effect.catchTags({
               Busy: (error) =>
                 Effect.succeed(

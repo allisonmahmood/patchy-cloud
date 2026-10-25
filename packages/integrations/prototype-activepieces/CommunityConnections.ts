@@ -227,11 +227,19 @@ export const make = Effect.gen(function* () {
   });
   const remove = Effect.fn("CommunityConnections.delete")(function* (key: Key, id: string) {
     const viewer = yield* admin;
+    yield* sql`SELECT id FROM connections WHERE company_id = ${viewer.company.id} AND id = ${id} FOR UPDATE`;
+    yield* get(key, viewer.company.id, id);
+    const declared =
+      yield* sql`SELECT 1 FROM patches JOIN patch_versions ON patch_versions.patch_id = patches.id
+      CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
+      WHERE patches.company_id = ${viewer.company.id} AND declaration.value->>'kind' = 'community'
+      AND declaration.value->>'id' = ${id} LIMIT 1`;
+    if (declared.length) return yield* new Refused({ code: "conflict" });
     const rows =
       yield* sql`DELETE FROM connections WHERE company_id = ${viewer.company.id} AND id = ${id}
       AND integration = ${integration(key)} AND status = 'disconnected' RETURNING id`;
     if (!rows.length) return yield* new Refused({ code: "missing" });
-  });
+  }, sql.withTransaction);
   return CommunityConnections.of({ list, connect, run, disconnect, delete: remove });
 });
 export const layer = Layer.effect(CommunityConnections, make);

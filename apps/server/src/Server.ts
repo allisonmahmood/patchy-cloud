@@ -57,7 +57,8 @@ import {
   PostgresExecution,
   PostgresOperations,
   PostHogSource,
-  PostHogOperations
+  PostHogOperations,
+  CommunitySupport
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
@@ -180,7 +181,16 @@ const services = Layer.mergeAll(
       const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
+      const community = yield* CommunitySupport.CommunitySupport;
+      const handlers = {
+        me,
+        ...tables,
+        ...files,
+        ...members,
+        ...postgres,
+        ...posthog,
+        ...community?.handlers
+      };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
         Layer.provideMerge(

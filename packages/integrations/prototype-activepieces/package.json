@@ -6,6 +6,7 @@
     "local": "node --import tsx --conditions=development local.mjs",
     "local:slack": "node --import tsx --conditions=development local.mjs --slack",
     "local:catalog": "node --import tsx --conditions=development local.mjs --catalog",
+    "local:patch": "node --import tsx --conditions=development localPatch.mjs",
     "local:status": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts status",
     "local:logs": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts logs",
     "local:stop": "node --import tsx --conditions=development ../../../scripts/dev/src/main.ts stop",

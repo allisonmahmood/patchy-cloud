@@ -806,7 +806,7 @@ export const add = Effect.fn("Project.add")(function* (
     });
   const client = yield* Api.client(token);
   const instance = yield* Instance.Instance;
-  let declaration: Declaration;
+  let declaration: Exclude<Declaration, { readonly kind: "community" }>;
   let defaultAlias: string;
   if (integration === "members") {
     if (Option.isSome(target) || (Option.isSome(as) && as.value !== "members"))

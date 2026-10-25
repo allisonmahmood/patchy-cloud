@@ -3,7 +3,11 @@ import ts from "typescript";
 import type { Declaration } from "./config.js";
 
 export type UsesChange =
-  | { readonly kind: "add"; readonly alias: string; readonly declaration: Declaration }
+  | {
+      readonly kind: "add";
+      readonly alias: string;
+      readonly declaration: Exclude<Declaration, { readonly kind: "community" }>;
+    }
   | { readonly kind: "remove"; readonly alias: string };
 
 export class UsesEditRefused extends Schema.TaggedError<UsesEditRefused>()("UsesEditRefused", {

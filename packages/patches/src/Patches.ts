@@ -45,7 +45,7 @@ import {
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
 import { Wakes } from "@patchy/runtime/core";
-import { ConnectionStore } from "@patchy/integrations";
+import { CommunitySupport, ConnectionStore } from "@patchy/integrations";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
@@ -1101,6 +1101,7 @@ export const make = Effect.gen(function* () {
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
   const connections = yield* ConnectionStore.ConnectionStore;
+  const community = yield* CommunitySupport.CommunitySupport;
   const wakes = yield* Wakes.Wakes;
   const analytics = yield* Analytics.Analytics;
   const announce = (patchId: string) =>
@@ -1708,6 +1709,15 @@ export const make = Effect.gen(function* () {
       .filter((declaration) => declaration.kind !== "members")
       .sort((a, b) => a.id.localeCompare(b.id));
     for (const declaration of declarations) {
+      if (declaration.kind === "community") {
+        if (community === null) return yield* new ConnectionStore.ConnectionNotConnected({});
+        yield* community.validate(companyId, declaration).pipe(
+          Effect.catchTags({
+            ConnectionNotFound: () => Effect.fail(new ConnectionStore.ConnectionNotConnected({}))
+          })
+        );
+        continue;
+      }
       if (declaration.kind === "postgres" || declaration.kind === "posthog") {
         yield* connections.resolve(companyId, declaration);
         continue;
