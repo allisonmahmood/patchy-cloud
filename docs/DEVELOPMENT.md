@@ -141,6 +141,13 @@ forms for Resend and Slack. It uses real provider requests and preloads no
 credentials. `local:slack` remains an alias. Stop before switching modes. Its
 README distinguishes the offline mock tests from real calls.
 
+On that branch, `npm --prefix packages/integrations/prototype-activepieces run
+local:patch -- --company ap-customer-a --piece slack --handle workspace --action
+slack_get_thread_replies` publishes a real tier 1 example into this local instance
+using a saved community connection. The prototype README lists input defaults
+and limits. Invented local CLI tokens come from its custom seed; credentials stay
+in the instance. `patchy dev`, tier 2 and production are not wired for it.
+
 | Command                                       | What it does                                                                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `pnpm dev`                                    | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.              |

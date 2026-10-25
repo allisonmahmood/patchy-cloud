@@ -13,6 +13,7 @@ import {
   MembersDeclaration,
   PostgresDeclaration,
   PostHogDeclaration,
+  CommunityDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -95,6 +96,13 @@ const configSchema = Schema.Struct({
     Schema.Union([
       MembersDeclaration,
       Schema.Struct({
+        kind: CommunityDeclaration.fields.kind,
+        piece: CommunityDeclaration.fields.piece,
+        handle: CommunityDeclaration.fields.handle,
+        version: CommunityDeclaration.fields.version,
+        actions: CommunityDeclaration.fields.actions
+      }),
+      Schema.Struct({
         kind: PostgresDeclaration.fields.kind,
         handle: PostgresDeclaration.fields.handle
       }),
@@ -125,6 +133,7 @@ const generatedIndexSchema = Schema.Struct({
       declaration: Schema.Union([
         PostgresDeclaration,
         PostHogDeclaration,
+        CommunityDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -331,6 +340,12 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "postgres" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "posthog" &&
         (generated.kind !== "posthog" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "community" &&
+        (generated.kind !== "community" ||
+          declaration.handle !== generated.handle ||
+          declaration.piece !== generated.piece ||
+          declaration.version !== generated.version ||
+          JSON.stringify(declaration.actions) !== JSON.stringify(generated.actions))) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

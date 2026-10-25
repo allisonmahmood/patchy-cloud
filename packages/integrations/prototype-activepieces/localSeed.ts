@@ -52,9 +52,9 @@ const seeded = await Effect.runPromise(
       yield* sql`INSERT INTO companies (id, handle, name) VALUES (${customer.companyId}, ${customer.handle}, ${customer.name}) ON CONFLICT (id) DO NOTHING`;
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
       VALUES (${customer.userId}, ${`dev_${customer.handle}`}, ${customer.companyId}, ${customer.email}, ${customer.name}, 'admin') ON CONFLICT (id) DO NOTHING`;
-      if (process.argv.includes("--catalog") || process.argv.includes("--slack")) continue;
       yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, expires_at, last_used_at)
       VALUES (${`tok_${customer.handle}`}, ${customer.userId}, 'Activepieces local demo', ${sha256(`local-machine-${customer.handle}`)}, now() + interval '90 days', now()) ON CONFLICT (id) DO NOTHING`;
+      if (process.argv.includes("--catalog") || process.argv.includes("--slack")) continue;
       const found = (yield* store.list(customer.companyId)).find(
         (item) => item.integration === "posthog" && item.handle === "analytics"
       );

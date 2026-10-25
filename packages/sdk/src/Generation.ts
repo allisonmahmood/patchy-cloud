@@ -17,7 +17,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { ConnectionStore, Postgres, PostHog } from "@patchy/integrations";
+import { CommunitySupport, ConnectionStore, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -117,7 +117,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "members" }
+    { kind: "postgres" | "posthog" | "community" | "members" }
   >
 ) => {
   const source =
@@ -224,6 +224,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
   ConnectionStore.ConnectionStore | Patches.Patches | Looks.Looks | FileSystem.FileSystem
 > {
   const connections = yield* ConnectionStore.ConnectionStore;
+  const community = yield* CommunitySupport.CommunitySupport;
   const patches = yield* Patches.Patches;
   const looks = yield* Looks.Looks;
   const fs = yield* FileSystem.FileSystem;
@@ -296,7 +297,31 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
-    if (declaration.kind === "postgres" || declaration.kind === "posthog") {
+    if (declaration.kind === "community") {
+      if (request.manifest.tier !== 1 || community === null)
+        return yield* new GenerationUnavailable({ stage: "connection-snapshot", resource: alias });
+      const output = yield* community
+        .resolve(companyId, declaration)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GenerationUnavailable({ stage: "connection-snapshot", resource: alias, cause })
+          )
+        );
+      const resolved = { ...declaration, id: output.id, revision: output.revision };
+      files.set(client, output.client);
+      files.set(context, output.context);
+      uses.push({
+        alias,
+        id: resolved.id,
+        revision: resolved.revision,
+        declaration: resolved,
+        skill: "",
+        context,
+        client
+      });
+      factories[alias] = `./uses/${alias}.js`;
+    } else if (declaration.kind === "postgres" || declaration.kind === "posthog") {
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&

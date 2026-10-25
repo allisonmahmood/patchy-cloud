@@ -4,6 +4,13 @@ The company capability for connecting outside systems without handing credential
 
 ## Language
 
+**Community module prototype**:
+An experimental host adapter for selected, pinned community integration actions.
+Its local `community` declaration binds a connection identity, module version and
+allowed action names; generation and runtime keep credentials server-side. It is
+disabled by normal startup and supports published company tier 1 pages only.
+See [the prototype](prototype-activepieces/README.md).
+
 **Integration**:
 A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres and PostHog are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit

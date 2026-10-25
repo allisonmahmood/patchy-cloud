@@ -13,6 +13,7 @@ import {
 } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { posthogOperations } from "./posthog.js";
+import { communityOperations } from "./community.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -344,6 +345,7 @@ export type ServerCall = typeof ServerCall.Type;
 export const runtimeOperations = {
   ...postgresOperations,
   ...posthogOperations,
+  ...communityOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),

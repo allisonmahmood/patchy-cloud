@@ -19,6 +19,7 @@ import * as PostHogSource from "../src/posthog/Source.js";
 import * as CommunityConnections from "./CommunityConnections.js";
 import * as CommunityPages from "./CommunityPages.js";
 import * as Pieces from "./Pieces.js";
+import * as CommunityRuntime from "./CommunityRuntime.js";
 
 NodeRuntime.runMain(
   Effect.gen(function* () {
@@ -47,6 +48,9 @@ NodeRuntime.runMain(
       Layer.provide(CredentialKeys.layer)
     );
     const routes = CommunityPages.layer.pipe(HttpRouter.provideRequest(localServices));
+    const support = CommunityRuntime.layer.pipe(
+      Layer.provide([Pieces.layer, CredentialKeys.layer])
+    );
     return yield* Layer.launch(
       Layer.effectDiscard(
         HttpServer.addressFormattedWith((address) =>
@@ -62,6 +66,7 @@ NodeRuntime.runMain(
             label: "Explore connectors (local prototype)"
           })
         ),
+        Layer.provide(support),
         Layer.provide([Sql.layer, ClientDocumentNetwork.layer]),
         Layer.provide(http)
       )

@@ -1066,6 +1066,13 @@ reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
 Other integrations and personal connections remain planned.
 
+The Activepieces prototype branch has an optional local-only host adapter for
+selected community actions. Its experimental `community` declarations bind a
+module version, connection and action list; generated tier 1 clients read through
+the existing runtime. Normal startup refuses them. This is not a generally offered
+integration or OAuth support; see
+[`prototype-activepieces`](../packages/integrations/prototype-activepieces/README.md).
+
 An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first and PostHog the second; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.

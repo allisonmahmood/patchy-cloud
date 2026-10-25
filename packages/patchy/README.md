@@ -1635,3 +1635,14 @@ Report vulnerabilities privately by following the [security policy](https://gith
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
+
+### Experimental local community declarations
+
+On the Activepieces prototype branch only, a host may enable a `community`
+connection declaration with `piece`, `version`, `handle` and selected `actions`.
+`patchy refresh` binds its identity and creates action methods under
+`patchy.connections.<alias>`; `patchy publish` rechecks the binding. Input fields
+come from the pinned module and credentials remain server-side. Normal hosts
+refuse these declarations. The prototype runner generates an example config;
+there is no `patchy add community` command, fixture/dev binding or tier 2 support.
+See [the prototype](../integrations/prototype-activepieces/README.md).

@@ -1,11 +1,13 @@
 # Activepieces module prototype
 
-Local, throwaway connector catalog. `prototype/activepieces-slack-thread-read`
-extends `prototype/activepieces-connection-catalog` (#925), which branched from
+Local, throwaway connector catalog. `prototype/activepieces-patch-runtime` extends
+`prototype/activepieces-slack-thread-read` (#927), which extends
+`prototype/activepieces-connection-catalog` (#925), which branched from
 pushed `prototype/activepieces-slack-token` (#923). That branch
 rebased the earlier prototype onto main at `8a278cb4`. No Nango implementation is
-continued. Production startup, releases, migrations and public SDK contracts are
-unchanged.
+continued. Production has no community implementation. This branch adds an
+experimental wire/config shape and local host support; it changes no release or
+migration and enables no production connector.
 
 ## Connector catalog inside local Patchy
 
@@ -91,10 +93,47 @@ raw output. Credentials travel privately over IPC. The worker keeps TLS
 verification enabled despite an upstream helper trying to disable it. This is
 process separation for reviewed code, not an OS sandbox for untrusted modules.
 
-Calls currently run as admins from connection pages. **Community connections are
-not yet callable from generated patch clients or declared runtime operations.**
-The inherited PostHog mock below demonstrates those surfaces for PostHog only.
-No community action snapshots or general generated client contract are added.
+## A real local patch
+
+`prototype/activepieces-patch-runtime` extends the thread-read branch (#927).
+The local entrypoint supplies generation, publish validation and the
+`community.call` runtime handler. Normal startup supplies no community support
+and refuses these declarations/calls. This is an experimental wire/config shape.
+
+After `local:catalog` is running and a company has a saved connection:
+
+```sh
+npm --prefix packages/integrations/prototype-activepieces run local:patch -- \
+  --company ap-customer-a --piece slack --handle workspace \
+  --action slack_get_thread_replies
+```
+
+This initializes, refreshes and publishes `community-demo` to the **local instance
+only**, using the ordinary CLI and generated client. Open its printed sign-in
+link, enter the known conversation ID and parent timestamp, and run the read.
+Optional `--inputs '{"channel":"D_EXAMPLE","threadTs":"1700000000.000001"}'`
+prepopulates non-secret fields. Never pass credentials. Generated repos live in
+`.local/dev/community-patches/`. The custom seed adds local CLI machine tokens
+for the two invented companies, and still preloads no provider credentials.
+
+A `community` declaration pins the piece/version, connection handle/id,
+metadata revision and allowed action names. Generation resolves the company's
+handle and creates methods from admitted module text fields. Publish revalidates
+and locks the connection row. Runtime derives company/principal from existing
+authorization, resolves only declared aliases, checks current connection state,
+decrypts server-side, runs the pinned module, and rejects results if credentials
+changed during the call. `RuntimeProduction` records viewer, patch, version,
+connection and action; input values and results are not copied into logs.
+Active company members may read through their declaring patch; administration
+remains admin-only. Disconnected connections deny patch reads; reconnect restores
+them. Deletion is refused while any stored patch version declares the connection.
+
+Only **published, company-scoped tier 1 pages** are supported. Tier 2 callbacks,
+public pages, `patchy dev` bindings, native discovery, OAuth and immutable
+action-schema snapshots remain unimplemented. Results use generic JSON types.
+The module version is checked on generation, publish and calls. Reverting to the
+parent cannot serve these new manifests; discard the disposable dev instance
+when switching back.
 
 ## Evidence and limits
 
@@ -105,8 +144,11 @@ cross-company and cross-provider denial before HTTP, unadmitted write-action and
 field rejection, safe auth/upstream failures, logs, disconnect/reconnect and legacy
 Slack credential reads. `render.test.ts` checks module-driven field semantics,
 escaping and visible setup requirements. Tests do not prove real provider access.
-The local browser mode makes **real requests**, never fake successful responses;
-no successful real Slack or Resend call has been verified without user credentials.
+The local browser mode makes **real requests** with supplied credentials. Real
+interactive results are recorded in the PR without message text or credentials.
+Generated-client tests use real runtime/crypto/SQL/logs with loopback provider
+doubles and an in-memory published-version lookup. They do not prove two real
+Slack installations. The browser example publishes a real patch.
 
 Provider-specific work remains: field/action admission, auth-version differences,
 permissions, results, rate limits, pagination and extra worker context. The selected
@@ -246,7 +288,7 @@ arguments; credentials are acquired after server authorization and sent privatel
 to the trusted module worker. Additional action names, OAuth auth and unsupported
 Activepieces context capabilities are refused.
 
-**Real provider calls: zero.** Real storage/crypto/runtime checks and a real local
+**Inherited PostHog proof: real provider calls are zero.** Real storage/crypto/runtime checks and a real local
 HTTP socket do not turn the simulator into PostHog. No real credential was supplied.
 The default source mapping names the existing US/EU PostHog Cloud hosts, but that
 path has not been exercised with a real project.

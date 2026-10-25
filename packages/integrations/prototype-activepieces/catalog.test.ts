@@ -5,16 +5,32 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assert, it } from "@effect/vitest";
+import { expect } from "vitest";
+import { build } from "esbuild";
+import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { clerkEnv, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { RuntimeLog } from "@patchy/runtime";
+import {
+  LoadedVersions,
+  RuntimeApi,
+  RuntimeLog,
+  RuntimeProduction,
+  StreamAdmission
+} from "@patchy/runtime";
+import { Limits, OperatingLimits } from "@patchy/limits";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Testing from "@patchy/sql/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FiberSet from "effect/FiberSet";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import * as Redacted from "effect/Redacted";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
@@ -25,12 +41,22 @@ import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as CommunityConnections from "./CommunityConnections.js";
 import * as CommunityPages from "./CommunityPages.js";
 import * as Pieces from "./Pieces.js";
+import * as CommunityRuntime from "./CommunityRuntime.js";
 
 const tokens = ["xoxb-MockCompanyA000001", "xoxb-MockCompanyB000002"];
 const resendTokens = ["re_MockCompanyA000001", "re_MockCompanyB000002"];
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
 const slackPath = `${CommunityPages.path}/slack`;
+const TestApi = HttpApi.make("patchy").add(
+  RuntimeGroup.add(
+    HttpApiEndpoint.post("call", "/api/runtime/call", {
+      headers: Schema.Record(Schema.String, Schema.String),
+      payload: Schema.Unknown,
+      success: Schema.Unknown
+    })
+  )
+);
 const requests: {
   provider: string;
   path: string;
@@ -195,6 +221,228 @@ const send = Effect.fn(function* (
 
 it.layer(services)("Community connector catalog (mock providers)", (it) => {
   it.effect(
+    "runs the generated community client through runtime authorization, never trusting ids or credentials from patch code",
+    () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const sql = yield* SqlClient.SqlClient;
+        const logs = yield* RuntimeLog.RuntimeLog;
+        const owners: Array<Effect.Success<ReturnType<Companies.Companies["Service"]["create"]>>> =
+          [];
+        const ids: string[] = [];
+        for (const [i, suffix] of ["runtime-a", "runtime-b"].entries()) {
+          const owner = yield* companies.create({
+            handle: suffix,
+            name: suffix,
+            clerkUserId: `user_${suffix}`,
+            email: `${suffix}@test.local`,
+            userName: suffix
+          });
+          owners.push(owner);
+          assert.strictEqual(
+            (yield* send(owner.user, slackPath, {
+              handle: "runtime",
+              "credential.botToken": tokens[i]!
+            })).status,
+            303
+          );
+          const found = yield* sql<{
+            id: string;
+          }>`SELECT id FROM connections WHERE company_id = ${owner.company.id} AND handle = 'runtime'`;
+          ids.push(found[0]!.id);
+        }
+        const hooks = yield* CommunityRuntime.make;
+        const version = `ver_${"a".repeat(24)}`;
+        const poisoned = `ver_${"b".repeat(24)}`;
+        const patchIds = ["community01a", "community01b"];
+        const versions = LoadedVersions.LoadedVersions.of({
+          find: (patchId, versionId = version) => {
+            const index = patchIds.indexOf(patchId);
+            if (index < 0 || ![version, poisoned].includes(versionId))
+              return Effect.succeed(Option.none());
+            return Effect.succeed(
+              Option.some({
+                patchId,
+                versionId,
+                patchTier: 1,
+                companyId: owners[index]!.company.id,
+                scope: "company" as const,
+                wireVersion: WIRE_VERSION,
+                manifest: {
+                  manifestVersion: 1,
+                  release: CURRENT_RELEASE,
+                  tier: 1 as const,
+                  tables: {},
+                  files: {},
+                  uses: {
+                    external: {
+                      kind: "community" as const,
+                      piece: "slack",
+                      version: "0.23.1",
+                      handle: "runtime",
+                      revision: 1,
+                      id: ids[versionId === poisoned ? 1 - index : index]!,
+                      actions: ["slack_get_thread_replies"]
+                    }
+                  }
+                }
+              })
+            );
+          }
+        });
+        const api = yield* HttpApiTest.groups(TestApi, ["runtime"], { baseUrl: base }).pipe(
+          Effect.provide(
+            Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
+              Layer.provide(RuntimeProduction.layer(hooks.handlers)),
+              Layer.provide(StreamAdmission.layer),
+              Layer.provide(Layer.succeed(LoadedVersions.LoadedVersions, versions)),
+              Layer.provide([Limits.layer, OperatingLimits.layer])
+            )
+          )
+        );
+        const run = yield* FiberSet.makeRuntimePromise();
+        const transport =
+          (
+            viewer: (typeof owners)[number],
+            patchId = patchIds[owners.indexOf(viewer)]!,
+            versionId = version
+          ) =>
+          (op: string, args: unknown) =>
+            run(
+              api
+                .call({
+                  payload: {
+                    wire: WIRE_VERSION,
+                    patchId,
+                    versionId,
+                    principal: { userId: viewer.user.id },
+                    op,
+                    args
+                  },
+                  headers: {
+                    "x-patchy-wire": String(WIRE_VERSION),
+                    "x-patchy-principal": JSON.stringify({ userId: viewer.user.id }),
+                    origin: base,
+                    cookie: signedInCookies(
+                      signSession({
+                        sub: viewer.user.clerkUserId,
+                        email: viewer.user.email,
+                        name: viewer.user.name
+                      })
+                    )
+                  },
+                  responseMode: "response-only"
+                })
+                .pipe(
+                  Effect.flatMap((response) => response.json),
+                  Effect.map((body) => {
+                    const envelope = body as { ok?: boolean; value?: unknown };
+                    return envelope.ok === true ? envelope.value : body;
+                  })
+                )
+            );
+        const info = (yield* Pieces.Pieces).infos.find((info) => info.key === "slack")!;
+        const source = CommunityRuntime.generateClient(info, ["slack_get_thread_replies"]);
+        for (const token of tokens) assert.notInclude(source, token);
+        const bundle = yield* Effect.promise(() =>
+          build({
+            stdin: {
+              contents: source,
+              resolveDir: new URL("../../patchy", import.meta.url).pathname,
+              loader: "ts"
+            },
+            bundle: true,
+            write: false,
+            platform: "node",
+            format: "esm"
+          })
+        );
+        const generated = yield* Effect.promise(
+          () =>
+            import(
+              `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0]!.text).toString("base64")}`
+            )
+        );
+        const client = (viewer: (typeof owners)[number], patchId?: string, versionId?: string) =>
+          generated.createClient("external", transport(viewer, patchId, versionId)) as {
+            slack_get_thread_replies: (input: Record<string, string>) => Promise<unknown>;
+          };
+        const start = requests.length;
+        for (const [i, owner] of owners.entries()) {
+          const value = yield* Effect.promise(() =>
+            client(owner).slack_get_thread_replies({
+              channel: `D${i}`,
+              threadTs: "1700000000.000001"
+            })
+          );
+          assert.include(JSON.stringify(value), `mock-thread-company-${i}`);
+          const calls = yield* logs.recent({ companyId: owner.company.id, connectionId: ids[i]! });
+          assert.strictEqual(calls[0]!.op, "community.call");
+          assert.strictEqual(calls[0]!.patchId, patchIds[i]);
+          assert.strictEqual(calls[0]!.userId, owner.user.id);
+          assert.strictEqual(calls[0]!.outcome, "success");
+          assert.notInclude(JSON.stringify(calls), "1700000000.000001");
+          for (const token of tokens) assert.notInclude(JSON.stringify(calls), token);
+        }
+        assert.deepStrictEqual(
+          requests.slice(start).map((request) => request.token),
+          tokens
+        );
+        const before = requests.length;
+        const inputs = { channel: "D0", threadTs: "1700000000.000001" };
+        for (const call of [
+          () => client(owners[1]!, patchIds[0]).slack_get_thread_replies(inputs),
+          () => client(owners[0]!, patchIds[0], poisoned).slack_get_thread_replies(inputs)
+        ])
+          yield* Effect.promise(() =>
+            expect(call()).rejects.toMatchObject({ code: "access_denied" })
+          );
+        for (const args of [
+          { connection: "missing", action: "slack_get_thread_replies", inputs },
+          { connection: "external", action: "slack_list_channels", inputs: {} },
+          {
+            connection: "external",
+            action: "slack_get_thread_replies",
+            inputs,
+            companyId: owners[1]!.company.id,
+            credentials: tokens[1]
+          },
+          {
+            connection: "external",
+            action: "slack_get_thread_replies",
+            inputs: { ...inputs, botToken: tokens[1]! }
+          }
+        ]) {
+          const reply = yield* Effect.promise(() => transport(owners[0]!)("community.call", args));
+          assert.isFalse((reply as { ok: boolean }).ok);
+        }
+        assert.strictEqual(requests.length, before);
+        assert.strictEqual(
+          (yield* send(owners[0]!.user, `${slackPath}/${ids[0]}/disconnect`, {})).status,
+          303
+        );
+        yield* Effect.promise(() =>
+          expect(client(owners[0]!).slack_get_thread_replies(inputs)).rejects.toMatchObject({
+            code: "access_denied"
+          })
+        );
+        assert.strictEqual(requests.length, before);
+        assert.strictEqual(
+          (yield* send(owners[0]!.user, `${slackPath}/${ids[0]}/connect`, {
+            handle: "runtime",
+            "credential.botToken": tokens[0]!
+          })).status,
+          303
+        );
+        assert.include(
+          JSON.stringify(
+            yield* Effect.promise(() => client(owners[0]!).slack_get_thread_replies(inputs))
+          ),
+          "mock-thread-company-0"
+        );
+      })
+  );
+  it.effect(
     "selects each company's encrypted token, refuses foreign ids and members, removes tokens on disconnect",
     () =>
       Effect.gen(function* () {
@@ -202,6 +450,7 @@ it.layer(services)("Community connector catalog (mock providers)", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const logs = yield* RuntimeLog.RuntimeLog;
         const owners = [];
+        const requestStart = requests.length;
         for (const name of ["slack-a", "slack-b"])
           owners.push(
             yield* companies.create({
@@ -256,6 +505,7 @@ it.layer(services)("Community connector catalog (mock providers)", (it) => {
         );
         assert.deepStrictEqual(
           requests
+            .slice(requestStart)
             .filter((r) => r.path === "/api/conversations.replies")
             .map(({ token, fields }) => ({ token, channel: fields.channel, ts: fields.ts })),
           tokens.map((token, i) => ({ token, channel: `D${i}`, ts: "1700000000.000001" }))

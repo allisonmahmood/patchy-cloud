@@ -35,12 +35,21 @@ use the same worktree plan. `npm --prefix packages/integrations/prototype-active
 run local:catalog` starts the local connector catalog with module-driven
 credential forms; `local:slack` remains an alias. It makes real provider requests
 and preloads no credentials. Stop before switching modes. Resend's List Domains
-needs a Full access API key; Slack needs an existing installed app's bot token
-with `channels:read`. The user enters credentials only in Patchy. The automated
+needs a Full access API key; Slack needs an existing installed app's bot token.
+List Channels needs `channels:read`; reading an accessible bot DM thread can use
+`im:history`. The user enters credentials only in Patchy. The automated
 catalog tests redirect the actual modules to loopback mocks and do not prove a
 real provider call. Use `catalogServer.ts` when restarting this entrypoint.
 
 ## 2. Exercise the change
+
+On the Activepieces prototype branch, `local:catalog` seeds two invented companies
+and local CLI tokens, with no provider credentials. Its `local:patch` publishes a
+real tier 1 example using a saved connection:
+`npm --prefix packages/integrations/prototype-activepieces run local:patch -- --company ap-customer-a --piece slack --handle workspace --action slack_get_thread_replies`.
+See the prototype README for non-secret input defaults and sign-in links. This
+community binding supports published company pages; `patchy dev` and tier 2
+callbacks are not wired. The inherited plain `local` mode is a PostHog mock.
 
 - **The CLI.** `pnpm patchy …` runs from source and publishes as **Dev
   Machine**, `dev@patchy.local`, the admin of Patchy Dev. For login or logout
