@@ -1,7 +1,8 @@
 # Activepieces module prototype
 
-Local, throwaway connector catalog on `prototype/activepieces-connection-catalog`,
-branched from pushed `prototype/activepieces-slack-token` (#923). That branch
+Local, throwaway connector catalog. `prototype/activepieces-slack-thread-read`
+extends `prototype/activepieces-connection-catalog` (#925), which branched from
+pushed `prototype/activepieces-slack-token` (#923). That branch
 rebased the earlier prototype onto main at `8a278cb4`. No Nango implementation is
 continued. Production startup, releases, migrations and public SDK contracts are
 unchanged.
@@ -20,10 +21,10 @@ instructions from each pinned piece. Validation uses the piece's existing auth
 validator. After connecting, the module's admitted read action is a button on its
 connection. Enter credentials only in Patchy, never in chat, source files or URLs.
 
-| Provider | Customer setup                                                                                                                                                  | Admitted existing action                                                |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Resend   | Create an API key in account settings. List Domains requires **Full access**; a Sending access key cannot read domains. No OAuth app is required for this mode. | `list_domains`                                                          |
-| Slack    | Supply an **existing installed app's** bot token with `channels:read`. Slack issues bot tokens through app installation; Activepieces does not provide one.     | `slack_list_channels`, public channels only, archived channels excluded |
+| Provider | Customer setup                                                                                                                                                                                                  | Admitted existing action                                                 |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Resend   | Create an API key in account settings. List Domains requires **Full access**; a Sending access key cannot read domains. No OAuth app is required for this mode.                                                 | `list_domains`                                                           |
+| Slack    | Supply an **existing installed app's** bot token. List Channels needs `channels:read`; Get Thread Replies can use `im:history` in a DM the bot belongs to. Activepieces does not provide tokens or permissions. | `slack_list_channels` (public, non-archived), `slack_get_thread_replies` |
 
 The catalog states these requirements before credential entry. It does not
 register provider apps, perform OAuth, send Slack messages or send emails. The
@@ -57,6 +58,22 @@ secret or properties. Only selected secret/text fields are rendered; missing
 validators, missing required fields and unsupported field types fail admission.
 Slack's optional user token is intentionally excluded because the admitted
 public-channel action needs only its bot token. OAuth is not admitted.
+
+**Get Thread Replies** takes a conversation ID and the parent message's timestamp
+through the same form renderer, using the action's field labels and descriptions.
+For a bot DM this uses existing `im:history` permission; a token may be valid for
+that read while lacking `channels:read` for channel discovery. Paste a known ID
+and parent timestamp rather than relying on discovery. Slack still checks the
+token's scopes, membership and access to that conversation. This does not make
+every Slack conversation available. The upstream action can fetch up to 50 pages
+(10,000 replies), subject to this adapter's five-second and 8 MB limits; large or
+rate-limited threads may fail. Continuation cursors are not exposed in this spike.
+
+Admission declares each action's host-fixed `props` and selected `inputs`.
+Only selected `SHORT_TEXT` inputs are supported here. Missing required, duplicate,
+oversized or unknown inputs are rejected before provider execution. Inputs cannot
+override fixed properties or credentials, and their values are not written to call
+logs. No per-user conversation ID, timestamp or credential belongs in the catalog.
 
 `CommunityConnections.ts` and `CommunityPages.ts` serve every admitted provider.
 They reuse Patchy's existing `connections` table as `activepieces:<key>`, AES-GCM

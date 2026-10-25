@@ -7,7 +7,15 @@ export interface Definition {
   readonly authFields?: ReadonlyArray<string>;
   readonly legacyCredentialField?: string;
   readonly setup: { readonly label: string; readonly instructions: string; readonly url: string };
-  readonly actions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  readonly actions: Readonly<
+    Record<
+      string,
+      {
+        readonly props: Readonly<Record<string, unknown>>;
+        readonly inputs?: ReadonlyArray<string>;
+      }
+    >
+  >;
 }
 export const catalog = {
   resend: {
@@ -21,7 +29,7 @@ export const catalog = {
         "Create an API key in Resend → API Keys. List Domains needs Full access; a Sending access key cannot read domains. This prototype only runs the selected read action and sends no emails.",
       url: "https://resend.com/api-keys"
     },
-    actions: { list_domains: {} }
+    actions: { list_domains: { props: {} } }
   },
   slack: {
     package: "@activepieces/piece-slack",
@@ -33,10 +41,13 @@ export const catalog = {
     setup: {
       label: "App setup required",
       instructions:
-        "Use a bot token from an existing installed Slack app with channels:read. Slack issues this token through an app installation. This prototype does not create an app or perform OAuth. Commercial Slack distribution authorization remains unresolved.",
+        "Use an existing installed app's bot token. List Channels needs channels:read. Get Thread Replies can read a bot's existing DM with im:history; enter its conversation ID and parent message timestamp. Access depends on the token's granted scopes and conversation membership. This prototype does not create apps or perform OAuth. Commercial Slack distribution authorization remains unresolved.",
       url: "https://api.slack.com/apps"
     },
-    actions: { slack_list_channels: { types: "public_channel", excludeArchived: true } }
+    actions: {
+      slack_list_channels: { props: { types: "public_channel", excludeArchived: true } },
+      slack_get_thread_replies: { props: {}, inputs: ["channel", "threadTs"] }
+    }
   }
 } as const satisfies Readonly<Record<string, Definition>>;
 export type Key = keyof typeof catalog;

@@ -33,7 +33,7 @@ license, hosted OAuth credentials or paid services.
 The Slack mode also pins `@activepieces/piece-slack@0.23.1` (npm gitHead
 `b2975300d89450e5a3e728c953f9213011b81f74`), with tarball integrity in the
 same lockfile. Its community source, including the selected auth and
-`slack_list_channels` action, falls under the same upstream MIT exclusion rule:
+`slack_list_channels` and `slack_get_thread_replies` actions, falls under the same upstream MIT exclusion rule:
 `packages/ee/` and `packages/server/api/src/app/ee` are enterprise code and are
 not loaded. The selected path uses the bundled MIT Slack Web API SDK, Axios
 (MIT) and pieces-common/framework helpers. The published package has no license
@@ -45,6 +45,7 @@ Reviewed source at that commit:
 
 - [Bot-token auth](https://github.com/activepieces/activepieces/blob/b2975300d89450e5a3e728c953f9213011b81f74/packages/pieces/community/slack/src/lib/auth.ts)
 - [Community Slack actions](https://github.com/activepieces/activepieces/tree/b2975300d89450e5a3e728c953f9213011b81f74/packages/pieces/community/slack/src/lib/actions)
+- [Get Thread Replies](https://github.com/activepieces/activepieces/blob/b2975300d89450e5a3e728c953f9213011b81f74/packages/pieces/community/slack/src/lib/actions/get-thread-replies.action.ts) and [pagination/timestamp helpers](https://github.com/activepieces/activepieces/blob/b2975300d89450e5a3e728c953f9213011b81f74/packages/pieces/community/slack/src/lib/common/utils.ts), using the same community framework and Slack SDK; no enterprise import in this selected read path
 - [Root license](https://github.com/activepieces/activepieces/blob/b2975300d89450e5a3e728c953f9213011b81f74/LICENSE)
 
 For Slack, only direct bot-token authentication is admitted. No Activepieces server,
