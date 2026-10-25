@@ -4,6 +4,10 @@ Who a caller is: Clerk sessions and viewers, user-owned machine tokens and agent
 
 ## Language
 
+**Account**:
+A person's sign-in identity, held by Clerk. An account can have a session without company membership; company membership and individual patch grants determine access separately. The local external-sharing experiment lets such an account remain a recipient without creating a company user or builder credentials.
+_Avoid_: restricted account (access is specific to a company or patch)
+
 **Purpose**:
 What a person's credential is for. `build` is a machine token's and opens the CLI's API; `work` is an agent connection's and opens only Patchy MCP. A credential used at the wrong door is refused as unknown.
 _Avoid_: scope (OAuth's word), token type

@@ -3,6 +3,24 @@ import { escapeHtml, htmlPage } from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
 
 describe("htmlPage app body", () => {
+  it("gives an account without company membership the app shell with only its shared home", () => {
+    const html = htmlPage({
+      title: "Home",
+      app: {
+        viewer: { user: { name: "Mia <outside>" }, company: null },
+        section: "home"
+      },
+      body: "<p>Shared patches</p>"
+    });
+    expect(html).toContain('class="app-card"');
+    expect(html).toContain('<a href="/" aria-current="page">Shared with you</a>');
+    expect(html).toContain("Mia &lt;outside&gt;");
+    expect(html).toContain('<form method="post" action="/logout">');
+    for (const href of ["/company", "/patches", "/company/connections", "/machines", "/whats-new"])
+      expect(html).not.toContain(`href="${href}"`);
+    expect(html).not.toContain('src="/whats-new/bell.js"');
+  });
+
   it("keeps section navigation and sign-out outside the page's main content", () => {
     const html = htmlPage({
       title: "Connections",

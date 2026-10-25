@@ -281,12 +281,14 @@ export const shellStyles = `
 `;
 
 export interface AppShell {
-  readonly viewer: {
-    readonly user: { readonly name: string };
-    readonly company: { readonly name: string };
-    /** The newest What's new release the person has seen. */
-    readonly whatsNewSeen: number;
-  };
+  readonly viewer:
+    | {
+        readonly user: { readonly name: string };
+        readonly company: { readonly name: string };
+        /** The newest What's new release the person has seen. */
+        readonly whatsNewSeen: number;
+      }
+    | { readonly user: { readonly name: string }; readonly company: null };
   /**
    * `home` is reached from the brand and `whats-new` from the bell, not a section link, so on
    * those no link is current.
@@ -332,7 +334,16 @@ function whatsNewBell(seen: number): string {
 function appBody(app: AppShell, body: string): string {
   const link = (href: string, label: string, section: AppShell["section"]) =>
     `<a href="${href}"${section === app.section ? ' aria-current="page"' : ""}>${label}</a>`;
-  return `<div class="app-card"${app.overlay === undefined ? "" : " inert"}><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}</nav><div class="app-who">${whatsNewBell(app.viewer.whatsNewSeen)}<span>${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  const member = app.viewer.company !== null;
+  const navigation = member
+    ? `${link("/patches", "Patches", "patches")}${link("/company", "Company", "company")}${link("/company/connections", "Connections", "connections")}${link("/machines", "Your machines", "machines")}`
+    : link("/", "Shared with you", "home");
+  const identity =
+    app.viewer.company === null
+      ? escapeHtml(app.viewer.user.name)
+      : `${escapeHtml(app.viewer.user.name)} · ${escapeHtml(app.viewer.company.name)}`;
+  const bell = "whatsNewSeen" in app.viewer ? whatsNewBell(app.viewer.whatsNewSeen) : "";
+  return `<div class="app-card"${app.overlay === undefined ? "" : " inert"}><header class="app-bar"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span>Patchy</a><nav class="app-nav" aria-label="Primary">${navigation}</nav><div class="app-who">${bell}<span>${identity}</span><form method="post" action="/logout"><button class="btn btn-quiet" type="submit">Sign out</button></form></div></header><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**

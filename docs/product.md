@@ -716,7 +716,7 @@ Company **SSO** is future work: Patchy will enable it for a company, and its adm
 
 ### Getting into a company
 
-There is no Patchy user without a company, but a Clerk session may exist before that membership does. A sign-in with no company behind it lands on **create-or-join**, which names the email it checked: choose **Join** on one of the live invitations for that email, or, without any invitations, create a company with a name and handle. A person on the wrong account can use **Not you? Sign out** rather than accidentally create a company for it.
+There is no company user without a company, but a Clerk account and session can exist without that membership. In production today, a sign-in with no company behind it lands on **create-or-join**, which names the email it checked: choose **Join** on one of the live invitations for that email, or, without any invitations, create a company with a name and handle. A person on the wrong account can use **Not you? Sign out** rather than accidentally create a company for it.
 
 **Invite** is the default way in: an admin invites an email address with a role, the person signs in, checks the company and chooses **Join**. Joining consumes that invitation and creates the user together, so a user always belongs to exactly one company.
 
@@ -731,6 +731,12 @@ delivery keeps the invitation and tells the admin to resend.
 A user is in **exactly one company**, and the rule is hard. An invitation to an email already belonging to any user is refused, and a person who joins one company cannot then consume another company's invitation. Leaving or deleting a company is not offered today.
 
 Later, an admin may verify the company's **domain** — proven by email, never a consumer domain like `gmail.com`, and one domain belonging to one company — after which a work identity on that domain will join it automatically. Invitations will still admit contractors from other domains. Someone with a company of one will need to delete it or add someone else and leave before joining another; its patches will not move with them. Those exits, domain verification and full billing onboarding remain future work. Company merging and multiple memberships for agencies or consultants are not designed.
+
+### External recipients: local experiment
+
+[External sharing (#924)](https://github.com/allisonmahmood/patchy-cloud/issues/924) explores one ordinary account with access granted separately: company membership permits building in that company, while a named patch invitation permits opening only that patch. An account may receive patches from several companies while having no membership, or retain its existing membership in another company. There is no global restricted-account flag.
+
+The local persona prototype gives every signed-in account without membership a personal Home, using the portal's shell, search and patch tiles. It lists only that account's pending and accepted shares, including an empty state after all access is revoked. Company creation, company pages, machine authorization and publishing are refused on the server. Existing members keep their company Home and publishing access, with a separate shared inbox. This experiment supports whole-page read access to static patches only; real Clerk signup/invitation delivery and an approval path from recipient to company member remain unimplemented. Production onboarding and company/public sharing are unchanged.
 
 ### Roles
 
