@@ -51,7 +51,7 @@ describe("renderAgentPanel", () => {
     expect(html).toContain(
       "At Bright &amp; &lt;Co&gt; that’s you, Allison &lt;A&gt; and Priya Shah."
     );
-    expect(html).toContain('<a class="btn" href="/company#agent-access">Turn it on at Company</a>');
+    expect(html).toContain('<a class="btn" href="/company/agent-access">Turn it on at Company</a>');
     expect(html).not.toContain("Connect your agent");
   });
 

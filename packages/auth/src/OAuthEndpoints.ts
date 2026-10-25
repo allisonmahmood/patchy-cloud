@@ -182,7 +182,7 @@ const accessOffPage = (
   return {
     title: `Agent access is off at ${viewer.company.name}`,
     heading: `${kicker}${changedNote(options.changed)}<h1 class="page-heading">Agent access is off at ${company}</h1>`,
-    body: `<p>${agent} can’t connect until an admin turns it on. ${admin ? `You’re an admin: turn it on, then connect again from ${agent}.` : `At ${company} that’s ${sentenceList(admins)}.`}</p>${answerForm(shown, `${admin ? '<a class="btn btn-primary" href="/company#agent-access">Turn it on at Company</a>' : ""}<button class="btn" type="submit" name="action" value="deny">Back to ${agent}</button>`, "actions")}<p class="supporting-text consent-foot">Signed in as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>. Back to ${agent} tells it no.</p>${anotherAccount(shown)}`,
+    body: `<p>${agent} can’t connect until an admin turns it on. ${admin ? `You’re an admin: turn it on, then connect again from ${agent}.` : `At ${company} that’s ${sentenceList(admins)}.`}</p>${answerForm(shown, `${admin ? '<a class="btn btn-primary" href="/company/agent-access">Turn it on at Company</a>' : ""}<button class="btn" type="submit" name="action" value="deny">Back to ${agent}</button>`, "actions")}<p class="supporting-text consent-foot">Signed in as <span class="auth-email">${escapeHtml(viewer.user.email)}</span>. Back to ${agent} tells it no.</p>${anotherAccount(shown)}`,
     styles,
     status: options.status,
     formActions: [formActionSource(request.redirectUri)]

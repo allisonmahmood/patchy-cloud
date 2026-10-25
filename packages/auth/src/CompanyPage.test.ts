@@ -585,7 +585,9 @@ it.layer(services)("company page and actions", (it) => {
         return yield* Effect.promise(() => response.text());
       });
       const everyone = [invited, owner.user.email, gone.email, member.email];
-      const shown = (html: string) => everyone.filter((email) => html.includes(email)).sort();
+      // The page's own list; the sidebar's account menu carries the viewer's email on every page.
+      const shown = (html: string) =>
+        everyone.filter((email) => html.slice(html.indexOf("<main")).includes(email)).sort();
       assert.deepStrictEqual(shown(yield* page("/company")), [...everyone].sort());
       assert.deepStrictEqual(shown(yield* page("/company?show=nonsense")), [...everyone].sort());
       assert.deepStrictEqual(shown(yield* page("/company?show=admins")), [owner.user.email]);

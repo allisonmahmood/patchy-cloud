@@ -701,7 +701,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
 
       const adminHtml = yield* text(yield* consentPage(query));
       assert.include(adminHtml, "You’re an admin: turn it on, then connect again from Agent.");
-      assert.include(adminHtml, '<a class="btn btn-primary" href="/company#agent-access">');
+      assert.include(adminHtml, '<a class="btn btn-primary" href="/company/agent-access">');
 
       // Allow from a page shown while it was on is refused; Back to the agent denies.
       const allowed = yield* answer(shownWhileOn, "allow", { cookie: sessionOf() });

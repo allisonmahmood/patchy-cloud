@@ -537,7 +537,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const html = yield* fresh.text;
       // Home is still Home, inert and blurred behind the panel.
       assert.strictEqual(heading(html), "Nothing here yet");
-      assert.include(html, '<div class="app-card" inert>');
+      assert.include(html, '<div class="app" inert>');
       assert.include(
         html,
         '<section class="modal-panel final-step" role="dialog" aria-modal="true" aria-labelledby="final-step-heading" data-guide-modal>'
@@ -579,7 +579,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
       // Someone with a live machine token sees Home alone, without the way back.
       const member = yield* (yield* request("/", workspace.member)).text;
       assert.notInclude(member, "data-guide-modal");
-      assert.notInclude(member, '<div class="app-card" inert>');
+      assert.notInclude(member, '<div class="app" inert>');
       assert.notInclude(member, 'class="tile-row tile-row-placeholder"');
     })
   );
@@ -1993,7 +1993,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.notInclude(html, foreign.owner.email);
         assert.match(html, /<form\b[^>]*method="get"/i);
         assert.match(html, /<form\b[^>]*method="post"/i);
-        assert.strictEqual(inputs(html, "q", "search").length, 1);
+        // One search on the page itself; the sidebar carries its own.
+        assert.strictEqual(inputs(html.slice(html.indexOf("<main")), "q", "search").length, 1);
         assert.strictEqual(hidden(html, "expectedOwnerUserId"), workspace.owner.id);
         const matching = yield* request(`${path}?q=aLeX`, workspace.admin);
         assert.strictEqual(matching.status, 200);
@@ -2007,7 +2008,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.strictEqual(noMatch.status, 200);
         const empty = yield* noMatch.text;
         assert.deepStrictEqual(radioValues(empty), []);
-        assert.strictEqual(hidden(empty, "q"), "nobody-has-this-name");
+        assert.strictEqual(
+          hidden(empty.slice(empty.indexOf("<main")), "q"),
+          "nobody-has-this-name"
+        );
         assert.match(empty, /<button\b(?=[^>]*type="submit")(?=[^>]*\bdisabled)[^>]*>/);
         yield* users.deactivate({ companyId: workspace.id, userId: workspace.member.id });
         const before = yield* readPatch(workspace.owner, patch.patchId);
@@ -2800,7 +2804,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
       assert.include(text(admin ?? ""), "At Northwind that’s you.");
       assert.deepStrictEqual(links(admin ?? ""), [
-        { href: "/company#agent-access", text: "Turn it on at Company" }
+        { href: "/company/agent-access", text: "Turn it on at Company" }
       ]);
     })
   );
