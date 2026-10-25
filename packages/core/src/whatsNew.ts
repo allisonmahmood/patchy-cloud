@@ -1,5 +1,5 @@
 /**
- * What's new: the changelog behind the app shell's bell and `/whats-new`. It ships with the
+ * What's new: the changelog behind What's new in the sidebar and `/whats-new`. It ships with the
  * server, so production shows the releases its own commit carries, and a rollback shows the
  * older list. Its New and Improved changes are public too: patchyhq.com reads them from
  * `/whats-new.json`, without the PRs, `through` or behind-the-scenes lines.
@@ -51,6 +51,58 @@ export interface Release {
 
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
+  {
+    id: 19,
+    date: "2026-10-25",
+    through: "156a22858887452c3cd87ee70997912f2a536f31",
+    changes: [
+      {
+        kind: "Improved",
+        title: "A sidebar that keeps your things and the company's apart",
+        detail:
+          "Every page now has a sidebar: Home, All patches and Your agents, then your company's People, Integrations and Agent access. Search sits at the top, and What's new and your name, which opens Sign out, sit at the bottom. On a phone, Menu opens the same list. Pages are calmer too, with fewer heavy borders, shadows and badges.",
+        prs: [930]
+      },
+      {
+        kind: "Improved",
+        title: "Your agents shows what's connected first",
+        detail:
+          "Your machines is now Your agents. It starts with the computers that publish as you and the apps that use your company's tools as you, each with a button to end it. Add a computer and Connect an app open the steps only when you want them, and Disconnect everything says what it ends and asks once before it does.",
+        prs: [932]
+      },
+      {
+        kind: "Improved",
+        title: "People, Integrations and Agent access each have a page",
+        detail:
+          "The Company page is now People, with Invite people in its toolbar. Agent access has a page of its own that says what turning it off does before you do it, and the page for your company's databases and analytics is now called Integrations.",
+        prs: [931]
+      },
+      {
+        kind: "Improved",
+        title: "Patches go by their real names, and one click opens them",
+        detail:
+          "Lists show a patch's title, like Spend Requests, instead of its short name, and clicking a patch opens it wherever it's listed. Its menu has About, Copy link and the rest.",
+        prs: [933]
+      },
+      {
+        kind: "New",
+        title: "Patchy says what just happened",
+        detail:
+          "After you revoke a computer, invite someone, change who can open a patch or anything like it, a line at the top of the page says what was done.",
+        prs: [930, 931, 932, 933]
+      },
+      {
+        kind: "Improved",
+        title: "Making a patch public asks first",
+        detail:
+          "Choosing Anyone on the internet now shows one step that says anyone with the link can open it without signing in, so nothing goes public by accident.",
+        prs: [933]
+      }
+    ],
+    behindTheScenes: [
+      "Agents' instructions and Patchy's docs use the new page names, and send people to Agent access when an admin needs to turn it on."
+    ]
+  },
   {
     id: 18,
     date: "2026-10-24",
