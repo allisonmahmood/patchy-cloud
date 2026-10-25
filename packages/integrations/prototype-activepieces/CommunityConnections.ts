@@ -26,7 +26,7 @@ export class Refused extends Schema.TaggedError<Refused>()("CommunityRefused", {
       forbidden: "Only company admins can use this local prototype.",
       missing: "This connection is unavailable in your company.",
       invalid:
-        "Check the required credentials, selected action, and connection handle (3–32 lowercase letters, digits or hyphens).",
+        "Check the required credentials or action inputs, selected action, and connection handle (3–32 lowercase letters, digits or hyphens).",
       conflict: "The connection changed or that handle is already in use. Reload and try again."
     }[this.code];
   }
@@ -55,7 +55,8 @@ export class CommunityConnections extends Context.Service<
     readonly run: (
       key: Key,
       id: string,
-      action?: string
+      action?: string,
+      inputs?: Readonly<Record<string, string>>
     ) => Effect.Effect<unknown, Failure, RequireSession.Viewer>;
     readonly disconnect: (
       key: Key,
@@ -153,12 +154,18 @@ export const make = Effect.gen(function* () {
   const run = Effect.fn("CommunityConnections.run")(function* (
     key: Key,
     id: string,
-    requestedAction?: string
+    requestedAction?: string,
+    inputs: Readonly<Record<string, string>> = {}
   ) {
     const viewer = yield* admin;
     const entry = definition(key);
     const action = requestedAction ?? Object.keys(entry.actions)[0]!;
     if (!Object.hasOwn(entry.actions, action)) return yield* new Refused({ code: "invalid" });
+    const admitted = pieces.infos
+      .find((info) => info.key === key)!
+      .actions.find((candidate) => candidate.name === action)!;
+    if (!Pieces.validInputs(admitted.fields, inputs))
+      return yield* new Refused({ code: "invalid" });
     const started = yield* Clock.currentTimeMillis;
     const correlationId = newInternalId("corr");
     // Failed company lookups are logged to the caller's company, never the target's history.
@@ -194,7 +201,7 @@ export const make = Effect.gen(function* () {
             : entry.legacyCredentialField
               ? Redacted.make({ [entry.legacyCredentialField]: Redacted.value(encrypted) })
               : yield* new CredentialKeys.CredentialDecryptionFailed({});
-        const value = yield* pieces.run(key, action, credentials);
+        const value = yield* pieces.run(key, action, credentials, inputs);
         // A token rotation or disconnect during the request invalidates this result.
         const current = yield* get(key, viewer.company.id, id);
         if (current.status !== "connected" || current.revision !== row.revision)

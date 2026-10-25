@@ -19,8 +19,28 @@ export interface Info {
   readonly displayName: string;
   readonly authDescription: string;
   readonly fields: ReadonlyArray<AuthField>;
-  readonly actions: ReadonlyArray<{ readonly name: string; readonly displayName: string }>;
+  readonly actions: ReadonlyArray<{
+    readonly name: string;
+    readonly displayName: string;
+    readonly fields: ReadonlyArray<AuthField>;
+  }>;
 }
+/** Only explicitly admitted text inputs can supplement host-fixed action properties. */
+export const validInputs = (
+  fields: ReadonlyArray<AuthField>,
+  values: Readonly<Record<string, string>>
+) =>
+  Object.entries(values).every(
+    ([name, value]) =>
+      fields.some((field) => field.name === name) &&
+      typeof value === "string" &&
+      value.length <= 4096
+  ) &&
+  fields.every(
+    (field) =>
+      !field.required ||
+      (Object.hasOwn(values, field.name) && (values[field.name]?.trim().length ?? 0) > 0)
+  );
 export class PieceFailure extends Schema.TaggedError<PieceFailure>()("PieceFailure", {
   key: Schema.String,
   stage: Schema.Literals(["load", "validate", "run"]),
@@ -41,7 +61,8 @@ export class Pieces extends Context.Service<
     readonly run: (
       key: Key,
       action: string,
-      credentials: Redacted.Redacted<Credentials>
+      credentials: Redacted.Redacted<Credentials>,
+      inputs?: Readonly<Record<string, string>>
     ) => Effect.Effect<unknown, PieceFailure>;
   }
 >()("prototype/activepieces/Pieces") {}
@@ -81,14 +102,37 @@ export const makeWithTestPreload = Effect.fn("Pieces.make")(function* (testPrelo
       )
     )
       return yield* new PieceFailure({ key, stage: "load" });
+    const actions: Info["actions"][number][] = [];
+    for (const [name, policy] of Object.entries(entry.actions)) {
+      const action = piece.metadata.actionDetails.find((action) => action.name === name)!;
+      const inputs = (policy.inputs ?? []).map((name) =>
+        action.fields.find((field) => field.name === name)
+      );
+      if (
+        inputs.some(
+          (field) =>
+            !field || field.type !== "SHORT_TEXT" || Object.hasOwn(policy.props, field.name)
+        ) ||
+        action.fields.some(
+          (field) =>
+            field.required &&
+            !Object.hasOwn(policy.props, field.name) &&
+            !inputs.some((input) => input?.name === field.name)
+        )
+      )
+        return yield* new PieceFailure({ key, stage: "load" });
+      actions.push({
+        name,
+        displayName: action.displayName,
+        fields: inputs as ReadonlyArray<AuthField>
+      });
+    }
     const info: Info = {
       key,
       displayName: piece.metadata.displayName,
       authDescription: piece.metadata.authDescription,
       fields: fields as ReadonlyArray<AuthField>,
-      actions: piece.metadata.actionDetails.filter((action) =>
-        Object.hasOwn(entry.actions, action.name)
-      )
+      actions
     };
     loaded.set(key, { piece, info });
   }
@@ -117,15 +161,19 @@ export const makeWithTestPreload = Effect.fn("Pieces.make")(function* (testPrelo
         catch: (cause) => new PieceFailure({ key, stage: "validate", cause: Redacted.make(cause) })
       });
     },
-    run: (key, action, credentials) =>
+    run: (key, action, credentials, inputs = {}) =>
       Effect.tryPromise({
         try: async () => {
           const values = Redacted.value(credentials);
-          if (!credentialsValid(key, values) || !Object.hasOwn(definition(key).actions, action))
-            throw new Error("Action or credentials not admitted");
-          const value = await loaded
+          const admitted = loaded
             .get(key)!
-            .piece.run(action, actionAuth(key, values), definition(key).actions[action]!);
+            .info.actions.find((candidate) => candidate.name === action);
+          if (!credentialsValid(key, values) || !admitted || !validInputs(admitted.fields, inputs))
+            throw new Error("Action or credentials not admitted");
+          const value = await loaded.get(key)!.piece.run(action, actionAuth(key, values), {
+            ...definition(key).actions[action]!.props,
+            ...inputs
+          });
           // Redact encoded secret strings even if a reviewed connector reflects them in object keys.
           let encoded = JSON.stringify(value);
           for (const field of loaded

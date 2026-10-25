@@ -31,7 +31,12 @@ const resendTokens = ["re_MockCompanyA000001", "re_MockCompanyB000002"];
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
 const slackPath = `${CommunityPages.path}/slack`;
-const requests: { provider: string; path: string; token: string }[] = [];
+const requests: {
+  provider: string;
+  path: string;
+  token: string;
+  fields: Record<string, string>;
+}[] = [];
 let rejectProvider = false;
 let echoCredential = false;
 
@@ -44,11 +49,13 @@ const provider = Layer.effect(
     Effect.promise(async () => {
       const dir = await mkdtemp(join(tmpdir(), "patchy-slack-double-"));
       const server = createServer(async (req, res) => {
-        req.resume(); // The mock inspects authorization and endpoint, not the SDK's form body.
+        let bodyText = "";
+        for await (const chunk of req) bodyText += chunk;
         const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
         const provider = req.url!.startsWith("/resend/") ? "resend" : "slack";
         const path = req.url!.split("?")[0]!.replace(/^\/(?:resend|slack)/, "");
-        requests.push({ provider, path, token });
+        const fields = Object.fromEntries(new URLSearchParams(bodyText));
+        requests.push({ provider, path, token, fields });
         if (provider === "resend") {
           const customer = resendTokens.indexOf(token);
           res.setHeader("content-type", "application/json");
@@ -86,7 +93,16 @@ const provider = Layer.effect(
                     ],
                     response_metadata: { next_cursor: "" }
                   }
-                : { ok: false, error: "unexpected_mock_endpoint" };
+                : path === "/api/conversations.replies" &&
+                    fields.channel === `D${customer}` &&
+                    fields.ts === "1700000000.000001"
+                  ? {
+                      ok: true,
+                      messages: [{ ts: fields.ts, text: `mock-thread-company-${customer}` }],
+                      has_more: false,
+                      response_metadata: { next_cursor: "" }
+                    }
+                  : { ok: false, error: "unexpected_mock_endpoint" };
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify(body));
       }).listen(0, "127.0.0.1");
@@ -148,7 +164,7 @@ const services = Layer.mergeAll(
 const send = Effect.fn(function* (
   user: Users.User | null,
   path = slackPath,
-  fields?: Record<string, string>,
+  fields?: Record<string, string> | URLSearchParams,
   origin = base
 ) {
   const app = yield* HttpRouter.toHttpEffect(CommunityPages.layer);
@@ -223,17 +239,76 @@ it.layer(services)("Community connector catalog (mock providers)", (it) => {
           });
           assert.strictEqual(history[0]!.outcome, "success");
           assert.notInclude(JSON.stringify(history), tokens[i]!);
+          const thread = yield* send(
+            owner.user,
+            `${slackPath}/${ids[i]}/run/slack_get_thread_replies`,
+            {
+              "input.channel": `D${i}`,
+              "input.threadTs": "1700000000.000001"
+            }
+          );
+          assert.strictEqual(thread.status, 200);
+          assert.include(yield* Effect.promise(() => thread.text()), `mock-thread-company-${i}`);
         }
         assert.deepStrictEqual(
           requests.filter((r) => r.path === "/api/conversations.list").map((r) => r.token),
           tokens
         );
+        assert.deepStrictEqual(
+          requests
+            .filter((r) => r.path === "/api/conversations.replies")
+            .map(({ token, fields }) => ({ token, channel: fields.channel, ts: fields.ts })),
+          tokens.map((token, i) => ({ token, channel: `D${i}`, ts: "1700000000.000001" }))
+        );
         const before = requests.length;
+        const invalidInputs: Array<Record<string, string> | URLSearchParams> = [
+          {},
+          { "input.channel": "D0", "input.threadTs": " " },
+          {
+            "input.channel": "D0",
+            "input.threadTs": "1700000000.000001",
+            "input.botToken": tokens[1]!
+          },
+          { "input.channel": "D".repeat(4097), "input.threadTs": "1700000000.000001" },
+          new URLSearchParams([
+            ["input.channel", "D0"],
+            ["input.channel", "D1"],
+            ["input.threadTs", "1700000000.000001"]
+          ])
+        ];
+        for (const fields of invalidInputs)
+          assert.strictEqual(
+            (yield* send(
+              owners[0]!.user,
+              `${slackPath}/${ids[0]}/run/slack_get_thread_replies`,
+              fields
+            )).status,
+            422
+          );
+        assert.strictEqual(
+          (yield* send(owners[1]!.user, `${slackPath}/${ids[0]}/run/slack_get_thread_replies`, {
+            "input.channel": "D0",
+            "input.threadTs": "1700000000.000001"
+          })).status,
+          404
+        );
+        assert.strictEqual(
+          (yield* send(owners[0]!.user, `${slackPath}/${ids[0]}/run/slack_list_channels`, {
+            "input.types": "im"
+          })).status,
+          422
+        );
         for (const action of ["run", "disconnect", "delete", "connect"]) {
-          const response = yield* send(owners[1]!.user, `${slackPath}/${ids[0]}/${action}`, {
-            handle: "workspace",
-            "credential.botToken": tokens[1]!
-          });
+          const response = yield* send(
+            owners[1]!.user,
+            `${slackPath}/${ids[0]}/${action}`,
+            action === "connect"
+              ? {
+                  handle: "workspace",
+                  "credential.botToken": tokens[1]!
+                }
+              : {}
+          );
           assert.strictEqual(response.status, 404);
         }
         assert.strictEqual(requests.length, before);
@@ -368,10 +443,16 @@ it.layer(services)("Community connector catalog (mock providers)", (it) => {
         const before = requests.length;
         for (const action of ["run", "connect", "disconnect", "delete"])
           assert.strictEqual(
-            (yield* send(owners[1]!.user, `${target}/${ids[0]}/${action}`, {
-              handle: "workspace",
-              "credential.secret_text": resendTokens[1]!
-            })).status,
+            (yield* send(
+              owners[1]!.user,
+              `${target}/${ids[0]}/${action}`,
+              action === "connect"
+                ? {
+                    handle: "workspace",
+                    "credential.secret_text": resendTokens[1]!
+                  }
+                : {}
+            )).status,
             404
           );
         assert.strictEqual(

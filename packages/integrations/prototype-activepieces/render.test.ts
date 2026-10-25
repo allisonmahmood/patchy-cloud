@@ -15,7 +15,7 @@ const resend: Info = {
       required: true
     }
   ],
-  actions: [{ name: "list_domains", displayName: "List Domains" }]
+  actions: [{ name: "list_domains", displayName: "List Domains", fields: [] }]
 };
 it("renders required masked credentials and action labels from module metadata", () => {
   const html = View.provider({
@@ -59,4 +59,49 @@ it("shows API-key versus app-setup requirements before asking for credentials", 
   assert.include(html, "Full access");
   assert.include(html, 'href="/company/connections/community/resend"');
   assert.include(html, 'href="/company/connections/community/slack"');
+});
+it("renders admitted action inputs with module labels, escaped hints, and unique field ids", () => {
+  const info: Info = {
+    ...resend,
+    key: "slack",
+    displayName: "Slack",
+    actions: [
+      {
+        name: "slack_get_thread_replies",
+        displayName: "Get Thread Replies",
+        fields: [
+          {
+            name: "channel",
+            displayName: "Channel",
+            description: "<script>bad()</script>",
+            type: "SHORT_TEXT",
+            required: true
+          },
+          {
+            name: "threadTs",
+            displayName: "Thread Timestamp",
+            description: "Parent message.",
+            type: "SHORT_TEXT",
+            required: true
+          }
+        ]
+      }
+    ]
+  };
+  const html = View.provider({
+    info,
+    company: "Mock",
+    rows: [{ id: "conn_mock", handle: "workspace", status: "connected" }],
+    calls: new Map()
+  });
+  assert.include(html, 'name="input.channel" type="text"');
+  assert.include(html, 'name="input.threadTs" type="text"');
+  assert.include(
+    html,
+    'for="conn_mock-slack_get_thread_replies-threadTs">Thread Timestamp</label>'
+  );
+  assert.include(html, 'aria-describedby="conn_mock-slack_get_thread_replies-threadTs-hint"');
+  assert.include(html, "&lt;script&gt;");
+  assert.notInclude(html, "<script>");
+  assert.include(html, "/run/slack_get_thread_replies");
 });

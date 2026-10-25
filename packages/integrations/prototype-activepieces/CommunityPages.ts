@@ -64,46 +64,61 @@ const render = Effect.fn("CommunityPages.render")(function* (
   );
 });
 
+const readForm = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const entries = yield* request.urlParamsBody.pipe(
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(32768)),
+    Effect.map((params) =>
+      Array.from(
+        params,
+        ([name, value]) =>
+          [name, Redacted.isRedacted(value) ? Redacted.value(value) : value] as const
+      )
+    ),
+    Effect.catchTags({
+      HttpServerError: () => Effect.fail(new CommunityConnections.Refused({ code: "invalid" }))
+    })
+  );
+  const form = new Map(entries);
+  if (form.size !== entries.length)
+    return yield* new CommunityConnections.Refused({ code: "invalid" });
+  return form;
+});
+
 const submit = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
   if (viewer.role !== "admin")
     return yield* new CommunityConnections.Refused({ code: "forbidden" });
   const key = yield* selected;
   const store = yield* CommunityConnections.CommunityConnections;
-  const request = yield* HttpServerRequest.HttpServerRequest;
   const params = yield* HttpRouter.params;
   const action = params.action ?? "connect";
   const id = params.id ?? "";
   if (params.operation && action !== "run")
     return yield* new CommunityConnections.Refused({ code: "missing" });
-  if (action === "run")
+  if (action === "run") {
+    const form = yield* readForm;
+    if ([...form.keys()].some((name) => !name.startsWith("input.")))
+      return yield* new CommunityConnections.Refused({ code: "invalid" });
     return yield* render(
       key,
       "Action completed.",
       200,
-      yield* store.run(key, id, params.operation)
+      yield* store.run(
+        key,
+        id,
+        params.operation,
+        Object.fromEntries([...form].map(([name, value]) => [name.slice("input.".length), value]))
+      )
     );
+  }
   if (action === "disconnect") yield* store.disconnect(key, id);
   else if (action === "delete") yield* store.delete(key, id);
   else if (action === "connect") {
     const fields = (yield* Pieces.Pieces).infos.find((info) => info.key === key)!.fields;
-    const entries = yield* request.urlParamsBody.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(32768)),
-      Effect.map((params) =>
-        Array.from(
-          params,
-          ([name, value]) =>
-            [name, Redacted.isRedacted(value) ? Redacted.value(value) : value] as const
-        )
-      ),
-      Effect.catchTags({
-        HttpServerError: () => Effect.fail(new CommunityConnections.Refused({ code: "invalid" }))
-      })
-    );
-    const form = new Map(entries);
+    const form = yield* readForm;
     if (
-      form.size !== entries.length ||
-      entries.some(
+      [...form].some(
         ([name]) =>
           name !== "handle" && !fields.some((field) => name === `credential.${field.name}`)
       )

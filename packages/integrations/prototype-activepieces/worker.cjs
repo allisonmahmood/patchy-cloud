@@ -49,7 +49,10 @@ process.once("message", async ({ modulePath, exportName, authType, invocation })
           actions: Object.keys(actions),
           actionDetails: Object.entries(actions).map(([name, action]) => ({
             name,
-            displayName: action.displayName ?? name
+            displayName: action.displayName ?? name,
+            fields: Object.entries(action.props ?? {}).map(([name, property]) =>
+              field(name, property)
+            )
           }))
         }
       };

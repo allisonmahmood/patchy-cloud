@@ -23,7 +23,13 @@ const Metadata = Schema.Struct({
   authFields: Schema.Array(AuthField),
   hasValidator: Schema.Boolean,
   actions: Schema.Array(Schema.String),
-  actionDetails: Schema.Array(Schema.Struct({ name: Schema.String, displayName: Schema.String }))
+  actionDetails: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      displayName: Schema.String,
+      fields: Schema.Array(AuthField)
+    })
+  )
 });
 const decodeMetadata = Schema.decodeUnknownSync(Metadata);
 
