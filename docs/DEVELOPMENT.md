@@ -136,9 +136,10 @@ patches. See that directory's README for setup and restart instructions. Normal
 `logs` and `stop` manage the prototype's processes too. Its extra people and
 connections are seeded only by the prototype launcher, not the normal dev seed
 or vitest template. `npm --prefix packages/integrations/prototype-activepieces
-run local:slack` instead starts direct Slack bot-token entry inside local
-Patchy, with real provider requests and no tokens preloaded. Stop before
-switching modes. Its README distinguishes the offline mock tests from real calls.
+run local:catalog` instead opens a local catalog with module-driven credential
+forms for Resend and Slack. It uses real provider requests and preloads no
+credentials. `local:slack` remains an alias. Stop before switching modes. Its
+README distinguishes the offline mock tests from real calls.
 
 | Command                                       | What it does                                                                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |

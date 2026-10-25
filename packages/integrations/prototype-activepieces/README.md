@@ -1,83 +1,111 @@
 # Activepieces module prototype
 
-Local, throwaway milestone 1. `prototype/activepieces-slack-token` starts from
-the pushed `prototype/activepieces` and is rebased onto main at `8a278cb4`.
-This directory is outside the
-integration package's production `src`. A separate local server entrypoint
-composes the adapter; normal server startup, releases, migrations and the SDK
-keep their existing behavior. No Nango branch code was incorporated.
+Local, throwaway connector catalog on `prototype/activepieces-connection-catalog`,
+branched from pushed `prototype/activepieces-slack-token` (#923). That branch
+rebased the earlier prototype onto main at `8a278cb4`. No Nango implementation is
+continued. Production startup, releases, migrations and public SDK contracts are
+unchanged.
 
-The question: can a shared adapter run an existing community action while
-Patchy owns connections, secrets and authorization? **Yes for this one action,
-against simulated provider responses.** This does not prove catalog compatibility
-or a successful real provider call. The Slack mode below is wired for real
-requests, but needs your existing bot token to demonstrate provider success.
-
-## Slack inside local Patchy
+## Connector catalog inside local Patchy
 
 ```sh
 npm --prefix packages/integrations/prototype-activepieces ci --ignore-scripts --no-audit --no-fund
-npm --prefix packages/integrations/prototype-activepieces run local:slack
+npm --prefix packages/integrations/prototype-activepieces run local:catalog
 ```
 
-Open the printed Customer A link. You are inside Patchy's signed-in Connections
-area. Paste an **existing installed app's `xoxb-` bot token**, then choose
-**Test and connect**. This runs the module's existing `auth.test` validator.
-Choose **List public channels** to run its unchanged `slack_list_channels`
-action, limited to `public_channel` and excluding archived channels. The bot
-needs `channels:read`. No Slack app is registered and no OAuth redirect occurs.
-No messages are sent. Do not paste a token into chat, a source file or a URL.
+Open the printed Customer A link, or **Connections → Explore connectors (local
+prototype)**. Pick a provider, enter credentials, and choose **Test and connect**.
+The same form renderer takes field labels, secret/text types, required flags and
+instructions from each pinned piece. Validation uses the piece's existing auth
+validator. After connecting, the module's admitted read action is a button on its
+connection. Enter credentials only in Patchy, never in chat, source files or URLs.
 
-The normal Connections page links to this local Slack page. Replace token,
-disconnect (which erases the saved token), reconnect, delete a disconnected
-connection, and recent call outcomes are available there. The two test companies
-start with **no Slack connections**. Use Customer B's link in another browser
-profile and a separate token to try a second real connection. With one browser
-profile, the latest sign-in changes every tab to that company.
+| Provider | Customer setup                                                                                                                                                  | Admitted existing action                                                |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Resend   | Create an API key in account settings. List Domains requires **Full access**; a Sending access key cannot read domains. No OAuth app is required for this mode. | `list_domains`                                                          |
+| Slack    | Supply an **existing installed app's** bot token with `channels:read`. Slack issues bot tokens through app installation; Activepieces does not provide one.     | `slack_list_channels`, public channels only, archived channels excluded |
 
-This mode uses **real Slack requests**; it never substitutes fake successful
-responses. The automated `slack.test.ts` is different: it loads the same pinned
-module but redirects its HTTP transport to a loopback **mock Slack provider**.
-It verifies two companies' credential selection, rejected cross-company ids,
-admin checks, same-origin checks, encryption, safe failures and call logs. These
-tests do **not** establish that a real Slack workspace has connected.
+The catalog states these requirements before credential entry. It does not
+register provider apps, perform OAuth, send Slack messages or send emails. The
+module's auth validator confirms credentials; it does not certify least-privilege
+scopes or access to every action. Resend's validator can accept a Sending access
+key even though List Domains then fails; use the Full access key described above.
 
-The adapter selects `CUSTOM_AUTH` explicitly from the piece's OAuth/custom-auth
-array, runs its validator, and maps the saved token into the existing action's
-`{ type: "CUSTOM_AUTH", props: { botToken } }` auth shape. The worker keeps TLS
-certificate validation enabled despite an upstream helper's attempt to disable
-it. Tokens travel over private IPC, not process arguments or environment.
+The two invented customer companies start without provider credentials. Each may
+have multiple connections. Use a separate browser profile for Customer B;
+switching persona in one profile changes all its tabs. Replace credentials,
+disconnect (which erases saved credentials), reconnect, delete a disconnected
+connection, and recent call outcomes are available on each provider page.
+`local:slack` remains a launcher alias, and the previous `/community/slack` URL
+still serves Slack. Stop with `local:stop` before switching to the inherited
+PostHog mock's `local` command. State survives restart; `pnpm dev down` removes it.
 
-The local service reuses the existing `connections` table under integration
-`activepieces:slack`, AES-GCM `CredentialKeys` (including company/id/integration
-binding), `RequireSession` membership/admin checks and `RuntimeLog`. Native
-stores already filter unknown integration kinds. No migrations, production
-entrypoint, public API schema, CLI or SDK contract are changed. Saved tokens
-are never returned in HTML, action output or call logs. Calls run as an admin
-from the connection page; **Slack is not yet callable from generated patch
-clients or declared patch runtime operations**. That runtime contract remains a
-separate milestone; the inherited PostHog mock demonstrates those surfaces only
-for PostHog. This proof does not create schema snapshots for community actions.
+## How another connector is admitted
 
-Provider-specific work still includes auth shape/field mapping, scopes, admitted
-actions and properties, result schemas, timeouts/pagination, rate limits and
-any additional Activepieces context capabilities. OAuth, triggers, webhooks,
-background execution and general catalog discovery are outside this milestone.
-One connector's compatibility says nothing about the rest of the catalog.
+`catalog.ts` is the host's policy: package/version/export, selected authentication
+mode/fields, setup requirements, and enabled action names with fixed properties.
+The npm lockfile pins tarball integrity; startup checks the installed version.
+Adding a compatible reviewed module requires a dependency pin and catalog entry,
+not a new provider form, connection service or HTTP implementation. This is not
+an npm installer or automatic admission of every community piece.
 
-**Permission boundary:** an authorized local/internal test with an existing
-token does not need Patchy to register a provider app or use a hosted auth broker.
-The token still carries the Slack app's existing permissions and any workspace
-admin restrictions. It is not a workaround for Slack's commercial distribution
-rules: [Slack's API terms](https://slack.com/terms-of-service/api), effective
-October 10, 2025, require a separate agreement for commercial distribution,
-including apps connecting to paid products and custom app templates (with a
-single-third-party exception). Do not treat this prototype as clearance to ship
-a commercial Slack integration without resolving that blocker.
+`Pieces.ts` loads the admitted modules through `adapter.ts`, obtains metadata in
+an isolated worker, and shares the supported authentication mappings:
+`SECRET_TEXT` becomes the module's `secret_text` credential; `CUSTOM_AUTH` becomes
+its `props` record for action execution. Validators receive the corresponding raw
+secret or properties. Only selected secret/text fields are rendered; missing
+validators, missing required fields and unsupported field types fail admission.
+Slack's optional user token is intentionally excluded because the admitted
+public-channel action needs only its bot token. OAuth is not admitted.
 
-To switch modes, stop this worktree's instance first with `local:stop`, then run
-`local:slack` for real Slack or `local` for the inherited PostHog mock below.
-State survives restart; `pnpm dev down` deletes this worktree's local instance.
+`CommunityConnections.ts` and `CommunityPages.ts` serve every admitted provider.
+They reuse Patchy's existing `connections` table as `activepieces:<key>`, AES-GCM
+`CredentialKeys` (company/id/integration binding), current membership/admin checks,
+same-origin POST protection and `RuntimeLog`. Queries include both company and
+provider; supplying another provider's or company's id fails before decryption
+or provider HTTP. Secrets are encrypted as a versioned JSON field record and are
+not returned in HTML, results or logs. Existing raw Slack credentials remain
+readable; replacement upgrades them to the new format. Going back to the older
+Slack-only prototype after writing the new format requires re-entering those
+credentials there. Production's native stores ignore community connection kinds.
+
+Workers retain the five-second bound, empty inherited environment and suppressed
+raw output. Credentials travel privately over IPC. The worker keeps TLS
+verification enabled despite an upstream helper trying to disable it. This is
+process separation for reviewed code, not an OS sandbox for untrusted modules.
+
+Calls currently run as admins from connection pages. **Community connections are
+not yet callable from generated patch clients or declared runtime operations.**
+The inherited PostHog mock below demonstrates those surfaces for PostHog only.
+No community action snapshots or general generated client contract are added.
+
+## Evidence and limits
+
+`catalog.test.ts` loads the unchanged pinned Slack and Resend modules with their
+transport redirected to loopback **mock providers**. It checks both credential
+shapes, distinct companies and provider kinds, credential selection and encryption,
+cross-company and cross-provider denial before HTTP, unadmitted write-action and
+field rejection, safe auth/upstream failures, logs, disconnect/reconnect and legacy
+Slack credential reads. `render.test.ts` checks module-driven field semantics,
+escaping and visible setup requirements. Tests do not prove real provider access.
+The local browser mode makes **real requests**, never fake successful responses;
+no successful real Slack or Resend call has been verified without user credentials.
+
+Provider-specific work remains: field/action admission, auth-version differences,
+permissions, results, rate limits, pagination and extra worker context. The selected
+Resend action returns its response page without following pagination. Unsupported
+context fails explicitly. OAuth/refresh, triggers, webhooks, background execution,
+dynamic fields, a general action-input editor, production network controls and a
+complete bundle dependency/license inventory remain outside this proof. Two
+modules do not establish catalog-wide compatibility.
+
+Community source is MIT under the root license with enterprise-directory
+exclusions; see `NOTICE.md`. No paid connector subscription, Activepieces server,
+hosted OAuth broker or enterprise code is used. Provider accounts, quotas, terms
+and credentials remain separate. In particular, [Slack's API terms](https://slack.com/terms-of-service/api)
+require separate authorization for commercial distribution, subject to their
+exceptions. Bot-token entry does not resolve that commercial blocker. This local
+proof is not commercial-distribution or complete SBOM clearance.
 
 ## Run
 
@@ -241,10 +269,11 @@ path has not been exercised with a real project.
   environment is unchanged. This is not an OS sandbox, and does not establish
   TLS or network safety for other pieces.
 
-## What still needs work
+## Inherited PostHog proof limits
 
-This uses an integration Patchy already supports to keep the seam small; it does
-not add a new catalog entry or general connection schema. A new provider still
+The inherited PostHog runtime proof uses an integration Patchy already supports
+to keep that runtime seam small. The separate community catalog above adds
+connection-page execution, not a general patch runtime integration schema. A new provider still
 needs a reviewed auth-field mapping, permitted operations and credential
 destinations, input/output schemas, and a connection setup/discovery experience.
 Common adapter execution can stay shared instead of rewriting each API call.
