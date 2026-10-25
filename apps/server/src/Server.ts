@@ -88,6 +88,7 @@ import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
 import * as SetupPickup from "./SetupPickup.js";
+import * as ExternalSharingPrototype from "./ExternalSharingPrototype.js";
 
 /** Where client documents come from, which the launcher brings: the pinned network, or fixtures. */
 export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
@@ -310,7 +311,8 @@ const middleware = HttpRouter.middleware(
     const events = yield* RequestEvents.edge;
     const trustedProxies = yield* TrustedProxies.make;
     const guard = yield* ApiGuard.make;
-    return (app) => events(trustedProxies(servingHeaders(guard(app))));
+    const sharing = (yield* DevPersonas.enabled) ? yield* ExternalSharingPrototype.make : undefined;
+    return (app) => events(trustedProxies(servingHeaders(guard(sharing ? sharing(app) : app))));
   }),
   { global: true }
 );

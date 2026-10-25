@@ -1,0 +1,383 @@
+/**
+ * Local-only experiment for #924. Installed only with loopback dev personas.
+ * Scratch tables deliberately stay outside the production migration record.
+ * Real sessions, patch bytes and server-side grants; static patches only.
+ * No company user, machine token or resource authority is created for a recipient.
+ */
+import * as ByteSize from "effect/ByteSize";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
+import { RequireSession, Session, pageResponse, signOutForm, withCookies } from "@patchy/auth";
+import { Users } from "@patchy/companies";
+import { escapeAttribute, escapeHtml, newInternalId } from "@patchy/core";
+import { Content, Patches } from "@patchy/patches";
+import { Pages } from "@patchy/serving";
+import {
+  contentSecurityPolicy,
+  PATCH_CONTENT_SECURITY_POLICY,
+  PATCH_PERMISSIONS_POLICY,
+  renderPatchWrapper
+} from "@patchy/serving/shell";
+
+const Share = Schema.Struct({
+  id: Schema.String,
+  patchId: Schema.String,
+  email: Schema.String,
+  subject: Schema.NullOr(Schema.String),
+  revoked: Schema.Boolean,
+  name: Schema.String,
+  title: Schema.String,
+  company: Schema.String,
+  handle: Schema.String
+});
+const decodeShares = Schema.decodeUnknownEffect(Schema.Array(Share));
+const decodeForm = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    patchId: Schema.NonEmptyString,
+    email: Schema.String.check(
+      Schema.isPattern(/^[^@\s]+@[^@\s]+\.[^@\s]+$/),
+      Schema.isMaxLength(254)
+    )
+  })
+);
+type Claims = RequireSession.SignedIn["Service"];
+
+function requestPath(target: string, pathname: string): string | null {
+  try {
+    // Match the router's decoding, query delimiters and slash normalization.
+    // Keep origin-form //paths as paths rather than interpreting a new host.
+    const raw = target.startsWith("/") ? target : pathname;
+    const decoded = decodeURI(raw.split(/[?;#]/, 1)[0]!).replace(/\/+/g, "/");
+    return decoded.length > 1 ? decoded.replace(/\/+$/, "") : decoded;
+  } catch {
+    return null;
+  }
+}
+
+const script = `(() => {
+  const url = new URL(document.currentScript.src);
+  const check = async () => {
+    try {
+      const reply = await fetch('/~shared/access/' + url.searchParams.get('patch') + '/' + url.searchParams.get('version'), { cache: 'no-store' });
+      if (reply.ok) return;
+    } catch {}
+    document.querySelector('#patch')?.remove();
+    location.replace('/~shared/ended');
+  };
+  setInterval(check, 2000);
+  addEventListener('focus', check);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  void check();
+})();`;
+
+export const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const session = yield* Session.Session;
+  const users = yield* Users.Users;
+  const patches = yield* Patches.Patches;
+  const content = yield* Content.Content;
+  // Only this branch's local persona instance reaches these scratch tables.
+  yield* sql`CREATE TABLE IF NOT EXISTS prototype_external_people (
+    subject TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL
+  )`;
+  yield* sql`CREATE TABLE IF NOT EXISTS prototype_external_shares (
+    id TEXT PRIMARY KEY,
+    patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    subject TEXT,
+    revoked BOOLEAN NOT NULL DEFAULT false,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    UNIQUE(patch_id, email)
+  )`;
+
+  const rows = Effect.fn("ExternalSharingPrototype.rows")(function* (
+    query: Effect.Effect<ReadonlyArray<unknown>, SqlError>
+  ) {
+    // The SQL client decodes through the same schema for every list.
+    return yield* query.pipe(
+      Effect.flatMap(decodeShares),
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+  });
+  const columns = sql`s.id, p.id AS "patchId", s.email, s.subject, s.revoked,
+    p.name, p.title, c.name AS company, c.handle`;
+  const joins = sql`FROM prototype_external_shares s JOIN patches p ON p.id = s.patch_id
+    JOIN companies c ON c.id = p.company_id JOIN patch_versions v ON v.id = p.current_version_id`;
+  const available = sql`p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL AND v.tier = 0`;
+  const forRecipient = (claims: Claims) =>
+    rows(sql`
+    SELECT ${columns} ${joins} WHERE NOT s.revoked AND ${available}
+    AND (s.subject = ${claims.sub} OR (s.subject IS NULL AND s.email = ${claims.email.toLowerCase()}))
+    ORDER BY c.name, p.name`);
+  const canOpen = Effect.fn("ExternalSharingPrototype.canOpen")(function* (
+    claims: Claims,
+    patchId: string,
+    versionId?: string
+  ) {
+    const found = yield* sql`SELECT s.id ${joins} WHERE s.patch_id = ${patchId}
+      AND s.subject = ${claims.sub} AND NOT s.revoked AND ${available}
+      ${versionId === undefined ? sql`` : sql`AND v.id = ${versionId}`}`;
+    return found.length > 0;
+  });
+  const redirect = (path: string) =>
+    HttpServerResponse.redirect(path, {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    });
+  const page = (title: string, body: string, status = 200) =>
+    pageResponse(
+      {
+        title,
+        status,
+        body,
+        styles:
+          ".shared-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; } .shared-link { overflow-wrap:anywhere; }"
+      },
+      session
+    );
+  const refused = () =>
+    page(
+      "This account opens shared patches",
+      `<p>Only company members can build patches or open company administration.</p><div class="actions"><a class="btn btn-primary" href="/shared">Shared with you</a></div>${signOutForm()}`,
+      403
+    );
+  const remember = (
+    claims: Claims
+  ) => sql`INSERT INTO prototype_external_people (subject, email, name)
+    VALUES (${claims.sub}, ${claims.email.toLowerCase()}, ${claims.name || claims.email.split("@")[0]!})
+    ON CONFLICT (subject) DO UPDATE SET email = excluded.email, name = excluded.name`;
+
+  const inbox = Effect.fn("ExternalSharingPrototype.inbox")(function* (
+    claims: Claims,
+    user: Users.User | null
+  ) {
+    yield* remember(claims);
+    const shares = yield* forRecipient(claims);
+    const groups = new Map<string, typeof shares>();
+    for (const share of shares)
+      groups.set(share.handle, [...(groups.get(share.handle) ?? []), share]);
+    const shared = [...groups]
+      .map(
+        ([, entries]) =>
+          `<section class="section"><h2 class="section-heading">${escapeHtml(entries[0]!.company)}</h2><div class="list">${entries.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p class="supporting-text">${escapeHtml(share.title)}</p></div>${share.subject === null ? `<form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>` : `<a class="btn" href="/${escapeAttribute(share.handle)}/${escapeAttribute(share.name)}">Open patch</a>`}</div><p class="supporting-text">${share.subject === null ? "Invited" : "Can read this page"} · shared with ${escapeHtml(share.email)}</p></div>`).join("")}</div></section>`
+      )
+      .join("");
+    let management = "";
+    if (user !== null) {
+      const inventory =
+        yield* sql`SELECT p.id, p.name FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
+        WHERE p.company_id = ${user.companyId} AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL
+        AND p.scope = 'company' AND v.tier = 0 AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name`;
+      const owned =
+        yield* rows(sql`SELECT ${columns} ${joins} WHERE p.company_id = ${user.companyId}
+        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name, s.email`);
+      management = `<section class="section"><h2 class="section-heading">Share a patch</h2><p class="supporting-text">Recipients can read the entire static page. Share only information intended for them.</p>${inventory.length === 0 ? "<p>No company-only static patches to share yet.</p>" : `<form class="confirmation-form" method="post" action="/~shared/grant"><label class="field-label" for="patchId">Patch</label><select class="field" name="patchId" id="patchId">${inventory.map((p) => `<option value="${escapeAttribute(p.id)}">${escapeHtml(p.name)}</option>`).join("")}</select><label class="field-label" for="email">Recipient’s email</label><input class="field" name="email" id="email" type="email" required><div class="actions"><button class="btn btn-primary" type="submit">Invite to this patch</button></div></form>`}</section>${owned.length === 0 ? "" : `<section class="section"><h2 class="section-heading">External access you manage</h2><div class="list">${owned.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p>${escapeHtml(share.email)} · ${share.revoked ? "Revoked" : share.subject === null ? "Invited" : "Accepted"}</p></div>${share.revoked ? "" : `<form method="post" action="/~shared/revoke/${escapeAttribute(share.id)}"><button class="btn btn-danger" type="submit">${share.subject === null ? "Cancel invitation" : "Revoke access"}</button></form>`}</div>${share.revoked ? "" : `<p class="supporting-text shared-link">Invitation: <a href="/~shared/invite/${escapeAttribute(share.id)}">${escapeHtml(session.publicBaseUrl)}/~shared/invite/${escapeHtml(share.id)}</a></p>`}</div>`).join("")}</div></section>`}`;
+    }
+    return page(
+      "Shared with you",
+      `<p class="supporting-text">Signed in as ${escapeHtml(claims.email)}</p><p class="supporting-text">Patches shared with you, across companies. Accepting an invitation does not join that company.</p>${user === null ? '<p class="supporting-text">This account can open shared patches. It cannot build patches.</p>' : '<div class="actions"><a class="btn" href="/?company=1">Your company home</a></div>'}${shared || '<section class="section"><p>Nothing has been shared with you yet.</p></section>'}${management}${signOutForm()}`
+    );
+  });
+
+  const handle = Effect.fn("ExternalSharingPrototype.handle")(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = new URL(request.url, session.publicBaseUrl);
+    const path = requestPath(request.url, url.pathname);
+    if (path === null) return page("Request refused", "<p>This address is malformed.</p>", 400);
+    const sharedPath = path === "/shared" || path.startsWith("/~shared/");
+    if (path === "/~shared/session.js" && request.method === "GET")
+      return HttpServerResponse.text(script, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-store" }
+      });
+    // Leave the public wire, runtime and session infrastructure to their existing doors.
+    if (
+      !sharedPath &&
+      (path.startsWith("/api/") ||
+        path.startsWith("/.well-known/") ||
+        path.startsWith("/healthz") ||
+        path.startsWith("/auth/") ||
+        path.startsWith("/dev/") ||
+        path === "/logout" ||
+        path === "/login" ||
+        path === "/mcp")
+    )
+      return null;
+    if (request.method === "POST" && sharedPath && request.headers.origin !== session.publicBaseUrl)
+      return page("Request refused", "<p>Submit this form from this Patchy instance.</p>", 403);
+    const signedIn = yield* session.authenticate(
+      new Request(url, { method: request.method, headers: request.headers })
+    );
+    if (signedIn.status !== "signed-in") {
+      if (!sharedPath) return null;
+      return RequireSession.door(session, `${path}${url.search}`);
+    }
+    const claims = signedIn.claims;
+    const user = yield* users.findByClerkId(claims.sub);
+    if (user?.deactivatedAt) return sharedPath ? refused() : null;
+    const people =
+      yield* sql`SELECT subject FROM prototype_external_people WHERE subject = ${claims.sub}`;
+    const invitations = yield* forRecipient(claims);
+    const guest = user === null && (people.length > 0 || invitations.length > 0 || sharedPath);
+    if (guest) yield* remember(claims);
+    if (path === "/" && !url.searchParams.has("company") && (guest || invitations.length > 0))
+      return redirect("/shared");
+    if (request.method === "GET" && path === "/shared") return yield* inbox(claims, user);
+    if (request.method === "GET" && path === "/~shared/ended")
+      return page(
+        "This patch is no longer available",
+        '<p>Your access ended, your account changed, or the page is no longer shared. The open patch has been closed.</p><div class="actions"><a class="btn btn-primary" href="/shared">Shared with you</a></div>',
+        403
+      );
+    const check = path.match(/^\/~shared\/access\/([^/]+)\/([^/]+)$/);
+    if (request.method === "GET" && check) {
+      const allowed = yield* canOpen(claims, check[1]!, check[2]!);
+      return HttpServerResponse.jsonUnsafe(
+        { allowed },
+        { status: allowed ? 200 : 403, headers: { "cache-control": "private, no-store" } }
+      );
+    }
+    const invitation = path.match(/^\/~shared\/invite\/([^/]+)$/);
+    if (request.method === "GET" && invitation) {
+      const share = invitations.find((entry) => entry.id === invitation[1]);
+      if (share === undefined)
+        return page(
+          "Invitation unavailable",
+          `<p>This invitation has ended or belongs to another email address.</p>${signOutForm(true, path)}<p><a href="/shared">Shared with you</a></p>`,
+          403
+        );
+      if (share.subject !== null) return redirect(`/${share.handle}/${share.name}`);
+      return page(
+        `Open ${share.name}`,
+        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(claims.email)}.</p><p>You can read this page without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
+      );
+    }
+    const accept = path.match(/^\/~shared\/accept\/([^/]+)$/);
+    if (request.method === "POST" && accept) {
+      // Claim exactly once by signed-in email; afterwards only the stable subject counts.
+      const accepted = yield* sql`UPDATE prototype_external_shares s SET subject = ${claims.sub}
+        FROM patches p, patch_versions v WHERE s.id = ${accept[1]!} AND p.id = s.patch_id
+        AND v.id = p.current_version_id AND ${available} AND NOT s.revoked
+        AND ((s.subject IS NULL AND s.email = ${claims.email.toLowerCase()}) OR s.subject = ${claims.sub}) RETURNING s.id`;
+      return accepted.length > 0
+        ? redirect("/shared")
+        : page(
+            "Invitation unavailable",
+            '<p>This invitation has ended or belongs to another person.</p><p><a href="/shared">Shared with you</a></p>',
+            403
+          );
+    }
+    if (request.method === "POST" && path === "/~shared/grant") {
+      if (user === null) return refused();
+      const form = yield* request.urlParamsBody.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.kibibytes(8))
+      );
+      const input = yield* decodeForm(Object.fromEntries(form));
+      const selected =
+        yield* sql`SELECT p.id FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
+        WHERE p.id = ${input.patchId} AND p.company_id = ${user.companyId} AND ${available}
+        AND p.scope = 'company' AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"})`;
+      if (selected.length === 0)
+        return page(
+          "Cannot share this patch",
+          "<p>Only the owner or a company admin can share a live, company-only static patch.</p>",
+          403
+        );
+      yield* sql`INSERT INTO prototype_external_shares (id, patch_id, email, created_by)
+        VALUES (${newInternalId("share")}, ${input.patchId}, ${input.email.toLowerCase()}, ${user.id})
+        ON CONFLICT (patch_id, email) DO UPDATE SET id = excluded.id, subject = NULL, revoked = false, created_by = excluded.created_by
+        WHERE prototype_external_shares.revoked`;
+      return redirect("/shared");
+    }
+    const revoke = path.match(/^\/~shared\/revoke\/([^/]+)$/);
+    if (request.method === "POST" && revoke) {
+      if (user === null) return refused();
+      const changed =
+        yield* sql`UPDATE prototype_external_shares s SET revoked = true FROM patches p
+        WHERE s.id = ${revoke[1]!} AND p.id = s.patch_id AND p.company_id = ${user.companyId}
+        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) RETURNING s.id`;
+      return changed.length ? redirect("/shared") : refused();
+    }
+    if (sharedPath) return Pages.notFound;
+    if (guest && /^\/(join|company|patches|guide|machines|login\/device|oauth)(\/|$)/i.test(path))
+      return refused();
+    if (request.method !== "GET") return null;
+    const address = path.match(/^\/([a-z0-9-]+)\/([a-z0-9-]+)(\/.*)?$/);
+    const internal = path.match(/^\/~content\/([^/]+)\/([^/]+)$/);
+    if (!address && !internal) return null;
+    const resolved = address ? yield* patches.resolveName(address[1]!, address[2]!) : Option.none();
+    const patchId = internal?.[1] ?? (Option.isSome(resolved) ? resolved.value.patchId : undefined);
+    if (patchId === undefined) return null;
+    const found = yield* patches.find(patchId);
+    if (Option.isNone(found)) return null;
+    const { patch, version } = found.value;
+    if (patch.scope === "public" || user?.companyId === patch.companyId) return null;
+    if (
+      (internal && internal[2] !== version.id) ||
+      (address?.[3] && address[3] !== "/") ||
+      version.tier !== 0 ||
+      !(yield* canOpen(claims, patch.id, version.id))
+    )
+      return Pages.notFound;
+    const html = yield* content.read(version);
+    const response = internal
+      ? HttpServerResponse.text(html, {
+          contentType: "text/html",
+          headers: {
+            "content-security-policy": contentSecurityPolicy(0),
+            "permissions-policy": PATCH_PERMISSIONS_POLICY
+          }
+        })
+      : HttpServerResponse.text(
+          renderPatchWrapper({
+            patch,
+            version,
+            html,
+            scope: "company",
+            head: `<script defer src="/~shared/session.js?patch=${escapeAttribute(patch.id)}&amp;version=${escapeAttribute(version.id)}"></script>`
+          }),
+          {
+            contentType: "text/html",
+            headers: {
+              "content-security-policy": `${PATCH_CONTENT_SECURITY_POLICY}; script-src 'self'; connect-src 'self'`
+            }
+          }
+        );
+    return withCookies(
+      HttpServerResponse.setHeaders(response, {
+        "cache-control": "private, no-store",
+        "referrer-policy": "no-referrer",
+        "x-robots-tag": "noindex"
+      }),
+      signedIn.cookies
+    );
+  });
+
+  return <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+    Effect.gen(function* () {
+      const result = yield* handle().pipe(
+        Effect.catchTags({
+          SchemaError: () =>
+            Effect.succeed(
+              page(
+                "Check the invitation",
+                "<p>Choose a patch and enter a valid email address.</p>",
+                422
+              )
+            ),
+          SqlError: () =>
+            Effect.succeed(page("Sharing is unavailable", "<p>Please try again.</p>", 503)),
+          SessionError: () =>
+            Effect.succeed(page("Sign-in is unavailable", "<p>Please try again.</p>", 502)),
+          InvalidObjectKey: Effect.die,
+          StoreUnavailable: Effect.die
+        })
+      );
+      return result ?? (yield* app);
+    });
+});
