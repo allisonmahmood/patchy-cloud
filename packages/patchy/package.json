@@ -28,7 +28,7 @@
     "node": ">=22.22.0"
   },
   "bin": {
-    "patchy": "./dist/index.js"
+    "patchy": "./dist/bin.js"
   },
   "exports": {
     "./config": {

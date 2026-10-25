@@ -179,6 +179,7 @@ try {
   );
   const packedFiles = new Set(packResult[0].files.map((file) => file.path));
   for (const requiredFile of [
+    "dist/bin.js",
     "dist/index.js",
     "dist/dev.js",
     "dist/devChild.js",
@@ -1283,6 +1284,7 @@ async function assertAgentLoginOnPty(cliPath, publicBaseUrl, options) {
  * The front door as an outside agent meets it: read /llms.txt, run its POSIX
  * line on a clean HOME and a fresh npm prefix, and reach the login handoff.
  * A second run reinstalls, keeps the skill links and polls the same login.
+ * The CLI lands in HOME, so npm's prefix stays empty.
  */
 async function runFrontDoorFlow(publicBaseUrl) {
   if (process.platform === "win32") return;
@@ -1302,7 +1304,7 @@ async function runFrontDoorFlow(publicBaseUrl) {
     npm_config_prefix: prefix,
     npm_config_cache: path.join(machine, "npm cache"),
     npm_config_update_notifier: "false",
-    PATH: [path.join(prefix, "bin"), path.dirname(process.execPath), "/usr/bin", "/bin"].join(
+    PATH: [path.join(home, ".local/bin"), path.dirname(process.execPath), "/usr/bin", "/bin"].join(
       path.delimiter
     )
   };
@@ -1310,7 +1312,7 @@ async function runFrontDoorFlow(publicBaseUrl) {
   for (const attempt of ["fresh install", "rerun"]) {
     const result = await run("sh", ["-c", line], { cwd: machine, env, timeoutMs: 180_000 });
     const lines = result.stdout.trim().split("\n");
-    assert.ok(lines.includes(`Executable: ${path.join(prefix, "bin/patchy")}`), attempt);
+    assert.ok(lines.includes(`Executable: ${path.join(home, ".local/bin/patchy")}`), attempt);
     for (const link of [".agents/skills/patchy", ".claude/skills/patchy"]) {
       assert.equal(await checkedCall(() => readlink(path.join(home, link))), skill, attempt);
     }
@@ -1318,6 +1320,11 @@ async function runFrontDoorFlow(publicBaseUrl) {
     if (attempt === "fresh install") assertLoginHandoff(login, publicBaseUrl, publicBaseUrl);
     else assert.equal(login.status, "pending", "a rerun's login polls the live handoff");
   }
+  assert.deepEqual(
+    await checkedCall(() => readdir(prefix)),
+    [],
+    "npm's prefix holds nothing Patchy"
+  );
 }
 
 async function runCli(cliPath, args, options) {

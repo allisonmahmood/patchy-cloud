@@ -1,11 +1,12 @@
 // The installer as an agent runs it: a child Node process against a stub instance,
 // with a clean HOME and a fresh npm prefix under a path with spaces.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -61,7 +62,7 @@ const instance = async (integrity = metadata.integrity) => {
 const system = [path.dirname(process.execPath), "/usr/bin", "/bin"];
 
 let cases = 0;
-/** A machine with nothing Patchy on it: its own home, npm prefix, cache and temp directory. */
+/** A machine with nothing Patchy on it: its own home, npm prefix (this Node's), cache and temp directory. */
 const machine = (url: string) => {
   const dir = path.join(root, `machine ${++cases}`);
   const home = path.join(dir, "home");
@@ -76,7 +77,7 @@ const machine = (url: string) => {
       JSON.stringify(url)
     )
   );
-  const bin = path.join(prefix, "bin");
+  const bin = path.join(home, ".local/bin");
   return {
     home,
     prefix,
@@ -87,7 +88,7 @@ const machine = (url: string) => {
       npm_config_prefix: prefix,
       npm_config_cache: path.join(dir, "npm cache"),
       npm_config_update_notifier: "false",
-      // The new prefix's bin first, then Node's directory with npm, then the shell npm runs under.
+      // The launcher's directory, then Node's directory with npm, then the shell npm runs under.
       PATH: [bin, ...system].join(path.delimiter)
     },
     run: (env: Record<string, string>, node: ReadonlyArray<string> = []) =>
@@ -103,10 +104,16 @@ const machine = (url: string) => {
   };
 };
 
+/** Where npm puts a global `patchy` in this Node's prefix, as installers before ~/.patchy/cli did. */
 const installed = (prefix: string) => path.join(prefix, "lib/node_modules/patchy");
+const cli = (home: string) => path.join(home, ".patchy/cli/node_modules/patchy");
+
+/** `patchy --version` as the machine's shell would find it. */
+const version = (env: Record<string, string>) =>
+  spawnSync("patchy", ["--version"], { env, encoding: "utf8" }).stdout.trim();
 
 describe.skipIf(process.platform === "win32")("the instance installer", () => {
-  it("installs the release, links both skill paths, and reinstalls on a second run", async () => {
+  it("installs the release outside Node's prefix, links both skill paths, and reinstalls on a second run", async () => {
     const { url } = await instance();
     const { home, prefix, bin, env, run } = machine(url);
     const skill = path.join(home, ".patchy/skills/patchy");
@@ -119,27 +126,50 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
       for (const link of [".agents/skills/patchy", ".claude/skills/patchy"])
         expect(readlinkSync(path.join(home, link)), attempt).toBe(skill);
     }
-    expect(
-      JSON.parse(readFileSync(path.join(installed(prefix), "package.json"), "utf8"))
-    ).toMatchObject({
+    expect(JSON.parse(readFileSync(path.join(cli(home), "package.json"), "utf8"))).toMatchObject({
       name: "patchy",
       version: CURRENT_RELEASE
     });
-    // A version manager removing this Node takes the prefix, not the skill.
+    // A version manager switching or removing this Node takes its prefix, which holds nothing Patchy.
+    expect(readdirSync(prefix)).toEqual([]);
     rmSync(prefix, { recursive: true });
-    expect(existsSync(path.join(home, ".claude/skills/patchy/SKILL.md"))).toBe(true);
+    expect(version(env)).toBe(CURRENT_RELEASE);
+  }, 180_000);
+
+  it("moves an install an earlier installer left in this Node's prefix", async () => {
+    const { url } = await instance();
+    const { home, prefix, env, run } = machine(url);
+    const file = path.join(root, `earlier ${cases}.tgz`);
+    writeFileSync(file, tarball);
+    const earlier = spawnSync(
+      "npm",
+      ["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", file],
+      { env, encoding: "utf8" }
+    );
+    expect(earlier.status, earlier.stderr).toBe(0);
+    // Version managers put this Node's bin first.
+    const managed = { ...env, PATH: [path.join(prefix, "bin"), env.PATH].join(path.delimiter) };
+    expect(
+      spawnSync("sh", ["-c", "command -v patchy"], { env: managed, encoding: "utf8" }).stdout.trim()
+    ).toBe(path.join(prefix, "bin/patchy"));
+    const result = await run(managed);
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain(`Removed the earlier install from ${installed(prefix)};`);
+    expect(existsSync(installed(prefix))).toBe(false);
+    expect(existsSync(path.join(cli(home), "package.json"))).toBe(true);
+    expect(version(managed)).toBe(CURRENT_RELEASE);
   }, 180_000);
 
   it("refuses a download that does not match the release's integrity before npm runs", async () => {
     const stub = await instance(`sha512-${Buffer.alloc(64).toString("base64")}`);
-    const { prefix, env, run } = machine(stub.url);
+    const { home, env, run } = machine(stub.url);
     const result = await run(env);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       "does not match the release's integrity, so nothing was installed"
     );
     expect(stub.requests).toEqual(["/api/release", `/sdk/${filename}`]);
-    expect(existsSync(installed(prefix))).toBe(false);
+    expect(existsSync(path.join(home, ".patchy/cli"))).toBe(false);
   });
 
   it("names the fix for old Node and for missing npm before asking the instance anything", async () => {
@@ -159,22 +189,7 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     expect(stub.requests).toEqual([]);
   });
 
-  it.skipIf(process.getuid?.() === 0)(
-    "names a prefix it can write when npm cannot write the global prefix",
-    async () => {
-      const { url } = await instance();
-      const { home, prefix, env, run } = machine(url);
-      chmodSync(prefix, 0o555);
-      const result = await run(env);
-      chmodSync(prefix, 0o755);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(`npm cannot write to its global prefix ${prefix}.`);
-      expect(result.stderr).toContain(`npm config set prefix "${path.join(home, ".npm-global")}"`);
-    },
-    180_000
-  );
-
-  it("says how to reach patchy when the prefix's bin is not on PATH, after linking the skill", async () => {
+  it("says how to reach patchy when ~/.local/bin is not on PATH, after linking the skill", async () => {
     const { url } = await instance();
     const { home, bin, env, run } = machine(url);
     const result = await run({ ...env, PATH: system.join(path.delimiter) });
@@ -184,39 +199,36 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     expect(existsSync(path.join(home, ".agents/skills/patchy/SKILL.md"))).toBe(true);
   }, 180_000);
 
-  it("names a prefix to own when Volta's Node image is npm's prefix, before installing", async () => {
-    const stub = await instance();
-    const { env, run } = machine(stub.url);
-    // Volta's npm defaults to its Node image, whose bin only Volta's own children see.
-    const volta = path.join(root, "volta home");
-    const prefix = path.join(volta, "tools/image/node/22.22.0");
-    mkdirSync(prefix, { recursive: true });
-    const result = await run({
-      ...env,
-      VOLTA_HOME: volta,
-      npm_config_prefix: prefix,
-      PATH: [path.join(prefix, "bin"), ...system].join(path.delimiter)
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`Volta manages this Node, so npm's global prefix ${prefix}`);
-    expect(result.stderr).toContain("npm config set prefix");
-    expect(stub.requests).toEqual([]);
-    expect(existsSync(installed(prefix))).toBe(false);
-  });
-
-  it("passes over a patchy the shell cannot run, but refuses one that runs first", async () => {
+  it("passes over a patchy the shell cannot run and a shim that hands over, but refuses another copy", async () => {
     const { url } = await instance();
     const { bin, env, run } = machine(url);
-    const other = path.join(root, "other patchy");
+    const other = path.join(root, `other patchy ${cases}`);
     mkdirSync(other, { recursive: true });
-    writeFileSync(path.join(other, "patchy"), "#!/bin/sh\n", { mode: 0o644 });
+    const shim = path.join(other, "patchy");
+    writeFileSync(shim, "#!/bin/sh\n", { mode: 0o644 });
     const withOther = { ...env, PATH: [other, bin, ...system].join(path.delimiter) };
     expect(await run(withOther)).toMatchObject({ status: 0, stderr: "" });
-    chmodSync(path.join(other, "patchy"), 0o755);
+    // As mise's shim does when the current Node has no patchy of its own.
+    writeFileSync(shim, `#!/bin/sh\nexec '${path.join(bin, "patchy")}' "$@"\n`);
+    chmodSync(shim, 0o755);
+    expect(await run(withOther)).toMatchObject({ status: 0, stderr: "" });
+    writeFileSync(shim, "#!/bin/sh\necho 0.0.1\n");
     const shadowed = await run(withOther);
     expect(shadowed.status).toBe(1);
-    expect(shadowed.stderr).toContain(
-      `${path.join(other, "patchy")} comes before ${path.join(bin, "patchy")} on PATH`
-    );
+    expect(shadowed.stderr).toContain(`${shim} comes before ${path.join(bin, "patchy")} on PATH`);
   }, 180_000);
+
+  it("refuses to replace a patchy in ~/.local/bin it did not make, before downloading", async () => {
+    const stub = await instance();
+    const { home, bin, env, run } = machine(stub.url);
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, "patchy"), "#!/bin/sh\n", { mode: 0o755 });
+    const result = await run(env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `${path.join(bin, "patchy")} is already there and this installer did not make it.`
+    );
+    expect(stub.requests).toEqual([]);
+    expect(existsSync(path.join(home, ".patchy"))).toBe(false);
+  });
 });
