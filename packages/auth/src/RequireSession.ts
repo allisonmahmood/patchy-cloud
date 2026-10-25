@@ -7,7 +7,7 @@ import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
+import { pageResponse, RECEIPT_SHOWN, returnPath, signOutForm, withCookies } from "./page.js";
 
 export class Viewer extends Context.Service<
   Viewer,
@@ -205,7 +205,13 @@ export const withViewer = <E, R>(
         ...viewer,
         receipt: receipt.text
       });
-      return withCookies(response, receipt.clear);
+      // A receipt waits through redirects and fragments for the page that shows it; one that
+      // isn't this person's is cleared at once.
+      const shown = response.headers[RECEIPT_SHOWN] !== undefined;
+      return withCookies(
+        HttpServerResponse.removeHeader(response, RECEIPT_SHOWN),
+        shown || receipt.text === undefined ? receipt.clear : []
+      );
     }),
     returnTo
   );

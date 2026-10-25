@@ -4,7 +4,9 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as Cookies from "effect/http/Cookies";
 import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { CookieJar } from "tough-cookie";
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
@@ -14,6 +16,7 @@ import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthPages from "./AuthPages.js";
+import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import {
   clerkEnv,
@@ -219,6 +222,64 @@ it.layer(layer)("auth pages on a socket", (it) => {
         );
         const signIn = new URL(door.headers.get("x-patchy-sign-in-url")!);
         assert.strictEqual(signIn.searchParams.get("redirect_url"), `${PUBLIC_BASE_URL}${consent}`);
+      })
+  );
+  it.effect(
+    "keeps a receipt through redirects until a page shows it, and drops one left for someone else",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer;
+        if (server.address._tag === "UnixPathAddress")
+          return assert.fail("Expected a TCP listener");
+        const socket = `http://127.0.0.1:${server.address.port}`;
+        const { user } = yield* (yield* Companies.Companies).create({
+          handle: "receipt-co",
+          name: "Receipt Co",
+          clerkUserId: "user_receipt",
+          email: "receipt@example.com",
+          userName: "Rae"
+        });
+        const session = signedInCookies(
+          signSession({ sub: "user_receipt", email: "receipt@example.com", name: "Rae" })
+        );
+        // The cookie a form's redirect would have left, as the browser sends it back.
+        const left = (userId: string) =>
+          Cookies.toSetCookieHeaders(
+            Receipt.set(HttpServerResponse.empty(), {
+              userId,
+              text: "Revoked <b>Mac</b>",
+              publicBaseUrl: PUBLIC_BASE_URL
+            }).cookies
+          )[0]!.split(";")[0]!;
+        const name = left(user.id).split("=")[0]!;
+        const get = (path: string, receipt: string) =>
+          Effect.promise(() =>
+            fetch(`${socket}${path}`, {
+              headers: { cookie: `${session}; ${receipt}` },
+              redirect: "manual"
+            })
+          );
+        const clears = (response: Response) =>
+          response.headers
+            .getSetCookie()
+            .some((cookie) => cookie.startsWith(`${name}=;`) && cookie.includes("Max-Age=0"));
+
+        const hop = yield* get("/company/agent-access", left(user.id));
+        assert.strictEqual(hop.status, 303);
+        assert.isFalse(clears(hop), "a redirect leaves the receipt for the page it lands on");
+        const page = yield* get("/company", left(user.id));
+        assert.strictEqual(page.status, 200);
+        assert.include(
+          yield* Effect.promise(() => page.text()),
+          '<p class="note note-ok app-receipt" role="status">Revoked &lt;b&gt;Mac&lt;/b&gt;</p>'
+        );
+        assert.isTrue(clears(page), "the page that shows it clears it");
+        assert.isNull(page.headers.get("x-patchy-receipt-shown"));
+
+        const theirs = yield* get("/company/agent-access", left("usr_someone_else"));
+        assert.isTrue(clears(theirs), "someone else's receipt is dropped at once");
+        const unseen = yield* get("/company", left("usr_someone_else"));
+        assert.notInclude(yield* Effect.promise(() => unseen.text()), "Revoked");
       })
   );
 });
