@@ -2804,7 +2804,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
       assert.include(text(admin ?? ""), "At Northwind that’s you.");
       assert.deepStrictEqual(links(admin ?? ""), [
-        { href: "/company#agent-access", text: "Turn it on at Company" }
+        { href: "/company/agent-access", text: "Turn it on at Company" }
       ]);
     })
   );

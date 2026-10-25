@@ -131,7 +131,7 @@ const connectSection = ({ viewer, agent, address, admins }: View) => {
   if (admins !== null) {
     const off =
       viewer.role === "admin"
-        ? `No agent can connect until it’s turned on for everyone at ${company}.<div class="actions"><a class="btn" href="/company#agent-access">Turn it on at Company</a></div>`
+        ? `No agent can connect until it’s turned on for everyone at ${company}.<div class="actions"><a class="btn" href="/company/agent-access">Turn it on at Company</a></div>`
         : `Agents can’t connect until an admin turns it on. At ${company} that’s ${sentenceList(admins)}.`;
     return `<section class="section" id="connect-an-agent" aria-labelledby="connect-an-agent-heading">${heading}<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong>${off}</div></section>`;
   }

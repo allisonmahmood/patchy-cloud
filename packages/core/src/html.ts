@@ -311,6 +311,8 @@ export interface AppShell {
     readonly company: { readonly name: string };
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
+    /** One line naming what their last form did, shown once at the top of the page. */
+    readonly receipt?: string | undefined;
   };
   /** The place the page belongs to; `whats-new` is reached from its own button, so no place is lit there. */
   readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new";
@@ -319,6 +321,8 @@ export interface AppShell {
    * and blurs, and the panel carries its own role, label and ways out.
    */
   readonly overlay?: string;
+  /** The sidebar search's query, when the page shows its results, so the field keeps it. */
+  readonly query?: string;
 }
 
 /** A change's kind as a pill: New green, Improved blue, Fixed plain. */
@@ -379,12 +383,12 @@ function appBody(app: AppShell, body: string): string {
   const search = searchField({
     action: "/",
     id: "app-search",
-    query: "",
+    query: app.query ?? "",
     placeholder: "Search patches",
     label: "Search patches",
     className: "app-search"
   });
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -953,6 +957,8 @@ export function htmlPage(options: {
       .app-account-menu { position-area: top span-right; position-try-fallbacks: flip-block; }
     }
     .app-page { min-width: 0; max-width: 1240px; padding: 34px 44px 48px; overflow-wrap: anywhere; }
+    /* app-receipt: what the person's last form did, once, above the page it landed on. */
+    .app-receipt { margin: 0 0 20px; font-weight: 650; }
     @media (max-width: 899px) {
       .app { grid-template-columns: minmax(0, 1fr); }
       .app-side { position: sticky; top: 0; z-index: 2; border-right: 0; border-bottom: 1.5px solid var(--line-strong); }

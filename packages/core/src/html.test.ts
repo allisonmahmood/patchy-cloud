@@ -59,6 +59,19 @@ describe("htmlPage app body", () => {
     expect(html.match(/<nav /g)).toHaveLength(1);
   });
 
+  it("leads the page with the viewer's receipt, escaped", () => {
+    const html = htmlPage({
+      title: "Your agents",
+      app: { viewer: { ...viewer, receipt: "Revoked <b>Mac</b>" }, section: "agents" },
+      body: "<h1>Your agents</h1>"
+    });
+    expect(html).toContain(
+      '<main class="app-page"><p class="note note-ok app-receipt" role="status">Revoked &lt;b&gt;Mac&lt;/b&gt;</p><h1>Your agents</h1>'
+    );
+    const none = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "" });
+    expect(none).not.toContain('class="note note-ok app-receipt"');
+  });
+
   it("escapes viewer and company names without introducing shell markup", () => {
     const html = htmlPage({
       title: "People",

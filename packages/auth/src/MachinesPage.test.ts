@@ -151,7 +151,7 @@ it.layer(services)("Your machines", (it) => {
       assert.include(asAdmin, "Agent access is off at Studio &lt;off&gt;");
       assert.include(
         asAdmin,
-        '<a class="btn" href="/company#agent-access">Turn it on at Company</a>'
+        '<a class="btn" href="/company/agent-access">Turn it on at Company</a>'
       );
       assert.notInclude(asAdmin, "that’s Alex");
       assert.notInclude(asAdmin, 'class="tabs"');

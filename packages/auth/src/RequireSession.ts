@@ -5,6 +5,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
+import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
 
@@ -16,6 +17,8 @@ export class Viewer extends Context.Service<
     readonly role: Users.Role;
     /** The newest What's new release this person has seen; not part of who they are. */
     readonly whatsNewSeen: number;
+    /** What their last form did, shown once on this page; see `Receipt`. */
+    readonly receipt?: string | undefined;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
 
@@ -192,7 +195,17 @@ export const withViewer = <E, R>(
         });
       }
       yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
-      return yield* Effect.provideService(app, Viewer, viewer);
+      const session = yield* Session.Session;
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const receipt = Receipt.take(request.cookies, {
+        userId: viewer.user.id,
+        publicBaseUrl: session.publicBaseUrl
+      });
+      const response = yield* Effect.provideService(app, Viewer, {
+        ...viewer,
+        receipt: receipt.text
+      });
+      return withCookies(response, receipt.clear);
     }),
     returnTo
   );
