@@ -41,7 +41,9 @@ describe("renderAgentPanel", () => {
       '<summary><code>findDeals</code><span class="tag">Reads</span></summary><p class="supporting-text">Search &lt;b&gt;open&lt;/b&gt; deals.</p>'
     );
     expect(html).toContain('<code>moveDeal</code><span class="tag">Changes</span>');
-    expect(html).toContain('<a href="/machines#connect-an-agent">Connect your agent</a>');
+    expect(html).toContain(
+      '<a href="/machines?agent=claude#connect-an-agent">Connect your agent</a>'
+    );
     expect(html).not.toContain("note-warn");
   });
 

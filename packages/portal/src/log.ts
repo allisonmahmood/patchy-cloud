@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { integrations } from "@patchy/api";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { escapeAttribute, escapeHtml, patchTitle } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 import { InvocationLog } from "@patchy/runtime";
 
@@ -220,7 +220,7 @@ export const renderLog = (input: {
   const filtered =
     filter.outcome !== undefined || filter.viewerId !== undefined || filter.handler !== undefined;
   if (input.entries.length === 0 && !filtered && input.before === undefined)
-    return `<p>Nothing logged yet. Saves and actions appear here as people use ${escapeHtml(patch.name)}; reads appear only when they log or fail.</p>`;
+    return `<p>Nothing logged yet. Saves and actions appear here as people use ${escapeHtml(patchTitle(patch))}; reads appear only when they log or fail.</p>`;
   const select = (
     id: string,
     name: string,

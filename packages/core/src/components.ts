@@ -45,17 +45,27 @@ const searchIcon =
 export const rowMenu = (id: string, label: string, items: readonly string[]) =>
   `<button class="btn btn-quiet btn-icon" type="button" popovertarget="${escapeAttribute(`menu-${id}`)}" aria-label="${escapeAttribute(`Actions for ${label}`)}">${dots}</button><div class="menu" id="${escapeAttribute(`menu-${id}`)}" popover aria-label="${escapeAttribute(label)}"><p class="menu-head">${escapeHtml(label)}</p>${items.join("")}</div>`;
 
-/** A menu item that navigates. */
-export const menuLink = (path: string, label: string, danger = false) =>
-  `<a class="menu-item${danger ? " menu-item-danger" : ""}" href="${escapeAttribute(path)}">${escapeHtml(label)}</a>`;
+/** `aria-label` naming whose item this is, "Settings, Kudos", keeping the visible label first. */
+const itemName = (label: string, target?: string) =>
+  target === undefined ? "" : ` aria-label="${escapeAttribute(`${label}, ${target}`)}"`;
+
+/** A menu item that navigates; `target` names whose it is for screen readers and agents. */
+export const menuLink = (path: string, label: string, danger = false, target?: string) =>
+  `<a class="menu-item${danger ? " menu-item-danger" : ""}" href="${escapeAttribute(path)}"${itemName(label, target)}>${escapeHtml(label)}</a>`;
 
 /** A menu item that posts its own form; `fields` is trusted HTML, usually hidden inputs. */
-export const menuPost = (path: string, label: string, fields = "", danger = false) =>
-  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="menu-item${danger ? " menu-item-danger" : ""}" type="submit">${escapeHtml(label)}</button></form>`;
+export const menuPost = (
+  path: string,
+  label: string,
+  fields = "",
+  danger = false,
+  target?: string
+) =>
+  `<form method="post" action="${escapeAttribute(path)}">${fields}<button class="menu-item${danger ? " menu-item-danger" : ""}" type="submit"${itemName(label, target)}>${escapeHtml(label)}</button></form>`;
 
 /** A menu item that copies `text`, hidden until the page's copy script reveals it. */
-export const menuCopy = (text: string, label: string) =>
-  `<button class="menu-item" type="button" data-copy="${escapeAttribute(text)}" aria-live="polite" hidden>${escapeHtml(label)}</button>`;
+export const menuCopy = (text: string, label: string, target?: string) =>
+  `<button class="menu-item" type="button" data-copy="${escapeAttribute(text)}"${itemName(label, target)} aria-live="polite" hidden>${escapeHtml(label)}</button>`;
 
 /**
  * A GET search form over `q`. `keep` holds other query parameters to carry; `className` is the
