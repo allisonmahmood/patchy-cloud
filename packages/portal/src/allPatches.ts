@@ -15,7 +15,7 @@ import {
   searchField
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { firstClause, hidden } from "./render.js";
+import { firstClause, hidden, patchTitle } from "./render.js";
 
 /** All patches' layout; components come from the shell. */
 export const listStyles = `
@@ -139,24 +139,53 @@ const actor = (id: string | null, names: ReadonlyMap<string, string>) => {
   return name === undefined ? "" : ` by ${name}`;
 };
 
-/** Every act on a patch the viewer may perform, each going to the route that already does it. */
-const actions = (row: Patches.ReadPatch, viewer: Viewer, url: string, now: number) => {
-  const { patch } = row;
-  const items = [
-    ...(patch.state === "live" ? [menuLink(url, "Open"), menuCopy(url, "Copy link")] : []),
-    menuLink(cardPath(patch), "About this patch")
-  ];
-  if (!manages(row, viewer)) return rowMenu(patch.id, patch.name, items);
-  const manage = [
-    menuLink(cardPath(patch, "settings"), "Settings"),
-    ...(viewer.role === "admin" ? [menuLink(cardPath(patch, "reassign"), "Reassign…")] : []),
-    ...(patch.state === "live" ? [menuLink(cardPath(patch, "retire"), "Retire…", true)] : []),
-    ...(patch.state !== "live" && recoverable(patch, now)
-      ? [menuPost(cardPath(patch, "restore"), "Restore", restoreForm(patch))]
+/** A live patch's address, relative to the instance. */
+export const patchAddress = (patch: Patches.Patch) =>
+  `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
+
+/**
+ * The ways to open a patch, then its card, as a row's menu starts on Home and All patches. Its
+ * name already opens a live patch, so the menu offers a new tab, the link and About this patch.
+ */
+export const openItems = (patch: Patches.Patch, publicBaseUrl: string) => {
+  const title = patchTitle(patch);
+  return [
+    ...(patch.state === "live"
+      ? [
+          `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`,
+          menuCopy(
+            `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,
+            "Copy link",
+            title
+          )
+        ]
       : []),
-    ...(patch.state !== "deleted" ? [menuLink(cardPath(patch, "delete"), "Delete…", true)] : [])
+    menuLink(cardPath(patch), "About this patch", false, title)
   ];
-  return rowMenu(patch.id, patch.name, [...items, '<hr class="menu-rule">', ...manage]);
+};
+
+/** Every act on a patch the viewer may perform, each going to the route that already does it. */
+const actions = (row: Patches.ReadPatch, viewer: Viewer, publicBaseUrl: string, now: number) => {
+  const { patch } = row;
+  const items = openItems(patch, publicBaseUrl);
+  if (!manages(row, viewer)) return rowMenu(patch.id, patchTitle(patch), items);
+  const title = patchTitle(patch);
+  const manage = [
+    menuLink(cardPath(patch, "settings"), "Settings", false, title),
+    ...(viewer.role === "admin"
+      ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
+      : []),
+    ...(patch.state === "live"
+      ? [menuLink(cardPath(patch, "retire"), "Retire…", true, title)]
+      : []),
+    ...(patch.state !== "live" && recoverable(patch, now)
+      ? [menuPost(cardPath(patch, "restore"), "Restore", restoreForm(patch), false, title)]
+      : []),
+    ...(patch.state !== "deleted"
+      ? [menuLink(cardPath(patch, "delete"), "Delete…", true, title)]
+      : [])
+  ];
+  return rowMenu(patch.id, patchTitle(patch), [...items, '<hr class="menu-rule">', ...manage]);
 };
 
 const filterHref = (show: Show, query: string) => {
@@ -184,7 +213,6 @@ export const renderAllPatches = (input: {
   readonly failures?: ReadonlyMap<string, number>;
 }): string => {
   const { viewer, now, show, query, names } = input;
-  const base = input.publicBaseUrl.replace(/\/+$/u, "");
   const byVisits = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
     b.visits - a.visits || a.patch.name.localeCompare(b.patch.name);
   const newest =
@@ -232,25 +260,31 @@ export const renderAllPatches = (input: {
     ? `<p class="supporting-text portal-list-matches">${plural(entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
     : "";
 
+  // A live patch's name opens it, as on Home; an off one's goes to its card.
   const patchCell = (row: Patches.ReadPatch) => {
     const { patch } = row;
-    const tags = `${row.owner.id === viewer.user.id ? '<span class="tag">You</span>' : ""}${isNew(row, viewer, input.opens, now) ? '<span class="tag tag-new">New</span>' : ""}`;
-    return `<td><div class="portal-list-patch">${patchMark(patch.name, row.tier)}<div><a href="${escapeAttribute(cardPath(patch))}"><strong>${escapeHtml(patch.name)}</strong></a>${tags}<br><span class="supporting-text">${escapeHtml(firstClause(patch.description) || "No description")}</span></div></div></td>`;
+    const href = patch.state === "live" ? patchAddress(patch) : cardPath(patch);
+    const fresh = isNew(row, viewer, input.opens, now)
+      ? '<span class="tag tag-new">New</span>'
+      : "";
+    return `<td><div class="portal-list-patch">${patchMark(patch.name, row.tier)}<div><a href="${escapeAttribute(href)}"><strong>${escapeHtml(patchTitle(patch))}</strong></a>${fresh}<br><span class="supporting-text">${escapeHtml(firstClause(patch.description) || "No description")}</span></div></div></td>`;
   };
   const ownerCell = (row: Patches.ReadPatch) =>
-    `<td><div class="portal-list-person">${avatar(row.owner.id, row.owner.name, row.owner.deactivated ? "off" : undefined)}<span>${escapeHtml(row.owner.name)}${row.owner.deactivated ? '<span class="tag">Deactivated</span>' : ""}</span></div></td>`;
+    `<td><div class="portal-list-person">${avatar(row.owner.id, row.owner.name, row.owner.deactivated ? "off" : undefined)}<span>${row.owner.id === viewer.user.id ? "You" : escapeHtml(row.owner.name)}${row.owner.deactivated ? '<span class="tag">Deactivated</span>' : ""}</span></div></td>`;
   const menuCell = (row: Patches.ReadPatch, extra = "") =>
-    `<td class="portal-list-actions">${extra}${actions(row, viewer, `${base}/${encodeURIComponent(row.patch.companyHandle)}/${encodeURIComponent(row.patch.name)}`, now)}</td>`;
+    `<td class="portal-list-actions">${extra}${actions(row, viewer, input.publicBaseUrl, now)}</td>`;
   const time = (iso: string) =>
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(ago(iso, now))}</time>`;
 
+  // Health names failures only. A tier 2 patch with none recorded is blank; a row with no calls
+  // to count (not tier 2, or not the viewer's to manage) shows a dash.
   const healthy = input.failures !== undefined && show !== "pages";
   const health = (row: Patches.ReadPatch) => {
     const failed = input.failures?.get(row.patch.id);
-    if (failed === undefined) return "<td></td>";
+    if (failed === undefined) return '<td><span class="supporting-text">—</span></td>';
     return failed === 0
-      ? '<td><span class="pill pill-done">OK</span></td>'
-      : `<td><a href="${escapeAttribute(failedLog(row.patch))}"><span class="pill pill-failed">${escapeHtml(failed)} failed</span></a></td>`;
+      ? "<td></td>"
+      : `<td><a href="${escapeAttribute(failedLog(row.patch))}">${escapeHtml(failed)} failed in the last day</a></td>`;
   };
   const columns =
     show === "attention"

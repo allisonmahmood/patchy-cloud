@@ -52,6 +52,6 @@ _Avoid_: setup token, setup code (the device login's code is the code), attempt
 The authorization of a machine through a short-lived URL and code that the person confirms, never types, in their signed-in browser. Confirmation records their answer and machine name; only the terminal's poll mints and receives the machine token, once, so an abandoned confirmation creates no credential. Disconnect everything and deactivation cancel a confirmation whose terminal hasn't collected its token.
 _Avoid_: device flow (the protocol), OAuth (how agent connections are made), paste your token
 
-**Your machines**:
-The user's list of their live agent connections and machine tokens, with disconnect one agent, revoke one machine, and disconnect everything, which also cancels approvals not yet collected. It opens with each agent's steps to connect. The user's control over which agents and machines may act for them; browser sign-out lives here too.
-_Avoid_: sessions (a browser's), API keys
+**Your agents**:
+The user's page of what acts as them, at `/machines`. Build patches lists their machine tokens, the computers that publish as them, each with Revoke; Use patches lists their agent connections, each with Disconnect. Each section ends with how to add one: the setup line for a computer, each app's steps for an agent connection. Disconnect everything, confirmed on its own page, ends both kinds and cancels approvals not yet collected.
+_Avoid_: Your machines (its old name), sessions (a browser's), API keys

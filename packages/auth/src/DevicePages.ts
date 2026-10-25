@@ -98,7 +98,7 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
       heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
       styles,
       status: refusal === undefined ? 200 : invalid ? 422 : 409,
-      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${confirmForm({ userCode: login.userCode, userId: viewer.user.id, machineName, oldMachineName: login.oldMachineName, invalid })}<p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your machines</a>.</p>`
+      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${confirmForm({ userCode: login.userCode, userId: viewer.user.id, machineName, oldMachineName: login.oldMachineName, invalid })}<p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/machines">Your agents</a>.</p>`
     },
     session
   );
@@ -164,7 +164,7 @@ const postInline = Effect.fn("DevicePages.postInline")(function* (form: {
         ? pageResponse(
             message(
               "That computer is already connected.",
-              '<p>It finished logging in before you pressed Not me. Remove it on <a href="/machines">Your machines</a> to disconnect it.</p>',
+              '<p>It finished logging in before you pressed Not me. Remove it on <a href="/machines">Your agents</a> to disconnect it.</p>',
               409
             ),
             session

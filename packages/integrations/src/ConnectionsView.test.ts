@@ -106,7 +106,7 @@ describe("the connections index", () => {
     const html = index(thirty);
     expect(listed(html)).toHaveLength(30);
     expect(listed(html)[0]).toBe("airtable/ops-base");
-    expect(html).toContain("30 sources from 15 integrations.");
+    expect(html).toContain("30 connections from 15 integrations");
     expect([...html.matchAll(/<option value="([^"]+)"/g)].map(([, key]) => key)).toEqual(
       Object.keys(labels)
     );
@@ -183,10 +183,10 @@ describe("the connections index", () => {
     expect(html).toContain("is disconnected; 6 patches can't read it.");
   });
 
-  it("shows members the table without Last call, the attention notice, Unused or Connect a source", () => {
+  it("shows members the table without Last call, the attention notice, Unused or Connect an integration", () => {
     const html = index(thirty, { admin: false, filters: { view: "unused" } });
     expect(listed(html)).toHaveLength(30);
-    for (const hidden of ["Last call", "need attention", "Unused", "Connect a source"])
+    for (const hidden of ["Last call", "need attention", "Unused", "Connect an integration"])
       expect(html).not.toContain(hidden);
     expect(html).toContain("Needs attention 2");
   });
@@ -199,7 +199,7 @@ describe("the connections index", () => {
 
   it("starts an empty company from the catalogue for admins and tells members whom to ask", () => {
     const admin = index([]);
-    expect(admin).toContain("Connect your first source");
+    expect(admin).toContain('<h2 class="section-heading">Connect an integration</h2>');
     expect(admin).toContain('href="/company/connections/connect/postgres">Connect Postgres</a>');
     const member = index([], { admin: false });
     expect(member).toContain("At Northwind that's Dana and Jordan.");

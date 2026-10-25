@@ -12,7 +12,7 @@ type Connection = Extract<ConnectionStore.Connection, { readonly integration: "p
 export const integration = { key: "posthog", label: "PostHog" } as const;
 export const offer = {
   integration,
-  reads: "Product analytics: read-only SQL over a PostHog Cloud project's events and people.",
+  reads: "SQL over a PostHog Cloud project's events and people.",
   mode: "Company-wide · read-only"
 };
 export const actions = {
@@ -119,13 +119,13 @@ export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
   const handle = View.fieldNote(
     "connection-handle",
     "handle",
-    "3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen. Patches declare it by this name, which can't be changed later.",
+    "3–32 lowercase letters, digits or hyphens. Patches use this name, which can't be changed later.",
     refusal
   );
   const description = View.fieldNote(
     "connection-description",
     "description",
-    "One line telling builders what this is. With many connections, it's how people find the right one.",
+    "One line on what this project is for, so builders pick the right one.",
     refusal
   );
   return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">posthog/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${regionField(submitted, refusal)}${projectField(submitted, refusal)}${keyField(refusal)}${access}${building}`;

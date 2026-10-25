@@ -184,7 +184,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.strictEqual(gone._tag, "DeviceLoginUnknown");
       assert.deepStrictEqual(yield* (yield* MachineTokens.MachineTokens).list(owner.user.id), []);
 
-      // Already minted: says so, for the person to remove on Your machines.
+      // Already minted: says so, for the person to remove on Your agents.
       yield* SetupLinks.retire(owner.user.id);
       const mintedLine = yield* SetupLinks.current(owner.user.id);
       const minted = yield* logins.start({ machineNameHint: "c", setupLink: mintedLine.value });

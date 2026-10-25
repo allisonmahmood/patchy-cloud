@@ -1,6 +1,13 @@
 import * as DateTime from "effect/DateTime";
 import { escapeAttribute, escapeHtml } from "./html.js";
 
+/**
+ * What people see a patch called: its title, else its name. Addresses, and anything typed to
+ * confirm, use the name.
+ */
+export const patchTitle = (patch: { readonly name: string; readonly title: string }): string =>
+  patch.title.trim() || patch.name;
+
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export const dateLabel = (iso: string): string => {

@@ -9,6 +9,7 @@ import {
   escapeAttribute,
   escapeHtml,
   patchMark,
+  patchTitle,
   renderOffPatch,
   sentenceList
 } from "@patchy/core";
@@ -53,6 +54,9 @@ export const firstClause = (description: string): string => {
   return points.length > 80 ? `${points.slice(0, 79).join("").trimEnd()}…` : clause;
 };
 
+/** What lists, tiles, search results, menus and headings call a patch: core's `patchTitle`. */
+export { patchTitle };
+
 const cardPath = (patch: Patches.Patch, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
@@ -70,17 +74,6 @@ export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAct
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
 const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
   `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, action))}">${hidden("expectedPatchId", patch.id)}`;
-
-const titleLine = (patch: Patches.Patch): string => {
-  const normalized = (text: string) =>
-    text
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_-]+/gu, "");
-  return patch.title.trim() !== "" && normalized(patch.title) !== normalized(patch.name)
-    ? `<p class="supporting-text">${escapeHtml(patch.title)}</p>`
-    : "";
-};
 
 const descriptionBlock = (card: Patches.PortalCard): string => {
   const { patch } = card;
@@ -186,9 +179,9 @@ const offState = (card: Patches.PortalCard, viewer: Viewer, now: number) => {
 };
 
 /**
- * One patch's card at `/patches/<name>`: its mark, name, tags and the act that matters most (Open,
- * or Restore for a manager while recovery is open), then its tabs over `body`, with any `panel`
- * beside it. Log and Settings are the owner's and admins'.
+ * One patch's card at `/patches/<name>`: its mark, title over its name, an off patch's state and
+ * the act that matters most (Open, or Restore for a manager while recovery is open), then its tabs
+ * over `body`, with any `panel` beside it. Log and Settings are the owner's and admins'.
  */
 export const renderCardFrame = (input: {
   readonly card: Patches.PortalCard;
@@ -212,14 +205,11 @@ export const renderCardFrame = (input: {
   const act = live
     ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>`
     : restore;
-  const tags = [
-    card.tier === 0 ? "Page" : "Tool",
-    patch.scope === "public" ? "Public" : "Company only",
-    `v${card.currentVersion}`,
-    ...(live ? [] : [patch.state === "retired" ? "Retired" : "Deleted"])
-  ]
-    .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
-    .join("");
+  const title = patchTitle(patch);
+  // Kind, audience and version are facts on Overview; only an off patch's state rides the heading.
+  const tags = live
+    ? ""
+    : `<p class="portal-card-tags"><span class="tag">${patch.state === "retired" ? "Retired" : "Deleted"}</span></p>`;
   const tabs = (
     [
       ["overview", "Overview", true],
@@ -234,7 +224,11 @@ export const renderCardFrame = (input: {
         `<a href="${escapeAttribute(cardPath(patch, tab === "overview" ? "" : tab))}"${tab === input.tab ? ' aria-current="page"' : ""}>${label}</a>`
     )
     .join("");
-  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(patch.name)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(patch.name)}</h1>${titleLine(patch)}<p class="portal-card-tags">${tags}</p></div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(patch.name)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  const name =
+    title === patch.name
+      ? ""
+      : `<p class="supporting-text"><code>${escapeHtml(patch.name)}</code></p>`;
+  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
   return input.panel ? `<div class="card-split">${article}${input.panel}</div>` : article;
 };
 
@@ -249,7 +243,7 @@ const adminNames = (admins: readonly Admin[], viewerId: string): string => {
 /**
  * What agents can do, beside the Overview of a live patch with agent tools: each tool in
  * `open_patch`'s order with Reads or Changes, its description opening in place, then the link
- * to connect an agent on Your machines. With agent access off, a note names the admins in place
+ * to connect an agent on Your agents. With agent access off, a note names the admins in place
  * of that link, and gives an admin the way to turn it on.
  */
 export const renderAgentPanel = (input: {
@@ -272,7 +266,7 @@ export const renderAgentPanel = (input: {
       : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/company/agent-access">Turn it on at Company</a></div>' : ""}</div>`;
   const connect =
     admins === null
-      ? '<p class="supporting-text"><a href="/machines#connect-an-agent">Connect your agent</a></p>'
+      ? '<p class="supporting-text"><a href="/machines?agent=claude#connect-an-agent">Connect your agent</a></p>'
       : "";
   return `<aside class="side-panel" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><p class="supporting-text">As the person who connected them.</p>${off}<ul class="list list-compact">${tools}</ul>${connect}</aside>`;
 };
@@ -346,6 +340,16 @@ export const renderSettings = (input: {
         ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
         : "";
   return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
+};
+
+/**
+ * The step before a live patch goes public, rendered in answer to its Settings save: what that
+ * means, then Make public, which posts the same scope form with `confirm=public`, or Cancel.
+ */
+export const renderPublicConfirmation = (patch: Patches.Patch): string => {
+  const title = escapeHtml(patchTitle(patch));
+  const settings = escapeAttribute(cardPath(patch, "settings"));
+  return `<article class="portal-subpage"><p><a href="${settings}">Back to settings</a></p><h1 class="page-heading">Make ${title} public?</h1>${actionForm(patch, "scope", "confirmation-form")}${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${hidden("confirm", "public")}<p class="confirmation-consequence">Anyone with the link can open it without signing in.</p><div class="confirmation-actions"><button class="btn btn-primary" type="submit" aria-label="Make ${title} public">Make public</button><a class="btn btn-quiet" href="${settings}">Cancel</a></div></form></article>`;
 };
 
 /** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
@@ -460,5 +464,6 @@ export const renderConfirmation = (input: {
     }
   }
 
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${escapeHtml(patch.name)}</a></p><h1 class="page-heading">${verb} ${escapeHtml(patch.name)}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${escapeHtml(patch.name)}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  const title = escapeHtml(patchTitle(patch));
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
