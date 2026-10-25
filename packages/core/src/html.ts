@@ -837,6 +837,8 @@ export function htmlPage(options: {
     .count { color: var(--muted); font-weight: 650; font-variant-numeric: tabular-nums; }
     .tabs a[aria-current="page"] .count { color: var(--ink); }
     /* btn-icon: a square button holding one icon, named by its aria-label. */
+    /* btn-quiet btn-danger: a destructive action kept out of the way, such as Disconnect everything: no frame, danger ink. */
+    .btn-quiet.btn-danger { background: transparent; color: var(--danger); }
     .btn-icon { width: 44px; padding: 0; }
     .btn-icon svg { width: 18px; height: 18px; }
     .btn-quiet:has(+ .menu:popover-open) { background: color-mix(in srgb, var(--blue) 10%, transparent); }

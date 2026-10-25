@@ -17,6 +17,8 @@ import * as MachineTokens from "./MachineTokens.js";
 import * as Testing from "@patchy/sql/testing";
 import * as AuthPages from "./AuthPages.js";
 import * as Receipt from "./Receipt.js";
+import * as RequireSession from "./RequireSession.js";
+import { pageResponse } from "./page.js";
 import * as Session from "./Session.js";
 import {
   clerkEnv,
@@ -33,7 +35,37 @@ const localRevocation = Layer.effect(
     revoke: () => Effect.void
   }))
 );
-const layer = HttpRouter.serve(AuthPages.layer, {
+/**
+ * Probes for receipts: a signed-in redirect, a signed-in page without the app shell, and one with
+ * it, each the shape a real handler takes.
+ */
+const receiptProbes = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    yield* router.add(
+      "GET",
+      "/probe/hop",
+      RequireSession.withViewer(Effect.succeed(HttpServerResponse.redirect("/probe/page")))
+    );
+    yield* router.add(
+      "GET",
+      "/probe/door",
+      RequireSession.withViewer(
+        Effect.succeed(pageResponse({ title: "Door", body: "<p>Door</p>" }))
+      )
+    );
+    yield* router.add(
+      "GET",
+      "/probe/page",
+      RequireSession.withViewer(
+        Effect.map(RequireSession.Viewer, (viewer) =>
+          pageResponse({ title: "Page", body: "<p>Page</p>", app: { viewer, section: "people" } })
+        )
+      )
+    );
+  })
+);
+
+const layer = HttpRouter.serve(Layer.mergeAll(AuthPages.layer, receiptProbes), {
   disableLogger: true,
   disableListenLog: true
 }).pipe(
@@ -264,10 +296,12 @@ it.layer(layer)("auth pages on a socket", (it) => {
             .getSetCookie()
             .some((cookie) => cookie.startsWith(`${name}=;`) && cookie.includes("Max-Age=0"));
 
-        const hop = yield* get("/company/agent-access", left(user.id));
-        assert.strictEqual(hop.status, 303);
+        const hop = yield* get("/probe/hop", left(user.id));
+        assert.strictEqual(hop.status, 302);
         assert.isFalse(clears(hop), "a redirect leaves the receipt for the page it lands on");
-        const page = yield* get("/company", left(user.id));
+        const door = yield* get("/probe/door", left(user.id));
+        assert.isFalse(clears(door), "a page without the app shell can't show it, so leaves it");
+        const page = yield* get("/probe/page", left(user.id));
         assert.strictEqual(page.status, 200);
         assert.include(
           yield* Effect.promise(() => page.text()),
@@ -276,9 +310,9 @@ it.layer(layer)("auth pages on a socket", (it) => {
         assert.isTrue(clears(page), "the page that shows it clears it");
         assert.isNull(page.headers.get("x-patchy-receipt-shown"));
 
-        const theirs = yield* get("/company/agent-access", left("usr_someone_else"));
+        const theirs = yield* get("/probe/hop", left("usr_someone_else"));
         assert.isTrue(clears(theirs), "someone else's receipt is dropped at once");
-        const unseen = yield* get("/company", left("usr_someone_else"));
+        const unseen = yield* get("/probe/page", left("usr_someone_else"));
         assert.notInclude(yield* Effect.promise(() => unseen.text()), "Revoked");
       })
   );
