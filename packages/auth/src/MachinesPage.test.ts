@@ -128,7 +128,7 @@ it.layer(services)("Your agents", (it) => {
         assert.include(bare, `data-copy="Set up Patchy using ${origin}/llms.txt"`);
         assert.include(bare, 'aria-label="Copy the setup line"');
         assert.include(bare, "<p>No app uses patches as you yet.</p>");
-        assert.include(bare, '<details class="agents-add" id="connect-an-agent" open>');
+        assert.include(bare, '<details class="agents-add" open>');
         for (const cut of ["Lost a laptop?", "Machines publishing and agents", "?s="])
           assert.notInclude(bare, cut);
 
@@ -139,7 +139,9 @@ it.layer(services)("Your agents", (it) => {
         yield* connect(member.id, "Claude Code");
         const listed = yield* page("/machines", member.cookie);
         assert.include(listed, '<details class="agents-add" id="add-a-computer">');
-        assert.include(listed, '<details class="agents-add" id="connect-an-agent">');
+        assert.include(listed, '<details class="agents-add">');
+        // A link to the fragment opens the closed disclosure: it names the body inside it.
+        assert.include(listed, '<div class="agents-add-body" id="connect-an-agent">');
         assert.isBelow(
           listed.indexOf(`/machines/${machine.id}/revoke`),
           listed.indexOf('id="add-a-computer"')
@@ -149,7 +151,7 @@ it.layer(services)("Your agents", (it) => {
         for (const agent of ["codex", "another", "%3Cscript%3E"])
           assert.include(
             yield* page(`/machines?agent=${agent}`, member.cookie),
-            '<details class="agents-add" id="connect-an-agent" open>'
+            '<details class="agents-add" open>'
           );
       })
   );
@@ -323,7 +325,8 @@ it.layer(services)("Your agents", (it) => {
         const { admin, member } = yield* company("everything", true);
         const tokens = yield* MachineTokens.MachineTokens;
         const connections = yield* AgentConnections.AgentConnections;
-        const link = '<a href="/machines/revoke-all">Disconnect everything…</a>';
+        const link =
+          '<a class="btn btn-quiet btn-danger" href="/machines/revoke-all">Disconnect everything…</a>';
         // Nothing listed yet, and still reachable: an approval not yet collected can be cancelled.
         assert.include(yield* page("/machines", member.cookie), link);
         assert.include(

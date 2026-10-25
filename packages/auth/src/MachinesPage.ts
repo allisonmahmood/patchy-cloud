@@ -201,7 +201,8 @@ const connectApp = ({ viewer, agent, address, admins, connections }: View) => {
     .map((step) => `<li><p><strong>${step.title}</strong></p>${step.body}</li>`)
     .join("");
   const open = agent !== null || connections.length === 0;
-  return `<details class="agents-add" id="connect-an-agent"${open ? " open" : ""}><summary class="btn">Connect an app</summary><div class="agents-add-body"><nav class="tabs" aria-label="Agent">${tabs}</nav><ol class="agents-steps">${list}</ol></div></details>`;
+  // The fragment names the disclosure's body, so a link to `#connect-an-agent` opens it without script.
+  return `<details class="agents-add"${open ? " open" : ""}><summary class="btn">Connect an app</summary><div class="agents-add-body" id="connect-an-agent"><nav class="tabs" aria-label="Agent">${tabs}</nav><ol class="agents-steps">${list}</ol></div></details>`;
 };
 
 const useSection = (view: View) => {
@@ -213,7 +214,7 @@ const render = (view: View): Page => ({
   title: "Your agents",
   app: { viewer: view.viewer, section: "agents" },
   styles,
-  body: `<div class="agents">${buildSection(view)}${useSection(view)}<p class="agents-foot"><a href="/machines/revoke-all">Disconnect everything…</a></p></div><script defer src="${copyScriptPath}"></script>`
+  body: `<div class="agents">${buildSection(view)}${useSection(view)}<p class="agents-foot"><a class="btn btn-quiet btn-danger" href="/machines/revoke-all">Disconnect everything…</a></p></div><script defer src="${copyScriptPath}"></script>`
 });
 
 const machines = Effect.gen(function* () {
