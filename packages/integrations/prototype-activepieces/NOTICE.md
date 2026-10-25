@@ -47,9 +47,26 @@ Reviewed source at that commit:
 - [Community Slack actions](https://github.com/activepieces/activepieces/tree/b2975300d89450e5a3e728c953f9213011b81f74/packages/pieces/community/slack/src/lib/actions)
 - [Root license](https://github.com/activepieces/activepieces/blob/b2975300d89450e5a3e728c953f9213011b81f74/LICENSE)
 
-Only direct bot-token authentication is admitted. No Activepieces server,
+For Slack, only direct bot-token authentication is admitted. No Activepieces server,
 enterprise module, hosted OAuth broker (`secrets.activepieces.com`), connector
 subscription, or Activepieces account is required at runtime. Slack's API and
 the customer's existing installed Slack app remain external dependencies.
 Community-code licensing does not grant Slack API distribution permission;
 see the commercial-authentication blocker in README.md and Slack's API terms.
+
+The catalog adds `@activepieces/piece-resend@0.6.1`, npm gitHead
+`88abfc7a8ba519b491d5beb037a560253a268924`, with tarball integrity pinned in
+`package-lock.json`. Reviewed community source at that commit:
+
+- [API-key authentication](https://github.com/activepieces/activepieces/blob/88abfc7a8ba519b491d5beb037a560253a268924/packages/pieces/community/resend/src/index.ts)
+- [List Domains action](https://github.com/activepieces/activepieces/blob/88abfc7a8ba519b491d5beb037a560253a268924/packages/pieces/community/resend/src/lib/actions/list-domains.action.ts)
+- [Shared Resend client](https://github.com/activepieces/activepieces/blob/88abfc7a8ba519b491d5beb037a560253a268924/packages/pieces/community/resend/src/lib/common/client.ts)
+- [Root license](https://github.com/activepieces/activepieces/blob/88abfc7a8ba519b491d5beb037a560253a268924/LICENSE)
+
+This selected path uses community code and the previously reviewed common/framework
+helpers under the MIT root license, with no enterprise-directory import found.
+It authenticates directly to Resend with the customer's API key. No OAuth app,
+Activepieces account or hosted auth service is required for this mode. The
+published package is also a bundle with an empty dependency map and no license
+field; this is a selected-source review, not a completed bundle SBOM or commercial
+redistribution clearance. No email-send action is admitted or exercised.

@@ -12,7 +12,9 @@ NodeRuntime.runMain(
     yield* supervise(
       plan,
       new URL(
-        process.argv.includes("--slack") ? "./slackServer.ts" : "./localServer.ts",
+        process.argv.includes("--catalog") || process.argv.includes("--slack")
+          ? "./catalogServer.ts"
+          : "./localServer.ts",
         import.meta.url
       ).pathname
     );

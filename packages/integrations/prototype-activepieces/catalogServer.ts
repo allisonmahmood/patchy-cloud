@@ -29,7 +29,7 @@ NodeRuntime.runMain(
       !(yield* DevPersonas.enabled)
     )
       return yield* Effect.die(
-        new Error("Slack prototype requires a loopback dev-personas instance.")
+        new Error("The connector catalog requires a loopback dev-personas instance.")
       );
     const http = NodeHttpServer.layer(createServer, {
       host: "127.0.0.1",
@@ -43,14 +43,15 @@ NodeRuntime.runMain(
       CommunityConnections.layer
     ).pipe(
       Layer.provideMerge(RuntimeLog.layer),
-      Layer.provide([Pieces.layer, CredentialKeys.layer])
+      Layer.provideMerge(Pieces.layer),
+      Layer.provide(CredentialKeys.layer)
     );
     const routes = CommunityPages.layer.pipe(HttpRouter.provideRequest(localServices));
     return yield* Layer.launch(
       Layer.effectDiscard(
         HttpServer.addressFormattedWith((address) =>
           Console.log(
-            `Patchy listening on ${address} (Slack bot-token prototype; REAL Slack requests)`
+            `Patchy listening on ${address} (community connector catalog; REAL provider requests)`
           )
         )
       ).pipe(
@@ -58,7 +59,7 @@ NodeRuntime.runMain(
         Layer.provide(
           Layer.succeed(ConnectionPages.extraNavigation, {
             href: CommunityPages.path,
-            label: "Try Slack in this local prototype"
+            label: "Explore connectors (local prototype)"
           })
         ),
         Layer.provide([Sql.layer, ClientDocumentNetwork.layer]),

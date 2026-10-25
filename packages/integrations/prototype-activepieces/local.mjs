@@ -29,8 +29,8 @@ const plan = JSON.parse(run(dev, ["--dry-run", "--json"]));
 if (plan.environment || new URL(plan.apiUrl).hostname !== "127.0.0.1")
   throw new Error("Use a plain loopback dev instance for this prototype.");
 const markerFile = join(state, "activepieces-mode.json");
-const slack = process.argv.includes("--slack");
-const mode = slack ? "slack-token" : "posthog-mock";
+const community = process.argv.includes("--catalog") || process.argv.includes("--slack");
+const mode = community ? "community-catalog" : "posthog-mock";
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -52,7 +52,7 @@ if (plan.pids && alive(plan.pids.supervisor)) {
   const log = openSync(join(state, "activepieces-launcher.log"), "a", 0o600);
   const child = spawn(
     process.execPath,
-    [...args, join(here, "localSupervisor.ts"), ...(slack ? ["--slack"] : [])],
+    [...args, join(here, "localSupervisor.ts"), ...(community ? ["--catalog"] : [])],
     {
       cwd: root,
       env: baseEnv,
@@ -83,21 +83,21 @@ for (let attempt = 0; attempt < 480; attempt++) {
 if (!ready)
   throw new Error(`Local startup failed. See ${state}/dev.log and activepieces-launcher.log`);
 console.log(
-  slack
+  community
     ? "Local Patchy is running. Preparing two test companies…"
     : "Local Patchy is running. Seeding the two simulated customer connections…"
 );
-run(join(here, "localSeed.ts"), slack ? ["--slack"] : []);
-if (slack) {
+run(join(here, "localSeed.ts"), community ? ["--catalog"] : []);
+if (community) {
   console.log(
-    "Slack bot-token connections inside local Patchy (REAL provider requests; no tokens preloaded):"
+    "Connector catalog inside local Patchy (REAL provider requests; no credentials preloaded):"
   );
   for (const customer of customers)
     console.log(
-      `${customer.name}: ${plan.apiUrl}/dev/sign-in?as=${encodeURIComponent(customer.email)}&return=${encodeURIComponent("/company/connections/community/slack")}`
+      `${customer.name}: ${plan.apiUrl}/dev/sign-in?as=${encodeURIComponent(customer.email)}&return=${encodeURIComponent("/company/connections/community")}`
     );
   console.log(
-    "Paste an existing installed app's bot token in Patchy. Separate browser profiles keep companies signed in independently."
+    "Choose Resend (API key) or Slack (existing app token). Separate browser profiles keep companies signed in independently."
   );
   process.exit(0);
 }

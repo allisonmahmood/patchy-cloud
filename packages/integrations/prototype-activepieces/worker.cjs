@@ -27,9 +27,33 @@ process.once("message", async ({ modulePath, exportName, authType, invocation })
         ? choices[0]
         : undefined;
     if (!auth) throw new Error("Explicit authentication selection required");
-    if (!invocation)
-      reply = { ok: true, value: { authType: auth.type, actions: Object.keys(actions) } };
-    else if (invocation.kind === "validate") {
+    if (!invocation) {
+      const field = (name, property) => ({
+        name,
+        displayName: property.displayName ?? name,
+        description: property.description ?? "",
+        type: property.type,
+        required: property.required === true
+      });
+      reply = {
+        ok: true,
+        value: {
+          displayName: piece.displayName ?? exportName,
+          authType: auth.type,
+          authDescription: auth.description ?? "",
+          authFields:
+            auth.type === "SECRET_TEXT"
+              ? [field("secret_text", auth)]
+              : Object.entries(auth.props ?? {}).map(([name, property]) => field(name, property)),
+          hasValidator: typeof auth.validate === "function",
+          actions: Object.keys(actions),
+          actionDetails: Object.entries(actions).map(([name, action]) => ({
+            name,
+            displayName: action.displayName ?? name
+          }))
+        }
+      };
+    } else if (invocation.kind === "validate") {
       if (typeof auth.validate !== "function") throw new Error("No auth validator");
       // Validators take the credential properties; actions take the piece's runtime auth shape.
       const result = await auth.validate({ auth: invocation.auth });
