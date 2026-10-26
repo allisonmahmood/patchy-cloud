@@ -150,6 +150,67 @@ jobs:
       - name: Exercise the packed Preact runtime and same-version upgrades
         run: pnpm test:packed-preact-e2e
 
+  # The release, packed once on Linux for the install checks on every platform.
+  release-tarball:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=patchy
+      - uses: actions/upload-artifact@v7
+        with:
+          name: patchy-release
+          path: packages/patchy/artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The installer and CLI where people run them: each platform's install line, a
+  # Node switch, an earlier install moving, setup's links and the old-Node refusal.
+  # Only Node and the packed release; `pnpm test:packed-install-e2e`.
+  install:
+    name: install (${{ matrix.os }})
+    needs: release-tarball
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: patchy-release
+          path: packages/patchy/artifacts
+      # The supported minimum, then the Node most new users install; the switch is between them.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.0
+      - run: echo "NODE_A=$(node -p process.execPath)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.11.1
+      - run: echo "NODE_B=$(node -p process.execPath)" >> "$GITHUB_ENV"
+      - name: Install, switch Node and move an earlier install
+        run: node scripts/packed-install-e2e.mjs --node-a "$NODE_A" --node-b "$NODE_B"
+
   tier2-smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

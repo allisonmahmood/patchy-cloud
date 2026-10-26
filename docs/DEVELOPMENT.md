@@ -28,8 +28,15 @@ offers start, stop, environment and **Check** actions; import them once from
 
 `pnpm verify` mirrors CI's jobs: `postgres-concurrency`, `cli-smoke` (a
 one-second check that the packed harness reaps orphaned processes, the packed CLI
-end to end, and the packed Preact runtime), `tier2-smoke` (the packed tier 2
-journey) and `browser` (tier 1 and 2 pages in Chromium). It keeps
+end to end, and the packed Preact runtime), `install` (the installer and CLI on
+this machine: each platform's install line, a Node switch, an earlier install
+moving, setup's links, a saved key and a file publish against a stub, and the
+old-Node refusal), `tier2-smoke` (the packed tier 2 journey) and `browser` (tier 1
+and 2 pages in Chromium). CI runs `install` on Linux, macOS and Windows against
+one release packed on Linux, switching between Node 22.22.0 and 26.11.1. Locally
+it needs only Node and the release `pnpm --filter patchy build` packs, and it
+uses this Node for both sides, so its switch changes only the npm prefix; pass
+`--node-a` and `--node-b` to switch Nodes too. It keeps
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0, 24.20.0 and 26.11.1, `cli-smoke` again on Node 26.11.1, and `clerk-live`
 on pushes to `main` and same-repository PRs.
@@ -48,8 +55,9 @@ and back at the PR the agent connections it ended must stay ended.
 leaves it out, because it rehearses commits against the commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
 the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
 
-CI pins every job to `ubuntu-24.04`, and every job that runs the repository's
-code to an exact Node patch. Bump the patches by hand in every workflow under
+CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
+`macos-15` and `windows-2025`, and every job that runs the repository's code
+to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
 `node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
 

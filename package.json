@@ -21,6 +21,7 @@
     "check": "node --import tsx scripts/verify.ts check",
     "verify": "node --import tsx scripts/verify.ts verify",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
+    "test:packed-install-e2e": "node scripts/packed-install-e2e.mjs",
     "test:packed-preact-e2e": "node scripts/packed-preact-e2e.mjs",
     "test:packed-tier2-e2e": "node scripts/packed-cli-e2e.mjs --tier2",
     "test:postgres-concurrency": "vitest run --config vitest.postgres.config.ts",
