@@ -54,8 +54,14 @@ const PACE_MS = 1_250;
 const MAX_WAIT_S = 240;
 /** How long a full key count is waited out before the mint is asked again. */
 const KEY_CAP_WAIT_S = 15;
-/** Old enough that no run still uses it: a run takes a few minutes. */
-const STALE_MS = 10 * 60_000;
+/**
+ * The longest a run's tests may use Pidgeon, from when this module loads; CI's job stops at the
+ * same mark. After it, only the run's own sweep calls Pidgeon.
+ */
+const RUN_LIMIT_MS = 20 * 60_000;
+const runEnds = Date.now() + RUN_LIMIT_MS;
+/** Older than any run can still be using: three run limits. */
+const STALE_MS = 3 * RUN_LIMIT_MS;
 
 const faults: Array<{ match: (sent: Sent) => boolean; value: string; times: number }> = [];
 /** Every request sent, and what the run made: its keys and its addresses. */
@@ -157,32 +163,59 @@ const budgetWait = (error: Source.CallError): number | undefined =>
 /**
  * The production source over that paced fetch, waiting out the shared budget outside the call's
  * own timeout and asking again with the caller's allowance anew, as if the wait never happened.
+ * `limited`, it refuses every call once the run's limit has passed, sending nothing.
  */
-const waiting = Effect.gen(function* () {
-  const inner = yield* Source.make;
-  const call: Source.Source["Service"]["call"] = (token, request, deadline) => {
-    const allowance = Math.max(1_000, deadline - Date.now());
-    const attempt = (until: number, waited: number): ReturnType<typeof inner.call> =>
-      inner.call(token, request, until).pipe(
-        Effect.catch((error) => {
-          const seconds = budgetWait(error);
-          if (seconds === undefined || waited + seconds > MAX_WAIT_S) return Effect.fail(error);
-          return Effect.sleep(Math.ceil(seconds * 1_000) + 250).pipe(
-            Effect.andThen(Effect.suspend(() => attempt(Date.now() + allowance, waited + seconds)))
-          );
-        })
-      );
-    return attempt(deadline, 0);
-  };
-  return Source.Source.of({ call, withSlot: inner.withSlot });
-});
+const waiting = (limited: boolean) =>
+  Effect.gen(function* () {
+    const inner = yield* Source.make;
+    const call: Source.Source["Service"]["call"] = (token, request, deadline) => {
+      if (limited && Date.now() > runEnds)
+        return Effect.die(
+          new Error(`The live Pidgeon run ${RUN} passed its ${RUN_LIMIT_MS / 60_000}-minute limit.`)
+        );
+      const allowance = Math.max(1_000, deadline - Date.now());
+      const attempt = (until: number, waited: number): ReturnType<typeof inner.call> =>
+        inner.call(token, request, until).pipe(
+          Effect.catch((error) => {
+            const seconds = budgetWait(error);
+            if (seconds === undefined || waited + seconds > MAX_WAIT_S) return Effect.fail(error);
+            return Effect.sleep(Math.ceil(seconds * 1_000) + 250).pipe(
+              Effect.andThen(
+                Effect.suspend(() => attempt(Date.now() + allowance, waited + seconds))
+              )
+            );
+          })
+        );
+      return attempt(deadline, 0);
+    };
+    return Source.Source.of({ call, withSlot: inner.withSlot });
+  });
 
-/** The live tier's Pidgeon. */
-export const layer = Layer.effect(Source.Source, waiting).pipe(
-  Layer.provide(
-    Layer.effect(HttpClient.HttpClient, paced).pipe(Layer.provide(FetchHttpClient.layer))
-  )
-);
+const http = Layer.effect(HttpClient.HttpClient, paced).pipe(Layer.provide(FetchHttpClient.layer));
+/** The live tier's Pidgeon, for its tests: nothing after the run's limit. */
+export const layer = Layer.effect(Source.Source, waiting(true)).pipe(Layer.provide(http));
+/** The same Pidgeon for the sweeps, which may run after the limit to clear up. */
+export const sweepLayer = Layer.effect(Source.Source, waiting(false)).pipe(Layer.provide(http));
+
+/**
+ * Refuses, before anything changes, a `PIDGEON_TEST_ADMIN_KEY` that isn't a test key: a live
+ * key's addresses and keys would be live ones, which no sweep touches. Never says the key.
+ */
+export const requireTestKey = Effect.gen(function* () {
+  const source = yield* Source.Source;
+  const answer = yield* source.call(admin(), { method: "GET", path: "/me" }, Date.now() + 60_000);
+  const data = Source.data(answer.body);
+  const key =
+    typeof data === "object" && data !== null && "key" in data && typeof data.key === "object"
+      ? data.key
+      : null;
+  if (key === null || !("test" in key) || key.test !== true)
+    return yield* Effect.die(
+      new Error(
+        "PIDGEON_TEST_ADMIN_KEY isn't a test key. The live tier only runs with a test admin key, so it changed nothing."
+      )
+    );
+});
 
 /** One call as the admin, for what a test sets up or checks itself. */
 export const call = Effect.fn("live.call")(function* (
@@ -245,7 +278,8 @@ export interface Swept {
  * `stale`, anyone's that no run still uses. It only ever touches a key named `Patchy …`, in test
  * mode and below admin: this run's, or a stale one, reaching nothing because its address is gone.
  * It only ever deletes a test address: this run's, or a stale run-tagged one. Never a live
- * address, an admin key or a key Patchy didn't name.
+ * address, an admin key or a key Patchy didn't name. Stale means older than any run can still be
+ * using, three run limits.
  */
 export const sweep = (stale: boolean) =>
   Effect.gen(function* () {
@@ -253,6 +287,18 @@ export const sweep = (stale: boolean) =>
     const until = () => Date.now() + 60_000;
     let keys = 0;
     let addresses = 0;
+    // Addresses first, so a key that reached one reaches nothing by the time keys are listed.
+    for (const identity of yield* everything("/identities")) {
+      const local = text(identity, "local_part");
+      if (identity.test !== true) continue;
+      const ours = local.startsWith(`patchy-${RUN}-`);
+      const left = stale && /^patchy-lv[a-z0-9]+-/.test(local) && older(identity);
+      if (!(ours || left)) continue;
+      const deleted = yield* source
+        .call(admin(), { method: "DELETE", path: `/identities/${text(identity, "id")}` }, until())
+        .pipe(Effect.option);
+      if (deleted._tag === "Some") addresses++;
+    }
     for (const key of yield* everything("/api-keys")) {
       const name = text(key, "name");
       // Never anything but a test key Patchy named, below admin: never an admin key, ours or not.
@@ -271,17 +317,6 @@ export const sweep = (stale: boolean) =>
         .call(admin(), { method: "DELETE", path: `/api-keys/${text(key, "id")}` }, until())
         .pipe(Effect.option);
       if (revoked._tag === "Some") keys++;
-    }
-    for (const identity of yield* everything("/identities")) {
-      const local = text(identity, "local_part");
-      if (identity.test !== true) continue;
-      const ours = local.startsWith(`patchy-${RUN}-`);
-      const left = stale && /^patchy-lv[a-z0-9]+-/.test(local) && older(identity);
-      if (!(ours || left)) continue;
-      const deleted = yield* source
-        .call(admin(), { method: "DELETE", path: `/identities/${text(identity, "id")}` }, until())
-        .pipe(Effect.option);
-      if (deleted._tag === "Some") addresses++;
     }
     const swept: Swept = { keys, addresses };
     return swept;

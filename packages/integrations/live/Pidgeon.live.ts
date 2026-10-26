@@ -46,6 +46,7 @@ const services = pageServices(Live.layer).pipe(
   Layer.merge(
     Layer.effectDiscard(
       Effect.gen(function* () {
+        yield* Live.requireTestKey;
         const before = yield* Live.sweep(true);
         yield* Effect.addFinalizer(() =>
           Live.sweep(false).pipe(
@@ -53,7 +54,7 @@ const services = pageServices(Live.layer).pipe(
           )
         );
       })
-    ).pipe(Layer.provide(Live.layer))
+    ).pipe(Layer.provide(Live.sweepLayer))
   )
 );
 /** What `/me` says about a key, as far as these tests look. */

@@ -10,7 +10,8 @@ import * as Live from "./harness.js";
 NodeRuntime.runMain(
   Live.ADMIN_KEY === undefined
     ? Effect.sync(() => console.log("No PIDGEON_TEST_ADMIN_KEY, so there's nothing to sweep."))
-    : Live.sweep(true).pipe(
+    : Live.requireTestKey.pipe(
+        Effect.andThen(Live.sweep(true)),
         Effect.flatMap((swept) =>
           swept.problem === undefined
             ? Effect.sync(() =>
@@ -20,6 +21,6 @@ NodeRuntime.runMain(
               )
             : Effect.die(`The Pidgeon sweep for ${Live.RUN} couldn't list: ${swept.problem}.`)
         ),
-        Effect.provide(Live.layer)
+        Effect.provide(Live.sweepLayer)
       )
 );
