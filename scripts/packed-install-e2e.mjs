@@ -213,8 +213,16 @@ const shell = (
           String(child.pid),
           "/T",
           "/F"
-        ]);
-      else if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        ]).on("error", () => {});
+      else if (child.pid !== undefined)
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // The group already ended.
+        }
+      // Whatever still holds the pipes no longer keeps this process alive.
+      child.stdout.destroy();
+      child.stderr.destroy();
       resolve({ status: null, stdout, stderr: `${stderr}\ntimed out after 300 s` });
     }, 300_000);
     child.on("close", (status) => {
