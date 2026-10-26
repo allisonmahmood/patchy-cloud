@@ -54,11 +54,11 @@ flag applies to connections. Wrong-level flags are local errors, exit 1.
 
 For a company connection, run `patchy list connections`, then
 `patchy list connections <integration>/<handle>`, such as `postgres/warehouse` or
-`posthog/product`, to inspect its snapshot and `takenAt`.
+`posthog/product` or `pidgeon/support`, to inspect its snapshot and `takenAt`.
 `list connections --all` also shows offered integrations. A null snapshot means
 unavailable, not an empty source. Select a connected handle and add it from
 the consuming repo with `pnpm patchy add <integration>/<handle> --as <alias>`.
-`add postgres` or `add posthog` selects that integration's sole connected
+`add postgres`, `add posthog` or `add pidgeon` selects that integration's sole connected
 connection; with several, it lists choices from `list connections` and stops.
 
 All levels accept `--json`. Top-level success is `{ patches, connections }`
@@ -129,6 +129,7 @@ The project skills teach Preact, tables, files and declarations in Patchy's own 
 Use the discovery chain above before adding a dependency.
 `pnpm patchy add postgres/<handle> --as <alias>`,
 `pnpm patchy add posthog/<handle> --as <alias>`,
+`pnpm patchy add pidgeon/<handle> --as <alias>`,
 `pnpm patchy add shared-table <patchId>/<table> --as <alias>` or
 `pnpm patchy add shared-store <patchId>/<store> --as <alias>` adds a declaration
 and generates its client, context, fixture stub and skill. Shared stores publish
@@ -415,7 +416,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   A `release_mismatch` names both releases and the instance's install line:
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres and PostHog declarations.
+  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres, PostHog and Pidgeon declarations.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
   fleet in production and the local executor in dev and tests. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a

@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres and PostHog connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog and Pidgeon connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres and PostHog are built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog and Pidgeon are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -41,7 +41,7 @@ An admin's hint about a connection's purpose, helping a builder choose it. It ne
 _Avoid_: permission, policy, grant
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
@@ -52,6 +52,26 @@ _Avoid_: inventory (the cumulative authority for patch-owned resources), schema 
 An immutable list of a PostHog project's event definitions and event and person property definitions, with their types and descriptions, never events. Its types are hints for writing HogQL; a query may name anything the project has.
 _Avoid_: event catalogue, schema (PostHog has none to snapshot)
 
+**Address snapshot**:
+An immutable description of one Pidgeon address: its email, display name and send policy, what Patchy's key for it may do, its labels and the account's plan, never mail. Refresh labels takes a new one with the stored key.
+_Avoid_: mailbox, inbox snapshot
+
+**Admin key**:
+The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key. Revoking it revokes every key minted from it.
+_Avoid_: master key, account key, root key
+
+**Address key**:
+The Pidgeon key Patchy mints for one address, at `read` or `send`, and the only Pidgeon secret it keeps. It is named `Patchy <handle> <attempt> <code>`, the code its own submission's, checked to reach exactly its address before it is saved, and revokes itself when replaced or deleted; a replaced one stays retired, saved with its replacement, until it has.
+_Avoid_: scoped key, API key (Pidgeon's word for every kind)
+
+**Send policy**:
+Pidgeon's rule for who an address may write to: `reply_only`, answering only people who wrote first, `open`, or an allow-list. Addresses Patchy creates start reply-only.
+_Avoid_: permission, access (what the key may do)
+
+**Rotate key**:
+A Pidgeon address key giving itself a new secret, with no admin key, while the old secret works for a grace period. It is recorded as unknown before Pidgeon is asked, so an answer that never came, or a server that stopped mid-rotation, keeps Rotate off until Replace key; it is never retried. Distinct from **Replace key**, which mints a new key with an admin key.
+_Avoid_: refresh, renew (the store's name for it)
+
 **Revision**:
 The connection's server-assigned metadata revision identifying one schema snapshot. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.
 _Avoid_: snapshot revision, release, wire version, credential revision, schema revision (Primitives' term)
@@ -61,7 +81,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection.
 _Avoid_: rename, new connection
 
 **Credential revision**:
@@ -79,6 +99,10 @@ _Avoid_: event export, insight (PostHog's saved chart)
 **Project slots**:
 The queries one server process lets run at once against one PostHog region and project, shared by every connection to it. A call that can't get one before its deadline is refused busy, having sent nothing.
 _Avoid_: pool (a Postgres word for reusable sessions), rate limit (PostHog's own)
+
+**Address slots**:
+The calls one server process lets run at once against one Pidgeon address, shared by `patchy dev` and published patches. A call that can't get one before its deadline is refused busy, having sent nothing; one that waited checks its caller and connection again and loads the key as it stands.
+_Avoid_: pool, rate limit (Pidgeon's own)
 
 **Typed client**:
 The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query.

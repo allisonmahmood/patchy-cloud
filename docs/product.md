@@ -6,7 +6,7 @@ Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 stati
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
-Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Signed-in pages share one sidebar shell and component set.
+Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address; patches can declare them, and their operations are next. Signed-in pages share one sidebar shell and component set.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches, is specified and not built. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
@@ -25,7 +25,7 @@ Each version has exactly one tier. The CLI checks the tree and bundle; the serve
 The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
 the generated client, contract, Preact with compat semantics and shell operations,
 including generated-file downloads separate from stored-file access;
-Primitives supply tables and files; Integrations supply company Postgres and PostHog;
+Primitives supply tables and files; Integrations supply company Postgres, PostHog and Pidgeon;
 Helpers include `patchy/csv`, a synchronous text codec based on PapaParse with
 Patchy's own API, importable on both page and server graphs. Everything else
 written or copied into the patch is **company code**, maintained by the company.
@@ -66,7 +66,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres and PostHog connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres, PostHog and Pidgeon connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -266,7 +266,7 @@ obsolete instructions. Explicit remove may retire a declaration skill when no
 declaration of its kind remains.
 
 A **fixture stub** contains metadata and guidance, not company rows or bytes.
-PostHog declarations have none. The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
+PostHog and Pidgeon declarations have none. The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
 with invented local inserts, or `fixtures/shared-<alias>/` with invented files
 for the named source store. Refresh creates a missing directory and never
 overwrites an existing one. Dev loads shared fixtures at start; edit them and
@@ -641,7 +641,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres and PostHog — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres, PostHog and Pidgeon — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/company/connections`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`),
@@ -1065,9 +1065,11 @@ A replacement patch under the old name never takes over the source identity.
 Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
-Other integrations and personal connections remain planned.
+Company Pidgeon connections connect one email address with a key Patchy mints for
+it, and publish binds them; reading and sending from patches is next. Other
+integrations and personal connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first and PostHog the second; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second and Pidgeon the third, the first that can write; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1077,8 +1079,8 @@ Today every integration supports **company** connections only: an admin connects
 a source, and every active company member may use it through a company-runtime
 patch that declares it. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
-the connection string, or the admin's PostHog key, not a separate identity for
-each person.
+the connection string, the admin's PostHog key, or the key Patchy minted for a
+Pidgeon address, not a separate identity for each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
@@ -1187,6 +1189,106 @@ arguments at 256 KiB. Tier 1 pages query through the broker as the viewer; tier 
 queries only in actions, reauthorising the live viewer on every callback. PostHog
 reads are not live-query dependencies. Each call's name and first 8 KiB of query
 text, never its values or rows, appear in the connection's recent calls.
+
+### Connecting Pidgeon
+
+[Pidgeon](https://pidgeon.ai) gives software real email addresses. One Pidgeon
+connection is one address, company-wide: `pidgeon/support` is `support@…`, and
+Patchy fills in the address on every call, so a patch can't read or send as
+another. The credentialed server makes every call, only to
+`https://pidgeon.ai/api/v1`, never following a redirect, with answers, refusals
+included, read under the 8 MiB cap before they're decoded.
+
+**Connect.** The connect page is one form. An admin pastes a Pidgeon admin key,
+Admin and Live, over the whole account, and presses Find addresses: the page's
+script posts the key in the body of that one request, and Patchy answers with the
+addresses it reaches. The admin picks one, or creates one on Pidgeon's shared
+`pidgeon.email` or a domain the workspace has, with a display name and a send
+policy, then chooses what patches may do, **Read** or **Read and send**, and names
+it. The page needs its script, because the server never writes the admin key back
+into a page; a refused submit keeps everything typed except the key. A side panel
+says where to make the key, that Patchy never stores it, what rotating and
+revoking it do, that a key just for Patchy keeps a revocation to Patchy, who reads
+the mail, and that builders' agents read it while they build.
+
+Patchy then, in order: reads `/me` and refuses a key that isn't admin, doesn't
+reach the whole account, or is test mode, which only its `pgn_test_` prefix shows;
+finds the address, refusing one without an inbox, or creates it with an inbox and
+an `Idempotency-Key` from the page's attempt, so a retried connect never makes two;
+mints a key for that address alone at `read` or `send`, named `Patchy <handle>
+<attempt> <code>` with a code of its own submission's; and checks the new key, whose `/me` must show the chosen access and no
+reach over the whole account, whose mint must say it's live, and whose
+`/identities` must list exactly the address. It then reads the snapshot with it.
+Only that key is saved, encrypted under the keyring, and only after all of that;
+the admin key is used for the request and never stored, logged or shown.
+
+Anything that fails before the save revokes the minted key with its own secret. A
+mint whose answer was lost is cleaned up with the admin key by its name, whose
+code is its submission's, so a cleanup never takes another submission's key, even
+one of the same attempt still running. If the save's own outcome is unknown, nothing is revoked and the page says
+to check the connections list. A cleanup that fails names the key, so an admin
+can revoke it in Pidgeon.
+
+**The snapshot** keeps the address, its display name and send policy, the key's
+access, the address's labels and the account's plan, never mail. It is immutable,
+with the same revisions, `stale_generated` and deletion protection as Postgres;
+the connection is bound to Pidgeon's address id. Refresh labels takes a new one
+with the stored key.
+
+**Send policy.** Pidgeon's own: an address may be `reply_only`, answering only
+people who wrote first and never starting a conversation with a stranger, `open`,
+or limited to an allow-list. Addresses Patchy creates start reply-only unless the
+admin picks Anyone; existing addresses keep theirs, and the connection page shows
+it.
+
+**Rotate key** takes no admin key. A rotate can't be repeated safely, so under the
+connection's lock Patchy first records the rotation as unknown and commits that;
+until it's settled, the record refuses Rotate in every server process. Then
+Pidgeon gives the key a new secret, with a grace period during which the old one
+still works, and Patchy saves the new secret in the record's place with when the
+old one stops, which the page shows. Calls load the key when they're sent, so a
+queued call uses the new one. A failed save is retried with the secret Patchy
+holds; Pidgeon is never asked twice. A refusal changed nothing, so the record goes
+back. If the answer never comes, or the server stops mid-rotation, the record
+stays, because the rotation may still complete: the page says the stored secret
+may stop when its grace ends and offers Replace key, and Rotate stays refused
+until then.
+Rotate is also refused while a saved rotation's grace period runs. Pidgeon limits
+rotations and mints across the whole account: a burst answers 429 for about ten
+minutes, which changed nothing, so the page says to try again in a few minutes.
+
+**Change access and Replace key** take an admin key. Holding the connection's lock,
+Patchy mints a new key for the same address, checks it, takes a fresh snapshot and
+saves both, keeping the old key as retired in the same save; then the old key
+revokes itself, a 401 counting as already done. A failure before the save leaves
+the connection as it was. An old key that won't revoke, or whose save's answer was
+lost, stays retired and named on the page until a later Test connection or Delete
+revokes it.
+Replace key is for a key that stopped working, for example because its admin key
+was revoked: revoking an admin key revokes every key minted from it, while
+rotating it leaves them working. A key whose address was deleted in Pidgeon still
+signs in but reaches nothing, so the page says the address is gone; Replace key
+can't bring it back. There's no retarget: a different address is a new connection.
+
+**Disconnect and reconnect** keep the key, so reconnecting needs no admin key, only
+a check that it still works. **Delete** is refused while a stored version declares
+the connection, as for every integration; once the row is gone, the stored key
+and any retired ones revoke themselves, even if the request was interrupted or
+the COMMIT's answer lost, and one that won't is named. The address and its mail stay in
+Pidgeon.
+
+**Calls** reach an address through one gate per server process: at most four at
+once per address, shared by `patchy dev` and published patches, an excess call
+waiting within its deadline, keeping a second's reserve, then failing `busy` with
+nothing sent. A call that waited checks its caller and connection again and loads
+the key as it stands before it sends. Pidgeon's 429 and 402 fail
+`source_rate_limited`, with `retryAfter` only when Pidgeon sent one, and Patchy
+never retries a call Pidgeon might have run.
+
+A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
+`patchy add pidgeon/<handle>` writes it with the address's context. Its generated
+client has no operations yet; reading, replying, sending and triage come next,
+with their skill, and dev's live reads after.
 
 ### Discovery and binding
 

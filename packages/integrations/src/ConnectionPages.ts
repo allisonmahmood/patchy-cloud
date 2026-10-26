@@ -13,6 +13,8 @@ import type { RuntimeLog } from "@patchy/runtime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
 import * as ConnectionsView from "./ConnectionsView.js";
+import * as PidgeonPage from "./pidgeon/Page.js";
+import type * as PidgeonSource from "./pidgeon/Source.js";
 
 type Params = Readonly<Record<string, string | undefined>>;
 
@@ -43,7 +45,7 @@ const serve = <R>(
               {
                 ...content,
                 heading: "",
-                styles: ConnectionsView.styles,
+                styles: ConnectionPage.styles,
                 app: { viewer, section: "integrations" }
               },
               session
@@ -97,7 +99,26 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
     );
   });
 
-const confirmations = ["rotate", "retarget", "description", "disconnect", "delete"] as const;
+const confirmations = [
+  "rotate",
+  "retarget",
+  "access",
+  "description",
+  "disconnect",
+  "delete"
+] as const;
+
+/** A fragment for the page's own script: never cached, never run as a document. */
+const fragment = (content: ConnectionPage.Fragment) =>
+  HttpServerResponse.text(content.body, {
+    contentType: "text/html",
+    status: content.status,
+    headers: {
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'"
+    }
+  });
 
 /** Integrations mounts its own pages; Auth remains independent of integrations. */
 export const layer: Layer.Layer<
@@ -113,6 +134,7 @@ export const layer: Layer.Layer<
       | ConnectionStore.ConnectionStore
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
+      | PidgeonSource.Source
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -143,12 +165,34 @@ export const layer: Layer.Layer<
       kind: "connect" as const,
       integration: params.integration ?? ""
     });
+    yield* router.add(
+      "GET",
+      PidgeonPage.connectScriptPath,
+      HttpServerResponse.text(PidgeonPage.connectScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
+      })
+    );
+    // Find addresses: the admin key arrives in this POST's body and is never written back.
+    yield* router.add(
+      "POST",
+      PidgeonPage.addressesPath,
+      errors(
+        RequireSession.sameOrigin(
+          RequireSession.withViewer(
+            Effect.flatMap(RequireSession.Viewer, ConnectionPage.pidgeonAddresses).pipe(
+              Effect.map(fragment)
+            )
+          )
+        )
+      )
+    );
     yield* get(indexPath, () => ({ kind: "index" }));
     yield* get(cataloguePath, () => ({ kind: "catalogue" }));
     yield* get(`${cataloguePath}/:integration`, integration);
     yield* post(`${cataloguePath}/:integration`, integration);
     yield* get(`${indexPath}/:id`, (params) => ({ kind: "view", id: params.id ?? "" }));
-    for (const kind of ["test", "refresh", "reconnect"] as const)
+    for (const kind of ["test", "refresh", "reconnect", "renew"] as const)
       yield* post(`${indexPath}/:id/${kind}`, (params) => ({ kind, id: params.id ?? "" }));
     for (const action of confirmations) {
       yield* get(`${indexPath}/:id/${action}`, (params) => ({

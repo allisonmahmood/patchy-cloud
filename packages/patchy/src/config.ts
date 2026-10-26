@@ -279,6 +279,11 @@ export const posthog = <const Handle extends string>(handle: Handle) => ({
   kind: "posthog" as const,
   handle
 });
+/** One company email address on Pidgeon, by its connection's handle. */
+export const pidgeon = <const Handle extends string>(handle: Handle) => ({
+  kind: "pidgeon" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -299,6 +304,7 @@ export const members = () => ({ kind: "members" as const });
 export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
   | { readonly kind: "posthog"; readonly handle: string }
+  | { readonly kind: "pidgeon"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

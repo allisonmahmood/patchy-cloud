@@ -36,7 +36,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   uses = "{}",
   generatedServer,
   generatedFiles = [],
-  metadata = { postgres: {}, posthog: {}, shared: {} },
+  metadata = { postgres: {}, posthog: {}, pidgeon: {}, shared: {} },
   duringGeneration = () => Effect.void
 }: {
   readonly index: unknown;
@@ -174,6 +174,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         const shared = (declaration: typeof contacts | { revision: number }) => ({
           postgres: {},
           posthog: {},
+          pidgeon: {},
           shared: {
             contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} }
           }
@@ -234,6 +235,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         const metadata = (declaration: typeof analytics | { revision: number }) => ({
           postgres: {},
           shared: {},
+          pidgeon: {},
           posthog: {
             analytics: {
               declaration: { ...analytics, ...declaration },
@@ -259,7 +261,12 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       });
       const prepared = yield* prepare;
       assert.deepStrictEqual(prepared.manifest.uses, { members: { kind: "members" } });
-      assert.deepStrictEqual(prepared.metadata, { postgres: {}, posthog: {}, shared: {} });
+      assert.deepStrictEqual(prepared.metadata, {
+        postgres: {},
+        posthog: {},
+        pidgeon: {},
+        shared: {}
+      });
     })
   );
   it.effect("requires a directory for shared-store fixtures and preserves it while stamping", () =>
@@ -281,6 +288,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         metadata: {
           postgres: {},
           posthog: {},
+          pidgeon: {},
           shared: {
             assets: { declaration, definition: { description: "Source documents", shared: true } }
           }

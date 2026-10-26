@@ -33,6 +33,7 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as DevReads from "./DevReads.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
@@ -150,7 +151,8 @@ const serve = (
             Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
           )
         ]),
-        Layer.provideMerge(double.layer)
+        Layer.provideMerge(double.layer),
+        Layer.provideMerge(PidgeonSource.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

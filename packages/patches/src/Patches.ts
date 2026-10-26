@@ -1708,7 +1708,11 @@ export const make = Effect.gen(function* () {
       .filter((declaration) => declaration.kind !== "members")
       .sort((a, b) => a.id.localeCompare(b.id));
     for (const declaration of declarations) {
-      if (declaration.kind === "postgres" || declaration.kind === "posthog") {
+      if (
+        declaration.kind === "postgres" ||
+        declaration.kind === "posthog" ||
+        declaration.kind === "pidgeon"
+      ) {
         yield* connections.resolve(companyId, declaration);
         continue;
       }

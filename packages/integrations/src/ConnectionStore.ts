@@ -2,6 +2,7 @@ import {
   type ConnectionDeclaration,
   type ConnectionDetail,
   type Integration,
+  PidgeonSnapshot,
   PostHogSnapshot
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
@@ -13,6 +14,8 @@ import * as Schema from "effect/Schema";
 import type * as CredentialKeys from "./CredentialKeys.js";
 import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
+import type * as PidgeonKeys from "./pidgeon/Keys.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -41,8 +44,13 @@ export const PostHogConnection = Schema.Struct({
   integration: Schema.Literal("posthog"),
   display: PostHogSource.Display
 });
+export const PidgeonConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("pidgeon"),
+  display: PidgeonSource.Display
+});
 /** A company connection; its integration decides what its display says. */
-export const Connection = Schema.Union([PostgresConnection, PostHogConnection]);
+export const Connection = Schema.Union([PostgresConnection, PostHogConnection, PidgeonConnection]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
 export type Target = {
@@ -52,7 +60,8 @@ export type Target = {
 /** A stored snapshot, decoded by the integration its own row names. */
 export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("postgres"), snapshot: Snapshot }),
-  Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot })
+  Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -140,6 +149,28 @@ export class ConnectionRetargetRequired extends Schema.TaggedError<ConnectionRet
     return "These credentials name a different database. Point the connection elsewhere to discover its schema before switching.";
   }
 }
+/** A Pidgeon connection is one address: another address is another connection. */
+export class ConnectionRetargetUnavailable extends Schema.TaggedError<ConnectionRetargetUnavailable>()(
+  "ConnectionRetargetUnavailable",
+  {}
+) {
+  readonly code = "connection_retarget_unavailable";
+  readonly status = 409;
+  override get message() {
+    return "A Pidgeon connection is one address and can't move to another. Connect the other address as a new connection.";
+  }
+}
+/** Only a key that can rotate itself gets a new secret without new credentials. */
+export class ConnectionNotRenewable extends Schema.TaggedError<ConnectionNotRenewable>()(
+  "ConnectionNotRenewable",
+  {}
+) {
+  readonly code = "connection_not_renewable";
+  readonly status = 409;
+  override get message() {
+    return "This connection's credentials can't rotate themselves. Replace them instead.";
+  }
+}
 export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("ConnectionInUse", {}) {
   readonly code = "connection_in_use";
   readonly status = 409;
@@ -170,6 +201,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "connect",
       "test",
       "rotate",
+      "renew",
       "refresh",
       "retarget",
       "disconnect",
@@ -198,11 +230,15 @@ export type ConnectionError =
   | InvalidConnectionHandle
   | InvalidConnectionDescription
   | ConnectionRetargetRequired
+  | ConnectionRetargetUnavailable
+  | ConnectionNotRenewable
   | ConnectionInUse
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
   | PostgresSource.SourceError
-  | PostHogSource.SourceError;
+  | PostHogSource.SourceError
+  | PidgeonSource.CallError
+  | PidgeonKeys.KeysError;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {
@@ -241,6 +277,11 @@ export interface ConnectInput {
 }
 export interface CredentialsInput extends Identity {
   readonly credentials: Redacted.Redacted<string>;
+}
+/** A deleted connection, and the key Patchy couldn't revoke after it, named for an admin. */
+export interface Deleted {
+  readonly connection: Connection;
+  readonly keyLeft: string | null;
 }
 
 /** Callers authorize company membership and admin actions before entering this service. */
@@ -282,7 +323,13 @@ export class ConnectionStore extends Context.Service<
       report?: (connection: Connection) => Effect.Effect<void>
     ) => Effect.Effect<Connection, ConnectionError>;
     readonly test: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
+    /**
+     * New credentials for the same target. A Pidgeon connection takes an admin key and mints a new
+     * key for its address, at the same access (Replace key) or another (Change access).
+     */
     readonly rotate: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
+    /** A new secret for the stored key, where its integration can rotate it itself (Pidgeon). */
+    readonly renew: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly retarget: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly refresh: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly disconnect: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
@@ -290,11 +337,14 @@ export class ConnectionStore extends Context.Service<
     readonly describe: (
       input: Identity & { readonly description: string }
     ) => Effect.Effect<Connection, ConnectionError>;
-    /** Returns the connection as it was before deletion; `report` runs as `connect`'s does. */
+    /**
+     * Returns the connection as it was before deletion; `report` runs as `connect`'s does. A key
+     * Patchy minted revokes itself once the row is gone; one that couldn't is named in `keyLeft`.
+     */
     readonly delete: (
       input: Identity,
       report?: (connection: Connection) => Effect.Effect<void>
-    ) => Effect.Effect<Connection, ConnectionError>;
+    ) => Effect.Effect<Deleted, ConnectionError>;
     /** Hold the connection lock until the declaring version commits in the caller's platform transaction. */
     readonly resolve: (
       companyId: string,

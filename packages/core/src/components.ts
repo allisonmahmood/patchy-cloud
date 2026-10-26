@@ -90,3 +90,59 @@ export const searchField = (input: {
     .join(
       ""
     )}<div class="field field-group field-search"><label class="field-prefix" for="${escapeAttribute(input.id)}">${searchIcon}</label><input id="${escapeAttribute(input.id)}" type="search" name="q" value="${escapeAttribute(input.query)}" maxlength="200" placeholder="${escapeAttribute(input.placeholder)}" aria-label="${escapeAttribute(input.label)}"></div></form>`;
+
+const dataAttributes = (data: Readonly<Record<string, string>> | undefined) =>
+  Object.entries(data ?? {})
+    .map(([key, value]) => ` data-${escapeAttribute(key)}="${escapeAttribute(value)}"`)
+    .join("");
+
+/** One choice of `tileOptions`. */
+export interface TileOption {
+  readonly value: string;
+  /** The row's name, which is the choice's accessible name. */
+  readonly name: string;
+  /** A line about it, read as the choice's description. */
+  readonly text: string;
+  /** Trusted markup for the row's mark, such as `patchMark`'s or a `mono-placeholder`. */
+  readonly mark: string;
+  readonly checked?: boolean;
+  readonly disabled?: boolean;
+  /** Dashes the row, as one standing in for something to make. */
+  readonly placeholder?: boolean;
+  /** `data-*` attributes on the radio, for a page's script. */
+  readonly data?: Readonly<Record<string, string>>;
+}
+
+/**
+ * A radio group drawn as tile rows. Put it in a fieldset whose legend names the group; `name` is
+ * the form field and seeds each option's id, so it must be unique on the page.
+ */
+export const tileOptions = (name: string, options: readonly TileOption[]) =>
+  `<div class="tile-options">${options
+    .map((option, index) => {
+      const id = `${name}-option-${index}`;
+      return `<label class="tile-row tile-option${option.placeholder === true ? " tile-row-placeholder" : ""}"><input type="radio" name="${escapeAttribute(name)}" value="${escapeAttribute(option.value)}" aria-labelledby="${escapeAttribute(`${id}-name`)}" aria-describedby="${escapeAttribute(`${id}-text`)}"${option.checked === true ? " checked" : ""}${option.disabled === true ? " disabled" : ""}${dataAttributes(option.data)}>${option.mark}<span class="tile-body"><span class="tile-name" id="${escapeAttribute(`${id}-name`)}">${escapeHtml(option.name)}</span><span class="tile-text" id="${escapeAttribute(`${id}-text`)}">${escapeHtml(option.text)}</span></span></label>`;
+    })
+    .join("")}</div>`;
+
+/** One choice of `choiceCards`. */
+export interface ChoiceCard {
+  readonly value: string;
+  readonly title: string;
+  /** What choosing it means, a line each, read as the choice's description. */
+  readonly points: readonly string[];
+  readonly checked?: boolean;
+  readonly disabled?: boolean;
+}
+
+/**
+ * A radio group drawn as cards side by side. Put it in a fieldset whose legend names the group;
+ * `name` is the form field and seeds each card's id, so it must be unique on the page.
+ */
+export const choiceCards = (name: string, cards: readonly ChoiceCard[]) =>
+  `<div class="choice-cards">${cards
+    .map((card, index) => {
+      const id = `${name}-card-${index}`;
+      return `<label class="choice-card"><input type="radio" name="${escapeAttribute(name)}" value="${escapeAttribute(card.value)}" aria-labelledby="${escapeAttribute(`${id}-title`)}" aria-describedby="${escapeAttribute(`${id}-points`)}"${card.checked === true ? " checked" : ""}${card.disabled === true ? " disabled" : ""}><span class="choice-card-title" id="${escapeAttribute(`${id}-title`)}">${escapeHtml(card.title)}</span><span id="${escapeAttribute(`${id}-points`)}">${card.points.map((point) => `<span class="choice-card-point">${escapeHtml(point)}</span>`).join("")}</span></label>`;
+    })
+    .join("")}</div>`;

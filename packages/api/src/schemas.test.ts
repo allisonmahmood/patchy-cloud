@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
+  Generated,
   PatchId,
   PatchInventory,
   PrimitiveDetail,
@@ -346,5 +347,16 @@ describe("wire schemas", () => {
     expect(
       decode({ ...consumer, uses: { contacts: { ...declaration, patchId: "source-name" } } })._tag
     ).toBe("Failure");
+  });
+
+  it("reads a release before Pidgeon's generation, which has no Pidgeon metadata", () => {
+    // After a rollback, this CLI runs the earlier release's generator and reads what it prints.
+    const generated = Schema.decodeUnknownSync(Generated)({
+      ok: true,
+      files: [],
+      metadata: { postgres: {}, posthog: {}, shared: {} },
+      uses: []
+    });
+    expect(generated.metadata.pidgeon).toEqual({});
   });
 });

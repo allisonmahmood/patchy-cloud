@@ -31,6 +31,22 @@ export const RepoPatch = Schema.Struct({
   sampleData: Schema.optionalKey(Schema.Boolean)
 });
 
+/**
+ * A company connection the publisher makes through its connect page, as an admin would, before
+ * any patch publishes. Pidgeon's is to one address of the dev instance's fake account.
+ */
+export const ScenarioConnection = Schema.Struct({
+  integration: Schema.Literal("pidgeon"),
+  handle: Slug,
+  description: Schema.NonEmptyString,
+  /** The fake account's admin key, pasted as an admin would paste a real one. */
+  key: Schema.NonEmptyString,
+  /** The address picked from the ones the key reaches. */
+  address: Email,
+  access: Schema.Literals(["read", "send"])
+});
+export type ScenarioConnection = typeof ScenarioConnection.Type;
+
 /** A static page published from `files/<file>`. */
 export const FilePatch = Schema.Struct({
   file: Schema.NonEmptyString,
@@ -48,6 +64,7 @@ export const Scenario = Schema.Struct({
   people: Schema.NonEmptyArray(Person),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
+  connections: Schema.optionalKey(Schema.Array(ScenarioConnection)),
   patches: Schema.Array(Schema.Union([RepoPatch, FilePatch]))
 });
 export type Scenario = typeof Scenario.Type;

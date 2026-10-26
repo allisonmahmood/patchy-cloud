@@ -52,18 +52,25 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
         if (found?.takenAt === undefined)
           return Effect.succeed({ ...base, integration, snapshot: null });
         const stamp = { revision, takenAt: found.takenAt };
+        const kept = found.metadata;
         return Effect.succeed(
-          found.metadata.integration === "postgres"
+          kept.integration === "postgres"
             ? {
                 ...base,
-                integration: "postgres",
-                snapshot: { ...found.metadata.snapshot, ...stamp }
+                integration: "postgres" as const,
+                snapshot: { ...kept.snapshot, ...stamp }
               }
-            : {
-                ...base,
-                integration: "posthog",
-                snapshot: { ...found.metadata.snapshot, ...stamp }
-              }
+            : kept.integration === "posthog"
+              ? {
+                  ...base,
+                  integration: "posthog" as const,
+                  snapshot: { ...kept.snapshot, ...stamp }
+                }
+              : {
+                  ...base,
+                  integration: "pidgeon" as const,
+                  snapshot: { ...kept.snapshot, ...stamp }
+                }
         );
       },
       snapshot: (companyId, id, revision) => {
@@ -99,6 +106,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       connect: unavailable,
       test: unavailable,
       rotate: unavailable,
+      renew: unavailable,
       retarget: unavailable,
       refresh: unavailable,
       disconnect: unavailable,

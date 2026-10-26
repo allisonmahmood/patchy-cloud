@@ -10,6 +10,7 @@
  * server on `PORT` and the pinned network; a test brings a fresh database,
  * `NodeHttpServer.layerTest` and, when it connects agents, fixture documents.
  */
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import type * as Duration from "effect/Duration";
@@ -17,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
@@ -56,7 +58,9 @@ import {
   PostgresExecution,
   PostgresOperations,
   PostHogSource,
-  PostHogOperations
+  PostHogOperations,
+  PidgeonFake,
+  PidgeonSource
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
@@ -105,6 +109,31 @@ const contentStore = Layer.unwrap(
   Effect.map(Config.option(S3ContentStore.bucket), (bucket) =>
     Option.isSome(bucket) ? S3ContentStore.layer : FilesystemContentStore.layer
   )
+);
+
+/** The dev runner's fake Pidgeon reached a production server's configuration. */
+export class PidgeonFakeOutsideDevelopment extends Schema.TaggedError<PidgeonFakeOutsideDevelopment>()(
+  "PidgeonFakeOutsideDevelopment",
+  { environment: Schema.String }
+) {
+  override get message() {
+    return `PATCHY_PIDGEON_FAKE runs only outside production, not with NODE_ENV=${this.environment}.`;
+  }
+}
+
+/**
+ * Pidgeon itself, unless the dev runner set PATCHY_PIDGEON_FAKE to a state file: then Lumen
+ * Bikes' fake account answers in process, so `pnpm dev` never reaches pidgeon.ai.
+ */
+const pidgeonSource = Layer.unwrap(
+  Effect.gen(function* () {
+    const fake = yield* Config.option(Config.String("PATCHY_PIDGEON_FAKE"));
+    if (Option.isNone(fake)) return PidgeonSource.layer;
+    const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
+    if (environment === "production")
+      return yield* new PidgeonFakeOutsideDevelopment({ environment });
+    return PidgeonFake.layer(fake.value).pipe(Layer.provide(NodeFileSystem.layer));
+  })
 );
 
 /** Every capability's migrations, applied before anything reads the database. */
@@ -223,11 +252,13 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog source, so connection administration and patches share each project's slots.
+      // One PostHog source and one Pidgeon source, so connection administration and patches share
+      // each project's and each address's slots.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
-          Layer.provideMerge(PostHogSource.layer)
+          Layer.provideMerge(PostHogSource.layer),
+          Layer.provideMerge(pidgeonSource)
         )
       ),
       Layer.provideMerge(Tables.layer),

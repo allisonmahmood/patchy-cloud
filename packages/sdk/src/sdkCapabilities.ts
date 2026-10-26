@@ -226,7 +226,8 @@ export const sdkCapabilities: readonly SdkCapability[] = [
 const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
-  Integrations: "Postgres and PostHog are the shipped company integrations.",
+  Integrations:
+    "Postgres and PostHog are the shipped company integrations to call. A Pidgeon email connection can be declared, and its context names the address, but its client has no operations yet.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

@@ -48,6 +48,7 @@ import { generateClient, generateSharedStoreClient } from "../../../sdk/src/gene
 import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
 import { generate as generatePostHog } from "../../../integrations/src/posthog/Generate.js";
+import { generate as generatePidgeon } from "../../../integrations/src/pidgeon/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
 import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
@@ -351,6 +352,14 @@ export const projectConnections = {
       description: "Synthetic product analytics",
       status: "connected",
       hint: "patchy add posthog/product"
+    },
+    {
+      id: "conn-support",
+      handle: "support",
+      integration: "pidgeon",
+      description: "Synthetic support inbox",
+      status: "connected",
+      hint: "patchy add pidgeon/support"
     }
   ]
 };
@@ -427,6 +436,7 @@ export const generateProjectResponse = (
   }> = [];
   const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
   const posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]> = {};
+  const pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]> = {};
   const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
   const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
@@ -476,6 +486,28 @@ export const generateProjectResponse = (
       connections[alias] = `./uses/${alias}.js`;
       uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
       skills.add("patchy-posthog");
+      continue;
+    }
+    if (declaration.kind === "pidgeon") {
+      // Until its operations arrive, a Pidgeon declaration brings its context alone.
+      const stamp = { ...declaration, id: "conn-support", revision: 1 };
+      const snapshot = {
+        version: 1 as const,
+        address: {
+          email: "support@acme.example",
+          displayName: "Support",
+          sendPolicy: "reply_only"
+        },
+        access: "send" as const,
+        labels: [{ id: "lbl-1", name: "Warranty", colour: "amber" }],
+        plan: "free"
+      };
+      pidgeon[alias] = { declaration: stamp, snapshot };
+      files.push({
+        path: `patchy/_generated/context/${alias}.md`,
+        contents: generatePidgeon(stamp, snapshot).context
+      });
+      uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
       continue;
     }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
@@ -528,7 +560,12 @@ export const generateProjectResponse = (
       path: `.agents/skills/${skill}/SKILL.md`,
       contents: readFileSync(path.join(packageDir, "../sdk/skills", skill, "SKILL.md"), "utf8")
     });
-  return { ok: true, files, metadata: { postgres, posthog, shared: sharedMetadata }, uses };
+  return {
+    ok: true,
+    files,
+    metadata: { postgres, posthog, pidgeon, shared: sharedMetadata },
+    uses
+  };
 };
 
 export const projectHandler: Handler = (request, respond) => {

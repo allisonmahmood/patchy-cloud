@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
-import { Person, publisherToken, type Scenario } from "./scenario.js";
+import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -49,6 +49,15 @@ export class SampleDataFailed extends Schema.TaggedError<SampleDataFailed>()("Sa
 }) {
   override get message() {
     return `Loading sample data in ${this.patch} failed. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again to finish, or press "Load sample data" yourself.`;
+  }
+}
+
+export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectFailed", {
+  connection: Schema.String,
+  cause: Schema.Defect()
+}) {
+  override get message() {
+    return `Connecting ${this.connection} through its connect page failed: ${String(this.cause)}`;
   }
 }
 
@@ -565,6 +574,52 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
   );
 });
 
+/**
+ * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
+ * would, the page's script included. One already connected under its name is left be.
+ */
+const connectSource = Effect.fn("connectSource")(function* (
+  apiUrl: string,
+  email: string,
+  connection: ScenarioConnection
+) {
+  const name = `${connection.integration}/${connection.handle}`;
+  yield* Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+        );
+        if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
+        await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
+        await page.locator("#pidgeon-key").fill(connection.key);
+        await page.getByRole("button", { name: "Find addresses" }).click();
+        await page.locator("label.tile-option", { hasText: connection.address }).click();
+        await page
+          .locator("label.choice-card")
+          .filter({
+            has: page.getByText(connection.access === "send" ? "Read and send" : "Read", {
+              exact: true
+            })
+          })
+          .click();
+        await page.locator("#connection-handle").fill(connection.handle);
+        await page.locator("#connection-description").fill(connection.description);
+        await Promise.all([
+          page.waitForURL(/\/company\/connections\/conn_/),
+          page.getByRole("button", { name: "Connect", exact: true }).click()
+        ]);
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => new ConnectFailed({ connection: name, cause })
+  });
+});
+
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
 const loadSampleData = Effect.fn("loadSampleData")(function* (
   apiUrl: string,
@@ -670,6 +725,12 @@ const materialize = Effect.fn("materialize")(function* (
       };
       yield* fs.writeFileString(layout.manifest, encodeManifest(current));
     });
+  for (const connection of scenario.connections ?? []) {
+    yield* Console.error(
+      `  ${connection.integration}/${connection.handle}: connecting as ${publisher.name}`
+    );
+    yield* connectSource(manifest.apiUrl, publisher.email, connection);
+  }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
     let entry = current.patches.find((done) => done.key === key);

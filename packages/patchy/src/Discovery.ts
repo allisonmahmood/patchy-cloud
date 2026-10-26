@@ -88,6 +88,19 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
     `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
   ];
   if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
+  if (connection.integration === "pidgeon") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Address: ${snapshot.address.email}${snapshot.address.displayName === null ? "" : ` (${snapshot.address.displayName})`}`,
+      `Access: ${snapshot.access === "send" ? "read and send" : "read"}`,
+      `Send policy: ${snapshot.address.sendPolicy}`,
+      `Plan: ${snapshot.plan}`,
+      `Labels: ${snapshot.labels.length === 0 ? "none" : snapshot.labels.map((label) => label.name).join(", ")}`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`
+    ];
+  }
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>

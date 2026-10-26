@@ -17,7 +17,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { ConnectionStore, Postgres, PostHog } from "@patchy/integrations";
+import { ConnectionStore, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -59,16 +59,17 @@ export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>
     return "Generation refused: an output path is outside the managed project set.";
   }
 }
+const labels = { postgres: "Postgres", posthog: "PostHog", pidgeon: "Pidgeon" } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog"]),
+    integration: Schema.Literals(["postgres", "posthog", "pidgeon"]),
     handle: Schema.String
   }
 ) {
   readonly code = "connection_not_connected" as const;
   override get message() {
-    return `${this.integration === "postgres" ? "Postgres" : "PostHog"} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
+    return `${labels[this.integration]} connection ${this.handle} is not connected. Ask an administrator at /company/connections.`;
   }
 }
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
@@ -117,7 +118,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "members" }
+    { kind: "postgres" | "posthog" | "pidgeon" | "members" }
   >
 ) => {
   const source =
@@ -254,9 +255,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const uses: Array<
     (typeof Generated.Type)["uses"][number] & {
       declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
-      skill: string;
+      /** Absent while an integration has no project skill, as Pidgeon until #825. */
+      skill?: string;
       context: string;
-      client: string;
+      /** Absent while an integration's client has no operations, as Pidgeon's until #825. */
+      client?: string;
       fixture?: string;
     }
   > = [];
@@ -271,15 +274,17 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const metadata: {
     postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
     posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]>;
+    pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
     posthog: Object.create(null),
+    pidgeon: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
   const available = Object.values(request.manifest.uses).some(
-    (entry) => entry.kind === "postgres" || entry.kind === "posthog"
+    (entry) => entry.kind === "postgres" || entry.kind === "posthog" || entry.kind === "pidgeon"
   )
     ? yield* connections.list(companyId).pipe(
         Effect.mapError(
@@ -296,7 +301,11 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (declaration.kind === "members") continue;
     const context = `${root}/context/${alias}.md`;
     const client = `${root}/uses/${alias}.ts`;
-    if (declaration.kind === "postgres" || declaration.kind === "posthog") {
+    if (
+      declaration.kind === "postgres" ||
+      declaration.kind === "posthog" ||
+      declaration.kind === "pidgeon"
+    ) {
       const connection = available.find(
         (entry) =>
           entry.integration === declaration.kind &&
@@ -347,6 +356,21 @@ export const generate = Effect.fn("Generation.generate")(function* (
           fixture
         });
         skills.add("patchy-postgres");
+      } else if (stored.integration === "pidgeon") {
+        // Until its operations arrive (#825), a Pidgeon declaration brings its context alone: no
+        // client, no skill, no fixture.
+        const declared = { kind: "pidgeon" as const, ...resolved };
+        metadata.pidgeon[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Pidgeon.pidgeon.generate({ ...described, kind: "pidgeon" }, stored.snapshot);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          context
+        });
+        continue;
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };
