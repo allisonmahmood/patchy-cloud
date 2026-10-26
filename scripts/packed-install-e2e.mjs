@@ -8,9 +8,10 @@
 //
 //   node scripts/packed-install-e2e.mjs [--node-a <node>] [--node-b <node>]
 //
-// Both Nodes default to this one, which still switches the npm prefix.
+// Both Nodes default to this one, so a local run switches only the npm prefix.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -35,22 +36,67 @@ const metadata = JSON.parse(fs.readFileSync(path.join(artifacts, "release.json")
 const filename = `patchy-${metadata.release}-${metadata.digest}.tgz`;
 const tarball = fs.readFileSync(path.join(artifacts, filename));
 
+const token = "patchy-install-e2e-token";
+const identity = {
+  user: { id: "usr_e2e", email: "ada@example.com", name: "Ada" },
+  company: { id: "cmp_e2e", handle: "example", name: "Example" },
+  role: "admin",
+  machine: { id: "tok_e2e", name: "install e2e" }
+};
+/** The instance's answer to a file publish: a new patch, or a version of the cached one. */
+const published = (/** @type {string | undefined} */ patchId, /** @type {string} */ html) => ({
+  ok: true,
+  patchId: patchId ?? "abcdefghijkl",
+  versionId: `abcdefghijkl-v${patchId === undefined ? 1 : 2}`,
+  versionNumber: patchId === undefined ? 1 : 2,
+  title: "Plan",
+  description: "",
+  descriptionUpdatedAt: null,
+  name: "quarterly-plan",
+  address: `${base}/example/quarterly-plan`,
+  publicUrl: `${base}/example/quarterly-plan`,
+  scope: "company",
+  tier: 0,
+  artifacts: {
+    html: {
+      sha256: createHash("sha256").update(html).digest("hex"),
+      bytes: Buffer.byteLength(html)
+    }
+  },
+  schemaRevision: 0,
+  provisioned: { tables: [], columns: [], indexes: [], stores: [] },
+  unused: { tables: [], columns: [], indexes: [], stores: [] },
+  warnings: []
+});
+/** @type {Array<{ url: string, authorization?: string, body?: any }>} */
+const requests = [];
 const server = createServer((request, response) => {
-  if (request.url === "/api/release") {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(
-      JSON.stringify({
+  let raw = "";
+  request.setEncoding("utf8").on("data", (chunk) => (raw += chunk));
+  request.on("end", () => {
+    const url = request.url ?? "";
+    const body = raw === "" ? undefined : JSON.parse(raw);
+    requests.push({ url, authorization: request.headers.authorization, body });
+    const json = (/** @type {number} */ status, /** @type {unknown} */ value) =>
+      response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
+    const signedIn = request.headers.authorization === `Bearer ${token}`;
+    if (url === "/api/release")
+      json(200, {
         release: metadata.release,
-        package: { tarball: `/sdk/${filename}`, integrity: metadata.integrity }
-      })
-    );
-  } else if (request.url === `/sdk/${filename}`) {
-    response.writeHead(200, { "content-type": "application/octet-stream" }).end(tarball);
-  } else if (request.url === "/install.mjs") {
-    response.writeHead(200, { "content-type": "text/javascript" }).end(installer);
-  } else {
-    response.writeHead(404).end();
-  }
+        package: { tarball: `/sdk/${filename}`, integrity: metadata.integrity },
+        manifestVersion: metadata.manifestVersion,
+        wireVersion: metadata.wireVersion,
+        toolchain: metadata.toolchain
+      });
+    else if (url === `/sdk/${filename}`)
+      response.writeHead(200, { "content-type": "application/octet-stream" }).end(tarball);
+    else if (url === "/install.mjs")
+      response.writeHead(200, { "content-type": "text/javascript" }).end(installer);
+    else if (url === "/api/me" && signedIn) json(200, identity);
+    else if (url === "/api/publish" && signedIn)
+      json(body.patchId ? 200 : 201, published(body.patchId, body.html));
+    else json(404, { ok: false, error: `The stub has no ${request.method} ${url}.` });
+  });
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
 const address = server.address();
@@ -134,11 +180,16 @@ const machine = () => {
 const shell = (
   /** @type {string} */ line,
   /** @type {Record<string, string>} */ env,
-  /** @type {{ powershell?: boolean, cwd?: string }} */ { powershell = false, cwd = root } = {}
+  /** @type {{ powershell?: boolean, cwd?: string, input?: string }} */ {
+    powershell = false,
+    cwd = root,
+    input
+  } = {}
 ) =>
   // Asynchronous, so this process's stub instance can answer while the line runs.
   new Promise((resolve) => {
-    const options = { env, cwd, timeout: 300_000 };
+    // Its own process group on POSIX, so a timeout can stop everything the line started.
+    const options = { env, cwd, detached: !windows };
     const child = windows
       ? powershell
         ? spawn(
@@ -152,8 +203,24 @@ const shell = (
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    child.stdin.end(input);
     child.on("error", (error) => (stderr += String(error)));
-    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    // A child the line left behind can hold the pipes open, so a timeout settles without `close`.
+    const timer = setTimeout(() => {
+      if (windows)
+        spawn(path.join(systemRoot, "System32", "taskkill.exe"), [
+          "/pid",
+          String(child.pid),
+          "/T",
+          "/F"
+        ]);
+      else if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      resolve({ status: null, stdout, stderr: `${stderr}\ntimed out after 300 s` });
+    }, 300_000);
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
   });
 /** @typedef {{ status: number | null, stdout: string, stderr: string }} Result */
 const show = (/** @type {Result} */ result) =>
@@ -170,6 +237,11 @@ const installThenVersion = (/** @type {Record<string, string>} */ env) =>
     : shell(`${installCommand(base, "posix")} && patchy --version`, env);
 const version = (/** @type {Record<string, string>} */ env) => shell(`${exe} --version`, env);
 const lines = (/** @type {string} */ text) => text.trim().split(/\r?\n/);
+/** The same file, by real path; Windows compares without case. */
+const same = (/** @type {string} */ a, /** @type {string} */ b) => {
+  const real = (/** @type {string} */ file) => fs.realpathSync(file);
+  return windows ? real(a).toLowerCase() === real(b).toLowerCase() : real(a) === real(b);
+};
 
 try {
   log(`Node a ${nodes.a}, Node b ${nodes.b}, release ${metadata.release}`);
@@ -186,10 +258,24 @@ try {
       assert.ok(fs.existsSync(path.join(m.home, link, "SKILL.md")), link);
     assert.deepEqual(fs.readdirSync(m.prefix("a")), [], "Node a's npm prefix holds nothing Patchy");
 
-    // Node a leaves PATH entirely, so whatever runs patchy now is Node b.
-    const switched = await version(m.env("b"));
+    // Node a leaves PATH entirely; the preload records which Node actually runs patchy.
+    const which = path.join(m.dir, "which node.mjs");
+    const ran = path.join(m.dir, "ran with");
+    fs.writeFileSync(
+      which,
+      'import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.PATCHY_E2E_RAN_WITH, process.execPath);\n'
+    );
+    const switched = await version({
+      ...m.env("b"),
+      NODE_OPTIONS: `--import=${pathToFileURL(which).href}`,
+      PATCHY_E2E_RAN_WITH: ran
+    });
     assert.equal(switched.status, 0, show(switched));
     assert.equal(switched.stdout.trim(), metadata.release);
+    assert.ok(
+      same(fs.readFileSync(ran, "utf8"), nodes.b),
+      `patchy ran on ${fs.readFileSync(ran, "utf8")}`
+    );
 
     const page = path.join(m.dir, "page.html");
     fs.writeFileSync(page, "<!doctype html><title>Plan</title><p>Ship it.</p>\n");
@@ -222,11 +308,42 @@ try {
     const removed = await shell(`${exe} setup --remove --json`, m.env("b"));
     assert.equal(removed.status, 0, show(removed));
     assert.deepEqual(JSON.parse(removed.stdout).warnings, []);
-    for (const link of [".agents/skills/patchy", ".claude/skills/patchy", ".patchy/skills/patchy"])
-      assert.equal(fs.existsSync(path.join(m.home, link)), false, link);
+    // lstat, so a dangling link or junction left behind counts as present.
+    const links = [".agents/skills/patchy", ".claude/skills/patchy"];
+    for (const each of [...links, ".patchy/skills/patchy"])
+      assert.equal(
+        fs.lstatSync(path.join(m.home, each), { throwIfNoEntry: false }),
+        undefined,
+        each
+      );
     const linked = await shell(`${exe} setup --json`, m.env("b"));
     assert.equal(linked.status, 0, show(linked));
-    assert.ok(fs.existsSync(path.join(m.home, ".claude/skills/patchy/SKILL.md")));
+    for (const each of links)
+      assert.ok(same(path.join(m.home, each), path.join(m.home, ".patchy/skills/patchy")), each);
+
+    log("a saved key, whoami and a file published twice, from a fresh shell with bare patchy");
+    const saved = await shell(`${exe} auth set --token-stdin --api-url ${base}`, m.env("b"), {
+      input: `${token}\n`
+    });
+    assert.equal(saved.status, 0, show(saved));
+    // PowerShell on Windows, where bare `patchy` must find patchy.cmd; a fresh session each time.
+    const session = (/** @type {string} */ args) =>
+      shell(`patchy ${args}`, m.env("b"), { cwd: m.dir, powershell: true });
+    const whoami = await session("whoami --json");
+    assert.equal(whoami.status, 0, show(whoami));
+    assert.deepEqual(JSON.parse(whoami.stdout), identity);
+    fs.writeFileSync(path.join(m.dir, "quarterly plan.html"), fs.readFileSync(page));
+    const first = await session(`publish 'quarterly plan.html' --name quarterly-plan --json`);
+    assert.equal(first.status, 0, show(first));
+    assert.equal(JSON.parse(first.stdout).versionNumber, 1);
+    // The patch id cached in the state directory turns the second into an update.
+    const second = await session(`publish 'quarterly plan.html' --json`);
+    assert.equal(second.status, 0, show(second));
+    assert.equal(JSON.parse(second.stdout).versionNumber, 2);
+    const publishes = requests.filter(({ url }) => url === "/api/publish");
+    assert.equal(publishes.length, 2);
+    assert.equal(publishes[0]?.body.metadata.filename, "quarterly plan.html");
+    assert.equal(publishes[1]?.body.patchId, "abcdefghijkl");
   }
 
   {
