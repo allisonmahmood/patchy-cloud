@@ -1,5 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Cookies from "effect/http/Cookies";
@@ -9,7 +13,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { PublishCreated } from "@patchy/api";
 import { MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { Companies } from "@patchy/companies";
+import {
+  FRONTEND_API_HOST,
+  signedInCookies,
+  signHandshake,
+  signSession
+} from "@patchy/auth/testing";
+import { Companies, InviteMail } from "@patchy/companies";
 import { html, publish, send, server } from "./test/server.js";
 
 const origin = "http://localhost:3000";
@@ -21,6 +31,7 @@ const login = Effect.fn("RecipientHomeTest.login")(function* (email: string) {
   assert.strictEqual(response.status, 303);
   return Cookies.toCookieHeader(response.cookies);
 });
+
 const get = (path: string, cookie: string) =>
   send(HttpClientRequest.get(path).pipe(HttpClientRequest.setHeader("cookie", cookie)));
 const post = (path: string, cookie: string, fields: Record<string, string> = {}) =>
@@ -154,7 +165,10 @@ it.layer(
         for (const id of [a, b]) {
           const response = yield* post(`/~shared/accept/${id}`, recipient);
           assert.strictEqual(response.status, 303);
-          assert.strictEqual(response.headers.location, "/");
+          assert.strictEqual(
+            response.headers.location,
+            new URL((id === a ? firstPatch : secondPatch).address).pathname
+          );
         }
         const home = yield* (yield* get("/", recipient)).text;
         assert.include(home, "Patchy Dev");
@@ -232,7 +246,7 @@ it.layer(
         assert.include(body, 'href="/shared"');
         assert.notInclude(body, 'href="/member-source/member-brief"');
         const accepted = yield* post(`/~shared/accept/${id}`, member);
-        assert.strictEqual(accepted.headers.location, "/shared");
+        assert.strictEqual(accepted.headers.location, new URL(shared.address).pathname);
         assert.strictEqual((yield* get(new URL(shared.address).pathname, member)).status, 200);
         assert.strictEqual((yield* get("/company", member)).status, 200);
         yield* page("member-can-still-publish");
@@ -243,3 +257,256 @@ it.layer(
       })
   );
 });
+
+it.layer(
+  server({
+    NODE_ENV: "test",
+    PATCHY_PUBLIC_BASE_URL: origin,
+    PATCHY_DEV_EXTERNAL_SHARING: "true"
+  }).pipe(Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })))
+)("Clerk recipient admission", (it) => {
+  it.effect("finishes the Clerk handshake and preserves the returned session cookies", () =>
+    Effect.gen(function* () {
+      const token = signSession({
+        sub: "user_external_handshake",
+        email: "handshake@example.com",
+        azp: origin
+      });
+      const directives = signedInCookies(token)
+        .split("; ")
+        .map((cookie) => `${cookie}; Path=/; SameSite=Lax`);
+      const reply = yield* send(
+        HttpClientRequest.get(
+          `/?__clerk_handshake=${encodeURIComponent(signHandshake(directives))}`
+        )
+      );
+      assert.strictEqual(reply.status, 307);
+      assert.strictEqual(reply.headers["cache-control"], "private, no-store");
+      const cookie = Cookies.toCookieHeader(reply.cookies);
+      assert.include(cookie, "__session=");
+      const home = yield* get(new URL(reply.headers.location!, origin).pathname, cookie);
+      assert.strictEqual(home.status, 200);
+      assert.include(yield* home.text, "handshake@example.com");
+    })
+  );
+
+  it.effect("keeps public pages session-free with a cold expired Clerk cookie", () =>
+    Effect.gen(function* () {
+      const response = yield* publish(DEV_SEED.token, { html: html("Public"), scope: "public" });
+      const created = yield* response.json.pipe(Effect.flatMap(decodeCreated));
+      const cookie = signedInCookies(signSession({ azp: origin, iat: 1, nbf: 1, exp: 2 }));
+      for (const path of [
+        new URL(created.address).pathname,
+        `${new URL(created.address).pathname}/~v/1`
+      ]) {
+        const reply = yield* send(
+          HttpClientRequest.get(path).pipe(
+            HttpClientRequest.setHeaders({ cookie, accept: "text/html" })
+          )
+        );
+        assert.strictEqual(reply.status, 200);
+        assert.strictEqual(reply.headers["cache-control"], "public, max-age=60");
+        assert.isUndefined(reply.headers.location);
+        assert.deepStrictEqual(Cookies.toSetCookieHeaders(reply.cookies), []);
+      }
+    })
+  );
+
+  it.effect(
+    "admits a Clerk identity to only its grant and refreshes its session outside the static page",
+    () =>
+      Effect.gen(function* () {
+        const shared = yield* page("clerk-shared");
+        const unrelated = yield* page("clerk-private");
+        const cookie = signedInCookies(
+          signSession({
+            sub: "user_external_clerk",
+            email: "clerk-recipient@example.com",
+            azp: origin
+          })
+        );
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO prototype_external_shares (id,patch_id,email,created_by) VALUES ('share_clerk_test',${shared.patchId},'clerk-recipient@example.com',${DEV_SEED.userId})`;
+        const accepted = yield* post("/~shared/accept/share_clerk_test", cookie);
+        assert.strictEqual(accepted.status, 303);
+        const reply = yield* get(new URL(shared.address).pathname, cookie);
+        assert.strictEqual(reply.status, 200);
+        const body = yield* reply.text;
+        assert.include(body, "clerk.headless.browser.js");
+        assert.include(body, 'src="/auth/session.js"');
+        assert.include(body, 'src="/~shared/session.js?');
+        assert.include(reply.headers["content-security-policy"]!, FRONTEND_API_HOST);
+        assert.include(reply.headers["content-security-policy"]!, "connect-src 'self'");
+        assert.strictEqual((yield* get(new URL(unrelated.address).pathname, cookie)).status, 404);
+        assert.strictEqual(
+          (yield* post("/join", cookie, { action: "create", name: "No", handle: "not-permitted" }))
+            .status,
+          403
+        );
+        assert.strictEqual((yield* post("/api/publish", cookie)).status, 401);
+        assert.deepStrictEqual(
+          yield* sql`SELECT id FROM users WHERE clerk_user_id='user_external_clerk'`,
+          []
+        );
+      })
+  );
+});
+
+// A scoped HTTP boundary exercises Clerk's real SDK, with no external mail or account changes.
+class MailHost extends Context.Service<
+  MailHost,
+  {
+    readonly events: Array<{ method: string; path: string; body: Record<string, unknown> }>;
+    failRevoke: boolean;
+    holdCreate: boolean;
+    readonly started: ReturnType<typeof Promise.withResolvers<void>>;
+    readonly pending: Array<() => void>;
+  }
+>()("ExternalSharingPrototypeTest/MailHost") {}
+
+const mailHost = Layer.effectContext(
+  Effect.gen(function* () {
+    const state = MailHost.of({
+      events: [],
+      failRevoke: false,
+      holdCreate: false,
+      started: Promise.withResolvers<void>(),
+      pending: []
+    });
+    const host = createServer((req, res) => {
+      let text = "";
+      req.on("data", (chunk) => {
+        text += String(chunk);
+      });
+      req.on("end", () => {
+        const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+        state.events.push({ method: req.method!, path: req.url!, body });
+        res.setHeader("content-type", "application/json");
+        if (req.url?.endsWith("/revoke") && state.failRevoke) {
+          res
+            .writeHead(400)
+            .end(
+              JSON.stringify({ errors: [{ code: "offline_failure", message: "Cannot cancel" }] })
+            );
+          return;
+        }
+        const reply = () =>
+          res.end(
+            JSON.stringify({
+              id: "inv_offline",
+              object: "invitation",
+              email_address: body.email_address ?? "mail@example.com",
+              status: req.url?.endsWith("/revoke") ? "revoked" : "pending",
+              public_metadata: {},
+              created_at: 1,
+              updated_at: 1
+            })
+          );
+        if (state.holdCreate && req.url === "/v1/invitations") {
+          state.pending.push(reply);
+          state.started.resolve();
+        } else reply();
+      });
+    });
+    const port = yield* Effect.acquireRelease(
+      Effect.callback<number>((resume) => {
+        host.listen(0, "127.0.0.1", () =>
+          resume(Effect.succeed((host.address() as AddressInfo).port))
+        );
+      }),
+      () =>
+        Effect.callback<void>((resume) => {
+          host.closeAllConnections();
+          host.close(() => resume(Effect.void));
+        })
+    );
+    return Context.make(MailHost, state).pipe(
+      Context.add(InviteMail.backendApiUrl, `http://127.0.0.1:${port}`)
+    );
+  })
+);
+
+it.layer(
+  server({
+    NODE_ENV: "test",
+    PATCHY_PUBLIC_BASE_URL: origin,
+    PATCHY_DEV_EXTERNAL_SHARING: "true"
+  }).pipe(
+    Layer.provideMerge(mailHost),
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+  )
+)("Clerk patch invitation mail", (it) => {
+  const owner = () =>
+    signedInCookies(signSession({ sub: DEV_SEED.clerkUserId, email: DEV_SEED.email, azp: origin }));
+  it.effect(
+    "delivers the hosted signup return, retries failed cancellation and denies the revoked grant",
+    () =>
+      Effect.gen(function* () {
+        const shared = yield* page("mailed-patch");
+        const state = yield* MailHost;
+        const id = yield* invite(shared.patchId, "mail@example.com", owner());
+        const sent = state.events.at(-1)!;
+        assert.strictEqual(sent.path, "/v1/invitations");
+        assert.strictEqual(sent.body.email_address, "mail@example.com");
+        const destination = new URL(String(sent.body.redirect_url));
+        assert.strictEqual(destination.hostname, "accounts.patchy.invalid");
+        assert.strictEqual(destination.pathname, "/sign-up");
+        assert.strictEqual(
+          destination.searchParams.get("redirect_url"),
+          `${origin}/~shared/invite/${id}`
+        );
+        const sql = yield* SqlClient.SqlClient;
+        const [row] =
+          yield* sql`SELECT clerk_invitation_id FROM prototype_external_shares WHERE id = ${id}`;
+        assert.strictEqual(row!.clerk_invitation_id, "inv_offline");
+        state.failRevoke = true;
+        assert.strictEqual((yield* post(`/~shared/revoke/${id}`, owner())).status, 502);
+        const recipient = signedInCookies(
+          signSession({ sub: "mail_guest", email: "mail@example.com", azp: origin })
+        );
+        assert.strictEqual((yield* post(`/~shared/accept/${id}`, recipient)).status, 403);
+        assert.strictEqual((yield* get(new URL(shared.address).pathname, recipient)).status, 404);
+        state.failRevoke = false;
+        assert.strictEqual((yield* post(`/~shared/revoke/${id}`, owner())).status, 303);
+        assert.strictEqual(state.events.at(-1)!.path, "/v1/invitations/inv_offline/revoke");
+      })
+  );
+
+  it.effect("cancels an email whose grant was revoked while Clerk was creating it", () =>
+    Effect.gen(function* () {
+      const shared = yield* page("in-flight-mail");
+      const state = yield* MailHost;
+      state.holdCreate = true;
+      const sending = yield* post("/~shared/grant", owner(), {
+        patchId: shared.patchId,
+        email: "race@example.com"
+      }).pipe(Effect.forkChild);
+      yield* Effect.promise(() => state.started.promise);
+      const sql = yield* SqlClient.SqlClient;
+      const [row] =
+        yield* sql`SELECT id FROM prototype_external_shares WHERE patch_id = ${shared.patchId}`;
+      assert.strictEqual((yield* post(`/~shared/revoke/${String(row!.id)}`, owner())).status, 303);
+      state.pending.shift()!();
+      assert.strictEqual((yield* Fiber.join(sending)).status, 303);
+      assert.strictEqual(state.events.at(-1)!.path, "/v1/invitations/inv_offline/revoke");
+      assert.deepStrictEqual(
+        yield* sql`SELECT revoked, clerk_invitation_id FROM prototype_external_shares WHERE id = ${String(row!.id)}`,
+        [{ revoked: true, clerk_invitation_id: null }]
+      );
+      state.holdCreate = false;
+    })
+  );
+});
+
+it.layer(server({ NODE_ENV: "test", PATCHY_DEV_EXTERNAL_SHARING: "true" }))(
+  "sharing stays local",
+  (it) => {
+    it.effect("does not install sharing on a public origin even with the dev flag", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const [row] = yield* sql`SELECT to_regclass('prototype_external_shares')::text AS name`;
+        assert.strictEqual(row!.name, null);
+      })
+    );
+  }
+);

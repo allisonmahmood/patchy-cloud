@@ -26,6 +26,13 @@ read `pnpm dev logs`. A failed migration also prints which step failed and why.
 
 Done when `pnpm dev status` exits 0.
 
+For the external-sharing experiment, a separate worktree with `pnpm dev --clerk`
+keeps the persona demo intact. Use Clerk development keys and disposable
+`+clerk_test` identities. The runner enables the loopback-only prototype; start
+at `/`, where an account without company membership remains a recipient. Bind
+the seeded admin as DEVELOPMENT describes to publish and invite. Clerk's hosted
+signup fields still apply, and invitations send real development mail.
+
 ## 2. Exercise the change
 
 - **The CLI.** `pnpm patchy …` runs from source and publishes as **Dev

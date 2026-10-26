@@ -62,7 +62,7 @@ export function door(
       ? `<p>Try signing in again.</p><div class="actions">${signIn}</div>`
       : waitlistUrl === undefined
         ? `<p>${purpose === "shared" ? "Sign in to open patches shared with your account." : "Continue to your company."}</p>${setup}<div class="actions">${signIn}</div>`
-        : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p>${setup}<div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
+        : `<p>Patchy Cloud is in private beta. ${purpose === "shared" ? "Sign in to open patches shared with your account." : "Sign in to continue to your company."}</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p>${setup}<div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
     status
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }

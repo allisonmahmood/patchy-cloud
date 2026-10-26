@@ -311,7 +311,9 @@ const middleware = HttpRouter.middleware(
     const events = yield* RequestEvents.edge;
     const trustedProxies = yield* TrustedProxies.make;
     const guard = yield* ApiGuard.make;
-    const sharing = (yield* DevPersonas.enabled) ? yield* ExternalSharingPrototype.make : undefined;
+    const sharing = (yield* ExternalSharingPrototype.enabled)
+      ? yield* ExternalSharingPrototype.make
+      : undefined;
     return (app) => events(trustedProxies(servingHeaders(guard(sharing ? sharing(app) : app))));
   }),
   { global: true }
