@@ -171,6 +171,34 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     180_000
   );
 
+  it.skipIf(process.getuid?.() === 0)(
+    "keeps working when it cannot remove the earlier install, and a rerun after the cleanup it names restores the launcher",
+    async () => {
+      const { url } = await instance();
+      const { home, run, env: base } = machine(url);
+      const prefix = path.join(home, ".local");
+      const env = { ...base, npm_config_prefix: prefix };
+      const file = path.join(root, `earlier ${cases}.tgz`);
+      writeFileSync(file, tarball);
+      const npm = (args: ReadonlyArray<string>) =>
+        spawnSync("npm", [...args], { env, encoding: "utf8" });
+      expect(npm(["install", "--global", "--ignore-scripts", file]).status).toBe(0);
+      const modules = path.join(prefix, "lib/node_modules");
+      chmodSync(modules, 0o555);
+      const kept = await run(env);
+      chmodSync(modules, 0o755);
+      expect(kept).toMatchObject({ status: 0, stderr: "" });
+      expect(kept.stdout).toContain(
+        `Could not remove the earlier install from ${installed(prefix)}. Remove it with npm uninstall --global patchy, then run this again.`
+      );
+      expect(version(env)).toBe(CURRENT_RELEASE);
+      expect(npm(["uninstall", "--global", "patchy"]).status).toBe(0);
+      expect(await run(env)).toMatchObject({ status: 0, stderr: "" });
+      expect(version(env)).toBe(CURRENT_RELEASE);
+    },
+    180_000
+  );
+
   it("refuses a download that does not match the release's integrity before npm runs", async () => {
     const stub = await instance(`sha512-${Buffer.alloc(64).toString("base64")}`);
     const { home, env, run } = machine(stub.url);

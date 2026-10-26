@@ -168,11 +168,13 @@ const install = async (/** @type {string} */ work) => {
   console.log(`Executable: ${executable}`);
   console.log(`Skill: ${skill}`);
   console.log(`Linked for agents: ${linked.join(", ")}`);
+  // A failed removal's fix, npm uninstall, also takes the new launcher when npm's
+  // prefix is ~/.local, so it ends with the rerun that puts the launcher back.
   if (removed !== undefined)
     console.log(
       removed
         ? `Removed the earlier install from ${earlier}; open a new terminal if one that ran patchy before still looks for it there.`
-        : `Could not remove the earlier install from ${earlier}; remove it with npm uninstall --global patchy.`
+        : `Could not remove the earlier install from ${earlier}. Remove it with npm uninstall --global patchy, then run this again.`
     );
 
   // PATH may name the launcher's directory through a link, so compare the files themselves.
