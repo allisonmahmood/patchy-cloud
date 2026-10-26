@@ -81,6 +81,7 @@ export interface SharedPatch {
   readonly id: string;
   readonly name: string;
   readonly title: string;
+  readonly tier: 0 | 1 | 2;
   readonly company: string;
   readonly handle: string;
   readonly subject: string | null;
@@ -113,7 +114,8 @@ export const renderSharedHome = (
       (entries) =>
         `<section class="home-shelf"><div class="home-shelf-head"><h2 class="section-heading">${highlight(entries[0]!.company, query)} <span class="count">${entries.length}</span></h2></div><div class="home-tools">${entries
           .map((share) => {
-            const patch = `${patchMark(share.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(share.name, query)}</span><span class="tile-text">${highlight(share.title, query)}</span><span class="tile-meta">${share.subject === null ? "Invitation · Can read this page" : "Can read this page"}</span></span>`;
+            const permission = share.tier === 0 ? "Can read this page" : "Can use this patch";
+            const patch = `${patchMark(share.name, share.tier)}<span class="tile-body"><span class="tile-name">${highlight(share.name, query)}</span><span class="tile-text">${highlight(share.title, query)}</span><span class="tile-meta">${share.subject === null ? "Invitation · " : ""}${permission}</span></span>`;
             return share.subject === null
               ? `<div class="tile-row">${patch}<form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form></div>`
               : `<a class="tile-row" href="/${escapeAttribute(share.handle)}/${escapeAttribute(share.name)}">${patch}</a>`;

@@ -9,6 +9,8 @@ export class Binding extends Context.Service<
   LoadedVersion & {
     readonly principal: typeof RuntimePrincipal.Type;
     readonly identity: typeof RuntimeMe.Type;
+    /** A host-admitted patch recipient, never company membership or client input. */
+    readonly externalRecipient?: boolean;
     readonly correlationId: string;
     /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
     readonly effectivePrincipal?: string;

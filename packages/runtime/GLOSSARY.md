@@ -152,6 +152,10 @@ _Avoid_: principal, machine token, owning patch
 The patch's own id, used for its owned resources. It does not inherit the owner's access and does not change on reassignment or owner deactivation.
 _Avoid_: service account, owner's token
 
+**External recipient**:
+A signed-in person with an accepted grant to one patch, without membership in its company. The loopback-only sharing experiment supplies a runtime viewer identity for that patch and rechecks the grant for calls, streams and handler callbacks. This identity never grants first-party company access. Its declared data capabilities remain the patch's, including writes; it is not a read-only role.
+_Avoid_: company guest member, restricted company account
+
 **Wire version**:
 The stable deployed-bundle contract a runtime request speaks, distinct from the tooling release and the patch's schema revision.
 _Avoid_: Release, schema revision, transport version

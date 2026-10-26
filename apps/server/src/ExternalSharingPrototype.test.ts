@@ -182,8 +182,12 @@ it.layer(
         const miss = yield* (yield* get("/?q=private-forecast", recipient)).text;
         assert.include(miss, "No shared patches match");
         assert.notInclude(miss, "Build us a Patchy tool");
-        for (const shared of [firstPatch, secondPatch])
-          assert.strictEqual((yield* get(new URL(shared.address).pathname, recipient)).status, 200);
+        for (const shared of [firstPatch, secondPatch]) {
+          const opened = yield* get(new URL(shared.address).pathname, recipient);
+          assert.strictEqual(opened.status, 200);
+          assert.include(opened.headers["content-security-policy"]!, "script-src 'self'");
+          assert.include(opened.headers["content-security-policy"]!, "connect-src 'self'");
+        }
         assert.strictEqual(
           (yield* get(new URL(privatePatch.address).pathname, recipient)).status,
           404

@@ -16,6 +16,51 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 
 it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway", (it) => {
+  it.effect("revocation stops an external recipient's next owned, nested and log callback", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      let writes = 0;
+      let nested = 0;
+      let active = true;
+      const gateway = yield* CallbackGateway.make({
+        "tables.insert": { kind: "mutation", run: () => Effect.sync(() => ++writes) }
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const capability = yield* Fixtures.issue(capabilities, {
+        kind: "action",
+        binding: { ...Fixtures.binding, externalRecipient: true },
+        reauthorize: Effect.suspend(() =>
+          active ? Effect.succeed(Fixtures.identity) : Effect.fail(new Runtime.AccessDenied({}))
+        ),
+        run: () =>
+          Effect.sync(() => {
+            nested++;
+            return { ok: true as const, value: null };
+          })
+      });
+      assert.deepStrictEqual(
+        yield* gateway.callback(capability.token, capability.attempt, {
+          op: "tables.insert",
+          args: {}
+        }),
+        { ok: true, value: 1 }
+      );
+      active = false;
+      const refusedCalls: GuestProtocol.Callback[] = [
+        { op: "tables.insert", args: {} },
+        { op: "server.call", args: { handler: "nested", args: {} } },
+        { op: "log", args: { message: "After revocation" } }
+      ];
+      for (const input of refusedCalls)
+        assert.deepInclude(yield* gateway.callback(capability.token, capability.attempt, input), {
+          ok: false,
+          code: "access_denied"
+        });
+      assert.strictEqual(writes, 1);
+      assert.strictEqual(nested, 0);
+      assert.deepStrictEqual(capability.logs, []);
+    }).pipe(Effect.scoped)
+  );
+
   it.effect(
     "kind checks refuse query writes, mutation file/shared access, and unknown nested calls",
     () =>

@@ -13,6 +13,7 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
+import * as PatchAccess from "./PatchAccess.js";
 
 type Dependencies =
   | CompanyAdmission.CompanyAdmission
@@ -40,52 +41,50 @@ export const make = (
       yield* Effect.context<
         Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>
       >();
-    const identity = Effect.gen(function* () {
-      const admission = yield* RequireSession.admission.pipe(
-        Effect.provideService(Session.Session, session),
-        Effect.mapError((cause) => new Runtime.SessionExpired({ cause }))
-      );
-      if (HttpServerResponse.isHttpServerResponse(admission.result))
-        return yield* new Runtime.SessionExpired({});
-      const claims = admission.result;
-      const resolveViewer = RequireSession.resolveViewer.pipe(
-        Effect.provideContext(viewerContext),
-        Effect.provideService(RequireSession.SignedIn, claims),
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      );
-      const viewer = yield* resolveViewer;
-      if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
-        return yield* new Runtime.AccessDenied({});
-      // Admission covers the JWT's remaining lifetime. After expiry, concurrent
-      // callbacks share one backend result for this invocation, including failures.
-      const activeAfterExpiry = yield* session.isActive(claims).pipe(
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
-        Effect.cached
-      );
-      return {
-        viewer: { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" },
-        reauthorize: Effect.gen(function* () {
-          if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
-            return yield* new Runtime.SessionExpired({});
-          const current = yield* resolveViewer;
-          if (
-            current === null ||
-            HttpServerResponse.isHttpServerResponse(current) ||
-            current.user.id !== viewer.user.id ||
-            current.company.id !== viewer.company.id
-          )
-            return yield* new Runtime.AccessDenied({});
-          return {
-            user: current.user,
-            company: current.company,
-            admin: current.role === "admin"
-          };
-        })
-      };
-    });
+    const identity = (target?: PatchAccess.Target) =>
+      Effect.gen(function* () {
+        const admission = yield* RequireSession.admission.pipe(
+          Effect.provideService(Session.Session, session),
+          Effect.mapError((cause) => new Runtime.SessionExpired({ cause }))
+        );
+        if (HttpServerResponse.isHttpServerResponse(admission.result))
+          return yield* new Runtime.SessionExpired({});
+        const claims = admission.result;
+        const resolveViewer = PatchAccess.admit(claims, target).pipe(
+          Effect.provideContext(viewerContext),
+          Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+        );
+        const viewer = yield* resolveViewer;
+        if (viewer === null) return yield* new Runtime.AccessDenied({});
+        // Admission covers the JWT's remaining lifetime. After expiry, concurrent
+        // callbacks share one backend result for this invocation, including failures.
+        const activeAfterExpiry = yield* session.isActive(claims).pipe(
+          Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+          Effect.cached
+        );
+        return {
+          ...viewer,
+          reauthorize: Effect.gen(function* () {
+            if (
+              (yield* Clock.currentTimeMillis) >= claims.exp * 1_000 &&
+              !(yield* activeAfterExpiry)
+            )
+              return yield* new Runtime.SessionExpired({});
+            const current = yield* resolveViewer;
+            if (
+              current === null ||
+              current.viewer.user.id !== viewer.viewer.user.id ||
+              current.viewer.company.id !== viewer.viewer.company.id
+            )
+              return yield* new Runtime.AccessDenied({});
+            return current.viewer;
+          })
+        };
+      });
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
-      identity,
+      identity: identity(),
+      identityForPatch: identity,
       bootstrapIdentity: Effect.map(principalAdmission.admit, ({ identity, recheck }) => ({
         viewer: identity,
         reauthorize: Effect.map(recheck, (current) => current.identity)
