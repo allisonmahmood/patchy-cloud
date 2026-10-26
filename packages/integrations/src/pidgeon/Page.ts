@@ -24,8 +24,7 @@ type Submitted = Readonly<Record<string, string | undefined>>;
 export const integration = { key: "pidgeon", label: "Pidgeon email" } as const;
 export const offer = {
   integration,
-  reads:
-    "One email address on Pidgeon. Patches read its mail and, if you allow it, reply and send from it. Paste an admin key; Patchy keeps a key for that address only.",
+  reads: "An email address on Pidgeon: patches read its mail and, if you allow it, send from it.",
   mode: "Company-wide · one address"
 };
 export const actions: View.Actions = {
@@ -274,7 +273,7 @@ export const renderConnect = (submitted: Submitted, refusal?: View.Notice) => {
     `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">pidgeon/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}`,
     true
   )}<div class="note" data-pidgeon-review hidden><strong class="note-title" data-pidgeon-review-title></strong><p data-pidgeon-review-policy></p></div><div class="actions"><button class="btn btn-primary" type="submit" disabled data-pidgeon-submit>Connect</button><a class="btn btn-quiet" href="${escapeAttribute(View.cataloguePath)}">Cancel</a></div></form>`;
-  return `<p><a href="${View.indexPath}">Integrations</a> / <a href="${View.cataloguePath}">Connect a source</a> / Pidgeon email</p><h1 class="page-heading">Connect Pidgeon email</h1><p>About two minutes. You'll need a Pidgeon admin key. Nothing is saved until Patchy has checked the key it makes.</p>${View.notice(refusal)}<noscript><div class="note note-warn" role="alert"><strong class="note-title">This page needs JavaScript</strong><p>It checks your admin key with Pidgeon without the page ever showing it back. Turn JavaScript on for this page to connect.</p></div></noscript><div class="card-split"><div>${form}</div>${side}</div><script defer src="${connectScriptPath}"></script>`;
+  return `<p><a href="${View.indexPath}">Integrations</a> / <a href="${View.cataloguePath}">Connect an integration</a> / Pidgeon email</p><h1 class="page-heading">Connect Pidgeon email</h1><p>About two minutes. You'll need a Pidgeon admin key. Nothing is saved until Patchy has checked the key it makes.</p>${View.notice(refusal)}<noscript><div class="note note-warn" role="alert"><strong class="note-title">This page needs JavaScript</strong><p>It checks your admin key with Pidgeon without the page ever showing it back. Turn JavaScript on for this page to connect.</p></div></noscript><div class="card-split"><div>${form}</div>${side}</div><script defer src="${connectScriptPath}"></script>`;
 };
 
 /** The page's own layout: the key beside its button, and the new address's two parts. */
