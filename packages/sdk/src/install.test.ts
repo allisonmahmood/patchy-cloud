@@ -136,29 +136,40 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     expect(version(env)).toBe(CURRENT_RELEASE);
   }, 180_000);
 
-  it("moves an install an earlier installer left in this Node's prefix", async () => {
-    const { url } = await instance();
-    const { home, prefix, env, run } = machine(url);
-    const file = path.join(root, `earlier ${cases}.tgz`);
-    writeFileSync(file, tarball);
-    const earlier = spawnSync(
-      "npm",
-      ["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", file],
-      { env, encoding: "utf8" }
-    );
-    expect(earlier.status, earlier.stderr).toBe(0);
-    // Version managers put this Node's bin first.
-    const managed = { ...env, PATH: [path.join(prefix, "bin"), env.PATH].join(path.delimiter) };
-    expect(
-      spawnSync("sh", ["-c", "command -v patchy"], { env: managed, encoding: "utf8" }).stdout.trim()
-    ).toBe(path.join(prefix, "bin/patchy"));
-    const result = await run(managed);
-    expect(result).toMatchObject({ status: 0, stderr: "" });
-    expect(result.stdout).toContain(`Removed the earlier install from ${installed(prefix)};`);
-    expect(existsSync(installed(prefix))).toBe(false);
-    expect(existsSync(path.join(cli(home), "package.json"))).toBe(true);
-    expect(version(managed)).toBe(CURRENT_RELEASE);
-  }, 180_000);
+  // A version manager's per-Node prefix, and `~/.local`, whose bin is where the launcher goes.
+  it.each(["this Node's", "~/.local as"])(
+    "moves an install an earlier installer left in %s npm prefix",
+    async (kind) => {
+      const { url } = await instance();
+      const machined = machine(url);
+      const { home, run } = machined;
+      const prefix = kind === "~/.local as" ? path.join(home, ".local") : machined.prefix;
+      const env = { ...machined.env, npm_config_prefix: prefix };
+      const file = path.join(root, `earlier ${cases}.tgz`);
+      writeFileSync(file, tarball);
+      const earlier = spawnSync(
+        "npm",
+        ["install", "--global", "--ignore-scripts", "--no-audit", "--no-fund", file],
+        { env, encoding: "utf8" }
+      );
+      expect(earlier.status, earlier.stderr).toBe(0);
+      // Version managers put this Node's bin first.
+      const managed = { ...env, PATH: [path.join(prefix, "bin"), env.PATH].join(path.delimiter) };
+      expect(
+        spawnSync("sh", ["-c", "command -v patchy"], {
+          env: managed,
+          encoding: "utf8"
+        }).stdout.trim()
+      ).toBe(path.join(prefix, "bin/patchy"));
+      const result = await run(managed);
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toContain(`Removed the earlier install from ${installed(prefix)};`);
+      expect(existsSync(installed(prefix))).toBe(false);
+      expect(existsSync(path.join(cli(home), "package.json"))).toBe(true);
+      expect(version(managed)).toBe(CURRENT_RELEASE);
+    },
+    180_000
+  );
 
   it("refuses a download that does not match the release's integrity before npm runs", async () => {
     const stub = await instance(`sha512-${Buffer.alloc(64).toString("base64")}`);
@@ -212,6 +223,10 @@ describe.skipIf(process.platform === "win32")("the instance installer", () => {
     writeFileSync(shim, `#!/bin/sh\nexec '${path.join(bin, "patchy")}' "$@"\n`);
     chmodSync(shim, 0o755);
     expect(await run(withOther)).toMatchObject({ status: 0, stderr: "" });
+    // Handing over is not enough when the launcher's own directory is off PATH.
+    const offPath = await run({ ...env, PATH: [other, ...system].join(path.delimiter) });
+    expect(offPath.status).toBe(1);
+    expect(offPath.stderr).toContain(`${bin} is not on PATH`);
     writeFileSync(shim, "#!/bin/sh\necho 0.0.1\n");
     const shadowed = await run(withOther);
     expect(shadowed.status).toBe(1);

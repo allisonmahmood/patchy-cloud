@@ -28,7 +28,7 @@ class Stop extends Error {}
 const run = (
   /** @type {string} */ name,
   /** @type {string[]} */ args,
-  /** @type {string[]} */ paths = []
+  /** @type {{ paths?: string[], timeout?: number }} */ { paths = [], timeout } = {}
 ) =>
   windows
     ? childProcess.spawnSync(
@@ -36,13 +36,14 @@ const run = (
         {
           shell: true,
           encoding: "utf8",
+          timeout,
           env: {
             ...process.env,
             ...Object.fromEntries(paths.map((value, i) => [`PATCHY_INSTALL_PATH_${i}`, value]))
           }
         }
       )
-    : childProcess.spawnSync(name, [...args, ...paths], { encoding: "utf8" });
+    : childProcess.spawnSync(name, [...args, ...paths], { encoding: "utf8", timeout });
 
 const output = (/** @type {childProcess.SpawnSyncReturns<string>} */ result) =>
   `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
@@ -78,6 +79,11 @@ const install = async (/** @type {string} */ work) => {
       "npm is not on PATH. It ships with Node.js: reinstall Node.js 22.22.0 or newer from https://nodejs.org, open a new terminal, then run this again."
     );
   }
+  // An earlier installer put patchy in this Node's npm prefix, where it would run
+  // first and leave with this Node. Its bundled skill tells it from npm's unrelated `patchy`.
+  const globalPrefix = prefixResult.stdout.trim();
+  const earlier = path.join(globalPrefix, ...(windows ? [] : ["lib"]), "node_modules", "patchy");
+  const hasEarlier = () => fs.existsSync(path.join(earlier, "skills", "patchy", "SKILL.md"));
   const home = os.homedir();
   const prefix = path.join(home, ".patchy", "cli");
   const entry = path.join(prefix, "node_modules", "patchy", "dist", "index.js");
@@ -86,15 +92,18 @@ const install = async (/** @type {string} */ work) => {
   const bin = path.join(home, ".local", "bin");
   const executable = path.join(bin, windows ? "patchy.cmd" : "patchy");
   const launcher = '@"%~dp0..\\..\\.patchy\\cli\\node_modules\\.bin\\patchy.cmd" %*\r\n';
-  /** The launcher at `executable`: absent, this installer's, or anything else. */
+  /**
+   * The launcher at `executable`: absent, this installer's, npm's link to the
+   * earlier install (when npm's prefix is `~/.local`), or anything else.
+   */
   const launcherState = () => {
     try {
-      return (
-        windows
-          ? fs.readFileSync(executable, "utf8") === launcher
-          : fs.readlinkSync(executable) === target
-      )
-        ? "ours"
+      if (windows) return fs.readFileSync(executable, "utf8") === launcher ? "ours" : "foreign";
+      const link = fs.readlinkSync(executable);
+      if (link === target) return "ours";
+      const into = path.relative(earlier, path.resolve(bin, link));
+      return hasEarlier() && !into.startsWith("..") && !path.isAbsolute(into)
+        ? "earlier"
         : "foreign";
     } catch (error) {
       return /** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT" ? "absent" : "foreign";
@@ -124,13 +133,18 @@ const install = async (/** @type {string} */ work) => {
   const installed = run(
     "npm",
     ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", "--prefix"],
-    [prefix, file]
+    { paths: [prefix, file] }
   );
   if (installed.status !== 0) throw new Stop(`npm could not install patchy:\n${output(installed)}`);
   if (!fs.existsSync(target) || !fs.existsSync(entry))
     throw new Stop(`npm finished but ${target} is missing. Run this again.`);
-  if (launcherState() === "absent") {
+  const removed = hasEarlier()
+    ? run("npm", ["uninstall", "--global", "--loglevel=error", "patchy"]).status === 0
+    : undefined;
+  if (launcherState() !== "ours") {
     fs.mkdirSync(bin, { recursive: true });
+    // Only an earlier install's link is left to replace: anything else stopped before the download.
+    fs.rmSync(executable, { force: true });
     if (windows) fs.writeFileSync(executable, launcher);
     else fs.symlinkSync(target, executable);
   }
@@ -154,40 +168,35 @@ const install = async (/** @type {string} */ work) => {
   console.log(`Executable: ${executable}`);
   console.log(`Skill: ${skill}`);
   console.log(`Linked for agents: ${linked.join(", ")}`);
-
-  // An earlier installer put patchy in this Node's npm prefix, where it would run
-  // first and leave with this Node. Its bundled skill tells it from npm's unrelated `patchy`.
-  const globalPrefix = prefixResult.stdout.trim();
-  const earlier = path.join(globalPrefix, ...(windows ? [] : ["lib"]), "node_modules", "patchy");
-  if (fs.existsSync(path.join(earlier, "skills", "patchy", "SKILL.md"))) {
-    const removed = run("npm", ["uninstall", "--global", "--loglevel=error", "patchy"]);
+  if (removed !== undefined)
     console.log(
-      removed.status === 0
+      removed
         ? `Removed the earlier install from ${earlier}; open a new terminal if one that ran patchy before still looks for it there.`
         : `Could not remove the earlier install from ${earlier}; remove it with npm uninstall --global patchy.`
     );
-  }
 
   // PATH may name the launcher's directory through a link, so compare the files themselves.
   const same = (/** @type {string} */ a, /** @type {string} */ b) =>
     windows
       ? fs.realpathSync(a).toLowerCase() === fs.realpathSync(b).toLowerCase()
       : fs.realpathSync(a) === fs.realpathSync(b);
-  const first = (process.env.PATH ?? "")
+  const found = (process.env.PATH ?? "")
     .split(path.delimiter)
     .filter(Boolean)
     .map((dir) => path.join(path.resolve(dir), path.basename(executable)))
-    .find(runnable);
-  if (first === undefined) {
+    .filter(runnable);
+  const first = found[0];
+  if (first === undefined || !found.some((file) => same(file, executable))) {
     throw new Stop(
       `${bin} is not on PATH, so the shell cannot find patchy. Add it to PATH${windows ? " in your user environment variables" : ` in your shell profile (export PATH="${bin}:$PATH")`}, open a new terminal, or run ${executable} directly.`
     );
   }
   // A version manager's shim for an older Node's copy can come first and still hand over to this one.
-  if (
-    !same(first, executable) &&
-    run(path.basename(executable), ["--version"]).stdout?.trim() !== release.release
-  ) {
+  const handsOver = () => {
+    const probe = run(path.basename(executable), ["--version"], { timeout: 30_000 });
+    return probe.status === 0 && probe.stdout.trim() === release.release;
+  };
+  if (!same(first, executable) && !handsOver()) {
     throw new Stop(
       `${first} comes before ${executable} on PATH and runs another patchy. Put ${bin} first on PATH, or remove that copy (for a version manager's shim, run npm uninstall --global patchy under each Node version that still has one), then open a new terminal.`
     );
