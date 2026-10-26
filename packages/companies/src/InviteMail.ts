@@ -31,10 +31,21 @@ export class InvitationNotPending extends Schema.TaggedError<InvitationNotPendin
 
 const notPendingCodes = new Set(["invitation_already_revoked", "invitation_already_accepted"]);
 
+/** Backend transport override for offline tests; browser input never selects this URL. */
+export const backendApiUrl = Context.Reference<string>(
+  "@patchy/companies/InviteMail/backendApiUrl",
+  {
+    defaultValue: () => "https://api.clerk.com"
+  }
+);
+
 export class InviteMail extends Context.Service<
   InviteMail,
   {
-    readonly create: (email: string) => Effect.Effect<string, InviteMailError>;
+    readonly create: (
+      email: string,
+      redirectUrl?: string
+    ) => Effect.Effect<string, InviteMailError>;
     readonly revoke: (id: string) => Effect.Effect<void, InviteMailError | InvitationNotPending>;
   }
 >()("@patchy/companies/InviteMail") {}
@@ -46,16 +57,18 @@ export const make = Effect.gen(function* () {
   );
   const client = createClerkClient({
     secretKey: Redacted.value(secretKey),
+    apiUrl: yield* backendApiUrl,
     telemetry: { disabled: true }
   });
-  // No redirect URL: the emailed link then opens Clerk's own sign-up or sign-in page, which
-  // consumes the invitation ticket, the only way past waitlist mode. Clerk then sends the
-  // person to the instance's home URL, and the app takes a person without a company to /join.
-  const create = Effect.fn("InviteMail.create")(function* (email: string) {
+  // Company invitations keep Clerk's default Account Portal destination. A caller may
+  // supply an Account Portal URL with a return destination; that page still consumes
+  // the ticket, including when sign-up runs in waitlist mode.
+  const create = Effect.fn("InviteMail.create")(function* (email: string, redirectUrl?: string) {
     const invitation = yield* Effect.tryPromise({
       try: () =>
         client.invitations.createInvitation({
           emailAddress: email,
+          ...(redirectUrl === undefined ? {} : { redirectUrl }),
           ignoreExisting: true,
           notify: true
         }),

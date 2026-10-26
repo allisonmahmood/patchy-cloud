@@ -265,6 +265,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           ...inherited,
           ...signIn,
           NODE_ENV: "development",
+          PATCHY_DEV_EXTERNAL_SHARING: "true",
           PATCHY_CREDENTIAL_KEYS: Redacted.value(credentialKeys),
           PORT: String(plan.ports.server),
           DATABASE_URL: plan.databaseUrl,

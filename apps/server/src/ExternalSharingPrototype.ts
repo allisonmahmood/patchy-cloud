@@ -1,10 +1,11 @@
 /**
- * Local-only experiment for #924. Installed only with loopback dev personas.
+ * Local-only experiment for #924. Installed only on loopback in development/test.
  * Scratch tables deliberately stay outside the production migration record.
  * Real sessions, patch bytes and server-side grants; static patches only.
  * No company user, machine token or resource authority is created for a recipient.
  */
 import * as ByteSize from "effect/ByteSize";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -12,8 +13,16 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
-import { RequireSession, Session, pageResponse, signOutForm, withCookies } from "@patchy/auth";
-import { Companies, Users } from "@patchy/companies";
+import {
+  DevPersonas,
+  RequireSession,
+  Session,
+  pageResponse,
+  sessionScripts,
+  signOutForm,
+  withCookies
+} from "@patchy/auth";
+import { Companies, InviteMail, Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml, newInternalId } from "@patchy/core";
 import { Content, Patches } from "@patchy/patches";
 import { homeStyles, PortalPages, renderSharedHome } from "@patchy/portal";
@@ -22,6 +31,7 @@ import {
   contentSecurityPolicy,
   PATCH_CONTENT_SECURITY_POLICY,
   PATCH_PERMISSIONS_POLICY,
+  shellContentSecurityPolicy,
   renderPatchWrapper
 } from "@patchy/serving/shell";
 
@@ -47,6 +57,19 @@ const decodeForm = Schema.decodeUnknownEffect(
   })
 );
 type Claims = RequireSession.SignedIn["Service"];
+
+export const enabled = Effect.gen(function* () {
+  const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
+  const session = yield* Session.Session;
+  if (
+    (environment !== "development" && environment !== "test") ||
+    !Session.isLoopback(new URL(session.publicBaseUrl))
+  )
+    return false;
+  if (yield* DevPersonas.enabled) return true;
+  if (!session.clerk?.publishableKey.startsWith("pk_test_")) return false;
+  return yield* Config.Boolean("PATCHY_DEV_EXTERNAL_SHARING").pipe(Config.withDefault(false));
+});
 
 function requestPath(target: string, pathname: string): string | null {
   try {
@@ -81,9 +104,10 @@ export const make = Effect.gen(function* () {
   const session = yield* Session.Session;
   const users = yield* Users.Users;
   const companies = yield* Companies.Companies;
+  const mail = yield* InviteMail.InviteMail;
   const patches = yield* Patches.Patches;
   const content = yield* Content.Content;
-  // Only this branch's local persona instance reaches these scratch tables.
+  // Only this branch's loopback development/test instance reaches these scratch tables.
   yield* sql`CREATE TABLE IF NOT EXISTS prototype_external_shares (
     id TEXT PRIMARY KEY,
     patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
@@ -93,6 +117,7 @@ export const make = Effect.gen(function* () {
     created_by TEXT NOT NULL REFERENCES users(id),
     UNIQUE(patch_id, email)
   )`;
+  yield* sql`ALTER TABLE prototype_external_shares ADD COLUMN IF NOT EXISTS clerk_invitation_id TEXT`;
 
   const rows = Effect.fn("ExternalSharingPrototype.rows")(function* (
     query: Effect.Effect<ReadonlyArray<unknown>, SqlError>
@@ -188,42 +213,12 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const handle = Effect.fn("ExternalSharingPrototype.handle")(function* () {
+  const forAccount = Effect.fn("ExternalSharingPrototype.forAccount")(function* (
+    claims: Claims,
+    path: string
+  ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = new URL(request.url, session.publicBaseUrl);
-    const path = requestPath(request.url, url.pathname);
-    if (path === null) return page("Request refused", "<p>This address is malformed.</p>", 400);
     const sharedPath = path === "/shared" || path.startsWith("/~shared/");
-    if (request.method === "GET" && path === "/login" && !url.searchParams.has("return"))
-      return RequireSession.door(session, "/", false, 200, "shared");
-    if (path === "/~shared/session.js" && request.method === "GET")
-      return HttpServerResponse.text(script, {
-        contentType: "text/javascript",
-        headers: { "cache-control": "no-store" }
-      });
-    // Leave the public wire, runtime and session infrastructure to their existing doors.
-    if (
-      !sharedPath &&
-      (path.startsWith("/api/") ||
-        path.startsWith("/.well-known/") ||
-        path.startsWith("/healthz") ||
-        path.startsWith("/auth/") ||
-        path.startsWith("/dev/") ||
-        path === "/logout" ||
-        path === "/login" ||
-        path === "/mcp")
-    )
-      return null;
-    if (request.method === "POST" && sharedPath && request.headers.origin !== session.publicBaseUrl)
-      return page("Request refused", "<p>Submit this form from this Patchy instance.</p>", 403);
-    const signedIn = yield* session.authenticate(
-      new Request(url, { method: request.method, headers: request.headers })
-    );
-    if (signedIn.status !== "signed-in") {
-      if (!sharedPath && path !== "/") return null;
-      return RequireSession.door(session, `${path}${url.search}`, false, 401, "shared");
-    }
-    const claims = signedIn.claims;
     const user = yield* users.findByClerkId(claims.sub);
     if (user?.deactivatedAt) return sharedPath ? refused() : null;
     const invitations = yield* forRecipient(claims);
@@ -263,11 +258,11 @@ export const make = Effect.gen(function* () {
     if (request.method === "POST" && accept) {
       // Claim exactly once by signed-in email; afterwards only the stable subject counts.
       const accepted = yield* sql`UPDATE prototype_external_shares s SET subject = ${claims.sub}
-        FROM patches p, patch_versions v WHERE s.id = ${accept[1]!} AND p.id = s.patch_id
+        FROM patches p, patch_versions v, companies c WHERE s.id = ${accept[1]!} AND p.id = s.patch_id AND c.id = p.company_id
         AND v.id = p.current_version_id AND ${available} AND NOT s.revoked
-        AND ((s.subject IS NULL AND s.email = ${claims.email.toLowerCase()}) OR s.subject = ${claims.sub}) RETURNING s.id`;
+        AND ((s.subject IS NULL AND s.email = ${claims.email.toLowerCase()}) OR s.subject = ${claims.sub}) RETURNING s.id, p.name, c.handle`;
       return accepted.length > 0
-        ? redirect(guest ? "/" : "/shared")
+        ? redirect(`/${String(accepted[0]!.handle)}/${String(accepted[0]!.name)}`)
         : page(
             "Invitation unavailable",
             '<p>This invitation has ended or belongs to another person.</p><p><a href="/shared">Shared with you</a></p>',
@@ -290,10 +285,47 @@ export const make = Effect.gen(function* () {
           "<p>Only the owner or a company admin can share a live, company-only static patch.</p>",
           403
         );
-      yield* sql`INSERT INTO prototype_external_shares (id, patch_id, email, created_by)
+      const [grant] =
+        yield* sql`INSERT INTO prototype_external_shares (id, patch_id, email, created_by)
         VALUES (${newInternalId("share")}, ${input.patchId}, ${input.email.toLowerCase()}, ${user.id})
-        ON CONFLICT (patch_id, email) DO UPDATE SET id = excluded.id, subject = NULL, revoked = false, created_by = excluded.created_by
-        WHERE prototype_external_shares.revoked`;
+        ON CONFLICT (patch_id, email) DO UPDATE SET
+          id = CASE WHEN prototype_external_shares.revoked THEN excluded.id ELSE prototype_external_shares.id END,
+          subject = CASE WHEN prototype_external_shares.revoked THEN NULL ELSE prototype_external_shares.subject END,
+          clerk_invitation_id = CASE WHEN prototype_external_shares.revoked THEN NULL ELSE prototype_external_shares.clerk_invitation_id END,
+          created_by = CASE WHEN prototype_external_shares.revoked THEN excluded.created_by ELSE prototype_external_shares.created_by END,
+          revoked = false
+        RETURNING id, subject, clerk_invitation_id AS "mailId"`;
+      if (session.clerk && grant!.subject === null && grant!.mailId === null) {
+        const portal = new URL(session.signInUrl(`/~shared/invite/${String(grant!.id)}`));
+        portal.pathname = "/sign-up";
+        const sent = yield* mail.create(input.email.toLowerCase(), portal.href).pipe(Effect.result);
+        if (sent._tag === "Failure")
+          return page(
+            "Invitation saved",
+            '<p>The invitation is saved, but its email could not be sent. Try inviting this address again to retry delivery.</p><p><a href="/shared">External access</a></p>',
+            502
+          );
+        // Revocation may finish while Clerk sends the email. Attach only to the same
+        // active grant; cancel an in-flight or duplicate invitation that lost the race.
+        const attached =
+          yield* sql`UPDATE prototype_external_shares SET clerk_invitation_id = ${sent.success}
+          WHERE id = ${String(grant!.id)} AND NOT revoked AND clerk_invitation_id IS NULL RETURNING id`;
+        if (attached.length === 0) {
+          const kept = yield* sql`SELECT id FROM prototype_external_shares
+            WHERE id = ${String(grant!.id)} AND NOT revoked AND clerk_invitation_id = ${sent.success}`;
+          if (kept.length === 0) {
+            const cancelled = yield* mail
+              .revoke(sent.success)
+              .pipe(Effect.catchTags({ InvitationNotPending: () => Effect.void }), Effect.result);
+            if (cancelled._tag === "Failure")
+              return page(
+                "Invitation changed",
+                '<p>The patch invitation changed while email was being sent. Its account invitation could not be cancelled; it grants no patch or company access.</p><p><a href="/shared">External access</a></p>',
+                502
+              );
+          }
+        }
+      }
       return redirect("/shared");
     }
     const revoke = path.match(/^\/~shared\/revoke\/([^/]+)$/);
@@ -302,7 +334,18 @@ export const make = Effect.gen(function* () {
       const changed =
         yield* sql`UPDATE prototype_external_shares s SET revoked = true FROM patches p
         WHERE s.id = ${revoke[1]!} AND p.id = s.patch_id AND p.company_id = ${user.companyId}
-        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) RETURNING s.id`;
+        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) RETURNING s.id, s.clerk_invitation_id AS "mailId"`;
+      if (changed[0]?.mailId) {
+        const cancelled = yield* mail
+          .revoke(String(changed[0].mailId))
+          .pipe(Effect.catchTags({ InvitationNotPending: () => Effect.void }), Effect.result);
+        if (cancelled._tag === "Failure")
+          return page(
+            "Access revoked",
+            '<p>Patch access has ended, but the account invitation email could not be cancelled. It grants no patch or company access.</p><p><a href="/shared">External access</a></p>',
+            502
+          );
+      }
       return changed.length ? redirect("/shared") : refused();
     }
     if (sharedPath) return Pages.notFound;
@@ -341,22 +384,88 @@ export const make = Effect.gen(function* () {
             version,
             html,
             scope: "company",
-            head: `<script defer src="/~shared/session.js?patch=${escapeAttribute(patch.id)}&amp;version=${escapeAttribute(version.id)}"></script>`
+            head: `${sessionScripts(session)}<script defer src="/~shared/session.js?patch=${escapeAttribute(patch.id)}&amp;version=${escapeAttribute(version.id)}"></script>`
           }),
           {
             contentType: "text/html",
             headers: {
-              "content-security-policy": `${PATCH_CONTENT_SECURITY_POLICY}; script-src 'self'; connect-src 'self'`
+              "content-security-policy": session.clerk
+                ? shellContentSecurityPolicy(0, session.clerk.frontendApiHost).replace(
+                    "connect-src ",
+                    "connect-src 'self' "
+                  )
+                : `${PATCH_CONTENT_SECURITY_POLICY}; script-src 'self'; connect-src 'self'`
             }
           }
         );
-    return withCookies(
-      HttpServerResponse.setHeaders(response, {
-        "cache-control": "private, no-store",
-        "referrer-policy": "no-referrer",
-        "x-robots-tag": "noindex"
-      }),
-      signedIn.cookies
+    return HttpServerResponse.setHeaders(response, {
+      "cache-control": "private, no-store",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex"
+    });
+  });
+
+  const handle = Effect.fn("ExternalSharingPrototype.handle")(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = new URL(request.url, session.publicBaseUrl);
+    const path = requestPath(request.url, url.pathname);
+    if (path === null) return page("Request refused", "<p>This address is malformed.</p>", 400);
+    const sharedPath = path === "/shared" || path.startsWith("/~shared/");
+    if (request.method === "GET" && path === "/login" && !url.searchParams.has("return"))
+      return RequireSession.door(session, "/", false, 200, "shared");
+    if (path === "/~shared/session.js" && request.method === "GET")
+      return HttpServerResponse.text(script, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-store" }
+      });
+    // Leave the public wire, runtime and session infrastructure to their existing doors.
+    if (
+      !sharedPath &&
+      (path.startsWith("/api/") ||
+        path.startsWith("/.well-known/") ||
+        path.startsWith("/healthz") ||
+        path.startsWith("/auth/") ||
+        path.startsWith("/dev/") ||
+        path === "/logout" ||
+        path === "/login" ||
+        path === "/mcp")
+    )
+      return null;
+    if (request.method === "POST" && sharedPath && request.headers.origin !== session.publicBaseUrl)
+      return page("Request refused", "<p>Submit this form from this Patchy instance.</p>", 403);
+    const signedIn = yield* session.authenticate(
+      new Request(url, { method: request.method, headers: request.headers })
+    );
+    if (signedIn.status === "handshake") {
+      // Serving decides whether an initial handshake is needed: public pages
+      // stay readable even with an expired session cookie.
+      if (!signedIn.completed && !sharedPath && path !== "/") return null;
+      return withCookies(
+        HttpServerResponse.empty({
+          status: signedIn.response.status,
+          headers: {
+            location: signedIn.response.headers.get("location") ?? "/",
+            "cache-control": "private, no-store"
+          }
+        }),
+        signedIn.response.headers.getSetCookie()
+      );
+    }
+    if (signedIn.status === "signed-out") {
+      if (!sharedPath && path !== "/") return null;
+      return withCookies(
+        RequireSession.door(
+          session,
+          `${path}${url.search}`,
+          signedIn.handshakeFailed,
+          401,
+          "shared"
+        ),
+        signedIn.cookies
+      );
+    }
+    return yield* forAccount(signedIn.claims, path).pipe(
+      Effect.map((response) => (response === null ? null : withCookies(response, signedIn.cookies)))
     );
   });
 

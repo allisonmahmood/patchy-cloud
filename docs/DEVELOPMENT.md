@@ -436,7 +436,19 @@ Clerk user before your first sign-in (restart after changing it; a healthy
 instance does not reseed). Leave `CLERK_AUTHORIZED_PARTIES` unset
 locally: a port-specific origin makes worktrees evict each other's sessions.
 
-Sign in at `/join`; without the user binding you create or join a company there.
+The external-sharing experiment also runs with Clerk development keys. The dev runner
+sets `PATCHY_DEV_EXTERNAL_SHARING=true`; the server accepts it only on loopback in
+development/test, with `pk_test_` keys. Outside that setting the normal company
+onboarding is unchanged. Enter the experiment at `/`: an account without company
+membership stays a recipient and cannot create a company or authorize a builder.
+Use the seeded admin binding above when you need a company member to publish or invite.
+Patch invitations send Clerk mail and point to the hosted Account Portal with a return
+to this local patch invitation. Acceptance opens the patch; cancelling or revoking
+ends its grant and attempts to cancel any pending Clerk invitation, reporting a
+provider failure without restoring patch access. Use disposable `+clerk_test`
+addresses. A development application's configured signup fields still apply.
+
+Without the experiment enabled, sign in at `/join`; without the user binding you create or join a company there.
 Then log the CLI in with `PATCHY_API_TOKEN` unset: an agent runs
 `pnpm patchy login --json`, gives the person `verificationUrl` and `userCode`,
 and after they confirm runs the returned `next` command
