@@ -11,6 +11,8 @@ export default defineConfig({
     include: ["packages/integrations/live/**/*.live.ts"],
     globalSetup: fileURLToPath(new URL("./test/postgres.ts", import.meta.url)),
     fileParallelism: false,
+    // The harness prints the run's call and mint counts, the account's shared budgets.
+    silent: false,
     testTimeout: 120_000,
     hookTimeout: 180_000
   }

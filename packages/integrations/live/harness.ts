@@ -230,5 +230,5 @@ export const cleanup = Effect.gen(function* () {
       )
       .pipe(Effect.ignore);
   // Counts only: what the run cost the account's shared budgets.
-  yield* Effect.log(`Pidgeon live run ${RUN}: ${sent.length} calls, ${mints()} keys minted.`);
+  console.log(`Pidgeon live run ${RUN}: ${sent.length} calls, ${mints()} keys minted.`);
 });
