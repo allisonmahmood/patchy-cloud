@@ -99,6 +99,7 @@ export default tseslint.config(
     files: [
       "apps/server/src/start.ts",
       "packages/integrations/live/harness.ts",
+      "packages/integrations/live/sweep.ts",
       "test/postgres.ts",
       "test/clerk.ts",
       "scripts/flake-report.ts",

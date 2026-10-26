@@ -658,7 +658,9 @@ export const ConnectionSummary = Schema.Struct({
   description: Schema.String,
   status: Schema.Literals(["connected", "disconnected"]),
   hint: Schema.String,
-  reason: Schema.optionalKey(Schema.Literal("not_connected"))
+  reason: Schema.optionalKey(Schema.Literal("not_connected")),
+  /** A Pidgeon connection made with a test key: its mail stays in Pidgeon. Absent otherwise. */
+  test: Schema.optionalKey(Schema.Literal(true))
 });
 
 export const Connections = Schema.Struct({

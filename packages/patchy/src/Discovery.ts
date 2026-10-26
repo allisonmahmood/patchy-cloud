@@ -55,7 +55,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}`,
       `  ${connection.hint}`
     );
   }

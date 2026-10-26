@@ -624,7 +624,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const revoked = new Set<string>();
         const left: Array<{ readonly key: PidgeonSource.Key; readonly name: string }> = [];
         for (const item of old) {
-          const done = yield* PidgeonKeys.revoke(Redacted.make(item.key.token), item.key.id).pipe(
+          const done = yield* PidgeonKeys.revoke(
+            Redacted.make(item.key.token),
+            item.key.id,
+            "self"
+          ).pipe(
             Effect.as(true),
             Effect.orElseSucceed(() => false)
           );

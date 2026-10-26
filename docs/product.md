@@ -1239,8 +1239,8 @@ deadline, is named, so an admin can revoke it in Pidgeon.
 Pidgeon, sends are stored as sent and reach only that Pidgeon account, and
 Pidgeon deletes a test address a day after it's made, when the connection says
 the address is gone. The connection keeps its mode, shows "Test · mail stays in
-Pidgeon" beside its name wherever it's listed, and its snapshot, CLI detail and
-generated context say so; Replace key and Change access take an admin key in the
+Pidgeon" beside its name wherever it's listed, and its snapshot, `patchy list
+connections` (`test: true` in its JSON) and generated context say so; Replace key and Change access take an admin key in the
 same mode.
 
 **The snapshot** keeps the address, its display name and send policy, the key's

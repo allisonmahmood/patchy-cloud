@@ -12,10 +12,13 @@ import * as Source from "../src/pidgeon/Source.js";
 
 /**
  * The live tier's Pidgeon: pidgeon.ai in test mode, with `PIDGEON_TEST_ADMIN_KEY`. One account
- * serves every run, its budgets shared: 120 requests a minute on the free plan and 300 test mints
- * an hour. So this run paces its calls, waits out any 429, and tags everything it makes with its
- * own code, which cleanup goes by. That account also holds an address that isn't ours: the tests
- * read and assert only on what they made, and nothing here prints what Pidgeon lists.
+ * serves every run and every developer's dev environment, its budgets shared: 120 requests a
+ * minute on the free plan, 300 test mints an hour and 10 active keys, test keys included, two of
+ * them the admin keys. So a run paces its calls, waits out a 429 or a full key count, keeps few
+ * keys alive at once, and tags what it makes with its own code; it sweeps what's left, its own
+ * when it ends and anyone's stale ones before it starts. That account also holds an address that
+ * isn't ours: the tests read and assert only on what they made, and nothing here prints what
+ * Pidgeon lists.
  */
 
 /**
@@ -28,8 +31,14 @@ const realFetch = globalThis.fetch;
 export const ADMIN_KEY = process.env.PIDGEON_TEST_ADMIN_KEY;
 export const admin = () => Redacted.make(ADMIN_KEY ?? "");
 
-/** This run's tag, in every handle, key name and address it makes. */
-export const RUN = `lv${randomBytes(4).toString("hex").slice(0, 6)}`;
+/**
+ * This run's tag, in every handle, key name and address it makes: CI's run id, so its sweep step
+ * finds the same run after a cancel, or six random characters.
+ */
+export const RUN = `lv${(process.env.PIDGEON_TEST_RUN_ID ?? randomBytes(3).toString("hex"))
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, "")
+  .slice(0, 16)}`;
 
 /** One request as the harness saw it, for matching faults and counting calls. */
 export interface Sent {
@@ -41,8 +50,12 @@ export interface Sent {
 
 /** At most one request per this many milliseconds: two runs at once stay under 120 a minute. */
 const PACE_MS = 1_250;
-/** The longest wait for a 429 the harness sits out; longer, and the run fails saying so. */
-const MAX_WAIT_S = 120;
+/** The longest one call sits out 429s and a full key count before it fails, saying so. */
+const MAX_WAIT_S = 240;
+/** How long a full key count is waited out before the mint is asked again. */
+const KEY_CAP_WAIT_S = 15;
+/** Old enough that no run still uses it: a run takes a few minutes. */
+const STALE_MS = 10 * 60_000;
 
 const faults: Array<{ match: (sent: Sent) => boolean; value: string; times: number }> = [];
 /** Every request sent, and what the run made: its keys and its addresses. */
@@ -50,7 +63,10 @@ export const sent: Sent[] = [];
 export const minted = new Set<string>();
 export const created = new Set<string>();
 
-/** Sends `Pidgeon-Test-Fail: value` on the next `times` requests that match. */
+/**
+ * Sends `Pidgeon-Test-Fail: value` on the next `times` requests that match. The suite never asks
+ * for a 429: every 429 is the shared budget's, which the harness waits out.
+ */
 export const fail = (match: (sent: Sent) => boolean, value: string, times = 1) => {
   faults.push({ match, value, times });
 };
@@ -59,16 +75,6 @@ export const route =
   (request: Sent): boolean =>
     request.method === method &&
     (typeof path === "string" ? request.path === path : path.test(request.path));
-
-/** Seconds Pidgeon asked to wait: `Retry-After`, else `X-RateLimit-Reset` as seconds or a time. */
-const waitFor = (headers: Readonly<Record<string, string | undefined>>) => {
-  const after = Number(headers["retry-after"]);
-  if (Number.isFinite(after) && after >= 0) return after;
-  const reset = Number(headers["x-ratelimit-reset"]);
-  if (!Number.isFinite(reset)) return 1;
-  // An epoch in seconds, or seconds from now.
-  return reset > 1e9 ? Math.max(0, reset - Date.now() / 1_000) : reset;
-};
 
 const bodyOf = (request: HttpClientRequest.HttpClientRequest) =>
   request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
@@ -98,6 +104,7 @@ const next = gate.withPermits(1)(
   })
 );
 
+/** Node's fetch, paced, with the faults a test asked for, recording what the run made. */
 const paced = Effect.gen(function* () {
   const fetch = yield* HttpClient.HttpClient;
   return HttpClient.make((request) =>
@@ -115,37 +122,63 @@ const paced = Effect.gen(function* () {
         fault === undefined
           ? request
           : request.pipe(HttpClientRequest.setHeader("pidgeon-test-fail", fault.value));
-      for (let attempt = 0; ; attempt++) {
-        yield* next;
-        sent.push(seen);
-        const response = yield* fetch
-          .execute(outgoing)
-          .pipe(Effect.provideService(FetchHttpClient.Fetch, realFetch));
-        // A 429 this run didn't ask for is the shared budget: sit it out and send again.
-        if (response.status === 429 && fault === undefined && attempt < 3) {
-          const seconds = waitFor(response.headers);
-          if (seconds <= MAX_WAIT_S) {
-            yield* Effect.sleep(Math.ceil(seconds * 1_000) + 250);
-            continue;
-          }
-        }
-        const text = yield* response.text;
-        if (response.status >= 200 && response.status < 300 && seen.method === "POST") {
-          const id = idOf(text);
-          if (id !== undefined && seen.path === "/api-keys") minted.add(id);
-          if (id !== undefined && seen.path === "/identities") created.add(id);
-        }
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(text, { status: response.status, headers: new Headers(response.headers) })
-        );
+      yield* next;
+      sent.push(seen);
+      const response = yield* fetch
+        .execute(outgoing)
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, realFetch));
+      const text = yield* response.text;
+      if (response.status >= 200 && response.status < 300 && seen.method === "POST") {
+        const id = idOf(text);
+        if (id !== undefined && seen.path === "/api-keys") minted.add(id);
+        if (id !== undefined && seen.path === "/identities") created.add(id);
       }
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(text, { status: response.status, headers: new Headers(response.headers) })
+      );
     })
   );
 });
 
-/** The production source over pidgeon.ai, paced, as the live tier's Pidgeon. */
-export const layer = Layer.effect(Source.Source, Source.make).pipe(
+/**
+ * Seconds to sit out a refusal of the shared budget before asking again: a 429's Retry-After, or
+ * a while for the account's full key count to free a slot. Any other refusal is the test's.
+ */
+const budgetWait = (error: Source.CallError): number | undefined =>
+  error._tag !== "PidgeonRateLimited"
+    ? undefined
+    : error.limit === "requests"
+      ? (error.retryAfterSeconds ?? 5)
+      : /active keys/i.test(error.details.message)
+        ? KEY_CAP_WAIT_S
+        : undefined;
+
+/**
+ * The production source over that paced fetch, waiting out the shared budget outside the call's
+ * own timeout and asking again with the caller's allowance anew, as if the wait never happened.
+ */
+const waiting = Effect.gen(function* () {
+  const inner = yield* Source.make;
+  const call: Source.Source["Service"]["call"] = (token, request, deadline) => {
+    const allowance = Math.max(1_000, deadline - Date.now());
+    const attempt = (until: number, waited: number): ReturnType<typeof inner.call> =>
+      inner.call(token, request, until).pipe(
+        Effect.catch((error) => {
+          const seconds = budgetWait(error);
+          if (seconds === undefined || waited + seconds > MAX_WAIT_S) return Effect.fail(error);
+          return Effect.sleep(Math.ceil(seconds * 1_000) + 250).pipe(
+            Effect.andThen(Effect.suspend(() => attempt(Date.now() + allowance, waited + seconds)))
+          );
+        })
+      );
+    return attempt(deadline, 0);
+  };
+  return Source.Source.of({ call, withSlot: inner.withSlot });
+});
+
+/** The live tier's Pidgeon. */
+export const layer = Layer.effect(Source.Source, waiting).pipe(
   Layer.provide(
     Layer.effect(HttpClient.HttpClient, paced).pipe(Layer.provide(FetchHttpClient.layer))
   )
@@ -160,75 +193,107 @@ export const call = Effect.fn("live.call")(function* (
   return yield* source.call(token, request, Date.now() + 60_000);
 });
 
-/** Keys the run minted, a replay's included once. */
-const mints = () => minted.size;
-
 /** How many requests this run has sent that match. */
 export const count = (match: (request: Sent) => boolean) => sent.filter(match).length;
 
-/**
- * Revokes every key the run made and deletes every address it made, then revokes any key whose
- * name carries the run's tag that an answer lost along the way kept from the record.
- */
-export const cleanup = Effect.gen(function* () {
-  const source = yield* Source.Source;
-  const until = Date.now() + 120_000;
-  for (const id of minted)
-    yield* source
-      .call(
-        admin(),
-        { method: "DELETE", path: `/api-keys/${id}`, idempotencyKey: `cleanup-${id}` },
-        until
-      )
-      .pipe(Effect.ignore);
-  let cursor: string | null = null;
-  do {
-    const page = yield* source
-      .call(
+/** Every item of one of Pidgeon's lists, as plain records; never printed. */
+const everything = (path: string) =>
+  Effect.gen(function* () {
+    const source = yield* Source.Source;
+    const items: Array<Record<string, unknown>> = [];
+    let cursor: string | null = null;
+    do {
+      const page = yield* source.call(
         admin(),
         {
           method: "GET",
-          path: "/api-keys",
-          query: { limit: 100, ...(cursor === null ? {} : { cursor }) }
+          path,
+          // Pidgeon's own page size: `/api-keys` refuses a larger limit.
+          query: cursor === null ? {} : { cursor }
         },
-        until
-      )
-      .pipe(Effect.option);
-    if (page._tag === "None") break;
-    const body = Source.data(page.value.body);
-    const keys = Array.isArray(body) ? body : [];
-    for (const key of keys)
-      if (
-        typeof key === "object" &&
-        key !== null &&
-        "id" in key &&
-        "name" in key &&
-        "revoked_at" in key &&
-        typeof key.id === "string" &&
-        typeof key.name === "string" &&
-        key.name.includes(RUN) &&
-        key.revoked_at === null
-      )
-        yield* source
-          .call(admin(), { method: "DELETE", path: `/api-keys/${key.id}` }, until)
-          .pipe(Effect.ignore);
-    const envelope: unknown = page.value.body;
-    cursor =
-      typeof envelope === "object" &&
-      envelope !== null &&
-      "next_cursor" in envelope &&
-      typeof envelope.next_cursor === "string"
-        ? envelope.next_cursor
-        : null;
-  } while (cursor !== null);
-  for (const id of created)
-    yield* source
-      .call(
-        admin(),
-        { method: "DELETE", path: `/identities/${id}`, idempotencyKey: `cleanup-${id}` },
-        until
-      )
-      .pipe(Effect.ignore);
-  // Counts only: what the run cost the account's shared budgets.
-  console.log(`Pidgeon live run ${RUN}: ${sent.length} calls, ${mints()} keys minted.`);
-});
+        Date.now() + 60_000
+      );
+      const data = Source.data(page.body);
+      for (const item of Array.isArray(data) ? data : [])
+        if (typeof item === "object" && item !== null) items.push({ ...item });
+      const envelope: unknown = page.body;
+      cursor =
+        typeof envelope === "object" &&
+        envelope !== null &&
+        "next_cursor" in envelope &&
+        typeof envelope.next_cursor === "string"
+          ? envelope.next_cursor
+          : null;
+    } while (cursor !== null);
+    return items;
+  });
+
+const text = (item: Record<string, unknown>, field: string) =>
+  typeof item[field] === "string" ? item[field] : "";
+const older = (item: Record<string, unknown>) =>
+  Date.now() - Date.parse(text(item, "created_at")) > STALE_MS;
+
+/** One sweep's counts, and what stopped it when it couldn't list. */
+export interface Swept {
+  readonly keys: number;
+  readonly addresses: number;
+  readonly problem?: string;
+}
+
+/**
+ * Revokes keys and deletes test addresses the live tier left: this run's, by its tag, and, when
+ * `stale`, anyone's that no run still uses. A stale key is one Patchy minted, a test key below
+ * admin that reaches nothing because its address is gone; a stale address is a run-tagged test
+ * address. Only ours: never a live address, an admin key or one Patchy didn't name.
+ */
+export const sweep = (stale: boolean) =>
+  Effect.gen(function* () {
+    const source = yield* Source.Source;
+    const until = () => Date.now() + 60_000;
+    let keys = 0;
+    let addresses = 0;
+    for (const key of yield* everything("/api-keys")) {
+      const name = text(key, "name");
+      const ours = name.startsWith(`Patchy ${RUN}`);
+      const dead =
+        stale &&
+        name.startsWith("Patchy ") &&
+        key.test === true &&
+        key.access !== "admin" &&
+        Array.isArray(key.identity_ids) &&
+        key.identity_ids.length === 0 &&
+        older(key);
+      if (key.revoked_at !== null || !(ours || dead)) continue;
+      const revoked = yield* source
+        .call(admin(), { method: "DELETE", path: `/api-keys/${text(key, "id")}` }, until())
+        .pipe(Effect.option);
+      if (revoked._tag === "Some") keys++;
+    }
+    for (const identity of yield* everything("/identities")) {
+      const local = text(identity, "local_part");
+      if (identity.test !== true) continue;
+      const ours = local.startsWith(`patchy-${RUN}-`);
+      const left = stale && /^patchy-lv[a-z0-9]+-/.test(local) && older(identity);
+      if (!(ours || left)) continue;
+      const deleted = yield* source
+        .call(admin(), { method: "DELETE", path: `/identities/${text(identity, "id")}` }, until())
+        .pipe(Effect.option);
+      if (deleted._tag === "Some") addresses++;
+    }
+    const swept: Swept = { keys, addresses };
+    return swept;
+  }).pipe(
+    // A sweep that couldn't list says so by the refusal's name, never its words or what it listed.
+    Effect.catch((error) => Effect.succeed<Swept>({ keys: 0, addresses: 0, problem: error._tag }))
+  );
+
+const told = (swept: Swept, what: string) =>
+  swept.problem === undefined
+    ? `${swept.keys} ${what}keys and ${swept.addresses} ${what}addresses`
+    : `nothing (${swept.problem})`;
+
+/** What a run cost the account's shared budgets, and what the sweeps took: counts only. */
+export const summary = (swept: { readonly before: Swept; readonly after: Swept }) =>
+  console.log(
+    `Pidgeon live run ${RUN}: ${sent.length} calls, ${minted.size} keys minted; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
+  );

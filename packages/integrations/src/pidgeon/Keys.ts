@@ -141,14 +141,18 @@ export class MintUnknown extends Schema.TaggedError<MintUnknown>()("PidgeonMintU
     return "Pidgeon's answers kept getting lost while it made the key, so Patchy revoked what it made and saved nothing. Try again.";
   }
 }
-/** Patchy stopped before saving, and couldn't revoke, or tell whether Pidgeon made, a key. */
+/**
+ * Patchy stopped before saving, and couldn't revoke, or tell whether Pidgeon made, a key. `then`
+ * is the refusal that stopped it, such as when to try again.
+ */
 export class StrayKey extends Schema.TaggedError<StrayKey>()("PidgeonStrayKey", {
-  key: Schema.String
+  key: Schema.String,
+  then: Schema.optionalKey(Schema.String)
 }) {
   readonly code = "pidgeon_key_left" as const;
   readonly status = 503;
   override get message() {
-    return `Patchy stopped before saving anything, and couldn't revoke a key it made, or may have made, in Pidgeon, named ${this.key}. Revoke it in Pidgeon under Developers › API keys.`;
+    return `Patchy stopped before saving anything, and couldn't revoke a key it made, or may have made, in Pidgeon, named ${this.key}. Revoke it in Pidgeon under Developers › API keys.${this.then === undefined ? "" : ` ${this.then}`}`;
   }
 }
 /** The save's own outcome is unknown, so nothing was revoked. */
@@ -287,22 +291,31 @@ const listed = Effect.fn("PidgeonKeys.listed")(function* <A>(
 /** How many times one write is sent while its answer is lost, under the same Idempotency-Key. */
 const WRITE_ATTEMPTS = 3;
 
+/** A send whose answer never came back: Pidgeon may have done the work. One never sent isn't. */
+const answerLost = (error: Source.CallError) =>
+  error._tag === "PidgeonUnavailable" ||
+  (error._tag === "PidgeonTimeout" && error.milliseconds > 0);
+
 /**
  * Sends a write under one Idempotency-Key, again while its answer is lost on the way back: Pidgeon
- * answers a repeat with the first result and does nothing twice. A refusal is final.
+ * answers a repeat with the first result and does nothing twice. A refusal is final. `seen.lost`
+ * says whether any send lost its answer, so a refusal after one leaves the outcome unknown.
  */
 const write = Effect.fn("PidgeonKeys.write")(function* (
   token: Redacted.Redacted<string>,
   request: Omit<Source.Request, "idempotencyKey">,
   until: number,
-  idempotencyKey: string = `patchy-${randomUUID()}`
+  idempotencyKey: string = `patchy-${randomUUID()}`,
+  seen: { lost: boolean } = { lost: false }
 ) {
   const source = yield* Source.Source;
   return yield* source.call(token, { ...request, idempotencyKey }, until).pipe(
-    Effect.retry({
-      times: WRITE_ATTEMPTS - 1,
-      while: (error) => error._tag === "PidgeonUnavailable" || error._tag === "PidgeonTimeout"
-    })
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        if (answerLost(error)) seen.lost = true;
+      })
+    ),
+    Effect.retry({ times: WRITE_ATTEMPTS - 1, while: answerLost })
   );
 });
 
@@ -544,12 +557,15 @@ export interface Made {
 }
 
 /**
- * Revokes a key with `token`: its own secret, or the admin key that made it. A key already revoked
- * answers its own secret 401, and one gone some other way 404; both count as done.
+ * Revokes a key with `token`: its own secret (`self`), or the admin key that made it. A key gone
+ * some other way answers 404, which counts as done. A key already revoked answers its own secret
+ * 401, which counts as done too; the admin key's 401 says only that the admin key stopped, so the
+ * key may still work.
  */
 export const revoke = Effect.fn("PidgeonKeys.revoke")(function* (
   token: Redacted.Redacted<string>,
-  id: string
+  id: string,
+  by: "self" | "admin"
 ) {
   const until = (yield* Clock.currentTimeMillis) + registry["integration.deadline"].default;
   yield* write(
@@ -559,7 +575,7 @@ export const revoke = Effect.fn("PidgeonKeys.revoke")(function* (
   ).pipe(
     Effect.asVoid,
     Effect.catchTags({
-      PidgeonKeyRejected: () => Effect.void,
+      PidgeonKeyRejected: (error) => (by === "self" ? Effect.void : Effect.fail(error)),
       PidgeonNotFound: () => Effect.void
     })
   );
@@ -630,7 +646,8 @@ const snapshotOf = Effect.fn("PidgeonKeys.snapshotOf")(function* (
  * Mints a key for `identity` alone at `access`. A lost answer is asked for again with the same
  * admin key, request and Idempotency-Key; Pidgeon then names the key it made but never shows its
  * secret twice, so that key is revoked and one more is minted. A key Patchy can't revoke, or
- * can't tell it made by the deadline, is named, so an admin can.
+ * can't tell it made, because the deadline passed or the ask again was refused, is named, so an
+ * admin can, with the refusal's own words about when to try again.
  */
 const mint = Effect.fn("PidgeonKeys.mint")(function* (
   adminKey: Redacted.Redacted<string>,
@@ -641,16 +658,24 @@ const mint = Effect.fn("PidgeonKeys.mint")(function* (
 ) {
   const stray = () => new StrayKey({ key: name });
   for (let round = 0; round < 2; round++) {
+    const seen = { lost: false };
     const answer = yield* write(
       adminKey,
       { method: "POST", path: "/api-keys", body: { name, identity_ids: [identity.id], access } },
-      until
+      until,
+      undefined,
+      seen
     ).pipe(
-      Effect.catchTags({
-        PidgeonUnavailable: () => Effect.fail(stray()),
-        PidgeonTimeout: () => Effect.fail(stray()),
-        PidgeonTooLarge: () => Effect.fail(stray())
-      })
+      Effect.catch((error): Effect.Effect<never, StrayKey | Source.CallError> =>
+        error._tag === "PidgeonUnavailable" ||
+        error._tag === "PidgeonTimeout" ||
+        error._tag === "PidgeonTooLarge"
+          ? Effect.fail(stray())
+          : // A refusal after a lost answer: the first send may have made the key.
+            seen.lost
+            ? Effect.fail(new StrayKey({ key: name, then: error.message }))
+            : Effect.fail(error)
+      )
     );
     const minted = yield* decodeMinted(Source.data(answer.body)).pipe(Effect.mapError(stray));
     if (minted.token !== null)
@@ -664,7 +689,7 @@ const mint = Effect.fn("PidgeonKeys.mint")(function* (
         test: minted.test
       };
     // A replay: the first answer was lost, and the key's secret with it.
-    yield* revoke(adminKey, minted.id).pipe(Effect.mapError(stray));
+    yield* revoke(adminKey, minted.id, "admin").pipe(Effect.mapError(stray));
   }
   return yield* new MintUnknown({});
 });
@@ -695,7 +720,7 @@ const check = (
 
 /** Revokes `made` after a failure, or names it when that fails too. */
 export const undo = <E>(made: Made, error: E) =>
-  revoke(made.token, made.id).pipe(
+  revoke(made.token, made.id, "self").pipe(
     Effect.matchEffect({
       onFailure: () => Effect.fail(new StrayKey({ key: made.name })),
       onSuccess: () => Effect.fail(error)

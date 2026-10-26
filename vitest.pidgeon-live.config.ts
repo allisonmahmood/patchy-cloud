@@ -13,7 +13,8 @@ export default defineConfig({
     fileParallelism: false,
     // The harness prints the run's call and mint counts, the account's shared budgets.
     silent: false,
-    testTimeout: 120_000,
+    // A test can sit out the shared budget: a 429's Retry-After, or a full key count.
+    testTimeout: 300_000,
     hookTimeout: 180_000
   }
 });

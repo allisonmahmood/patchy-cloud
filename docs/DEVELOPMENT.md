@@ -604,9 +604,18 @@ can quote it.
   repository has the secret. It makes failures with Pidgeon's `Pidgeon-Test-Fail`
   header, creates only test addresses of its own, tags every key it mints with
   its run, removes both when it ends, and asserts only on what it made: the
-  account holds an address that isn't ours. Every run shares that account's
-  budgets, 120 requests a minute and 300 test mints an hour, so the suite paces
-  itself to about 48 calls a minute and waits out any 429.
+  account holds an address that isn't ours. Every run and every developer's dev
+  environment share that account's budgets: 120 requests a minute, 300 test
+  mints an hour and, on the free plan, 10 active keys, test keys included, two of
+  them the admin keys. So the suite paces itself to about 48 calls a minute,
+  keeps at most three of its own keys alive at once, and waits out a 429 or a
+  full key count (402). Before it starts it sweeps what nobody uses any more:
+  Patchy-minted test keys that reach nothing and run-tagged test addresses older
+  than ten minutes; when it ends, its own, however it ended. CI runs one at a
+  time, queued, and runs `pnpm test:pidgeon:sweep` after the suite even when the
+  job is cancelled. `pnpm dev down` deletes an environment's Pidgeon
+  connections, which revokes their keys, so stopped environments don't hold
+  slots; evidence instances get this through their own `down`.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

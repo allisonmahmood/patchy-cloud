@@ -7,7 +7,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { layoutOf, workerServer, writeAgent, writeWorkers } from "./environment.js";
+import * as Cause from "effect/Cause";
+import { connectFailed, layoutOf, workerServer, writeAgent, writeWorkers } from "./environment.js";
 
 const API_URL = "http://env.localhost:4100";
 
@@ -308,4 +309,22 @@ it.layer(NodeServices.layer)("the worker agent launchers", (it) => {
       assert.notInclude(stdout, "started");
     }).pipe(Effect.scoped)
   );
+});
+
+it("never shows the admin key a failed fill quotes, naming the step instead", () => {
+  const sentinel = "pgn_test_SENTINELdevRunnerKey001";
+  // Playwright's call log quotes what it was asked to type into an input it couldn't fill.
+  const playwright = new Error(
+    `locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator('#pidgeon-key')\n  - fill("${sentinel}")\n  - element is not enabled`
+  );
+  const failed = connectFailed("pidgeon/support", "pasting the admin key", playwright);
+  assert.include(failed.message, "pidgeon/support");
+  assert.include(failed.message, "while pasting the admin key");
+  for (const shown of [
+    failed.message,
+    String(failed),
+    JSON.stringify(failed),
+    Cause.pretty(Cause.fail(failed))
+  ])
+    assert.isFalse(shown.includes(sentinel), "A failed connect showed the admin key.");
 });

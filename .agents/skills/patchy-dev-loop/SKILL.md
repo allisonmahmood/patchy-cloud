@@ -104,7 +104,9 @@ Done when `pnpm dev status` exits 0.
   the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from their dev.env or
   the environment, and connects `pidgeon/support` to a new test address, which
   Pidgeon deletes a day later. Without that key it says so and skips Pidgeon;
-  never ask for a live key.
+  never ask for a live key. The account holds ten active keys, test keys
+  included: `pnpm dev down` deletes the connection, revoking its key, so take
+  environments down when done.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.

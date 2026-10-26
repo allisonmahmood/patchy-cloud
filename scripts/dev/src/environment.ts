@@ -24,7 +24,13 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
-import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
+import {
+  loadScenario,
+  Person,
+  publisherToken,
+  type Scenario,
+  type ScenarioConnection
+} from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -55,12 +61,17 @@ export class SampleDataFailed extends Schema.TaggedError<SampleDataFailed>()("Sa
   }
 }
 
+/**
+ * Connecting a scenario's connection through its page failed at `step`. Playwright's error can
+ * quote what was typed, the admin key included, so it rides redacted and never reaches the message.
+ */
 export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectFailed", {
   connection: Schema.String,
-  cause: Schema.Defect()
+  step: Schema.String,
+  cause: Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true })
 }) {
   override get message() {
-    return `Connecting ${this.connection} through its connect page failed: ${String(this.cause)}`;
+    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /company/connections.`;
   }
 }
 
@@ -591,22 +602,29 @@ const connectSource = Effect.fn("connectSource")(function* (
 ) {
   const name = `${connection.integration}/${connection.handle}`;
   const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+  // Where it got to, for a failure's message; Playwright's own error stays redacted.
+  let step = "starting the browser";
   yield* Effect.tryPromise({
     try: async () => {
       const { chromium } = await import("@playwright/test");
       const browser = await chromium.launch();
       try {
         const page = await browser.newPage();
+        step = "signing in";
         await page.goto(
           `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
+        step = "pasting the admin key";
         await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
         await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
+        step = "finding addresses";
         await page.getByRole("button", { name: "Find addresses" }).click();
+        step = "describing the new address";
         await page.locator("label.tile-option", { hasText: "New address" }).click();
         await page.locator("#pidgeon-local").fill(localPart);
         await page.locator("#pidgeon-display").fill(connection.displayName);
+        step = "choosing what patches may do";
         await page
           .locator("label.choice-card")
           .filter({
@@ -615,8 +633,10 @@ const connectSource = Effect.fn("connectSource")(function* (
             })
           })
           .click();
+        step = "naming it";
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
+        step = "connecting";
         await Promise.all([
           page.waitForURL(/\/company\/connections\/conn_/),
           page.getByRole("button", { name: "Connect", exact: true }).click()
@@ -625,8 +645,62 @@ const connectSource = Effect.fn("connectSource")(function* (
         await browser.close();
       }
     },
-    catch: (cause) => new ConnectFailed({ connection: name, cause })
+    catch: (cause) => connectFailed(name, step, cause)
   });
+});
+
+/** A connect page failure, its cause kept but never shown: it can quote the admin key. */
+export const connectFailed = (connection: string, step: string, cause: unknown) =>
+  new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
+
+/**
+ * Deletes a scenario's connections through their pages as `email`, so each revokes the key Patchy
+ * minted for it: a test key counts against the Pidgeon account's ten active keys. One a stored
+ * version declares can't be deleted, and stays; the line says so.
+ */
+const deleteConnections = Effect.fn("deleteConnections")(function* (
+  apiUrl: string,
+  email: string,
+  connections: ReadonlyArray<ScenarioConnection>
+) {
+  const results = yield* Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+        );
+        const outcomes: Array<string> = [];
+        for (const connection of connections) {
+          const name = `${connection.integration}/${connection.handle}`;
+          const link = page.getByRole("link", { name, exact: true });
+          if ((await link.count()) === 0) continue;
+          const href = await link.first().getAttribute("href");
+          if (href === null) continue;
+          const response = await page.request.post(`${apiUrl}${href}/delete`, {
+            headers: { origin: new URL(apiUrl).origin },
+            maxRedirects: 0
+          });
+          outcomes.push(
+            response.status() === 303
+              ? `  ${name}: deleted, and its key revoked`
+              : `  ${name}: not deleted (${response.status()}), so its key stays in Pidgeon until an admin revokes it`
+          );
+        }
+        return outcomes;
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => Redacted.make(cause)
+  }).pipe(
+    Effect.orElseSucceed(() => [
+      "  Couldn't delete the scenario's connections, so their keys stay in Pidgeon until an admin revokes them."
+    ])
+  );
+  for (const line of results) yield* Console.error(line);
 });
 
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
@@ -1021,6 +1095,17 @@ export const tearDown = Effect.fn("Environment.tearDown")(function* (worktree: s
   const path = yield* Path.Path;
   const layout = layoutOf(yield* environmentDir(worktree), path);
   if (!(yield* fs.exists(layout.dir))) return false;
+  // While the instance still runs, its scenario's connections go, revoking the keys they hold.
+  const manifest = yield* readManifest(layout);
+  if (Option.isSome(manifest)) {
+    const scenario = yield* loadScenario(worktree, manifest.value.scenario).pipe(Effect.option);
+    const connections = Option.isSome(scenario) ? (scenario.value.scenario.connections ?? []) : [];
+    const publisher = manifest.value.people.find(
+      (person) => person.key === manifest.value.publisher
+    );
+    if (connections.length > 0 && publisher !== undefined)
+      yield* deleteConnections(manifest.value.apiUrl, publisher.email, connections);
+  }
   const env = yield* childEnv(layout);
   for (const repo of yield* workspaceRepos(layout))
     if (yield* fs.exists(path.join(repo, ".patchy", "dev")))

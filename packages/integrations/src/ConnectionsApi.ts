@@ -68,14 +68,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           );
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
-              connections: rows.map(({ id, handle, integration, description, status }) => ({
-                id,
-                handle,
-                integration,
-                description,
-                status,
-                ...(status === "connected"
-                  ? { hint: `patchy add ${integration}/${handle}` }
+              connections: rows.map((row) => ({
+                id: row.id,
+                handle: row.handle,
+                integration: row.integration,
+                description: row.description,
+                status: row.status,
+                ...(row.integration === "pidgeon" && row.display.test
+                  ? { test: true as const }
+                  : {}),
+                ...(row.status === "connected"
+                  ? { hint: `patchy add ${row.integration}/${row.handle}` }
                   : {
                       reason: "not_connected" as const,
                       hint: "Ask an administrator to reconnect it at /company/connections."

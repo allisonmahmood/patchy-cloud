@@ -86,16 +86,47 @@ jobs:
         if: always()
         run: pnpm test:clerk --cleanup
 
-  pidgeon-live:
-    # Pidgeon's test mode, with the repository's test admin key. Every run shares that account's
-    # budgets, so the suite paces its calls (two runs at once stay under 120 a minute) and waits
-    # out any 429; no concurrency group, which would cancel a queued run's check. Without the
-    # secret, the job says so and passes.
+  pidgeon-changes:
+    # Whether a pull request touches what the live Pidgeon tier exercises; pushes to main always do.
     if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.changes.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+            grep -qE '^(packages/(integrations|api|core|sql|limits)/|test/|vitest\.pidgeon-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/ci\.yml$)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  pidgeon-live:
+    # Pidgeon's test mode, with the repository's test admin key. Every run shares that account
+    # with the others and with developers' dev environments: 120 requests a minute and 10 active
+    # keys, two of them the admin keys. So runs go one at a time, queued rather than cancelled, a
+    # run keeps at most three keys alive and paces itself, and its sweep runs however the job
+    # ends. A pull request that touches none of it skips the job, which counts as passing; so does
+    # a repository without the secret.
+    needs: pidgeon-changes
+    if: needs.pidgeon-changes.outputs.relevant == 'true'
+    concurrency:
+      group: pidgeon-live
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       PIDGEON_TEST_ADMIN_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY }}
+      PIDGEON_TEST_RUN_ID: ${{ github.run_id }}${{ github.run_attempt }}
     steps:
       - name: Skip without a Pidgeon test key
         if: env.PIDGEON_TEST_ADMIN_KEY == ''
@@ -116,6 +147,9 @@ jobs:
       - name: Verify Pidgeon connections against Pidgeon's test mode
         if: env.PIDGEON_TEST_ADMIN_KEY != ''
         run: pnpm test:pidgeon
+      - name: Sweep what this run left in Pidgeon
+        if: always() && env.PIDGEON_TEST_ADMIN_KEY != ''
+        run: pnpm test:pidgeon:sweep
 
   lint:
     runs-on: ubuntu-24.04

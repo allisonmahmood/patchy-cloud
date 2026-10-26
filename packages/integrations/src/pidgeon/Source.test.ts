@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { registry } from "@patchy/limits/registry";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -190,10 +191,21 @@ it.effect(
         requests.map((sentRequest) => sentRequest.headers["idempotency-key"]),
         ["mint-1", "mint-1"]
       );
+      // Past the deadline, nothing is sent at all.
+      const expired = yield* over(() => json(200, { data: {} }));
+      assert.deepInclude(
+        yield* expired.source
+          .call(key, request, (yield* Clock.currentTimeMillis) - 1)
+          .pipe(Effect.flip),
+        { _tag: "PidgeonTimeout", milliseconds: 0 }
+      );
+      assert.strictEqual(expired.requests.length, 0);
       // One still running at the deadline is a timeout, with nothing more sent.
       const late = yield* over(inProgress);
       assert.instanceOf(
-        yield* late.source.call(key, request, 1_000).pipe(Effect.flip),
+        yield* late.source
+          .call(key, request, (yield* Clock.currentTimeMillis) + 1_000)
+          .pipe(Effect.flip),
         Source.Timeout
       );
       assert.strictEqual(late.requests.length, 1);

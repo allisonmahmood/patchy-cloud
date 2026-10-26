@@ -941,6 +941,36 @@ describe("patchy list", () => {
     expect(JSON.parse(json.stdout)).toEqual(detail);
   });
 
+  it("marks a test-mode Pidgeon connection in the list, as text and JSON", async () => {
+    const listed = {
+      connections: [
+        {
+          id: "conn-support",
+          handle: "support",
+          integration: "pidgeon",
+          description: "Customer mail",
+          status: "connected",
+          hint: "patchy add pidgeon/support",
+          test: true
+        }
+      ]
+    };
+    const instance = await stubInstance((request, respond) =>
+      request.url?.startsWith("/api/connections?") === true
+        ? respond(200, listed)
+        : respond(404, { ok: false, error: "Not found." })
+    );
+    const result = await runCli(["list", "connections", "--api-url", instance.url], { env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain(
+      "pidgeon/support  Customer mail  connected · test, mail stays in Pidgeon\n"
+    );
+    const json = await runCli(["list", "connections", "--json", "--api-url", instance.url], {
+      env
+    });
+    expect(JSON.parse(json.stdout)).toEqual(listed);
+  });
+
   it("prints a Pidgeon connection's address, access, send policy and labels", async () => {
     const detail = {
       integration: "pidgeon",

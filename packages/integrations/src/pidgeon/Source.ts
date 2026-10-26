@@ -129,7 +129,9 @@ export class Timeout extends Schema.TaggedError<Timeout>()("PidgeonTimeout", {
   readonly code = "timeout" as const;
   readonly status = 504;
   override get message() {
-    return `Pidgeon did not answer within ${Math.ceil(this.milliseconds / 1_000)} seconds.`;
+    return this.milliseconds === 0
+      ? "The time for this call ran out before Patchy sent it to Pidgeon."
+      : `Pidgeon did not answer within ${Math.ceil(this.milliseconds / 1_000)} seconds.`;
   }
 }
 export class TooLarge extends Schema.TaggedError<TooLarge>()("PidgeonTooLarge", {
@@ -461,10 +463,9 @@ export const make = Effect.gen(function* () {
 
   const once = (token: Redacted.Redacted<string>, request: Request, deadline: number) =>
     Effect.flatMap(Clock.currentTimeMillis, (now) => {
-      const milliseconds = Math.max(
-        1,
-        Math.min(deadline - now, registry["integration.deadline"].default)
-      );
+      // Past the deadline nothing is sent: a retry then can't run after its caller gave up.
+      if (deadline <= now) return Effect.fail(new Timeout({ milliseconds: 0 }));
+      const milliseconds = Math.min(deadline - now, registry["integration.deadline"].default);
       return send(token, request).pipe(
         Effect.timeoutOrElse({
           duration: milliseconds,

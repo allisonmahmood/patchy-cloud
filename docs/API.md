@@ -264,7 +264,7 @@ List the caller's company connections, including disconnected ones, for any acti
 
 Responses:
 
-- `200` { connections: { id: string, handle: string, integration: "postgres" | "posthog" | "pidgeon", description: string, status: "connected" | "disconnected", hint: string, reason?: "not_connected" }[], offered?: { integration: "postgres" | "posthog" | "pidgeon", connected: boolean }[] }
+- `200` { connections: { id: string, handle: string, integration: "postgres" | "posthog" | "pidgeon", description: string, status: "connected" | "disconnected", hint: string, reason?: "not_connected", test?: true }[], offered?: { integration: "postgres" | "posthog" | "pidgeon", connected: boolean }[] }
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }

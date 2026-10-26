@@ -20,6 +20,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
+import * as PidgeonTest from "./test/pidgeon.js";
 
 const snapshot = {
   version: 1,
@@ -370,6 +371,40 @@ it.layer(layer)("connections group", (it) => {
             assert.notInclude(yield* listing.text, "private_missing_connections");
           }),
         () => sql`ALTER TABLE private_missing_connections RENAME TO connections`.pipe(Effect.orDie)
+      );
+    })
+  );
+
+  it.effect("marks a Pidgeon connection made with a test key in the list", () =>
+    Effect.gen(function* () {
+      const tokens = yield* MachineTokens.MachineTokens;
+      const api = yield* client(
+        (yield* tokens.mint({ userId: "connections-foreign", name: "Pidgeon reader" })).token
+      );
+      for (const [id, handle, test] of [
+        ["conn_test_mail", "test-mail", true],
+        ["conn_live_mail", "live-mail", false]
+      ] as const)
+        yield* PidgeonTest.seed({
+          id,
+          companyId: "cmp_foreign_connections",
+          userId: "connections-foreign",
+          handle,
+          test
+        }).pipe(
+          Effect.provide(
+            CredentialKeys.layerFromKeys(
+              Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
+            )
+          )
+        );
+      const listed = yield* api.listConnections({ query: { integrations: "pidgeon" } });
+      assert.deepStrictEqual(
+        listed.connections.map((connection) => [connection.handle, connection.test]),
+        [
+          ["live-mail", undefined],
+          ["test-mail", true]
+        ]
       );
     })
   );
