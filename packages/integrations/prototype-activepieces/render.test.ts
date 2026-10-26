@@ -53,12 +53,23 @@ it("escapes module metadata and results instead of rendering connector HTML", ()
   assert.notInclude(html, "<script");
 });
 it("shows API-key versus app-setup requirements before asking for credentials", () => {
-  const html = View.catalogue([resend, { ...resend, key: "slack", displayName: "Slack" }]);
+  const html = View.catalogue([
+    resend,
+    { ...resend, key: "slack", displayName: "Slack" },
+    { ...resend, key: "github", displayName: "GitHub" },
+    { ...resend, key: "notion", displayName: "Notion" }
+  ]);
   assert.include(html, "API key");
   assert.include(html, "App setup required");
   assert.include(html, "Full access");
   assert.include(html, 'href="/company/connections/community/resend"');
   assert.include(html, 'href="/company/connections/community/slack"');
+  assert.include(html, 'href="/company/connections/community/github"');
+  assert.include(html, 'href="/company/connections/community/notion"');
+  assert.include(html, "Metadata: read");
+  assert.include(html, "company-wide");
+  assert.include(html, "Personal-token compatibility still needs a real-account test");
+  assert.include(html, "public OAuth connections");
 });
 it("renders admitted action inputs with module labels, escaped hints, and unique field ids", () => {
   const info: Info = {

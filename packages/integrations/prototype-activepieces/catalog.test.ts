@@ -1,4 +1,4 @@
-/** OFFLINE: pinned Slack/Resend modules call a loopback provider double. No real provider calls. */
+/** OFFLINE: pinned community modules call a loopback provider double. No real provider calls. */
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -45,6 +45,8 @@ import * as CommunityRuntime from "./CommunityRuntime.js";
 
 const tokens = ["xoxb-MockCompanyA000001", "xoxb-MockCompanyB000002"];
 const resendTokens = ["re_MockCompanyA000001", "re_MockCompanyB000002"];
+const githubTokens = ["github_pat_MockCompanyA000001", "github_pat_MockCompanyB000002"];
+const notionTokens = ["ntn_MockCompanyA000001", "ntn_MockCompanyB000002"];
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
 const slackPath = `${CommunityPages.path}/slack`;
@@ -78,10 +80,28 @@ const provider = Layer.effect(
         let bodyText = "";
         for await (const chunk of req) bodyText += chunk;
         const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
-        const provider = req.url!.startsWith("/resend/") ? "resend" : "slack";
-        const path = req.url!.split("?")[0]!.replace(/^\/(?:resend|slack)/, "");
+        const provider = req.url!.split("/")[1]!;
+        const path = req.url!.split("?")[0]!.replace(/^\/(?:github|notion|resend|slack)/, "");
         const fields = Object.fromEntries(new URLSearchParams(bodyText));
         requests.push({ provider, path, token, fields });
+        if (provider === "github" || provider === "notion") {
+          const customer = (provider === "github" ? githubTokens : notionTokens).indexOf(token);
+          res.setHeader("content-type", "application/json");
+          if (customer < 0 || rejectProvider)
+            res.writeHead(401).end(JSON.stringify({ message: "Mock authentication refused" }));
+          else if (provider === "github" && path === "/user")
+            res.end(JSON.stringify({ login: `mock-company-${customer}` }));
+          else if (provider === "github" && path === `/repos/mock-${customer}/repository`)
+            res.end(
+              JSON.stringify({ full_name: `mock-${customer}/repository`, description: token })
+            );
+          else if (provider === "notion" && path === "/v1/users/me")
+            res.end(JSON.stringify({ object: "user", type: "bot", id: `mock-${customer}` }));
+          else if (provider === "notion" && path === `/v1/pages/mock-page-${customer}`)
+            res.end(JSON.stringify({ object: "page", id: `mock-page-${customer}`, title: token }));
+          else res.writeHead(404).end("{}");
+          return;
+        }
         if (provider === "resend") {
           const customer = resendTokens.indexOf(token);
           res.setHeader("content-type", "application/json");
@@ -143,15 +163,17 @@ const provider = Layer.effect(
     const http = require('node:http');
     const https = require('node:https');
     const fetch = globalThis.fetch;
+    const origins = { 'https://slack.com': 'slack', 'https://api.resend.com': 'resend', 'https://api.github.com': 'github', 'https://api.notion.com': 'notion' };
     globalThis.fetch = (input, init) => {
-      const url = new URL(input);
-      const provider = url.origin === 'https://slack.com' ? 'slack' : url.origin === 'https://api.resend.com' ? 'resend' : undefined;
+      const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+      const provider = origins[url.origin];
       if (!provider) throw new Error('Offline test refused external request');
       return fetch(new URL('/' + provider + url.pathname + url.search, ${JSON.stringify(mockBase)}), init);
     };
     https.request = (options, callback) => {
-      if (options.hostname !== 'slack.com') throw new Error('Offline test refused external request');
-      return http.request({...options, path: '/slack' + options.path, protocol: 'http:', hostname: '127.0.0.1', host: '127.0.0.1', port: ${address.port}, agent: undefined}, callback);
+      const provider = origins['https://' + options.hostname];
+      if (!provider) throw new Error('Offline test refused external request');
+      return http.request({...options, path: '/' + provider + options.path, protocol: 'http:', hostname: '127.0.0.1', host: '127.0.0.1', port: ${address.port}, agent: undefined}, callback);
     };
   `
       );
@@ -220,6 +242,133 @@ const send = Effect.fn(function* (
 });
 
 it.layer(services)("Community connector catalog (mock providers)", (it) => {
+  it.effect(
+    "runs GitHub and Notion read actions with separate encrypted company credentials and rejects cross-company calls before HTTP",
+    () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const sql = yield* SqlClient.SqlClient;
+        const logs = yield* RuntimeLog.RuntimeLog;
+        const hooks = yield* CommunityRuntime.make;
+        for (const entry of [
+          {
+            key: "github",
+            field: "secret_text",
+            tokens: githubTokens,
+            action: "get_repository",
+            version: "0.11.0"
+          },
+          {
+            key: "notion",
+            field: "accessToken",
+            tokens: notionTokens,
+            action: "notion_get_page",
+            version: "0.8.2"
+          }
+        ] as const) {
+          const target = `${CommunityPages.path}/${entry.key}`;
+          const owners = [];
+          const ids: string[] = [];
+          for (const suffix of ["a", "b"]) {
+            const name = `${entry.key}-${suffix}`;
+            owners.push(
+              yield* companies.create({
+                handle: name,
+                name,
+                clerkUserId: `user_${name}`,
+                email: `${name}@test.local`,
+                userName: name
+              })
+            );
+          }
+          for (const [i, owner] of owners.entries()) {
+            const form = yield* send(owner.user, target);
+            assert.strictEqual(form.status, 200);
+            assert.include(
+              yield* Effect.promise(() => form.text()),
+              `name="credential.${entry.field}" type="password"`
+            );
+            assert.strictEqual(
+              (yield* send(owner.user, target, {
+                handle: "workspace",
+                [`credential.${entry.field}`]: entry.tokens[i]!
+              })).status,
+              303
+            );
+            const rows = yield* sql<{
+              id: string;
+              credentials: string;
+            }>`SELECT id, credentials FROM connections WHERE company_id = ${owner.company.id} AND integration = ${`activepieces:${entry.key}`}`;
+            assert.lengthOf(rows, 1);
+            const row = rows[0]!;
+            ids.push(row.id);
+            assert.notInclude(row.credentials, entry.tokens[i]!);
+            const resolved = yield* hooks.resolve(owner.company.id, {
+              kind: "community",
+              piece: entry.key,
+              version: entry.version,
+              handle: "workspace",
+              actions: [entry.action]
+            });
+            assert.strictEqual(resolved.id, row.id);
+            assert.include(resolved.client, entry.action);
+            for (const token of entry.tokens) assert.notInclude(resolved.client, token);
+            const inputs: Record<string, string> =
+              entry.key === "github"
+                ? { "input.owner": `mock-${i}`, "input.repo": "repository" }
+                : { "input.page_id": `mock-page-${i}` };
+            const start = requests.length;
+            const result = yield* send(
+              owner.user,
+              `${target}/${row.id}/run/${entry.action}`,
+              inputs
+            );
+            assert.strictEqual(result.status, 200);
+            const html = yield* Effect.promise(() => result.text());
+            assert.include(
+              html,
+              entry.key === "github" ? `mock-${i}/repository` : `mock-page-${i}`
+            );
+            for (const token of entry.tokens) assert.notInclude(html, token);
+            assert.deepStrictEqual(
+              requests.slice(start).map((call) => ({ provider: call.provider, token: call.token })),
+              [{ provider: entry.key, token: entry.tokens[i]! }]
+            );
+            const history = yield* logs.recent({
+              companyId: owner.company.id,
+              connectionId: row.id
+            });
+            assert.strictEqual(history[0]!.outcome, "success");
+            assert.strictEqual(history[0]!.resource, entry.action);
+            for (const token of entry.tokens) assert.notInclude(JSON.stringify(history), token);
+          }
+          const inputs: Record<string, string> =
+            entry.key === "github"
+              ? { "input.owner": "mock-0", "input.repo": "repository" }
+              : { "input.page_id": "mock-page-0" };
+          const before = requests.length;
+          assert.strictEqual(
+            (yield* send(owners[1]!.user, `${target}/${ids[0]}/run/${entry.action}`, inputs))
+              .status,
+            404
+          );
+          assert.strictEqual(
+            (yield* send(owners[0]!.user, `${target}/${ids[0]}/run/create_repository`, inputs))
+              .status,
+            422
+          );
+          assert.strictEqual(
+            (yield* send(owners[0]!.user, `${target}/${ids[0]}/run/${entry.action}`, {
+              ...inputs,
+              "input.accessToken": "injected"
+            })).status,
+            422
+          );
+          assert.strictEqual(requests.length, before);
+        }
+      })
+  );
+
   it.effect(
     "runs the generated community client through runtime authorization, never trusting ids or credentials from patch code",
     () =>

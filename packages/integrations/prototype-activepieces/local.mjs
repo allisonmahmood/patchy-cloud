@@ -97,7 +97,7 @@ if (community) {
       `${customer.name}: ${plan.apiUrl}/dev/sign-in?as=${encodeURIComponent(customer.email)}&return=${encodeURIComponent("/company/connections/community")}`
     );
   console.log(
-    "Choose Resend (API key) or Slack (existing app token). Separate browser profiles keep companies signed in independently."
+    "Choose GitHub, Notion, Resend or Slack. Each provider page explains its token and access requirements. Separate browser profiles keep companies signed in independently."
   );
   process.exit(0);
 }

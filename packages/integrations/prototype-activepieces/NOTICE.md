@@ -71,3 +71,25 @@ Activepieces account or hosted auth service is required for this mode. The
 published package is also a bundle with an empty dependency map and no license
 field; this is a selected-source review, not a completed bundle SBOM or commercial
 redistribution clearance. No email-send action is admitted or exercised.
+
+The token-read catalog pins these additional npm bundles with integrity in
+`package-lock.json`:
+
+| Module                              | Source commit                              | Selected community source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@activepieces/piece-github@0.11.0` | `252ea9e53984357ad2edc6605d7cec89087c8f92` | [Token auth](https://github.com/activepieces/activepieces/blob/252ea9e53984357ad2edc6605d7cec89087c8f92/packages/pieces/community/github/src/lib/auth.ts), [auth helpers](https://github.com/activepieces/activepieces/blob/252ea9e53984357ad2edc6605d7cec89087c8f92/packages/pieces/community/github/src/lib/common/auth-helpers.ts), [API helper](https://github.com/activepieces/activepieces/blob/252ea9e53984357ad2edc6605d7cec89087c8f92/packages/pieces/community/github/src/lib/common/index.ts), [Get Repository](https://github.com/activepieces/activepieces/blob/252ea9e53984357ad2edc6605d7cec89087c8f92/packages/pieces/community/github/src/lib/actions/ai/get-repository.ts), [root license](https://github.com/activepieces/activepieces/blob/252ea9e53984357ad2edc6605d7cec89087c8f92/LICENSE) |
+| `@activepieces/piece-notion@0.8.2`  | `9586503566fcfb4cd9c395d50ed5e5c2ff0ac423` | [Token auth](https://github.com/activepieces/activepieces/blob/9586503566fcfb4cd9c395d50ed5e5c2ff0ac423/packages/pieces/community/notion/src/lib/auth.ts), [token helper](https://github.com/activepieces/activepieces/blob/9586503566fcfb4cd9c395d50ed5e5c2ff0ac423/packages/pieces/community/notion/src/lib/common/index.ts), [Get Page](https://github.com/activepieces/activepieces/blob/9586503566fcfb4cd9c395d50ed5e5c2ff0ac423/packages/pieces/community/notion/src/lib/actions/notion-get-page.ts), [root license](https://github.com/activepieces/activepieces/blob/9586503566fcfb4cd9c395d50ed5e5c2ff0ac423/LICENSE)                                                                                                                                                                                   |
+
+These selected paths fall under the same MIT root license, with the same
+enterprise-directory exclusions. No enterprise import was found in this source
+slice. GitHub's action uses community HTTP helpers; Notion's uses the MIT
+`@notionhq/client` SDK. The modules contain other actions and auth modes which
+are not admitted. No Activepieces hosted service or paid connector subscription
+is used by the selected token paths. The npm manifests have empty dependency
+maps and no license field despite bundling dependencies; the incomplete SBOM
+and redistribution caveats above apply to these bundles too.
+
+Provider authentication policies are separate from this code license. GitHub
+recommends a GitHub App for integrations serving other users. Notion directs
+multi-user products to public OAuth connections. Personal-token testing does
+not establish production authentication clearance for Patchy.
