@@ -593,7 +593,9 @@ can quote it.
   through the connect page in a browser with a test admin key,
   `PIDGEON_TEST_ADMIN_KEY` from the environment or from
   `~/.config/patchy-cloud/dev.env` as Clerk's keys are, creating a new test
-  address on pidgeon.email; without the key it says so and skips Pidgeon. The
+  address on pidgeon.email; without the key it says so and skips Pidgeon.
+  `compare`, `film` and `transcript` hand the key in their environment to their
+  instances' `up` alone. The
   offline suites need no Pidgeon: they seed connections and answer revokes and
   reads through `packages/integrations/src/test/pidgeon.ts`. What Pidgeon does
   is the live tier's, `pnpm test:pidgeon` with `PIDGEON_TEST_ADMIN_KEY` set

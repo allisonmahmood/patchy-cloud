@@ -389,19 +389,27 @@ const prepare = Effect.fn("Evidence.prepare")(function* (
   );
 });
 
-/** `pnpm dev up <scenario>` in the checkout, checked by asking the instance itself. */
+/**
+ * `pnpm dev up <scenario>` in the checkout, checked by asking the instance itself. A Pidgeon test
+ * admin key in this environment reaches `up` alone, so a scenario's Pidgeon connection is made.
+ */
 const bringUp = Effect.fn("Evidence.bringUp")(function* (
   dir: string,
   side: SideName,
   scenario: string,
   env: Record<string, string>
 ) {
+  const pidgeon = yield* Config.option(Config.String("PIDGEON_TEST_ADMIN_KEY"));
   const served = yield* decodeServed(
     yield* stepOutput(
       `Bringing the ${side} instance up`,
       "pnpm",
       ["--silent", "dev", "up", scenario, "--json"],
-      { cwd: dir, env, prefix: side }
+      {
+        cwd: dir,
+        env: Option.isSome(pidgeon) ? { ...env, PIDGEON_TEST_ADMIN_KEY: pidgeon.value } : env,
+        prefix: side
+      }
     )
   );
   const healthy = yield* HttpClient.get(`${served.apiUrl}/healthz`).pipe(
