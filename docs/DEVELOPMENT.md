@@ -448,6 +448,15 @@ ends its grant and attempts to cancel any pending Clerk invitation, reporting a
 provider failure without restoring patch access. Use disposable `+clerk_test`
 addresses. A development application's configured signup fields still apply.
 
+The recipient browser regression runs offline with
+`pnpm exec playwright test -c playwright.tier1.config.ts external-sharing.spec.ts --project chromium`.
+It verifies signed Clerk cookies without company membership, invitation acceptance,
+Home and direct access boundaries, session refresh and revocation of an open patch.
+Invitation grants are seeded and the Clerk browser SDK boundary is replaced;
+page scripts, server admission and grant storage stay real. It does not create an
+account, deliver mail or prove hosted signup. Use the Clerk instance and the
+person's browser for those checks.
+
 Without the experiment enabled, sign in at `/join`; without the user binding you create or join a company there.
 Then log the CLI in with `PATCHY_API_TOKEN` unset: an agent runs
 `pnpm patchy login --json`, gives the person `verificationUrl` and `userCode`,
