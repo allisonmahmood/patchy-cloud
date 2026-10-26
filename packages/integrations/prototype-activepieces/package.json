@@ -14,6 +14,8 @@
     "typecheck": "../../../node_modules/.bin/tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@activepieces/piece-github": "0.11.0",
+    "@activepieces/piece-notion": "0.8.2",
     "@activepieces/piece-posthog": "0.7.1",
     "@activepieces/piece-resend": "0.6.1",
     "@activepieces/piece-slack": "0.23.1"

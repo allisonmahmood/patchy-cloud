@@ -1,6 +1,7 @@
 # Activepieces module prototype
 
-Local, throwaway connector catalog. `prototype/activepieces-patch-runtime` extends
+Local, throwaway connector catalog. `prototype/activepieces-github-notion` extends
+`prototype/activepieces-patch-runtime` (#929), which extends
 `prototype/activepieces-slack-thread-read` (#927), which extends
 `prototype/activepieces-connection-catalog` (#925), which branched from
 pushed `prototype/activepieces-slack-token` (#923). That branch
@@ -25,6 +26,8 @@ connection. Enter credentials only in Patchy, never in chat, source files or URL
 
 | Provider | Customer setup                                                                                                                                                                                                  | Admitted existing action                                                 |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| GitHub   | Use a dedicated fine-grained PAT for selected repositories, with Metadata: read. Organization policy may require admin approval. This local test creates no GitHub App.                                         | `get_repository` (`owner`, `repo`)                                       |
+| Notion   | Use an existing internal connection token, or a personal token for local testing. Workspace policy and page access still apply. Personal-token compatibility has not been tested against real Notion.           | `notion_get_page` (`page_id`)                                            |
 | Resend   | Create an API key in account settings. List Domains requires **Full access**; a Sending access key cannot read domains. No OAuth app is required for this mode.                                                 | `list_domains`                                                           |
 | Slack    | Supply an **existing installed app's** bot token. List Channels needs `channels:read`; Get Thread Replies can use `im:history` in a DM the bot belongs to. Activepieces does not provide tokens or permissions. | `slack_list_channels` (public, non-archived), `slack_get_thread_replies` |
 
@@ -70,6 +73,34 @@ token's scopes, membership and access to that conversation. This does not make
 every Slack conversation available. The upstream action can fetch up to 50 pages
 (10,000 replies), subject to this adapter's five-second and 8 MB limits; large or
 rate-limited threads may fail. Continuation cursors are not exposed in this spike.
+
+**GitHub Get Repository** reads metadata for the supplied owner/repository. It
+does not read file contents, issues or pull requests. Select only the repositories
+your Patchy company should be able to read. A PAT needs no app registration for
+this local test, but GitHub [recommends a GitHub App](https://docs.github.com/en/rest/authentication/keeping-your-api-credentials-secure)
+for integrations serving other users. The module's broader example scopes for
+other actions are unnecessary here; use a dedicated fine-grained token with
+Metadata: read. Organization approval/SSO policies still apply.
+
+**Notion Get Page** reads page metadata and properties, not the page's body
+blocks. An existing internal token needs access to a page shared with its
+connection. Notion also [documents personal access tokens](https://developers.notion.com/guides/get-started/personal-access-tokens)
+for local/trusted tools, subject to workspace controls; no connection registration
+or OAuth is needed for that token mode. Paste the token into the module's
+`Internal Integration Secret` field. Its validator and action pin API version
+`2022-02-22`; real PAT compatibility is **unverified**. The mock proves only the
+adapter's credential shape and HTTP path, not current Notion API behavior. PATs
+act with their creator's page permissions. This is a company-wide connection,
+not a personal connection: use a test workspace suitable for company access.
+Notion directs products serving many users to public OAuth connections; token
+entry is not a substitute for that production authentication design.
+
+Both actions use the existing loader, forms, encrypted store, runtime and
+generated-client path. No provider HTTP implementation or new auth mode is
+added. When using `local:patch`, choose `--piece github --action get_repository`
+or `--piece notion --action notion_get_page`; the saved connection handle is
+still required. This helper updates the same `community-demo` patch per company,
+so choosing another provider replaces that demo's declaration.
 
 Admission declares each action's host-fixed `props` and selected `inputs`.
 Only selected `SHORT_TEXT` inputs are supported here. Missing required, duplicate,
@@ -137,7 +168,7 @@ when switching back.
 
 ## Evidence and limits
 
-`catalog.test.ts` loads the unchanged pinned Slack and Resend modules with their
+`catalog.test.ts` loads the unchanged pinned GitHub, Notion, Slack and Resend modules with their
 transport redirected to loopback **mock providers**. It checks both credential
 shapes, distinct companies and provider kinds, credential selection and encryption,
 cross-company and cross-provider denial before HTTP, unadmitted write-action and
@@ -155,8 +186,8 @@ permissions, results, rate limits, pagination and extra worker context. The sele
 Resend action returns its response page without following pagination. Unsupported
 context fails explicitly. OAuth/refresh, triggers, webhooks, background execution,
 dynamic fields, a general action-input editor, production network controls and a
-complete bundle dependency/license inventory remain outside this proof. Two
-modules do not establish catalog-wide compatibility.
+complete bundle dependency/license inventory remain outside this proof. These
+selected actions do not establish catalog-wide compatibility.
 
 Community source is MIT under the root license with enterprise-directory
 exclusions; see `NOTICE.md`. No paid connector subscription, Activepieces server,

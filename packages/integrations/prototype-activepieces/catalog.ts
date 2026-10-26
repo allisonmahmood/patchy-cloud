@@ -18,6 +18,33 @@ export interface Definition {
   >;
 }
 export const catalog = {
+  github: {
+    package: "@activepieces/piece-github",
+    version: "0.11.0",
+    exportName: "github",
+    authType: "SECRET_TEXT",
+    setup: {
+      label: "Personal access token · local test",
+      instructions:
+        "Use a dedicated fine-grained personal access token with access to the selected repository and Metadata: read. Organization policy may require admin approval. No GitHub App is registered for this local test. GitHub recommends a GitHub App for integrations serving other users. This Patchy connection is shared with your company; select only repositories its members should be able to read.",
+      url: "https://github.com/settings/personal-access-tokens"
+    },
+    actions: { get_repository: { props: {}, inputs: ["owner", "repo"] } }
+  },
+  notion: {
+    package: "@activepieces/piece-notion",
+    version: "0.8.2",
+    exportName: "notion",
+    authType: "CUSTOM_AUTH",
+    authFields: ["accessToken"],
+    setup: {
+      label: "Existing access token · local test",
+      instructions:
+        "Use an existing internal connection token, or a personal access token with Notion API access for a local test. Paste it in the connector's Internal Integration Secret field. Internal tokens can read only pages shared with that connection; personal tokens use their owner's page permissions and may be restricted by workspace policy. Personal-token compatibility still needs a real-account test. This Patchy connection is company-wide: use a test workspace whose content your company may read. Notion directs products serving many users to public OAuth connections.",
+      url: "https://www.notion.so/developers/tokens"
+    },
+    actions: { notion_get_page: { props: {}, inputs: ["page_id"] } }
+  },
   resend: {
     package: "@activepieces/piece-resend",
     version: "0.6.1",

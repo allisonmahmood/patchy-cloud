@@ -41,6 +41,11 @@ List Channels needs `channels:read`; reading an accessible bot DM thread can use
 catalog tests redirect the actual modules to loopback mocks and do not prove a
 real provider call. Use `catalogServer.ts` when restarting this entrypoint.
 
+The local catalog includes GitHub Get Repository and Notion Get Page using
+existing tokens. Their pages explain account access and company-wide sharing;
+Notion personal-token compatibility still needs a real-account test. See the
+prototype README before entering credentials.
+
 ## 2. Exercise the change
 
 On the Activepieces prototype branch, `local:catalog` seeds two invented companies
