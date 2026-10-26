@@ -24,7 +24,7 @@ const me = {
 const identity = {
   data: {
     id: ADDRESS,
-    email: "support@pidgeon.email",
+    email: "support@acme.example",
     display_name: null,
     has_inbox: true,
     send_policy: "reply_only",
