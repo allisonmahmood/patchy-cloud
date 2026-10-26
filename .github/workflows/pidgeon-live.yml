@@ -8,22 +8,15 @@ on:
 permissions:
   contents: read
 
-# One run at a time against the shared Pidgeon account, every run queued and none cancelled: a
-# cancelled run would leave its keys and addresses with only minutes for its sweep. Its own
-# workflow, so the CI workflow's cancel-on-push never reaches it.
-concurrency:
-  group: pidgeon-live
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   pidgeon-changes:
-    # Whether a pull request touches what the live Pidgeon tier exercises; pushes to main always do.
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    # Whether the live Pidgeon tier runs: on main, and on a pull request from this repository that
+    # touches what it exercises, when the repository has the test key. Fork and Dependabot pull
+    # requests never get the key.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      relevant: ${{ steps.changes.outputs.relevant }}
+      run: ${{ steps.changes.outputs.run }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -32,47 +25,75 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
+          OURS: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+          HAS_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY != '' }}
         run: |
-          if [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+          if [ "$OURS" != "true" ] || [ "$HAS_KEY" != "true" ]; then
+            echo "No Pidgeon test key for this run, so the live tier doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
             grep -qE '^(packages/(integrations|api|core|sql|limits)/|test/|vitest\.pidgeon-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/pidgeon-live\.yml$)'; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the live tier exercises changed, so it doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-  pidgeon-live:
+  pidgeon-suite:
     # Pidgeon's test mode, with the repository's test admin key. Every run shares that account
     # with developers' dev environments: 120 requests a minute and 10 active keys, two of them the
     # admin keys. A run keeps at most three keys alive, paces itself, stops using Pidgeon after
-    # 20 minutes, as this job does, and sweeps however it ends. A pull request that touches none of
-    # it skips the job, which counts as passing; so does a repository without the secret.
+    # 20 minutes, as this job does, and sweeps however it ends. Runs wait in one account-wide
+    # queue and none is cancelled: a cancelled run would leave its keys and addresses with only
+    # minutes for its sweep. Only a run that tests waits in it.
     needs: pidgeon-changes
-    if: needs.pidgeon-changes.outputs.relevant == 'true'
+    if: needs.pidgeon-changes.outputs.run == 'true'
+    concurrency:
+      group: pidgeon-live
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PIDGEON_TEST_ADMIN_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY }}
       PIDGEON_TEST_RUN_ID: ${{ github.run_id }}${{ github.run_attempt }}
     steps:
-      - name: Skip without a Pidgeon test key
-        if: env.PIDGEON_TEST_ADMIN_KEY == ''
-        run: echo "No PIDGEON_TEST_ADMIN_KEY secret, so the live Pidgeon tier doesn't run."
       - uses: actions/checkout@v7
-        if: env.PIDGEON_TEST_ADMIN_KEY != ''
       - uses: pnpm/action-setup@v6
-        if: env.PIDGEON_TEST_ADMIN_KEY != ''
         with:
           package_json_file: package.json
       - uses: actions/setup-node@v7
-        if: env.PIDGEON_TEST_ADMIN_KEY != ''
         with:
           node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-        if: env.PIDGEON_TEST_ADMIN_KEY != ''
       - name: Verify Pidgeon connections against Pidgeon's test mode
-        if: env.PIDGEON_TEST_ADMIN_KEY != ''
         run: pnpm test:pidgeon
       - name: Sweep what this run left in Pidgeon
-        if: always() && env.PIDGEON_TEST_ADMIN_KEY != ''
+        if: always()
         run: pnpm test:pidgeon:sweep
+
+  pidgeon-live:
+    # The check to require: it passes only when pidgeon-changes decided and the suite passed, or
+    # was skipped because it had no reason or no key to run. A skipped job would pass on its own.
+    needs: [pidgeon-changes, pidgeon-suite]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          CHANGES: ${{ needs.pidgeon-changes.result }}
+          RUN: ${{ needs.pidgeon-changes.outputs.run }}
+          SUITE: ${{ needs.pidgeon-suite.result }}
+        run: |
+          if [ "$CHANGES" != "success" ]; then
+            echo "pidgeon-changes ended $CHANGES, so whether the live tier had to run is unknown."
+            exit 1
+          elif [ "$RUN" = "true" ] && [ "$SUITE" != "success" ]; then
+            echo "The live Pidgeon tier ended $SUITE."
+            exit 1
+          elif [ "$RUN" != "true" ] && [ "$SUITE" != "skipped" ]; then
+            echo "The live Pidgeon tier ended $SUITE when it had no reason to run."
+            exit 1
+          fi
+          echo "pidgeon-changes decided run=$RUN; the live tier ended $SUITE."
