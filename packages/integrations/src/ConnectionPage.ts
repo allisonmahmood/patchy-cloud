@@ -27,7 +27,7 @@ export type Target =
 export type Change =
   | { readonly kind: "connect"; readonly integration: string }
   | {
-      readonly kind: "test" | "refresh" | "reconnect" | "renew" | View.Confirmation;
+      readonly kind: "test" | "refresh" | "reconnect" | View.Confirmation;
       readonly id: string;
     };
 
@@ -93,15 +93,17 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
 const offers = integrations.map((integration) => pages[integration].offer);
 const isIntegration = Schema.is(Integration);
 
-/** Where a connection reads, its facts, and what its page keeps saying, in its integration's words. */
+/**
+ * Where a connection reads, its facts, what its page keeps saying and the label beside its name,
+ * in its integration's words.
+ */
 const about = (
-  connection: ConnectionStore.Connection,
-  now: number
+  connection: ConnectionStore.Connection
 ): {
   readonly source: string;
   readonly facts: ReadonlyArray<readonly [string, string]>;
   readonly standing?: ReadonlyArray<View.Standing>;
-  readonly renewOff?: boolean;
+  readonly tag?: string | undefined;
 } =>
   connection.integration === "postgres"
     ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
@@ -110,8 +112,8 @@ const about = (
       : {
           source: PidgeonPage.source(connection),
           facts: PidgeonPage.facts(connection),
-          standing: PidgeonPage.standing(connection, now),
-          renewOff: PidgeonPage.renewOff(connection, now)
+          standing: PidgeonPage.standing(connection),
+          tag: PidgeonPage.tag(connection)
         };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
@@ -197,17 +199,20 @@ const filters = (query: URLSearchParams): View.Filters => {
 
 const row = (
   connection: ConnectionStore.Connection,
-  usage: ReadonlyMap<string, ConnectionStore.Usage>,
-  now: number
-): View.Row => ({
-  id: connection.id,
-  integration: pages[connection.integration].integration,
-  handle: connection.handle,
-  description: connection.description,
-  source: about(connection, now).source,
-  status: connection.status,
-  ...(usage.get(connection.id) ?? ConnectionStore.unused)
-});
+  usage: ReadonlyMap<string, ConnectionStore.Usage>
+): View.Row => {
+  const known = about(connection);
+  return {
+    id: connection.id,
+    integration: pages[connection.integration].integration,
+    handle: connection.handle,
+    description: connection.description,
+    source: known.source,
+    status: connection.status,
+    ...(known.tag === undefined ? {} : { tag: known.tag }),
+    ...(usage.get(connection.id) ?? ConnectionStore.unused)
+  };
+};
 
 const index = Effect.fn("ConnectionPage.index")(function* (
   viewer: RequireSession.Viewer["Service"],
@@ -216,7 +221,6 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "admin";
-  const now = yield* Clock.currentTimeMillis;
   const connections = yield* store.list(viewer.company.id);
   const usage = yield* store.usage(viewer.company.id);
   // Members can see connection status, but must never read the call log.
@@ -252,11 +256,11 @@ const index = Effect.fn("ConnectionPage.index")(function* (
       admin,
       company: viewer.company.name,
       admins,
-      rows: connections.map((connection) => row(connection, usage, now)),
+      rows: connections.map((connection) => row(connection, usage)),
       lastCalls,
       offers,
       filters: filters(query),
-      now,
+      now: yield* Clock.currentTimeMillis,
       notice
     }),
     status: notice?.status
@@ -267,12 +271,11 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
-  const now = yield* Clock.currentTimeMillis;
   return {
     title: "Connect an integration",
     body: View.renderCatalogue({
       admin: viewer.role === "admin",
-      rows: connections.map((connection) => row(connection, new Map(), now)),
+      rows: connections.map((connection) => row(connection, new Map())),
       offers
     })
   } satisfies Page;
@@ -316,14 +319,13 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   const connection = yield* store.get(viewer.company.id, id);
   const page = pages[connection.integration];
   const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
-  const now = yield* Clock.currentTimeMillis;
   // Deactivated people keep their names: they still added connections and made calls. A
   // directory that cannot be read leaves the page and its actions working, without names.
   const people = yield* (yield* Users.Users).list(viewer.company.id).pipe(
     Effect.map((users) => new Map(users.map((user) => [user.id, user.name]))),
     Effect.catchTags({ SqlError: () => Effect.succeed(null) })
   );
-  const known = about(connection, now);
+  const known = about(connection);
   return {
     connection,
     page,
@@ -342,7 +344,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
       facts: known.facts,
       ...(known.standing === undefined ? {} : { standing: known.standing }),
-      ...(known.renewOff === undefined ? {} : { renewOff: known.renewOff }),
+      ...(known.tag === undefined ? {} : { tag: known.tag }),
       ...usage
     } satisfies View.Connection
   };
@@ -634,9 +636,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
           );
         default: {
           const { page } = yield* connectionView(viewer, id);
-          // A Pidgeon key that stopped working, or whose rotation is unknown, is fixed by replacing it.
+          // A Pidgeon key that stopped working is fixed by replacing it.
           const replace =
-            notice.code === "pidgeon_key_stopped" || notice.code === "pidgeon_rotation_unknown"
+            notice.code === "pidgeon_key_stopped"
               ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace key…" } }
               : {};
           return yield* connectionPage(viewer, id, { ...atField(page, notice, []), ...replace });
@@ -675,11 +677,7 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     } else {
       yield* store[kind](input);
     }
-    // Rotate key's own page says when the old secret stops, so it needs no result line.
-    const done =
-      kind === "renew"
-        ? ""
-        : `?result=${kind}${kind === "delete" && integration !== undefined ? `&integration=${integration}` : ""}`;
+    const done = `?result=${kind}${kind === "delete" && integration !== undefined ? `&integration=${integration}` : ""}`;
     return {
       title: "Integrations",
       body: "",

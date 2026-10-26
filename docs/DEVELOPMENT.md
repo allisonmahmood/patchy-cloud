@@ -319,8 +319,8 @@ An environment is this instance plus what a multi-person check or demo needs:
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
 is three people and no patches; `brightline` is a five-person agency with tier 0,
 1 and 2 patches, agent areas on its tier 2 ones and agent access on, and takes
-about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to the
-fake Pidgeon account. `up` is idempotent and resumes a
+about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
+new Pidgeon test address. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -588,19 +588,23 @@ can quote it.
   double (`DevReads.test.ts`); in `patchy dev` they appear on the connection's
   page as Dev calls. Connecting PostHog on a local instance needs a real key and
   project, so check those by hand only with a disposable project.
-  Pidgeon never reaches pidgeon.ai from a dev instance: the runner starts the
-  server with `PATCHY_PIDGEON_FAKE`, so an in-process fake account, Lumen Bikes,
-  answers, kept in `.local/dev/pidgeon.json` across restarts until `pnpm dev down`.
-  Its admin key is `pgn_live_fake_lumen_admin_0000`; `pnpm dev up pidgeon`
-  connects `pidgeon/support` with it through the connect page in a browser. The
-  suites use the same fake through a double (`packages/integrations/src/test/pidgeon.ts`)
-  that also loses, refuses or holds answers. One opt-in test runs against a real
-  account and never in `pnpm test` or `pnpm verify`:
-  `node --env-file=$HOME/.config/patchy-cloud/pidgeon.env node_modules/vitest/vitest.mjs run --config vitest.pidgeon-live.config.ts`,
-  or `pnpm test:pidgeon:live` with `PIDGEON_ADMIN_KEY` already exported. It
-  creates and deletes its own address on pidgeon.email, never touches another,
-  and revokes every key it mints. Run it rarely: Pidgeon holds an account's key
-  changes for about ten minutes after a burst.
+  Pidgeon is Pidgeon itself, in test mode, where mail never leaves Pidgeon and a
+  test address lasts a day. `pnpm dev up pidgeon` connects `pidgeon/support`
+  through the connect page in a browser with a test admin key,
+  `PIDGEON_TEST_ADMIN_KEY` from the environment or from
+  `~/.config/patchy-cloud/dev.env` as Clerk's keys are, creating a new test
+  address on pidgeon.email; without the key it says so and skips Pidgeon. The
+  offline suites need no Pidgeon: they seed connections and answer revokes and
+  reads through `packages/integrations/src/test/pidgeon.ts`. What Pidgeon does
+  is the live tier's, `pnpm test:pidgeon` with `PIDGEON_TEST_ADMIN_KEY` set
+  (`node --env-file=$HOME/.config/patchy-cloud/pidgeon-test.env node_modules/vitest/vitest.mjs run --config vitest.pidgeon-live.config.ts`),
+  never in `pnpm test` or `pnpm verify`; CI runs it as `pidgeon-live` when the
+  repository has the secret. It makes failures with Pidgeon's `Pidgeon-Test-Fail`
+  header, creates only test addresses of its own, tags every key it mints with
+  its run, removes both when it ends, and asserts only on what it made: the
+  account holds an address that isn't ours. Every run shares that account's
+  budgets, 120 requests a minute and 300 test mints an hour, so the suite paces
+  itself to about 48 calls a minute and waits out any 429.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

@@ -192,7 +192,7 @@ export const layer: Layer.Layer<
     yield* get(`${cataloguePath}/:integration`, integration);
     yield* post(`${cataloguePath}/:integration`, integration);
     yield* get(`${indexPath}/:id`, (params) => ({ kind: "view", id: params.id ?? "" }));
-    for (const kind of ["test", "refresh", "reconnect", "renew"] as const)
+    for (const kind of ["test", "refresh", "reconnect"] as const)
       yield* post(`${indexPath}/:id/${kind}`, (params) => ({ kind, id: params.id ?? "" }));
     for (const action of confirmations) {
       yield* get(`${indexPath}/:id/${action}`, (params) => ({

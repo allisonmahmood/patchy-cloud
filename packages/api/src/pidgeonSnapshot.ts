@@ -1,6 +1,7 @@
 /**
  * What Patchy keeps about one Pidgeon address when it connects: the address, who it may write
- * to, what Patchy's key for it may do, its labels and the account's plan. Never a message.
+ * to, what Patchy's key for it may do, whether it's in test mode, its labels and the account's
+ * plan. Never a message.
  */
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
@@ -16,7 +17,8 @@ export const PidgeonLabel = Schema.Struct({
 /**
  * One address and its labels. `access` is what Patchy's own key for it may do: `read` reads its
  * mail; `send` also replies, sends and triages from it. `sendPolicy` is Pidgeon's, such as
- * `reply_only`, which can't start a conversation with a stranger, `open` or `list`.
+ * `reply_only`, which can't start a conversation with a stranger, `open` or `list`. `test` marks
+ * a test address: its mail stays in Pidgeon, and Pidgeon deletes it a day after it was made.
  */
 export const PidgeonSnapshot = Schema.Struct({
   version: Schema.Literal(1),
@@ -26,6 +28,7 @@ export const PidgeonSnapshot = Schema.Struct({
     sendPolicy: Text(32)
   }),
   access: Schema.Literals(["read", "send"]),
+  test: Schema.Boolean,
   labels: Schema.Array(PidgeonLabel),
   plan: Text(64)
 }).check(

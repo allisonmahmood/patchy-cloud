@@ -499,6 +499,7 @@ export const generateProjectResponse = (
           sendPolicy: "reply_only"
         },
         access: "send" as const,
+        test: false,
         labels: [{ id: "lbl-1", name: "Warranty", colour: "amber" }],
         plan: "free"
       };

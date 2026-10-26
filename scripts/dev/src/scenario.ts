@@ -33,16 +33,16 @@ export const RepoPatch = Schema.Struct({
 
 /**
  * A company connection the publisher makes through its connect page, as an admin would, before
- * any patch publishes. Pidgeon's is to one address of the dev instance's fake account.
+ * any patch publishes. Pidgeon's pastes the developer's test admin key and creates a new test
+ * address on pidgeon.email, which Pidgeon deletes a day later.
  */
 export const ScenarioConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
   handle: Slug,
   description: Schema.NonEmptyString,
-  /** The fake account's admin key, pasted as an admin would paste a real one. */
-  key: Schema.NonEmptyString,
-  /** The address picked from the ones the key reaches. */
-  address: Email,
+  /** The new address's local part; a code after it makes each environment's its own. */
+  localPart: Slug,
+  displayName: Schema.NonEmptyString,
   access: Schema.Literals(["read", "send"])
 });
 export type ScenarioConnection = typeof ScenarioConnection.Type;

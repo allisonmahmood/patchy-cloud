@@ -15,9 +15,9 @@
     {
       "integration": "pidgeon",
       "handle": "support",
-      "description": "support@lumenbikes.example: customer questions, warranty claims, returns, supplier invoices and press.",
-      "key": "pgn_live_fake_lumen_admin_0000",
-      "address": "support@lumenbikes.example",
+      "description": "Lumen Bikes support: customer questions, warranty claims, returns, supplier invoices and press.",
+      "localPart": "lumen-support",
+      "displayName": "Lumen Bikes Support",
       "access": "send"
     }
   ],

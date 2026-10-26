@@ -100,9 +100,11 @@ Done when `pnpm dev status` exits 0.
   key, and each read shows as a Dev call on the connection's page. Connecting
   PostHog here takes a real key and project, so check dev reads through the
   suites' PostHog double unless the person hands you a disposable project.
-  Pidgeon here is always a fake account, Lumen Bikes, whose admin key is
-  `pgn_live_fake_lumen_admin_0000`; `pnpm dev up pidgeon` connects
-  `pidgeon/support` with it. A real Pidgeon key never works on a dev instance.
+  Pidgeon here is Pidgeon itself, in test mode: `pnpm dev up pidgeon` pastes
+  the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from their dev.env or
+  the environment, and connects `pidgeon/support` to a new test address, which
+  Pidgeon deletes a day later. Without that key it says so and skips Pidgeon;
+  never ask for a live key.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.

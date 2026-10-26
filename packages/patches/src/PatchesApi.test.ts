@@ -52,7 +52,7 @@ import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as PostHogDouble from "../../integrations/src/test/posthog.js";
-import * as PidgeonDouble from "../../integrations/src/test/pidgeon.js";
+import * as PidgeonTest from "../../integrations/src/test/pidgeon.js";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -2703,18 +2703,16 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
 
   it.effect("binds a Pidgeon connection's snapshot revision and refuses it once refreshed", () =>
     Effect.gen(function* () {
-      const pidgeon = PidgeonDouble.make();
-      const connections = yield* SqlConnectionStore.make.pipe(Effect.provide(pidgeon.layer));
-      const connection = yield* connections.connect({
-        integration: "pidgeon",
+      const connections = yield* SqlConnectionStore.make.pipe(
+        Effect.provide(PidgeonTest.canned().layer)
+      );
+      yield* PidgeonTest.seed({
+        id: "conn_publish_support",
         companyId: admin.company.id,
         userId: admin.user.id,
-        handle: "publish-support",
-        description: "Publish contract mail",
-        credentials: PidgeonDouble.connectRequest({
-          id: pidgeon.fake.address("help@acme.example")!.id
-        })
+        handle: "publish-support"
       });
+      const connection = yield* connections.get(admin.company.id, "conn_publish_support");
       const declaration = {
         kind: "pidgeon" as const,
         handle: connection.handle,
@@ -2732,11 +2730,13 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         Option.getOrThrow(yield* patches.find(created.patchId)).version.manifest.uses.mail,
         declaration
       );
-      yield* connections.refresh({
-        companyId: admin.company.id,
-        userId: admin.user.id,
-        id: connection.id
-      });
+      // Refresh labels as the store saves one: a second snapshot, and the revision moves to it.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO connection_snapshots
+        (company_id, connection_id, integration, revision, snapshot, created_at)
+        SELECT company_id, connection_id, integration, 2, snapshot, now() FROM connection_snapshots
+        WHERE connection_id = ${connection.id} AND revision = 1`;
+      yield* sql`UPDATE connections SET metadata_revision = 2 WHERE id = ${connection.id}`;
       const stale = yield* api.publish({
         payload: publishRequest({
           ...payload,

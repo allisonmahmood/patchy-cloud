@@ -957,6 +957,7 @@ describe("patchy list", () => {
           sendPolicy: "reply_only"
         },
         access: "send",
+        test: true,
         labels: [
           { id: "lbl-1", name: "Warranty", colour: "amber" },
           { id: "lbl-2", name: "Returns", colour: "pink" }
@@ -981,6 +982,7 @@ describe("patchy list", () => {
           "Address: support@acme.example (Acme Support)",
           "Access: read and send",
           "Send policy: reply_only",
+          "Mode: test · mail stays in Pidgeon",
           "Plan: free",
           "Labels: Warranty, Returns",
           "Snapshot revision: 2",

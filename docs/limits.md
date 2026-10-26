@@ -38,7 +38,6 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated] | None | No | release |
 | `pidgeon.calls.concurrent` | contract | 4 | calls | host | Pidgeon calls per address at once in one server process, shared by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot | `timeout` | No | release |
-| `pidgeon.rotation.grace` | contract | 300 | seconds | company | How long a rotated Pidgeon key's old secret keeps working; at least one call's deadline, so a call already sent finishes | None | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |
 | `pidgeon.addresses.listed` | contract | 1000 | addresses | company | Addresses the Pidgeon connect form lists from one admin key | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |

@@ -13,7 +13,6 @@ import { RuntimeLog } from "@patchy/runtime";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
 import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -32,7 +31,6 @@ import {
   ConnectionInUse,
   ConnectionNotConnected,
   ConnectionNotFound,
-  ConnectionNotRenewable,
   ConnectionRetargetRequired,
   ConnectionRetargetUnavailable,
   ConnectionStorageFailed,
@@ -124,12 +122,10 @@ const Lookup = Schema.Struct({
   id: Schema.String,
   locked: Schema.Boolean
 });
-const iso = (at: number) => DateTime.formatIso(DateTime.makeUnsafe(at));
-const millis = (at: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(at));
 
 /**
  * Runs `effect` to its end even when the request that started it is interrupted, so a key Patchy
- * minted or rotated in Pidgeon is always saved, revoked or named.
+ * minted in Pidgeon is always saved, revoked or named.
  */
 const detached = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Effect.forkDetach(effect), Fiber.join);
@@ -466,20 +462,19 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       return yield* get(input.companyId, identity.id);
     });
 
-    // ---------- Pidgeon: keys Patchy mints, keeps, rotates and revokes ----------
+    // ---------- Pidgeon: keys Patchy mints, keeps and revokes ----------
 
-    /** `display` with this rotation and these retired keys, leaving out what's absent. */
+    /** `display` with these retired keys, leaving them out when there are none. */
     const pidgeonDisplay = (
       display: PidgeonSource.Display,
-      rotation: PidgeonSource.Display["rotation"],
       retired: PidgeonSource.Display["retired"]
     ): PidgeonSource.Display => ({
       email: display.email,
       identityId: display.identityId,
       sendPolicy: display.sendPolicy,
       access: display.access,
+      test: display.test,
       key: display.key,
-      ...(rotation === undefined ? {} : { rotation }),
       ...(retired === undefined || retired.length === 0 ? {} : { retired })
     });
     /** The old keys a connection still has to revoke, with their secrets and names. */
@@ -492,7 +487,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       locked = false
     ) {
       const current = yield* stored(input, locked);
-      if (current.integration !== "pidgeon") return yield* new ConnectionNotRenewable({});
+      if (current.integration !== "pidgeon")
+        return yield* new ConnectionNotFound({
+          companyId: input.companyId,
+          lookup: { id: input.id }
+        });
       return current;
     });
     const secretOf = (current: StoredPidgeon) =>
@@ -508,14 +507,14 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const updatePidgeon = Effect.fn("ConnectionStore.updatePidgeon")(function* (
       input: Identity,
       display: PidgeonSource.Display,
-      credentials?: { readonly value: PidgeonSource.Credentials; readonly renewed: boolean }
+      credentials?: { readonly value: PidgeonSource.Credentials; readonly newKey: boolean }
     ) {
       const encrypted =
         credentials === undefined ? undefined : yield* sealed(input, credentials.value);
       yield* sql`UPDATE connections SET
         display = ${encodeDisplay({ integration: "pidgeon", display })}
         ${encrypted === undefined ? sql`` : sql`, credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId}`}
-        ${credentials?.renewed === true ? sql`, credential_revision = credential_revision + 1` : sql``}
+        ${credentials?.newKey === true ? sql`, credential_revision = credential_revision + 1` : sql``}
         WHERE id = ${input.id} AND company_id = ${input.companyId}`;
     });
 
@@ -575,6 +574,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               identityId: address.id,
               sendPolicy: address.sendPolicy,
               access: request.access,
+              test: provisioned.test,
               key: { id: made.id, name: made.name, madeAt: made.madeAt }
             };
             const now = yield* Clock.currentTimeMillis;
@@ -653,7 +653,6 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                   input,
                   pidgeonDisplay(
                     current.display,
-                    current.display.rotation,
                     (current.display.retired ?? []).filter((item) => !revoked.has(item.id))
                   ),
                   {
@@ -662,7 +661,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                       key: credentials.key,
                       ...(left.length === 0 ? {} : { retired: left })
                     },
-                    renewed: false
+                    newKey: false
                   }
                 );
               })
@@ -707,8 +706,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                     { integration: "pidgeon", snapshot: provisioned.snapshot },
                     now
                   );
-                  // A new key clears any rotation's state: the old key's secret no longer matters.
-                  // The old key is saved as retired with it, so it's never left untracked.
+                  // The old key is saved as retired with the new one, so it's never left untracked.
                   const retired = [
                     ...(locked.display.retired ?? []),
                     { id: old.key.id, name: locked.display.key.name }
@@ -722,9 +720,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                         identityId: locked.display.identityId,
                         sendPolicy: provisioned.identity.sendPolicy,
                         access: request.access,
+                        test: provisioned.test,
                         key: { id: made.id, name: made.name, madeAt: made.madeAt }
                       },
-                      undefined,
                       retired
                     ),
                     {
@@ -733,7 +731,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
                         key: { id: made.id, token: Redacted.value(made.token) },
                         retired: retiredKeys
                       },
-                      renewed: true
+                      newKey: true
                     }
                   );
                   yield* sql`UPDATE connections SET metadata_revision = ${revision},
@@ -775,149 +773,6 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       },
       Effect.catchTags(safe("rotate"))
     );
-
-    /**
-     * Rotate key. Under the connection's lock, a rotation still running or unknown refuses it;
-     * otherwise the rotation is recorded as unknown and committed before Pidgeon is asked, because
-     * a rotate can't be repeated safely. If the answer never comes, or this process stops, the
-     * record keeps Rotate refused, in every process, and the page offers Replace key. A refusal
-     * changed nothing, so the record goes back; a new secret is saved in its place.
-     */
-    const renew = Effect.fn("ConnectionStore.renew")(
-      (input: Identity) =>
-        detached(
-          audited(
-            { ...input, integration: "pidgeon" },
-            "pidgeon.rotate",
-            Effect.gen(function* () {
-              const started = yield* sql.withTransaction(
-                Effect.gen(function* () {
-                  const current = yield* pidgeonOf(input, true);
-                  const now = yield* Clock.currentTimeMillis;
-                  const state = current.display.rotation;
-                  if (state?.outcome === "unknown")
-                    return yield* new PidgeonKeys.RotationUnknown({ stopsBy: state.stopsBy });
-                  if (state?.outcome === "saved" && millis(state.oldStopsAt) > now)
-                    return yield* new PidgeonKeys.RotationRunning({
-                      oldStopsAt: state.oldStopsAt
-                    });
-                  const credentials = yield* secretOf(current);
-                  // Pidgeon may rotate as late as the call's deadline, and the grace runs from then.
-                  const pending = {
-                    outcome: "unknown" as const,
-                    at: iso(now),
-                    stopsBy: iso(
-                      now +
-                        registry["integration.deadline"].default +
-                        registry["pidgeon.rotation.grace"].default * 1_000
-                    )
-                  };
-                  yield* updatePidgeon(
-                    input,
-                    pidgeonDisplay(current.display, pending, current.display.retired)
-                  );
-                  return { current, credentials, pending };
-                })
-              );
-              const answer = yield* PidgeonKeys.rotate(started.credentials).pipe(
-                Effect.tapError(() => unmark(input, started))
-              );
-              if (answer.outcome === "unknown")
-                return yield* new PidgeonKeys.RotationUnknown({ stopsBy: started.pending.stopsBy });
-              yield* saveRotated(input, started.credentials.key.id, answer);
-              return yield* get(input.companyId, input.id);
-            })
-          ).pipe(Effect.provideService(PidgeonSource.Source, pidgeonSource))
-        ),
-      Effect.catchTags(safe("renew"))
-    );
-    /**
-     * Puts a refused rotation's record back as it was, if it's still this rotation's. Best effort:
-     * a record left behind keeps Rotate refused and offers Replace key, which is safe.
-     */
-    const unmark = (
-      input: Identity,
-      started: {
-        readonly current: StoredPidgeon;
-        readonly pending: { readonly at: string };
-      }
-    ) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const current = yield* pidgeonOf(input, true);
-            const state = current.display.rotation;
-            if (
-              state?.outcome !== "unknown" ||
-              state.at !== started.pending.at ||
-              current.display.key.id !== started.current.display.key.id
-            )
-              return;
-            yield* updatePidgeon(
-              input,
-              pidgeonDisplay(
-                current.display,
-                started.current.display.rotation,
-                current.display.retired
-              )
-            );
-          })
-        )
-        .pipe(Effect.ignore);
-    /**
-     * Saves a secret Pidgeon issued in place of its rotation's record, retried in fresh
-     * transactions with that same secret; Pidgeon is never asked twice. A key Replace key retired
-     * meanwhile keeps its new secret there instead, so revoking it still works.
-     */
-    const saveRotated = Effect.fn("ConnectionStore.saveRotated")(function* (
-      input: Identity,
-      id: string,
-      rotated: { readonly token: Redacted.Redacted<string>; readonly oldStopsAt: string }
-    ) {
-      const token = Redacted.value(rotated.token);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const saved = yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              const current = yield* pidgeonOf(input, true);
-              const held = yield* secretOf(current);
-              if (held.key.id !== id) {
-                const retired = held.retired ?? [];
-                if (retired.some((key) => key.id === id))
-                  yield* updatePidgeon(input, current.display, {
-                    value: {
-                      ...held,
-                      retired: retired.map((key) => (key.id === id ? { id, token } : key))
-                    },
-                    renewed: false
-                  });
-                return false;
-              }
-              // An earlier try may have landed after all: then the secret is already stored.
-              if (held.key.token === token) return true;
-              const now = yield* Clock.currentTimeMillis;
-              yield* updatePidgeon(
-                input,
-                pidgeonDisplay(
-                  current.display,
-                  { outcome: "saved", oldStopsAt: rotated.oldStopsAt },
-                  current.display.retired
-                ),
-                { value: { ...held, key: { id, token } }, renewed: true }
-              );
-              yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000})
-                WHERE id = ${input.id} AND company_id = ${input.companyId}`;
-              return true;
-            })
-          )
-          .pipe(Effect.exit);
-        if (Exit.isSuccess(saved)) {
-          if (saved.value) return;
-          return yield* new ConnectionChanged({});
-        }
-      }
-      return yield* new PidgeonKeys.RotationNotSaved({ oldStopsAt: rotated.oldStopsAt });
-    });
 
     /** Checks the stored key reaches its address, and tries again to revoke old keys. */
     const pidgeonTest = Effect.fn("ConnectionStore.pidgeonTest")(
@@ -1188,7 +1043,6 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       connect,
       test,
       rotate,
-      renew,
       retarget,
       refresh,
       disconnect,

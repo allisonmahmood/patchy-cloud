@@ -160,17 +160,6 @@ export class ConnectionRetargetUnavailable extends Schema.TaggedError<Connection
     return "A Pidgeon connection is one address and can't move to another. Connect the other address as a new connection.";
   }
 }
-/** Only a key that can rotate itself gets a new secret without new credentials. */
-export class ConnectionNotRenewable extends Schema.TaggedError<ConnectionNotRenewable>()(
-  "ConnectionNotRenewable",
-  {}
-) {
-  readonly code = "connection_not_renewable";
-  readonly status = 409;
-  override get message() {
-    return "This connection's credentials can't rotate themselves. Replace them instead.";
-  }
-}
 export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("ConnectionInUse", {}) {
   readonly code = "connection_in_use";
   readonly status = 409;
@@ -201,7 +190,6 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "connect",
       "test",
       "rotate",
-      "renew",
       "refresh",
       "retarget",
       "disconnect",
@@ -231,7 +219,6 @@ export type ConnectionError =
   | InvalidConnectionDescription
   | ConnectionRetargetRequired
   | ConnectionRetargetUnavailable
-  | ConnectionNotRenewable
   | ConnectionInUse
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
@@ -328,8 +315,6 @@ export class ConnectionStore extends Context.Service<
      * key for its address, at the same access (Replace key) or another (Change access).
      */
     readonly rotate: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
-    /** A new secret for the stored key, where its integration can rotate it itself (Pidgeon). */
-    readonly renew: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly retarget: (input: CredentialsInput) => Effect.Effect<Connection, ConnectionError>;
     readonly refresh: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly disconnect: (input: Identity) => Effect.Effect<Connection, ConnectionError>;

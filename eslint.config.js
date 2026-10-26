@@ -116,6 +116,7 @@ export default tseslint.config(
       "packages/serving/src/render.test.ts",
       "packages/patchy/src/cli*.test.ts",
       "packages/patchy/src/test/cli.ts",
+      "packages/integrations/live/harness.ts",
       "vitest.clerk.config.ts",
       "test/clerk.ts",
       "scripts/test-clerk.ts",

@@ -113,9 +113,7 @@ securely through its environment, never through an agent transcript.
 
 A Pidgeon connection keeps only the key Patchy minted for its address, encrypted
 under this keyring; admin keys are never stored. The server calls only
-`https://pidgeon.ai/api/v1`. `PATCHY_PIDGEON_FAKE`, a path to a state file, swaps
-in an in-process fake account instead, as the dev runner does; a server with
-`NODE_ENV=production` refuses to start with it set.
+`https://pidgeon.ai/api/v1`, and needs no Pidgeon configuration of its own.
 
 ### Initial credentials
 

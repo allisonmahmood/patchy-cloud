@@ -86,6 +86,37 @@ jobs:
         if: always()
         run: pnpm test:clerk --cleanup
 
+  pidgeon-live:
+    # Pidgeon's test mode, with the repository's test admin key. Every run shares that account's
+    # budgets, so the suite paces its calls (two runs at once stay under 120 a minute) and waits
+    # out any 429; no concurrency group, which would cancel a queued run's check. Without the
+    # secret, the job says so and passes.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PIDGEON_TEST_ADMIN_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY }}
+    steps:
+      - name: Skip without a Pidgeon test key
+        if: env.PIDGEON_TEST_ADMIN_KEY == ''
+        run: echo "No PIDGEON_TEST_ADMIN_KEY secret, so the live Pidgeon tier doesn't run."
+      - uses: actions/checkout@v7
+        if: env.PIDGEON_TEST_ADMIN_KEY != ''
+      - uses: pnpm/action-setup@v6
+        if: env.PIDGEON_TEST_ADMIN_KEY != ''
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        if: env.PIDGEON_TEST_ADMIN_KEY != ''
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: env.PIDGEON_TEST_ADMIN_KEY != ''
+      - name: Verify Pidgeon connections against Pidgeon's test mode
+        if: env.PIDGEON_TEST_ADMIN_KEY != ''
+        run: pnpm test:pidgeon
+
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

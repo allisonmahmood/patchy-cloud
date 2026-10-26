@@ -1199,41 +1199,55 @@ another. The credentialed server makes every call, only to
 `https://pidgeon.ai/api/v1`, never following a redirect, with answers, refusals
 included, read under the 8 MiB cap before they're decoded.
 
-**Connect.** The connect page is one form. An admin pastes a Pidgeon admin key,
-Admin and Live, over the whole account, and presses Find addresses: the page's
+**Connect.** The connect page is one form. An admin pastes a Pidgeon admin key
+over the whole account, live or test, and presses Find addresses: the page's
 script posts the key in the body of that one request, and Patchy answers with the
-addresses it reaches. The admin picks one, or creates one on Pidgeon's shared
-`pidgeon.email` or a domain the workspace has, with a display name and a send
-policy, then chooses what patches may do, **Read** or **Read and send**, and names
-it. The page needs its script, because the server never writes the admin key back
-into a page; a refused submit keeps everything typed except the key. A side panel
-says where to make the key, that Patchy never stores it, what rotating and
-revoking it do, that a key just for Patchy keeps a revocation to Patchy, who reads
-the mail, and that builders' agents read it while they build.
+addresses it reaches in its own mode. The admin picks one, or creates one on
+Pidgeon's shared `pidgeon.email` or a domain the workspace has, with a display
+name and a send policy, then chooses what patches may do, **Read** or **Read and
+send**, and names it. The page needs its script, because the server never writes
+the admin key back into a page; a refused submit keeps everything typed except
+the key. A side panel says where to make the key, that Patchy never stores it,
+what rotating and revoking it in Pidgeon do, that a key just for Patchy keeps a
+revocation to Patchy, who reads the mail, and that builders' agents read it while
+they build.
 
-Patchy then, in order: reads `/me` and refuses a key that isn't admin, doesn't
-reach the whole account, or is test mode, which only its `pgn_test_` prefix shows;
-finds the address, refusing one without an inbox, or creates it with an inbox and
-an `Idempotency-Key` from the page's attempt, so a retried connect never makes two;
-mints a key for that address alone at `read` or `send`, named `Patchy <handle>
-<attempt> <code>` with a code of its own submission's; and checks the new key, whose `/me` must show the chosen access and no
-reach over the whole account, whose mint must say it's live, and whose
-`/identities` must list exactly the address. It then reads the snapshot with it.
-Only that key is saved, encrypted under the keyring, and only after all of that;
-the admin key is used for the request and never stored, logged or shown.
+Patchy then, in order: reads `/me` and refuses a key that isn't admin or doesn't
+reach the whole account; finds the address, refusing one without an inbox or in
+the other mode, or creates it with an inbox, which a test key makes a test
+address, under an `Idempotency-Key` from the page's attempt, so a connect retried
+within the day Pidgeon keeps that key makes no second address; mints a key for that
+address alone at `read` or `send`, named `Patchy <handle> <attempt>`; and checks
+the new key, whose `/me` must show the chosen access, the admin key's mode and no
+reach over the whole account, and whose `/identities` must list exactly the
+address. It then reads the snapshot with it. Only that key is saved, encrypted
+under the keyring, and only after all of that; the admin key is used for the
+request and never stored, logged or shown.
 
-Anything that fails before the save revokes the minted key with its own secret. A
-mint whose answer was lost is cleaned up with the admin key by its name, whose
-code is its submission's, so a cleanup never takes another submission's key, even
-one of the same attempt still running. If the save's own outcome is unknown, nothing is revoked and the page says
-to check the connections list. A cleanup that fails names the key, so an admin
-can revoke it in Pidgeon.
+Every write Patchy sends carries an `Idempotency-Key`, so one whose answer was
+lost is sent again with the same key, admin key and request, and Pidgeon answers
+with the first result, doing nothing twice; while that first request is still
+running, Patchy waits as long as Pidgeon asks. A lost mint answer comes back that
+way naming the key it made but, as Pidgeon shows a secret once, without its
+secret: Patchy revokes that key with the admin key and mints once more. Anything
+that fails before the save revokes the minted key with its own secret. If the
+save's own outcome is unknown, nothing is revoked and the page says to check the
+connections list. A key Patchy couldn't revoke, or couldn't tell it made by the
+deadline, is named, so an admin can revoke it in Pidgeon.
+
+**Test mode.** A test admin key connects test addresses: their mail stays in
+Pidgeon, sends are stored as sent and reach only that Pidgeon account, and
+Pidgeon deletes a test address a day after it's made, when the connection says
+the address is gone. The connection keeps its mode, shows "Test · mail stays in
+Pidgeon" beside its name wherever it's listed, and its snapshot, CLI detail and
+generated context say so; Replace key and Change access take an admin key in the
+same mode.
 
 **The snapshot** keeps the address, its display name and send policy, the key's
-access, the address's labels and the account's plan, never mail. It is immutable,
-with the same revisions, `stale_generated` and deletion protection as Postgres;
-the connection is bound to Pidgeon's address id. Refresh labels takes a new one
-with the stored key.
+access, whether it's a test address, the address's labels and the account's plan,
+never mail. It is immutable, with the same revisions, `stale_generated` and
+deletion protection as Postgres; the connection is bound to Pidgeon's address id.
+Refresh labels takes a new one with the stored key.
 
 **Send policy.** Pidgeon's own: an address may be `reply_only`, answering only
 people who wrote first and never starting a conversation with a stranger, `open`,
@@ -1241,34 +1255,20 @@ or limited to an allow-list. Addresses Patchy creates start reply-only unless th
 admin picks Anyone; existing addresses keep theirs, and the connection page shows
 it.
 
-**Rotate key** takes no admin key. A rotate can't be repeated safely, so under the
-connection's lock Patchy first records the rotation as unknown and commits that;
-until it's settled, the record refuses Rotate in every server process. Then
-Pidgeon gives the key a new secret, with a grace period during which the old one
-still works, and Patchy saves the new secret in the record's place with when the
-old one stops, which the page shows. Calls load the key when they're sent, so a
-queued call uses the new one. A failed save is retried with the secret Patchy
-holds; Pidgeon is never asked twice. A refusal changed nothing, so the record goes
-back. If the answer never comes, or the server stops mid-rotation, the record
-stays, because the rotation may still complete: the page says the stored secret
-may stop when its grace ends and offers Replace key, and Rotate stays refused
-until then.
-Rotate is also refused while a saved rotation's grace period runs. Pidgeon limits
-rotations and mints across the whole account: a burst answers 429 for about ten
-minutes, which changed nothing, so the page says to try again in a few minutes.
-
-**Change access and Replace key** take an admin key. Holding the connection's lock,
-Patchy mints a new key for the same address, checks it, takes a fresh snapshot and
-saves both, keeping the old key as retired in the same save; then the old key
-revokes itself, a 401 counting as already done. A failure before the save leaves
-the connection as it was. An old key that won't revoke, or whose save's answer was
-lost, stays retired and named on the page until a later Test connection or Delete
-revokes it.
+**Change access and Replace key** take an admin key, and are the one way to give
+a connection a new key. Holding the connection's lock, Patchy mints a new key for
+the same address, checks it, takes a fresh snapshot and saves both, keeping the
+old key as retired in the same save; then the old key revokes itself, a 401
+counting as already done. A failure before the save leaves the connection as it
+was. An old key that won't revoke, or whose save's answer was lost, stays retired
+and named on the page until a later Test connection or Delete revokes it.
 Replace key is for a key that stopped working, for example because its admin key
 was revoked: revoking an admin key revokes every key minted from it, while
-rotating it leaves them working. A key whose address was deleted in Pidgeon still
-signs in but reaches nothing, so the page says the address is gone; Replace key
-can't bring it back. There's no retarget: a different address is a new connection.
+rotating it in Pidgeon leaves them working. A key whose address was deleted in
+Pidgeon still signs in but reaches nothing, so the page says the address is gone;
+Replace key can't bring it back. There's no retarget: a different address is a
+new connection. Pidgeon's 429 changed nothing, and the page says when to try
+again from its `Retry-After`.
 
 **Disconnect and reconnect** keep the key, so reconnecting needs no admin key, only
 a check that it still works. **Delete** is refused while a stored version declares
@@ -1282,8 +1282,8 @@ once per address, shared by `patchy dev` and published patches, an excess call
 waiting within its deadline, keeping a second's reserve, then failing `busy` with
 nothing sent. A call that waited checks its caller and connection again and loads
 the key as it stands before it sends. Pidgeon's 429 and 402 fail
-`source_rate_limited`, with `retryAfter` only when Pidgeon sent one, and Patchy
-never retries a call Pidgeon might have run.
+`source_rate_limited`, with `retryAfter` when Pidgeon sent one, and Patchy never
+retries a call Pidgeon might have run without its Idempotency-Key.
 
 A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
 `patchy add pidgeon/<handle>` writes it with the address's context. Its generated

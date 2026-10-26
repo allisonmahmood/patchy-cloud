@@ -7,7 +7,6 @@ import {
   tileOptions,
   type TileOption
 } from "@patchy/core";
-import * as DateTime from "effect/DateTime";
 import type * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
@@ -31,10 +30,8 @@ export const offer = {
 };
 export const actions: View.Actions = {
   refresh: "Refresh labels",
-  renew: "Rotate key",
   access: "Change access",
-  rotate: "Replace key",
-  note: "Rotate gives Patchy's key a new secret, with no admin key. Change access and Replace key ask for one."
+  rotate: "Replace key"
 };
 
 const policies: Readonly<Record<string, string>> = {
@@ -44,8 +41,6 @@ const policies: Readonly<Record<string, string>> = {
 };
 const policyLabel = (policy: string) => policies[policy] ?? policy;
 const accessLabel = (access: Keys.Access) => (access === "send" ? "Read and send" : "Read");
-const minute = (iso: string) => `${iso.slice(11, 16)} UTC`;
-const millis = (iso: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
 
 /** A sentence about a Pidgeon connection's key, or `other` for any other connection. */
 const about =
@@ -77,6 +72,9 @@ export const results = {
 };
 
 export const source = (connection: Connection) => connection.display.email;
+/** The label beside a test connection's name, wherever it's shown. */
+export const tag = (connection: Connection) =>
+  connection.display.test ? "Test · mail stays in Pidgeon" : undefined;
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => [
   ["Address", connection.display.email],
   ["Writes to", policyLabel(connection.display.sendPolicy)],
@@ -102,45 +100,13 @@ export const reads = (snapshot: PidgeonSnapshot) => ({
   more: Math.max(0, snapshot.labels.length - 10)
 });
 
-/** Notices a Pidgeon connection keeps on its page while they hold. */
-export const standing = (connection: Connection, now: number): ReadonlyArray<View.Standing> => {
-  const rotation = connection.display.rotation;
-  const replace = { href: View.connectionPath(connection.id, "rotate"), label: "Replace key…" };
-  return [
-    ...(rotation?.outcome === "unknown"
-      ? [
-          {
-            tone: "warn" as const,
-            title: "We couldn't tell whether the rotation went through",
-            text: new Keys.RotationUnknown({ stopsBy: rotation.stopsBy }).message,
-            action: replace
-          }
-        ]
-      : rotation?.outcome === "saved" && millis(rotation.oldStopsAt) > now
-        ? [
-            {
-              tone: "ok" as const,
-              title: "Key rotated",
-              text: `Patchy saved a new secret. The old one stops working at ${minute(rotation.oldStopsAt)}.`
-            }
-          ]
-        : []),
-    ...(connection.display.retired ?? []).map((key) => ({
-      tone: "warn" as const,
-      title: "The old key is still active in Pidgeon",
-      text: `Patchy switched to the new key but hasn't revoked the old one, named ${key.name}. Test connection tries again, or revoke it in Pidgeon under Developers › API keys.`
-    }))
-  ];
-};
-
-/** Rotate stays off while a rotation's answer is missing or its old secret still works. */
-export const renewOff = (connection: Connection, now: number) => {
-  const rotation = connection.display.rotation;
-  return (
-    rotation?.outcome === "unknown" ||
-    (rotation?.outcome === "saved" && millis(rotation.oldStopsAt) > now)
-  );
-};
+/** Notices a Pidgeon connection keeps on its page while they hold: old keys not yet revoked. */
+export const standing = (connection: Connection): ReadonlyArray<View.Standing> =>
+  (connection.display.retired ?? []).map((key) => ({
+    tone: "warn" as const,
+    title: "The old key is still active in Pidgeon",
+    text: `Patchy switched to the new key but hasn't revoked the old one, named ${key.name}. Test connection tries again, or revoke it in Pidgeon under Developers › API keys.`
+  }));
 
 export const consequences = {
   delete:
@@ -152,11 +118,11 @@ export const consequences = {
 /** Refusals about the admin key or the address, shown under their part of the form. */
 export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
   ["invalid_credentials", "key"],
-  ["pidgeon_test_key", "key"],
   ["pidgeon_admin_key_rejected", "key"],
   ["pidgeon_not_admin", "key"],
   ["pidgeon_partial_admin", "key"],
   ["pidgeon_address_not_found", "address"],
+  ["pidgeon_address_mode", "address"],
   ["pidgeon_no_inbox", "address"],
   ["pidgeon_address_taken", "address"],
   ["pidgeon_invalid_address", "address"],
@@ -164,17 +130,15 @@ export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
 ]);
 /** A refusal's bold first line, where the message reads as its explanation. */
 export const refusalTitles: ReadonlyMap<string, string> = new Map([
-  ["pidgeon_test_key", "That's a test-mode key"],
   ["pidgeon_not_admin", "That key isn't an admin key"],
   ["pidgeon_partial_admin", "That admin key reaches only some addresses"],
-  ["pidgeon_key_stopped", "Patchy's key stopped working"],
-  ["pidgeon_rotation_unknown", "We couldn't tell whether the rotation went through"]
+  ["pidgeon_key_stopped", "Patchy's key stopped working"]
 ]);
 
 // ---------- the connect page ----------
 
 const HOWTO =
-  "In Pidgeon, open Developers › API keys › New key. Choose <strong>Admin</strong> and <strong>Live</strong>, for every address rather than a few, and name it Patchy.";
+  "In Pidgeon, open Developers › API keys › New key. Choose <strong>Admin</strong>, for every address rather than a few, and name it Patchy.";
 const KEY_HINT =
   "Patchy uses it once, to find or create the address and make its own key for it. It's never stored.";
 const LATER =
@@ -243,12 +207,12 @@ const newAddress = (domains: ReadonlyArray<string>, kept: Submitted) => {
  * the new address's fields. The script swaps each into the page by its `data-pidgeon-*` mark.
  */
 export const addressesFragment = (found: {
-  readonly reaches: number;
+  readonly test: boolean;
   readonly addresses: ReadonlyArray<Keys.Address>;
   readonly more: boolean;
   readonly domains: ReadonlyArray<string>;
 }) =>
-  `<p class="field-hint" id="pidgeon-key-hint" data-pidgeon-key-status>${escapeHtml(`Live · reaches ${found.reaches === 1 ? "1 address" : `${found.reaches} addresses`} · not stored.`)}</p><div data-pidgeon-addresses>${tiles(found.addresses, found.domains)}${found.more ? `<p class="supporting-text">${escapeHtml(`Showing the first ${found.addresses.length} addresses.`)}</p>` : ""}${newAddress(found.domains, {})}</div>`;
+  `<p class="field-hint" id="pidgeon-key-hint" data-pidgeon-key-status>${escapeHtml(`${found.test ? "Test" : "Live"} · ${found.addresses.length === 1 ? "1 address" : `${found.addresses.length} addresses`} · not stored.`)}</p><div data-pidgeon-addresses>${tiles(found.addresses, found.domains)}${found.more ? `<p class="supporting-text">${escapeHtml(`Showing the first ${found.addresses.length} addresses.`)}</p>` : ""}${newAddress(found.domains, {})}</div>`;
 
 /** A refusal of the admin key as the script shows it, under the key. */
 export const keyRefusalFragment = (refusal: View.Notice) =>
@@ -295,7 +259,7 @@ export const renderConnect = (submitted: Submitted, refusal?: View.Notice) => {
     1,
     "pidgeon-step-key",
     "Admin key",
-    `<div class="pidgeon-key-row"><input class="field" id="pidgeon-key" type="password" name="key" placeholder="pgn_live_…" autocomplete="off" spellcheck="false" aria-label="Admin key"${key.attributes}><button class="btn btn-primary" type="button" data-pidgeon-find hidden>Find addresses</button></div>${key.note}`,
+    `<div class="pidgeon-key-row"><input class="field" id="pidgeon-key" type="password" name="key" placeholder="pgn_…" autocomplete="off" spellcheck="false" aria-label="Admin key"${key.attributes}><button class="btn btn-primary" type="button" data-pidgeon-find hidden>Find addresses</button></div>${key.note}`,
     false
   )}${step(
     2,
@@ -310,7 +274,7 @@ export const renderConnect = (submitted: Submitted, refusal?: View.Notice) => {
     `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">pidgeon/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}`,
     true
   )}<div class="note" data-pidgeon-review hidden><strong class="note-title" data-pidgeon-review-title></strong><p data-pidgeon-review-policy></p></div><div class="actions"><button class="btn btn-primary" type="submit" disabled data-pidgeon-submit>Connect</button><a class="btn btn-quiet" href="${escapeAttribute(View.cataloguePath)}">Cancel</a></div></form>`;
-  return `<p><a href="${View.indexPath}">Connections</a> / <a href="${View.cataloguePath}">Connect a source</a> / Pidgeon email</p><h1 class="page-heading">Connect Pidgeon email</h1><p>About two minutes. You'll need a Pidgeon admin key. Nothing is saved until Patchy has checked the key it makes.</p>${View.notice(refusal)}<noscript><div class="note note-warn" role="alert"><strong class="note-title">This page needs JavaScript</strong><p>It checks your admin key with Pidgeon without the page ever showing it back. Turn JavaScript on for this page to connect.</p></div></noscript><div class="card-split"><div>${form}</div>${side}</div><script defer src="${connectScriptPath}"></script>`;
+  return `<p><a href="${View.indexPath}">Integrations</a> / <a href="${View.cataloguePath}">Connect a source</a> / Pidgeon email</p><h1 class="page-heading">Connect Pidgeon email</h1><p>About two minutes. You'll need a Pidgeon admin key. Nothing is saved until Patchy has checked the key it makes.</p>${View.notice(refusal)}<noscript><div class="note note-warn" role="alert"><strong class="note-title">This page needs JavaScript</strong><p>It checks your admin key with Pidgeon without the page ever showing it back. Turn JavaScript on for this page to connect.</p></div></noscript><div class="card-split"><div>${form}</div>${side}</div><script defer src="${connectScriptPath}"></script>`;
 };
 
 /** The page's own layout: the key beside its button, and the new address's two parts. */
@@ -324,7 +288,7 @@ export const styles = `
 
 const adminKeyField = (refusal: View.Notice | undefined) => {
   const note = View.fieldNote("pidgeon-key", "key", KEY_HINT, refusal);
-  return `<label class="field-label" for="pidgeon-key">Admin key</label><input class="field" id="pidgeon-key" type="password" name="key" required placeholder="pgn_live_…" autocomplete="off" spellcheck="false"${note.attributes}>${note.note}`;
+  return `<label class="field-label" for="pidgeon-key">Admin key</label><input class="field" id="pidgeon-key" type="password" name="key" required placeholder="pgn_…" autocomplete="off" spellcheck="false"${note.attributes}>${note.note}`;
 };
 const attemptField = (submitted: Submitted) =>
   `<input type="hidden" name="attempt" value="${escapeAttribute(
@@ -374,7 +338,7 @@ export const credentials = (
     };
   const attempt = form.attempt ?? "";
   if (adminKey === "")
-    return refused("key", "Paste a Pidgeon admin key: it starts with pgn_live_.");
+    return refused("key", "Paste a Pidgeon admin key: it starts with pgn_live_ or pgn_test_.");
   const chosen =
     form.access ?? (current?.integration === "pidgeon" ? current.display.access : undefined);
   if (chosen !== "read" && chosen !== "send")

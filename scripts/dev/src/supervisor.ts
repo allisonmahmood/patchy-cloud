@@ -271,9 +271,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
-          PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
-          // Pidgeon is an in-process fake account here, kept beside the rest of the state.
-          PATCHY_PIDGEON_FAKE: path.join(plan.stateDir, "pidgeon.json")
+          PATCHY_PUBLIC_BASE_URL: plan.apiUrl
         },
         extendEnv: false,
         stdin: "ignore",

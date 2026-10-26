@@ -95,6 +95,7 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       `Address: ${snapshot.address.email}${snapshot.address.displayName === null ? "" : ` (${snapshot.address.displayName})`}`,
       `Access: ${snapshot.access === "send" ? "read and send" : "read"}`,
       `Send policy: ${snapshot.address.sendPolicy}`,
+      ...(snapshot.test ? ["Mode: test · mail stays in Pidgeon"] : []),
       `Plan: ${snapshot.plan}`,
       `Labels: ${snapshot.labels.length === 0 ? "none" : snapshot.labels.map((label) => label.name).join(", ")}`,
       `Snapshot revision: ${snapshot.revision}`,

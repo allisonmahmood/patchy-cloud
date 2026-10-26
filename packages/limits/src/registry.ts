@@ -203,16 +203,6 @@ export const registry = {
     refusal: "timeout",
     overridable: false
   },
-  "pidgeon.rotation.grace": {
-    kind: "contract",
-    default: 300,
-    unit: "seconds",
-    scope: "company",
-    measure:
-      "How long a rotated Pidgeon key's old secret keeps working; at least one call's deadline, so a call already sent finishes",
-    refusal: null,
-    overridable: false
-  },
   "pidgeon.snapshot.labels": {
     kind: "contract",
     default: 500,

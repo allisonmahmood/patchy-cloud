@@ -6,7 +6,7 @@ import * as Source from "./Source.js";
 /**
  * How a call reaches a connected Pidgeon address, for the operations #825 adds: it waits for one
  * of the address's slots, then checks its caller and the connection again and loads the key as it
- * stands when the call is sent. A call that waited through a rotation sends the new secret; one
+ * stands when the call is sent. A call that waited through Replace key sends the new key; one
  * whose connection was disconnected or moved meanwhile sends nothing.
  */
 

@@ -53,24 +53,24 @@ An immutable list of a PostHog project's event definitions and event and person 
 _Avoid_: event catalogue, schema (PostHog has none to snapshot)
 
 **Address snapshot**:
-An immutable description of one Pidgeon address: its email, display name and send policy, what Patchy's key for it may do, its labels and the account's plan, never mail. Refresh labels takes a new one with the stored key.
+An immutable description of one Pidgeon address: its email, display name and send policy, what Patchy's key for it may do, whether it's a test address, its labels and the account's plan, never mail. Refresh labels takes a new one with the stored key.
 _Avoid_: mailbox, inbox snapshot
 
 **Admin key**:
-The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key. Revoking it revokes every key minted from it.
+The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key, live or test. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key, both in its mode. Revoking it revokes every key minted from it.
 _Avoid_: master key, account key, root key
 
 **Address key**:
-The Pidgeon key Patchy mints for one address, at `read` or `send`, and the only Pidgeon secret it keeps. It is named `Patchy <handle> <attempt> <code>`, the code its own submission's, checked to reach exactly its address before it is saved, and revokes itself when replaced or deleted; a replaced one stays retired, saved with its replacement, until it has.
+The Pidgeon key Patchy mints for one address, at `read` or `send`, and the only Pidgeon secret it keeps. It is named `Patchy <handle> <attempt>`, checked to reach exactly its address before it is saved, and revokes itself when replaced or deleted; a replaced one stays retired, saved with its replacement, until it has. Replace key and Change access are the only ways to a new one.
 _Avoid_: scoped key, API key (Pidgeon's word for every kind)
 
 **Send policy**:
 Pidgeon's rule for who an address may write to: `reply_only`, answering only people who wrote first, `open`, or an allow-list. Addresses Patchy creates start reply-only.
 _Avoid_: permission, access (what the key may do)
 
-**Rotate key**:
-A Pidgeon address key giving itself a new secret, with no admin key, while the old secret works for a grace period. It is recorded as unknown before Pidgeon is asked, so an answer that never came, or a server that stopped mid-rotation, keeps Rotate off until Replace key; it is never retried. Distinct from **Replace key**, which mints a new key with an admin key.
-_Avoid_: refresh, renew (the store's name for it)
+**Test-mode connection**:
+A Pidgeon connection made with a test admin key, to a test address: its mail stays in Pidgeon, and Pidgeon deletes the address a day after it's made. It shows "Test · mail stays in Pidgeon" wherever it's listed. Distinct from Test connection, the action that checks a connection's credentials still work.
+_Avoid_: sandbox, demo connection
 
 **Revision**:
 The connection's server-assigned metadata revision identifying one schema snapshot. A published declaration keeps the revision it was generated against; refreshing discovery never rewrites it.

@@ -16,10 +16,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Random from "effect/Random";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
@@ -576,14 +579,18 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 
 /**
  * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
- * would, the page's script included. One already connected under its name is left be.
+ * would, the page's script included: the test admin key, then a new address on pidgeon.email with
+ * a code of this environment's after its local part. One already connected under its name is left
+ * be.
  */
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
   email: string,
-  connection: ScenarioConnection
+  connection: ScenarioConnection,
+  adminKey: Redacted.Redacted<string>
 ) {
   const name = `${connection.integration}/${connection.handle}`;
+  const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
   yield* Effect.tryPromise({
     try: async () => {
       const { chromium } = await import("@playwright/test");
@@ -595,9 +602,11 @@ const connectSource = Effect.fn("connectSource")(function* (
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
         await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
-        await page.locator("#pidgeon-key").fill(connection.key);
+        await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
         await page.getByRole("button", { name: "Find addresses" }).click();
-        await page.locator("label.tile-option", { hasText: connection.address }).click();
+        await page.locator("label.tile-option", { hasText: "New address" }).click();
+        await page.locator("#pidgeon-local").fill(localPart);
+        await page.locator("#pidgeon-display").fill(connection.displayName);
         await page
           .locator("label.choice-card")
           .filter({
@@ -725,11 +734,19 @@ const materialize = Effect.fn("materialize")(function* (
       };
       yield* fs.writeFileString(layout.manifest, encodeManifest(current));
     });
-  for (const connection of scenario.connections ?? []) {
-    yield* Console.error(
-      `  ${connection.integration}/${connection.handle}: connecting as ${publisher.name}`
-    );
-    yield* connectSource(manifest.apiUrl, publisher.email, connection);
+  const connections = scenario.connections ?? [];
+  const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
+  const pidgeonKey = connections.length === 0 ? Option.none() : yield* readPidgeonTestKey(devEnv);
+  for (const connection of connections) {
+    const name = `${connection.integration}/${connection.handle}`;
+    if (Option.isNone(pidgeonKey)) {
+      yield* Console.error(
+        `  ${name}: skipped. Put a Pidgeon test admin key in ${devEnv} as PIDGEON_TEST_ADMIN_KEY to connect it.`
+      );
+      continue;
+    }
+    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value);
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;

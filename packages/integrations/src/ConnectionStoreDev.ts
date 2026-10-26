@@ -106,7 +106,6 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       connect: unavailable,
       test: unavailable,
       rotate: unavailable,
-      renew: unavailable,
       retarget: unavailable,
       refresh: unavailable,
       disconnect: unavailable,

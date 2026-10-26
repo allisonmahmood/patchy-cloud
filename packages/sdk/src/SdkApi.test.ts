@@ -888,6 +888,7 @@ it.layer(layer)("SDK company generation", (it) => {
             sendPolicy: "reply_only"
           },
           access: "send" as const,
+          test: false,
           labels: [{ id: "lbl-1", name: "Warranty", colour: "amber" }],
           plan: "free"
         };
@@ -895,7 +896,7 @@ it.layer(layer)("SDK company generation", (it) => {
         (id, company_id, integration, handle, description, mode, status, display, credentials,
          key_id, credential_revision, metadata_revision, created_by)
         VALUES ('sdk-pidgeon', ${identity.company.id}, 'pidgeon', 'support', 'Customer mail',
-          'company', 'connected', ${sql.json({ email: "support@acme.example", identityId: "idn", sendPolicy: "reply_only", access: "send", key: { id: "k", name: "Patchy support x", madeAt: "2026-10-25T00:00:00.000Z" } })},
+          'company', 'connected', ${sql.json({ email: "support@acme.example", identityId: "idn", sendPolicy: "reply_only", access: "send", test: false, key: { id: "k", name: "Patchy support x", madeAt: "2026-10-25T00:00:00.000Z" } })},
           'not-a-valid-ciphertext', 'missing-key', 1, 3, ${identity.user.id})`;
         yield* sql`INSERT INTO connection_snapshots
         (connection_id, company_id, integration, revision, snapshot)

@@ -81,6 +81,16 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
           })
       ],
       [
+        // A Patchy bug, never a lost answer: the same Idempotency-Key with another request.
+        json(409, refusal("idempotency_mismatch", "That Idempotency-Key was used differently.")),
+        (error) => assert.deepInclude(error, { _tag: "PidgeonConflict" })
+      ],
+      [
+        // Test mode's dropped answer: the work was done, so it reads as an answer lost.
+        json(504, refusal("test_dropped", "Pidgeon-Test-Fail: drop dropped this answer.")),
+        (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 504 })
+      ],
+      [
         json(
           400,
           refusal("validation", "Too big: expected string to have <=60 characters", "name")
@@ -96,7 +106,14 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
       ],
       [
         json(429, refusal("rate_limited", "Slow down."), { "retry-after": "30" }),
-        (error) => assert.deepInclude(error, { retryAfterSeconds: 30 })
+        (error) => {
+          assert.deepInclude(error, { retryAfterSeconds: 30 });
+          assert.include(error.message, "Try again in 30 seconds.");
+        }
+      ],
+      [
+        json(429, refusal("rate_limited", "Slow down."), { "retry-after": "1500" }),
+        (error) => assert.include(error.message, "Try again in 25 minutes.")
       ],
       [
         json(500, refusal("internal", "Something went wrong.")),
@@ -135,6 +152,52 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
       { body: { data: { id: "m1" } }, replayed: true }
     );
   })
+);
+
+it.effect(
+  "waits out a write Pidgeon is still answering, then sends it again under the same key",
+  () =>
+    Effect.gen(function* () {
+      // Recorded: Pidgeon's answer while the first request with this Idempotency-Key runs.
+      const inProgress = () =>
+        json(
+          409,
+          refusal(
+            "idempotency_in_progress",
+            "The first request with this Idempotency-Key hasn't answered yet."
+          ),
+          { "retry-after": "2" }
+        );
+      const answers = [
+        inProgress(),
+        json(201, { data: { id: "k1", token: null } }, { "idempotent-replay": "true" })
+      ];
+      const { source, requests } = yield* over(() => answers.shift()!);
+      const request = {
+        method: "POST",
+        path: "/api-keys",
+        body: { name: "Patchy support attempt00001" },
+        idempotencyKey: "mint-1"
+      } as const;
+      const sent = yield* source.call(key, request, 60_000).pipe(Effect.forkChild);
+      for (let turn = 0; turn < 100 && requests.length < 1; turn++) yield* Effect.yieldNow;
+      yield* TestClock.adjust("2 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(sent), {
+        body: { data: { id: "k1", token: null } },
+        replayed: true
+      });
+      assert.deepStrictEqual(
+        requests.map((sentRequest) => sentRequest.headers["idempotency-key"]),
+        ["mint-1", "mint-1"]
+      );
+      // One still running at the deadline is a timeout, with nothing more sent.
+      const late = yield* over(inProgress);
+      assert.instanceOf(
+        yield* late.source.call(key, request, 1_000).pipe(Effect.flip),
+        Source.Timeout
+      );
+      assert.strictEqual(late.requests.length, 1);
+    })
 );
 
 it.effect("sends only to Pidgeon's API, with the key as a bearer token, never a path out", () =>
@@ -278,7 +341,5 @@ it.effect("keeps the key's stored form round-tripping, and refuses anything else
       ),
       Source.InvalidCredentials
     );
-    assert.isTrue(Source.isTestToken("pgn_test_abcdef"));
-    assert.isFalse(Source.isTestToken("pgn_live_abcdef"));
   })
 );
