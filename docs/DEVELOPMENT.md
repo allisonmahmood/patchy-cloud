@@ -607,15 +607,20 @@ can quote it.
   account holds an address that isn't ours. Every run and every developer's dev
   environment share that account's budgets: 120 requests a minute, 300 test
   mints an hour and, on the free plan, 10 active keys, test keys included, two of
-  them the admin keys. So the suite paces itself to about 48 calls a minute,
-  keeps at most three of its own keys alive at once, and waits out a 429 or a
-  full key count (402). Before it starts it sweeps what nobody uses any more:
-  Patchy-minted test keys that reach nothing and run-tagged test addresses older
-  than ten minutes; when it ends, its own, however it ended. CI runs one at a
-  time, queued, and runs `pnpm test:pidgeon:sweep` after the suite even when the
-  job is cancelled. `pnpm dev down` deletes an environment's Pidgeon
-  connections, which revokes their keys, so stopped environments don't hold
-  slots; evidence instances get this through their own `down`.
+  them the admin keys. So the suite refuses a key that isn't a test key before
+  changing anything, paces itself to about 48 calls a minute, keeps at most
+  three of its own keys alive at once, waits out a 429 or a full key count
+  (402), and stops using Pidgeon 20 minutes after it starts. Before it starts it
+  sweeps what nobody can still be using: run-tagged test addresses older than an
+  hour, then Patchy-named test keys below admin that reach nothing; when it ends,
+  its own, however it ended. The sweep never touches anything else. CI runs it as
+  its own workflow, `Pidgeon live`, one run at a time, queued and never
+  cancelled, and runs `pnpm test:pidgeon:sweep` after the suite however the job
+  ends. `pnpm dev down` and `reset` revoke the Pidgeon keys the instance's
+  database stores, by id, with the test key, before wiping anything; if they
+  can't, because the instance is stopped or Pidgeon refuses, they say which keys
+  and remove nothing, so run `pnpm dev` and try again. Evidence instances do this
+  through their own `down`.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

@@ -9,6 +9,7 @@
  * launcher, the worker agent launchers with their folder and state, and
  * `environment.json`, the manifest the card is printed from.
  */
+import { PidgeonSource } from "@patchy/integrations";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
+import { isTestKey } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import {
   loadScenario,
@@ -653,56 +655,6 @@ const connectSource = Effect.fn("connectSource")(function* (
 export const connectFailed = (connection: string, step: string, cause: unknown) =>
   new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
 
-/**
- * Deletes a scenario's connections through their pages as `email`, so each revokes the key Patchy
- * minted for it: a test key counts against the Pidgeon account's ten active keys. One a stored
- * version declares can't be deleted, and stays; the line says so.
- */
-const deleteConnections = Effect.fn("deleteConnections")(function* (
-  apiUrl: string,
-  email: string,
-  connections: ReadonlyArray<ScenarioConnection>
-) {
-  const results = yield* Effect.tryPromise({
-    try: async () => {
-      const { chromium } = await import("@playwright/test");
-      const browser = await chromium.launch();
-      try {
-        const page = await browser.newPage();
-        await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
-        );
-        const outcomes: Array<string> = [];
-        for (const connection of connections) {
-          const name = `${connection.integration}/${connection.handle}`;
-          const link = page.getByRole("link", { name, exact: true });
-          if ((await link.count()) === 0) continue;
-          const href = await link.first().getAttribute("href");
-          if (href === null) continue;
-          const response = await page.request.post(`${apiUrl}${href}/delete`, {
-            headers: { origin: new URL(apiUrl).origin },
-            maxRedirects: 0
-          });
-          outcomes.push(
-            response.status() === 303
-              ? `  ${name}: deleted, and its key revoked`
-              : `  ${name}: not deleted (${response.status()}), so its key stays in Pidgeon until an admin revokes it`
-          );
-        }
-        return outcomes;
-      } finally {
-        await browser.close();
-      }
-    },
-    catch: (cause) => Redacted.make(cause)
-  }).pipe(
-    Effect.orElseSucceed(() => [
-      "  Couldn't delete the scenario's connections, so their keys stay in Pidgeon until an admin revokes them."
-    ])
-  );
-  for (const line of results) yield* Console.error(line);
-});
-
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
 const loadSampleData = Effect.fn("loadSampleData")(function* (
   apiUrl: string,
@@ -816,6 +768,17 @@ const materialize = Effect.fn("materialize")(function* (
     if (Option.isNone(pidgeonKey)) {
       yield* Console.error(
         `  ${name}: skipped. Put a Pidgeon test admin key in ${devEnv} as PIDGEON_TEST_ADMIN_KEY to connect it.`
+      );
+      continue;
+    }
+    // A live key would make a live address and key, which nothing here takes down again.
+    const test = yield* isTestKey(pidgeonKey.value).pipe(
+      Effect.provide(PidgeonSource.layer),
+      Effect.orElseSucceed(() => false)
+    );
+    if (!test) {
+      yield* Console.error(
+        `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key, and dev environments only use one.`
       );
       continue;
     }
@@ -1086,6 +1049,16 @@ export const screenshot = Effect.fn("Environment.screenshot")(function* (
   });
 });
 
+/** Whether the worktree's environment is a scenario that connects Pidgeon. */
+export const connectsPidgeon = Effect.fn("connectsPidgeon")(function* (worktree: string) {
+  const path = yield* Path.Path;
+  const layout = layoutOf(yield* environmentDir(worktree), path);
+  const manifest = yield* readManifest(layout);
+  if (Option.isNone(manifest)) return false;
+  const scenario = yield* loadScenario(worktree, manifest.value.scenario).pipe(Effect.option);
+  return Option.isSome(scenario) && (scenario.value.scenario.connections ?? []).length > 0;
+});
+
 /**
  * Stops what `up` started outside the instance: patch dev sessions in the
  * workspace and the persons' browsers. Then deletes the environment folder.
@@ -1095,17 +1068,6 @@ export const tearDown = Effect.fn("Environment.tearDown")(function* (worktree: s
   const path = yield* Path.Path;
   const layout = layoutOf(yield* environmentDir(worktree), path);
   if (!(yield* fs.exists(layout.dir))) return false;
-  // While the instance still runs, its scenario's connections go, revoking the keys they hold.
-  const manifest = yield* readManifest(layout);
-  if (Option.isSome(manifest)) {
-    const scenario = yield* loadScenario(worktree, manifest.value.scenario).pipe(Effect.option);
-    const connections = Option.isSome(scenario) ? (scenario.value.scenario.connections ?? []) : [];
-    const publisher = manifest.value.people.find(
-      (person) => person.key === manifest.value.publisher
-    );
-    if (connections.length > 0 && publisher !== undefined)
-      yield* deleteConnections(manifest.value.apiUrl, publisher.email, connections);
-  }
   const env = yield* childEnv(layout);
   for (const repo of yield* workspaceRepos(layout))
     if (yield* fs.exists(path.join(repo, ".patchy", "dev")))

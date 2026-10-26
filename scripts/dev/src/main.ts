@@ -23,6 +23,7 @@
  * contains the current directory.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -52,7 +53,9 @@ import {
   type Served,
   UncommittedChanges
 } from "./evidence.js";
+import { developerEnvFile } from "./developerEnv.js";
 import {
+  connectsPidgeon,
   encodeManifest,
   findPerson,
   layoutFor,
@@ -67,6 +70,7 @@ import {
 import { checkFfmpeg, filmMarkdown, filmSide, loadFlow, sideBySide, Take } from "./film.js";
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
+import { revokeEnvironmentKeys } from "./pidgeon.js";
 import { alive, signal } from "./process.js";
 import { loadScenario, Person } from "./scenario.js";
 import {
@@ -510,6 +514,8 @@ const reset = Command.make(
     );
     const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
     const signIn = Option.isSome(recorded) ? signInOf(recorded.value) : "personas";
+    // Its database says which Pidgeon keys the instance holds: they go before it does.
+    if (Option.isSome(recorded)) yield* revokePidgeon(root, recorded.value.databaseUrl);
     // An environment's workspace describes the data about to be wiped, so it goes too.
     if (environment !== undefined) yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value, Console.error);
@@ -1636,6 +1642,19 @@ const trial = Command.make(
   )
 );
 
+/**
+ * Revokes the Pidgeon keys the worktree's instance stores, before its database is wiped; fails,
+ * removing nothing, when it can't.
+ */
+const revokePidgeon = Effect.fn("revokePidgeon")(function* (root: string, databaseUrl: string) {
+  const home = yield* Config.String("HOME");
+  yield* revokeEnvironmentKeys(
+    databaseUrl,
+    yield* developerEnvFile(home),
+    yield* connectsPidgeon(root)
+  );
+});
+
 const down = Command.make(
   "down",
   {},
@@ -1643,11 +1662,13 @@ const down = Command.make(
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
     const stateDir = yield* stateDirOf(root);
-    const evidenceRemoved = yield* removeEvidence(root);
-    const environmentRemoved = yield* tearDown(root);
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
+    // Its database says which Pidgeon keys the instance holds: they go before it does.
+    if (Option.isSome(recorded)) yield* revokePidgeon(root, recorded.value.databaseUrl);
+    const evidenceRemoved = yield* removeEvidence(root);
+    const environmentRemoved = yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
     const instanceRemoved = yield* fs.exists(stateDir);
     yield* fs.remove(stateDir, { recursive: true, force: true });
