@@ -1,12 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Ownership needs lstat and Windows needs junctions; Effect's FileSystem follows links and takes no link type.
 /**
  * `patchy setup`: register the package's bundled global skill with agents. It
- * copies the whole bundled directory to `~/.patchy/skills/patchy`, outside any
- * npm prefix, and links each agent skill path to that copy, so the skill
- * outlives the Node version that installed the CLI. Setup owns that copy, links
- * to it, and the links earlier releases made into a `patchy` package's
- * `skills/patchy` directory, including a dangling one left by an npm prefix
- * that no longer exists. Nothing else.
+ * copies the whole bundled directory to `~/.patchy/skills/patchy` and links
+ * each agent skill path to that copy, so the skill outlives the package it
+ * came from. Setup owns that copy, links to it, and the links earlier
+ * releases made into a `patchy` package's `skills/patchy` directory, including
+ * a dangling one left by an npm prefix that no longer exists. Nothing else.
  */
 import {
   cp,

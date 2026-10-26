@@ -183,17 +183,20 @@ renamed to `patches.json` or removed.
 | `patchy validate <file>`                            | Check the static-HTML policy without publishing or authenticating.                                                                                                                                                                       | `{ ok, warnings }`                                                                                                       |
 
 The copy follows the home directory, never `PATCHY_STATE_DIR`, and each run
-replaces it whole, so the skill outlives the npm prefix of the Node that
-installed the CLI. Setup owns that copy, links to it, and a link an earlier
-release made to a `patchy` package's `skills/patchy` directory, including a
-dangling one whose npm prefix is gone; it uses symlinks on POSIX and junctions
-on Windows. Correct links are left untouched and owned links into a package are
+replaces it whole, so the skill outlives the package it came from. Setup owns
+that copy, links to it, and a link an earlier release made to a `patchy`
+package's `skills/patchy` directory, including a dangling one whose npm prefix
+is gone; it uses symlinks on POSIX and junctions on Windows. Correct links are left untouched and owned links into a package are
 replaced. The copy and both links are checked before any changes: a directory,
 a file or a foreign link at an agent path, or a file or link at the copy's
 path, is exit 1 with `skill_conflict` naming the path. `skill` is the copy's
 `SKILL.md`. Remove leaves anything it does not own and reports it in
-`warnings`. The instance's `/install.mjs` runs `setup --json` by absolute path
-after installing.
+`warnings`. The instance's `/install.mjs` installs the release under
+`~/.patchy/cli`, outside every Node's npm prefix, puts the command at
+`~/.local/bin/patchy` (`patchy.cmd` on Windows), and runs `setup --json` by
+absolute path. The command runs on whichever Node is current; on one older than
+the package's `engines` floor it exits 1 before loading the CLI, with one
+`{ ok: false, error, kind: "local" }` document under `--json`.
 
 `status` walks the same key chain; `tokenSource` is `login`/`auth-set` only for a
 selected saved key with that provenance, otherwise null. It is not proof a key

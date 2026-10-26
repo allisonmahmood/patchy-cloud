@@ -178,6 +178,18 @@ await bundle({
   target: "node22",
   banner: { js: `#!/usr/bin/env node\n${requireBanner}` }
 });
+// The executable checks the running Node before it loads the CLI bundle.
+await bundle({
+  entryPoints: [path.join(packageDir, "src/bin.ts")],
+  outfile: path.join(distDir, "bin.js"),
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  // Old Node must parse it to reach the check.
+  target: "es2020",
+  external: ["./index.js"],
+  banner: { js: "#!/usr/bin/env node" }
+});
 await bundle({
   ...common,
   entryPoints: ["config", "server", "csv"].map((name) => path.join(packageDir, `src/${name}.ts`)),
@@ -246,7 +258,7 @@ try {
 } finally {
   await declarations.close();
 }
-await chmod(path.join(distDir, "index.js"), 0o755);
+for (const executable of ["bin.js", "index.js"]) await chmod(path.join(distDir, executable), 0o755);
 await mkdir(path.join(distDir, "licenses"), { recursive: true });
 await copyFile(
   path.join(packageDir, "node_modules/papaparse/LICENSE"),

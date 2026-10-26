@@ -58,6 +58,8 @@ vi.setConfig({ testTimeout: 30_000 });
 
 export const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const cliPath = path.join(packageDir, "dist/index.js");
+/** The package's `patchy` executable, which checks the running Node before loading `cliPath`. */
+export const binPath = path.join(packageDir, "dist/bin.js");
 export const releaseArtifact = JSON.parse(
   readFileSync(path.join(packageDir, "artifacts/release.json"), "utf8")
 ) as { digest: string; integrity: string };

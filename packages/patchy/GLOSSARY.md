@@ -57,11 +57,11 @@ An instance's public `/llms.txt` and `/install.mjs`, served before anyone signs 
 _Avoid_: landing page, docs site
 
 **Installer**:
-The instance's `/install.mjs`: a dependency-free Node script with the instance's address baked in. It verifies the current release's integrity, installs it globally with npm, then runs setup. Rerunning it is how a global CLI upgrades; inside a patch repo, refresh does.
+The instance's `/install.mjs`: a dependency-free Node script with the instance's address baked in. It verifies the current release's integrity, installs it under `~/.patchy/cli` with the command at `~/.local/bin/patchy`, so switching Node keeps it, then runs setup. Rerunning it is how a global CLI upgrades; inside a patch repo, refresh does.
 _Avoid_: bootstrapper, npm package, self-update
 
 **Setup**:
-`patchy setup`, which copies the package's global skill directory to `~/.patchy/skills/patchy` and links that copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`, so the skill outlives the Node version that installed the CLI. It owns only that copy, links to it and links an earlier setup made into a `patchy` package's skill, and refuses to replace anything else.
+`patchy setup`, which copies the package's global skill directory to `~/.patchy/skills/patchy` and links that copy as `~/.agents/skills/patchy` and `~/.claude/skills/patchy`, so the skill outlives the package it came from. It owns only that copy, links to it and links an earlier setup made into a `patchy` package's skill, and refuses to replace anything else.
 _Avoid_: onboarding, install
 
 **Publishing key**:

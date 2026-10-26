@@ -22,14 +22,13 @@ archive, its SHA-512 integrity, and its tested and accepted toolchain versions.
 unauthenticated tarball route is immutable. A same-version rebuild with different
 bytes gets a different URL, which `refresh` writes into the managed `patchy` pin.
 After installation, the global skill ships at `node_modules/patchy/skills/patchy/SKILL.md`
-in npm's global prefix. `patchy setup` copies that whole directory, references
-included, to `~/.patchy/skills/patchy` and links the copy as
+in the installer's `~/.patchy/cli`. `patchy setup` copies that whole directory,
+references included, to `~/.patchy/skills/patchy` and links the copy as
 `~/.agents/skills/patchy` and `~/.claude/skills/patchy`; the instance's
 `/install.mjs` runs it after installing the release, so an agent can read the
-skill straight away and later sessions discover it. The copy is outside the
-prefix: when a Node version manager switches or removes the Node that installed
-the CLI, agents keep the skill, which tells them to reinstall `patchy`. Each
-setup replaces the copy whole with the running release's skill.
+skill straight away and later sessions discover it. Like the CLI, the copy is
+outside every Node's npm prefix, so switching Node keeps both. Each setup
+replaces the copy whole with the running release's skill.
 
 Before serving discovery, the server validates the current archive's SHA-256 and
 SHA-512 against the metadata and writes those verified bytes under `sdk/` in its

@@ -2,10 +2,12 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
+  binPath,
   htmlFile,
   identity,
   readJson,
@@ -50,6 +52,31 @@ describe("patchy setup", () => {
       error: expect.stringContaining(claude)
     });
     expect(existsSync(agents)).toBe(false);
+  });
+});
+
+describe("the patchy executable", () => {
+  it("runs the CLI, and refuses a Node older than the package needs before loading it", async () => {
+    expect(await runCli(["--version"], { cli: binPath })).toMatchObject({
+      status: 0,
+      stdout: `${CURRENT_RELEASE}\n`
+    });
+    const preload = path.join(tempDir(), "old-node.mjs");
+    writeFileSync(
+      preload,
+      'Object.defineProperty(process.versions, "node", { value: "22.21.1" });\n'
+    );
+    const env = { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` };
+    const text = await runCli(["--version"], { cli: binPath, env });
+    expect(text).toMatchObject({ status: 1, stdout: "" });
+    expect(text.stderr).toContain("Patchy needs Node.js 22.22.0 or newer; this is 22.21.1.");
+    const json = await runCli(["status", "--json"], { cli: binPath, env });
+    expect(json).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(json.stderr)).toMatchObject({
+      ok: false,
+      kind: "local",
+      error: expect.stringContaining("this is 22.21.1")
+    });
   });
 });
 

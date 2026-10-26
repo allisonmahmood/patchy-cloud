@@ -75,7 +75,8 @@ A **publish key** identifies one attempt for its owning user. Before sending, th
 `patchy` is one private npm package containing the CLI, config builders, browser
 client and local dev runtime. Its version is the **release**. The instance serves
 its immutable tarball and reports its SHA-512 integrity through `GET /api/release`,
-and its `/install.mjs` installs that release globally; rerunning it upgrades.
+and its `/install.mjs` installs that release under `~/.patchy`, where a Node
+version change cannot take it; rerunning it upgrades.
 Public npm distribution remains future work. A repo pins that tarball as one
 devDependency, and `pnpm patchy …` runs the pinned copy.
 

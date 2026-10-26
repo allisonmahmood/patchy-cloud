@@ -647,7 +647,8 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
           "answer without authentication, no-store, with the instance's public base URL in " +
           "their commands. /llms.txt tells an outside agent how to install the CLI and log in; " +
           "/install.mjs fetches this release, verifies the tarball's SHA-512 integrity before " +
-          "installing it globally with npm, then runs patchy setup."
+          "installing it under ~/.patchy/cli with the command at ~/.local/bin/patchy, then runs " +
+          "patchy setup."
       )
     ),
     HttpApiEndpoint.post("generate", "/sdk/generate", {

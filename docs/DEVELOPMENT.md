@@ -538,15 +538,16 @@ can quote it.
   follow the portal's setup line, give it a throwaway machine, never the
   environment's agent: a folder under `/tmp`, outside your HOME so no
   `CLAUDE.md` above it loads, with its own HOME and npm prefix, no `PATCHY_*`,
-  and a `PATH` of its npm `bin`, Node's real directory (not a version manager's
-  shim) and the system tools, with no other `patchy` on it.
+  and a `PATH` of its `~/.local/bin`, Node's real directory (not a version
+  manager's shim) and the system tools, with no other `patchy` on it. Keep its
+  npm prefix: the installer removes a `patchy` it finds in npm's global prefix.
 
   ```sh
   url=http://127.0.0.1:29276   # the URL pnpm dev or up printed
   m=$(mktemp -d /tmp/patchy-machine.XXXXXX) && mkdir "$m/home" "$m/work"
   cat > "$m/env.sh" <<EOF
   export HOME='$m/home' npm_config_prefix='$m/npm' npm_config_cache='$m/npm-cache' npm_config_userconfig=/dev/null
-  export PATH='$m/npm/bin:$(dirname "$(node -p process.execPath)")':/usr/bin:/bin
+  export PATH='$m/home/.local/bin:$(dirname "$(node -p process.execPath)")':/usr/bin:/bin
   unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME PATCHY_API_URL PATCHY_API_TOKEN PATCHY_STATE_DIR
   EOF
   (. "$m/env.sh"; command -v patchy)   # must print nothing
@@ -556,10 +557,10 @@ can quote it.
   `CLAUDE_ENV_FILE` applies `env.sh` to every command the agent runs, while
   Claude Code itself keeps your HOME and so your login; setting HOME on `claude`
   logs it out, and never copy its credentials file. The two flags leave out
-  your own settings, skills and connectors. A version manager installs global
-  packages beside Node, so if the check prints a path, your own `patchy` is
-  there: use a Node version without one. The installer should print paths
-  inside `$m` and stop at the login handoff. To run the install line without an
+  your own settings, skills and connectors. Installers before `~/.patchy/cli`
+  put `patchy` beside Node, so if the check prints a path, your own earlier
+  `patchy` is there: use a Node version without one. The installer should
+  print paths inside `$m` and stop at the login handoff. To run the install line without an
   agent, paste it into `(. "$m/env.sh" && cd "$m/work" && <line>)`. `rm -rf "$m"`
   removes the machine.
 
