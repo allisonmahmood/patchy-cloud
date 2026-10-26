@@ -55,7 +55,6 @@ import {
 } from "./evidence.js";
 import { developerEnvFile } from "./developerEnv.js";
 import {
-  connectsPidgeon,
   encodeManifest,
   findPerson,
   layoutFor,
@@ -70,7 +69,7 @@ import {
 import { checkFfmpeg, filmMarkdown, filmSide, loadFlow, sideBySide, Take } from "./film.js";
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
-import { revokeEnvironmentKeys } from "./pidgeon.js";
+import { takeDownRecorded } from "./pidgeon.js";
 import { alive, signal } from "./process.js";
 import { loadScenario, Person } from "./scenario.js";
 import {
@@ -514,10 +513,12 @@ const reset = Command.make(
     );
     const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
     const signIn = Option.isSome(recorded) ? signInOf(recorded.value) : "personas";
-    // Its database says which Pidgeon keys the instance holds: they go before it does.
-    if (Option.isSome(recorded)) yield* revokePidgeon(root, recorded.value.databaseUrl);
-    // An environment's workspace describes the data about to be wiped, so it goes too.
-    if (environment !== undefined) yield* tearDown(root);
+    // An environment's workspace describes the data about to be wiped, so it goes too, and what
+    // it made in Pidgeon before it.
+    if (environment !== undefined) {
+      yield* takeDownPidgeon(root);
+      yield* tearDown(root);
+    }
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value, Console.error);
     yield* fs.remove(stateDir, { recursive: true, force: true });
     const plan = yield* start(yield* computePlan(root, isPortFree, environment, signIn));
@@ -1643,16 +1644,12 @@ const trial = Command.make(
 );
 
 /**
- * Revokes the Pidgeon keys the worktree's instance stores, before its database is wiped; fails,
- * removing nothing, when it can't.
+ * Takes down the Pidgeon test addresses the worktree's environment recorded, and their keys, before
+ * the environment folder that records them goes; fails, removing nothing, when it can't.
  */
-const revokePidgeon = Effect.fn("revokePidgeon")(function* (root: string, databaseUrl: string) {
+const takeDownPidgeon = Effect.fn("takeDownPidgeon")(function* (root: string) {
   const home = yield* Config.String("HOME");
-  yield* revokeEnvironmentKeys(
-    databaseUrl,
-    yield* developerEnvFile(home),
-    yield* connectsPidgeon(root)
-  );
+  yield* takeDownRecorded((yield* layoutFor(root)).pidgeon, yield* developerEnvFile(home));
 });
 
 const down = Command.make(
@@ -1665,8 +1662,8 @@ const down = Command.make(
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
-    // Its database says which Pidgeon keys the instance holds: they go before it does.
-    if (Option.isSome(recorded)) yield* revokePidgeon(root, recorded.value.databaseUrl);
+    // What the environment made in Pidgeon goes before the folder that records it.
+    yield* takeDownPidgeon(root);
     const evidenceRemoved = yield* removeEvidence(root);
     const environmentRemoved = yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);

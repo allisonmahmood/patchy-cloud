@@ -593,15 +593,23 @@ can quote it.
   through the connect page in a browser with a test admin key,
   `PIDGEON_TEST_ADMIN_KEY` from the environment or from
   `~/.config/patchy-cloud/dev.env` as Clerk's keys are, creating a new test
-  address on pidgeon.email; without the key it says so and skips Pidgeon.
-  `compare`, `film` and `transcript` hand the key in their environment to their
-  instances' `up` alone. The
-  offline suites need no Pidgeon: they seed connections and answer revokes and
+  address on pidgeon.email; without the key, or with one that isn't a test key,
+  it says so and skips Pidgeon. `up` records each test address it asks Pidgeon
+  for in the environment folder, and `pnpm dev down` and `reset` take those
+  down with the test key, needing no instance: they revoke each Patchy-named
+  test key below admin that reaches only those addresses, delete the addresses,
+  then wipe. If any of it fails, for want of the key or a refusal from Pidgeon,
+  they name the addresses and remove nothing; fix that and run them again. An
+  address connected by hand isn't recorded: delete its connection before `down`,
+  which revokes its key, or the live tier's stale sweep revokes the key once
+  Pidgeon has deleted the address, a day after it was made. `compare`, `film`
+  and `transcript` hand the key in their environment to their instances' `up`
+  and `down` alone. The offline suites need no Pidgeon: they seed connections and answer revokes and
   reads through `packages/integrations/src/test/pidgeon.ts`. What Pidgeon does
   is the live tier's, `pnpm test:pidgeon` with `PIDGEON_TEST_ADMIN_KEY` set
   (`node --env-file=$HOME/.config/patchy-cloud/pidgeon-test.env node_modules/vitest/vitest.mjs run --config vitest.pidgeon-live.config.ts`),
-  never in `pnpm test` or `pnpm verify`; CI runs it as `pidgeon-live` when the
-  repository has the secret. It makes failures with Pidgeon's `Pidgeon-Test-Fail`
+  never in `pnpm test` or `pnpm verify`; CI runs it when the repository has the
+  secret. It makes failures with Pidgeon's `Pidgeon-Test-Fail`
   header, creates only test addresses of its own, tags every key it mints with
   its run, removes both when it ends, and asserts only on what it made: the
   account holds an address that isn't ours. Every run and every developer's dev
@@ -613,14 +621,11 @@ can quote it.
   (402), and stops using Pidgeon 20 minutes after it starts. Before it starts it
   sweeps what nobody can still be using: run-tagged test addresses older than an
   hour, then Patchy-named test keys below admin that reach nothing; when it ends,
-  its own, however it ended. The sweep never touches anything else. CI runs it as
-  its own workflow, `Pidgeon live`, one run at a time, queued and never
-  cancelled, and runs `pnpm test:pidgeon:sweep` after the suite however the job
-  ends. `pnpm dev down` and `reset` revoke the Pidgeon keys the instance's
-  database stores, by id, with the test key, before wiping anything; if they
-  can't, because the instance is stopped or Pidgeon refuses, they say which keys
-  and remove nothing, so run `pnpm dev` and try again. Evidence instances do this
-  through their own `down`.
+  its own, however it ended. The sweep never touches anything else. CI runs it in
+  its own workflow, `Pidgeon live`: `pidgeon-changes` decides whether it runs,
+  `pidgeon-suite` runs it one run at a time, queued and never cancelled, then
+  `pnpm test:pidgeon:sweep` however it ended, and `pidgeon-live`, the check to
+  require, passes only when the suite passed or had no reason or no key to run.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

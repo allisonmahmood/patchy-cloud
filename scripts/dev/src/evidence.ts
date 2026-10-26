@@ -338,7 +338,7 @@ const readCloneState = Effect.fn("Evidence.readCloneState")(function* (
 
 /**
  * Takes a side's instance down with its own runner, which deletes its data, with the Pidgeon test
- * admin key so the keys the instance holds are revoked first.
+ * admin key so the test addresses its environment recorded, and their keys, go first.
  */
 const takeDown = (dir: string, side: SideName, env: Record<string, string>) =>
   Effect.flatMap(withPidgeonKey(env), (withKey) =>
@@ -402,7 +402,7 @@ const prepare = Effect.fn("Evidence.prepare")(function* (
 /**
  * `pnpm dev up <scenario>` in the checkout, checked by asking the instance itself. A Pidgeon test
  * admin key in this environment reaches `up` and `down` alone, so a scenario's Pidgeon connection
- * is made, and its key revoked again.
+ * is made, and its address and key taken down again.
  */
 const bringUp = Effect.fn("Evidence.bringUp")(function* (
   dir: string,

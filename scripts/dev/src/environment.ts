@@ -24,15 +24,9 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
-import { isTestKey } from "./pidgeon.js";
+import { isTestKey, recordAddress } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
-import {
-  loadScenario,
-  Person,
-  publisherToken,
-  type Scenario,
-  type ScenarioConnection
-} from "./scenario.js";
+import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -166,7 +160,9 @@ export const layoutOf = (dir: string, path: Path.Path) => ({
   codexHome: path.join(dir, "worker-state", "codex"),
   claudeWorker: path.join(dir, "worker-claude"),
   codexWorker: path.join(dir, "worker-codex"),
-  manifest: path.join(dir, "environment.json")
+  manifest: path.join(dir, "environment.json"),
+  /** The local parts of the Pidgeon test addresses `up` asked for, for `down` to take down. */
+  pidgeon: path.join(dir, "pidgeon-addresses.json")
 });
 type Layout = ReturnType<typeof layoutOf>;
 
@@ -592,18 +588,17 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 
 /**
  * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
- * would, the page's script included: the test admin key, then a new address on pidgeon.email with
- * a code of this environment's after its local part. One already connected under its name is left
- * be.
+ * would, the page's script included: the test admin key, then a new address on pidgeon.email at
+ * `localPart`. One already connected under its name is left be.
  */
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
   email: string,
   connection: ScenarioConnection,
-  adminKey: Redacted.Redacted<string>
+  adminKey: Redacted.Redacted<string>,
+  localPart: string
 ) {
   const name = `${connection.integration}/${connection.handle}`;
-  const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
   // Where it got to, for a failure's message; Playwright's own error stays redacted.
   let step = "starting the browser";
   yield* Effect.tryPromise({
@@ -782,8 +777,12 @@ const materialize = Effect.fn("materialize")(function* (
       );
       continue;
     }
+    // A code of this environment's after the local part makes the address its own. It's recorded
+    // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
+    const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+    yield* recordAddress(layout.pidgeon, localPart);
     yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
-    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value);
+    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value, localPart);
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
@@ -1047,16 +1046,6 @@ export const screenshot = Effect.fn("Environment.screenshot")(function* (
     },
     catch: (cause) => new ScreenshotFailed({ target, cause })
   });
-});
-
-/** Whether the worktree's environment is a scenario that connects Pidgeon. */
-export const connectsPidgeon = Effect.fn("connectsPidgeon")(function* (worktree: string) {
-  const path = yield* Path.Path;
-  const layout = layoutOf(yield* environmentDir(worktree), path);
-  const manifest = yield* readManifest(layout);
-  if (Option.isNone(manifest)) return false;
-  const scenario = yield* loadScenario(worktree, manifest.value.scenario).pipe(Effect.option);
-  return Option.isSome(scenario) && (scenario.value.scenario.connections ?? []).length > 0;
 });
 
 /**

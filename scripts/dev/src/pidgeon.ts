@@ -1,47 +1,28 @@
 /**
  * An environment's Pidgeon: the developer's test admin key, checked to be a test key before
- * anything is made with it, and the keys the environment's connections stored, revoked by their
- * ids before `down` or `reset` wipes the database that says which they are. The Pidgeon account
- * is shared, with ten active keys between everyone, so a key left behind takes a slot until
- * someone revokes it by hand.
+ * anything is made with it, and the test addresses `up` made, recorded in the environment folder.
+ * `down` and `reset` revoke the keys that reach only those addresses and delete the addresses
+ * before the folder that names them goes. The Pidgeon account is shared, with ten active keys
+ * between everyone, so a key left behind takes a slot until someone revokes it.
  */
 import { PidgeonSource } from "@patchy/integrations";
-import * as Sql from "@patchy/sql";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 import { readPidgeonTestKey } from "./developerEnv.js";
 
-export class PidgeonKeyNotTest extends Schema.TaggedError<PidgeonKeyNotTest>()(
-  "PidgeonKeyNotTest",
-  {}
-) {
-  override get message() {
-    return "PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key. Dev environments only use a test admin key, so nothing was made or revoked with it.";
-  }
-}
-
-/** The environment's database is down, and its scenario connected Pidgeon. */
-export class PidgeonKeysUnknown extends Schema.TaggedError<PidgeonKeysUnknown>()(
-  "PidgeonKeysUnknown",
-  {}
-) {
-  override get message() {
-    return "This environment's instance isn't running, so its Pidgeon keys can't be read from its database, and nothing was removed. Start it with `pnpm dev`, then run this again.";
-  }
-}
-
-/** Keys the environment holds that it couldn't revoke; nothing was removed, so they stay findable. */
-export class PidgeonKeysLeft extends Schema.TaggedError<PidgeonKeysLeft>()("PidgeonKeysLeft", {
-  ids: Schema.Array(Schema.String),
+/** What the environment made in Pidgeon isn't all gone, so nothing was removed and its record stays. */
+export class PidgeonLeft extends Schema.TaggedError<PidgeonLeft>()("PidgeonLeft", {
+  addresses: Schema.Array(Schema.String),
   why: Schema.String
 }) {
   override get message() {
-    return `This environment holds Pidgeon keys it couldn't revoke (${this.why}): ${this.ids.join(", ")}. Nothing was removed. Run this again, or revoke them in Pidgeon under Developers › API keys first.`;
+    const named = this.addresses.length > 0 ? ` (${this.addresses.join(", ")})` : "";
+    return `Nothing was removed: this environment's Pidgeon test addresses${named} and their keys aren't all taken down, because ${this.why}. Fix that and run this again; the environment keeps its record of them until then.`;
   }
 }
 
@@ -49,20 +30,29 @@ const Me = Schema.Struct({
   data: Schema.Struct({ key: Schema.NullOr(Schema.Struct({ test: Schema.Boolean })) })
 });
 const decodeMe = Schema.decodeUnknownOption(Me);
+const Page = Schema.Struct({
+  data: Schema.Array(Schema.Unknown),
+  next_cursor: Schema.optionalKey(Schema.NullOr(Schema.String))
+});
+const decodePage = Schema.decodeUnknownOption(Page);
+const Identity = Schema.Struct({
+  id: Schema.String,
+  local_part: Schema.String,
+  test: Schema.Boolean
+});
+const decodeIdentity = Schema.decodeUnknownOption(Identity);
 const Key = Schema.Struct({
-  data: Schema.Struct({
-    name: Schema.String,
-    access: Schema.String,
-    test: Schema.Boolean,
-    revoked_at: Schema.NullOr(Schema.String)
-  })
+  id: Schema.String,
+  name: Schema.String,
+  access: Schema.String,
+  test: Schema.Boolean,
+  revoked_at: Schema.NullOr(Schema.String),
+  identity_ids: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String)))
 });
 const decodeKey = Schema.decodeUnknownOption(Key);
-const Display = Schema.Struct({
-  key: Schema.Struct({ id: Schema.String }),
-  retired: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String })))
-});
-const decodeDisplay = Schema.decodeUnknownOption(Display);
+const Recorded = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeRecorded = Schema.decodeUnknownOption(Recorded);
+const encodeRecorded = Schema.encodeSync(Recorded);
 
 const soon = Effect.map(Clock.currentTimeMillis, (now) => now + 15_000);
 
@@ -76,113 +66,130 @@ export const isTestKey = Effect.fn("isTestKey")(function* (adminKey: Redacted.Re
   });
 });
 
-/**
- * Revokes the keys `ids` with the test admin key: only one that's a test key Patchy named below
- * admin, whatever stored its id. A key gone or already revoked counts as done; one Pidgeon
- * wouldn't answer for, or revoke, is left.
- */
-export const revokeKeys = Effect.fn("revokeKeys")(function* (
+/** Every item of one of Pidgeon's lists that `decode` reads; one it can't read is left out. */
+const listed = Effect.fn("listed")(function* <A>(
   adminKey: Redacted.Redacted<string>,
-  ids: ReadonlyArray<string>
+  path: string,
+  decode: (item: unknown) => Option.Option<A>
 ) {
   const source = yield* PidgeonSource.Source;
-  const left: string[] = [];
-  const skipped: string[] = [];
-  let revoked = 0;
-  for (const id of ids) {
-    const path = `/api-keys/${encodeURIComponent(id)}`;
-    const found = yield* source.call(adminKey, { method: "GET", path }, yield* soon).pipe(
-      Effect.map((answer) => decodeKey(answer.body)),
-      Effect.catchTag("PidgeonNotFound", () => Effect.succeed(Option.none())),
-      Effect.option
+  const items: A[] = [];
+  let cursor: string | null = null;
+  do {
+    const answer = yield* source.call(
+      adminKey,
+      { method: "GET", path, ...(cursor === null ? {} : { query: { cursor } }) },
+      yield* soon
     );
-    if (Option.isNone(found)) {
-      left.push(id);
-      continue;
+    const page = decodePage(answer.body);
+    if (Option.isNone(page)) return yield* new PidgeonSource.Unavailable({ stage: "response" });
+    for (const item of page.value.data) {
+      const value = decode(item);
+      if (Option.isSome(value)) items.push(value.value);
     }
-    // Gone, or already revoked: nothing to do.
-    if (Option.isNone(found.value) || found.value.value.data.revoked_at !== null) continue;
-    const key = found.value.value.data;
-    if (
-      !key.name.startsWith("Patchy ") ||
-      !key.test ||
-      !(key.access === "read" || key.access === "draft" || key.access === "send")
-    ) {
-      skipped.push(id);
-      continue;
-    }
-    const done = yield* source
-      .call(
-        adminKey,
-        { method: "DELETE", path, idempotencyKey: `patchy-dev-down-${id}` },
-        yield* soon
-      )
-      .pipe(
-        Effect.asVoid,
-        // Gone between the read and the revoke: done all the same.
-        Effect.catchTag("PidgeonNotFound", () => Effect.void),
-        Effect.option
-      );
-    if (Option.isSome(done)) revoked++;
-    else left.push(id);
-  }
-  return { revoked, left, skipped };
+    const next: string | null = page.value.next_cursor ?? null;
+    // A cursor that repeats would never end the list.
+    cursor = next === cursor ? null : next;
+  } while (cursor !== null);
+  return items;
 });
 
-/** Every Pidgeon key id the environment's connections store, current and retired. */
-const storedKeyIds = (databaseUrl: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{
-      readonly display: unknown;
-    }>`SELECT display FROM connections WHERE integration = 'pidgeon'`;
-    return rows.flatMap((row) =>
-      Option.match(decodeDisplay(row.display), {
-        onNone: () => [],
-        onSome: (display) => [display.key.id, ...(display.retired ?? []).map((item) => item.id)]
-      })
+/**
+ * Takes down what an environment made in Pidgeon, with the test admin key: the test addresses
+ * whose local parts are exactly `localParts`, and first each key that reaches nothing else. It
+ * only ever revokes a test key Patchy named below admin, and only deletes a test address; it
+ * refuses an admin key that isn't a test key before anything else. A key or address already gone
+ * counts as done. Fails, naming the addresses, when any of it doesn't happen.
+ */
+export const takeDown = Effect.fn("takeDownPidgeonAddresses")(function* (
+  adminKey: Redacted.Redacted<string>,
+  localParts: ReadonlyArray<string>
+) {
+  const left = (why: string) => new PidgeonLeft({ addresses: localParts, why });
+  const answered = <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.mapError(effect, (error) => left(`Pidgeon didn't answer (${error.message})`));
+  const source = yield* PidgeonSource.Source;
+  if (!(yield* answered(isTestKey(adminKey))))
+    return yield* left("PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key");
+  const wanted = new Set(localParts);
+  const addresses = (yield* answered(listed(adminKey, "/identities", decodeIdentity))).filter(
+    (identity) => identity.test && wanted.has(identity.local_part)
+  );
+  const ids = new Set(addresses.map((identity) => identity.id));
+  const keys = (yield* answered(listed(adminKey, "/api-keys", decodeKey))).filter(
+    (key) =>
+      key.revoked_at === null &&
+      key.name.startsWith("Patchy ") &&
+      key.test &&
+      (key.access === "read" || key.access === "draft" || key.access === "send") &&
+      (key.identity_ids ?? []).length > 0 &&
+      (key.identity_ids ?? []).every((id) => ids.has(id))
+  );
+  const gone = (path: string) =>
+    Effect.flatMap(soon, (deadline) =>
+      source.call(adminKey, { method: "DELETE", path }, deadline)
+    ).pipe(
+      Effect.asVoid,
+      // Gone already: done all the same.
+      Effect.catchTag("PidgeonNotFound", () => Effect.void)
     );
-  }).pipe(Effect.provide(Sql.layerFromUrl(Redacted.make(databaseUrl))), Effect.scoped);
+  // Keys first: once its address is gone, a key reaches nothing and this can't tell it's ours.
+  for (const key of keys)
+    yield* gone(`/api-keys/${encodeURIComponent(key.id)}`).pipe(
+      Effect.mapError((error) => left(`Pidgeon didn't revoke key ${key.id} (${error.message})`))
+    );
+  for (const identity of addresses)
+    yield* gone(`/identities/${encodeURIComponent(identity.id)}`).pipe(
+      Effect.mapError((error) =>
+        left(`Pidgeon didn't delete ${identity.local_part} (${error.message})`)
+      )
+    );
+  return { revoked: keys.length, deleted: addresses.length };
+});
+
+/** The local parts recorded in `file`: none when there is no file. */
+const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return Option.none<ReadonlyArray<string>>();
+  const read = decodeRecorded(yield* fs.readFileString(file));
+  if (Option.isNone(read))
+    return yield* new PidgeonLeft({ addresses: [], why: `${file} couldn't be read` });
+  return read;
+});
 
 /**
- * Revokes the Pidgeon keys the environment's database stores, by their ids, with the developer's
- * test admin key. Only a test key Patchy named below admin is ever revoked. A key already gone
- * counts as done. Fails, so the caller removes nothing, when the keys can't be read and the
- * scenario connected Pidgeon, or when any can't be revoked.
+ * Records a test address's local part in `file` before `up` asks Pidgeon to make it, so `down`
+ * finds it even when the connect failed after Pidgeon made it.
  */
-export const revokeEnvironmentKeys = Effect.fn("revokeEnvironmentKeys")(function* (
-  databaseUrl: string,
-  devEnvFile: string,
-  connected: boolean
+export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
+  file: string,
+  localPart: string
 ) {
-  const ids = yield* storedKeyIds(databaseUrl).pipe(
-    Effect.timeoutOption("10 seconds"),
-    Effect.orElseSucceed(() => Option.none<ReadonlyArray<string>>())
-  );
-  if (Option.isNone(ids)) {
-    if (connected) return yield* new PidgeonKeysUnknown({});
-    return;
-  }
-  if (ids.value.length === 0) return;
+  const fs = yield* FileSystem.FileSystem;
+  const before = Option.getOrElse(yield* recorded(file), () => []);
+  yield* fs.writeFileString(file, encodeRecorded([...before, localPart]));
+});
+
+/**
+ * For `down` and `reset`: takes down the test addresses recorded in `file`, and their keys, with
+ * the developer's test admin key. Nothing recorded, nothing to do, and no call to Pidgeon.
+ */
+export const takeDownRecorded = Effect.fn("takeDownRecordedPidgeon")(function* (
+  file: string,
+  devEnvFile: string
+) {
+  const localParts = yield* recorded(file);
+  if (Option.isNone(localParts) || localParts.value.length === 0) return;
   const adminKey = yield* readPidgeonTestKey(devEnvFile);
   if (Option.isNone(adminKey))
-    return yield* new PidgeonKeysLeft({ ids: ids.value, why: "no PIDGEON_TEST_ADMIN_KEY" });
-  const pidgeon = PidgeonSource.layer;
-  const test = yield* isTestKey(adminKey.value).pipe(
-    Effect.provide(pidgeon),
-    Effect.orElseSucceed(() => undefined)
+    return yield* new PidgeonLeft({
+      addresses: localParts.value,
+      why: `there's no PIDGEON_TEST_ADMIN_KEY in the environment or ${devEnvFile}`
+    });
+  const { revoked, deleted } = yield* takeDown(adminKey.value, localParts.value).pipe(
+    Effect.provide(PidgeonSource.layer)
   );
-  if (test === undefined)
-    return yield* new PidgeonKeysLeft({ ids: ids.value, why: "Pidgeon didn't answer" });
-  if (!test) return yield* new PidgeonKeyNotTest({});
-  const { revoked, left, skipped } = yield* revokeKeys(adminKey.value, ids.value).pipe(
-    Effect.provide(pidgeon)
+  yield* Console.error(
+    `  Pidgeon: revoked ${revoked} key${revoked === 1 ? "" : "s"} and deleted ${deleted} test address${deleted === 1 ? "" : "es"} this environment made.`
   );
-  for (const id of skipped)
-    yield* Console.error(`  Left Pidgeon key ${id} alone: it isn't a test key Patchy made.`);
-  if (left.length > 0) return yield* new PidgeonKeysLeft({ ids: left, why: "Pidgeon refused" });
-  if (revoked > 0)
-    yield* Console.error(
-      `  Revoked ${revoked === 1 ? "the Pidgeon key" : `${revoked} Pidgeon keys`} this environment held.`
-    );
 });
