@@ -370,7 +370,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
+      const identity = yield* admission.forPatch?.(input) ?? admission.admit;
       if (principal === null || principal.userId !== identity.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const find = (versionId?: string) =>
@@ -404,6 +404,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ...loaded,
         principal,
         identity: identity.identity,
+        ...(identity.externalRecipient ? { externalRecipient: true } : {}),
         correlationId: generation
       };
       let servedTier = loaded.patchTier;
@@ -856,7 +857,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
+      const identity = yield* admission.forPatch?.(input) ?? admission.admit;
       if (principal === null || principal.userId !== identity.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;

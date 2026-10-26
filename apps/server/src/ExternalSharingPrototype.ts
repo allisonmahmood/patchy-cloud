@@ -1,12 +1,13 @@
 /**
  * Local-only experiment for #924. Installed only on loopback in development/test.
  * Scratch tables deliberately stay outside the production migration record.
- * Real sessions, patch bytes and server-side grants; static patches only.
- * No company user, machine token or resource authority is created for a recipient.
+ * Real sessions, patch bytes, runtime operations and server-side grants.
+ * No company membership, machine token or direct resource credential is created.
  */
 import * as ByteSize from "effect/ByteSize";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -25,14 +26,16 @@ import {
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml, newInternalId } from "@patchy/core";
 import { Content, Patches } from "@patchy/patches";
+import { PatchAccess, RuntimeStream } from "@patchy/runtime";
+import { handlerKinds, WIRE_VERSION } from "@patchy/api";
 import { homeStyles, PortalPages, renderSharedHome } from "@patchy/portal";
 import { Pages } from "@patchy/serving";
 import {
   contentSecurityPolicy,
-  PATCH_CONTENT_SECURITY_POLICY,
   PATCH_PERMISSIONS_POLICY,
   shellContentSecurityPolicy,
-  renderPatchWrapper
+  renderPatchWrapper,
+  renderShellNotice
 } from "@patchy/serving/shell";
 
 const Share = Schema.Struct({
@@ -43,6 +46,7 @@ const Share = Schema.Struct({
   revoked: Schema.Boolean,
   name: Schema.String,
   title: Schema.String,
+  tier: Schema.Literals([0, 1, 2]),
   company: Schema.String,
   handle: Schema.String
 });
@@ -105,14 +109,8 @@ const script = `(() => {
   void check();
 })();`;
 
-export const make = Effect.gen(function* () {
+const initialize = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const session = yield* Session.Session;
-  const users = yield* Users.Users;
-  const companies = yield* Companies.Companies;
-  const mail = yield* InviteMail.InviteMail;
-  const patches = yield* Patches.Patches;
-  const content = yield* Content.Content;
   // Only this branch's loopback development/test instance reaches these scratch tables.
   yield* sql`CREATE TABLE IF NOT EXISTS prototype_external_shares (
     id TEXT PRIMARY KEY,
@@ -124,6 +122,59 @@ export const make = Effect.gen(function* () {
     UNIQUE(patch_id, email)
   )`;
   yield* sql`ALTER TABLE prototype_external_shares ADD COLUMN IF NOT EXISTS clerk_invitation_id TEXT`;
+});
+
+const recipientId = (subject: string) => `recipient:${subject}`;
+
+/** Only Runtime receives this identity. First-party company and builder doors still
+ * resolve real membership, and a grant never inserts or changes a users row.
+ */
+export const runtimeAccess = Layer.unwrap(
+  Effect.gen(function* () {
+    if (!(yield* enabled)) return Layer.empty;
+    const sql = yield* SqlClient.SqlClient;
+    const users = yield* Users.Users;
+    const companies = yield* Companies.Companies;
+    yield* initialize;
+    return Layer.succeed(
+      PatchAccess.recipient,
+      Effect.fn("ExternalSharingPrototype.runtimeAccess")(function* (claims, target) {
+        const [found] = yield* sql<{
+          readonly companyId: string;
+        }>`SELECT p.company_id AS "companyId"
+      FROM prototype_external_shares s JOIN patches p ON p.id=s.patch_id
+      JOIN patch_versions v ON v.patch_id=p.id AND v.id=${target.versionId}
+      WHERE p.id=${target.patchId} AND v.tier >= 1 AND s.subject=${claims.sub} AND NOT s.revoked
+      AND p.scope='company' AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL`;
+        if (found === undefined) return null;
+        const member = yield* users.findByClerkId(claims.sub);
+        if (member?.deactivatedAt || member?.companyId === found.companyId) return null;
+        const company = yield* companies.findById(found.companyId);
+        if (company === null) return null;
+        return {
+          user: {
+            id: recipientId(claims.sub),
+            name: claims.name || claims.email,
+            email: claims.email
+          },
+          company: { id: company.id, handle: company.handle, name: company.name },
+          admin: false
+        };
+      })
+    );
+  })
+);
+
+export const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const session = yield* Session.Session;
+  const users = yield* Users.Users;
+  const companies = yield* Companies.Companies;
+  const mail = yield* InviteMail.InviteMail;
+  const patches = yield* Patches.Patches;
+  const content = yield* Content.Content;
+  const streams = yield* Effect.serviceOption(RuntimeStream.RuntimeStream);
+  yield* initialize;
 
   const rows = Effect.fn("ExternalSharingPrototype.rows")(function* (
     query: Effect.Effect<ReadonlyArray<unknown>, SqlError>
@@ -135,10 +186,10 @@ export const make = Effect.gen(function* () {
     );
   });
   const columns = sql`s.id, p.id AS "patchId", s.email, s.subject, s.revoked,
-    p.name, p.title, c.name AS company, c.handle`;
+    p.name, p.title, v.tier, c.name AS company, c.handle`;
   const joins = sql`FROM prototype_external_shares s JOIN patches p ON p.id = s.patch_id
     JOIN companies c ON c.id = p.company_id JOIN patch_versions v ON v.id = p.current_version_id`;
-  const available = sql`p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL AND v.tier = 0`;
+  const available = sql`p.scope = 'company' AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL`;
   const forRecipient = (claims: Claims) =>
     rows(sql`
     SELECT ${columns} ${joins} WHERE NOT s.revoked AND ${available}
@@ -151,7 +202,7 @@ export const make = Effect.gen(function* () {
   ) {
     const found = yield* sql`SELECT s.id ${joins} WHERE s.patch_id = ${patchId}
       AND s.subject = ${claims.sub} AND NOT s.revoked AND ${available}
-      ${versionId === undefined ? sql`` : sql`AND v.id = ${versionId}`}`;
+      ${versionId === undefined ? sql`` : sql`AND EXISTS (SELECT 1 FROM patch_versions allowed WHERE allowed.patch_id=p.id AND allowed.id=${versionId})`}`;
     return found.length > 0;
   });
   const redirect = (path: string) =>
@@ -193,11 +244,11 @@ export const make = Effect.gen(function* () {
       const inventory =
         yield* sql`SELECT p.id, p.name FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
         WHERE p.company_id = ${user.companyId} AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL
-        AND p.scope = 'company' AND v.tier = 0 AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name`;
+        AND p.scope = 'company' AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name`;
       const owned =
         yield* rows(sql`SELECT ${columns} ${joins} WHERE p.company_id = ${user.companyId}
         AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name, s.email`);
-      management = `<section class="section"><h2 class="section-heading">Share a patch</h2><p class="supporting-text">Recipients can read the entire static page. Share only information intended for them.</p>${inventory.length === 0 ? "<p>No company-only static patches to share yet.</p>" : `<form class="confirmation-form" method="post" action="/~shared/grant"><label class="field-label" for="patchId">Patch</label><select class="field" name="patchId" id="patchId">${inventory.map((p) => `<option value="${escapeAttribute(p.id)}">${escapeHtml(p.name)}</option>`).join("")}</select><label class="field-label" for="email">Recipient’s email</label><input class="field" name="email" id="email" type="email" required><div class="actions"><button class="btn btn-primary" type="submit">Invite to this patch</button></div></form>`}</section>${owned.length === 0 ? "" : `<section class="section"><h2 class="section-heading">External access you manage</h2><div class="list">${owned.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p>${escapeHtml(share.email)} · ${share.revoked ? "Revoked" : share.subject === null ? "Invited" : "Accepted"}</p></div>${share.revoked ? "" : `<form method="post" action="/~shared/revoke/${escapeAttribute(share.id)}"><button class="btn btn-danger" type="submit">${share.subject === null ? "Cancel invitation" : "Revoke access"}</button></form>`}</div>${share.revoked ? "" : `<p class="supporting-text shared-link">Invitation: <a href="/~shared/invite/${escapeAttribute(share.id)}">${escapeHtml(session.publicBaseUrl)}/~shared/invite/${escapeHtml(share.id)}</a></p>`}</div>`).join("")}</div></section>`}`;
+      management = `<section class="section"><h2 class="section-heading">Share a patch</h2><p class="supporting-text">Recipients can use this live patch and its declared data and connections, including writes. Share only tools and data intended for them.</p>${inventory.length === 0 ? "<p>No company-only patches to share yet.</p>" : `<form class="confirmation-form" method="post" action="/~shared/grant"><label class="field-label" for="patchId">Patch</label><select class="field" name="patchId" id="patchId">${inventory.map((p) => `<option value="${escapeAttribute(p.id)}">${escapeHtml(p.name)}</option>`).join("")}</select><label class="field-label" for="email">Recipient’s email</label><input class="field" name="email" id="email" type="email" required><div class="actions"><button class="btn btn-primary" type="submit">Invite to this patch</button></div></form>`}</section>${owned.length === 0 ? "" : `<section class="section"><h2 class="section-heading">External access you manage</h2><div class="list">${owned.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p>${escapeHtml(share.email)} · ${share.revoked ? "Revoked" : share.subject === null ? "Invited" : "Accepted"}</p></div>${share.revoked ? "" : `<form method="post" action="/~shared/revoke/${escapeAttribute(share.id)}"><button class="btn btn-danger" type="submit">${share.subject === null ? "Cancel invitation" : "Revoke access"}</button></form>`}</div>${share.revoked ? "" : `<p class="supporting-text shared-link">Invitation: <a href="/~shared/invite/${escapeAttribute(share.id)}">${escapeHtml(session.publicBaseUrl)}/~shared/invite/${escapeHtml(share.id)}</a></p>`}</div>`).join("")}</div></section>`}`;
     }
     return pageResponse(
       {
@@ -257,7 +308,7 @@ export const make = Effect.gen(function* () {
       if (share.subject !== null) return redirect(`/${share.handle}/${share.name}`);
       return page(
         `Open ${share.name}`,
-        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(claims.email)}.</p><p>You can read this page without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
+        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(claims.email)}.</p><p>You can use this live patch without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
       );
     }
     const accept = path.match(/^\/~shared\/accept\/([^/]+)$/);
@@ -288,7 +339,7 @@ export const make = Effect.gen(function* () {
       if (selected.length === 0)
         return page(
           "Cannot share this patch",
-          "<p>Only the owner or a company admin can share a live, company-only static patch.</p>",
+          "<p>Only the owner or a company admin can share a live, company-only patch.</p>",
           403
         );
       const [grant] =
@@ -340,7 +391,9 @@ export const make = Effect.gen(function* () {
       const changed =
         yield* sql`UPDATE prototype_external_shares s SET revoked = true FROM patches p
         WHERE s.id = ${revoke[1]!} AND p.id = s.patch_id AND p.company_id = ${user.companyId}
-        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) RETURNING s.id, s.clerk_invitation_id AS "mailId"`;
+        AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) RETURNING s.id, s.patch_id AS "patchId", s.clerk_invitation_id AS "mailId"`;
+      if (changed[0] && Option.isSome(streams))
+        yield* streams.value.notify(String(changed[0].patchId));
       if (changed[0]?.mailId) {
         const cancelled = yield* mail
           .revoke(String(changed[0].mailId))
@@ -359,28 +412,36 @@ export const make = Effect.gen(function* () {
       return refused();
     if (request.method !== "GET") return null;
     const address = path.match(/^\/([a-z0-9-]+)\/([a-z0-9-]+)(\/.*)?$/);
+    const route = Pages.addressRouteOf(address?.[3] ?? "");
     const internal = path.match(/^\/~content\/([^/]+)\/([^/]+)$/);
     if (!address && !internal) return null;
     const resolved = address ? yield* patches.resolveName(address[1]!, address[2]!) : Option.none();
     const patchId = internal?.[1] ?? (Option.isSome(resolved) ? resolved.value.patchId : undefined);
     if (patchId === undefined) return null;
-    const found = yield* patches.find(patchId);
+    const found = yield* patches.find(patchId, undefined, internal?.[2]);
     if (Option.isNone(found)) return null;
     const { patch, version } = found.value;
     if (patch.scope === "public" || user?.companyId === patch.companyId) return null;
     if (
-      (internal && internal[2] !== version.id) ||
-      (address?.[3] && address[3] !== "/") ||
-      version.tier !== 0 ||
+      (address && route.versionNumber !== undefined) ||
       !(yield* canOpen(claims, patch.id, version.id))
     )
       return Pages.notFound;
+    if (version.tier >= 1 && version.wireVersion !== WIRE_VERSION)
+      return HttpServerResponse.text(renderShellNotice("needs_rebuild", request.url), {
+        status: 409,
+        contentType: "text/html",
+        headers: {
+          "cache-control": "private, no-store",
+          "content-security-policy": shellContentSecurityPolicy(0)
+        }
+      });
     const html = yield* content.read(version);
     const response = internal
       ? HttpServerResponse.text(html, {
           contentType: "text/html",
           headers: {
-            "content-security-policy": contentSecurityPolicy(0),
+            "content-security-policy": contentSecurityPolicy(version.tier),
             "permissions-policy": PATCH_PERMISSIONS_POLICY
           }
         })
@@ -390,17 +451,28 @@ export const make = Effect.gen(function* () {
             version,
             html,
             scope: "company",
+            viewerId: recipientId(claims.sub),
+            handlerKinds: handlerKinds(version.manifest.handlers),
+            ...(version.tier >= 1
+              ? {
+                  nonce: newInternalId("boot"),
+                  base: `/${patch.companyHandle}/${patch.name}`,
+                  route: route.route
+                }
+              : {}),
             head: `${sessionScripts(session)}<script defer src="/~shared/session.js?patch=${escapeAttribute(patch.id)}&amp;version=${escapeAttribute(version.id)}"></script>`
           }),
           {
             contentType: "text/html",
             headers: {
               "content-security-policy": session.clerk
-                ? shellContentSecurityPolicy(0, session.clerk.frontendApiHost).replace(
+                ? shellContentSecurityPolicy(version.tier, session.clerk.frontendApiHost).replace(
                     "connect-src ",
                     "connect-src 'self' "
                   )
-                : `${PATCH_CONTENT_SECURITY_POLICY}; script-src 'self'; connect-src 'self'`
+                : version.tier === 0
+                  ? `${shellContentSecurityPolicy(0)}; script-src 'self'; connect-src 'self'`
+                  : shellContentSecurityPolicy(version.tier)
             }
           }
         );

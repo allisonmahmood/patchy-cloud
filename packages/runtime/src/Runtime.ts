@@ -442,6 +442,7 @@ export interface Execution {
 
 export interface AdmittedIdentity {
   readonly viewer: NonNullable<Binding.Binding["Service"]["identity"]>;
+  readonly externalRecipient?: boolean;
   readonly reauthorize: Effect.Effect<
     NonNullable<Binding.Binding["Service"]["identity"]>,
     RuntimeError
@@ -458,6 +459,8 @@ export interface Options {
   >;
   /** The read-only shell handshake may recover a stale cookie before binding its principal. */
   readonly bootstrapIdentity: Options["identity"];
+  /** Host admission scoped to the loaded patch; ordinary dev adapters use identity. */
+  readonly identityForPatch?: (target: LoadedVersions.LoadedVersion) => Options["identity"];
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   /**
@@ -618,6 +621,7 @@ export const make = (
         )
           return yield* new ShellOutdated({});
         let identity: Binding.Binding["Service"]["identity"] = null;
+        let externalRecipient = false;
         let reauthorize: AdmittedIdentity["reauthorize"] = Effect.fail(new AccessDenied({}));
         if (
           principalBootstrap &&
@@ -635,8 +639,11 @@ export const make = (
         )
           return yield* new PublicUnavailable({});
         if (version.scope !== "public" || input.op !== "me") {
-          const admitted = yield* principalBootstrap ? options.bootstrapIdentity : options.identity;
+          const admitted = yield* principalBootstrap
+            ? options.bootstrapIdentity
+            : (options.identityForPatch?.(version) ?? options.identity);
           identity = admitted.viewer;
+          externalRecipient = admitted.externalRecipient ?? false;
           reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
@@ -644,6 +651,7 @@ export const make = (
         const binding = Binding.Binding.of({
           ...version,
           identity,
+          ...(externalRecipient ? { externalRecipient: true } : {}),
           principal: identity === null ? null : { userId: identity.user.id },
           correlationId: newInternalId("call")
         });

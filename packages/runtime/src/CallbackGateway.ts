@@ -243,6 +243,16 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       GuestProtocol.CallbackReply,
       Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
     > {
+      let identity = capability.binding.identity;
+      if (capability.binding.externalRecipient) {
+        identity = yield* capability.reauthorize;
+        if (
+          identity.company.id !== capability.binding.companyId ||
+          identity.user.id !== capability.binding.identity?.user.id
+        )
+          return yield* new Runtime.AccessDenied({});
+        yield* capabilities.resolve(token, attempt);
+      }
       if (request.op === "server.call") {
         if (request.body !== undefined || capability.run === undefined)
           return remember(refused("access_denied", "Nested handlers are unavailable."), 403);
@@ -287,6 +297,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         : "patch";
       let binding = Binding.Binding.of({
         ...capability.binding,
+        identity,
         effectivePrincipal,
         invocationId: attempt.invocationId,
         correlationId: newInternalId("call"),
@@ -296,7 +307,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         GuestProtocol.CallbackReply,
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
-        if (viewerAuthority(request.op)) {
+        if (!binding.externalRecipient && viewerAuthority(request.op)) {
           const identity = yield* capability.reauthorize;
           if (
             identity.company.id !== binding.companyId ||

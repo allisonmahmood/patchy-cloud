@@ -189,7 +189,8 @@ const services = Layer.mergeAll(
             Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
           )
         ),
-        Layer.provide(StreamAdmission.layer)
+        Layer.provide(StreamAdmission.layer),
+        Layer.provide(ExternalSharingPrototype.runtimeAccess)
       );
       // The invocation that runs a page's calls also runs agents' calls at Patchy MCP's door,
       // which finds it, when the host runs patch code at all, beside Runtime.

@@ -386,7 +386,9 @@ const versionNumberOf = (segment: string | undefined) => {
 };
 
 /** Every reserved segment is refused except the version selector at the address root. */
-const addressRouteOf = (suffix: string): { versionNumber?: number | null; route: string } => {
+export const addressRouteOf = (
+  suffix: string
+): { versionNumber?: number | null; route: string } => {
   let segments: string[];
   try {
     segments = suffix === "" ? [] : decodeURIComponent(suffix.slice(1)).split("/");
