@@ -85,9 +85,15 @@ function requestPath(target: string, pathname: string): string | null {
 
 const script = `(() => {
   const url = new URL(document.currentScript.src);
+  const probe = () => fetch('/~shared/access/' + url.searchParams.get('patch') + '/' + url.searchParams.get('version'), { cache: 'no-store', redirect: 'manual' });
   const check = async () => {
     try {
-      const reply = await fetch('/~shared/access/' + url.searchParams.get('patch') + '/' + url.searchParams.get('version'), { cache: 'no-store' });
+      let reply = await probe();
+      // A stale cookie can start Clerk's handshake; keep that hop outside fetch.
+      // Refresh through the existing session client, then recheck the grant itself.
+      if (reply.status === 401 || reply.type === 'opaqueredirect') {
+        if (await window.patchySession?.refresh() === 'refreshed') reply = await probe();
+      }
       if (reply.ok) return;
     } catch {}
     document.querySelector('#patch')?.remove();
