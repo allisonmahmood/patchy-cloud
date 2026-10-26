@@ -242,9 +242,10 @@ export interface Swept {
 
 /**
  * Revokes keys and deletes test addresses the live tier left: this run's, by its tag, and, when
- * `stale`, anyone's that no run still uses. A stale key is one Patchy minted, a test key below
- * admin that reaches nothing because its address is gone; a stale address is a run-tagged test
- * address. Only ours: never a live address, an admin key or one Patchy didn't name.
+ * `stale`, anyone's that no run still uses. It only ever touches a key named `Patchy …`, in test
+ * mode and below admin: this run's, or a stale one, reaching nothing because its address is gone.
+ * It only ever deletes a test address: this run's, or a stale run-tagged one. Never a live
+ * address, an admin key or a key Patchy didn't name.
  */
 export const sweep = (stale: boolean) =>
   Effect.gen(function* () {
@@ -254,16 +255,18 @@ export const sweep = (stale: boolean) =>
     let addresses = 0;
     for (const key of yield* everything("/api-keys")) {
       const name = text(key, "name");
-      const ours = name.startsWith(`Patchy ${RUN}`);
+      // Never anything but a test key Patchy named, below admin: never an admin key, ours or not.
+      if (
+        key.revoked_at !== null ||
+        !name.startsWith("Patchy ") ||
+        key.test !== true ||
+        !(key.access === "read" || key.access === "draft" || key.access === "send")
+      )
+        continue;
+      const ours = name.startsWith(`Patchy ${RUN}-`);
       const dead =
-        stale &&
-        name.startsWith("Patchy ") &&
-        key.test === true &&
-        key.access !== "admin" &&
-        Array.isArray(key.identity_ids) &&
-        key.identity_ids.length === 0 &&
-        older(key);
-      if (key.revoked_at !== null || !(ours || dead)) continue;
+        stale && Array.isArray(key.identity_ids) && key.identity_ids.length === 0 && older(key);
+      if (!(ours || dead)) continue;
       const revoked = yield* source
         .call(admin(), { method: "DELETE", path: `/api-keys/${text(key, "id")}` }, until())
         .pipe(Effect.option);

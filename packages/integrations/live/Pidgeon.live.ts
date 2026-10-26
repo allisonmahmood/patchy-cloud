@@ -69,9 +69,6 @@ const decodeMe = Schema.decodeUnknownSync(
     })
   })
 );
-const decodeMinted = Schema.decodeUnknownSync(
-  Schema.Struct({ data: Schema.Struct({ id: Schema.String, token: Schema.String }) })
-);
 
 type Pidgeon = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
 const pidgeon = (connection: ConnectionStore.Connection): Pidgeon => {
@@ -195,59 +192,35 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
           })
       );
 
-      it.effect(
-        "refuses a key that isn't an admin key over the whole account, creating nothing",
-        () =>
-          Effect.gen(function* () {
-            const store = yield* SqlConnectionStore.make;
-            const address = need(made.address, "The address from the first test");
-            const addressKey = (yield* stored(store, need(made.a, "The first connection"))).key
-              .token;
-            // An admin key over one address only, revoked again before the test ends.
-            const partial = decodeMinted(
-              (yield* Live.call(Live.admin(), {
-                method: "POST",
-                path: "/api-keys",
-                body: {
-                  name: `Patchy ${Live.RUN} partial`,
-                  identity_ids: [address],
-                  access: "admin"
-                },
-                idempotencyKey: `${Live.RUN}-partial`
-              })).body
-            ).data;
-            const before = Live.count(writes);
-            for (const [adminKey, refusal] of [
-              [addressKey, "PidgeonNotAdminKey"],
-              [partial.token, "PidgeonPartialAdminKey"]
-            ] as const) {
-              const error = yield* store
-                .connect({
-                  integration: "pidgeon",
-                  ...who,
-                  handle: handle("refused"),
-                  description: "",
-                  credentials: Keys.connectSecret({
-                    adminKey,
-                    attempt: attempt(),
-                    access: "read",
-                    address: { id: address }
-                  })
-                })
-                .pipe(Effect.flip);
-              assert.strictEqual(error._tag, refusal);
-              assert.isFalse(
-                error.message.includes(adminKey),
-                "A refusal echoed the key it refused."
-              );
-            }
-            assert.strictEqual(Live.count(writes), before);
-            yield* Live.call(Live.admin(), {
-              method: "DELETE",
-              path: `/api-keys/${partial.id}`,
-              idempotencyKey: `${Live.RUN}-partial-revoke`
-            });
-          })
+      // An admin key over some addresses only is refused offline (Keys.test.ts): minting one here
+      // would have the run touch an admin key, which the live tier never does.
+      it.effect("refuses a key that isn't an admin key, creating nothing", () =>
+        Effect.gen(function* () {
+          const store = yield* SqlConnectionStore.make;
+          const address = need(made.address, "The address from the first test");
+          const addressKey = (yield* stored(store, need(made.a, "The first connection"))).key.token;
+          const before = Live.count(writes);
+          const error = yield* store
+            .connect({
+              integration: "pidgeon",
+              ...who,
+              handle: handle("refused"),
+              description: "",
+              credentials: Keys.connectSecret({
+                adminKey: addressKey,
+                attempt: attempt(),
+                access: "read",
+                address: { id: address }
+              })
+            })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "PidgeonNotAdminKey");
+          assert.isFalse(
+            error.message.includes(addressKey),
+            "A refusal echoed the key it refused."
+          );
+          assert.strictEqual(Live.count(writes), before);
+        })
       );
 
       it.effect(

@@ -94,6 +94,19 @@ it.effect(
     })
 );
 
+it.effect("refuses an admin key that doesn't reach the whole account, or isn't admin", () =>
+  Effect.gen(function* () {
+    for (const [key, refusal] of [
+      [{ ...me.data.key, reaches_all_addresses: false }, "PidgeonPartialAdminKey"],
+      [{ ...me.data.key, access: "send" }, "PidgeonNotAdminKey"]
+    ] as const) {
+      const { sent, layer } = scripted([{ status: 200, body: { data: { ...me.data, key } } }]);
+      assert.strictEqual((yield* connect(layer))._tag, refusal);
+      assert.deepStrictEqual(sent, ["GET /me"]);
+    }
+  })
+);
+
 it.effect("refuses outright when nothing was lost, and nothing can have been minted", () =>
   Effect.gen(function* () {
     const { layer } = scripted([
