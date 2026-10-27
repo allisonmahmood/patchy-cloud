@@ -56,6 +56,7 @@ export const test = base.extend<object, { live: Live; externalSharing: boolean }
         skipPasswordRequirement: true,
         skipLegalChecks: true
       });
+      const ownedUsers = [user.id];
       const instance = await startInstance(user.id, externalSharing);
       const contexts: BrowserContext[] = [];
       try {
@@ -119,20 +120,27 @@ export const test = base.extend<object, { live: Live; externalSharing: boolean }
           seededPage,
           newContext,
           createOutsider: async () => {
-            await client.users.createUser({
+            const outsider = await client.users.createUser({
               emailAddress: [settings.outsiderEmail],
               firstName: "Outsider",
               lastName: "Live",
               skipPasswordRequirement: true,
               skipLegalChecks: true
             });
+            ownedUsers.push(outsider.id);
           }
         });
       } finally {
         try {
           await Promise.all(contexts.map((context) => context.close()));
         } finally {
-          await instance.close();
+          try {
+            await instance.close();
+          } finally {
+            // Worker options start separate instances with the same run-scoped emails.
+            // Release this worker's accounts before the next one creates its own.
+            for (const id of ownedUsers) await client.users.deleteUser(id);
+          }
         }
       }
     },
