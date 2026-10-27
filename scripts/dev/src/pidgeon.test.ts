@@ -11,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Option from "effect/Option";
 import {
   deliverMail,
+  isRecorded,
   isTestKey,
   recordAddress,
   takeDown,
@@ -58,6 +59,18 @@ const key = (
   identity_ids
 });
 const deletes = (sent: ReadonlyArray<string>) => sent.filter((route) => route.startsWith("DELETE"));
+
+it.effect("knows only the addresses up recorded, and none without a record", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const file = path.join(yield* fs.makeTempDirectoryScoped(), "pidgeon-addresses.json");
+    assert.isFalse(yield* isRecorded(file, "lumen-support-ab12cd"));
+    yield* recordAddress(file, "lumen-support-ab12cd");
+    assert.isTrue(yield* isRecorded(file, "lumen-support-ab12cd"));
+    assert.isFalse(yield* isRecorded(file, "lumen-support-zz99yy"));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+);
 
 it.effect("refuses a live admin key, by its own /me", () =>
   Effect.gen(function* () {

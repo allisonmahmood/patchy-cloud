@@ -24,7 +24,14 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
-import { decodeMail, deliverMail, isTestKey, MailFailed, recordAddress } from "./pidgeon.js";
+import {
+  decodeMail,
+  deliverMail,
+  isRecorded,
+  isTestKey,
+  MailFailed,
+  recordAddress
+} from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
@@ -261,6 +268,12 @@ const ReleaseJson = Schema.fromJsonString(
 const PublishJson = Schema.fromJsonString(
   Schema.Struct({ name: Schema.String, address: Schema.String })
 );
+const ConnectedJson = Schema.fromJsonString(
+  Schema.Struct({
+    snapshot: Schema.NullOr(Schema.Struct({ address: Schema.Struct({ email: Schema.String }) }))
+  })
+);
+const decodeConnected = Schema.decodeUnknownOption(ConnectedJson);
 const decodeRelease = Schema.decodeUnknownEffect(ReleaseJson);
 const decodePublish = Schema.decodeUnknownEffect(PublishJson);
 
@@ -646,6 +659,33 @@ const connectSource = Effect.fn("connectSource")(function* (
   });
 });
 
+/**
+ * A scenario connection an earlier start already made, by the environment's CLI: none when the
+ * instance has none by that name, else its address's local part, none inside when it can't be read.
+ */
+const connectedLocalPart = Effect.fn("connectedLocalPart")(function* (
+  layout: Layout,
+  env: Record<string, string>,
+  name: string
+) {
+  const result = yield* exec(
+    `Looking up ${name}`,
+    "patchy",
+    ["list", "connections", name, "--json"],
+    {
+      cwd: layout.dir,
+      env
+    }
+  );
+  if (result.exitCode !== 0) return Option.none<Option.Option<string>>();
+  return Option.some(
+    decodeConnected(result.stdout).pipe(
+      Option.flatMap((detail) => Option.fromNullishOr(detail.snapshot)),
+      Option.map((snapshot) => snapshot.address.email.slice(0, snapshot.address.email.indexOf("@")))
+    )
+  );
+});
+
 /** A connect page failure, its cause kept but never shown: it can quote the admin key. */
 export const connectFailed = (connection: string, step: string, cause: unknown) =>
   new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
@@ -781,12 +821,35 @@ const materialize = Effect.fn("materialize")(function* (
       );
       continue;
     }
-    // A code of this environment's after the local part makes the address its own. It's recorded
-    // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
-    const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
-    yield* recordAddress(layout.pidgeon, localPart);
-    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
-    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value, localPart);
+    // An earlier start that connected it, then stopped, left its address: its mail resumes there.
+    const existing = yield* connectedLocalPart(layout, env, name);
+    let localPart: string;
+    if (Option.isSome(existing)) {
+      if (
+        Option.isNone(existing.value) ||
+        !(yield* isRecorded(layout.pidgeon, existing.value.value))
+      ) {
+        yield* Console.error(
+          `  ${name}: already connected to an address this environment didn't make, so it gets no mail.`
+        );
+        continue;
+      }
+      localPart = existing.value.value;
+      yield* Console.error(`  ${name}: already connected`);
+    } else {
+      // A code of this environment's after the local part makes the address its own. It's recorded
+      // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
+      localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+      yield* recordAddress(layout.pidgeon, localPart);
+      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+      yield* connectSource(
+        manifest.apiUrl,
+        publisher.email,
+        connection,
+        pidgeonKey.value,
+        localPart
+      );
+    }
     if (connection.mail !== undefined) {
       const mail = yield* decodeMail(
         yield* fs.readFileString(path.join(scenarioDir, connection.mail))
@@ -796,7 +859,7 @@ const materialize = Effect.fn("materialize")(function* (
       );
       yield* Console.error(
         Option.match(delivered, {
-          onNone: () => `  ${name}: already connected, so its mail is the earlier start's.`,
+          onNone: () => `  ${name}: its address isn't in Pidgeon any more, so it gets no mail.`,
           onSome: (done) =>
             `  ${name}: ${done.messages} messages in ${done.conversations} conversations delivered through Pidgeon's test inbound mail.`
         })

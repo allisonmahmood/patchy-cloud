@@ -251,8 +251,9 @@ const sender = (from: string) => {
  * Delivers `mail` to the environment's test address `localPart` with the test admin key: the
  * address is shared by nobody else and lasts a day. Every write carries an Idempotency-Key made
  * from `localPart` and its place in the mail, so an `up` that runs again within the day sends
- * nothing twice. A 429 is waited out, a few times. Answers none when Pidgeon has no such address,
- * as when an earlier `up` connected the environment's address under another code.
+ * nothing twice, and one that resumes an earlier start's address finishes its mail. A 429 is
+ * waited out, a few times. Answers none when Pidgeon has no such address any more, as a day after
+ * it was made.
  */
 export const deliverMail = Effect.fn("deliverPidgeonMail")(function* (
   adminKey: Redacted.Redacted<string>,
@@ -382,6 +383,17 @@ const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
   if (Option.isNone(read))
     return yield* new PidgeonLeft({ addresses: [], why: `${file} couldn't be read` });
   return read;
+});
+
+/** Whether `up` recorded `localPart` in `file`: an address it made, never one connected by hand. */
+export const isRecorded = Effect.fn("isRecordedPidgeon")(function* (
+  file: string,
+  localPart: string
+) {
+  return Option.match(yield* recorded(file), {
+    onNone: () => false,
+    onSome: (localParts) => localParts.includes(localPart)
+  });
 });
 
 /**
