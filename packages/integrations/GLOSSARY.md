@@ -96,6 +96,22 @@ _Avoid_: unrestricted SQL, direct database access
 PostHog's one operation: a named, read-only query in PostHog's ClickHouse-flavoured SQL, with constant values for its placeholders and a declared result shape. Patchy builds the request, so patch code can only read. Its **name** labels the call in recent calls and in PostHog's own query log.
 _Avoid_: event export, insight (PostHog's saved chart)
 
+**Pidgeon operation**:
+One of the calls Patchy writes for a Pidgeon address: reads (`threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list`, `attachments.text`) travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which only a connection whose key sends may make. Patchy fills in the address, so patch code never names a path, an address id or a key.
+_Avoid_: email API, inbox call
+
+**Draft key**:
+The `idempotencyKey` a patch makes for one email when the person starts it and keeps until a send answers. Patchy sends Pidgeon a hash of the connection, the patch and the draft key as its Idempotency-Key, so the same draft within Pidgeon's 24 hours is one email.
+_Avoid_: request id, nonce
+
+**Held send**:
+A send or reply Pidgeon answers `pending_approval`: nothing was sent, and it waits as a draft for a person to approve in Pidgeon. Distinct from **held mail**, a message that arrived and that Pidgeon Firewall holds for a person, unreadable and unanswerable until someone releases it.
+_Avoid_: queued send, scheduled send
+
+**Send budget**:
+The sends and replies one Pidgeon connection makes per UTC day, every attempt counted durably before Pidgeon sees it. Past it, a send is refused `source_rate_limited` with `limit: "budget"` and nothing is sent.
+_Avoid_: quota, sending allowance (Pidgeon's own)
+
 **Project slots**:
 The queries one server process lets run at once against one PostHog region and project, shared by every connection to it. A call that can't get one before its deadline is refused busy, having sent nothing.
 _Avoid_: pool (a Postgres word for reusable sessions), rate limit (PostHog's own)
@@ -105,7 +121,7 @@ The calls one server process lets run at once against one Pidgeon address, share
 _Avoid_: pool, rate limit (Pidgeon's own)
 
 **Typed client**:
-The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query.
+The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query; the Pidgeon client exposes its address's operations, without the writes when its key only reads.
 _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 
 **Call log**:
