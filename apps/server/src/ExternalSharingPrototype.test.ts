@@ -10,7 +10,7 @@ import * as Cookies from "effect/http/Cookies";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
-import { PublishCreated } from "@patchy/api";
+import { CURRENT_RELEASE, MANIFEST_VERSION, PublishCreated, WIRE_VERSION } from "@patchy/api";
 import { MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
@@ -60,7 +60,7 @@ const invite = Effect.fn("RecipientHomeTest.invite")(function* (
   assert.strictEqual((yield* post("/~shared/grant", cookie, { patchId, email })).status, 303);
   const sql = yield* SqlClient.SqlClient;
   const [row] =
-    yield* sql`SELECT id FROM prototype_external_shares WHERE patch_id = ${patchId} AND email = ${email}`;
+    yield* sql`SELECT id FROM patch_grants WHERE patch_id = ${patchId} AND email = ${email}`;
   return String(row!.id);
 });
 
@@ -71,6 +71,70 @@ it.layer(
     PATCHY_DEV_PERSONAS_SECRET: "recipient-home-test-secret"
   }).pipe(Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })))
 )("signed-in recipient Home", (it) => {
+  it.effect("a company deactivation does not cancel another company's patch grant", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.make;
+      const other = yield* companies.create({
+        handle: "independent-recipient",
+        name: "Recipient Company",
+        clerkUserId: "independent-recipient",
+        email: "independent@example.com",
+        userName: "Recipient"
+      });
+      const owner = yield* login(DEV_SEED.email);
+      const recipient = yield* login(other.user.email);
+      const published = yield* publish(DEV_SEED.token, {
+        name: "independent-grant",
+        html: html("Independent grant"),
+        manifest: {
+          manifestVersion: MANIFEST_VERSION,
+          release: CURRENT_RELEASE,
+          tier: 1,
+          tables: {},
+          files: {},
+          uses: {}
+        }
+      });
+      assert.strictEqual(published.status, 201);
+      const shared = yield* published.json.pipe(Effect.flatMap(decodeCreated));
+      const privatePatch = yield* page("independent-private");
+      const id = yield* invite(shared.patchId, other.user.email, owner);
+      assert.strictEqual((yield* post(`/~shared/accept/${id}`, recipient)).status, 303);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${other.user.id}`;
+      assert.strictEqual((yield* get(new URL(shared.address).pathname, recipient)).status, 200);
+      assert.strictEqual(
+        (yield* get(new URL(privatePatch.address).pathname, recipient)).status,
+        404
+      );
+      assert.strictEqual((yield* get("/company", recipient)).status, 403);
+      const principal = { userId: `recipient:${other.user.clerkUserId}` };
+      const runtime = (patch: typeof shared) =>
+        send(
+          HttpClientRequest.post("/api/runtime/call").pipe(
+            HttpClientRequest.setHeaders({
+              cookie: recipient,
+              origin,
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify(principal)
+            }),
+            HttpClientRequest.bodyJsonUnsafe({
+              patchId: patch.patchId,
+              versionId: patch.versionId,
+              principal,
+              wire: WIRE_VERSION,
+              op: "me",
+              args: {}
+            })
+          )
+        );
+      assert.strictEqual((yield* runtime(shared)).status, 200);
+      assert.strictEqual((yield* runtime(privatePatch)).status, 403);
+      assert.strictEqual((yield* post(`/~shared/revoke/${id}`, owner)).status, 303);
+      assert.strictEqual((yield* runtime(shared)).status, 403);
+    })
+  );
+
   it.effect("needs no company or invitations and cannot self-enroll before visiting Home", () =>
     Effect.gen(function* () {
       const cookie = yield* login("empty@example.com");
@@ -330,7 +394,7 @@ it.layer(
           })
         );
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO prototype_external_shares (id,patch_id,email,created_by) VALUES ('share_clerk_test',${shared.patchId},'clerk-recipient@example.com',${DEV_SEED.userId})`;
+        yield* sql`INSERT INTO patch_grants (id,patch_id,email,created_by) VALUES ('share_clerk_test',${shared.patchId},'clerk-recipient@example.com',${DEV_SEED.userId})`;
         const accepted = yield* post("/~shared/accept/share_clerk_test", cookie);
         assert.strictEqual(accepted.status, 303);
         const reply = yield* get(new URL(shared.address).pathname, cookie);
@@ -460,8 +524,7 @@ it.layer(
           `${origin}/~shared/invite/${id}`
         );
         const sql = yield* SqlClient.SqlClient;
-        const [row] =
-          yield* sql`SELECT clerk_invitation_id FROM prototype_external_shares WHERE id = ${id}`;
+        const [row] = yield* sql`SELECT clerk_invitation_id FROM patch_grants WHERE id = ${id}`;
         assert.strictEqual(row!.clerk_invitation_id, "inv_offline");
         state.failRevoke = true;
         assert.strictEqual((yield* post(`/~shared/revoke/${id}`, owner())).status, 502);
@@ -487,14 +550,13 @@ it.layer(
       }).pipe(Effect.forkChild);
       yield* Effect.promise(() => state.started.promise);
       const sql = yield* SqlClient.SqlClient;
-      const [row] =
-        yield* sql`SELECT id FROM prototype_external_shares WHERE patch_id = ${shared.patchId}`;
+      const [row] = yield* sql`SELECT id FROM patch_grants WHERE patch_id = ${shared.patchId}`;
       assert.strictEqual((yield* post(`/~shared/revoke/${String(row!.id)}`, owner())).status, 303);
       state.pending.shift()!();
       assert.strictEqual((yield* Fiber.join(sending)).status, 303);
       assert.strictEqual(state.events.at(-1)!.path, "/v1/invitations/inv_offline/revoke");
       assert.deepStrictEqual(
-        yield* sql`SELECT revoked, clerk_invitation_id FROM prototype_external_shares WHERE id = ${String(row!.id)}`,
+        yield* sql`SELECT revoked, clerk_invitation_id FROM patch_grants WHERE id = ${String(row!.id)}`,
         [{ revoked: true, clerk_invitation_id: null }]
       );
       state.holdCreate = false;
@@ -505,11 +567,12 @@ it.layer(
 it.layer(server({ NODE_ENV: "test", PATCHY_DEV_EXTERNAL_SHARING: "true" }))(
   "sharing stays local",
   (it) => {
-    it.effect("does not install sharing on a public origin even with the dev flag", () =>
+    it.effect("migrates grants but leaves sharing disabled on a public origin", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        const [row] = yield* sql`SELECT to_regclass('prototype_external_shares')::text AS name`;
-        assert.strictEqual(row!.name, null);
+        const [row] = yield* sql`SELECT to_regclass('patch_grants')::text AS name`;
+        assert.strictEqual(row!.name, "patch_grants");
+        assert.strictEqual((yield* get("/shared", signedInCookies())).status, 404);
       })
     );
   }

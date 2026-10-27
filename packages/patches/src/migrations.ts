@@ -109,5 +109,21 @@ export const migrations: Migrations = {
     PRIMARY KEY (user_id, patch_id)
     )`,
     `CREATE INDEX patch_opens_patch_id_idx ON patch_opens(patch_id)`
+  ),
+  "0028_patch_grants": ddl(
+    `CREATE TABLE patch_grants (
+      id TEXT PRIMARY KEY, patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      email TEXT NOT NULL CHECK (email = lower(email)), subject TEXT,
+      revoked BOOLEAN NOT NULL DEFAULT false, created_by TEXT NOT NULL REFERENCES users(id),
+      clerk_invitation_id TEXT, UNIQUE (patch_id, email)
+    )`,
+    `CREATE INDEX patch_grants_subject_idx ON patch_grants(subject) WHERE NOT revoked`,
+    `DO $$ BEGIN
+      IF to_regclass('prototype_external_shares') IS NOT NULL THEN
+        INSERT INTO patch_grants (id,patch_id,email,subject,revoked,created_by,clerk_invitation_id)
+        SELECT id,patch_id,email,subject,revoked,created_by,clerk_invitation_id FROM prototype_external_shares
+        ON CONFLICT DO NOTHING;
+      END IF;
+    END $$`
   )
 };

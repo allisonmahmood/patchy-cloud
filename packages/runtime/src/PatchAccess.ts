@@ -34,11 +34,11 @@ export const admit: (
   const member = yield* RequireSession.resolveViewer.pipe(
     Effect.provideService(RequireSession.SignedIn, claims)
   );
-  if (HttpServerResponse.isHttpServerResponse(member)) return null;
   if (target !== undefined) {
     const external = yield* (yield* recipient)(claims, target);
     if (external !== null) return { viewer: external, externalRecipient: true };
   }
+  if (HttpServerResponse.isHttpServerResponse(member)) return null;
   return member === null
     ? null
     : {

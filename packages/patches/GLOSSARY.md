@@ -28,6 +28,10 @@ _Avoid_: transfer (a patch never moves companies), republish, claim
 Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
+**Patch grant**:
+An invitation or accepted permission for one signed-in person to use one patch without membership in its company. Grants from different companies are independent; a grant never grants company administration or publishing access.
+_Avoid_: company invitation, restricted company membership
+
 **Openable patch**:
 A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.
 _Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)

@@ -11,7 +11,7 @@ test.use({ serverEnvironment: { PATCHY_DEV_EXTERNAL_SHARING: "true" } });
 
 async function grant(instance: Instance, patch: Published, id: string, owner = "usr_dev") {
   await instance.platform.query(
-    "INSERT INTO prototype_external_shares (id,patch_id,email,subject,created_by) VALUES ($1,$2,$3,$4,$5)",
+    "INSERT INTO patch_grants (id,patch_id,email,subject,created_by) VALUES ($1,$2,$3,$4,$5)",
     [id, patch.patchId, recipient.email, recipient.sub, owner]
   );
 }
@@ -182,7 +182,7 @@ test("one recipient uses live patches from two companies without connecting thei
 
     // An existing company member receives B without losing membership or publishing rights in A.
     await instance.platform.query(
-      "INSERT INTO prototype_external_shares (id,patch_id,email,subject,created_by) VALUES ('share_member_b',$1,'dev@patchy.local','user_dev','usr_colleague')",
+      "INSERT INTO patch_grants (id,patch_id,email,subject,created_by) VALUES ('share_member_b',$1,'dev@patchy.local','user_dev','usr_colleague')",
       [b.patchId]
     );
     const memberPage = await owner.context().newPage();

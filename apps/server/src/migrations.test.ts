@@ -38,6 +38,36 @@ it("allocates migration ids once each, with no gaps", () => {
 // The first steps after launch that change connections run on databases that already hold them.
 const before = (step: string) =>
   Object.fromEntries(Object.entries(migrations).filter(([key]) => key < step));
+
+it.layer(Testing.emptyLayer(before("0028_patch_grants")))("durable patch grants", (it) => {
+  it.effect("preserves pending, accepted and revoked prototype invitations on upgrade", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id,handle,name) VALUES ('cmp_shares','shares','Shares')`;
+      yield* sql`INSERT INTO users (id,clerk_user_id,company_id,email,name,role)
+        VALUES ('usr_shares','clerk_shares','cmp_shares','owner@example.com','Owner','admin')`;
+      yield* sql`INSERT INTO patches (id,company_id,owner_user_id,title,name)
+        VALUES ('pat_shares','cmp_shares','usr_shares','Shared','shared')`;
+      yield* sql`CREATE TABLE prototype_external_shares (
+        id TEXT PRIMARY KEY, patch_id TEXT, email TEXT, subject TEXT, revoked BOOLEAN,
+        created_by TEXT, clerk_invitation_id TEXT)`;
+      yield* sql`INSERT INTO prototype_external_shares VALUES
+        ('share_pending','pat_shares','pending@example.com',NULL,false,'usr_shares','inv_pending'),
+        ('share_accepted','pat_shares','accepted@example.com','clerk_recipient',false,'usr_shares',NULL),
+        ('share_revoked','pat_shares','revoked@example.com','clerk_revoked',true,'usr_shares','inv_revoked')`;
+      yield* migrate(migrations);
+      assert.deepStrictEqual(
+        yield* sql`SELECT id,subject,revoked,clerk_invitation_id AS mail FROM patch_grants ORDER BY id`,
+        [
+          { id: "share_accepted", subject: "clerk_recipient", revoked: false, mail: null },
+          { id: "share_pending", subject: null, revoked: false, mail: "inv_pending" },
+          { id: "share_revoked", subject: "clerk_revoked", revoked: true, mail: "inv_revoked" }
+        ]
+      );
+    })
+  );
+});
+
 const beforeIntegrations = before("0011_connections_per_integration");
 /** The schema release 10 leaves: connections know their integration, handles are per company. */
 const release10 = before("0013_handles_per_integration");
