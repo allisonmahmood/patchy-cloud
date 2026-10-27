@@ -14,7 +14,7 @@ async function sharedPage(instance: Instance) {
   // The provider boundary stays offline. Acceptance and revocation use real UI forms,
   // signed-cookie verification, grant storage and page serving.
   await instance.platform.query(
-    "INSERT INTO prototype_external_shares (id,patch_id,email,created_by) VALUES ('share_browser',$1,$2,'usr_dev')",
+    "INSERT INTO patch_grants (id,patch_id,email,created_by) VALUES ('share_browser',$1,$2,'usr_dev')",
     [patch.patchId, recipient.email]
   );
   return patch;
@@ -148,10 +148,9 @@ for (const changedAccount of [false, true]) {
       : "refreshes an expired recipient session before treating a patch as revoked",
     async ({ browser, instance }) => {
       const patch = await sharedPage(instance);
-      await instance.platform.query(
-        "UPDATE prototype_external_shares SET subject=$1 WHERE id='share_browser'",
-        [recipient.sub]
-      );
+      await instance.platform.query("UPDATE patch_grants SET subject=$1 WHERE id='share_browser'", [
+        recipient.sub
+      ]);
       const context = await browser.newContext();
       try {
         await prepare(context, instance);

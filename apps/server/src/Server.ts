@@ -60,7 +60,14 @@ import {
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
-import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
+import {
+  Content,
+  LoadedVersions,
+  DeletionSweep,
+  PatchGrants,
+  Patches,
+  PatchesApi
+} from "@patchy/patches";
 import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
@@ -210,6 +217,7 @@ const services = Layer.mergeAll(
     })
   ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
 ).pipe(
+  Layer.provideMerge(PatchGrants.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       WideEventsPostHog.layer,

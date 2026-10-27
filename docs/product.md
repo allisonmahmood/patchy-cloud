@@ -742,7 +742,11 @@ The grant opens the owner's live patch, including tiers 1 and 2, rather than a c
 
 Owners and company admins see invitations, accepted grants and revocations at `/shared`. Revocation denies subsequent page loads, runtime calls, stream admission and server-handler callbacks, including nested calls. Open streams are notified and wrappers recheck at least every two seconds and on focus before removing the frame. An operation already admitted may finish, including committing a write; revocation does not undo data already read or written. Existing documents retain their loaded version across owner deployments, while reopening the address loads the latest version with the same data. Historical address selectors are not exposed to recipients.
 
+Patch grants use the normal migration record. One module owns invitation acceptance, owner/admin management, live patch and retained-version eligibility, and revocation; pages and runtime admission use that same decision. Revocation publishes the existing cross-host patch wake after durable denial. Deactivating a person's membership in one company does not end another company's independent patch grant.
+
 This is a whole-patch capability grant: it has no separate view/edit role, customer-specific row filter or data-redaction layer. Owners must share a tool whose declared capabilities and handler rules are appropriate for that recipient; changes to those capabilities affect recipients too. Production account rollout, an approval path from recipient to company member and finer data permissions remain unimplemented. Production onboarding and company/public sharing are unchanged.
+
+The intended production flow puts Share and recipient management inside each patch, separate from company membership settings. Sharers choose read-only or data-changing access and, where the patch supports it, named customer/project data scopes enforced on the server. Receive-only accounts require approval before creating a company. Those controls are not part of the local experiment yet.
 
 ### Roles
 
