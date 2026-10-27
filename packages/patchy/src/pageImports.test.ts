@@ -36,6 +36,31 @@ const save = (file: string, source: string) => {
   renameSync(`${file}.tmp`, file);
 };
 
+it("refuses server imports through a symlinked patch repo", async () => {
+  const root = page('import { secret } from "./server/private.ts"; console.log(secret);');
+  mkdirSync(path.join(root, "server"));
+  writeFileSync(path.join(root, "server/private.ts"), 'export const secret = "server-only";');
+  const alias = `${root}-link`;
+  symlinkSync(root, alias, "dir");
+  roots.push(alias);
+  let refusal: LocalError | undefined;
+  await expect(
+    build({
+      root: alias,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [
+        pageImports(alias, (error) => {
+          refusal = error;
+        })
+      ],
+      build: { write: false }
+    })
+  ).rejects.toThrow();
+  expect(refusal).toMatchObject({ code: "import_refused" });
+  expect(refusal?.message).toContain("the page can't import server/ at runtime");
+});
+
 it("keeps type-only module forms outside the runtime page graph", async () => {
   const root = page(`import type { Missing } from "lodash";
 import { type Other } from "lodash";

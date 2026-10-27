@@ -92,7 +92,7 @@ afterAll(() => {
 });
 
 export const tempDir = (): string => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "patchy-cli-test-"));
+  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), "patchy-cli-test-")));
   tempDirs.push(dir);
   return dir;
 };

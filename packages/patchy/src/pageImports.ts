@@ -17,6 +17,8 @@ export function pageImports(
   refused: (error: LocalError | undefined) => void,
   options: { readonly graph?: "page" | "server"; readonly sdkImports?: Set<string> } = {}
 ): Plugin {
+  // Match Vite's canonical module ids when the repo is reached through a symlink.
+  root = realpathSync(root);
   const sdkDirectory = realpathSync(path.join(root, "node_modules/patchy"));
   const graph = options.graph ?? "page";
   const entries = SDK_ENTRY_POINTS[graph];
