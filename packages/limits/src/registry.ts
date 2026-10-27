@@ -12,7 +12,8 @@ export type LimitRefusalCode =
   | "write_conflict"
   | "busy"
   | "patch_paused"
-  | "not_found";
+  | "not_found"
+  | "source_rate_limited";
 
 export interface LimitDefinition {
   readonly kind: "contract" | "operating";
@@ -181,6 +182,34 @@ export const registry = {
     measure:
       "One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated]",
     refusal: null,
+    overridable: false
+  },
+  "runtime.pidgeon.bytes": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "Pidgeon operation arguments, enough for a 100,000-character body however it encodes",
+    refusal: "too_large",
+    overridable: false
+  },
+  "pidgeon.thread.messages": {
+    kind: "contract",
+    default: 20,
+    unit: "messages",
+    scope: "viewer",
+    measure: "Messages one page of a Pidgeon thread returns, oldest first",
+    refusal: null,
+    overridable: false
+  },
+  "pidgeon.sends.daily": {
+    kind: "contract",
+    default: 200,
+    unit: "sends",
+    scope: "company",
+    measure:
+      "Sends and replies one Pidgeon connection attempts per UTC day, counted before Pidgeon sees each, retries and refusals included",
+    refusal: "source_rate_limited",
     overridable: false
   },
   "pidgeon.calls.concurrent": {

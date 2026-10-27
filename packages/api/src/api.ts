@@ -853,6 +853,19 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "details retain the source message, SQLSTATE and position. Integration attempts are " +
           "logged before execution, including denials and failures with trusted attribution; " +
           "only query logs SQL text (up to 8 KiB), never parameters. " +
+          "`pidgeon.read { connection, operation, input }` and `pidgeon.write { connection, operation, input }` " +
+          "run the operations Patchy writes for one declared Pidgeon address, which Patchy fills in: " +
+          "reads `threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list` and " +
+          "`attachments.text`; writes `messages.reply`, `messages.send`, `threads.update`, " +
+          "`threads.label` and `threads.unlabel`, which a connection whose key only reads refuses " +
+          "(`access_denied`). Each result encodes through its operation's schema, so no other field " +
+          "leaves the host. A send's `idempotencyKey` names one email: Pidgeon's Idempotency-Key is a " +
+          "hash of the connection, the patch and it. Pidgeon's 409 fails `idempotency_conflict` with " +
+          "`details.reason` `mismatch` or `in_progress` (with `retryAfter`), sending nothing; held " +
+          "mail and send refusals fail `access_denied` with `details.reason`; the daily send budget " +
+          "and Pidgeon's own limits fail `source_rate_limited` with `details.limit`. Arguments are " +
+          "bounded by `runtime.pidgeon.bytes`. Recent calls name each call's ids, a send's subject " +
+          "and recipients and a reply's CC, never a body or search text. " +
           "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
           'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
           "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +
