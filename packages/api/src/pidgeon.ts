@@ -245,6 +245,24 @@ export const PidgeonRead = Schema.Union([
   call("attachments.text", pidgeonReads["attachments.text"].input)
 ]);
 export type PidgeonRead = typeof PidgeonRead.Type;
+
+const devCall = <const Operation extends PidgeonReadOperation, Input extends Schema.Top>(
+  operation: Operation,
+  input: Input
+) => Schema.Struct({ operation: Schema.Literal(operation), input });
+/**
+ * A `patchy dev` read's arguments, which the instance's dev door reads live: the operation and its
+ * input. The repo's alias routed it locally and stays there. Writes never go to the door.
+ */
+export const PidgeonDevRead = Schema.Union([
+  devCall("threads.list", pidgeonReads["threads.list"].input),
+  devCall("threads.get", pidgeonReads["threads.get"].input),
+  devCall("messages.get", pidgeonReads["messages.get"].input),
+  devCall("messages.search", pidgeonReads["messages.search"].input),
+  devCall("labels.list", pidgeonReads["labels.list"].input),
+  devCall("attachments.text", pidgeonReads["attachments.text"].input)
+]);
+export type PidgeonDevRead = typeof PidgeonDevRead.Type;
 /** One reply, send or triage on a declared connection whose key can send. */
 export const PidgeonWrite = Schema.Union([
   call("messages.reply", pidgeonWrites["messages.reply"].input),

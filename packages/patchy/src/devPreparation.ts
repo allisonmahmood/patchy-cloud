@@ -24,6 +24,13 @@ export const Prepared = Schema.Struct({
 });
 export type Prepared = typeof Prepared.Type;
 
+/**
+ * Whether dev reads a declared connection through the instance, and so needs this machine's key
+ * (ADR-0013): PostHog's and Pidgeon's have no fixture.
+ */
+export const readsLive = (metadata: Prepared["metadata"]) =>
+  Object.keys(metadata.posthog).length + Object.keys(metadata.pidgeon).length > 0;
+
 export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFixtureMissing", {
   path: Schema.String
 }) {
@@ -77,7 +84,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          // PostHog has no fixture: dev reads the real connection. Nor has Pidgeon.
+          // PostHog and Pidgeon have no fixture: dev reads the real connection.
           if (
             declaration.kind === "members" ||
             declaration.kind === "posthog" ||

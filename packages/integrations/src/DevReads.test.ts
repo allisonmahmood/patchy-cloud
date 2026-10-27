@@ -5,6 +5,8 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   CURRENT_RELEASE,
   DevReadsGroup,
+  type Manifest,
+  type PidgeonSnapshot,
   PostgresRows,
   RuntimeFailure,
   WIRE_VERSION,
@@ -12,10 +14,12 @@ import {
 } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { Directory } from "@patchy/companies";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { Binding, LoadedVersions, Runtime, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -31,18 +35,22 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
+import * as DevDoor from "./DevDoor.js";
 import * as DevReads from "./DevReads.js";
+import * as PidgeonDev from "./pidgeon/Dev.js";
+import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
-import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
+import * as PidgeonTest from "./test/pidgeon.js";
 import * as PostHogDouble from "./test/posthog.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
 
 /**
- * `patchy dev`'s PostHog binding against a real instance door: the endpoint on a socket over a
- * migrated database, its PostHog the double. Nothing reaches the network.
+ * `patchy dev`'s live bindings against a real instance door: the endpoint on a socket over a
+ * migrated database, its PostHog the double and its Pidgeon answers recorded from Pidgeon.
+ * Nothing reaches the network. What Pidgeon itself decides is the live tier's.
  */
 
 type Declaration = typeof PostHogDeclaration.Type;
@@ -99,6 +107,79 @@ const read = {
   shape: { event: { kind: "text" }, views: { kind: "integer" } }
 } as const;
 
+/**
+ * The company's Pidgeon addresses, seeded as connect saves them: `support` sends, `invoices`
+ * only reads, and `closed` is one an admin disconnects. Each is `<handle>@acme.example`, its
+ * Pidgeon id `idn-<connection id>`.
+ */
+const address = (id: string, handle: string) => ({
+  id,
+  handle,
+  email: `${handle}@acme.example`,
+  identityId: `idn-${id}`
+});
+const support = address("conn_dev_support", "support");
+const invoices = address("conn_dev_invoices", "invoices");
+const closed = address("conn_dev_closed", "closed");
+
+/** Pidgeon's answers for `support`, as Pidgeon gives them; a held message has no content. */
+const threadRow = {
+  id: "thr_1",
+  identity: support.email,
+  subject: "Where is my order?",
+  status: "open",
+  message_count: 2,
+  folder: "inbox",
+  from: "sam@customer.example",
+  from_name: "Sam",
+  preview: "Hi, my order 1043…",
+  has_attachments: false,
+  last_message_at: "2026-10-26T09:00:00.000Z",
+  created_at: "2026-10-25T08:00:00.000Z"
+};
+const messageRow = (id: string, held: boolean) => ({
+  id,
+  thread_id: "thr_1",
+  identity_id: support.identityId,
+  from: { email: "sam@customer.example", name: "Sam" },
+  to: [{ email: support.email }],
+  cc: [],
+  subject: held ? null : "Where is my order?",
+  text: held ? null : "Hi, my order 1043 hasn't arrived.",
+  html: held ? null : "<p>Hi, my order 1043 hasn't arrived.</p>",
+  test: true,
+  is_held: held,
+  firewall: {
+    verdict: held ? "suspicious" : "clean",
+    signals: held ? [{ kind: "assistant_directive", detail: "Ignore all previous" }] : []
+  },
+  attachments: [],
+  delivery: null,
+  created_at: "2026-10-25T08:00:00.000Z"
+});
+const page = (data: ReadonlyArray<unknown>) => ({ data, has_more: false, next_cursor: null });
+const mail = PidgeonTest.recorded([
+  {
+    match: (sent) =>
+      PidgeonTest.route("GET", "/threads")(sent) && sent.query.identity_id === support.identityId,
+    body: page([threadRow])
+  },
+  { match: PidgeonTest.route("GET", "/threads/thr_1"), body: { data: threadRow } },
+  { match: PidgeonTest.route("GET", "/threads/thr_1/labels"), body: page([]) },
+  { match: PidgeonTest.route("GET", "/labels"), body: page([]) },
+  {
+    match: PidgeonTest.route("GET", "/messages"),
+    body: page([messageRow("msg_1", false), messageRow("msg_held", true)])
+  },
+  {
+    match: PidgeonTest.route("GET", "/messages/msg_held"),
+    status: 403,
+    body: { error: { code: "held", message: "This message is held for review." } }
+  }
+]);
+/** What Pidgeon heard: never anything but a read, and never the machine's key. */
+const heard = () => mail.requests;
+
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
@@ -111,6 +192,10 @@ const seed = Effect.gen(function* () {
     VALUES (${foreign.connectionId}, ${foreign.companyId}, 'posthog', 'product', '', 'company',
       'connected', ${JSON.stringify({ region: "us", projectId: 1, keyHint: "phx_…0000" })},
       'never-decrypted', 'missing-key', 1, 1, ${DEV_SEED.userId})`;
+  const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
+  yield* PidgeonTest.seed({ ...who, id: support.id, handle: support.handle });
+  yield* PidgeonTest.seed({ ...who, id: invoices.id, handle: invoices.handle, access: "read" });
+  yield* PidgeonTest.seed({ ...who, id: closed.id, handle: closed.handle });
 });
 
 /** The runtime this door drains with; it serves no published versions here. */
@@ -145,18 +230,19 @@ const serve = (
     Layer.provideMerge(runtime),
     Layer.provideMerge(
       SqlConnectionStore.layer.pipe(
-        Layer.provide([
-          PostgresSource.layer,
-          CredentialKeys.layerFromKeys(
-            Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
-          )
-        ]),
+        Layer.provide(PostgresSource.layer),
         Layer.provideMerge(double.layer),
-        Layer.provideMerge(PidgeonSource.layer)
+        Layer.provideMerge(mail.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
-    Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer())))
+    Layer.provideMerge(Layer.effectDiscard(seed)),
+    Layer.provideMerge(
+      CredentialKeys.layerFromKeys(
+        Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
+      )
+    ),
+    Layer.provideMerge(Testing.layer())
   );
 const layer = serve();
 
@@ -188,8 +274,8 @@ const colleague: Viewer = {
   admin: false
 };
 
-/** A local dev binding, as `patchy dev` admits either viewer. */
-const local = (declaration: Declaration, now: number, viewer: Viewer = owner) =>
+/** A local dev binding declaring `uses`, as `patchy dev` admits either viewer. */
+const local = (uses: (typeof Manifest.Type)["uses"], now: number, viewer: Viewer = owner) =>
   Binding.Binding.of({
     patchId: "localdev0000",
     versionId: "ver_000000000000000000000000",
@@ -202,7 +288,7 @@ const local = (declaration: Declaration, now: number, viewer: Viewer = owner) =>
       tier: 1,
       tables: {},
       files: {},
-      uses: { analytics: declaration }
+      uses
     },
     identity: viewer,
     principal: { userId: viewer.user.id },
@@ -243,10 +329,94 @@ const query = Effect.fn("test.devReads.query")(function* (
     .pipe(
       Effect.provideService(
         Binding.Binding,
-        local(declaration, yield* Clock.currentTimeMillis, options.viewer)
+        local({ analytics: declaration }, yield* Clock.currentTimeMillis, options.viewer)
       )
     );
 });
+
+/** What generation knows of a Pidgeon address: its access and labels. Every one is reply-only. */
+const snapshot = (email: string, access: "read" | "send"): PidgeonSnapshot => ({
+  version: 1,
+  address: { email, displayName: null, sendPolicy: "reply_only" },
+  access,
+  test: false,
+  labels: [{ id: "lbl-1", name: "Billing", colour: "amber" }],
+  plan: "free"
+});
+const declared = (connection: { readonly id: string; readonly handle: string }) => ({
+  kind: "pidgeon" as const,
+  id: connection.id,
+  handle: connection.handle,
+  revision: 1
+});
+/** The desk repo's declarations: `support`, `invoices` and `closed`, by their handles. */
+const desks = {
+  support: declared(support),
+  invoices: declared(invoices),
+  closed: declared(closed)
+};
+type Desk = keyof typeof desks;
+/** The same desk as a published version, for calls a published page makes beside dev's. */
+const publishedDesk = (now: number) => ({
+  ...local(desks, now),
+  patchId: "publishedone",
+  versionId: "ver_publishedpublishedpubl"
+});
+
+/**
+ * A support desk in `patchy dev` with `token`: Pidgeon's dev binding over the desk's addresses,
+ * the writes it simulated, and one call through it as the given viewer.
+ */
+const desk = Effect.fn("test.devReads.desk")(function* (token: string) {
+  const simulated: PidgeonDev.Simulated[] = [];
+  const handlers = yield* PidgeonDev.handlers(
+    { apiUrl: yield* origin, token: Option.some(Redacted.make(token)) },
+    {
+      support: { declaration: desks.support, snapshot: snapshot(support.email, "send") },
+      invoices: { declaration: desks.invoices, snapshot: snapshot(invoices.email, "read") },
+      closed: { declaration: desks.closed, snapshot: snapshot(closed.email, "send") }
+    },
+    (write) => Effect.sync(() => void simulated.push(write))
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+  const call = (
+    op: "pidgeon.read" | "pidgeon.write",
+    connection: Desk,
+    operation: string,
+    input: unknown,
+    viewer: Viewer = owner
+  ) =>
+    Effect.flatMap(Clock.currentTimeMillis, (now) =>
+      handlers[op]
+        .run({ connection, operation, input })
+        .pipe(Effect.provideService(Binding.Binding, local(desks, now, viewer)))
+    );
+  return { call, simulated };
+});
+/** One email from the desk, as a page sends it. */
+const email = (idempotencyKey: string) => ({
+  to: ["stranger@elsewhere.example"],
+  cc: ["ops@acme.example"],
+  subject: "Your order",
+  text: "It shipped today.",
+  idempotencyKey
+});
+
+/** One request straight to the door, as no binding would send it. */
+const door = Effect.fn("test.devReads.door")(function* (
+  body: unknown,
+  authorization = `Bearer ${DEV_SEED.token}`
+) {
+  const url = `${yield* origin}/api/connections/dev-read`;
+  return yield* Effect.promise(async () => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    return { status: response.status, body: (await response.json()) as unknown };
+  });
+});
+const refusal = Schema.decodeUnknownSync(RuntimeFailure);
 
 const decodeRows = Schema.decodeUnknownEffect(PostgresRows);
 const mint = (userId: string, name: string) =>
@@ -406,7 +576,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
             );
             yield* stop(minted.id);
             const refused = yield* query(minted.token).pipe(Effect.flip);
-            assert.instanceOf(refused, PostHogDev.KeyRefused, label);
+            assert.instanceOf(refused, DevDoor.KeyRefused, label);
             assert.strictEqual(refused.code, "access_denied");
             assert.include(refused.message, "Run `patchy login`");
           }
@@ -449,16 +619,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
         Effect.gen(function* () {
           const found = yield* connection;
           const url = `${yield* origin}/api/connections/dev-read`;
-          const post = (body: unknown, authorization = `Bearer ${DEV_SEED.token}`) =>
-            Effect.promise(async () => {
-              const response = await fetch(url, {
-                method: "POST",
-                headers: { authorization, "content-type": "application/json" },
-                body: JSON.stringify(body)
-              });
-              return { status: response.status, body: (await response.json()) as unknown };
-            });
-          const refusal = Schema.decodeUnknownSync(RuntimeFailure);
+          const post = door;
           const connection_ = { id: found.id, handle: found.handle };
           const postgres = yield* post({
             op: "postgres.query",
@@ -499,7 +660,8 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           }
 
           const before = (yield* devCalls).length;
-          // A body that never declares its length is cut off at the bound as it streams.
+          // A body that never declares its length is cut off as it streams, at the largest live
+          // operation's bound, Pidgeon's; then each operation's own bound holds, unlogged.
           const streamed = yield* Effect.promise(async () => {
             const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
             const response = await fetch(url, {
@@ -511,7 +673,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
               duplex: "half",
               body: new ReadableStream<Uint8Array>({
                 start(controller) {
-                  for (let sent = 0; sent < 5; sent++) controller.enqueue(chunk);
+                  for (let sent = 0; sent < 17; sent++) controller.enqueue(chunk);
                   controller.close();
                 }
               })
@@ -521,7 +683,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           assert.strictEqual(streamed.status, 413);
           assert.deepInclude(refusal(streamed.body), {
             code: "too_large",
-            limitId: "runtime.posthog.bytes"
+            limitId: "runtime.pidgeon.bytes"
           });
           const oversized = yield* post({
             op: "posthog.query",
@@ -563,7 +725,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
               .run({ connection: "analytics", ...read, name: `hold${n}` })
               .pipe(
                 Effect.provideService(Binding.Binding, {
-                  ...local(declaration, now),
+                  ...local({ analytics: declaration }, now),
                   patchId: "publishedone",
                   versionId: "ver_publishedpublishedpubl"
                 }),
@@ -585,7 +747,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           held.resolve();
           for (const fiber of holding) yield* Fiber.join(fiber);
           const refused = yield* Fiber.join(waiting);
-          assert.instanceOf(refused, PostHogDev.KeyRefused);
+          assert.instanceOf(refused, DevDoor.KeyRefused);
           assert.isString(Runtime.toFailure(refused).correlationId);
           // The waiting read never reached PostHog.
           assert.deepStrictEqual(
@@ -619,7 +781,7 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
             published["posthog.query"]
               .run({ connection: "analytics", ...read, name: `hold${n}` })
               .pipe(
-                Effect.provideService(Binding.Binding, local(declaration, now)),
+                Effect.provideService(Binding.Binding, local({ analytics: declaration }, now)),
                 Effect.forkChild
               )
           );
@@ -638,13 +800,325 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           const unreachable = yield* query(DEV_SEED.token, { apiUrl: "http://127.0.0.1:1" }).pipe(
             Effect.flip
           );
-          assert.instanceOf(unreachable, PostHogDev.InstanceUnavailable);
+          assert.instanceOf(unreachable, DevDoor.InstanceUnavailable);
           assert.strictEqual(unreachable.code, "source_unavailable");
           assert.include(unreachable.message, "Other dev work keeps going");
 
           yield* (yield* Runtime.Runtime).drain;
           const draining = yield* query(DEV_SEED.token).pipe(Effect.flip);
           assert.strictEqual(draining.code, "busy");
+        }),
+      30_000
+    );
+  }
+);
+
+it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
+  "Pidgeon in patchy dev",
+  (it) => {
+    it.effect(
+      "both dev viewers read the real address as the machine's person, held mail empty, logged as a dev call",
+      () =>
+        Effect.gen(function* () {
+          const { call } = yield* desk(DEV_SEED.token);
+          const before = heard().length;
+          for (const viewer of [owner, colleague]) {
+            const listed = yield* call("pidgeon.read", "support", "threads.list", {}, viewer);
+            assert.deepStrictEqual(
+              (listed as { threads: ReadonlyArray<{ id: string }> }).threads.map(({ id }) => id),
+              ["thr_1"]
+            );
+          }
+          const opened = yield* call("pidgeon.read", "support", "threads.get", { id: "thr_1" });
+          const [kept, held] = (opened as { messages: ReadonlyArray<object> }).messages;
+          assert.deepInclude(kept, { id: "msg_1", text: "Hi, my order 1043 hasn't arrived." });
+          assert.deepInclude(held, {
+            id: "msg_held",
+            held: true,
+            subject: null,
+            text: "",
+            attachments: [],
+            firewall: { verdict: "suspicious", kinds: ["assistant_directive"] }
+          });
+          // Pidgeon heard reads of the address alone, with its own key, never the machine's.
+          const sent = heard().slice(before);
+          assert.isNotEmpty(sent);
+          for (const request of sent) {
+            assert.strictEqual(request.method, "GET");
+            assert.match(request.authorization ?? "", /^Bearer pgn_live_seeded/);
+          }
+          assert.strictEqual(
+            sent.find(PidgeonTest.route("GET", "/threads"))?.query.identity_id,
+            support.identityId
+          );
+          assert.deepInclude((yield* devCalls)[0], {
+            credentialKind: "machine",
+            machineId: DEV_SEED.tokenId,
+            userId: DEV_SEED.userId,
+            patchId: null,
+            versionId: null,
+            op: "pidgeon.read",
+            resource: "threads.get thr_1",
+            connectionId: support.id,
+            outcome: "success",
+            rowCount: 2
+          });
+
+          // Held mail stays unreadable, refused as a published read is, naming the operation.
+          const refused = yield* call("pidgeon.read", "support", "messages.get", {
+            id: "msg_held"
+          }).pipe(Effect.flip);
+          const failure = Runtime.toFailure(refused);
+          assert.deepInclude(failure, {
+            code: "access_denied",
+            operation: "pidgeon.read",
+            details: { reason: "held" }
+          });
+          assert.isTrue(isPatchyError(decodeError(failure), "access_denied", "pidgeon"));
+          assert.deepInclude((yield* devCalls)[0], {
+            resource: "messages.get msg_held",
+            outcomeCode: "access_denied"
+          });
+        }),
+      30_000
+    );
+
+    it.effect(
+      "runs no write: one sent straight to the door is refused and logged, and reaches no one",
+      () =>
+        Effect.gen(function* () {
+          const before = heard().length;
+          const connection = { id: support.id, handle: support.handle };
+          const write = yield* door({
+            op: "pidgeon.write",
+            connection,
+            args: { operation: "messages.send", input: email("door-write-0001") }
+          });
+          assert.strictEqual(write.status, 400);
+          assert.strictEqual(refusal(write.body).code, "invalid_request");
+          assert.deepInclude((yield* devCalls)[0], {
+            op: "pidgeon.write",
+            connectionId: support.id,
+            outcomeCode: "invalid_request",
+            correlationId: refusal(write.body).correlationId
+          });
+          // The repo's alias stays in the repo.
+          const aliased = yield* door({
+            op: "pidgeon.read",
+            connection,
+            args: { connection: "support", operation: "threads.list", input: {} }
+          });
+          assert.strictEqual(aliased.status, 400);
+          assert.strictEqual(heard().length, before);
+        }),
+      30_000
+    );
+
+    it.effect(
+      "simulates sends, replies and triage: nothing reaches the instance or Pidgeon, and each shows its recipients",
+      () =>
+        Effect.gen(function* () {
+          const { call, simulated } = yield* desk(DEV_SEED.token);
+          const [calls, requests] = [(yield* devCalls).length, heard().length];
+          // The address is reply-only and has never written to this stranger: dev doesn't check
+          // the send policy, which only Pidgeon can apply.
+          const sent = yield* call(
+            "pidgeon.write",
+            "support",
+            "messages.send",
+            email("dev-send-0001")
+          );
+          assert.deepInclude(sent, { status: "sent", rejected: [], replayed: false, test: true });
+          const { messageId, threadId } = sent as { messageId: string; threadId: string };
+          assert.match(messageId, /^dev_/);
+          assert.match(threadId, /^dev_/);
+          assert.deepInclude(
+            yield* call("pidgeon.write", "support", "messages.reply", {
+              id: "msg_1",
+              text: "It's on its way.",
+              idempotencyKey: "dev-reply-0001"
+            }),
+            { status: "sent", test: true }
+          );
+          assert.deepInclude(
+            yield* call("pidgeon.write", "support", "threads.update", {
+              id: "thr_1",
+              status: "waiting"
+            }),
+            { id: "thr_1", status: "waiting" }
+          );
+          assert.deepStrictEqual(
+            yield* call("pidgeon.write", "support", "threads.label", {
+              id: "thr_1",
+              labelId: "lbl-1"
+            }),
+            { labels: [{ id: "lbl-1", name: "Billing", colour: "amber" }] }
+          );
+          assert.deepStrictEqual(
+            yield* call("pidgeon.write", "support", "threads.unlabel", {
+              id: "thr_1",
+              labelId: "lbl-1"
+            }),
+            { labels: [] }
+          );
+          assert.deepStrictEqual(
+            simulated.map(({ summary }) => summary),
+            [
+              "messages.send “Your order” to stranger@elsewhere.example cc ops@acme.example",
+              "messages.reply msg_1",
+              "threads.update thr_1 waiting",
+              "threads.label thr_1 lbl-1",
+              "threads.unlabel thr_1 lbl-1"
+            ]
+          );
+          assert.deepStrictEqual(simulated[0], {
+            viewerId: owner.user.id,
+            connection: "pidgeon/support",
+            operation: "messages.send",
+            summary: simulated[0]!.summary
+          });
+          // Nothing reached the instance's door or Pidgeon.
+          assert.strictEqual((yield* devCalls).length, calls);
+          assert.strictEqual(heard().length, requests);
+
+          // Arguments are checked as the host checks them.
+          for (const input of [
+            { ...email("dev-send-0002"), to: [] },
+            email("short"),
+            { ...email("dev-send-0003"), html: "<p>Hi</p>" }
+          ]) {
+            const invalid = yield* call("pidgeon.write", "support", "messages.send", input).pipe(
+              Effect.flip
+            );
+            assert.strictEqual(invalid.code, "invalid_request");
+          }
+          assert.lengthOf(simulated, 5);
+        }),
+      30_000
+    );
+
+    it.effect(
+      "refuses a write on a read connection in dev as a published patch's is refused",
+      () =>
+        Effect.gen(function* () {
+          const { call, simulated } = yield* desk(DEV_SEED.token);
+          const input = { id: "msg_1", text: "Thanks!", idempotencyKey: "dev-readonly-01" };
+          const inDev = yield* call("pidgeon.write", "invoices", "messages.reply", input).pipe(
+            Effect.flip
+          );
+          const handlers = yield* PidgeonOperations.makeHandlers.pipe(
+            Effect.provide(Directory.layer)
+          );
+          const asPublished = yield* handlers["pidgeon.write"]
+            .run({ connection: "invoices", operation: "messages.reply", input })
+            .pipe(
+              Effect.provideService(Binding.Binding, publishedDesk(yield* Clock.currentTimeMillis)),
+              Effect.flip
+            );
+          assert.strictEqual(inDev.code, "access_denied");
+          assert.deepStrictEqual(Runtime.toFailure(inDev), Runtime.toFailure(asPublished));
+          assert.lengthOf(simulated, 0);
+        }),
+      30_000
+    );
+
+    it.effect(
+      "a revoked key, a deactivated person or a disconnected address stops dev reads; simulated writes keep working",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const tokens = yield* MachineTokens.MachineTokens;
+          const cases = [
+            ["revoked", (id: string) => Effect.asVoid(tokens.revoke(id))],
+            ["deactivated", () => sql`UPDATE users SET deactivated_at = now() WHERE id = ${member}`]
+          ] as const;
+          for (const [label, stop] of cases) {
+            const minted = yield* mint(member, `Desk ${label}`);
+            const { call } = yield* desk(minted.token);
+            yield* call("pidgeon.read", "support", "threads.list", {});
+            yield* stop(minted.id);
+            const refused = yield* call("pidgeon.read", "support", "threads.list", {}).pipe(
+              Effect.flip
+            );
+            assert.instanceOf(refused, DevDoor.KeyRefused, label);
+            assert.include(refused.message, "Run `patchy login`");
+            assert.deepInclude(
+              yield* call("pidgeon.write", "support", "messages.send", email(`dev-${label}-01`)),
+              { status: "sent" },
+              label
+            );
+          }
+          yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${member}`;
+
+          const store = yield* ConnectionStore.ConnectionStore;
+          yield* store.disconnect({
+            companyId: DEV_SEED.companyId,
+            userId: DEV_SEED.userId,
+            id: closed.id
+          });
+          const { call } = yield* desk(DEV_SEED.token);
+          const disconnected = yield* call("pidgeon.read", "closed", "threads.list", {}).pipe(
+            Effect.flip
+          );
+          assert.strictEqual(disconnected.code, "access_denied");
+          assert.include(disconnected.message, "pidgeon/closed is disconnected");
+          assert.deepInclude((yield* devCalls)[0], {
+            connectionId: closed.id,
+            outcomeCode: "access_denied"
+          });
+          assert.deepInclude(
+            yield* call("pidgeon.write", "closed", "messages.send", email("dev-closed-01")),
+            { status: "sent" }
+          );
+        }),
+      30_000
+    );
+
+    it.effect(
+      "shares the address's slots with published reads, and checks the key again after waiting",
+      () =>
+        Effect.gen(function* () {
+          const minted = yield* mint(DEV_SEED.userId, "Desk slots");
+          const handlers = yield* PidgeonOperations.makeHandlers.pipe(
+            Effect.provide(Directory.layer)
+          );
+          const labels = PidgeonTest.route("GET", "/labels");
+          const lists = PidgeonTest.route("GET", "/threads");
+          const release = yield* Deferred.make<void>();
+          const before = heard().length;
+          // A published desk fills the address's four slots through the same Source.
+          mail.hold(labels, release, 4);
+          const now = yield* Clock.currentTimeMillis;
+          const holding = yield* Effect.forEach([1, 2, 3, 4], () =>
+            handlers["pidgeon.read"]
+              .run({ connection: "support", operation: "labels.list", input: {} })
+              .pipe(
+                Effect.provideService(Binding.Binding, publishedDesk(now)),
+                Effect.exit,
+                Effect.forkChild
+              )
+          );
+          while (heard().slice(before).filter(labels).length < 4) yield* Effect.sleep("10 millis");
+          const { call } = yield* desk(minted.token);
+          const waiting = yield* call("pidgeon.read", "support", "threads.list", {}).pipe(
+            Effect.flip,
+            Effect.forkChild
+          );
+          const sql = yield* SqlClient.SqlClient;
+          while (
+            (yield* sql`SELECT 1 FROM runtime_calls
+              WHERE credential_kind = 'machine' AND resource = 'threads.list' AND outcome = 'pending'`)
+              .length === 0
+          )
+            yield* Effect.sleep("10 millis");
+          yield* (yield* MachineTokens.MachineTokens).revoke(minted.id);
+          yield* Deferred.succeed(release, undefined);
+          for (const fiber of holding) yield* Fiber.join(fiber);
+          const refused = yield* Fiber.join(waiting);
+          assert.instanceOf(refused, DevDoor.KeyRefused);
+          assert.isString(Runtime.toFailure(refused).correlationId);
+          // The waiting read never reached Pidgeon.
+          assert.lengthOf(heard().slice(before).filter(lists), 0);
         }),
       30_000
     );
@@ -674,6 +1148,25 @@ it.layer(limited, { excludeTestServices: true, timeout: "60 seconds" })(
         }),
       30_000
     );
+
+    it.effect(
+      "holds across integrations too: PostHog queries and Pidgeon reads count together",
+      () =>
+        Effect.gen(function* () {
+          const minted = yield* mint(member, "Shared limit");
+          const { call } = yield* desk(minted.token);
+          yield* query(minted.token);
+          yield* call("pidgeon.read", "support", "threads.list", {});
+          const refused = yield* call("pidgeon.read", "support", "threads.list", {}).pipe(
+            Effect.flip
+          );
+          assert.deepInclude(Runtime.toFailure(refused), {
+            code: "rate_limited",
+            limitId: "runtime.calls.perMinute"
+          });
+        }),
+      30_000
+    );
   }
 );
 
@@ -697,7 +1190,7 @@ it.layer(serve(unloggable), { excludeTestServices: true, timeout: "60 seconds" }
   "an unloggable read",
   (it) => {
     it.effect(
-      "is refused before PostHog hears of it",
+      "is refused before PostHog or Pidgeon hears of it",
       () =>
         Effect.gen(function* () {
           yield* connection;
@@ -705,6 +1198,13 @@ it.layer(serve(unloggable), { excludeTestServices: true, timeout: "60 seconds" }
           const refused = yield* query(DEV_SEED.token).pipe(Effect.flip);
           assert.strictEqual(refused.code, "source_unavailable");
           assert.strictEqual(queries().length, before);
+          const { call } = yield* desk(DEV_SEED.token);
+          const heardBefore = heard().length;
+          const unread = yield* call("pidgeon.read", "support", "threads.list", {}).pipe(
+            Effect.flip
+          );
+          assert.strictEqual(unread.code, "source_unavailable");
+          assert.strictEqual(heard().length, heardBefore);
         }),
       30_000
     );
@@ -749,15 +1249,18 @@ it.live(
         token: Option.some(Redacted.make("pp_machine_key"))
       }).pipe(Effect.provide(FetchHttpClient.layer));
       const call = Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        handlers["posthog.query"]
-          .run({ connection: "analytics", ...read })
-          .pipe(
-            Effect.provideService(
-              Binding.Binding,
-              local({ kind: "posthog", id: "conn_product", handle: "product", revision: 1 }, now)
-            ),
-            Effect.flip
-          )
+        handlers["posthog.query"].run({ connection: "analytics", ...read }).pipe(
+          Effect.provideService(
+            Binding.Binding,
+            local(
+              {
+                analytics: { kind: "posthog", id: "conn_product", handle: "product", revision: 1 }
+              },
+              now
+            )
+          ),
+          Effect.flip
+        )
       );
       assert.deepInclude(Runtime.toFailure(yield* call), {
         code: "rate_limited",
@@ -765,7 +1268,7 @@ it.live(
         scope: "host",
         retryAfter: 12
       });
-      assert.instanceOf(yield* call, PostHogDev.KeyRefused);
+      assert.instanceOf(yield* call, DevDoor.KeyRefused);
     }),
   { timeout: 30_000 }
 );

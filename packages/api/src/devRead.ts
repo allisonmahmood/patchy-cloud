@@ -1,11 +1,12 @@
 import * as Schema from "effect/Schema";
+import { PidgeonDevRead } from "./pidgeon.js";
 import { PostHogDevQuery } from "./posthog.js";
 
 /** Where `patchy dev` sends a read, under the instance's `/api`. */
 export const DEV_READ_PATH = "/connections/dev-read";
 
 /**
- * A `patchy dev` read of an integration that dev reads live (#647). The repo's manifest only
+ * A `patchy dev` read of an integration that dev reads live (ADR-0013). The repo's manifest only
  * routed it to this connection: the machine token decides the company and the person, and the
  * instance checks the connection itself.
  */
@@ -22,12 +23,17 @@ export const DevReadEnvelope = Schema.Struct({
 }).annotate({ identifier: "DevReadEnvelope" });
 export type DevReadEnvelope = typeof DevReadEnvelope.Type;
 
-/** Every operation an integration lets dev read live, with its exact arguments. */
+/** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
   Schema.Struct({
     op: Schema.Literal("posthog.query"),
     connection: DevReadConnection,
     args: PostHogDevQuery
+  }),
+  Schema.Struct({
+    op: Schema.Literal("pidgeon.read"),
+    connection: DevReadConnection,
+    args: PidgeonDevRead
   })
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;

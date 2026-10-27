@@ -1,16 +1,23 @@
 /**
  * The instance's door for `patchy dev` reads of integrations that read the real connection in
- * development (ADR-0013, #647). A machine token is the only authority: its current person,
- * company and machine decide every call, and are checked again once a read holds its slot. The
- * repo's manifest only routed the call here; the connection it names must be the company's.
+ * development (ADR-0013): PostHog's queries and Pidgeon's reads. A machine token is the only
+ * authority: its current person, company and machine decide every call, and are checked again
+ * once a read holds its slot. The repo's manifest only routed the call here; the connection it
+ * names must be the company's. Writes never come here: `patchy dev` simulates them.
  *
- * The runtime's bounds hold: its argument and result sizes, the integration deadline, the
- * project's slots shared with published patches, and draining. A per-person limit keys on no
- * patch, so naming patches can't widen it. Every call with a valid token and envelope is logged
- * as a machine call with no patch or version, refusals included. Published runtime calls still
- * refuse bearer tokens; this door shares none of their admission.
+ * The runtime's bounds hold: each operation's argument and result sizes, the integration
+ * deadline, the project's or address's slots shared with published patches, and draining. A
+ * per-person limit keys on no patch, so naming patches can't widen it. Every call with a valid
+ * token and envelope is logged as a machine call with no patch or version, refusals included.
+ * Published runtime calls still refuse bearer tokens; this door shares none of their admission.
  */
-import { CurrentIdentity, DevReadEnvelope, PatchyApi, RuntimeSuccess } from "@patchy/api";
+import {
+  CurrentIdentity,
+  DevReadEnvelope,
+  PatchyApi,
+  RuntimeSuccess,
+  runtimeBodyLimitId
+} from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { newInternalId } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
@@ -25,6 +32,10 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as ConnectionStore from "./ConnectionStore.js";
+import type { DevRead } from "./definition.js";
+import { pidgeon } from "./pidgeon/index.js";
+import * as PidgeonOperations from "./pidgeon/Operations.js";
+import * as PidgeonSource from "./pidgeon/Source.js";
 import { postgres } from "./postgres/index.js";
 import { posthog } from "./posthog/index.js";
 import * as PostHogOperations from "./posthog/Operations.js";
@@ -62,15 +73,24 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
   }
 }
 
-/** Only what a definition's `live` names reaches this door; every Postgres operation is refused. */
+/**
+ * Only what a definition's `live` names reaches this door: every Postgres operation and every
+ * Pidgeon write is refused.
+ */
 const live = new Set(
-  [postgres, posthog].flatMap((integration) =>
+  [postgres, posthog, pidgeon].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
   )
 );
-const runners = PostHogOperations.devReads;
+const runners: {
+  readonly [Op in "posthog.query" | "pidgeon.read"]: DevRead<
+    PostHogSource.Source | PidgeonSource.Source
+  >;
+} = { ...PostHogOperations.devReads, ...PidgeonOperations.devReads };
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
+/** Each live operation's own argument bound, as the published runtime holds it. */
+const bounds = [...new Set([...live].map(runtimeBodyLimitId))];
 
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(DevReadEnvelope), {
   onExcessProperty: "error"
@@ -85,20 +105,32 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const log = yield* RuntimeLog.RuntimeLog;
     const tokens = yield* MachineTokens.MachineTokens;
     const connections = yield* ConnectionStore.ConnectionStore;
-    const source = yield* PostHogSource.Source;
+    const posthogSource = yield* PostHogSource.Source;
+    const pidgeonSource = yield* PidgeonSource.Source;
     const settings = yield* Effect.all({
       callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
-      maxBytes: ContractLimits.get("runtime.posthog.bytes"),
       deadlineMs: ContractLimits.get("integration.deadline")
     });
+    const sizes = new Map(
+      yield* Effect.forEach(bounds, (limitId) =>
+        Effect.map(ContractLimits.get(limitId), (maxBytes) => [limitId, maxBytes] as const)
+      )
+    );
+    // The body is read up to the largest live bound, then held to its own operation's.
+    const [widest, widestBytes] = [...sizes].reduce((largest, next) =>
+      next[1] > largest[1] ? next : largest
+    );
 
     const read = Effect.fn("DevReads.read")(function* () {
       const identity = yield* CurrentIdentity;
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const { text } = yield* RuntimeApi.readText(settings.maxBytes, "runtime.posthog.bytes");
+      const { text, byteLength } = yield* RuntimeApi.readText(widestBytes, widest);
       const input = yield* decodeEnvelope(text).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
+      const limitId = runtimeBodyLimitId(input.op);
+      const maxBytes = sizes.get(limitId) ?? (yield* ContractLimits.get(limitId));
+      if (byteLength > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
       const operation = isLive(input.op) ? runners[input.op] : undefined;
       const named = `${input.op.slice(0, input.op.indexOf("."))}/${input.connection.handle}`;
       // Attribute the call only to a connection of the token's company: another company's id is
@@ -111,6 +143,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const connectionId = lookup._tag === "Success" ? lookup.success : null;
       const correlationId = newInternalId("call");
       const startedAt = yield* Clock.currentTimeMillis;
+      const sql = operation?.sql?.(input.args);
       yield* log
         .begin({
           companyId: identity.company.id,
@@ -122,12 +155,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           op: input.op,
           resource: operation?.resource(input.args) ?? null,
           connectionId,
-          ...(operation === undefined ? {} : { sql: operation.sql(input.args) }),
+          ...(sql === undefined ? {} : { sql }),
           correlationId,
           deadlineMs: settings.deadlineMs
         })
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-      // The same token, person, company and machine, once a slot is held and before PostHog hears.
+      // The same token, person, company and machine, once a slot is held and before the source hears.
       const recheck = Authorization.identify("build").pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(MachineTokens.MachineTokens, tokens),
@@ -167,7 +200,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             input.args
           )
           .pipe(
-            Effect.provideService(PostHogSource.Source, source),
+            Effect.provideService(PostHogSource.Source, posthogSource),
+            Effect.provideService(PidgeonSource.Source, pidgeonSource),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
               ConnectionNotFound: (cause) =>

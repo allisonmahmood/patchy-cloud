@@ -12,6 +12,8 @@ import { sha256 } from "@patchy/core";
 import {
   ConnectionStore,
   ConnectionStoreDev,
+  DevDoor,
+  PidgeonDev,
   PostgresDev,
   PostgresExecution,
   PostgresOperations,
@@ -33,6 +35,7 @@ import * as Schema from "effect/Schema";
 import { FixtureMissing, type Prepared } from "./devPreparation.js";
 import { safePath } from "./ManagedProject.js";
 import * as DevExecution from "./devExecution.js";
+import * as DevLog from "./devLog.js";
 import * as DevMembers from "./devMembers.js";
 
 export class StateUnavailable extends Schema.TaggedError<StateUnavailable>()(
@@ -177,13 +180,15 @@ interface LocalState {
 
 export interface Options extends DevExecution.Options {
   /** How dev reaches integrations that read the real connection: the instance, with this key. */
-  readonly instance: PostHogDev.Instance;
+  readonly instance: DevDoor.Instance;
+  /** Shows a write dev simulated instead of sending, such as a Pidgeon reply; text by default. */
+  readonly simulated?: (write: PidgeonDev.Simulated) => Effect.Effect<void>;
 }
 
 const make = Effect.fn("DevResources.make")(function* (
   prepared: Prepared,
   state: LocalState,
-  instance: PostHogDev.Instance
+  options: Options
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -294,8 +299,14 @@ const make = Effect.fn("DevResources.make")(function* (
     ...(yield* Members.make),
     ...fileHandlers,
     ...postgres,
-    // PostHog has no fixture: its reads go to the real connection, through the instance.
-    ...(yield* PostHogDev.handlers(instance))
+    // PostHog and Pidgeon have no fixture: their reads go to the real connection, through the
+    // instance, and Pidgeon's writes are simulated here, reaching neither.
+    ...(yield* PostHogDev.handlers(options.instance)),
+    ...(yield* PidgeonDev.handlers(
+      options.instance,
+      prepared.metadata.pidgeon,
+      options.simulated ?? ((write) => DevLog.simulated(write, false))
+    ))
   };
   if (state.changed || state.initialize) yield* fs.writeFileString(state.stampPath, state.stamp);
   return { handlers, version: state.version };
@@ -560,7 +571,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       fixtures,
       storeFixtures
     },
-    options.instance
+    options
   ).pipe(Effect.provideContext(context));
   if (version.manifest.tier === 2) {
     // Each installed server binding is the next build, the first one 1.

@@ -212,7 +212,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         await atomicJson(stateDir, "prepared.json", { ...prepared, toolchain });
         await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
       });
-      const live = Object.keys(prepared.metadata.posthog).length > 0;
+      const live = Preparation.readsLive(prepared.metadata);
       const nonce = randomUUID();
       // Write the nonce before spawning; the child may reach its entrypoint before spawn returns.
       const initial: Daemon = {

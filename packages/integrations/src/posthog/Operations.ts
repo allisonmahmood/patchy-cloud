@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation } from "../definition.js";
+import { operation, type DevRead, type Target } from "../definition.js";
 import * as Mapping from "./Mapping.js";
 import * as Source from "./Source.js";
 
@@ -153,16 +153,6 @@ const connect = Effect.fn("PostHogOperations.connect")(function* (
     Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
   );
 });
-
-/** Which connection a read goes to and until when, for a caller its door already admitted. */
-export interface Target<E = never> {
-  readonly companyId: string;
-  readonly connection: { readonly id: string; readonly handle: string };
-  /** When the caller stops waiting, in epoch milliseconds; a queued read gives up before it. */
-  readonly deadline: number;
-  /** The caller, checked again once the read holds a slot and before anything is sent. */
-  readonly recheck: Effect.Effect<void, E>;
-}
 
 /** PostHog's columns, types and rows through the declared shape; anything else is refused. */
 export const shaped = Effect.fn("PostHogOperations.shaped")(function* (
@@ -350,29 +340,12 @@ export const makeHandlers = Effect.gen(function* () {
 const decodeDevQuery = Schema.decodeUnknownEffect(PostHogDevQuery, { onExcessProperty: "error" });
 const encodeRows = Schema.encodeEffect(PostgresRows);
 
-/** A live operation as the dev door runs it: its arguments decoded here, its rows encoded. */
-export interface DevRead {
-  readonly resource: (args: unknown) => string | null;
-  readonly rowCount: (value: unknown) => number | null;
-  readonly sql: (args: unknown) => string | undefined;
-  readonly run: <E extends Runtime.RuntimeError>(
-    target: Target<E>,
-    args: unknown
-  ) => Effect.Effect<
-    unknown,
-    | Runtime.RuntimeError
-    | ConnectionStore.ConnectionNotFound
-    | ConnectionStore.ConnectionNotConnected
-    | E,
-    Source.Source | ConnectionStore.ConnectionStore
-  >;
-}
-
 /**
  * The operations the definition's `live` names, for `patchy dev` through the instance's dev door
  * (#647): the caller is the door's, never a loaded version's, and the alias stays in the repo.
+ * Its arguments are decoded here and its rows encoded.
  */
-export const devReads: { readonly "posthog.query": DevRead } = {
+export const devReads: { readonly "posthog.query": DevRead<Source.Source> } = {
   "posthog.query": {
     ...recorded,
     run: (target, args) =>
