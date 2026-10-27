@@ -599,7 +599,9 @@ can quote it.
   down with the test key, needing no instance: they revoke each Patchy-named
   test key below admin that reaches only those addresses, delete the addresses,
   then wipe. If any of it fails, for want of the key or a refusal from Pidgeon,
-  they name the addresses and remove nothing; fix that and run them again. An
+  they name the addresses and remove nothing; fix that and run them again. A
+  recorded address Pidgeon already deleted is named and passed over: its key
+  reaches nothing, and `pnpm test:pidgeon:sweep` revokes it. An
   address connected by hand isn't recorded: delete its connection before `down`,
   which revokes its key, or the live tier's stale sweep revokes the key once
   Pidgeon has deleted the address, a day after it was made. `compare`, `film`

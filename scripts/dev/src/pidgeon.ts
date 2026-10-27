@@ -99,7 +99,8 @@ const listed = Effect.fn("listed")(function* <A>(
  * whose local parts are exactly `localParts`, and first each key that reaches nothing else. It
  * only ever revokes a test key Patchy named below admin, and only deletes a test address; it
  * refuses an admin key that isn't a test key before anything else. A key or address already gone
- * counts as done. Fails, naming the addresses, when any of it doesn't happen.
+ * counts as done; a recorded address Pidgeon no longer has comes back as `missing`. Fails, naming
+ * the addresses, when any of it doesn't happen.
  */
 export const takeDown = Effect.fn("takeDownPidgeonAddresses")(function* (
   adminKey: Redacted.Redacted<string>,
@@ -144,8 +145,30 @@ export const takeDown = Effect.fn("takeDownPidgeonAddresses")(function* (
         left(`Pidgeon didn't delete ${identity.local_part} (${error.message})`)
       )
     );
-  return { revoked: keys.length, deleted: addresses.length };
+  const found = new Set(addresses.map((identity) => identity.local_part));
+  return {
+    revoked: keys.length,
+    deleted: addresses.length,
+    missing: localParts.filter((localPart) => !found.has(localPart))
+  };
 });
+
+/**
+ * What `down` says it did in Pidgeon. A recorded address Pidgeon no longer has, deleted a day
+ * after it was made or never made, can't say which key was its: one it had reaches nothing, and
+ * the guarded stale sweep revokes that.
+ */
+export const told = (done: {
+  readonly revoked: number;
+  readonly deleted: number;
+  readonly missing: ReadonlyArray<string>;
+}) => [
+  ...done.missing.map(
+    (localPart) =>
+      `  Pidgeon: ${localPart} isn't in Pidgeon any more, or never was. Any key it had reaches nothing, and the stale sweep, \`pnpm test:pidgeon:sweep\`, revokes it.`
+  ),
+  `  Pidgeon: revoked ${done.revoked} key${done.revoked === 1 ? "" : "s"} and deleted ${done.deleted} test address${done.deleted === 1 ? "" : "es"} this environment made.`
+];
 
 /** The local parts recorded in `file`: none when there is no file. */
 const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
@@ -159,7 +182,8 @@ const recorded = Effect.fn("recordedPidgeon")(function* (file: string) {
 
 /**
  * Records a test address's local part in `file` before `up` asks Pidgeon to make it, so `down`
- * finds it even when the connect failed after Pidgeon made it.
+ * finds it even when the connect failed after Pidgeon made it. The new record is written beside
+ * the old and renamed over it, so a write cut short never loses what was recorded before.
  */
 export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
   file: string,
@@ -167,12 +191,15 @@ export const recordAddress = Effect.fn("recordPidgeonAddress")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const before = Option.getOrElse(yield* recorded(file), () => []);
-  yield* fs.writeFileString(file, encodeRecorded([...before, localPart]));
+  const next = `${file}.next`;
+  yield* fs.writeFileString(next, encodeRecorded([...before, localPart]));
+  yield* fs.rename(next, file);
 });
 
 /**
  * For `down` and `reset`: takes down the test addresses recorded in `file`, and their keys, with
- * the developer's test admin key. Nothing recorded, nothing to do, and no call to Pidgeon.
+ * the developer's test admin key, then drops the record. Nothing recorded, nothing to do, and no
+ * call to Pidgeon.
  */
 export const takeDownRecorded = Effect.fn("takeDownRecordedPidgeon")(function* (
   file: string,
@@ -186,10 +213,10 @@ export const takeDownRecorded = Effect.fn("takeDownRecordedPidgeon")(function* (
       addresses: localParts.value,
       why: `there's no PIDGEON_TEST_ADMIN_KEY in the environment or ${devEnvFile}`
     });
-  const { revoked, deleted } = yield* takeDown(adminKey.value, localParts.value).pipe(
+  const done = yield* takeDown(adminKey.value, localParts.value).pipe(
     Effect.provide(PidgeonSource.layer)
   );
-  yield* Console.error(
-    `  Pidgeon: revoked ${revoked} key${revoked === 1 ? "" : "s"} and deleted ${deleted} test address${deleted === 1 ? "" : "es"} this environment made.`
-  );
+  for (const line of told(done)) yield* Console.error(line);
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(file);
 });

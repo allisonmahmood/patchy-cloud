@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
-import { isTestKey, recordAddress, takeDown, takeDownRecorded } from "./pidgeon.js";
+import { isTestKey, recordAddress, takeDown, takeDownRecorded, told } from "./pidgeon.js";
 
 /**
  * Pidgeon as these tests script it: answers by method, path and cursor, and every request it saw.
@@ -95,7 +95,12 @@ it.effect("takes down only the recorded test addresses and the keys that reach n
       "DELETE /identities/ours": { data: {} }
     });
     const done = yield* takeDown(admin, ["support-ab12cd", "support-gone00"]).pipe(pidgeon.provide);
-    assert.deepStrictEqual(done, { revoked: 2, deleted: 1 });
+    assert.deepStrictEqual(done, { revoked: 2, deleted: 1, missing: ["support-gone00"] });
+    // The address Pidgeon already deleted is named, its key left to the stale sweep.
+    const lines = told(done);
+    assert.include(lines[0], "support-gone00 isn't in Pidgeon any more");
+    assert.include(lines[0], "`pnpm test:pidgeon:sweep`");
+    assert.include(lines[1], "revoked 2 keys and deleted 1 test address");
     // Keys first, so none is left reaching nothing; never the live address or another's key.
     assert.deepStrictEqual(deletes(pidgeon.sent), [
       "DELETE /api-keys/minted",
@@ -146,8 +151,9 @@ it.layer(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))("takeDownRecorded
       if (error._tag !== "PidgeonLeft") return assert.fail(error.message);
       assert.deepStrictEqual(error.addresses, ["support-ab12cd", "support-ef34gh"]);
       assert.include(error.message, "PIDGEON_TEST_ADMIN_KEY");
-      // The record stays for the next try.
+      // The record stays for the next try, and nothing but it is left beside it.
       assert.isTrue(yield* fs.exists(file));
+      assert.deepStrictEqual(yield* fs.readDirectory(dir), ["pidgeon-addresses.json"]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))))
   );
 });

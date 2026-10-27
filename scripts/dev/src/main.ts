@@ -505,6 +505,9 @@ const reset = Command.make(
   Effect.fn(function* ({ json }) {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
+    // What the environment made in Pidgeon goes first, whatever plan.json says, while the record
+    // of it is still there.
+    yield* takeDownPidgeon(root);
     yield* buildBroker(root);
     const stateDir = yield* stateDirOf(root);
     // Reset is the recovery path, so an unreadable plan.json is wiped, not fatal.
@@ -513,12 +516,8 @@ const reset = Command.make(
     );
     const environment = Option.isSome(recorded) ? recorded.value.environment : undefined;
     const signIn = Option.isSome(recorded) ? signInOf(recorded.value) : "personas";
-    // An environment's workspace describes the data about to be wiped, so it goes too, and what
-    // it made in Pidgeon before it.
-    if (environment !== undefined) {
-      yield* takeDownPidgeon(root);
-      yield* tearDown(root);
-    }
+    // An environment's workspace describes the data about to be wiped, so it goes too.
+    if (environment !== undefined) yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value, Console.error);
     yield* fs.remove(stateDir, { recursive: true, force: true });
     const plan = yield* start(yield* computePlan(root, isPortFree, environment, signIn));
