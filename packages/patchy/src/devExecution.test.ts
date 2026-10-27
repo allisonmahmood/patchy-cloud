@@ -20,12 +20,13 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type { PidgeonDev } from "@patchy/integrations/dev";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { ServerBinding } from "./devExecution.js";
 import type { Json } from "./config.js";
 
-/** These repos declare no PostHog connection, so dev never reaches an instance. */
+/** These repos declare no PostHog or Pidgeon connection, so dev never reaches an instance. */
 const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
 
 const identity = new Identity({
@@ -49,16 +50,29 @@ const prepared: Prepared = {
   },
   metadata: { postgres: {}, posthog: {}, pidgeon: {}, shared: {} }
 };
-const bundle = Effect.fn("test.devBundle")(function* (
-  label: string,
-  mode: "normal" | "removed" | "breaking" = "normal"
-) {
+/** A guest built from `contents` against this package's `patchy/server`, and its handlers. */
+const compile = Effect.fn("test.devCompile")(function* (contents: string) {
   const source = (yield* Effect.promise(() =>
     build({
       stdin: {
         resolveDir: new URL("..", import.meta.url).pathname,
         sourcefile: "dev-engine-fixture.ts",
-        contents: `import { query, mutation, action, createGuest, t } from "patchy/server";
+        contents
+      },
+      alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
+      external: ["./executeConfig.js"],
+      bundle: true,
+      write: false,
+      platform: "browser",
+      format: "esm",
+      target: "es2022",
+      conditions: ["development"]
+    })
+  )).outputFiles[0]!.text;
+  return { bytes: new TextEncoder().encode(source), handlers: yield* Inspection.inspect(source) };
+});
+const bundle = (label: string, mode: "normal" | "removed" | "breaking" = "normal") =>
+  compile(`import { query, mutation, action, createGuest, t } from "patchy/server";
 const value = query({args:{},result:t.text(),handler:async () => ${JSON.stringify(label)}});
 const live = query({args:${mode === "breaking" ? "{required:t.text()}" : "{}"},result:t.text(),handler:async ctx => {await ctx.tables.notes.list(); return ${JSON.stringify(label)};}});
 const nested = action({args:{},result:t.text(),handler:async ctx => {await ctx.tables.notes.list(); return ctx.run.demo.value({});}});
@@ -77,20 +91,7 @@ const analytics = action({args:{name:t.text()},result:t.json(),handler:async (ct
   catch (error) { return {code:error.code, correlationId:error.correlationId ?? null}; }
 }});
 const relayed = action({args:{},result:t.json(),handler:async ctx => (await ctx.connections.analytics.query({name:"broken",query:"SELECT 1",shape:{event:t.text()}})).rows});
-export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized,analytics,relayed}}, ["assets"]);`
-      },
-      alias: { "patchy/server": new URL("./server.ts", import.meta.url).pathname },
-      external: ["./executeConfig.js"],
-      bundle: true,
-      write: false,
-      platform: "browser",
-      format: "esm",
-      target: "es2022",
-      conditions: ["development"]
-    })
-  )).outputFiles[0]!.text;
-  return { bytes: new TextEncoder().encode(source), handlers: yield* Inspection.inspect(source) };
-});
+export default createGuest({demo:{value,${mode === "removed" ? "" : "live,"}nested,fixtures,storeMetadata,storeBytes,write,adopt,fail,oversized,analytics,relayed}}, ["assets"]);`);
 
 it.live(
   "runs fixture callbacks and transactional writes as each viewer without runtime-log tables",
@@ -437,6 +438,155 @@ it.live(
           shape: { event: { kind: "text", optional: false } }
         }
       });
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
+  { timeout: 60_000 }
+);
+
+it.live(
+  "an action reads Pidgeon through the instance as the machine's person and its reply is simulated, in a repo whose only live integration is Pidgeon",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-dev-pidgeon-" });
+      // The instance's dev door, as far as this repo can tell: it sees the key and the route.
+      const seen: Array<{ readonly authorization?: string; readonly body: unknown }> = [];
+      const thread = {
+        id: "thr_1",
+        subject: "Where is my order?",
+        status: "open",
+        from: { email: "sam@customer.example", name: "Sam" },
+        preview: "Hi, my order 1043…",
+        messageCount: 1,
+        hasAttachments: false,
+        lastMessageAt: "2026-10-26T09:00:00.000Z",
+        createdAt: "2026-10-25T08:00:00.000Z"
+      };
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          createServer((request, response) => {
+            const chunks: Buffer[] = [];
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+              seen.push({
+                ...(request.headers.authorization === undefined
+                  ? {}
+                  : { authorization: request.headers.authorization }),
+                body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              });
+              response.writeHead(200, { "content-type": "application/json" });
+              response.end(
+                JSON.stringify({ ok: true, value: { threads: [thread], nextCursor: null } })
+              );
+            });
+          })
+        ),
+        (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void)))
+      );
+      yield* Effect.callback<void>(
+        (resume) => void server.listen(0, "127.0.0.1", () => resume(Effect.void))
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") return assert.fail("Expected TCP");
+      const declaration = {
+        kind: "pidgeon" as const,
+        id: "conn_support",
+        handle: "support",
+        revision: 1
+      };
+      const simulated: PidgeonDev.Simulated[] = [];
+      const resources = yield* DevResources.prepare(
+        {
+          ...prepared,
+          manifest: { ...prepared.manifest, uses: { support: declaration } },
+          metadata: {
+            postgres: {},
+            shared: {},
+            posthog: {},
+            pidgeon: {
+              support: {
+                declaration,
+                snapshot: {
+                  version: 1,
+                  address: {
+                    email: "support@acme.example",
+                    displayName: null,
+                    sendPolicy: "reply_only"
+                  },
+                  access: "send",
+                  test: false,
+                  labels: [],
+                  plan: "free"
+                }
+              }
+            }
+          }
+        },
+        root,
+        `${root}/.patchy/dev`,
+        {
+          instance: {
+            apiUrl: `http://127.0.0.1:${address.port}`,
+            token: Option.some(Redacted.make("pp_machine_key"))
+          },
+          simulated: (write) => Effect.sync(() => void simulated.push(write)),
+          server: yield* compile(`import { action, createGuest, t } from "patchy/server";
+const answer = action({args:{draft:t.text()},result:t.json(),handler:async (ctx,args) => {
+  const inbox = ctx.connections.support;
+  const { threads } = await inbox.threads.list({ status: "open" });
+  const sent = await inbox.messages.reply("msg_1", { text: "On its way.", idempotencyKey: args.draft });
+  return { viewer: ctx.viewer.user.id, threads: threads.map((thread) => thread.id), sent };
+}});
+export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
+        }
+      );
+      const invocation = Context.getUnsafe(resources.context, Invocation.Invocation);
+      const colleague = {
+        ...viewer,
+        user: { id: "usr_colleague", name: "Colleague", email: "colleague@patchy.local" },
+        admin: false
+      };
+      for (const current of [viewer, colleague]) {
+        const answered = yield* invocation.call(
+          { handler: "desk.answer", args: { draft: `dev-draft-${current.user.id}` } },
+          {
+            ...resources.version,
+            identity: current,
+            principal: { userId: current.user.id },
+            correlationId: "dev-pidgeon"
+          },
+          Effect.succeed(current)
+        );
+        if (!answered.ok) return assert.fail(JSON.stringify(answered));
+        const value = answered.value as {
+          viewer: string;
+          threads: ReadonlyArray<string>;
+          sent: { status: string; messageId: string; test: boolean };
+        };
+        assert.deepStrictEqual([value.viewer, value.threads], [current.user.id, ["thr_1"]]);
+        assert.deepInclude(value.sent, { status: "sent", test: true });
+        assert.match(value.sent.messageId, /^dev_/);
+      }
+      // Each read went to the instance with the key; no reply did, and each shows in dev's output.
+      assert.deepStrictEqual(
+        seen.map((request) => request.authorization),
+        ["Bearer pp_machine_key", "Bearer pp_machine_key"]
+      );
+      assert.deepStrictEqual(seen[0]!.body, {
+        op: "pidgeon.read",
+        connection: { id: "conn_support", handle: "support" },
+        args: { operation: "threads.list", input: { status: "open" } }
+      });
+      assert.deepStrictEqual(
+        simulated.map((write) => [write.viewerId, write.connection, write.summary]),
+        [
+          [viewer.user.id, "pidgeon/support", "messages.reply msg_1"],
+          [colleague.user.id, "pidgeon/support", "messages.reply msg_1"]
+        ]
+      );
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.provide(FetchHttpClient.layer),

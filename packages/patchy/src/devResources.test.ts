@@ -22,7 +22,7 @@ import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
 
-/** These repos declare no PostHog connection, so dev never reaches an instance. */
+/** These repos declare no PostHog or Pidgeon connection, so dev never reaches an instance. */
 const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
 const decodeMetadata = Schema.decodeUnknownEffect(DeclarationMetadata);
 const decodePage = Schema.decodeUnknownEffect(TablePage);

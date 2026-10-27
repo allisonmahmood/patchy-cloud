@@ -178,10 +178,29 @@ const command = Effect.fn("test.lifecycle.command")(function* (
 
 /** The repo's PostHog declaration, when a fixture reads one; dev reads it through the stub. */
 const product = { kind: "posthog" as const, id: "conn_product", handle: "product", revision: 1 };
+/** The repo's Pidgeon declaration, when a fixture declares only that; dev reads it the same way. */
+const support = { kind: "pidgeon" as const, id: "conn_support", handle: "support", revision: 1 };
+/** The thread the stub's dev door answers a Pidgeon read with. */
+const thread = {
+  id: "thr_1",
+  subject: "Where is my order?",
+  status: "open",
+  from: { email: "sam@customer.example", name: "Sam" },
+  preview: "Hi, my order 1043…",
+  messageCount: 1,
+  hasAttachments: false,
+  lastMessageAt: "2026-10-26T09:00:00.000Z",
+  createdAt: "2026-10-25T08:00:00.000Z"
+};
 
 const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
-  options: { readonly posthog?: boolean } = {}
+  options: { readonly posthog?: boolean; readonly pidgeon?: boolean } = {}
 ) {
+  const declared = options.posthog
+    ? { alias: "analytics", declaration: product, config: 'posthog("product")' }
+    : options.pidgeon
+      ? { alias: "support", declaration: support, config: 'pidgeon("support")' }
+      : undefined;
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-lifecycle-" });
   const requests: string[] = [];
@@ -242,7 +261,12 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                 : { authorization: request.headers.authorization }),
               body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
             });
-            return respond({ ok: true, value: { ok: true, rows: [{ event: "$pageview" }] } });
+            return respond({
+              ok: true,
+              value: options.pidgeon
+                ? { threads: [thread], nextCursor: null }
+                : { ok: true, rows: [{ event: "$pageview" }] }
+            });
           }
           if (url === "/api/sdk/generate") {
             try {
@@ -251,18 +275,51 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
               );
               assert.deepStrictEqual(
                 manifest.uses,
-                options.posthog ? { analytics: { kind: "posthog", handle: "product" } } : {}
+                declared === undefined
+                  ? {}
+                  : {
+                      [declared.alias]: {
+                        kind: declared.declaration.kind,
+                        handle: declared.declaration.handle
+                      }
+                    }
               );
-              const stamps = options.posthog
-                ? [{ alias: "analytics", id: product.id, revision: 1, declaration: product }]
-                : [];
+              const stamps =
+                declared === undefined
+                  ? []
+                  : [
+                      {
+                        alias: declared.alias,
+                        id: declared.declaration.id,
+                        revision: 1,
+                        declaration: declared.declaration
+                      }
+                    ];
               return respond({
                 ok: true,
                 uses: stamps.map(({ alias, id, revision }) => ({ alias, id, revision })),
                 metadata: {
                   postgres: {},
                   shared: {},
-                  pidgeon: {},
+                  pidgeon: options.pidgeon
+                    ? {
+                        support: {
+                          declaration: support,
+                          snapshot: {
+                            version: 1,
+                            address: {
+                              email: "support@acme.example",
+                              displayName: null,
+                              sendPolicy: "reply_only"
+                            },
+                            access: "send",
+                            test: false,
+                            labels: [],
+                            plan: "free"
+                          }
+                        }
+                      }
+                    : {},
                   posthog: options.posthog
                     ? {
                         analytics: {
@@ -348,8 +405,8 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
   );
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
-    'import { defineConfig, table, t, posthog } from "patchy/config";\n' +
-      `export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: ${options.posthog ? '{ analytics: posthog("product") }' : "{}"} });\n`
+    'import { defineConfig, table, t, posthog, pidgeon } from "patchy/config";\n' +
+      `export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: ${declared === undefined ? "{}" : `{ ${declared.alias}: ${declared.config} }`} });\n`
   );
   yield* fs.writeFileString(
     path.join(root, "index.html"),
@@ -698,6 +755,70 @@ const holdsNoKey = Effect.fn("test.lifecycle.holdsNoKey")(function* (
       view
     );
 });
+
+it.live(
+  "hands the key to a repo whose only live integration is Pidgeon: reads go to the instance, a send stays in dev's output",
+  () =>
+    Effect.gen(function* () {
+      const { root, instance, stateDir, devReads } = yield* makeFixture({ pidgeon: true });
+      const started = yield* command(root, instance, []);
+      for (const [url, viewerId] of [
+        [started.url, identity.user.id],
+        [started.colleagueUrl, "usr_dev_colleague"]
+      ] as const)
+        assert.nestedPropertyVal(
+          yield* call(
+            url,
+            "pidgeon.read",
+            { connection: "support", operation: "threads.list", input: {} },
+            viewerId
+          ),
+          "value.threads[0].id",
+          "thr_1"
+        );
+      const sent = yield* call(started.url, "pidgeon.write", {
+        connection: "support",
+        operation: "messages.send",
+        input: {
+          to: ["ana@customer.example"],
+          subject: "Your order",
+          text: "It shipped today.",
+          idempotencyKey: "lifecycle-send-0001"
+        }
+      });
+      assert.nestedPropertyVal(sent, "value.status", "sent");
+      assert.nestedPropertyVal(sent, "value.test", true);
+      // Only the reads reached the instance, both as the key's person.
+      assert.deepStrictEqual(
+        devReads.map((request) => request.authorization),
+        ["Bearer disposable-lifecycle-token", "Bearer disposable-lifecycle-token"]
+      );
+      assert.deepStrictEqual(devReads[0]!.body, {
+        op: "pidgeon.read",
+        connection: { id: support.id, handle: support.handle },
+        args: { operation: "threads.list", input: {} }
+      });
+      // This session logs JSON, so dev's output says what it didn't send as a JSON line.
+      const { text } = yield* command(root, instance, ["logs"]);
+      const simulated = (text as string)
+        .split("\n")
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.type === "simulated");
+      assert.deepStrictEqual(simulated, [
+        {
+          type: "simulated",
+          viewerId: identity.user.id,
+          connection: "pidgeon/support",
+          operation: "messages.send",
+          summary: "messages.send “Your order” to ana@customer.example"
+        }
+      ]);
+      yield* holdsNoKey(stateDir, (yield* Effect.promise(() => readRecord(stateDir)))!.pid);
+      yield* command(root, instance, ["stop"]);
+    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+  { timeout: 60_000 }
+);
 
 it.live(
   "hands the key to the daemon on stdin only; both viewers read PostHog as its person, detached and in the foreground",
