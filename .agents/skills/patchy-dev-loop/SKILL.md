@@ -107,9 +107,10 @@ Done when `pnpm dev status` exits 0.
   never ask for a live key. The account holds ten active keys, test keys
   included: `pnpm dev down` revokes the keys and deletes the test addresses the
   environment's `up` made, before wiping it, so take environments down when
-  done. If it can't, it names the addresses and removes nothing. An address you
-  connect by hand isn't recorded: delete its connection before `down`, which
-  revokes its key.
+  done. If it can't, it names the addresses and removes nothing. An address
+  Pidgeon already deleted is named and passed over; its key reaches nothing,
+  and `pnpm test:pidgeon:sweep` revokes it. An address you connect by hand
+  isn't recorded: delete its connection before `down`, which revokes its key.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.
