@@ -461,13 +461,15 @@ provider failure without restoring patch access. Use disposable `+clerk_test`
 addresses. A development application's configured signup fields still apply.
 
 The recipient browser regression runs offline with
-`pnpm exec playwright test -c playwright.tier1.config.ts external-sharing.spec.ts external-sharing-live.spec.ts --project chromium`.
+`pnpm exec playwright test -c playwright.tier1.config.ts external-sharing.spec.ts external-sharing-live.spec.ts external-sharing-revocation.spec.ts --project chromium`.
 It verifies signed Clerk cookies without company membership, invitation acceptance,
 Home and direct access boundaries, session refresh and revocation of an open patch.
 The live spec uses real tables, files, subscriptions and server handlers to exercise
 two independent companies, existing-member recipients and declared shared dependencies.
 It also checks read-only table/file access, live permission changes and the company
-directory boundary. New invitations default to read only; select Can change data
+directory boundary. The revocation spec uses two real hosts and disables wrapper
+polling to prove that ending a grant on one host stops the other host’s runtime
+stream and refuses file downloads on both. New invitations default to read only; select Can change data
 when exercising writes. Read-only grants refuse company connections in both tiers.
 Its account-lookup HTTP fixture uses `PATCHY_TEST_CLERK_API_URL`, honored only with
 `NODE_ENV=test` and `pk_test_` keys; production and normal local Clerk runs ignore it.
