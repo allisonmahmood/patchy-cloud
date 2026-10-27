@@ -11,6 +11,7 @@ export class Binding extends Context.Service<
     readonly identity: typeof RuntimeMe.Type;
     /** A host-admitted patch recipient, never company membership or client input. */
     readonly externalRecipient?: boolean;
+    readonly externalAccess?: "read" | "write";
     readonly correlationId: string;
     /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
     readonly effectivePrincipal?: string;

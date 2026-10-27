@@ -226,6 +226,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (capability.readOnly && writes(request.op))
       return remember(refused("access_denied", "A read-only action cannot write."), 403);
     const operation = Object.hasOwn(handlers, request.op) ? handlers[request.op] : undefined;
+    // Company queries can call database functions. A read-only grant cannot delegate
+    // that authority, including through an otherwise read-only server action.
+    if (capability.binding.externalAccess === "read" && operation?.kind === "integration")
+      return remember(
+        refused("access_denied", "Read-only recipients cannot call company connections."),
+        403
+      );
     if (request.op !== "log" && request.op !== "server.call" && operation === undefined)
       return remember(refused("invalid_request", "Unknown callback operation."), 400);
     if (operation?.kind === "integration") integration = request.op;

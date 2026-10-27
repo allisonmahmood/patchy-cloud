@@ -74,7 +74,8 @@ export const make = (
             if (
               current === null ||
               current.viewer.user.id !== viewer.viewer.user.id ||
-              current.viewer.company.id !== viewer.viewer.company.id
+              current.viewer.company.id !== viewer.viewer.company.id ||
+              current.externalAccess !== viewer.externalAccess
             )
               return yield* new Runtime.AccessDenied({});
             return current.viewer;

@@ -27,6 +27,7 @@ import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as CompanyAdmission from "./CompanyAdmission.js";
+import * as PatchAccess from "./PatchAccess.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 
@@ -293,6 +294,32 @@ it.effect("does not rebind an invocation when the Clerk subject resolves to anot
     yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
       VALUES ('usr_rebound', ${DEV_SEED.clerkUserId}, ${DEV_SEED.companyId},
         ${DEV_SEED.email}, 'Rebound', 'admin')`;
+    assert.instanceOf(yield* reauthorize.pipe(Effect.flip), Runtime.AccessDenied);
+  }).pipe(Effect.provide(dependencies))
+);
+
+it.effect("a permission change refuses an already-admitted recipient callback", () =>
+  Effect.gen(function* () {
+    let access: "read" | "write" = "write";
+    const { binding: admitted, reauthorize } = yield* admit().pipe(
+      Effect.provideService(PatchAccess.recipient, () =>
+        Effect.sync(() => ({
+          access,
+          viewer: {
+            user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
+            company: {
+              id: DEV_SEED.companyId,
+              name: DEV_SEED.companyName,
+              handle: DEV_SEED.companyHandle
+            },
+            admin: false
+          }
+        }))
+      )
+    );
+    assert.strictEqual(admitted.externalAccess, "write");
+    assert.deepStrictEqual(yield* reauthorize, admitted.identity);
+    access = "read";
     assert.instanceOf(yield* reauthorize.pipe(Effect.flip), Runtime.AccessDenied);
   }).pipe(Effect.provide(dependencies))
 );

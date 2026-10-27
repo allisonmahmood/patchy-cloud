@@ -16,6 +16,37 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
 
 it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway", (it) => {
+  it.effect(
+    "read-only recipients cannot reach company connections through a read-only action",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const gateway = yield* CallbackGateway.make({
+          "postgres.query": {
+            kind: "integration",
+            run: () => Effect.die("Connection must not run.")
+          },
+          "posthog.query": {
+            kind: "integration",
+            run: () => Effect.die("Connection must not run.")
+          }
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const capability = yield* Fixtures.issue(capabilities, {
+          kind: "action",
+          readOnly: true,
+          binding: { ...Fixtures.binding, externalRecipient: true, externalAccess: "read" }
+        });
+        for (const op of ["postgres.query", "posthog.query"])
+          assert.deepInclude(
+            yield* gateway.callback(capability.token, capability.attempt, { op, args: {} }),
+            {
+              ok: false,
+              code: "access_denied"
+            }
+          );
+      }).pipe(Effect.scoped)
+  );
+
   it.effect("revocation stops an external recipient's next owned, nested and log callback", () =>
     Effect.gen(function* () {
       const capabilities = yield* InvocationCapabilities.make;

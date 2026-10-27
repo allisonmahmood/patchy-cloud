@@ -17,6 +17,7 @@ export interface Identity {
   readonly expiresAt: number;
   readonly identity: NonNullable<RuntimeMe>;
   readonly externalRecipient?: boolean;
+  readonly externalAccess?: "read" | "write";
 }
 
 /** Production verifies cookies; dev supplies its two explicit mount identities.
@@ -81,7 +82,8 @@ export const make: Effect.Effect<StreamAdmission["Service"], never, Dependencies
           viewerId: viewer.viewer.user.id,
           expiresAt: signedIn.claims.exp * 1_000,
           identity: viewer.viewer,
-          externalRecipient: viewer.externalRecipient
+          externalRecipient: viewer.externalRecipient,
+          ...(viewer.externalAccess === undefined ? {} : { externalAccess: viewer.externalAccess })
         };
       });
     const forPatch = (target?: PatchAccess.Target) =>

@@ -29,7 +29,7 @@ Who may open a patch: `company` means signed-in colleagues in its company; `publ
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Patch grant**:
-An invitation or accepted permission for one signed-in person to use one patch without membership in its company. Grants from different companies are independent; a grant never grants company administration or publishing access.
+An invitation or accepted permission for one signed-in person to use one patch without membership in its company. Each grant chooses read-only or data-changing access; new invitations default to read only. Owners and company admins may change that permission or revoke the grant. Grants from different companies are independent; a grant never grants company administration, patch editing or publishing access.
 _Avoid_: company invitation, restricted company membership
 
 **Openable patch**:

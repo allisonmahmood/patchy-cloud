@@ -14,6 +14,7 @@ export const Grant = Schema.Struct({
   email: Schema.String,
   subject: Schema.NullOr(Schema.String),
   revoked: Schema.Boolean,
+  access: Schema.Literals(["read", "write"]),
   name: Schema.String,
   title: Schema.String,
   tier: Schema.Literals([0, 1, 2]),
@@ -76,6 +77,7 @@ export class PatchGrants extends Context.Service<
       input: {
         readonly patchId: string;
         readonly email: string;
+        readonly access?: "read" | "write";
         readonly destination?: (id: string) => string;
       }
     ) => Effect.Effect<string, ChangeError>;
@@ -83,6 +85,11 @@ export class PatchGrants extends Context.Service<
       account: Account,
       id: string
     ) => Effect.Effect<boolean, SqlError | GrantRevocationMailFailed>;
+    readonly setAccess: (
+      account: Account,
+      id: string,
+      access: "read" | "write"
+    ) => Effect.Effect<boolean, SqlError>;
   }
 >()("@patchy/patches/PatchGrants") {}
 
@@ -93,7 +100,7 @@ export const make = Effect.gen(function* () {
   const mail = yield* InviteMail.InviteMail;
   const rows = (query: Effect.Effect<readonly unknown[], SqlError>) =>
     query.pipe(Effect.flatMap(decode), Effect.catchTags({ SchemaError: Effect.die }));
-  const columns = sql`s.id, p.id AS "patchId", s.email, s.subject, s.revoked,
+  const columns = sql`s.id, p.id AS "patchId", s.email, s.subject, s.revoked, s.access,
      p.name, p.title, v.tier, c.id AS "companyId", c.name AS company, c.handle`;
   const joins = (versionId?: string) => sql`FROM patch_grants s JOIN patches p ON p.id = s.patch_id
     JOIN companies c ON c.id = p.company_id JOIN patch_versions v ON v.patch_id = p.id
@@ -144,8 +151,8 @@ export const make = Effect.gen(function* () {
       WHERE p.id = ${input.patchId} AND ${live} AND ${manages(account.sub)}`;
       if (allowed.length === 0) return yield* new CannotSharePatch({ patchId: input.patchId });
       const [grant] = yield* sql<{ id: string; subject: string | null; mailId: string | null }>`
-      INSERT INTO patch_grants (id, patch_id, email, created_by)
-      SELECT ${newInternalId("share")}, p.id, ${input.email.toLowerCase()}, actor.id
+      INSERT INTO patch_grants (id, patch_id, email, created_by, access)
+      SELECT ${newInternalId("share")}, p.id, ${input.email.toLowerCase()}, actor.id, ${input.access ?? "read"}
       FROM patches p JOIN users actor ON actor.clerk_user_id = ${account.sub}
       WHERE p.id = ${input.patchId} AND actor.deactivated_at IS NULL AND ${live} AND ${manages(account.sub)}
       ON CONFLICT (patch_id, email) DO UPDATE SET
@@ -153,6 +160,7 @@ export const make = Effect.gen(function* () {
         subject = CASE WHEN patch_grants.revoked THEN NULL ELSE patch_grants.subject END,
         clerk_invitation_id = CASE WHEN patch_grants.revoked THEN NULL ELSE patch_grants.clerk_invitation_id END,
         created_by = CASE WHEN patch_grants.revoked THEN excluded.created_by ELSE patch_grants.created_by END,
+        access = CASE WHEN patch_grants.revoked THEN excluded.access ELSE patch_grants.access END,
         revoked = false
       RETURNING id, subject, clerk_invitation_id AS "mailId"`;
       if (grant === undefined) return yield* new CannotSharePatch({ patchId: input.patchId });
@@ -189,6 +197,18 @@ export const make = Effect.gen(function* () {
       );
     return true;
   });
-  return PatchGrants.of({ inbox, managed, admit, accept, invite, revoke });
+  const setAccess = Effect.fn("PatchGrants.setAccess")(function* (
+    account: Account,
+    id: string,
+    access: "read" | "write"
+  ) {
+    const changed = yield* sql<{ patchId: string }>`UPDATE patch_grants s SET access = ${access}
+      FROM patches p WHERE s.id = ${id} AND p.id = s.patch_id AND NOT s.revoked
+      AND ${manages(account.sub)} RETURNING s.patch_id AS "patchId"`;
+    if (changed[0] === undefined) return false;
+    yield* wake(changed[0].patchId);
+    return true;
+  });
+  return PatchGrants.of({ inbox, managed, admit, accept, invite, revoke, setAccess });
 });
 export const layer = Layer.effect(PatchGrants, make);

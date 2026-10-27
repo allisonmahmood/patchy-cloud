@@ -153,7 +153,8 @@ The patch's own id, used for its owned resources. It does not inherit the owner'
 _Avoid_: service account, owner's token
 
 **External recipient**:
-A signed-in person with an accepted grant to one patch, without membership in its company. The loopback-only sharing experiment supplies a runtime viewer identity for that patch and rechecks the grant for calls, streams and handler callbacks. This identity never grants first-party company access. Its declared data capabilities remain the patch's, including writes; it is not a read-only role.
+A signed-in person with an accepted grant to one patch, without membership in its company. The loopback-only sharing experiment supplies a runtime viewer identity for that patch and rechecks the grant for calls, streams and handler callbacks. This identity never grants first-party company access. Its data capabilities are bounded by both the patch and its grant permission.
+A read-only patch grant refuses table/file writes, upload staging, company-connection calls, mutations and actions not explicitly declared read-only. The same grant permission binds server callbacks and nested calls. A permission change refuses callbacks admitted under the previous permission; work already admitted may finish. The company member directory is unavailable to external recipients under either permission.
 _Avoid_: company guest member, restricted company account
 
 **Wire version**:

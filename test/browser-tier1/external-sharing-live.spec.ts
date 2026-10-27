@@ -11,7 +11,7 @@ test.use({ serverEnvironment: { PATCHY_DEV_EXTERNAL_SHARING: "true" } });
 
 async function grant(instance: Instance, patch: Published, id: string, owner = "usr_dev") {
   await instance.platform.query(
-    "INSERT INTO patch_grants (id,patch_id,email,subject,created_by) VALUES ($1,$2,$3,$4,$5)",
+    "INSERT INTO patch_grants (id,patch_id,email,subject,created_by,access) VALUES ($1,$2,$3,$4,$5,'write')",
     [id, patch.patchId, recipient.email, recipient.sub, owner]
   );
 }
@@ -67,6 +67,84 @@ const get = (frame: Frame) =>
       await (window as unknown as FixtureWindow).harness.client.files.assets!.get("shared.txt")
     )
   );
+
+test("read-only sharing keeps live reads and file downloads while refusing writes and permission escalation", async ({
+  browser,
+  page: owner,
+  instance
+}) => {
+  const patch = await instance.publish();
+  await grant(instance, patch, "share_permission");
+  const ownerFrame = await open(owner, patch);
+  await insert(ownerFrame, "Owner row");
+  await put(ownerFrame, "Owner file");
+  const management = await owner.context().newPage();
+  const external = await browser.newContext();
+  try {
+    await management.goto(`${instance.origin}/shared`);
+    const form = management.locator('form[action="/~shared/permission/share_permission"]');
+    await form.getByLabel(`Permission for ${recipient.email}`).selectOption("read");
+    await form.getByRole("button", { name: "Save permission" }).click();
+    await prepare(external, instance);
+    await recipientSession(external, instance);
+    await installSessionRefreshBoundary(external, () => recipientSession(external, instance));
+    const page = await external.newPage();
+    const frame = await open(page, patch);
+    await subscribe(frame);
+    await expect(frame.locator("#subscription-rows")).toHaveText('["Owner row"]');
+    expect(await get(frame)).toBe("Owner file");
+    const deniedInsert = () =>
+      frame.evaluate(async () => {
+        try {
+          await (window as unknown as FixtureWindow).harness.client.tables.rows!.insert({
+            label: "Not allowed"
+          });
+          return "allowed";
+        } catch (error) {
+          return (error as { code: string }).code;
+        }
+      });
+    const deniedPut = () =>
+      frame.evaluate(async () => {
+        try {
+          await (window as unknown as FixtureWindow).harness.client.files.assets!.put(
+            "shared.txt",
+            new TextEncoder().encode("Not allowed"),
+            { contentType: "text/plain" }
+          );
+          return "allowed";
+        } catch (error) {
+          return (error as { code: string }).code;
+        }
+      });
+    expect(await deniedInsert()).toBe("access_denied");
+    expect(await deniedPut()).toBe("access_denied");
+    expect(
+      (
+        await external.request.post(`${instance.origin}/~shared/permission/share_permission`, {
+          headers: { origin: instance.origin },
+          form: { access: "write" }
+        })
+      ).status()
+    ).toBe(403);
+    await insert(ownerFrame, "Still live");
+    await expect(frame.locator("#subscription-rows")).toContainText("Still live");
+    // Both changes take effect on this same document without relying on its UI.
+    await form.getByLabel(`Permission for ${recipient.email}`).selectOption("write");
+    await form.getByRole("button", { name: "Save permission" }).click();
+    await insert(frame, "Recipient write");
+    await subscribe(ownerFrame);
+    await expect(ownerFrame.locator("#subscription-rows")).toContainText("Recipient write");
+    await form.getByLabel(`Permission for ${recipient.email}`).selectOption("read");
+    await form.getByRole("button", { name: "Save permission" }).click();
+    expect(await deniedInsert()).toBe("access_denied");
+    expect(await deniedPut()).toBe("access_denied");
+    expect(await get(ownerFrame)).toBe("Owner file");
+  } finally {
+    await external.close();
+    await management.close();
+  }
+});
 
 test("a declared directory remains private to company members", async ({
   browser,
@@ -138,7 +216,7 @@ test("one recipient uses live patches from two companies without connecting thei
     const pageB = await external.newPage();
     const partnerPage = await partner.newPage();
     await pageA.goto(`${instance.origin}/`);
-    await expect(pageA.getByText("Can use this patch", { exact: true })).toHaveCount(2);
+    await expect(pageA.getByText("Can change patch data", { exact: true })).toHaveCount(2);
     await pageA.screenshot({
       path: testInfo.outputPath("recipient-home-two-companies.png"),
       fullPage: true
@@ -227,7 +305,7 @@ test("one recipient uses live patches from two companies without connecting thei
 
     // An existing company member receives B without losing membership or publishing rights in A.
     await instance.platform.query(
-      "INSERT INTO patch_grants (id,patch_id,email,subject,created_by) VALUES ('share_member_b',$1,'dev@patchy.local','user_dev','usr_colleague')",
+      "INSERT INTO patch_grants (id,patch_id,email,subject,created_by,access) VALUES ('share_member_b',$1,'dev@patchy.local','user_dev','usr_colleague','write')",
       [b.patchId]
     );
     const memberPage = await owner.context().newPage();

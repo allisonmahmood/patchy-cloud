@@ -68,6 +68,31 @@ it.layer(Testing.emptyLayer(before("0028_patch_grants")))("durable patch grants"
   );
 });
 
+it.layer(Testing.emptyLayer(before("0029_patch_grant_access")))(
+  "patch grant permissions upgrade",
+  (it) => {
+    it.effect("preserves existing interactive grants and defaults new grants to read-only", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id,handle,name) VALUES ('cmp_access','access','Access')`;
+        yield* sql`INSERT INTO users (id,clerk_user_id,company_id,email,name,role)
+        VALUES ('usr_access','clerk_access','cmp_access','owner@example.com','Owner','admin')`;
+        yield* sql`INSERT INTO patches (id,company_id,owner_user_id,title,name)
+        VALUES ('pat_access','cmp_access','usr_access','Access','access')`;
+        yield* sql`INSERT INTO patch_grants (id,patch_id,email,created_by)
+        VALUES ('share_old','pat_access','old@example.com','usr_access')`;
+        yield* migrate(migrations);
+        yield* sql`INSERT INTO patch_grants (id,patch_id,email,created_by)
+        VALUES ('share_new','pat_access','new@example.com','usr_access')`;
+        assert.deepStrictEqual(yield* sql`SELECT id,access FROM patch_grants ORDER BY id`, [
+          { id: "share_new", access: "read" },
+          { id: "share_old", access: "write" }
+        ]);
+      })
+    );
+  }
+);
+
 const beforeIntegrations = before("0011_connections_per_integration");
 /** The schema release 10 leaves: connections know their integration, handles are per company. */
 const release10 = before("0013_handles_per_integration");

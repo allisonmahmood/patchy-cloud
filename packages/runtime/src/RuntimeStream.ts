@@ -405,6 +405,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         principal,
         identity: identity.identity,
         ...(identity.externalRecipient ? { externalRecipient: true } : {}),
+        ...(identity.externalAccess === undefined
+          ? {}
+          : { externalAccess: identity.externalAccess }),
         correlationId: generation
       };
       let servedTier = loaded.patchTier;

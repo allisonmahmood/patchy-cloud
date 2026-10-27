@@ -88,6 +88,7 @@ export const renderPublishedNote = (row: Patches.ReadPatch, publicBaseUrl: strin
 
 /** Only invitation metadata and content the caller has authorized for this identity. */
 export interface SharedPatch {
+  readonly access?: "read" | "write";
   readonly id: string;
   readonly name: string;
   readonly title: string;
@@ -124,7 +125,12 @@ export const renderSharedHome = (
       (entries) =>
         `<section class="home-shelf"><div class="home-shelf-head"><h2 class="section-heading">${highlight(entries[0]!.company, query)} <span class="count">${entries.length}</span></h2></div><div class="home-tools">${entries
           .map((share) => {
-            const permission = share.tier === 0 ? "Can read this page" : "Can use this patch";
+            const permission =
+              share.tier === 0
+                ? "Can read this page"
+                : share.access === "read"
+                  ? "Read only"
+                  : "Can change patch data";
             const patch = `${patchMark(share.name, share.tier)}<span class="tile-body"><span class="tile-name">${highlight(share.name, query)}</span><span class="tile-text">${highlight(share.title, query)}</span><span class="tile-meta">${share.subject === null ? "Invitation · " : ""}${permission}</span></span>`;
             return share.subject === null
               ? `<div class="tile-row">${patch}<form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form></div>`

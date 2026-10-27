@@ -443,6 +443,7 @@ export interface Execution {
 export interface AdmittedIdentity {
   readonly viewer: NonNullable<Binding.Binding["Service"]["identity"]>;
   readonly externalRecipient?: boolean;
+  readonly externalAccess?: "read" | "write";
   readonly reauthorize: Effect.Effect<
     NonNullable<Binding.Binding["Service"]["identity"]>,
     RuntimeError
@@ -622,6 +623,7 @@ export const make = (
           return yield* new ShellOutdated({});
         let identity: Binding.Binding["Service"]["identity"] = null;
         let externalRecipient = false;
+        let externalAccess: "read" | "write" | undefined;
         let reauthorize: AdmittedIdentity["reauthorize"] = Effect.fail(new AccessDenied({}));
         if (
           principalBootstrap &&
@@ -644,6 +646,7 @@ export const make = (
             : (options.identityForPatch?.(version) ?? options.identity);
           identity = admitted.viewer;
           externalRecipient = admitted.externalRecipient ?? false;
+          externalAccess = admitted.externalAccess;
           reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
@@ -652,6 +655,7 @@ export const make = (
           ...version,
           identity,
           ...(externalRecipient ? { externalRecipient: true } : {}),
+          ...(externalAccess === undefined ? {} : { externalAccess }),
           principal: identity === null ? null : { userId: identity.user.id },
           correlationId: newInternalId("call")
         });
@@ -703,6 +707,13 @@ export const make = (
           )
             return yield* new ServerRequired();
           if (input.op === "files.inspectUpload") return yield* new AccessDenied({});
+          if (
+            externalAccess === "read" &&
+            (input.op === "files.stage" ||
+              input.op === "files.discard" ||
+              (operation !== undefined && operation.kind !== "read"))
+          )
+            return yield* new AccessDenied({});
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();
           const attempt = yield* limits.consume({

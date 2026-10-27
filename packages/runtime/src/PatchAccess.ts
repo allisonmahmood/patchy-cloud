@@ -17,14 +17,21 @@ export const recipient = Context.Reference<
   (
     claims: RequireSession.SignedIn["Service"],
     target: Target
-  ) => Effect.Effect<NonNullable<RuntimeMe> | null, SqlError>
+  ) => Effect.Effect<
+    { readonly viewer: NonNullable<RuntimeMe>; readonly access: "read" | "write" } | null,
+    SqlError
+  >
 >("@patchy/runtime/PatchAccess/recipient", { defaultValue: () => () => Effect.succeed(null) });
 
 export const admit: (
   claims: RequireSession.SignedIn["Service"],
   target?: Target
 ) => Effect.Effect<
-  { readonly viewer: NonNullable<RuntimeMe>; readonly externalRecipient: boolean } | null,
+  {
+    readonly viewer: NonNullable<RuntimeMe>;
+    readonly externalRecipient: boolean;
+    readonly externalAccess?: "read" | "write";
+  } | null,
   SqlError,
   Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>
 > = Effect.fn("PatchAccess.admit")(function* (
@@ -36,7 +43,8 @@ export const admit: (
   );
   if (target !== undefined) {
     const external = yield* (yield* recipient)(claims, target);
-    if (external !== null) return { viewer: external, externalRecipient: true };
+    if (external !== null)
+      return { viewer: external.viewer, externalRecipient: true, externalAccess: external.access };
   }
   if (HttpServerResponse.isHttpServerResponse(member)) return null;
   return member === null

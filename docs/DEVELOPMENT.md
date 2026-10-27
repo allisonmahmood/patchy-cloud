@@ -466,6 +466,9 @@ It verifies signed Clerk cookies without company membership, invitation acceptan
 Home and direct access boundaries, session refresh and revocation of an open patch.
 The live spec uses real tables, files, subscriptions and server handlers to exercise
 two independent companies, existing-member recipients and declared shared dependencies.
+It also checks read-only table/file access, live permission changes and the company
+directory boundary. New invitations default to read only; select Can change data
+when exercising writes. Read-only grants refuse company connections in both tiers.
 Its account-lookup HTTP fixture uses `PATCHY_TEST_CLERK_API_URL`, honored only with
 `NODE_ENV=test` and `pk_test_` keys; production and normal local Clerk runs ignore it.
 Invitation grants are seeded and the Clerk browser SDK boundary is replaced;

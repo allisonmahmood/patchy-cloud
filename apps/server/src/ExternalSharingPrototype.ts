@@ -39,6 +39,7 @@ import {
 
 const decodeForm = Schema.decodeUnknownEffect(
   Schema.Struct({
+    access: Schema.optionalKey(Schema.Literals(["read", "write"])),
     patchId: Schema.NonEmptyString,
     email: Schema.String.check(
       Schema.isPattern(/^[^@\s]+@[^@\s]+\.[^@\s]+$/),
@@ -46,6 +47,11 @@ const decodeForm = Schema.decodeUnknownEffect(
     )
   })
 );
+const decodeAccess = Schema.decodeUnknownEffect(
+  Schema.Struct({ access: Schema.Literals(["read", "write"]) })
+);
+const accessOptions = (access: "read" | "write") =>
+  `<option value="read"${access === "read" ? " selected" : ""}>Read only</option><option value="write"${access === "write" ? " selected" : ""}>Can change data</option>`;
 type Claims = RequireSession.SignedIn["Service"];
 
 export const enabled = Effect.gen(function* () {
@@ -113,13 +119,16 @@ export const runtimeAccess = Layer.unwrap(
         const member = yield* users.findByClerkId(claims.sub);
         if (member?.companyId === grant.companyId) return null;
         return {
-          user: {
-            id: recipientId(claims.sub),
-            name: claims.name || claims.email,
-            email: claims.email
-          },
-          company: { id: grant.companyId, handle: grant.handle, name: grant.company },
-          admin: false
+          access: grant.access,
+          viewer: {
+            user: {
+              id: recipientId(claims.sub),
+              name: claims.name || claims.email,
+              email: claims.email
+            },
+            company: { id: grant.companyId, handle: grant.handle, name: grant.company },
+            admin: false
+          }
         };
       })
     );
@@ -193,7 +202,7 @@ export const make = Effect.gen(function* () {
         WHERE p.company_id = ${user.companyId} AND p.retired_at IS NULL AND p.deleted_at IS NULL AND p.disabled_at IS NULL
         AND p.scope = 'company' AND (p.owner_user_id = ${user.id} OR ${user.role === "admin"}) ORDER BY p.name`;
       const owned = yield* grants.managed(claims);
-      management = `<section class="section"><h2 class="section-heading">Share a patch</h2><p class="supporting-text">Recipients can use this live patch and its declared data and connections, including writes. Share only tools and data intended for them.</p>${inventory.length === 0 ? "<p>No company-only patches to share yet.</p>" : `<form class="confirmation-form" method="post" action="/~shared/grant"><label class="field-label" for="patchId">Patch</label><select class="field" name="patchId" id="patchId">${inventory.map((p) => `<option value="${escapeAttribute(p.id)}">${escapeHtml(p.name)}</option>`).join("")}</select><label class="field-label" for="email">Recipient’s email</label><input class="field" name="email" id="email" type="email" required><div class="actions"><button class="btn btn-primary" type="submit">Invite to this patch</button></div></form>`}</section>${owned.length === 0 ? "" : `<section class="section"><h2 class="section-heading">External access you manage</h2><div class="list">${owned.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p>${escapeHtml(share.email)} · ${share.revoked ? "Revoked" : share.subject === null ? "Invited" : "Accepted"}</p></div>${share.revoked ? "" : `<form method="post" action="/~shared/revoke/${escapeAttribute(share.id)}"><button class="btn btn-danger" type="submit">${share.subject === null ? "Cancel invitation" : "Revoke access"}</button></form>`}</div>${share.revoked ? "" : `<p class="supporting-text shared-link">Invitation: <a href="/~shared/invite/${escapeAttribute(share.id)}">${escapeHtml(session.publicBaseUrl)}/~shared/invite/${escapeHtml(share.id)}</a></p>`}</div>`).join("")}</div></section>`}`;
+      management = `<section class="section"><h2 class="section-heading">Share a patch</h2><p class="supporting-text">Recipients see this live patch’s full permitted dataset, including declared shared tables, files and company connections. Read only does not hide sensitive rows or files, and cannot use company connections. The company directory is unavailable. Choose whether they may change patch data; neither permission lets them edit or publish the patch. Share only data intended for this person.</p>${inventory.length === 0 ? "<p>No company-only patches to share yet.</p>" : `<form class="confirmation-form" method="post" action="/~shared/grant"><label class="field-label" for="patchId">Patch</label><select class="field" name="patchId" id="patchId">${inventory.map((p) => `<option value="${escapeAttribute(p.id)}">${escapeHtml(p.name)}</option>`).join("")}</select><label class="field-label" for="email">Recipient’s email</label><input class="field" name="email" id="email" type="email" required><label class="field-label" for="access">Permission</label><select class="field" name="access" id="access">${accessOptions("read")}</select><div class="actions"><button class="btn btn-primary" type="submit">Invite to this patch</button></div></form>`}</section>${owned.length === 0 ? "" : `<section class="section"><h2 class="section-heading">External access you manage</h2><div class="list">${owned.map((share) => `<div class="list-row"><div class="shared-heading"><div><strong>${escapeHtml(share.name)}</strong><p>${escapeHtml(share.email)} · ${share.revoked ? "Revoked" : share.subject === null ? "Invited" : "Accepted"}</p></div>${share.revoked ? "" : `<form method="post" action="/~shared/revoke/${escapeAttribute(share.id)}"><button class="btn btn-danger" type="submit">${share.subject === null ? "Cancel invitation" : "Revoke access"}</button></form>`}</div>${share.revoked ? "" : `<form method="post" action="/~shared/permission/${escapeAttribute(share.id)}"><label class="field-label" for="access-${escapeAttribute(share.id)}">Permission for ${escapeHtml(share.email)}</label><select class="field" name="access" id="access-${escapeAttribute(share.id)}">${accessOptions(share.access)}</select><button class="btn" type="submit">Save permission</button></form><p class="supporting-text shared-link">Invitation: <a href="/~shared/invite/${escapeAttribute(share.id)}">${escapeHtml(session.publicBaseUrl)}/~shared/invite/${escapeHtml(share.id)}</a></p>`}</div>`).join("")}</div></section>`}`;
     }
     return pageResponse(
       {
@@ -254,7 +263,7 @@ export const make = Effect.gen(function* () {
       if (share.subject !== null) return redirect(`/${share.handle}/${share.name}`);
       return page(
         `Open ${share.name}`,
-        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(share.email)}.</p><p>You can use this live patch without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
+        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(share.email)}.</p><p>${share.access === "read" ? "Read only: you can read this patch’s data." : "You can read and change this patch’s data."} You cannot edit or publish the patch, or join the company through this invitation.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
       );
     }
     const accept = path.match(/^\/~shared\/accept\/([^/]+)$/);
@@ -286,6 +295,16 @@ export const make = Effect.gen(function* () {
           : {})
       });
       return redirect("/shared");
+    }
+    const permission = path.match(/^\/~shared\/permission\/([^/]+)$/);
+    if (request.method === "POST" && permission) {
+      const form = yield* request.urlParamsBody.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.kibibytes(8))
+      );
+      const { access } = yield* decodeAccess(Object.fromEntries(form));
+      return (yield* grants.setAccess(claims, permission[1]!, access))
+        ? redirect("/shared")
+        : refused();
     }
     const revoke = path.match(/^\/~shared\/revoke\/([^/]+)$/);
     if (request.method === "POST" && revoke)

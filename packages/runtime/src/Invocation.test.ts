@@ -131,6 +131,54 @@ const recorder = Effect.gen(function* () {
 });
 
 it.layer(services)("Invocation", (it) => {
+  it.effect(
+    "read-only recipients can query and run read-only actions but cannot invoke data-changing handlers",
+    () =>
+      Effect.gen(function* () {
+        const executed: string[] = [];
+        const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
+        const invocations = yield* makeInvocation((request) =>
+          Effect.gen(function* () {
+            executed.push(request.handler);
+            const capability = yield* capabilities.resolve(request.callback.capability, request);
+            assert.isTrue(capability.readOnly);
+            if (request.handler === "demo.peek") {
+              const denied = yield* capability.run!({ handler: "demo.mutation", args: {} }).pipe(
+                Effect.flip
+              );
+              assert.strictEqual(denied.code, "access_denied");
+            }
+            return {
+              outcome: "returned" as const,
+              reply: { ok: true as const, value: 1 },
+              guestMs: 1
+            };
+          }).pipe(Effect.orDie)
+        );
+        const external = { ...binding, externalRecipient: true, externalAccess: "read" as const };
+        for (const handler of ["demo.mutation", "demo.action"]) {
+          const denied = yield* invocations
+            .call({ handler, args: {} }, external, Effect.succeed(viewer))
+            .pipe(Effect.flip);
+          assert.strictEqual(denied.code, "access_denied");
+        }
+        assert.deepStrictEqual(executed, []);
+        for (const [handler, args] of [
+          ["demo.query", { id: 1 }],
+          ["demo.peek", {}]
+        ] as const)
+          assert.deepStrictEqual(
+            yield* invocations.call(
+              { handler, args },
+              { ...external, correlationId: newInternalId("call") },
+              Effect.succeed(viewer)
+            ),
+            { ok: true, value: 1 }
+          );
+        assert.deepStrictEqual(executed, ["demo.query", "demo.peek"]);
+      })
+  );
+
   it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(

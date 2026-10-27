@@ -125,5 +125,11 @@ export const migrations: Migrations = {
         ON CONFLICT DO NOTHING;
       END IF;
     END $$`
+  ),
+  "0029_patch_grant_access": ddl(
+    // Existing prototype grants retain their explicit whole-patch behavior.
+    `ALTER TABLE patch_grants ADD COLUMN access TEXT NOT NULL DEFAULT 'write'
+      CHECK (access IN ('read', 'write'))`,
+    `ALTER TABLE patch_grants ALTER COLUMN access SET DEFAULT 'read'`
   )
 };

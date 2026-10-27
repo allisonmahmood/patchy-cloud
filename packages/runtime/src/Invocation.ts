@@ -283,6 +283,12 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     if (descriptor === undefined || !Object.hasOwn(binding.manifest.handlers!, input.handler))
       return yield* new Runtime.InvalidRequest({});
     if (
+      binding.externalAccess === "read" &&
+      descriptor.kind !== "query" &&
+      !(descriptor.kind === "action" && descriptor.readOnly === true)
+    )
+      return yield* new Runtime.AccessDenied({});
+    if (
       observation !== undefined &&
       (descriptor.kind !== "query" || input.mutationKey !== undefined)
     )
@@ -539,7 +545,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   deadline
                 },
                 kind: descriptor.kind,
-                readOnly: descriptor.readOnly === true,
+                readOnly: descriptor.readOnly === true || binding.externalAccess === "read",
                 reauthorize,
                 ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,

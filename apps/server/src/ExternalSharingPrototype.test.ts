@@ -77,6 +77,52 @@ it.layer(
     PATCHY_DEV_PERSONAS_SECRET: "recipient-home-test-secret"
   }).pipe(Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })))
 )("signed-in recipient Home", (it) => {
+  it.effect("new grants are read-only and only their managers can change permission", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const owner = yield* login(DEV_SEED.email);
+      const recipient = yield* login("permissions@example.com");
+      const stranger = yield* login("unrelated-permissions@example.com");
+      const shared = yield* page("permission-brief");
+      const id = yield* invite(shared.patchId, "permissions@example.com", owner);
+      const access = () => sql`SELECT access FROM patch_grants WHERE id = ${id}`;
+      assert.deepStrictEqual(yield* access(), [{ access: "read" }]);
+      // Resending mail cannot silently increase an existing recipient's access.
+      assert.strictEqual(
+        (yield* post("/~shared/grant", owner, {
+          patchId: shared.patchId,
+          email: "permissions@example.com",
+          access: "write"
+        })).status,
+        303
+      );
+      assert.deepStrictEqual(yield* access(), [{ access: "read" }]);
+      assert.strictEqual((yield* post(`/~shared/accept/${id}`, recipient)).status, 303);
+      for (const cookie of [recipient, stranger])
+        assert.strictEqual(
+          (yield* post(`/~shared/permission/${id}`, cookie, { access: "write" })).status,
+          403
+        );
+      assert.deepStrictEqual(yield* access(), [{ access: "read" }]);
+      assert.strictEqual(
+        (yield* post(`/~shared/permission/${id}`, owner, { access: "admin" })).status,
+        422
+      );
+      for (const value of ["write", "read"] as const) {
+        assert.strictEqual(
+          (yield* post(`/~shared/permission/${id}`, owner, { access: value })).status,
+          303
+        );
+        assert.deepStrictEqual(yield* access(), [{ access: value }]);
+      }
+      assert.strictEqual((yield* post(`/~shared/revoke/${id}`, owner)).status, 303);
+      assert.strictEqual(
+        (yield* post(`/~shared/permission/${id}`, owner, { access: "write" })).status,
+        403
+      );
+    })
+  );
+
   it.effect("a company deactivation does not cancel another company's patch grant", () =>
     Effect.gen(function* () {
       const companies = yield* Companies.make;
