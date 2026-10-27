@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "patchy/preact";
+import { useEffect, useMemo, useRef, useState } from "patchy/preact";
 import { isPatchyError, patchy } from "../patchy/_generated/client.js";
 import {
   address,
@@ -67,6 +67,11 @@ export function App() {
   const [selected, setSelected] = useState<string | undefined>(undefined);
   // An email being written: each new one is its own Compose, with its own draft key.
   const [compose, setCompose] = useState<Draft | undefined>(undefined);
+  // The email on screen now, so a late answer closes only the one that sent it.
+  const current = useRef<number | undefined>(undefined);
+  current.current = compose?.key;
+  // A send in flight keeps its Compose, and its key, until Pidgeon answers.
+  const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<readonly SearchHit[] | undefined>(undefined);
 
@@ -114,6 +119,7 @@ export function App() {
         </div>
         <button
           className="primary"
+          disabled={sending}
           onClick={() => (setCompose({ key: Date.now() }), setSelected(undefined))}
         >
           New email
@@ -191,7 +197,9 @@ export function App() {
             <Compose
               key={compose.key}
               start={compose}
-              onDone={(threadId) => {
+              onSending={setSending}
+              onDone={(key, threadId) => {
+                if (current.current !== key) return;
                 setCompose(undefined);
                 setSelected(threadId);
                 void load();
@@ -430,11 +438,14 @@ interface Draft {
 
 function Compose({
   start,
+  onSending,
   onDone,
   onNew
 }: {
   start: Draft;
-  onDone: (threadId: string) => void;
+  onSending: (sending: boolean) => void;
+  /** Called with this Compose's `key`, so a late answer can't close another email. */
+  onDone: (key: number, threadId: string) => void;
   onNew: (start: Omit<Draft, "key">) => void;
 }) {
   const [to, setTo] = useState(start.to ?? "");
@@ -453,6 +464,7 @@ function Compose({
     .filter((item) => item !== "");
   const send = async () => {
     setBusy(true);
+    onSending(true);
     setNotice(undefined);
     try {
       const sent = await support.messages.send({
@@ -461,13 +473,15 @@ function Compose({
         text,
         idempotencyKey: draft
       });
-      if (sent.status === "sent" && sent.rejected.length === 0) return onDone(sent.threadId);
+      if (sent.status === "sent" && sent.rejected.length === 0)
+        return onDone(start.key, sent.threadId);
       setAnswered(sent);
       setNotice(outcome(sent, recipients.join(", ")));
     } catch (failure) {
       setNotice(explain(failure));
     } finally {
       setBusy(false);
+      onSending(false);
     }
   };
   return (
