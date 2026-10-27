@@ -21,5 +21,11 @@
       "access": "send"
     }
   ],
-  "patches": []
+  "patches": [
+    {
+      "repo": "support-desk",
+      "tier": 1,
+      "description": "Lumen Bikes' shared support inbox: triage conversations, read attachments, reply and start emails from the support address."
+    }
+  ]
 }
