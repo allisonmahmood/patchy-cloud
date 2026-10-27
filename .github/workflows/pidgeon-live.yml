@@ -85,15 +85,13 @@ jobs:
           CHANGES: ${{ needs.pidgeon-changes.result }}
           RUN: ${{ needs.pidgeon-changes.outputs.run }}
           SUITE: ${{ needs.pidgeon-suite.result }}
+        # Exactly two ways to pass; anything else, an empty decision included, fails.
         run: |
-          if [ "$CHANGES" != "success" ]; then
-            echo "pidgeon-changes ended $CHANGES, so whether the live tier had to run is unknown."
-            exit 1
-          elif [ "$RUN" = "true" ] && [ "$SUITE" != "success" ]; then
-            echo "The live Pidgeon tier ended $SUITE."
-            exit 1
-          elif [ "$RUN" != "true" ] && [ "$SUITE" != "skipped" ]; then
-            echo "The live Pidgeon tier ended $SUITE when it had no reason to run."
-            exit 1
-          fi
-          echo "pidgeon-changes decided run=$RUN; the live tier ended $SUITE."
+          case "$CHANGES/$RUN/$SUITE" in
+            success/true/success) echo "The live Pidgeon tier ran and passed." ;;
+            success/false/skipped) echo "The live Pidgeon tier had no reason or no key to run." ;;
+            *)
+              echo "Not a pass: pidgeon-changes ended '$CHANGES' deciding run='$RUN', and pidgeon-suite ended '$SUITE'."
+              exit 1
+              ;;
+          esac
