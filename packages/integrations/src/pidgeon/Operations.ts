@@ -125,6 +125,10 @@ export const Errors = Schema.Union([
   Runtime.TooLarge
 ]);
 const isError = Schema.is(Errors);
+/** The connection is gone or disconnected: each door says which, its own way. */
+const isAbsent = Schema.is(
+  Schema.Union([ConnectionStore.ConnectionNotFound, ConnectionStore.ConnectionNotConnected])
+);
 
 const DEADLINE_MS = registry["integration.deadline"].default;
 const MAX_LABELS = registry["pidgeon.snapshot.labels"].default;
@@ -682,9 +686,7 @@ const atAddress = Effect.fnUntraced(function* <E>(
         Effect.fail(
           Option.isSome(refused)
             ? refused.value
-            : isError(error) ||
-                error instanceof ConnectionStore.ConnectionNotFound ||
-                error instanceof ConnectionStore.ConnectionNotConnected
+            : isError(error) || isAbsent(error)
               ? error
               : new Runtime.SourceUnavailable({ cause: error })
         )
