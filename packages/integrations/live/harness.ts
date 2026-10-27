@@ -226,6 +226,34 @@ export const call = Effect.fn("live.call")(function* (
   return yield* source.call(token, request, Date.now() + 60_000);
 });
 
+/**
+ * Uploads a text file to one of the run's own test addresses as the admin, for mail a test sends
+ * with it: Pidgeon takes files as a multipart form, which `call` doesn't send. Answers its id.
+ */
+export const upload = (identityId: string, filename: string, text: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const form = new FormData();
+    form.set("identity_id", identityId);
+    form.set("file", new Blob([text], { type: "text/plain" }), filename);
+    yield* next;
+    sent.push({ method: "POST", path: "/attachments", body: "" });
+    const response = yield* client.execute(
+      HttpClientRequest.post(`${Source.BASE_URL}/attachments`).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(admin())),
+        HttpClientRequest.setHeader("idempotency-key", `${RUN}-upload-${identityId}-${filename}`),
+        HttpClientRequest.bodyFormData(form)
+      )
+    );
+    const id = idOf(yield* response.text);
+    if (response.status >= 300 || id === undefined)
+      return yield* Effect.die(new Error(`Pidgeon refused the upload with ${response.status}.`));
+    return id;
+  }).pipe(
+    Effect.provideService(FetchHttpClient.Fetch, realFetch),
+    Effect.provide(FetchHttpClient.layer)
+  );
+
 /** How many requests this run has sent that match. */
 export const count = (match: (request: Sent) => boolean) => sent.filter(match).length;
 
