@@ -396,7 +396,10 @@ const reads: { readonly [K in PidgeonReadOperation]: Step<ReadInputs[K]> } = {
       return {
         thread: thread(found),
         labels,
-        messages: messages.data.map(message),
+        // Only this thread's messages on the address; anything else Pidgeon answered is dropped.
+        messages: messages.data
+          .filter((row) => row.thread_id === found.id && onAddress(context, row))
+          .map(message),
         nextCursor: messages.next_cursor
       };
     })

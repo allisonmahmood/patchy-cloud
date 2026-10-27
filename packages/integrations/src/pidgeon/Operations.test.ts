@@ -888,11 +888,27 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           {
             match: PidgeonTest.route("GET", "/messages/search"),
             body: page([hitRow(elsewhere, "msg_2"), hitRow(address)])
+          },
+          { match: PidgeonTest.route("GET", "/threads/thr_1"), body: { data: threadRow(address) } },
+          { match: PidgeonTest.route("GET", "/threads/thr_1/labels"), body: page([]) },
+          {
+            // A page of thr_1 that also holds another address's message and another thread's.
+            match: PidgeonTest.route("GET", "/messages"),
+            body: page([
+              messageRow(address),
+              { ...messageRow(elsewhere, "msg_2"), thread_id: "thr_9" },
+              { ...messageRow(address, "msg_3"), thread_id: "thr_8" }
+            ])
           }
         ]);
         assert.include(yield* refused(call("pidgeon.read", "threads.get", { id: "thr_2" })), {
           code: "not_found"
         });
+        const opened = yield* call("pidgeon.read", "threads.get", { id: "thr_1" });
+        assert.deepStrictEqual(
+          (opened as { messages: ReadonlyArray<{ id: string }> }).messages.map((row) => row.id),
+          ["msg_1"]
+        );
         assert.include(yield* refused(call("pidgeon.read", "messages.get", { id: "msg_2" })), {
           code: "not_found"
         });
