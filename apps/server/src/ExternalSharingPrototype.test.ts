@@ -15,12 +15,18 @@ import { MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
   FRONTEND_API_HOST,
+  accountProfiles,
+  clerkAccount,
+  layerClerkAccounts,
   signedInCookies,
   signHandshake,
   signSession
 } from "@patchy/auth/testing";
 import { Companies, InviteMail } from "@patchy/companies";
-import { html, publish, send, server } from "./test/server.js";
+import { html, publish, send, server as makeServer } from "./test/server.js";
+
+const server: typeof makeServer = (...args) =>
+  makeServer(...args).pipe(Layer.provide(layerClerkAccounts));
 
 const origin = "http://localhost:3000";
 const decodeCreated = Schema.decodeUnknownEffect(PublishCreated);
@@ -333,6 +339,73 @@ it.layer(
     PATCHY_DEV_EXTERNAL_SHARING: "true"
   }).pipe(Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })))
 )("Clerk recipient admission", (it) => {
+  it.effect("only a verified email can claim a patch; accepted access follows the account", () =>
+    Effect.gen(function* () {
+      const shared = yield* page("verified-email-grant");
+      const privatePatch = yield* page("verified-email-private");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO patch_grants (id,patch_id,email,created_by) VALUES ('verified_email',${shared.patchId},'invited@example.com',${DEV_SEED.userId})`;
+      const sub = "verified_recipient";
+      const cookie = signedInCookies(
+        signSession({ sub, email: "invited@example.com", azp: origin })
+      );
+      const profile = clerkAccount(sub, "invited@example.com", {
+        public_metadata: { patchySignup: "patch-recipient" }
+      });
+      accountProfiles.set(sub, {
+        ...profile,
+        email_addresses: [
+          {
+            id: "email_test",
+            email_address: "invited@example.com",
+            verification: { status: "unverified" },
+            linked_to: []
+          }
+        ]
+      });
+      assert.strictEqual((yield* post("/~shared/accept/verified_email", cookie)).status, 403);
+      assert.strictEqual((yield* get(new URL(shared.address).pathname, cookie)).status, 404);
+      const [pending] = yield* sql`SELECT subject FROM patch_grants WHERE id='verified_email'`;
+      assert.isNull(pending!.subject);
+      // Failure to obtain fresh proof never spends the invitation.
+      accountProfiles.delete(sub);
+      assert.strictEqual((yield* post("/~shared/accept/verified_email", cookie)).status, 502);
+      const [stillPending] = yield* sql`SELECT subject FROM patch_grants WHERE id='verified_email'`;
+      assert.isNull(stillPending!.subject);
+      // A verified secondary address works even when the session's primary email differs.
+      accountProfiles.set(sub, profile);
+      const otherPrimary = signedInCookies(
+        signSession({ sub, email: "primary@example.com", azp: origin })
+      );
+      assert.strictEqual((yield* post("/~shared/accept/verified_email", otherPrimary)).status, 303);
+      accountProfiles.set(
+        sub,
+        clerkAccount(sub, "primary@example.com", {
+          public_metadata: { patchySignup: "patch-recipient" }
+        })
+      );
+      assert.strictEqual((yield* get(new URL(shared.address).pathname, otherPrimary)).status, 200);
+      assert.strictEqual(
+        (yield* get(new URL(privatePatch.address).pathname, otherPrimary)).status,
+        404
+      );
+      const otherAccount = signedInCookies(
+        signSession({ sub: "different_recipient", email: "invited@example.com", azp: origin })
+      );
+      assert.strictEqual((yield* post("/~shared/accept/verified_email", otherAccount)).status, 403);
+      assert.strictEqual((yield* post("/api/publish", otherPrimary)).status, 401);
+      assert.strictEqual(
+        (yield* post("/join", otherPrimary, {
+          action: "create",
+          name: "No",
+          handle: "not-allowed"
+        })).status,
+        403
+      );
+      assert.isUndefined((yield* sql`SELECT id FROM users WHERE clerk_user_id=${sub}`)[0]);
+    })
+  );
+
   it.effect("finishes the Clerk handshake and preserves the returned session cookies", () =>
     Effect.gen(function* () {
       const token = signSession({
@@ -386,6 +459,12 @@ it.layer(
       Effect.gen(function* () {
         const shared = yield* page("clerk-shared");
         const unrelated = yield* page("clerk-private");
+        accountProfiles.set(
+          "user_external_clerk",
+          clerkAccount("user_external_clerk", "clerk-recipient@example.com", {
+            public_metadata: { patchySignup: "patch-recipient" }
+          })
+        );
         const cookie = signedInCookies(
           signSession({
             sub: "user_external_clerk",
@@ -516,6 +595,7 @@ it.layer(
         const sent = state.events.at(-1)!;
         assert.strictEqual(sent.path, "/v1/invitations");
         assert.strictEqual(sent.body.email_address, "mail@example.com");
+        assert.deepStrictEqual(sent.body.public_metadata, { patchySignup: "patch-recipient" });
         const destination = new URL(String(sent.body.redirect_url));
         assert.strictEqual(destination.hostname, "accounts.patchy.invalid");
         assert.strictEqual(destination.pathname, "/sign-up");

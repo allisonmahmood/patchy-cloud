@@ -1,3 +1,4 @@
+import { layerClerkAccounts } from "./testing.js";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -29,7 +30,7 @@ const localRevocation = Layer.effect(
     ...session,
     revoke: () => Effect.void
   }))
-);
+).pipe(Layer.provide(layerClerkAccounts));
 const layer = HttpRouter.serve(AuthPages.layer, {
   disableLogger: true,
   disableListenLog: true

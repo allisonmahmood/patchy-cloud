@@ -1,3 +1,4 @@
+import { layerClerkAccounts } from "./testing.js";
 import { assert, it } from "@effect/vitest";
 import { CookieJar } from "tough-cookie";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -22,7 +23,7 @@ import { clerkEnv, signedInCookies, signHandshake, signSession } from "./testing
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
 const services = Layer.mergeAll(
-  Session.layer,
+  Session.layer.pipe(Layer.provide(layerClerkAccounts)),
   Companies.layer,
   Users.layer,
   InviteMail.layerRecording

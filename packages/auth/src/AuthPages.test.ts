@@ -1,3 +1,4 @@
+import { accountProfiles, clerkAccount, layerClerkAccounts } from "./testing.js";
 // @effect-diagnostics nodeBuiltinImport:off -- Clerk's development cookie suffix is a SHA-1 of the public key.
 import { createHash } from "node:crypto";
 import { constants } from "@clerk/backend/internal";
@@ -62,7 +63,7 @@ const recordedAnalytics = Layer.succeed(
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
 const services = Layer.mergeAll(
-  Session.layer,
+  Session.layer.pipe(Layer.provide(layerClerkAccounts)),
   Companies.layer,
   Users.layer,
   InviteMail.layerRecording
@@ -133,6 +134,69 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(yield* page("/?all=1"), setup);
       assert.notInclude(yield* page("/acme/leads"), "llms.txt");
       assert.notInclude(yield* page("/", true), "llms.txt");
+    })
+  );
+
+  it.effect(
+    "a patch signup cannot create a company until an operator approves, even outside the prototype",
+    () =>
+      Effect.gen(function* () {
+        const sub = "signup_recipient";
+        const email = "signup-recipient@example.com";
+        const profile = clerkAccount(sub, email, {
+          public_metadata: { patchySignup: "patch-recipient" }
+        });
+        accountProfiles.set(sub, profile);
+        const signedIn = cookie(sub, email);
+        const form = { action: "create", name: "Approved Company", handle: "approved-recipient" };
+        assert.strictEqual((yield* send("/join", { headers: { cookie: signedIn } })).status, 403);
+        const refused = yield* send("/join", post(form, signedIn));
+        assert.strictEqual(refused.status, 403);
+        assert.notInclude(yield* Effect.promise(() => refused.text()), 'name="handle"');
+        assert.isNull(yield* (yield* Users.Users).findByClerkId(sub));
+        // A user-editable field and a forged form field confer no approval.
+        accountProfiles.set(sub, {
+          ...profile,
+          unsafe_metadata: { patchyCompanyCreationApproved: true }
+        });
+        assert.strictEqual(
+          (yield* send("/join", post({ ...form, canCreateCompany: "true" }, signedIn))).status,
+          403
+        );
+        // Fresh Backend metadata takes effect without reissuing the browser's session.
+        accountProfiles.set(sub, {
+          ...profile,
+          private_metadata: { patchyCompanyCreationApproved: true }
+        });
+        assert.strictEqual((yield* send("/join", post(form, signedIn))).status, 303);
+        assert.isNotNull(yield* (yield* Users.Users).findByClerkId(sub));
+      })
+  );
+
+  it.effect("a company invitation admits a receive-only account only to that company", () =>
+    Effect.gen(function* () {
+      const sub = "signup_company_invite";
+      const email = "signup-company-invite@example.com";
+      accountProfiles.set(
+        sub,
+        clerkAccount(sub, email, { public_metadata: { patchySignup: "patch-recipient" } })
+      );
+      const signedIn = cookie(sub, email);
+      const companies = yield* Companies.Companies;
+      const invite = yield* companies.createInvite({
+        companyId: DEV_SEED.companyId,
+        email,
+        role: "member",
+        invitedBy: DEV_SEED.userId
+      });
+      assert.strictEqual((yield* send("/join", { headers: { cookie: signedIn } })).status, 200);
+      assert.strictEqual(
+        (yield* send("/join", post({ action: "join", inviteId: invite.id }, signedIn))).status,
+        303
+      );
+      const user = yield* (yield* Users.Users).findByClerkId(sub);
+      assert.strictEqual(user?.companyId, DEV_SEED.companyId);
+      assert.strictEqual(user?.role, "member");
     })
   );
 

@@ -9,6 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Session from "./Session.js";
 import {
   clerkEnv,
+  accountProfiles,
+  clerkAccount,
+  layerClerkAccounts,
   FRONTEND_API_HOST,
   publicKey,
   publishableKey,
@@ -440,4 +443,44 @@ it.effect("guards redirected fetches without changing manual hops or loopback re
     },
     catch: (cause) => cause
   })
+);
+
+it.effect(
+  "reads fresh verified emails and approval from the Backend and ignores test transport in production",
+  () =>
+    Effect.gen(function* () {
+      const sub = "account_production_boundary";
+      accountProfiles.set(
+        sub,
+        clerkAccount(sub, "Verified@Example.com", {
+          public_metadata: { patchySignup: "patch-recipient" },
+          unsafe_metadata: { patchyCompanyCreationApproved: true }
+        })
+      );
+      const settings = {
+        ...clerkEnv(),
+        ...live,
+        NODE_ENV: "production",
+        PATCHY_ENVIRONMENT: "production",
+        PATCHY_PUBLIC_BASE_URL: "https://patchy.example",
+        PATCHY_TEST_CLERK_API_URL: "https://must-not-be-used.invalid"
+      };
+      const session = yield* Session.make.pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings)))
+      );
+      assert.deepStrictEqual(yield* session.account({ sub, email: "unverified@example.com" }), {
+        verifiedEmails: ["verified@example.com"],
+        canCreateCompany: false
+      });
+      accountProfiles.set(
+        sub,
+        clerkAccount(sub, "Verified@Example.com", {
+          public_metadata: { patchySignup: "patch-recipient" },
+          private_metadata: { patchyCompanyCreationApproved: true }
+        })
+      );
+      assert.isTrue(
+        (yield* session.account({ sub, email: "unverified@example.com" })).canCreateCompany
+      );
+    }).pipe(Effect.provide(layerClerkAccounts))
 );

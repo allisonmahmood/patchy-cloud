@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
-  operation: Schema.Literals(["configuration", "authenticate", "recheck", "revoke"]),
+  operation: Schema.Literals(["configuration", "authenticate", "account", "recheck", "revoke"]),
   setting: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect())
 }) {
@@ -155,6 +155,14 @@ export class Session extends Context.Service<
     /** Clerk's waitlist for a person without an invitation; absent with the dev runner's people. */
     readonly waitlistUrl: string | undefined;
     readonly authenticate: (request: Request) => Effect.Effect<SessionResult, SessionError>;
+    /** Fresh Backend facts for enrollment and claiming an email invitation, never browser metadata. */
+    readonly account: (identity: { readonly sub: string; readonly email: string }) => Effect.Effect<
+      {
+        readonly verifiedEmails: readonly string[];
+        readonly canCreateCompany: boolean;
+      },
+      SessionError
+    >;
     readonly isActive: (identity: {
       readonly sid: string;
       readonly sub: string;
@@ -214,8 +222,14 @@ export const make = Effect.gen(function* () {
     onNone: () => undefined,
     onSome: (url) => [url.origin]
   });
+  // A process-level transport seam for the offline browser suite; never honored outside tests.
+  const testApiUrl =
+    publishableKey.startsWith("pk_test_") &&
+    (yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"))) === "test"
+      ? yield* Config.option(Config.String("PATCHY_TEST_CLERK_API_URL"))
+      : Option.none();
   const client = createClerkClient({
-    apiUrl: yield* backendApiUrl,
+    apiUrl: Option.getOrElse(testApiUrl, () => undefined) ?? (yield* backendApiUrl),
     publishableKey,
     secretKey,
     jwtKey,
@@ -361,6 +375,29 @@ export const make = Effect.gen(function* () {
     return { status: "signed-in", claims: claims.value, cookies };
   });
 
+  const account: Session["Service"]["account"] = Effect.fn("Session.account")(function* (identity) {
+    const user = yield* Effect.tryPromise({
+      try: () => client.users.getUser(identity.sub),
+      catch: (cause) => new SessionError({ operation: "account", cause })
+    });
+    if (user.id !== identity.sub) return yield* new SessionError({ operation: "account" });
+    return {
+      verifiedEmails:
+        user.banned || user.locked
+          ? []
+          : user.emailAddresses
+              .filter((email) => email.verification?.status === "verified")
+              .map((email) => email.emailAddress.toLowerCase()),
+      // Existing beta signup/approval stays intact. Patch invitations permit signup,
+      // not company creation. Only an operator can approve this on the Backend.
+      canCreateCompany:
+        !user.banned &&
+        !user.locked &&
+        (user.publicMetadata.patchySignup !== "patch-recipient" ||
+          user.privateMetadata.patchyCompanyCreationApproved === true)
+    };
+  });
+
   const isActive = Effect.fn("Session.isActive")(function* (identity: {
     readonly sid: string;
     readonly sub: string;
@@ -412,6 +449,7 @@ export const make = Effect.gen(function* () {
     signInUrl,
     waitlistUrl: `https://${portalHost}/waitlist`,
     authenticate,
+    account,
     isActive,
     revoke,
     signOutCookies: () => clearedCookies

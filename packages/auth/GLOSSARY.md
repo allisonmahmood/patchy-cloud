@@ -5,7 +5,7 @@ Who a caller is: Clerk sessions and viewers, user-owned machine tokens and agent
 ## Language
 
 **Account**:
-A person's sign-in identity, held by Clerk. An account can have a session without company membership; company membership and individual patch grants determine access separately. The local external-sharing experiment lets such an account remain a recipient without creating a company user or builder credentials.
+A person's sign-in identity, held by Clerk. An account can have a session without company membership; company membership and individual patch grants determine access separately. The local external-sharing experiment lets such an account remain a recipient without creating a company user or builder credentials. An account created by a patch invitation needs separate company-creation approval or a company invitation before it can become a builder. Pending patch invitations require a current verified email; accepted grants follow the account identity.
 _Avoid_: restricted account (access is specific to a company or patch)
 
 **Purpose**:

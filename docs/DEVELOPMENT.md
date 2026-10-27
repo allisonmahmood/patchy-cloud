@@ -440,7 +440,11 @@ The external-sharing experiment also runs with Clerk development keys. The dev r
 sets `PATCHY_DEV_EXTERNAL_SHARING=true`; the server accepts it only on loopback in
 development/test, with `pk_test_` keys. Outside that setting the normal company
 onboarding is unchanged. Enter the experiment at `/`: an account without company
-membership stays a recipient and cannot create a company or authorize a builder.
+membership stays a recipient and cannot authorize a builder. New accounts created
+from patch invitation tickets cannot create companies without separate operator
+approval; see Operations’ **Patch-recipient enrollment**. An ordinary company
+invitation permits joining that company. Existing approved beta accounts can still
+create a company through `/join`.
 Use the seeded admin binding above when you need a company member to publish or invite.
 Patch invitations send Clerk mail and point to the hosted Account Portal with a return
 to this local patch invitation. Acceptance opens the patch; cancelling or revoking
@@ -454,6 +458,8 @@ It verifies signed Clerk cookies without company membership, invitation acceptan
 Home and direct access boundaries, session refresh and revocation of an open patch.
 The live spec uses real tables, files, subscriptions and server handlers to exercise
 two independent companies, existing-member recipients and declared shared dependencies.
+Its account-lookup HTTP fixture uses `PATCHY_TEST_CLERK_API_URL`, honored only with
+`NODE_ENV=test` and `pk_test_` keys; production and normal local Clerk runs ignore it.
 Invitation grants are seeded and the Clerk browser SDK boundary is replaced;
 page scripts, server admission and grant storage stay real. It does not create an
 account, deliver mail or prove hosted signup. Use the Clerk instance and the
