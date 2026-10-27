@@ -109,6 +109,12 @@ modify the shared developer configuration or print key values. A dev reset remov
 both the database and this keyring. For a hand-started server, supply the keyring
 securely through its environment, never through an agent transcript.
 
+### Pidgeon
+
+A Pidgeon connection keeps only the key Patchy minted for its address, encrypted
+under this keyring; admin keys are never stored. The server calls only
+`https://pidgeon.ai/api/v1`, and needs no Pidgeon configuration of its own.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

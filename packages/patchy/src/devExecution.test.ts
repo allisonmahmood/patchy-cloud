@@ -47,7 +47,7 @@ const prepared: Prepared = {
     files: { documents: { description: "Locally adopted documents" } },
     uses: {}
   },
-  metadata: { postgres: {}, posthog: {}, shared: {} }
+  metadata: { postgres: {}, posthog: {}, pidgeon: {}, shared: {} }
 };
 const bundle = Effect.fn("test.devBundle")(function* (
   label: string,
@@ -143,6 +143,7 @@ it.live(
           },
           metadata: {
             posthog: {},
+            pidgeon: {},
             shared: {
               contacts: {
                 declaration: shared,
@@ -354,6 +355,7 @@ it.live(
           metadata: {
             postgres: {},
             shared: {},
+            pidgeon: {},
             posthog: {
               analytics: {
                 declaration,

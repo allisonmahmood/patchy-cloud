@@ -812,12 +812,44 @@ export function htmlPage(options: {
     .tile-row-plain .tile-text { white-space: normal; }
     /* side-panel: a framed column beside a page's main content, such as Home's Pages. */
     .side-panel { min-width: 0; padding: 18px 18px 8px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); }
-    /* card-split: a patch's card with a side-panel to its right, such as what agents can do. On a narrow page the
-       panel drops below the card. */
+    /* card-split: a page's main column with a side-panel to its right, such as what agents can do beside a patch's
+       card, or the how-to beside a connect form. On a narrow page the panel drops below. */
     .card-split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px 28px; align-items: start; }
     @media (max-width: 960px) {
       .card-split { grid-template-columns: minmax(0, 1fr); }
     }
+    /* form-step: one numbered part of a one-page form, a fieldset whose legend is a form-step-title led by its
+       form-step-number. While disabled, such as before an earlier part is done, its words dim; its controls dim
+       themselves as disabled controls do. */
+    .form-step { min-width: 0; margin: 28px 0 0; padding: 0; border: 0; }
+    .form-step-title { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 0; color: var(--ink); font-size: 1.15rem; font-weight: 850; line-height: 1.2; }
+    .form-step-number { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border: 2px solid var(--ink); border-radius: 50%; background: var(--yellow); color: var(--ink); font-size: .8rem; font-weight: 900; }
+    .form-step:disabled :is(.form-step-title, .field-label, .field-hint, .supporting-text) { opacity: .5; }
+    .field-group:has(> input:disabled) { opacity: .55; cursor: not-allowed; }
+    /* tile-option: a tile-row that is one choice of a radio group, its native radio kept for keyboard and screen
+       readers but drawn as the row: checked fills pale yellow with a strong frame, as a current list-link fills,
+       and disabled mutes, such as an address that can't be picked. tile-row-placeholder dashes one standing in for
+       something to make. */
+    .tile-options { display: grid; gap: 10px; margin: 12px 0 0; }
+    .tile-option { position: relative; cursor: pointer; }
+    .tile-option > input, .choice-card > input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+    .tile-option:has(> input:checked) { border-color: var(--ink); background: color-mix(in srgb, var(--yellow) 45%, var(--white)); color: var(--ink); }
+    .tile-option:has(> input:checked) .tile-text { color: var(--ink-soft); }
+    .tile-option:has(> input:focus-visible), .choice-card:has(> input:focus-visible) { outline: 3px solid var(--blue); outline-offset: 3px; }
+    .tile-option:has(> input:disabled), .choice-card:has(> input:disabled) { opacity: .5; cursor: not-allowed; }
+    .tile-option:has(> input:disabled):hover { border-color: var(--line-strong); background: var(--white); }
+    .tile-row-placeholder.tile-option:has(> input:disabled):hover { background: transparent; }
+    /* choice-card: one choice of a radio group as a card, a choice-card-title over its choice-card-point lines;
+       choice-cards lays a group side by side, one under another on a narrow page. Checked and disabled read as a
+       tile-option's do. */
+    .choice-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 0; }
+    .choice-card { position: relative; display: block; padding: 14px 16px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); cursor: pointer; }
+    .choice-card:hover { border-color: var(--ink); background: var(--paper-blue); }
+    .choice-card:has(> input:checked) { border-color: var(--ink); background: color-mix(in srgb, var(--yellow) 45%, var(--white)); }
+    .choice-card:has(> input:disabled):hover { border-color: var(--line-strong); background: var(--white); }
+    .choice-card-title { display: block; margin: 0 0 6px; color: var(--ink); font-size: 1.05rem; font-weight: 850; line-height: 1.25; }
+    .choice-card-point { position: relative; display: block; padding-left: 16px; font-size: .9rem; line-height: 1.45; }
+    .choice-card-point::before { content: "•"; content: "•" / ""; position: absolute; left: 2px; }
     /* shelf-label: a small capitalised label over a group inside a shelf or panel, such as New to you. */
     .shelf-label { margin: 14px 0 4px; color: var(--muted); font-size: .74rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
     mark { padding: 0 2px; border-radius: 3px; background: rgba(255, 191, 53, .6); color: var(--ink); }

@@ -12,6 +12,7 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
+import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -503,8 +504,17 @@ export const PostHogDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("posthog")
 });
+/** One company email address on Pidgeon. */
+export const PidgeonDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("pidgeon")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
-export const ConnectionDeclaration = Schema.Union([PostgresDeclaration, PostHogDeclaration]);
+export const ConnectionDeclaration = Schema.Union([
+  PostgresDeclaration,
+  PostHogDeclaration,
+  PidgeonDeclaration
+]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
 export const sharedTableId = (patchId: string, table: string): string => `${patchId}/${table}`;
@@ -591,6 +601,7 @@ export const Manifest = Schema.Struct({
     Schema.Union([
       PostgresDeclaration,
       PostHogDeclaration,
+      PidgeonDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -617,6 +628,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...PidgeonDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -631,7 +647,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog"] as const;
+export const integrations = ["postgres", "posthog", "pidgeon"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -642,7 +658,9 @@ export const ConnectionSummary = Schema.Struct({
   description: Schema.String,
   status: Schema.Literals(["connected", "disconnected"]),
   hint: Schema.String,
-  reason: Schema.optionalKey(Schema.Literal("not_connected"))
+  reason: Schema.optionalKey(Schema.Literal("not_connected")),
+  /** A Pidgeon connection made with a test key: its mail stays in Pidgeon. Absent otherwise. */
+  test: Schema.optionalKey(Schema.Literal(true))
 });
 
 export const Connections = Schema.Struct({
@@ -668,8 +686,13 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
 /** What the legacy `/connections/:handle` route answers, as CLIs from before PostHog decode it. */
 export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
+export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
-export const ConnectionDetail = Schema.Union([PostgresConnectionDetail, PostHogConnectionDetail]);
+export const ConnectionDetail = Schema.Union([
+  PostgresConnectionDetail,
+  PostHogConnectionDetail,
+  PidgeonConnectionDetail
+]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
 export const ConnectionUnavailable = failure(503, {
@@ -708,6 +731,12 @@ export const DeclarationMetadata = Schema.Struct({
     Schema.String,
     Schema.Struct({ declaration: PostHogDeclaration, snapshot: PostHogSnapshot })
   ),
+  // A release before Pidgeon generates none, which reads as no Pidgeon declarations: after a
+  // rollback, this CLI still reads that release's generation.
+  pidgeon: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: PidgeonDeclaration, snapshot: PidgeonSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   shared: Schema.Record(
     Schema.String,
     Schema.Union([

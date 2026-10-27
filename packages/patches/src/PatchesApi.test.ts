@@ -52,6 +52,7 @@ import { InvocationLog, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/integrations";
 import * as PostHogDouble from "../../integrations/src/test/posthog.js";
+import * as PidgeonTest from "../../integrations/src/test/pidgeon.js";
 import * as Content from "./Content.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
@@ -2697,6 +2698,62 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         responseMode: "response-only"
       });
       assert.include(yield* mismatched.json, { code: "connection_not_connected" });
+    })
+  );
+
+  it.effect("binds a Pidgeon connection's snapshot revision and refuses it once refreshed", () =>
+    Effect.gen(function* () {
+      const connections = yield* SqlConnectionStore.make.pipe(
+        Effect.provide(PidgeonTest.canned().layer)
+      );
+      yield* PidgeonTest.seed({
+        id: "conn_publish_support",
+        companyId: admin.company.id,
+        userId: admin.user.id,
+        handle: "publish-support"
+      });
+      const connection = yield* connections.get(admin.company.id, "conn_publish_support");
+      const declaration = {
+        kind: "pidgeon" as const,
+        handle: connection.handle,
+        id: connection.id,
+        revision: connection.metadataRevision
+      };
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const payload = publishRequest({
+        html: html("Support desk"),
+        manifest: { ...Fixtures.manifest, name: "support-desk", uses: { mail: declaration } }
+      });
+      const created = yield* api.publish({ payload });
+      const patches = yield* Patches.Patches;
+      assert.deepStrictEqual(
+        Option.getOrThrow(yield* patches.find(created.patchId)).version.manifest.uses.mail,
+        declaration
+      );
+      // Refresh labels as the store saves one: a second snapshot, and the revision moves to it.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO connection_snapshots
+        (company_id, connection_id, integration, revision, snapshot, created_at)
+        SELECT company_id, connection_id, integration, 2, snapshot, now() FROM connection_snapshots
+        WHERE connection_id = ${connection.id} AND revision = 1`;
+      yield* sql`UPDATE connections SET metadata_revision = 2 WHERE id = ${connection.id}`;
+      const stale = yield* api.publish({
+        payload: publishRequest({
+          ...payload,
+          patchId: created.patchId,
+          publishKey: crypto.randomUUID()
+        }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(stale.status, 422);
+      assert.include(yield* stale.json, { code: "stale_generated" });
+      // A stored version declares it now, so it can't be deleted.
+      assert.instanceOf(
+        yield* connections
+          .delete({ companyId: admin.company.id, userId: admin.user.id, id: connection.id })
+          .pipe(Effect.flip),
+        ConnectionStore.ConnectionInUse
+      );
     })
   );
 

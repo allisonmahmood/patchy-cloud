@@ -20,17 +20,20 @@ export {
   patchTitle,
   renderOffPatch
 } from "./patch-presentation.js";
+export type { ChoiceCard, TileOption } from "./components.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
 export {
   agentIcon,
   agentMark,
   avatar,
+  choiceCards,
   menuCopy,
   menuLink,
   menuPost,
   patchMark,
   rowMenu,
-  searchField
+  searchField,
+  tileOptions
 } from "./components.js";
 export * as WhatsNew from "./whatsNew.js";
 export { isPublicAddress } from "./addresses.js";

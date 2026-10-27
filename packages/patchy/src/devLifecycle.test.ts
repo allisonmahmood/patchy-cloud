@@ -262,6 +262,7 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                 metadata: {
                   postgres: {},
                   shared: {},
+                  pidgeon: {},
                   posthog: options.posthog
                     ? {
                         analytics: {

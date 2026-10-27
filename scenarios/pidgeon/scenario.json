@@ -1,0 +1,25 @@
+{
+  "company": { "name": "Lumen Bikes", "handle": "lumen" },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@lumenbikes.example",
+      "role": "admin"
+    },
+    { "key": "rae", "name": "Rae Okonkwo", "email": "rae@lumenbikes.example", "role": "member" },
+    { "key": "jonas", "name": "Jonas Weber", "email": "jonas@lumenbikes.example", "role": "member" }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "pidgeon",
+      "handle": "support",
+      "description": "Lumen Bikes support: customer questions, warranty claims, returns, supplier invoices and press.",
+      "localPart": "lumen-support",
+      "displayName": "Lumen Bikes Support",
+      "access": "send"
+    }
+  ],
+  "patches": []
+}

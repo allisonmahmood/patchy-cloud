@@ -1,13 +1,15 @@
 /**
- * Clerk development settings and the seed's optional Clerk user id, from
+ * Clerk development settings, the seed's optional Clerk user id and a Pidgeon test admin key, from
  * `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`).
- * Only Clerk settings reach the server; the user id is consumed by the seed.
- * Other settings in this developer-owned file never enter the dev instance.
+ * Only Clerk settings reach the server; the user id is consumed by the seed, and the Pidgeon key
+ * by a scenario's connect page. Other settings in this developer-owned file never enter the dev
+ * instance.
  */
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { CredentialKeys } from "@patchy/integrations";
@@ -56,6 +58,20 @@ export const developerEnvFile = Effect.fn("developerEnvFile")(function* (home: s
     Config.withDefault(path.join(home, ".config"))
   );
   return path.join(configHome, "patchy-cloud", "dev.env");
+});
+
+/**
+ * The Pidgeon test admin key a scenario's connections paste, `PIDGEON_TEST_ADMIN_KEY`: from the
+ * environment, else from the developer's dev.env. None, and the scenario skips Pidgeon.
+ */
+export const readPidgeonTestKey = Effect.fn("readPidgeonTestKey")(function* (file: string) {
+  const key = Config.option(Config.Redacted("PIDGEON_TEST_ADMIN_KEY"));
+  const fromEnv = yield* key;
+  if (Option.isSome(fromEnv)) return fromEnv;
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return Option.none();
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  return yield* key.pipe(Effect.provide(ConfigProvider.layer(provider)));
 });
 
 /** The allowed developer settings; empty when the developer has written no file. */

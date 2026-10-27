@@ -23,6 +23,7 @@
  * contains the current directory.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -52,6 +53,7 @@ import {
   type Served,
   UncommittedChanges
 } from "./evidence.js";
+import { developerEnvFile } from "./developerEnv.js";
 import {
   encodeManifest,
   findPerson,
@@ -67,6 +69,7 @@ import {
 import { checkFfmpeg, filmMarkdown, filmSide, loadFlow, sideBySide, Take } from "./film.js";
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
+import { takeDownRecorded } from "./pidgeon.js";
 import { alive, signal } from "./process.js";
 import { loadScenario, Person } from "./scenario.js";
 import {
@@ -502,6 +505,9 @@ const reset = Command.make(
   Effect.fn(function* ({ json }) {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
+    // What the environment made in Pidgeon goes first, whatever plan.json says, while the record
+    // of it is still there.
+    yield* takeDownPidgeon(root);
     yield* buildBroker(root);
     const stateDir = yield* stateDirOf(root);
     // Reset is the recovery path, so an unreadable plan.json is wiped, not fatal.
@@ -1636,6 +1642,15 @@ const trial = Command.make(
   )
 );
 
+/**
+ * Takes down the Pidgeon test addresses the worktree's environment recorded, and their keys, before
+ * the environment folder that records them goes; fails, removing nothing, when it can't.
+ */
+const takeDownPidgeon = Effect.fn("takeDownPidgeon")(function* (root: string) {
+  const home = yield* Config.String("HOME");
+  yield* takeDownRecorded((yield* layoutFor(root)).pidgeon, yield* developerEnvFile(home));
+});
+
 const down = Command.make(
   "down",
   {},
@@ -1643,11 +1658,13 @@ const down = Command.make(
     const fs = yield* FileSystem.FileSystem;
     const root = yield* worktree;
     const stateDir = yield* stateDirOf(root);
-    const evidenceRemoved = yield* removeEvidence(root);
-    const environmentRemoved = yield* tearDown(root);
     const recorded = yield* readPlan(stateDir).pipe(
       Effect.catchTags({ SchemaError: () => Effect.succeed(Option.none()) })
     );
+    // What the environment made in Pidgeon goes before the folder that records it.
+    yield* takeDownPidgeon(root);
+    const evidenceRemoved = yield* removeEvidence(root);
+    const environmentRemoved = yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);
     const instanceRemoved = yield* fs.exists(stateDir);
     yield* fs.remove(stateDir, { recursive: true, force: true });

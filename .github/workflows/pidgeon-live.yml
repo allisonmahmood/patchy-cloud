@@ -1,0 +1,97 @@
+name: Pidgeon live
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pidgeon-changes:
+    # Whether the live Pidgeon tier runs: on main, and on a pull request from this repository that
+    # touches what it exercises, when the repository has the test key. Fork and Dependabot pull
+    # requests never get the key.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          OURS: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+          HAS_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY != '' }}
+        run: |
+          if [ "$OURS" != "true" ] || [ "$HAS_KEY" != "true" ]; then
+            echo "No Pidgeon test key for this run, so the live tier doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+            grep -qE '^(packages/(integrations|api|core|sql|limits)/|test/|vitest\.pidgeon-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/pidgeon-live\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing the live tier exercises changed, so it doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  pidgeon-suite:
+    # Pidgeon's test mode, with the repository's test admin key. Every run shares that account
+    # with developers' dev environments: 120 requests a minute and 10 active keys, two of them the
+    # admin keys. A run keeps at most three keys alive, paces itself, stops using Pidgeon after
+    # 20 minutes, as this job does, and sweeps however it ends. Runs wait in one account-wide
+    # queue and none is cancelled: a cancelled run would leave its keys and addresses with only
+    # minutes for its sweep. Only a run that tests waits in it.
+    needs: pidgeon-changes
+    if: needs.pidgeon-changes.outputs.run == 'true'
+    concurrency:
+      group: pidgeon-live
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PIDGEON_TEST_ADMIN_KEY: ${{ secrets.PIDGEON_TEST_ADMIN_KEY }}
+      PIDGEON_TEST_RUN_ID: ${{ github.run_id }}${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Pidgeon connections against Pidgeon's test mode
+        run: pnpm test:pidgeon
+      - name: Sweep what this run left in Pidgeon
+        if: always()
+        run: pnpm test:pidgeon:sweep
+
+  pidgeon-live:
+    # The check to require: it passes only when pidgeon-changes decided and the suite passed, or
+    # was skipped because it had no reason or no key to run. A skipped job would pass on its own.
+    needs: [pidgeon-changes, pidgeon-suite]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          CHANGES: ${{ needs.pidgeon-changes.result }}
+          RUN: ${{ needs.pidgeon-changes.outputs.run }}
+          SUITE: ${{ needs.pidgeon-suite.result }}
+        # Exactly two ways to pass; anything else, an empty decision included, fails.
+        run: |
+          case "$CHANGES/$RUN/$SUITE" in
+            success/true/success) echo "The live Pidgeon tier ran and passed." ;;
+            success/false/skipped) echo "The live Pidgeon tier had no reason or no key to run." ;;
+            *)
+              echo "Not a pass: pidgeon-changes ended '$CHANGES' deciding run='$RUN', and pidgeon-suite ended '$SUITE'."
+              exit 1
+              ;;
+          esac

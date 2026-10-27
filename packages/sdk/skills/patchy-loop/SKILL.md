@@ -210,14 +210,14 @@ all other levels print the wire body with no added `ok` wrapper.
 
 For a company connection, run `pnpm patchy list connections`, then
 `pnpm patchy list connections <integration>/<handle>` for its snapshot and
-`takenAt`: a Postgres schema, or a PostHog project's events and properties.
+`takenAt`: a Postgres schema, a PostHog project's events and properties, or a Pidgeon address and its labels.
 `list connections --all` adds offered integrations. A null snapshot is
 unavailable, not an empty source. Only connected entries carry an `add` hint;
 disconnected entries point to `/company/connections`. Discovery grants no access.
 
 ## Commands and ownership
 
-- `pnpm patchy add postgres/<handle> --as sales`, `pnpm patchy add posthog/<handle> --as analytics` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub (none for PostHog) and skill. Choose the target through discovery above. `add postgres` and `add posthog` choose that integration's sole connected connection; with several they list choices from `list connections` and stop. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
+- `pnpm patchy add postgres/<handle> --as sales`, `pnpm patchy add posthog/<handle> --as analytics` or `pnpm patchy add shared-table <patchId>/<table> --as contacts` edits `uses` and generates its client, context, fixture stub (none for PostHog) and skill. `pnpm patchy add pidgeon/<handle>` declares a company email address; in this release it brings the address's context alone, with no client operations. Choose the target through discovery above. `add postgres` and `add posthog` choose that integration's sole connected connection; with several they list choices from `list connections` and stop. Connection setup belongs to an admin at `/company/connections`; keep credentials out of the repo and transcript.
 - `pnpm patchy remove sales` reverses the declaration and its generated output, and removes its declaration skill when no declaration of that kind remains. It leaves the fixture for you and says so.
 - An uneditable `uses` expression fails with its exact source line and, for add, the exact literal declaration line to insert. Either make `uses` an explicit object literal while preserving its meaning and retry, or add the declaration yourself and run `pnpm patchy refresh`. Do not bypass the refusal by editing generated metadata.
 - `pnpm patchy refresh` fetches one release, updates the managed pins and installs if needed, re-execs that CLI, executes config, generates, and activates the managed set transactionally. Failure retains the previous set. It refreshes every present skill and adds config-implied skills. `patchy-server` follows the tier and `patchy-members` follows its declaration; other installed skills stay sticky. If another present skill is no longer offered, refresh fails rather than leaving stale instructions. It announces newly recorded SDK capabilities with their entrypoints, where they run and limits; `--json` returns them in `addedCapabilities`. Older repos record the full catalogue once, and an unchanged refresh returns an empty list.

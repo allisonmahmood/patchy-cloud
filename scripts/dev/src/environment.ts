@@ -9,6 +9,7 @@
  * launcher, the worker agent launchers with their folder and state, and
  * `environment.json`, the manifest the card is printed from.
  */
+import { PidgeonSource } from "@patchy/integrations";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -16,12 +17,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Random from "effect/Random";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
+import { isTestKey, recordAddress } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
-import { Person, publisherToken, type Scenario } from "./scenario.js";
+import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
 export class StepExited extends Schema.TaggedError<StepExited>()("StepExited", {
@@ -49,6 +54,20 @@ export class SampleDataFailed extends Schema.TaggedError<SampleDataFailed>()("Sa
 }) {
   override get message() {
     return `Loading sample data in ${this.patch} failed. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again to finish, or press "Load sample data" yourself.`;
+  }
+}
+
+/**
+ * Connecting a scenario's connection through its page failed at `step`. Playwright's error can
+ * quote what was typed, the admin key included, so it rides redacted and never reaches the message.
+ */
+export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectFailed", {
+  connection: Schema.String,
+  step: Schema.String,
+  cause: Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true })
+}) {
+  override get message() {
+    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /company/connections.`;
   }
 }
 
@@ -141,7 +160,9 @@ export const layoutOf = (dir: string, path: Path.Path) => ({
   codexHome: path.join(dir, "worker-state", "codex"),
   claudeWorker: path.join(dir, "worker-claude"),
   codexWorker: path.join(dir, "worker-codex"),
-  manifest: path.join(dir, "environment.json")
+  manifest: path.join(dir, "environment.json"),
+  /** The local parts of the Pidgeon test addresses `up` asked for, for `down` to take down. */
+  pidgeon: path.join(dir, "pidgeon-addresses.json")
 });
 type Layout = ReturnType<typeof layoutOf>;
 
@@ -565,6 +586,70 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
   );
 });
 
+/**
+ * Connects a scenario's connection as `email` through its connect page in a browser, as an admin
+ * would, the page's script included: the test admin key, then a new address on pidgeon.email at
+ * `localPart`. One already connected under its name is left be.
+ */
+const connectSource = Effect.fn("connectSource")(function* (
+  apiUrl: string,
+  email: string,
+  connection: ScenarioConnection,
+  adminKey: Redacted.Redacted<string>,
+  localPart: string
+) {
+  const name = `${connection.integration}/${connection.handle}`;
+  // Where it got to, for a failure's message; Playwright's own error stays redacted.
+  let step = "starting the browser";
+  yield* Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        step = "signing in";
+        await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+        );
+        if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
+        step = "pasting the admin key";
+        await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
+        await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
+        step = "finding addresses";
+        await page.getByRole("button", { name: "Find addresses" }).click();
+        step = "describing the new address";
+        await page.locator("label.tile-option", { hasText: "New address" }).click();
+        await page.locator("#pidgeon-local").fill(localPart);
+        await page.locator("#pidgeon-display").fill(connection.displayName);
+        step = "choosing what patches may do";
+        await page
+          .locator("label.choice-card")
+          .filter({
+            has: page.getByText(connection.access === "send" ? "Read and send" : "Read", {
+              exact: true
+            })
+          })
+          .click();
+        step = "naming it";
+        await page.locator("#connection-handle").fill(connection.handle);
+        await page.locator("#connection-description").fill(connection.description);
+        step = "connecting";
+        await Promise.all([
+          page.waitForURL(/\/company\/connections\/conn_/),
+          page.getByRole("button", { name: "Connect", exact: true }).click()
+        ]);
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => connectFailed(name, step, cause)
+  });
+});
+
+/** A connect page failure, its cause kept but never shown: it can quote the admin key. */
+export const connectFailed = (connection: string, step: string, cause: unknown) =>
+  new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
+
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
 const loadSampleData = Effect.fn("loadSampleData")(function* (
   apiUrl: string,
@@ -670,6 +755,35 @@ const materialize = Effect.fn("materialize")(function* (
       };
       yield* fs.writeFileString(layout.manifest, encodeManifest(current));
     });
+  const connections = scenario.connections ?? [];
+  const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
+  const pidgeonKey = connections.length === 0 ? Option.none() : yield* readPidgeonTestKey(devEnv);
+  for (const connection of connections) {
+    const name = `${connection.integration}/${connection.handle}`;
+    if (Option.isNone(pidgeonKey)) {
+      yield* Console.error(
+        `  ${name}: skipped. Put a Pidgeon test admin key in ${devEnv} as PIDGEON_TEST_ADMIN_KEY to connect it.`
+      );
+      continue;
+    }
+    // A live key would make a live address and key, which nothing here takes down again.
+    const test = yield* isTestKey(pidgeonKey.value).pipe(
+      Effect.provide(PidgeonSource.layer),
+      Effect.orElseSucceed(() => false)
+    );
+    if (!test) {
+      yield* Console.error(
+        `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key, and dev environments only use one.`
+      );
+      continue;
+    }
+    // A code of this environment's after the local part makes the address its own. It's recorded
+    // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
+    const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+    yield* recordAddress(layout.pidgeon, localPart);
+    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value, localPart);
+  }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
     let entry = current.patches.find((done) => done.key === key);

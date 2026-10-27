@@ -183,6 +183,44 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "pidgeon.calls.concurrent": {
+    kind: "contract",
+    default: 4,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Pidgeon calls per address at once in one server process, shared by dev and published calls; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "pidgeon.connect.deadline": {
+    kind: "contract",
+    default: 45000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot",
+    refusal: "timeout",
+    overridable: false
+  },
+  "pidgeon.snapshot.labels": {
+    kind: "contract",
+    default: 500,
+    unit: "labels",
+    scope: "company",
+    measure: "Labels one Pidgeon snapshot keeps",
+    refusal: null,
+    overridable: false
+  },
+  "pidgeon.addresses.listed": {
+    kind: "contract",
+    default: 1000,
+    unit: "addresses",
+    scope: "company",
+    measure: "Addresses the Pidgeon connect form lists from one admin key",
+    refusal: null,
+    overridable: false
+  },
   "tier2.query.deadline": {
     kind: "contract",
     default: 3000,

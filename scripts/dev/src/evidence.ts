@@ -336,13 +336,23 @@ const readCloneState = Effect.fn("Evidence.readCloneState")(function* (
   } satisfies CloneState;
 });
 
-/** Takes a side's instance down with its own runner, which deletes its data. */
+/**
+ * Takes a side's instance down with its own runner, which deletes its data, with the Pidgeon test
+ * admin key so the test addresses its environment recorded, and their keys, go first.
+ */
 const takeDown = (dir: string, side: SideName, env: Record<string, string>) =>
-  stepOutput(`Taking the ${side} instance down`, "pnpm", ["--silent", "dev", "down"], {
-    cwd: dir,
-    env,
-    prefix: side
-  });
+  Effect.flatMap(withPidgeonKey(env), (withKey) =>
+    stepOutput(`Taking the ${side} instance down`, "pnpm", ["--silent", "dev", "down"], {
+      cwd: dir,
+      env: withKey,
+      prefix: side
+    })
+  );
+/** `env` and, when this environment has one, the Pidgeon test admin key: for `up` and `down` alone. */
+const withPidgeonKey = (env: Record<string, string>) =>
+  Effect.map(Config.option(Config.String("PIDGEON_TEST_ADMIN_KEY")), (key) =>
+    Option.isSome(key) ? { ...env, PIDGEON_TEST_ADMIN_KEY: key.value } : env
+  );
 
 /** The side's checkout at `commit`, installed: cloned, reused or moved per `clonePlan`. */
 const prepare = Effect.fn("Evidence.prepare")(function* (
@@ -389,7 +399,11 @@ const prepare = Effect.fn("Evidence.prepare")(function* (
   );
 });
 
-/** `pnpm dev up <scenario>` in the checkout, checked by asking the instance itself. */
+/**
+ * `pnpm dev up <scenario>` in the checkout, checked by asking the instance itself. A Pidgeon test
+ * admin key in this environment reaches `up` and `down` alone, so a scenario's Pidgeon connection
+ * is made, and its address and key taken down again.
+ */
 const bringUp = Effect.fn("Evidence.bringUp")(function* (
   dir: string,
   side: SideName,
@@ -401,7 +415,11 @@ const bringUp = Effect.fn("Evidence.bringUp")(function* (
       `Bringing the ${side} instance up`,
       "pnpm",
       ["--silent", "dev", "up", scenario, "--json"],
-      { cwd: dir, env, prefix: side }
+      {
+        cwd: dir,
+        env: yield* withPidgeonKey(env),
+        prefix: side
+      }
     )
   );
   const healthy = yield* HttpClient.get(`${served.apiUrl}/healthz`).pipe(

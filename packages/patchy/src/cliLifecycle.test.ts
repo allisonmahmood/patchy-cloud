@@ -684,7 +684,7 @@ describe("patchy list", () => {
       }
       // Connections are never filtered by the patch flags; the list names every integration
       // this release decodes.
-      expect(url.searchParams.get("integrations")).toBe("postgres,posthog");
+      expect(url.searchParams.get("integrations")).toBe("postgres,posthog,pidgeon");
       respond(200, projectConnections);
     });
     const result = await runCli(
@@ -909,7 +909,7 @@ describe("patchy list", () => {
     };
     const instance = await stubInstance((request, respond) => {
       // A bare handle only one connection has finds its integration first.
-      if (request.url === "/api/connections?integrations=postgres%2Cposthog")
+      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
         return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/posthog/product");
       respond(200, detail);
@@ -936,6 +936,93 @@ describe("patchy list", () => {
     }
     const json = await runCli(
       ["list", "connections", "posthog/product", "--json", "--api-url", instance.url],
+      { env }
+    );
+    expect(JSON.parse(json.stdout)).toEqual(detail);
+  });
+
+  it("marks a test-mode Pidgeon connection in the list, as text and JSON", async () => {
+    const listed = {
+      connections: [
+        {
+          id: "conn-support",
+          handle: "support",
+          integration: "pidgeon",
+          description: "Customer mail",
+          status: "connected",
+          hint: "patchy add pidgeon/support",
+          test: true
+        }
+      ]
+    };
+    const instance = await stubInstance((request, respond) =>
+      request.url?.startsWith("/api/connections?") === true
+        ? respond(200, listed)
+        : respond(404, { ok: false, error: "Not found." })
+    );
+    const result = await runCli(["list", "connections", "--api-url", instance.url], { env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toContain(
+      "pidgeon/support  Customer mail  connected · test, mail stays in Pidgeon\n"
+    );
+    const json = await runCli(["list", "connections", "--json", "--api-url", instance.url], {
+      env
+    });
+    expect(JSON.parse(json.stdout)).toEqual(listed);
+  });
+
+  it("prints a Pidgeon connection's address, access, send policy and labels", async () => {
+    const detail = {
+      integration: "pidgeon",
+      handle: "support",
+      description: "Customer mail",
+      status: "connected",
+      snapshot: {
+        version: 1,
+        revision: 2,
+        takenAt: "2026-10-25T00:00:00.000Z",
+        address: {
+          email: "support@acme.example",
+          displayName: "Acme Support",
+          sendPolicy: "reply_only"
+        },
+        access: "send",
+        test: true,
+        labels: [
+          { id: "lbl-1", name: "Warranty", colour: "amber" },
+          { id: "lbl-2", name: "Returns", colour: "pink" }
+        ],
+        plan: "free"
+      }
+    };
+    const instance = await stubInstance((request, respond) => {
+      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
+        return respond(200, projectConnections);
+      expect(request.url).toBe("/api/connections/pidgeon/support");
+      respond(200, detail);
+    });
+    for (const name of ["pidgeon/support", "support"]) {
+      const result = await runCli(["list", "connections", name, "--api-url", instance.url], {
+        env
+      });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(result.stdout).toBe(
+        [
+          "pidgeon/support  Customer mail  connected",
+          "Address: support@acme.example (Acme Support)",
+          "Access: read and send",
+          "Send policy: reply_only",
+          "Mode: test · mail stays in Pidgeon",
+          "Plan: free",
+          "Labels: Warranty, Returns",
+          "Snapshot revision: 2",
+          "Taken at: 2026-10-25T00:00:00.000Z",
+          ""
+        ].join("\n")
+      );
+    }
+    const json = await runCli(
+      ["list", "connections", "pidgeon/support", "--json", "--api-url", instance.url],
       { env }
     );
     expect(JSON.parse(json.stdout)).toEqual(detail);
@@ -985,7 +1072,7 @@ describe("patchy list", () => {
       };
       const instance = await stubInstance((request, respond) => {
         // A bare handle is looked up among every integration's connections first.
-        if (request.url === "/api/connections?integrations=postgres%2Cposthog")
+        if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
           return respond(200, projectConnections);
         expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);

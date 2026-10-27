@@ -55,7 +55,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}`,
       `  ${connection.hint}`
     );
   }
@@ -88,6 +88,20 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
     `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
   ];
   if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
+  if (connection.integration === "pidgeon") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Address: ${snapshot.address.email}${snapshot.address.displayName === null ? "" : ` (${snapshot.address.displayName})`}`,
+      `Access: ${snapshot.access === "send" ? "read and send" : "read"}`,
+      `Send policy: ${snapshot.address.sendPolicy}`,
+      ...(snapshot.test ? ["Mode: test · mail stays in Pidgeon"] : []),
+      `Plan: ${snapshot.plan}`,
+      `Labels: ${snapshot.labels.length === 0 ? "none" : snapshot.labels.map((label) => label.name).join(", ")}`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`
+    ];
+  }
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>

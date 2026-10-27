@@ -33,6 +33,8 @@ export interface Row extends Usage {
   /** Where it reads from, in the integration's words. */
   readonly source: string;
   readonly status: "connected" | "disconnected";
+  /** A label beside its name wherever it's shown, such as a test connection's. */
+  readonly tag?: string;
 }
 
 /** When each connection's newest call began, or "unavailable" when the call log could not be read. */
@@ -40,6 +42,8 @@ export type LastCalls = ReadonlyMap<string, string> | "unavailable";
 
 /** A completed action (no status) or a refusal, with the code agents and support can quote. */
 export interface Notice {
+  /** Bold over the message, when the message alone would read as a wall of text. */
+  readonly title?: string;
   readonly message: string;
   readonly status?: number;
   readonly code?: string;
@@ -50,7 +54,8 @@ export interface Notice {
 }
 
 /** The connection forms' fields a refusal can sit at; an integration names its own credential fields. */
-export type Field = "handle" | "description" | "credentials" | "region" | "project" | "key";
+export type Field =
+  "handle" | "description" | "credentials" | "region" | "project" | "key" | "address" | "access";
 
 export type View = "all" | "attention" | "unused";
 export interface Filters {
@@ -93,12 +98,17 @@ const hidden = (key: string, value: string) =>
 
 const noticeDetail = (value: Notice) =>
   `${value.code ? `<br><code>${escapeHtml(value.code)}</code>` : ""}${value.next ? `<br><a href="${escapeAttribute(value.next.href)}">${escapeHtml(value.next.label)}</a>` : ""}`;
+/** A titled notice's title and message, or its message alone. */
+const noticeText = (value: Notice) =>
+  value.title === undefined
+    ? escapeHtml(value.message)
+    : `<strong class="note-title">${escapeHtml(value.title)}</strong>${escapeHtml(value.message)}`;
 
 /** A refusal is an alert; a completed action is a status. A field's refusal sits with its field. */
 export const notice = (value: Notice | undefined) =>
   value === undefined || value.field !== undefined
     ? ""
-    : `<div class="note ${value.status ? "note-refused" : "note-ok"}" role="${value.status ? "alert" : "status"}">${escapeHtml(value.message)}${noticeDetail(value)}</div>`;
+    : `<div class="note ${value.status ? "note-refused" : "note-ok"}" role="${value.status ? "alert" : "status"}">${noticeText(value)}${noticeDetail(value)}</div>`;
 
 /**
  * A field's hint, or after a refusal at that field the callout that replaces it, with the
@@ -108,7 +118,7 @@ export const fieldNote = (id: string, field: Field, hint: string, refusal: Notic
   refusal?.field === field
     ? {
         attributes: ` aria-describedby="${id}-error" aria-invalid="true" autofocus`,
-        note: `<div class="note note-refused field-callout" id="${id}-error" role="alert"><strong class="note-title">${escapeHtml(refusal.message)}</strong>${noticeDetail(refusal)}</div>`
+        note: `<div class="note note-refused field-callout" id="${id}-error" role="alert"><strong class="note-title">${escapeHtml(refusal.title ?? refusal.message)}</strong>${refusal.title === undefined ? "" : `<p>${escapeHtml(refusal.message)}</p>`}${noticeDetail(refusal)}</div>`
       }
     : {
         attributes: ` aria-describedby="${id}-hint"`,
@@ -174,7 +184,7 @@ const table = (rows: ReadonlyArray<Row>, lastCalls: LastCalls | undefined, now: 
   `<div class="connections-table"><table class="table connections-index"><thead><tr><th scope="col">Connection</th><th scope="col">Source</th><th scope="col">Status</th><th scope="col">Used by</th>${lastCalls === undefined ? "" : '<th scope="col">Last call</th>'}</tr></thead><tbody>${rows
     .map(
       (row) =>
-        `<tr><td><a href="${escapeAttribute(connectionPath(row.id))}"><strong>${escapeHtml(name(row))}</strong></a><span class="supporting-text connections-line">${escapeHtml(row.description || "No description")}</span></td><td>${escapeHtml(`${row.integration.label} · ${row.source}`)}</td><td>${row.status === "connected" ? muted("Connected") : '<span class="pill">Disconnected</span>'}</td><td>${usedByCell(row)}</td>${lastCalls === undefined ? "" : `<td>${lastCallCell(lastCalls, row.id, now)}</td>`}</tr>`
+        `<tr><td><a href="${escapeAttribute(connectionPath(row.id))}"><strong>${escapeHtml(name(row))}</strong></a>${tag(row.tag)}<span class="supporting-text connections-line">${escapeHtml(row.description || "No description")}</span></td><td>${escapeHtml(`${row.integration.label} · ${row.source}`)}</td><td>${row.status === "connected" ? muted("Connected") : '<span class="pill">Disconnected</span>'}</td><td>${usedByCell(row)}</td>${lastCalls === undefined ? "" : `<td>${lastCallCell(lastCalls, row.id, now)}</td>`}</tr>`
     )
     .join("")}</tbody></table></div>`;
 
@@ -360,10 +370,25 @@ export interface Connection extends Usage {
   readonly addedBy: string;
   /** The integration's facts about where it reads from, as label and value. */
   readonly facts: ReadonlyArray<readonly [string, string]>;
+  /** What the page says about the connection's state until it changes, such as a key left over. */
+  readonly standing?: ReadonlyArray<Standing>;
+  /** A label beside its name, as the index shows it. */
+  readonly tag?: string;
+}
+
+/** A notice that stays on a connection's page while what it says holds. */
+export interface Standing {
+  readonly tone: "ok" | "warn" | "refused";
+  readonly title: string;
+  readonly text: string;
+  /** An action that settles it, such as Replace key. */
+  readonly action?: { readonly href: string; readonly label: string; readonly primary?: boolean };
 }
 
 /** What the connection's current metadata lets patches read, in the integration's words. */
 export interface Reads {
+  /** The section's heading, where an integration's connections also act: "What patches can read and do". */
+  readonly heading?: string;
   readonly summary: string;
   readonly items: ReadonlyArray<string>;
   readonly more: number;
@@ -374,8 +399,12 @@ export interface Reads {
 /** The labels of an integration's own actions. */
 export interface Actions {
   readonly refresh: string;
+  /** The form that replaces the credentials, keeping where they point. */
   readonly rotate: string;
-  readonly retarget: string;
+  /** The form that points the connection elsewhere; absent where it can't move. */
+  readonly retarget?: string;
+  /** The form that changes what the stored credentials may do. */
+  readonly access?: string;
 }
 
 /** Stored ids in the reader's words, for the recent calls. */
@@ -494,8 +523,15 @@ const linkButton = (path: string, label: string, tone = "") =>
 const adminActions = (connection: Connection, actions: Actions) => {
   const path = (action: string) => connectionPath(connection.id, action);
   const connected = connection.status === "connected";
-  return `<div class="connection-actions">${postButton(path("test"), "Test connection")}${connected ? postButton(path("refresh"), actions.refresh) : ""}${linkButton(path("rotate"), `${actions.rotate}…`)}${linkButton(path("retarget"), `${actions.retarget}…`)}${linkButton(path("description"), "Edit description…")}${connected ? linkButton(path("disconnect"), "Disconnect…", " btn-danger") : postButton(path("reconnect"), "Reconnect")}${connection.declared ? "" : linkButton(path("delete"), "Delete…", " btn-quiet")}</div>${connection.declared ? '<p class="supporting-text">Delete is offered once no stored patch version declares this connection.</p>' : ""}${connected ? "" : '<p class="supporting-text">Reconnecting tests the stored credentials before restoring access.</p>'}`;
+  return `<div class="connection-actions">${postButton(path("test"), "Test connection")}${connected ? postButton(path("refresh"), actions.refresh) : ""}${actions.access === undefined ? "" : linkButton(path("access"), `${actions.access}…`)}${linkButton(path("rotate"), `${actions.rotate}…`)}${actions.retarget === undefined ? "" : linkButton(path("retarget"), `${actions.retarget}…`)}${linkButton(path("description"), "Edit description…")}${connected ? linkButton(path("disconnect"), "Disconnect…", " btn-danger") : postButton(path("reconnect"), "Reconnect")}${connection.declared ? "" : linkButton(path("delete"), "Delete…", " btn-quiet")}</div>${connection.declared ? '<p class="supporting-text">Delete is offered once no stored patch version declares this connection.</p>' : ""}${connected ? "" : '<p class="supporting-text">Reconnecting tests the stored credentials before restoring access.</p>'}`;
 };
+
+/** The label after a connection's name, such as a test connection's. */
+const tag = (value: string | undefined) =>
+  value === undefined ? "" : `<span class="tag">${escapeHtml(value)}</span>`;
+
+const standing = (item: Standing) =>
+  `<div class="note note-${item.tone}" role="${item.tone === "ok" ? "status" : "alert"}"><strong class="note-title">${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p>${item.action === undefined ? "" : `<div class="actions">${linkButton(item.action.href, item.action.label, item.action.primary === true ? " btn-primary" : "")}</div>`}</div>`;
 
 /** `/company/connections/:id`: the same layout for every integration. */
 export const renderConnection = (input: {
@@ -519,18 +555,19 @@ export const renderConnection = (input: {
   const add = connected
     ? `${copyLine(`patchy add ${name(connection)}`, "Command that adds this connection to a patch, select to copy")}<script defer src="${copyScriptPath}"></script>`
     : "";
-  const readsSection = `<section class="section" aria-labelledby="connection-reads"><h2 class="section-heading" id="connection-reads">What patches can read</h2>${
+  const readsSection = `<section class="section" aria-labelledby="connection-reads"><h2 class="section-heading" id="connection-reads">${escapeHtml(reads?.heading ?? "What patches can read")}</h2>${
     reads === null
       ? "<p>Its current metadata is unavailable. Refresh it to see what patches can read.</p>"
       : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
   }</section>`;
   const facts = `<dl class="facts">${connection.facts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}<dt>Added by</dt><dd>${escapeHtml(connection.addedBy)}</dd><dt>Used by</dt><dd>${usedByFact(connection)}</dd></dl>`;
-  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
+  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map(standing).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
 };
 
 // ---------- confirmations ----------
 
-export type Confirmation = "rotate" | "retarget" | "description" | "disconnect" | "delete";
+export type Confirmation =
+  "rotate" | "retarget" | "access" | "description" | "disconnect" | "delete";
 
 /**
  * A risky or form-backed action on its own page, as the portal confirms retire and delete. The
@@ -540,8 +577,16 @@ export const renderConfirmation = (input: {
   readonly connection: Connection;
   readonly action: Confirmation;
   readonly actions: Actions;
-  /** The integration's own page for rotate and retarget: its title, what it means and its fields. */
-  readonly form?: { readonly title: string; readonly consequence: string; readonly fields: string };
+  /** The integration's own page for rotate, retarget and access: its title, meaning and fields. */
+  readonly form?: {
+    readonly title: string;
+    readonly consequence: string;
+    readonly fields: string;
+    /** The submit button's label, where testing first isn't what it does. */
+    readonly submit?: string;
+  };
+  /** The integration's own words for what deleting or disconnecting does, where they differ. */
+  readonly consequences?: Partial<Record<"delete" | "disconnect", string>>;
   readonly description?: string;
   readonly notice?: Notice;
 }): string => {
@@ -557,13 +602,26 @@ export const renderConfirmation = (input: {
       title: input.form?.title ?? label,
       consequence: input.form?.consequence ?? "",
       fields: input.form?.fields ?? "",
-      submit: ["btn-primary", `Test and ${input.actions.rotate.toLowerCase()}`]
+      submit: [
+        "btn-primary",
+        input.form?.submit ?? `Test and ${input.actions.rotate.toLowerCase()}`
+      ]
     },
     retarget: {
       title: input.form?.title ?? label,
       consequence: input.form?.consequence ?? "",
       fields: input.form?.fields ?? "",
-      submit: ["btn-primary", `Test and ${input.actions.retarget.toLowerCase()}`]
+      submit: [
+        "btn-primary",
+        input.form?.submit ??
+          `Test and ${(input.actions.retarget ?? "point it elsewhere").toLowerCase()}`
+      ]
+    },
+    access: {
+      title: input.form?.title ?? label,
+      consequence: input.form?.consequence ?? "",
+      fields: input.form?.fields ?? "",
+      submit: ["btn-primary", input.form?.submit ?? input.actions.access ?? "Change access"]
     },
     description: {
       title: `Edit the description of ${label}`,
@@ -582,13 +640,17 @@ export const renderConfirmation = (input: {
     },
     disconnect: {
       title: `Disconnect ${label}?`,
-      consequence: `Patches that declare it can't read it until an admin reconnects it. Its credentials, what patches can read and every declaration are kept; reconnecting tests the credentials and restores access.`,
+      consequence:
+        input.consequences?.disconnect ??
+        `Patches that declare it can't read it until an admin reconnects it. Its credentials, what patches can read and every declaration are kept; reconnecting tests the credentials and restores access.`,
       fields: affected,
       submit: ["btn-danger", `Disconnect ${label}`]
     },
     delete: {
       title: `Delete ${label}?`,
-      consequence: `No stored patch version declares it. Deleting removes its credentials and frees the name; the metadata patches were published against is kept. This can't be undone.`,
+      consequence:
+        input.consequences?.delete ??
+        `No stored patch version declares it. Deleting removes its credentials and frees the name; the metadata patches were published against is kept. This can't be undone.`,
       fields: "",
       submit: ["btn-danger", `Delete ${label}`]
     }
