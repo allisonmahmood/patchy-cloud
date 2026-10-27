@@ -57,9 +57,7 @@ const outcome = (sent: Sent, to: string) => {
   if (sent.status === "pending_approval")
     return `Waiting for approval in Pidgeon until ${new Date(sent.approval.expiresAt).toLocaleString()}. Nothing has gone to ${to} yet.`;
   const refused = sent.rejected.map((item) => item.address);
-  return refused.length === 0
-    ? `Sent to ${to}.`
-    : `Sent, but ${refused.join(", ")} refused it. Write to them in a new email.`;
+  return refused.length === 0 ? `Sent to ${to}.` : `Sent, but ${refused.join(", ")} refused it.`;
 };
 
 export function App() {
@@ -67,7 +65,8 @@ export function App() {
   const [error, setError] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<ThreadStatus>("open");
   const [selected, setSelected] = useState<string | undefined>(undefined);
-  const [composing, setComposing] = useState(false);
+  // An email being written: each new one is its own Compose, with its own draft key.
+  const [compose, setCompose] = useState<Draft | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<readonly SearchHit[] | undefined>(undefined);
 
@@ -113,7 +112,10 @@ export function App() {
             onKeyDown={(event) => event.key === "Enter" && search()}
           />
         </div>
-        <button className="primary" onClick={() => (setComposing(true), setSelected(undefined))}>
+        <button
+          className="primary"
+          onClick={() => (setCompose({ key: Date.now() }), setSelected(undefined))}
+        >
           New email
         </button>
       </header>
@@ -141,7 +143,7 @@ export function App() {
                 <button
                   key={thread.id}
                   className={thread.id === selected ? "row current" : "row"}
-                  onClick={() => (setSelected(thread.id), setComposing(false))}
+                  onClick={() => (setSelected(thread.id), setCompose(undefined))}
                 >
                   <span className="row-top">
                     <strong>{who(thread.from)}</strong>
@@ -167,7 +169,7 @@ export function App() {
                 <button
                   key={hit.messageId}
                   className={hit.threadId === selected ? "row current" : "row"}
-                  onClick={() => (setSelected(hit.threadId), setComposing(false))}
+                  onClick={() => (setSelected(hit.threadId), setCompose(undefined))}
                 >
                   <span className="row-top">
                     <strong>
@@ -185,13 +187,16 @@ export function App() {
           )}
         </aside>
         <main className="detail">
-          {composing ? (
+          {compose !== undefined ? (
             <Compose
+              key={compose.key}
+              start={compose}
               onDone={(threadId) => {
-                setComposing(false);
+                setCompose(undefined);
                 setSelected(threadId);
                 void load();
               }}
+              onNew={(start) => setCompose({ key: Date.now(), ...start })}
             />
           ) : selected === undefined ? (
             <p className="muted pad">Pick a conversation.</p>
@@ -415,12 +420,32 @@ function MessageView({ message }: { message: Message }) {
   );
 }
 
-function Compose({ onDone }: { onDone: (threadId: string) => void }) {
-  const [to, setTo] = useState("");
-  const [subject, setSubject] = useState("");
-  const [text, setText] = useState("");
+/** A new email's starting fields; `key` makes each one a fresh Compose. */
+interface Draft {
+  readonly key: number;
+  readonly to?: string;
+  readonly subject?: string;
+  readonly text?: string;
+}
+
+function Compose({
+  start,
+  onDone,
+  onNew
+}: {
+  start: Draft;
+  onDone: (threadId: string) => void;
+  onNew: (start: Omit<Draft, "key">) => void;
+}) {
+  const [to, setTo] = useState(start.to ?? "");
+  const [subject, setSubject] = useState(start.subject ?? "");
+  const [text, setText] = useState(start.text ?? "");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  // Pidgeon answered this email without sending all of it: it's done, and what comes next is new.
+  const [answered, setAnswered] = useState<Sent | undefined>(undefined);
+  // Names this email from its first Send until Pidgeon answers it: a failed Send sent again with
+  // it can't mail twice. A new email gets a new Compose, and so a new key.
   const [draft] = useState(() => crypto.randomUUID());
   const recipients = to
     .split(",")
@@ -437,6 +462,7 @@ function Compose({ onDone }: { onDone: (threadId: string) => void }) {
         idempotencyKey: draft
       });
       if (sent.status === "sent" && sent.rejected.length === 0) return onDone(sent.threadId);
+      setAnswered(sent);
       setNotice(outcome(sent, recipients.join(", ")));
     } catch (failure) {
       setNotice(explain(failure));
@@ -464,14 +490,36 @@ function Compose({ onDone }: { onDone: (threadId: string) => void }) {
       />
       <div className="actions">
         {notice === undefined ? <span /> : <span className="notice">{notice}</span>}
-        <button
-          type="button"
-          className="primary"
-          disabled={busy || recipients.length === 0 || subject.trim() === "" || text.trim() === ""}
-          onClick={() => void send()}
-        >
-          {busy ? "Sending…" : "Send"}
-        </button>
+        {answered === undefined ? (
+          <button
+            type="button"
+            className="primary"
+            disabled={
+              busy || recipients.length === 0 || subject.trim() === "" || text.trim() === ""
+            }
+            onClick={() => void send()}
+          >
+            {busy ? "Sending…" : "Send"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary"
+            onClick={() =>
+              onNew(
+                answered.status === "sent"
+                  ? {
+                      to: answered.rejected.map((item) => item.address).join(", "),
+                      subject,
+                      text
+                    }
+                  : {}
+              )
+            }
+          >
+            {answered.status === "sent" ? "Write to them in a new email" : "New email"}
+          </button>
+        )}
       </div>
     </div>
   );
