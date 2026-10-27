@@ -2,7 +2,14 @@ import { assert, it } from "@effect/vitest";
 import type { Member } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
 import * as Testing from "@patchy/company-database/testing";
-import { Binding, InvocationCapabilities, LoadedVersions, Runtime } from "@patchy/runtime";
+import {
+  Binding,
+  CallbackGateway,
+  InvocationCapabilities,
+  LoadedVersions,
+  Runtime,
+  RuntimeLog
+} from "@patchy/runtime";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -77,6 +84,61 @@ const fixture = Effect.gen(function* () {
 });
 
 it.layer(services)("Members", (it) => {
+  it.effect("refuses external recipients on direct reads, subscriptions and server callbacks", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const capabilities = yield* InvocationCapabilities.make;
+      const gateway = yield* CallbackGateway.make(f.handlers).pipe(
+        Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities),
+        Effect.provide(RuntimeLog.layer)
+      );
+      const external = { ...binding, externalRecipient: true };
+      const capability = yield* capabilities.issue({
+        binding: { ...external, manifest: { ...external.manifest, tier: 2 } },
+        kind: "query",
+        readOnly: false,
+        attempt: {
+          invocationId: "external-directory",
+          attemptId: "one",
+          processGeneration: 1,
+          deadline: (yield* Clock.currentTimeMillis) + 3000
+        },
+        reauthorize: Effect.succeed(binding.identity!)
+      });
+      capability.snapshot.value = {
+        run: (effect) => effect,
+        watermark: {},
+        cancel: Effect.void,
+        settled: Effect.void,
+        destroy: () => {}
+      };
+      for (const [op, args] of [
+        ["members.list", {}],
+        ["members.search", { text: "Owner" }],
+        ["members.get", { id: "owner" }],
+        ["members.getMany", { ids: ["owner"] }]
+      ] as const) {
+        const error = yield* f.handlers[op]
+          .run(args)
+          .pipe(Effect.provideService(Binding.Binding, external), Effect.flip);
+        assert.strictEqual(error.code, "access_denied");
+        assert.strictEqual(
+          (yield* f.readers.admit({ binding: external, op, args }).pipe(Effect.flip)).code,
+          "access_denied"
+        );
+        assert.deepInclude(
+          yield* gateway.callback(capability.token, capability.attempt, { op, args }),
+          {
+            ok: false,
+            code: "access_denied"
+          }
+        );
+      }
+      assert.strictEqual(f.state.reads, 0);
+      yield* capabilities.settle(capability.token, "returned");
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("keeps member-only query callbacks outside company storage and its read snapshot", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

@@ -68,6 +68,51 @@ const get = (frame: Frame) =>
     )
   );
 
+test("a declared directory remains private to company members", async ({
+  browser,
+  page: owner,
+  instance
+}) => {
+  const patch = await instance.publish("company", undefined, undefined, {
+    uses: { members: { kind: "members" } }
+  });
+  await grant(instance, patch, "share_directory");
+  const external = await browser.newContext();
+  try {
+    await prepare(external, instance);
+    await recipientSession(external, instance);
+    const call = (context: typeof external, userId: string, op: string, args: object) =>
+      context.request.post(`${instance.origin}/api/runtime/call`, {
+        headers: {
+          origin: instance.origin,
+          "x-patchy-wire": String(instance.wire),
+          "x-patchy-principal": JSON.stringify({ userId })
+        },
+        data: {
+          patchId: patch.patchId,
+          versionId: patch.versionId,
+          wire: instance.wire,
+          principal: { userId },
+          op,
+          args
+        }
+      });
+    for (const [op, args] of [
+      ["members.list", {}],
+      ["members.search", { text: "Dev" }],
+      ["members.get", { id: "usr_dev" }],
+      ["members.getMany", { ids: ["usr_dev"] }]
+    ] as const) {
+      const reply = await call(external, `recipient:${recipient.sub}`, op, args);
+      expect(reply.status(), op).toBe(403);
+      expect(await reply.json()).toMatchObject({ ok: false, code: "access_denied" });
+    }
+    expect((await call(owner.context(), "usr_dev", "members.list", {})).status()).toBe(200);
+  } finally {
+    await external.close();
+  }
+});
+
 test("one recipient uses live patches from two companies without connecting their access", async ({
   browser,
   page: owner,

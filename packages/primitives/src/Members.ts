@@ -6,6 +6,8 @@ import * as MemberDirectory from "./MemberDirectory.js";
 
 export const authorize = Effect.gen(function* () {
   const binding = yield* Binding.Binding;
+  // A patch grant conveys no company membership, even when this patch declares members.
+  if (binding.externalRecipient) return yield* new Runtime.AccessDenied({});
   if (
     !Object.hasOwn(binding.manifest.uses, "members") ||
     binding.manifest.uses.members?.kind !== "members"
