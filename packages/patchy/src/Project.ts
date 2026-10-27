@@ -537,20 +537,19 @@ export const generate = Effect.fn("Project.generate")(function* (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)
   ) {
-    // Pidgeon has no project skill until its operations arrive (#825).
     const skill =
       removedKind === "postgres"
         ? "patchy-postgres"
         : removedKind === "posthog"
           ? "patchy-posthog"
           : removedKind === "pidgeon"
-            ? undefined
+            ? "patchy-pidgeon"
             : removedKind === "members"
               ? "patchy-members"
               : removedKind === "sharedStore"
                 ? "patchy-shared-stores"
                 : "patchy-shared-tables";
-    if (skill !== undefined && skills.includes(skill)) removedSkills.push(skill);
+    if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
   if (manifest.tier !== 2 && skills.includes("patchy-server")) {

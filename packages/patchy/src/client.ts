@@ -20,6 +20,7 @@ import { canonicalArgs } from "@patchy/api/canonical-args";
 import { createQueryRegistry, type QueryCallable, type QueryRegistry } from "./queryRegistry.js";
 import { createDownload, type Download } from "./download.js";
 export * from "./clientError.js";
+export * from "./pidgeon.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";
@@ -152,7 +153,7 @@ type FactoryResults<F extends Factories> = {
 };
 type Aliases<
   C extends Config,
-  Kind extends "postgres" | "posthog" | "sharedTable" | "sharedStore"
+  Kind extends "postgres" | "posthog" | "pidgeon" | "sharedTable" | "sharedStore"
 > = {
   [N in keyof C["uses"]]: C["uses"][N]["kind"] extends Kind ? N : never;
 }[keyof C["uses"]];
@@ -277,7 +278,7 @@ export function createClient<
   options: {
     readonly transport?: Transport;
     readonly shared: S & Record<Aliases<C, "sharedTable" | "sharedStore">, Factory>;
-    readonly connections: P & Record<Aliases<C, "postgres" | "posthog">, Factory>;
+    readonly connections: P & Record<Aliases<C, "postgres" | "posthog" | "pidgeon">, Factory>;
   }
 ): Client<C, S, P> {
   const transport = options.transport ?? createPostMessageTransport();
@@ -397,7 +398,7 @@ export function createClient<
     tables,
     files,
     shared: instantiate(options.shared, ["sharedTable", "sharedStore"]),
-    connections: instantiate(options.connections, ["postgres", "posthog"]),
+    connections: instantiate(options.connections, ["postgres", "posthog", "pidgeon"]),
     ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
     download: createDownload(call),

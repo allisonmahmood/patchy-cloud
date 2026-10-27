@@ -489,7 +489,6 @@ export const generateProjectResponse = (
       continue;
     }
     if (declaration.kind === "pidgeon") {
-      // Until its operations arrive, a Pidgeon declaration brings its context alone.
       const stamp = { ...declaration, id: "conn-support", revision: 1 };
       const snapshot = {
         version: 1 as const,
@@ -504,11 +503,14 @@ export const generateProjectResponse = (
         plan: "free"
       };
       pidgeon[alias] = { declaration: stamp, snapshot };
-      files.push({
-        path: `patchy/_generated/context/${alias}.md`,
-        contents: generatePidgeon(stamp, snapshot).context
-      });
+      const generated = generatePidgeon(stamp, snapshot);
+      files.push(
+        { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
+        { path: `patchy/_generated/context/${alias}.md`, contents: generated.context }
+      );
+      connections[alias] = `./uses/${alias}.js`;
       uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
+      skills.add("patchy-pidgeon");
       continue;
     }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");

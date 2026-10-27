@@ -20,6 +20,7 @@ import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain } from "./toolchainProcess.js";
+import { guestAliases } from "./serverBuild.js";
 import { releaseFromPin } from "./packagePin.js";
 import {
   agentAreaFailure,
@@ -296,9 +297,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
               server: {
                 modules: serverModules,
                 agentFiles,
-                sharedStores: Object.entries(configured.uses)
-                  .filter(([, declaration]) => declaration.kind === "sharedStore")
-                  .map(([alias]) => alias)
+                aliases: guestAliases(configured.uses)
               }
             })
       });

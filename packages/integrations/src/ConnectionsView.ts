@@ -436,11 +436,13 @@ const relation = (value: string) =>
   value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1").replace(/^public\./u, "");
 /**
  * "customers.list", "query", "discover": the method, on its Postgres relation when it has one. A
- * PostHog query's resource is its name, shown as written: "query dailyRequests".
+ * PostHog query's resource is its name, shown as written: "query dailyRequests". A Pidgeon call's
+ * resource names its own operation: "messages.send “Order 1043” to sam@example.com".
  */
 const callName = (call: RuntimeLog.Call) => {
   const method = call.op.slice(call.op.indexOf(".") + 1);
   if (call.resource === null) return method;
+  if (call.op.startsWith("pidgeon.")) return call.resource;
   return call.op.startsWith("posthog.")
     ? `${method} ${call.resource}`
     : `${relation(call.resource)}.${method}`;

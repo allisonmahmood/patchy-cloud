@@ -1037,6 +1037,42 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("poolCredentials"))
     );
 
+    // The connection's row must be the company's; the budget check and the count are one
+    // statement, so concurrent sends never pass it together.
+    const countSend = Effect.fn("ConnectionStore.countSend")(
+      function* (companyId: string, id: string, day: string, budget: number) {
+        const counted = yield* sql<{ readonly sends: number }>`INSERT INTO pidgeon_sends
+            (connection_id, day, sends)
+          SELECT id, ${day}::date, 1 FROM connections
+            WHERE id = ${id} AND company_id = ${companyId} AND integration = 'pidgeon'
+              AND ${budget} > 0
+          ON CONFLICT (connection_id, day) DO UPDATE SET sends = pidgeon_sends.sends + 1
+            WHERE pidgeon_sends.sends < ${budget}
+          RETURNING sends`;
+        return counted.length === 1;
+      },
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new ConnectionStorageFailed({ operation: "countSend", cause: Redacted.make(cause) })
+          )
+      })
+    );
+    const sends = Effect.fn("ConnectionStore.sends")(
+      function* (companyId: string, id: string, day: string) {
+        const rows = yield* sql<{ readonly sends: number }>`SELECT s.sends FROM pidgeon_sends s
+          JOIN connections c ON c.id = s.connection_id
+          WHERE c.company_id = ${companyId} AND s.connection_id = ${id} AND s.day = ${day}::date`;
+        return rows[0]?.sends ?? 0;
+      },
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new ConnectionStorageFailed({ operation: "sends", cause: Redacted.make(cause) })
+          )
+      })
+    );
+
     return ConnectionStore.ConnectionStore.of({
       list,
       get,
@@ -1054,7 +1090,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       describe,
       delete: remove,
       resolve,
-      poolCredentials
+      poolCredentials,
+      countSend,
+      sends
     });
   });
 

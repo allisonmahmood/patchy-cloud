@@ -10,6 +10,14 @@ import { buildServer } from "./serverBuild.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const decodeModules = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeAliases = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sharedStores: Schema.Array(Schema.String),
+      pidgeon: Schema.Array(Schema.String)
+    })
+  )
+);
 const isLocalError = Schema.is(LocalError);
 const isBuildFailure = Schema.is(Schema.Struct({ errors: Schema.Array(Schema.Unknown) }));
 const isUnresolvedImport = Schema.is(
@@ -66,7 +74,7 @@ try {
           decodeModules(process.argv[5]),
           decodeModules(process.argv[7]!),
           toolchain,
-          decodeModules(process.argv[6]!)
+          decodeAliases(process.argv[6]!)
         )
       : undefined;
   if (server !== undefined)

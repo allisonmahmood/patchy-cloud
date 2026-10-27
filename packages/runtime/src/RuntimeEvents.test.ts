@@ -212,7 +212,8 @@ it.effect(
               "tier2.args.bytes": 64,
               "runtime.batch.bytes": 128,
               "runtime.postgres.bytes": 128,
-              "runtime.posthog.bytes": 128
+              "runtime.posthog.bytes": 128,
+              "runtime.pidgeon.bytes": 128
             },
             events.layer
           )

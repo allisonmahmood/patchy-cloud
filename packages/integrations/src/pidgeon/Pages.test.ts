@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as PidgeonTest from "../test/pidgeon.js";
@@ -141,6 +143,30 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         ])
           assert.include(page.html, part);
         assert.notInclude(page.html, "Rotate");
+        // Today's sends against the connection's budget, counted as Patchy counts them.
+        assert.include(page.html, "<dt>Sends today</dt><dd>0 of 200 · resets at 00:00 UTC</dd>");
+        const sql = yield* SqlClient.SqlClient;
+        const today = DateTime.formatIsoDateUtc(
+          DateTime.makeUnsafe(yield* Clock.currentTimeMillis)
+        );
+        yield* sql`INSERT INTO pidgeon_sends (connection_id, day, sends)
+          VALUES ('conn_page_test', ${today}::date, 2)`;
+        assert.include(
+          (yield* read("/company/connections/conn_page_test", owner.user)).html,
+          "<dt>Sends today</dt><dd>2 of 200 · resets at 00:00 UTC</dd>"
+        );
+        // A connection that only reads, and sent nothing today, has no such line.
+        yield* PidgeonTest.seed({
+          id: "conn_page_read",
+          companyId: owner.company.id,
+          userId: owner.user.id,
+          handle: "invoices",
+          access: "read"
+        });
+        assert.notInclude(
+          (yield* read("/company/connections/conn_page_read", owner.user)).html,
+          "Sends today"
+        );
         // A live connection carries no label.
         yield* PidgeonTest.seed({
           id: "conn_page_live",

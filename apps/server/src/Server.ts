@@ -38,7 +38,15 @@ import {
   RequireSession,
   Session
 } from "@patchy/auth";
-import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
+import {
+  Companies,
+  CompanyPage,
+  Directory,
+  InviteMail,
+  LookApi,
+  Looks,
+  Users
+} from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -57,7 +65,8 @@ import {
   PostgresOperations,
   PostHogSource,
   PostHogOperations,
-  PidgeonSource
+  PidgeonSource,
+  PidgeonOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
@@ -180,7 +189,8 @@ const services = Layer.mergeAll(
       const members = yield* Members.make;
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog };
+      const pidgeon = yield* PidgeonOperations.makeHandlers;
+      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog, ...pidgeon };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
         Layer.provideMerge(
@@ -207,7 +217,10 @@ const services = Layer.mergeAll(
           )
         : runtime;
     })
-  ).pipe(Layer.provide([LoadedVersions.layer, PostgresExecution.layer]))
+  ).pipe(
+    // Pidgeon's calls check their viewer again in the directory once they hold a slot.
+    Layer.provide([LoadedVersions.layer, PostgresExecution.layer, Directory.layer])
+  )
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(

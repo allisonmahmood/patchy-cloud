@@ -107,6 +107,7 @@ const resource = (value: string) => value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1"
 /**
  * "postgres/warehouse.customers.list": the connection by name (its id once deleted), relation,
  * method. A PostHog query's resource is its name, shown as written: "posthog/product.query daily".
+ * A Pidgeon call's resource names its operation: "pidgeon/support.threads.get thr_1".
  */
 const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
   const name =
@@ -114,6 +115,7 @@ const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
       ? "connection"
       : (names.connections.get(item.connectionId) ?? item.connectionId);
   const method = item.name.slice(item.name.indexOf(".") + 1);
+  if (item.name.startsWith("pidgeon.")) return `${name}.${item.resource ?? method}`;
   if (item.name.startsWith("posthog."))
     return `${name}.${method}${item.resource === null ? "" : ` ${item.resource}`}`;
   const relation =

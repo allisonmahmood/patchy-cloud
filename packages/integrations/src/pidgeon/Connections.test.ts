@@ -174,13 +174,14 @@ it.layer(fixture)("Pidgeon connections, offline", (it) => {
         const release = yield* Deferred.make<void>();
         pidgeon.hold(threads, release, slots);
         const call = (deadline: number) =>
-          Calls.send(
+          Calls.withAddress(
             { companyId: who.companyId, connection, deadline, recheck: Effect.void },
-            (credentials) => ({
-              method: "GET",
-              path: "/threads",
-              query: { identity_id: credentials.identityId }
-            })
+            (address) =>
+              address.call({
+                method: "GET",
+                path: "/threads",
+                query: { identity_id: address.credentials.identityId }
+              })
           ).pipe(
             Effect.provideService(ConnectionStore.ConnectionStore, store),
             Effect.provideService(Source.Source, source),

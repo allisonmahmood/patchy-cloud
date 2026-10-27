@@ -512,7 +512,8 @@ function mount(frame: HTMLIFrameElement): void {
             error.code === "limit_exceeded" ||
             error.code === "too_many_requests" ||
             error.code === "busy" ||
-            error.code === "source_rate_limited")
+            error.code === "source_rate_limited" ||
+            error.code === "idempotency_conflict")
             ? { retryAfter }
             : {}),
           ...(operation === undefined ? {} : { operation })

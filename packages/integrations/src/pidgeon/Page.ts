@@ -80,6 +80,23 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
   ["Patches may", accessLabel(connection.display.access)],
   ["Key", `Patchy's own, for this address · made ${connection.display.key.madeAt.slice(0, 10)}`]
 ];
+/**
+ * Today's sends and replies against the connection's daily budget, every attempt counted, while
+ * its key can send or it has sent today; `count` is undefined when it couldn't be read.
+ */
+export const sendsToday = (
+  connection: Connection,
+  count: number | undefined,
+  budget: number
+): ReadonlyArray<readonly [string, string]> =>
+  connection.display.access !== "send" && (count ?? 0) === 0
+    ? []
+    : [
+        [
+          "Sends today",
+          count === undefined ? "Couldn't be read" : `${count} of ${budget} · resets at 00:00 UTC`
+        ]
+      ];
 
 /** "support@…: threads, messages and attachment text…", then the address's labels. */
 export const reads = (snapshot: PidgeonSnapshot) => ({

@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { LocalError } from "./CliError.js";
 import * as DirectoryWatch from "./DirectoryWatch.js";
-import { watchServer, type BuiltServer } from "./serverBuild.js";
+import { watchServer, type BuiltServer, type GuestAliases } from "./serverBuild.js";
 import {
   agentAreaFailure,
   agentTypecheckWarning,
@@ -40,7 +40,7 @@ type SourceFolder = "server" | "agent";
 export const watch = Effect.fn("Dev.watchServer")(function* (
   root: string,
   toolchain: typeof ReleaseToolchain.Type,
-  sharedStores: readonly string[],
+  aliases: GuestAliases,
   /** The running manifest's tables, which the agent area check resolves rows against. */
   tables: (typeof Manifest.Type)["tables"]
 ) {
@@ -178,7 +178,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
     sources = { modules, agentFiles };
     builder = yield* Effect.tryPromise({
       try: () =>
-        watchServer(root, modules, agentFiles, toolchain, output, sharedStores, (result) => {
+        watchServer(root, modules, agentFiles, toolchain, output, aliases, (result) => {
           Queue.offerUnsafe(changes, { _tag: "Build", generation: current, result });
         }),
       catch: (cause) =>

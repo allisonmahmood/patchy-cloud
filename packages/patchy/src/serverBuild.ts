@@ -5,6 +5,24 @@ import type { ESTree, InlineConfig } from "vite";
 import { LocalError } from "./CliError.js";
 import { runToolchain } from "./toolchain.js";
 
+/**
+ * The declared aliases the guest builds its own clients for, by kind: a shared store's and a
+ * Pidgeon connection's differ from a shared table's and a Postgres connection's.
+ */
+export interface GuestAliases {
+  readonly sharedStores: readonly string[];
+  readonly pidgeon: readonly string[];
+}
+export const guestAliases = (
+  uses: Readonly<Record<string, { readonly kind: string }>>
+): GuestAliases => {
+  const of = (kind: string) =>
+    Object.entries(uses)
+      .filter(([, declaration]) => declaration.kind === kind)
+      .map(([alias]) => alias);
+  return { sharedStores: of("sharedStore"), pidgeon: of("pidgeon") };
+};
+
 export interface BuiltServer {
   readonly server: string;
   readonly sdkImports: readonly string[];
@@ -81,7 +99,7 @@ const buildConfig = (
   root: string,
   modules: readonly string[],
   agent: AgentArea,
-  sharedStores: readonly string[],
+  aliases: GuestAliases,
   watched?: { readonly outDir: string; readonly complete: (server: string) => void }
 ): InlineConfig => {
   const entry = "\0patchy-server-entry";
@@ -97,7 +115,7 @@ const buildConfig = (
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
     // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
-    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}});`
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)});`
   ].join("\n");
   return {
     configFile: false,
@@ -156,13 +174,13 @@ export async function buildServer(
   modules: readonly string[],
   agentFiles: readonly string[],
   toolchain: typeof ReleaseToolchain.Type,
-  sharedStores: readonly string[]
+  aliases: GuestAliases
 ) {
   const agent: AgentArea = { files: agentFiles, tools: {} };
   const built = await runToolchain(
     root,
     toolchain,
-    buildConfig(root, modules, agent, sharedStores),
+    buildConfig(root, modules, agent, aliases),
     "server"
   );
   const result = Array.isArray(built.result)
@@ -189,7 +207,7 @@ export async function watchServer(
   agentFiles: readonly string[],
   toolchain: typeof ReleaseToolchain.Type,
   outDir: string,
-  sharedStores: readonly string[],
+  aliases: GuestAliases,
   complete: (result: BuiltServer | LocalError) => void
 ) {
   let server: string | undefined;
@@ -197,7 +215,7 @@ export async function watchServer(
   const loaded = await runToolchain(
     root,
     toolchain,
-    buildConfig(root, modules, agent, sharedStores, {
+    buildConfig(root, modules, agent, aliases, {
       outDir,
       complete: (built) => {
         server = built;

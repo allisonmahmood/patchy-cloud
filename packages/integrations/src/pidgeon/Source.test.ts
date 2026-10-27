@@ -82,9 +82,30 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
           })
       ],
       [
-        // A Patchy bug, never a lost answer: the same Idempotency-Key with another request.
+        // The same Idempotency-Key with another request, or from another key: nothing was done.
         json(409, refusal("idempotency_mismatch", "That Idempotency-Key was used differently.")),
-        (error) => assert.deepInclude(error, { _tag: "PidgeonConflict" })
+        (error) => assert.instanceOf(error, Source.IdempotencyMismatch)
+      ],
+      [
+        json(403, refusal("held", "A person must release this message first.")),
+        (error) => assert.instanceOf(error, Source.Held)
+      ],
+      [
+        json(
+          403,
+          refusal(
+            "exfiltration_blocked",
+            "This contains text an API key read in conversation 7c0e…."
+          )
+        ),
+        (error) =>
+          assert.deepInclude(error, {
+            _tag: "PidgeonRefused",
+            details: {
+              reason: "exfiltration_blocked",
+              message: "This contains text an API key read in conversation 7c0e…."
+            }
+          })
       ],
       [
         // Test mode's dropped answer: the work was done, so it reads as an answer lost.
@@ -209,6 +230,13 @@ it.effect(
         Source.Timeout
       );
       assert.strictEqual(late.requests.length, 1);
+      // A request that asks to fail is told Pidgeon's wait instead, with nothing sent again.
+      const told = yield* over(inProgress);
+      assert.deepInclude(
+        yield* told.source.call(key, { ...request, inProgress: "fail" }, 60_000).pipe(Effect.flip),
+        { _tag: "PidgeonIdempotencyInProgress", retryAfterSeconds: 2 }
+      );
+      assert.strictEqual(told.requests.length, 1);
     })
 );
 

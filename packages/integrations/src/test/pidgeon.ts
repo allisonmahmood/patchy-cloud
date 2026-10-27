@@ -82,6 +82,78 @@ export const canned = () => {
   };
 };
 
+/** One request as Patchy built it: everything a test of the request compares. */
+export interface Built extends Sent {
+  readonly query: Readonly<Record<string, string>>;
+  readonly body: unknown;
+  readonly idempotencyKey: string | undefined;
+}
+
+/** An answer recorded from Pidgeon, for the requests it matches. */
+export interface Recorded {
+  readonly match: (sent: Built) => boolean;
+  readonly status?: number;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body: unknown;
+}
+
+/**
+ * The production source over answers recorded from Pidgeon, for what Patchy sends and how it
+ * reads an answer: each request gets the first answer that matches it, and anything else a 500.
+ * It decides nothing Pidgeon decides, such as idempotency or what a key reaches: those are the
+ * live tier's. A test can hold matching requests until it releases them.
+ */
+export const recorded = (answers: ReadonlyArray<Recorded>) => {
+  const requests: Built[] = [];
+  const holds: Array<{
+    match: (sent: Built) => boolean;
+    release: Deferred.Deferred<void>;
+    times: number;
+  }> = [];
+  const http = HttpClient.make((request, url) =>
+    Effect.gen(function* () {
+      const sent: Built = {
+        method: request.method,
+        path: url.pathname.replace(/^\/api\/v1/, ""),
+        authorization: request.headers.authorization,
+        query: Object.fromEntries(url.searchParams),
+        body:
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : undefined,
+        idempotencyKey: request.headers["idempotency-key"]
+      };
+      requests.push(sent);
+      const index = holds.findIndex((hold) => hold.match(sent));
+      if (index !== -1) {
+        const hold = holds[index]!;
+        if (--hold.times === 0) holds.splice(index, 1);
+        yield* Deferred.await(hold.release);
+      }
+      const answer = answers.find((item) => item.match(sent));
+      return HttpClientResponse.fromWeb(
+        request,
+        answer === undefined
+          ? Response.json(
+              { error: { code: "internal", message: "Not recorded." } },
+              { status: 500 }
+            )
+          : Response.json(answer.body, { status: answer.status ?? 200, headers: answer.headers })
+      );
+    })
+  );
+  return {
+    requests,
+    /** Holds the next `times` requests that match until `release` completes. */
+    hold: (match: (sent: Built) => boolean, release: Deferred.Deferred<void>, times = 1) => {
+      holds.push({ match, release, times });
+    },
+    layer: Layer.effect(Source.Source, Source.make).pipe(
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, http))
+    )
+  };
+};
+
 /** A Pidgeon connection as connect saves one, written straight into the database. */
 export const seed = Effect.fn("PidgeonTest.seed")(function* (input: {
   readonly id: string;
@@ -155,3 +227,53 @@ export const seed = Effect.fn("PidgeonTest.seed")(function* (input: {
     VALUES (${input.companyId}, ${input.id}, 'pidgeon', 1, ${JSON.stringify(snapshot)}::jsonb, now())`;
   return { key, display, credentials };
 });
+
+/**
+ * A tier 2 support desk, the same offline and live. `answer` finds the open conversation with
+ * `subject`, reads it to the end and its first attachment's text, replies to its newest message
+ * with the draft key the page made, and marks it waiting. `forced` writes through `invoices`, a
+ * read connection, and `peek` writes from a read-only action: the host refuses both.
+ */
+export const desk = {
+  source: `import { action, createGuest, t } from "patchy/server";
+const answer = action({
+  args: { subject: t.text(), draft: t.text(), text: t.text() },
+  result: t.json(),
+  handler: async (ctx, { subject, draft, text }) => {
+    const inbox = ctx.connections.support;
+    const { threads } = await inbox.threads.list({ status: "open", cursor: undefined });
+    const thread = threads.find((item) => item.subject === subject);
+    if (thread === undefined) return { found: false };
+    const messages = [];
+    let cursor;
+    do {
+      const page = await inbox.threads.get(thread.id, { cursor });
+      messages.push(...page.messages);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    const file = messages.flatMap((message) => message.attachments)[0];
+    const receipt = file === undefined ? null : (await inbox.attachments.text(file.id)).text;
+    const repliedTo = messages.at(-1).id;
+    const sent = await inbox.messages.reply(repliedTo, { text, idempotencyKey: draft });
+    const after = await inbox.threads.update(thread.id, { status: "waiting" });
+    return { found: true, threadId: thread.id, messages: messages.length, receipt, repliedTo, sent, status: after.status };
+  }
+});
+const forced = action({ args: {}, result: t.json(), handler: async (ctx) =>
+  ctx.connections.invoices.messages.reply("msg_1", { text: "Hi", idempotencyKey: "desk-forced-01" })
+});
+const peek = action({ readOnly: true, args: {}, result: t.json(), handler: async (ctx) =>
+  ctx.connections.support.messages.reply("msg_1", { text: "Hi", idempotencyKey: "desk-peek-0001" })
+});
+export default createGuest({ desk: { answer, forced, peek } }, [], {}, ["support", "invoices"]);
+`,
+  handlers: {
+    "desk.answer": {
+      kind: "action",
+      args: { subject: { kind: "text" }, draft: { kind: "text" }, text: { kind: "text" } },
+      result: { kind: "json" }
+    },
+    "desk.forced": { kind: "action", args: {}, result: { kind: "json" } },
+    "desk.peek": { kind: "action", readOnly: true, args: {}, result: { kind: "json" } }
+  }
+} as const;

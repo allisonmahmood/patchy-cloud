@@ -16,4 +16,5 @@ export * as PostHogOperations from "./posthog/Operations.js";
 export * as Pidgeon from "./pidgeon/index.js";
 export * as PidgeonSource from "./pidgeon/Source.js";
 export * as PidgeonCalls from "./pidgeon/Calls.js";
+export * as PidgeonOperations from "./pidgeon/Operations.js";
 export { migrations } from "./migrations.js";

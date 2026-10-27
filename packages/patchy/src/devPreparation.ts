@@ -77,7 +77,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          // PostHog has no fixture: dev reads the real connection. Pidgeon has no operations yet.
+          // PostHog has no fixture: dev reads the real connection. Nor has Pidgeon.
           if (
             declaration.kind === "members" ||
             declaration.kind === "posthog" ||

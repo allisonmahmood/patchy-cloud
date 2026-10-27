@@ -82,7 +82,9 @@ const connections: Readonly<Record<string, true>> = {
   "postgres.get": true,
   "postgres.getMany": true,
   "postgres.query": true,
-  "posthog.query": true
+  "posthog.query": true,
+  "pidgeon.read": true,
+  "pidgeon.write": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -97,7 +99,10 @@ const allowed = (kind: HandlerKind, op: string) =>
       Object.hasOwn(connections, op)));
 /** What a read-only action may not do; everything else an action may stays open to it. */
 const writes = (op: string) =>
-  Object.hasOwn(writeTable, op) || op === "files.put" || op === "files.delete";
+  Object.hasOwn(writeTable, op) ||
+  op === "files.put" ||
+  op === "files.delete" ||
+  op === "pidgeon.write";
 const viewerAuthority = (op: string) =>
   Object.hasOwn(shared, op) ||
   op === "shared.files.get" ||
@@ -112,7 +117,8 @@ const bounded = (
     | "tier2.callbacks.fileBytes"
     | "tier2.log.bytes"
     | "runtime.postgres.bytes"
-    | "runtime.posthog.bytes",
+    | "runtime.posthog.bytes"
+    | "runtime.pidgeon.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -146,7 +152,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     mutationDeadline: ContractLimits.get("runtime.mutation.deadline"),
     integrationDeadline: ContractLimits.get("integration.deadline"),
     postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
-    posthogBytes: ContractLimits.get("runtime.posthog.bytes")
+    posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
+    pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -233,9 +240,17 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       return remember(refused("access_denied", "Queries cannot transfer file bytes."), 403);
     // Integration arguments keep the caps they have on tier 1; nothing past them is sent.
     const argsLimitId = runtimeBodyLimitId(request.op);
-    if (argsLimitId === "runtime.postgres.bytes" || argsLimitId === "runtime.posthog.bytes") {
+    if (
+      argsLimitId === "runtime.postgres.bytes" ||
+      argsLimitId === "runtime.posthog.bytes" ||
+      argsLimitId === "runtime.pidgeon.bytes"
+    ) {
       const maxBytes =
-        argsLimitId === "runtime.postgres.bytes" ? limits.postgresBytes : limits.posthogBytes;
+        argsLimitId === "runtime.postgres.bytes"
+          ? limits.postgresBytes
+          : argsLimitId === "runtime.posthog.bytes"
+            ? limits.posthogBytes
+            : limits.pidgeonBytes;
       if (Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > maxBytes)
         return remember(bounded(argsLimitId, maxBytes), 413);
     }
