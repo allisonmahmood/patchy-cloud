@@ -15,6 +15,7 @@ const settings = liveSettings(process.env);
 
 type Live = BrowserInstance & {
   settings: typeof settings;
+  client: Effect.Success<typeof liveClient>;
   patchUrl: string;
   seededPage: Page;
   newContext: () => Promise<BrowserContext>;
@@ -41,9 +42,10 @@ export async function signIn(page: Page, email: string, destination: (url: URL) 
   }
 }
 
-export const test = base.extend<object, { live: Live }>({
+export const test = base.extend<object, { live: Live; externalSharing: boolean }>({
+  externalSharing: [false, { option: true, scope: "worker" }],
   live: [
-    async ({ browser }, use, workerInfo) => {
+    async ({ browser, externalSharing }, use, workerInfo) => {
       const client = await Effect.runPromise(
         liveClient.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv())))
       );
@@ -54,7 +56,7 @@ export const test = base.extend<object, { live: Live }>({
         skipPasswordRequirement: true,
         skipLegalChecks: true
       });
-      const instance = await startInstance(user.id);
+      const instance = await startInstance(user.id, externalSharing);
       const contexts: BrowserContext[] = [];
       try {
         // The instance builds workspace packages before this seed entry exists on a clean checkout.
@@ -112,6 +114,7 @@ export const test = base.extend<object, { live: Live }>({
         await use({
           ...instance,
           settings,
+          client,
           patchUrl,
           seededPage,
           newContext,

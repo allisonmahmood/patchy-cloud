@@ -473,8 +473,21 @@ Its account-lookup HTTP fixture uses `PATCHY_TEST_CLERK_API_URL`, honored only w
 `NODE_ENV=test` and `pk_test_` keys; production and normal local Clerk runs ignore it.
 Invitation grants are seeded and the Clerk browser SDK boundary is replaced;
 page scripts, server admission and grant storage stay real. It does not create an
-account, deliver mail or prove hosted signup. Use the Clerk instance and the
-person's browser for those checks.
+account, deliver mail or prove hosted signup. The real invitation regression runs with
+`pnpm test:clerk --browser external-sharing.spec.ts`: an existing account creates its
+own company, accepts another company's patch and retains its original company doors
+after that grant is revoked.
+
+The fresh signup case is an explicit manual gate. Run
+`CLERK_TEST_RECIPIENT_EMAIL='<fresh +clerk_test alias>' pnpm test:clerk --browser external-sharing.spec.ts --headed`.
+It refuses to use an existing account, creates the invitation through the share form,
+and waits up to ten minutes for the person to complete any hosted human-verification
+challenge. It then checks verified email, the recipient signup marker, patch acceptance,
+refusal of company creation and publishing, and revocation. Without an explicit email
+this case is skipped; an automated green run is not proof of fresh signup. Its cleanup
+deletes only the disposable account at the email proven absent before the test and
+revokes pending invitations. If the process is killed before cleanup, inspect that exact
+alias manually; the standard run-id sweep does not delete arbitrary Gmail aliases.
 
 Without the experiment enabled, sign in at `/join`; without the user binding you create or join a company there.
 Then log the CLI in with `PATCHY_API_TOKEN` unset: an agent runs

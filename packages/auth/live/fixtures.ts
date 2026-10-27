@@ -10,6 +10,7 @@ export interface LiveSettings {
   browserEmail: string;
   outsiderEmail: string;
   inviteEmail: string;
+  recipientEmail?: string;
   publicBaseUrl: string;
   authorizedParty: string;
 }
@@ -41,6 +42,7 @@ export function liveSettings(env: NodeJS.ProcessEnv): LiveSettings {
     browserEmail: `ci-${runId}-browser+clerk_test@example.com`,
     outsiderEmail: `ci-${runId}-outsider+clerk_test@example.com`,
     inviteEmail: `ci-${runId}-invite+clerk_test@example.com`,
+    ...(env.CLERK_TEST_RECIPIENT_EMAIL ? { recipientEmail: env.CLERK_TEST_RECIPIENT_EMAIL } : {}),
     publicBaseUrl: env.PATCHY_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
     authorizedParty:
       env.CLERK_AUTHORIZED_PARTIES ?? env.PATCHY_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000"

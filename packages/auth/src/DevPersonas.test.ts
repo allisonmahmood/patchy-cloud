@@ -112,9 +112,15 @@ it.layer(services)("dev personas", (it) => {
     })
   );
 
-  it.effect("lets an email with no user enrol, so invitations can be accepted", () =>
+  it.effect("an uninvited persona cannot enrol, but can accept a company invitation", () =>
     Effect.gen(function* () {
       const cookie = yield* signIn("someone.new@brightline.example", "/join");
+      assert.strictEqual((yield* send("/join", cookie)).status, 403);
+      yield* (yield* Companies.Companies).createInvite({
+        companyId: DEV_SEED.companyId,
+        invitedBy: DEV_SEED.userId,
+        email: "someone.new@brightline.example"
+      });
       const join = yield* send("/join", cookie);
       assert.strictEqual(join.status, 200);
       assert.include(yield* Effect.promise(() => join.text()), "someone.new@brightline.example");

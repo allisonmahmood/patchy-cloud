@@ -38,7 +38,10 @@ const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const terminationSignals = ["SIGHUP", "SIGINT", "SIGTERM", "SIGBREAK"] as const;
 
 /** Real server and installed CLI, with no checkout or developer authentication state. */
-export async function startInstance(clerkUserId: string): Promise<BrowserInstance> {
+export async function startInstance(
+  clerkUserId: string,
+  externalSharing = false
+): Promise<BrowserInstance> {
   const secretKey = process.env.CLERK_SECRET_KEY;
   const publishableKey = process.env.CLERK_PUBLISHABLE_KEY;
   if (!secretKey?.trim() || !publishableKey?.trim()) {
@@ -317,7 +320,8 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
         PATCHY_PUBLIC_BASE_URL: origin,
         CLERK_SECRET_KEY: secretKey,
         CLERK_PUBLISHABLE_KEY: publishableKey,
-        CLERK_AUTHORIZED_PARTIES: origin
+        CLERK_AUTHORIZED_PARTIES: origin,
+        ...(externalSharing ? { PATCHY_DEV_EXTERNAL_SHARING: "true" } : {})
       }
     );
     const readyLine = `Patchy Cloud server listening on http://0.0.0.0:${port}`;
