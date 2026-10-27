@@ -14,7 +14,7 @@ import {
   PidgeonWrite,
   pidgeonReads,
   type PidgeonReadOperation,
-  PidgeonSent,
+  type PidgeonSent,
   type PidgeonWriteOperation
 } from "@patchy/api";
 import { newInternalId } from "@patchy/core";

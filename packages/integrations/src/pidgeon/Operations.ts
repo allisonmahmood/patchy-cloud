@@ -622,7 +622,11 @@ const writeOne = <K extends PidgeonWriteOperation>(
 ) => writes[name](context, input);
 
 /** The door refused its caller once the call held a slot; `atAddress` hands on what it said. */
-class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRefused", {}) {}
+class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRefused", {}) {
+  override get message() {
+    return "The caller was refused once the call held a slot; nothing was sent.";
+  }
+}
 
 /**
  * A call on the address its door admitted, once it holds one of the address's slots, with the
