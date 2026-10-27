@@ -168,12 +168,14 @@ const inbound = Effect.fn("live.inbound")(function* (
     readonly inReplyTo?: string;
   }
 ) {
+  // Test inbound mail takes a bare address, with the name beside it.
+  const named = /^(.*?)\s*<([^>]+)>$/.exec(mail.from);
   const answer = yield* Live.call(Live.admin(), {
     method: "POST",
     path: "/test/inbound",
     body: {
       to,
-      from: mail.from,
+      ...(named === null ? { from: mail.from } : { from: named[2]!, from_name: named[1]! }),
       subject: mail.subject,
       text: mail.text,
       ...(mail.inReplyTo === undefined ? {} : { in_reply_to: mail.inReplyTo })
@@ -232,6 +234,17 @@ const desk = Effect.fn("live.desk")(function* (
 });
 const failure = (effect: Effect.Effect<unknown, Runtime.RuntimeError>) =>
   effect.pipe(Effect.flip, Effect.map(Runtime.toFailure));
+/** The refusal a call answered, by its code and, when it has one, its details' reason. */
+const refusedWith = Effect.fn("live.refusedWith")(function* (
+  effect: Effect.Effect<unknown, Runtime.RuntimeError>,
+  code: string,
+  reason?: string
+) {
+  const refused = yield* failure(effect);
+  assert.strictEqual(refused.code, code);
+  if (reason !== undefined) assert.strictEqual(refused.details?.reason, reason);
+  return refused;
+});
 const Thread = Schema.Struct({
   messages: Schema.Array(Schema.Struct({ id: Schema.String, test: Schema.Boolean })),
   nextCursor: Schema.NullOr(Schema.String)
@@ -452,10 +465,11 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               status: "sent",
               replayed: true
             });
-            assert.deepInclude(yield* failure(reply(lost, "It shipped on Tuesday.")), {
-              code: "idempotency_conflict",
-              details: { reason: "mismatch" }
-            });
+            yield* refusedWith(
+              reply(lost, "It shipped on Tuesday."),
+              "idempotency_conflict",
+              "mismatch"
+            );
             assert.lengthOf(yield* wholeThread(call, order.threadId), before + 1);
             // Whether the second answers as a replay or as still in progress, one email goes.
             const raced = `${Live.RUN}-raced`;
@@ -502,10 +516,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
                 text: "Your bike is ready.",
                 idempotencyKey: draft
               });
-            assert.deepInclude(yield* failure(send("stranger@customer.example")), {
-              code: "access_denied",
-              details: { reason: "not_permitted" }
-            });
+            yield* refusedWith(send("stranger@customer.example"), "access_denied", "not_permitted");
             // The customer wrote first, so a reply-only address may write to them.
             assert.deepInclude(yield* send(customer.email), { status: "sent", replayed: false });
           })
@@ -531,12 +542,11 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               send_approval: "first_contact"
             });
             const held = yield* send(`${Live.RUN}-first-contact`, ["newcomer@customer.example"]);
-            assert.deepInclude(held, {
-              status: "pending_approval",
-              replayed: false,
-              test: true,
-              approval: { reason: "first_contact" }
-            });
+            assert.deepInclude(held, { status: "pending_approval", replayed: false, test: true });
+            assert.strictEqual(
+              (held as { approval: { reason: string } }).approval.reason,
+              "first_contact"
+            );
             assert.notProperty(held, "messageId");
             assert.deepInclude(
               yield* send(`${Live.RUN}-first-contact`, ["newcomer@customer.example"]),
@@ -596,19 +606,19 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             ),
             { held: true, text: "", attachments: [] }
           );
-          assert.deepInclude(
-            yield* failure(call("pidgeon.read", "messages.get", { id: suspicious.messageId })),
-            { code: "access_denied", details: { reason: "held" } }
+          yield* refusedWith(
+            call("pidgeon.read", "messages.get", { id: suspicious.messageId }),
+            "access_denied",
+            "held"
           );
-          assert.deepInclude(
-            yield* failure(
-              call("pidgeon.write", "messages.reply", {
-                id: suspicious.messageId,
-                text: "Thanks for reaching out.",
-                idempotencyKey: `${Live.RUN}-held-reply`
-              })
-            ),
-            { code: "access_denied", details: { reason: "held" } }
+          yield* refusedWith(
+            call("pidgeon.write", "messages.reply", {
+              id: suspicious.messageId,
+              text: "Thanks for reaching out.",
+              idempotencyKey: `${Live.RUN}-held-reply`
+            }),
+            "access_denied",
+            "held"
           );
         })
       );
@@ -630,15 +640,14 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
           });
           const { call } = yield* desk(store, connection, patchId, 1);
           const before = (yield* wholeThread(call, chainstay)).length;
-          assert.deepInclude(
-            yield* failure(
-              call("pidgeon.write", "messages.reply", {
-                id: first.messageId,
-                text: first.text,
-                idempotencyKey: `${Live.RUN}-chainstay`
-              })
-            ),
-            { code: "idempotency_conflict", details: { reason: "mismatch" } }
+          yield* refusedWith(
+            call("pidgeon.write", "messages.reply", {
+              id: first.messageId,
+              text: first.text,
+              idempotencyKey: `${Live.RUN}-chainstay`
+            }),
+            "idempotency_conflict",
+            "mismatch"
           );
           assert.lengthOf(yield* wholeThread(call, chainstay), before);
         })
