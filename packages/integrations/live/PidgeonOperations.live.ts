@@ -185,15 +185,6 @@ const inbound = Effect.fn("live.inbound")(function* (
   return { messageId: delivered.message_id!, threadId: delivered.thread_id! };
 });
 
-/** Changes one of the run's own test addresses, as its admin. */
-const reconfigure = (identityId: string, body: Readonly<Record<string, unknown>>) =>
-  Live.call(Live.admin(), {
-    method: "PATCH",
-    path: `/identities/${identityId}`,
-    body,
-    idempotencyKey: keyFor(["reconfigure", identityId, body])
-  });
-
 /** One operation as a page calls it. */
 type Call = (
   op: "pidgeon.read" | "pidgeon.write",
@@ -535,7 +526,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
                 text: "Bring your bike in for a free check.",
                 idempotencyKey: draft
               });
-            yield* reconfigure(connection.display.identityId, {
+            yield* Live.reconfigure(connection.display.identityId, {
               send_policy: "open",
               send_approval: "first_contact"
             });
@@ -554,7 +545,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
                 replayed: true
               }
             );
-            yield* reconfigure(connection.display.identityId, { send_approval: "none" });
+            yield* Live.reconfigure(connection.display.identityId, { send_approval: "none" });
             const draft = `${Live.RUN}-rejected`;
             const recipients = [customer.email, "rejected@customer.example"];
             const sent = yield* send(draft, recipients);
@@ -592,7 +583,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
           const store = yield* SqlConnectionStore.make;
           const connection = need(made.connection, "The desk");
           const { call } = yield* desk(store, connection, patchId, 1);
-          yield* reconfigure(connection.display.identityId, { hold_suspicious: true });
+          yield* Live.reconfigure(connection.display.identityId, { hold_suspicious: true });
           const suspicious = yield* inbound(connection.display.email, {
             from: "Press Desk <press@news.example>",
             subject: `Interview request ${Live.RUN}`,

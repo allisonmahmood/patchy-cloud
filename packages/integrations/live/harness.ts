@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off — node:crypto draws the run's tag.
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -70,6 +70,15 @@ export const minted = new Set<string>();
 export const created = new Set<string>();
 
 /**
+ * At most this many of a run's keys may be active at once: the account allows 10, two of them the
+ * admin keys, and developers' dev environments share the rest. A mint past it fails the test,
+ * sending nothing. The run's own keys are counted from Pidgeon's answers: minted until revoked.
+ */
+const KEY_CAP = 6;
+const alive = new Set<string>();
+let peak = 0;
+
+/**
  * Sends `Pidgeon-Test-Fail: value` on the next `times` requests that match. The suite never asks
  * for a 429: every 429 is the shared budget's, which the harness waits out.
  */
@@ -128,6 +137,12 @@ const paced = Effect.gen(function* () {
         fault === undefined
           ? request
           : request.pipe(HttpClientRequest.setHeader("pidgeon-test-fail", fault.value));
+      if (seen.method === "POST" && seen.path === "/api-keys" && alive.size >= KEY_CAP)
+        return yield* Effect.die(
+          new Error(
+            `The live Pidgeon run ${RUN} already holds ${alive.size} active keys, its cap, so it minted no more.`
+          )
+        );
       yield* next;
       sent.push(seen);
       const response = yield* fetch
@@ -138,7 +153,19 @@ const paced = Effect.gen(function* () {
         const id = idOf(text);
         if (id !== undefined && seen.path === "/api-keys") minted.add(id);
         if (id !== undefined && seen.path === "/identities") created.add(id);
+        if (id !== undefined && seen.path === "/api-keys") {
+          alive.add(id);
+          peak = Math.max(peak, alive.size);
+        }
       }
+      // A revoke that answered, or a key already gone, is no longer the run's to count.
+      const revoked = /^\/api-keys\/([^/]+)$/.exec(seen.path)?.[1];
+      if (
+        seen.method === "DELETE" &&
+        revoked !== undefined &&
+        ((response.status >= 200 && response.status < 300) || response.status === 404)
+      )
+        alive.delete(decodeURIComponent(revoked));
       return HttpClientResponse.fromWeb(
         request,
         new Response(text, { status: response.status, headers: new Headers(response.headers) })
@@ -254,6 +281,45 @@ export const upload = (identityId: string, filename: string, text: string) =>
     Effect.provide(FetchHttpClient.layer)
   );
 
+/**
+ * Changes one of this run's own test addresses as the admin: whether it sends to anyone, asks a
+ * person before writing to someone new, or holds suspicious mail. Refuses, changing nothing, an
+ * address this run didn't make or one that isn't a test address of the run's.
+ */
+export const reconfigure = Effect.fn("live.reconfigure")(function* (
+  identityId: string,
+  change: {
+    readonly send_policy?: "open" | "reply_only";
+    readonly send_approval?: "none" | "first_contact";
+    readonly hold_suspicious?: true;
+  }
+) {
+  const path = `/identities/${encodeURIComponent(identityId)}`;
+  const found = Source.data((yield* call(admin(), { method: "GET", path })).body);
+  const ours =
+    created.has(identityId) &&
+    typeof found === "object" &&
+    found !== null &&
+    "test" in found &&
+    found.test === true &&
+    "local_part" in found &&
+    typeof found.local_part === "string" &&
+    found.local_part.startsWith(`patchy-${RUN}-`);
+  if (!ours)
+    return yield* Effect.die(
+      new Error("The live tier only changes test addresses its own run made; it changed nothing.")
+    );
+  yield* call(admin(), {
+    method: "PATCH",
+    path,
+    body: change,
+    idempotencyKey: `${RUN}-${createHash("sha256")
+      .update(JSON.stringify([identityId, change]))
+      .digest("hex")
+      .slice(0, 24)}`
+  });
+});
+
 /** How many requests this run has sent that match. */
 export const count = (match: (request: Sent) => boolean) => sent.filter(match).length;
 
@@ -361,5 +427,5 @@ const told = (swept: Swept, what: string) =>
 /** What a run cost the account's shared budgets, and what the sweeps took: counts only. */
 export const summary = (swept: { readonly before: Swept; readonly after: Swept }) =>
   console.log(
-    `Pidgeon live run ${RUN}: ${sent.length} calls, ${minted.size} keys minted; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
+    `Pidgeon live run ${RUN}: ${sent.length} calls, ${minted.size} keys minted, at most ${peak} active at once; swept ${told(swept.before, "stale ")} before, ${told(swept.after, "")} after.`
   );
