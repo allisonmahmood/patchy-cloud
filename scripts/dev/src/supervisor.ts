@@ -84,7 +84,7 @@ class PackageBuildFailed extends Schema.TaggedError<PackageBuildFailed>()("Packa
 }
 
 /** The whole instance; returns when the server exits, and tears down on interruption. */
-export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
+export const supervise = Effect.fn("supervise")(function* (plan: Plan, serverEntrypoint?: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -257,7 +257,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
         "--import",
         "tsx",
         "--conditions=development",
-        path.join(plan.worktree, "apps", "server", "src", "start.ts")
+        serverEntrypoint ?? path.join(plan.worktree, "apps", "server", "src", "start.ts")
       ],
       {
         cwd: plan.worktree,

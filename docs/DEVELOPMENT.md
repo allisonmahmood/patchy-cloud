@@ -135,6 +135,19 @@ once and keeps using the instance. Ports come from a hash of the worktree path,
 so worktrees run side by side; use the printed URL, not a remembered port. The
 server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
 
+On the Activepieces prototype branch, `npm --prefix
+packages/integrations/prototype-activepieces run local` starts this worktree's
+instance with a separate local entrypoint, a loopback provider simulator and two
+customer companies. It prints their sign-in links and publishes their demo
+patches. See that directory's README for setup and restart instructions. Normal
+`pnpm dev` and production keep the native PostHog source; `pnpm dev status`,
+`logs` and `stop` manage the prototype's processes too. Its extra people and
+connections are seeded only by the prototype launcher, not the normal dev seed
+or vitest template. `npm --prefix packages/integrations/prototype-activepieces
+run local:slack` instead starts direct Slack bot-token entry inside local
+Patchy, with real provider requests and no tokens preloaded. Stop before
+switching modes. Its README distinguishes the offline mock tests from real calls.
+
 | Command                                       | What it does                                                                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `pnpm dev`                                    | Start (or confirm) this worktree's instance and print the plan; `--json` for scripts.              |

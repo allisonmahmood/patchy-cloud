@@ -26,6 +26,18 @@ read `pnpm dev logs`. A failed migration also prints which step failed and why.
 
 Done when `pnpm dev status` exits 0.
 
+On the Activepieces prototype branch, use `npm --prefix
+packages/integrations/prototype-activepieces run local` for its alternate local
+entrypoint, two companies and simulated provider. The prototype README describes
+the sign-in links and test patches. Restart it with this launcher after `pnpm dev
+stop`; plain `pnpm dev` uses the native source. Status, logs, shot and stop still
+use the same worktree plan. `npm --prefix packages/integrations/prototype-activepieces
+run local:slack` starts direct Slack bot-token entry inside Patchy with real
+provider requests; no tokens are preloaded. Stop before switching modes. This
+mode needs a token from an existing installed Slack app with `channels:read`;
+the user enters it in Patchy, never in chat. The automated Slack test redirects
+the actual module to a loopback mock and is not evidence of a real provider call.
+
 ## 2. Exercise the change
 
 - **The CLI.** `pnpm patchy …` runs from source and publishes as **Dev
