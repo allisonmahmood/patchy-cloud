@@ -356,7 +356,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
         });
         skills.add("patchy-postgres");
       } else if (stored.integration === "pidgeon") {
-        // Pidgeon has no fixture: its mail can't be invented to resemble the real address.
+        // Pidgeon has no fixture: its mail can't be invented to resemble the real address, so
+        // dev reads the real one.
         const declared = { kind: "pidgeon" as const, ...resolved };
         metadata.pidgeon[alias] = { declaration: declared, snapshot: stored.snapshot };
         const output = Pidgeon.pidgeon.generate({ ...described, kind: "pidgeon" }, stored.snapshot);

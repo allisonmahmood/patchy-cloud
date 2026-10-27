@@ -321,7 +321,8 @@ is three people and no patches; `brightline` is a five-person agency with tier 0
 1 and 2 patches, agent areas on its tier 2 ones and agent access on, and takes
 about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 1 Support desk that
-answers it. `up` is idempotent and resumes a
+answers it; `patchy dev` in its workspace reads that address's mail through
+this instance and simulates its sends. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -460,10 +461,12 @@ worktree, so they open `/join` here afterwards.
 
 The cloud (`pnpm dev`) supplies release bytes, identity and metadata; a patch's
 local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures.
-A PostHog declaration has no fixture: `patchy dev` reads the real connection
-through the cloud's dev read door, as the CLI's machine key
+PostHog and Pidgeon declarations have no fixture: `patchy dev` reads the real
+connection through the cloud's dev read door, as the CLI's machine key
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
-exist on this instance.
+exist on this instance. Pidgeon's sends, replies and triage are simulated in the
+dev process, never sent: `patchy dev logs` names each one with its recipients
+and subject.
 With the cloud healthy, initialize beneath this checkout so discovery finds it:
 
 ```sh
@@ -588,7 +591,10 @@ can quote it.
   Dev reads run the patch repo's binding against the real dev read door over that
   double (`DevReads.test.ts`); in `patchy dev` they appear on the connection's
   page as Dev calls. Connecting PostHog on a local instance needs a real key and
-  project, so check those by hand only with a disposable project.
+  project, so check those by hand only with a disposable project. Pidgeon's dev
+  reads go through the same door, offline over answers recorded from Pidgeon in
+  the same suite and live in the live tier (`PidgeonDev.live.ts`); its simulated
+  writes reach neither.
   Pidgeon is Pidgeon itself, in test mode, where mail never leaves Pidgeon and a
   test address lasts a day. `pnpm dev up pidgeon` connects `pidgeon/support`
   through the connect page in a browser with a test admin key,

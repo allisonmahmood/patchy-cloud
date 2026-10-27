@@ -129,12 +129,16 @@ See **Runtime log** in [Runtime](../runtime/GLOSSARY.md); connection calls and a
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:
-How `patchy dev` runs an integration's operations, chosen per integration ([ADR-0013](../../docs/adr/ADR-0013-dev-bindings-per-integration.md)). By default it is local, over fixtures or a fake, with no production credentials or business rows. An integration whose shapes can't be known ahead and which can't write reads the real connection instead, through a dev read; PostHog does, Postgres keeps fixtures.
+How `patchy dev` runs an integration's operations, chosen per integration ([ADR-0013](../../docs/adr/ADR-0013-dev-bindings-per-integration.md)). By default it is local, over fixtures or a fake, with no production credentials or business rows. An integration whose fixtures wouldn't resemble production reads the real connection instead, through a dev read, and simulates its writes; PostHog and Pidgeon do, Postgres keeps fixtures. Writes never run live in dev.
 _Avoid_: Mock integration, production proxy
 
 **Dev read**:
-One live dev binding call: the instance runs an operation the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person.
+One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person.
 _Avoid_: Dev proxy, impersonated read
+
+**Simulated write**:
+A Pidgeon send, reply or triage in `patchy dev`, which never reaches the instance or Pidgeon. Dev checks its arguments and the connection's access as the host would, answers it with new ids starting `dev_` and `test: true`, and prints it in dev's output; nothing changes, so the next dev read doesn't show it. It doesn't check the send policy.
+_Avoid_: dry run, fake send, test send (a test-mode key's send, which does land in Pidgeon)
 
 **Fixture**:
 Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.

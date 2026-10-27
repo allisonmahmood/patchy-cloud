@@ -27,15 +27,17 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog has no
-fixture, and its actions read the real project through the instance, as the
-publishing key's person for either viewer. Put invented shared files
+rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog and Pidgeon
+have no fixture, and actions read the real project or address through the
+instance, as the publishing key's person for either viewer. Pidgeon's sends,
+replies and triage are simulated in dev and never sent. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
-output and each thrown error's message and stack, which browsers never receive.
-Starting with `--json` records full wide events and invocation JSON;
-`dev logs --json` returns `{ ok, log, text }`. No local runtime log rows are
-written; the instance logs PostHog dev reads.
+output, each thrown error's message and stack, which browsers never receive, and
+each simulated Pidgeon write with its recipients and subject.
+Starting with `--json` records full wide events, invocation JSON and simulated
+writes; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
+are written; the instance logs PostHog and Pidgeon dev reads.
 
 When someone says a published patch is broken, read its log before guessing:
 `pnpm patchy logs --failed --json`, or without `--failed` to see what led up to

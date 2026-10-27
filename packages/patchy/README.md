@@ -834,12 +834,15 @@ manifest. Omitted published columns and indexes remain in the local schema,
 including unique constraints; omission does not relax writes.
 
 Each Postgres declaration needs `fixtures/postgres-<handle>.sql`; aliases of
-one connection share its PGlite. PostHog declarations need no fixture: dev reads the
-real project through the instance's dev read door as the key's person, for either
-viewer (ADR-0013). The key reaches the daemon on stdin only when such a declaration
-exists, never argv, the environment, state files or `dev.log`, and never workerd.
-A refused key fails `access_denied` naming `patchy login` and a dev restart; an
-unreachable instance fails `source_unavailable` and the rest of dev keeps working.
+one connection share its PGlite. PostHog and Pidgeon declarations need no fixture:
+dev reads the real project or address through the instance's dev read door as the
+key's person, for either viewer (ADR-0013). The key reaches the daemon on stdin only
+when such a declaration exists, never argv, the environment, state files or
+`dev.log`, and never workerd. A refused key fails `access_denied` naming
+`patchy login` and a dev restart; an unreachable instance fails `source_unavailable`
+and the rest of dev keeps working. Pidgeon's sends, replies and triage never leave
+the daemon: each is checked as the host checks it, answered with ids starting
+`dev_` and `test: true`, and written to `dev.log` with its recipients and subject.
 Shared tables need `fixtures/shared-<alias>.sql`
 and use cumulative source definitions, including retained ref targets whose
 declaration was omitted from the source's current manifest. Missing files fail naming the

@@ -201,8 +201,10 @@ survive release changes. `--foreground` stays attached with logs.
 `dev.log` records viewer, handler, outcome, milliseconds, `ctx.log` and each
 thrown error's message and stack. Starting with `--json` records full wide events and invocation
 JSON; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
-are written. PostHog has no fixture: dev reads the real project through the
-instance as the key's person, and the instance logs each read as a Dev call.
+are written. PostHog and Pidgeon have no fixture: dev reads the real project or
+address through the instance as the key's person, and the instance logs each read
+as a Dev call. Pidgeon's sends, replies and triage are simulated in dev and never
+sent; `dev.log` names each one.
 Use invented local fixture inserts. On tier 1, every readable row is available
 to whoever can open the patch; it has no outbound access or client storage.
 Tier 2 puts access rules in handlers. The project skills carry the complete
