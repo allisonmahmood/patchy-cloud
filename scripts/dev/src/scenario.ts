@@ -28,7 +28,9 @@ export const RepoPatch = Schema.Struct({
   tier: Schema.Literals([0, 1, 2]),
   description: Schema.NonEmptyString,
   /** The patch's empty state offers "Load sample data"; `up` presses it as the publisher. */
-  sampleData: Schema.optionalKey(Schema.Boolean)
+  sampleData: Schema.optionalKey(Schema.Boolean),
+  /** The scenario's connections it declares, as `integration/handle`: `up` skips it without them. */
+  connections: Schema.optionalKey(Schema.Array(Schema.String))
 });
 
 /**
@@ -43,7 +45,9 @@ export const ScenarioConnection = Schema.Struct({
   /** The new address's local part; a code after it makes each environment's its own. */
   localPart: Slug,
   displayName: Schema.NonEmptyString,
-  access: Schema.Literals(["read", "send"])
+  access: Schema.Literals(["read", "send"]),
+  /** A file beside `scenario.json` holding the mail `up` delivers to the new address. */
+  mail: Schema.optionalKey(Schema.NonEmptyString)
 });
 export type ScenarioConnection = typeof ScenarioConnection.Type;
 
@@ -119,6 +123,20 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     return yield* new ScenarioInvalid({ name, problem: "people need unique keys and emails." });
   if (scenario.people.find((person) => person.key === scenario.publisher)?.role !== "admin")
     return yield* new ScenarioInvalid({ name, problem: "the publisher must be an admin." });
+  const connections = new Set(
+    (scenario.connections ?? []).map(
+      (connection) => `${connection.integration}/${connection.handle}`
+    )
+  );
+  for (const patch of scenario.patches) {
+    if (!("repo" in patch)) continue;
+    for (const connection of patch.connections ?? [])
+      if (!connections.has(connection))
+        return yield* new ScenarioInvalid({
+          name,
+          problem: `${patch.repo} names ${connection}, which isn't one of its connections.`
+        });
+  }
   return { name, dir, scenario };
 });
 

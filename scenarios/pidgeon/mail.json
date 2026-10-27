@@ -13,20 +13,12 @@
       "colour": "teal"
     },
     {
-      "name": "Invoices",
-      "colour": "slate"
-    },
-    {
       "name": "Returns",
       "colour": "pink"
     },
     {
       "name": "Feedback",
       "colour": "green"
-    },
-    {
-      "name": "Press",
-      "colour": "violet"
     }
   ],
   "threads": [
@@ -36,13 +28,7 @@
       "messages": [
         {
           "from": "Ana Ruiz <ana.ruiz@mailbox.example>",
-          "text": "Hi Lumen team,\n\nI noticed a hairline crack on the left chainstay of my Commuter this morning, right by the dropout. The bike is seven months old and I mostly ride it to work on paved roads.\n\nPhoto and receipt attached. Is this covered by the frame warranty? I'd rather not ride it until someone has looked at it.\n\nThanks,\nAna",
-          "attachments": [
-            {
-              "filename": "receipt-LB-20417.txt",
-              "text": "LUMEN BIKES — RECEIPT\nOrder: LB-20417\nDate: 2026-03-14\nItem: Lumen Commuter, size M, Fog Grey\nFrame serial: LMC-24-118804\nPrice: €2,390.00\nPaid by card ending 4421"
-            }
-          ]
+          "text": "Hi Lumen team,\n\nI noticed a hairline crack on the left chainstay of my Commuter this morning, right by the dropout. The bike is seven months old and I mostly ride it to work on paved roads.\n\nMy order number is LB-20417. Is this covered by the frame warranty? I'd rather not ride it until someone has looked at it.\n\nThanks,\nAna"
         }
       ]
     },
@@ -71,22 +57,6 @@
         {
           "from": "Priya Shah <priya@northsidecycles.example>",
           "text": "Hi there,\n\nI run Northside Cycles, an independent shop in Leeds. Customers keep asking about your Commuter and Cargo. We'd like to start with around 12 units for spring.\n\nCould you send your trade price list, minimum order and lead times?\n\nPriya Shah\nOwner, Northside Cycles"
-        }
-      ]
-    },
-    {
-      "subject": "Invoice INV-3391 from Torque Components",
-      "labels": ["Invoices"],
-      "messages": [
-        {
-          "from": "Torque Components Accounts <accounts@torquecomponents.example>",
-          "text": "Dear customer,\n\nPlease find attached invoice INV-3391 for your order PO-7712. Payment is due within 30 days.\n\nKind regards,\nAccounts, Torque Components",
-          "attachments": [
-            {
-              "filename": "INV-3391.txt",
-              "text": "TORQUE COMPONENTS — INVOICE INV-3391\nPurchase order: PO-7712\nIssued: 2026-10-19   Due: 2026-11-18\n\n40 × TC-250 rear hub motor        € 182.00   € 7,280.00\n40 × TC-36V 14Ah battery pack      € 214.50   € 8,580.00\n80 × TC torque sensor              €  23.75   € 1,900.00\n\nSubtotal                                        €17,760.00\nVAT 21%                                         € 3,729.60\nTotal due                                       €21,489.60\n\nIBAN: NL00 TORQ 0000 1234 56"
-            }
-          ]
         }
       ]
     },
@@ -127,63 +97,6 @@
         {
           "from": "me",
           "text": "Thanks Hannah! Tightening the kickstand bolt to 8 Nm usually fixes it. We're also shipping a rubber damper with new bikes from next month and can post you one."
-        }
-      ]
-    },
-    {
-      "subject": "Interview request: City Cycling Weekly",
-      "labels": ["Press"],
-      "status": "waiting",
-      "messages": [
-        {
-          "from": "Jo Park <jo@citycyclingweekly.example>",
-          "text": "Hi, I'm writing a piece on cargo e-bikes for families and would love 20 minutes with someone from Lumen this week. Are you free?"
-        },
-        {
-          "from": "me",
-          "text": "Hi Jo, happy to. Would Thursday at 11:00 work? Our founder can join."
-        }
-      ]
-    },
-    {
-      "subject": "Payment dispute notice for order LB-19902",
-      "status": "human_review",
-      "messages": [
-        {
-          "from": "PayFlow Disputes <disputes@payflow.example>",
-          "text": "A cardholder has disputed a payment of €2,390.00 for order LB-19902 (reason: product not received). Submit evidence by 2026-11-02 or the dispute will be decided in the cardholder's favour."
-        }
-      ]
-    },
-    {
-      "subject": "Battery range lower in winter?",
-      "status": "resolved",
-      "messages": [
-        {
-          "from": "Lars Nilsson <lars.nilsson@post.example>",
-          "text": "My range has dropped from about 80 km to 55 km since it got cold. Is the battery failing?"
-        },
-        {
-          "from": "me",
-          "text": "Hi Lars, that's normal: lithium batteries lose 20–30% of their range below 5°C. Keep the battery indoors and fit it just before you ride. If it's still low in spring, we'll test it for free."
-        }
-      ]
-    },
-    {
-      "subject": "Group ride sponsorship",
-      "messages": [
-        {
-          "from": "Mei Chen <mei@bikeclub.example>",
-          "text": "Hi! Our club runs a monthly family ride of about 60 people. Would Lumen lend two Cargo bikes for demo rides at the next one, on 8 November? We'd put your logo on the poster."
-        }
-      ]
-    },
-    {
-      "subject": "Brake pads for Lumen Cargo: which ones?",
-      "messages": [
-        {
-          "from": "Oliver Grant <oliver.grant@inbox.example>",
-          "text": "Which brake pads fit the 2025 Cargo? The front ones are getting thin and I'd like to order a spare set."
         }
       ]
     }

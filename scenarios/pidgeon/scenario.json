@@ -18,13 +18,15 @@
       "description": "Lumen Bikes support: customer questions, warranty claims, returns, supplier invoices and press.",
       "localPart": "lumen-support",
       "displayName": "Lumen Bikes Support",
-      "access": "send"
+      "access": "send",
+      "mail": "mail.json"
     }
   ],
   "patches": [
     {
       "repo": "support-desk",
       "tier": 1,
+      "connections": ["pidgeon/support"],
       "description": "Lumen Bikes' shared support inbox: triage conversations, read attachments, reply and start emails from the support address."
     }
   ]

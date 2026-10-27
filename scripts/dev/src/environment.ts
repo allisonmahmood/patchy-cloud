@@ -24,7 +24,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
-import { isTestKey, recordAddress } from "./pidgeon.js";
+import { decodeMail, deliverMail, isTestKey, MailFailed, recordAddress } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
@@ -758,9 +758,12 @@ const materialize = Effect.fn("materialize")(function* (
   const connections = scenario.connections ?? [];
   const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
   const pidgeonKey = connections.length === 0 ? Option.none() : yield* readPidgeonTestKey(devEnv);
+  // Connections not made, so the patches declaring them can't publish either.
+  const skipped = new Set<string>();
   for (const connection of connections) {
     const name = `${connection.integration}/${connection.handle}`;
     if (Option.isNone(pidgeonKey)) {
+      skipped.add(name);
       yield* Console.error(
         `  ${name}: skipped. Put a Pidgeon test admin key in ${devEnv} as PIDGEON_TEST_ADMIN_KEY to connect it.`
       );
@@ -772,6 +775,7 @@ const materialize = Effect.fn("materialize")(function* (
       Effect.orElseSucceed(() => false)
     );
     if (!test) {
+      skipped.add(name);
       yield* Console.error(
         `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key, and dev environments only use one.`
       );
@@ -783,9 +787,30 @@ const materialize = Effect.fn("materialize")(function* (
     yield* recordAddress(layout.pidgeon, localPart);
     yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
     yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value, localPart);
+    if (connection.mail !== undefined) {
+      const mail = yield* decodeMail(
+        yield* fs.readFileString(path.join(scenarioDir, connection.mail))
+      ).pipe(Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause })));
+      const delivered = yield* deliverMail(pidgeonKey.value, localPart, mail).pipe(
+        Effect.provide(PidgeonSource.layer)
+      );
+      yield* Console.error(
+        Option.match(delivered, {
+          onNone: () => `  ${name}: already connected, so its mail is the earlier start's.`,
+          onSome: (done) =>
+            `  ${name}: ${done.messages} messages in ${done.conversations} conversations delivered through Pidgeon's test inbound mail.`
+        })
+      );
+    }
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
+    const missing =
+      "repo" in patch ? (patch.connections ?? []).filter((name) => skipped.has(name)) : [];
+    if (missing.length > 0) {
+      yield* Console.error(`  ${key}: skipped, because ${missing.join(" and ")} wasn't connected.`);
+      continue;
+    }
     let entry = current.patches.find((done) => done.key === key);
     if ("repo" in patch) {
       const repo = path.join(layout.workspace, patch.repo);
