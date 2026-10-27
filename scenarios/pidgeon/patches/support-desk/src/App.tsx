@@ -353,10 +353,12 @@ function Conversation({
           <label className="muted" for="reply">
             Reply to {who(last.from)} as {address}
           </label>
+          {/* Read-only while it sends: what's shown stays what was sent, so a retry replays. */}
           <textarea
             id="reply"
             rows={5}
             value={reply}
+            readOnly={busy}
             onInput={(event) => setReply(event.currentTarget.value)}
           />
           <div className="actions">
@@ -506,12 +508,19 @@ function Compose({
   return (
     <div className="compose">
       <h2>New email from {address}</h2>
+      {/* Read-only while it sends: what's shown stays what was sent, so a retry replays. */}
       <label for="to">To</label>
-      <input id="to" value={to} onInput={(event) => setTo(event.currentTarget.value)} />
+      <input
+        id="to"
+        value={to}
+        readOnly={busy}
+        onInput={(event) => setTo(event.currentTarget.value)}
+      />
       <label for="subject">Subject</label>
       <input
         id="subject"
         value={subject}
+        readOnly={busy}
         onInput={(event) => setSubject(event.currentTarget.value)}
       />
       <label for="text">Message</label>
@@ -519,6 +528,7 @@ function Compose({
         id="text"
         rows={10}
         value={text}
+        readOnly={busy}
         onInput={(event) => setText(event.currentTarget.value)}
       />
       <div className="actions">
