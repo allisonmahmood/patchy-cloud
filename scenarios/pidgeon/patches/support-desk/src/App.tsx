@@ -70,7 +70,8 @@ export function App() {
   // The email on screen now, so a late answer closes only the one that sent it.
   const current = useRef<number | undefined>(undefined);
   current.current = compose?.key;
-  // A send in flight keeps its Compose, and its key, until Pidgeon answers.
+  // A send in flight, a new email's or a reply's, keeps what's on screen, and so its draft key,
+  // until Pidgeon answers: everything that would replace it waits.
   const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<readonly SearchHit[] | undefined>(undefined);
@@ -149,6 +150,7 @@ export function App() {
                 <button
                   key={thread.id}
                   className={thread.id === selected ? "row current" : "row"}
+                  disabled={sending}
                   onClick={() => (setSelected(thread.id), setCompose(undefined))}
                 >
                   <span className="row-top">
@@ -175,6 +177,7 @@ export function App() {
                 <button
                   key={hit.messageId}
                   className={hit.threadId === selected ? "row current" : "row"}
+                  disabled={sending}
                   onClick={() => (setSelected(hit.threadId), setCompose(undefined))}
                 >
                   <span className="row-top">
@@ -209,7 +212,12 @@ export function App() {
           ) : selected === undefined ? (
             <p className="muted pad">Pick a conversation.</p>
           ) : (
-            <Conversation key={selected} id={selected} onChange={() => void load()} />
+            <Conversation
+              key={selected}
+              id={selected}
+              onSending={setSending}
+              onChange={() => void load()}
+            />
           )}
         </main>
       </div>
@@ -230,7 +238,15 @@ const readThread = async (id: string) => {
   return { thread: first.thread, labels: first.labels, messages };
 };
 
-function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
+function Conversation({
+  id,
+  onSending,
+  onChange
+}: {
+  id: string;
+  onSending: (sending: boolean) => void;
+  onChange: () => void;
+}) {
   const [state, setState] = useState<Awaited<ReturnType<typeof readThread>> | undefined>(undefined);
   const [allLabels, setAllLabels] = useState<readonly Label[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -254,8 +270,10 @@ function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
     .reverse()
     .find((message) => !ours(message.from.email) && !message.held);
 
-  const act = async (work: () => Promise<string | undefined>) => {
+  /** Runs one change; a reply `sends`, so nothing replaces this conversation until it answers. */
+  const act = async (work: () => Promise<string | undefined>, sends = false) => {
     setBusy(true);
+    if (sends) onSending(true);
     setNotice(undefined);
     try {
       const done = await work();
@@ -266,6 +284,7 @@ function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
       setNotice(explain(failure));
     } finally {
       setBusy(false);
+      if (sends) onSending(false);
     }
   };
 
@@ -356,7 +375,7 @@ function Conversation({ id, onChange }: { id: string; onChange: () => void }) {
                   setReply("");
                   setDraft(crypto.randomUUID());
                   return outcome(sent, who(last.from));
-                })
+                }, true)
               }
             >
               {busy ? "Sending…" : "Send reply"}
