@@ -437,7 +437,7 @@ const relation = (value: string) =>
 /**
  * "customers.list", "query", "discover": the method, on its Postgres relation when it has one. A
  * PostHog query's resource is its name, shown as written: "query dailyRequests". A Pidgeon call's
- * resource names its own operation: "messages.send “Order 1043” to sam@example.com".
+ * resource names its own operation: "messages.send “Order 1043” to sam@customer.example".
  */
 const callName = (call: RuntimeLog.Call) => {
   const method = call.op.slice(call.op.indexOf(".") + 1);
