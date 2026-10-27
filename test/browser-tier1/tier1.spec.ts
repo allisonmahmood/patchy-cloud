@@ -89,7 +89,14 @@ test("broker keeps admission and source retry timing and the refusing operation,
     },
     { code: "unknown_outcome", status: 503 },
     // A tier 2 action relaying PostHog's refusal names the operation that refused.
-    { code: "source_rate_limited", operation: "posthog.query", status: 429 }
+    { code: "source_rate_limited", operation: "posthog.query", status: 429 },
+    // Pidgeon still sending a draft's first copy: send it again after the wait.
+    {
+      code: "idempotency_conflict",
+      operation: "pidgeon.write",
+      details: { reason: "in_progress" },
+      status: 409
+    }
   ];
   const requests: string[] = [];
   await page.route("**/api/runtime/call", async (route) => {
@@ -132,6 +139,12 @@ test("broker keeps admission and source retry timing and the refusing operation,
       expect(await error()).toHaveProperty("retryAfter", 2);
     } else if (code === "source_rate_limited") {
       expect(await error()).toMatchObject({ retryAfter: 2, operation: "posthog.query" });
+    } else if (code === "idempotency_conflict") {
+      expect(await error()).toMatchObject({
+        retryAfter: 2,
+        operation: "pidgeon.write",
+        details: { reason: "in_progress" }
+      });
     } else {
       expect(await error()).not.toHaveProperty("retryAfter");
     }

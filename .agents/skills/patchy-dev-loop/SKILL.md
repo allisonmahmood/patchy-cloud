@@ -102,8 +102,10 @@ Done when `pnpm dev status` exits 0.
   suites' PostHog double unless the person hands you a disposable project.
   Pidgeon here is Pidgeon itself, in test mode: `pnpm dev up pidgeon` pastes
   the person's test admin key, `PIDGEON_TEST_ADMIN_KEY` from their dev.env or
-  the environment, and connects `pidgeon/support` to a new test address, which
-  Pidgeon deletes a day later. Without that key it says so and skips Pidgeon;
+  the environment, connects `pidgeon/support` to a new test address, which
+  Pidgeon deletes a day later, delivers the scenario's customer mail to it, and
+  publishes the Support desk. Without that key it says so and skips Pidgeon and
+  the Support desk;
   never ask for a live key. The account holds ten active keys, test keys
   included: `pnpm dev down` revokes the keys and deletes the test addresses the
   environment's `up` made, before wiping it, so take environments down when

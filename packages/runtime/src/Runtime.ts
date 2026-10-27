@@ -127,6 +127,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.batch.bytes",
     "runtime.postgres.bytes",
     "runtime.posthog.bytes",
+    "runtime.pidgeon.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -275,7 +276,8 @@ export const toFailure = (error: RuntimeError): RuntimeFailure => {
       error.code === "busy" ||
       error.code === "patch_paused" ||
       error.code === "source_unavailable" ||
-      error.code === "source_rate_limited") &&
+      error.code === "source_rate_limited" ||
+      error.code === "idempotency_conflict") &&
     "retryAfterSeconds" in error
       ? error.retryAfterSeconds
       : undefined;
@@ -386,6 +388,7 @@ export const config = Effect.all({
   batchBytes: byteLimits.batchBytes,
   postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
   posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
+  pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -495,6 +498,7 @@ export const make = (
       settings.batchBytes + settings.callBytes,
       settings.postgresBytes,
       settings.posthogBytes,
+      settings.pidgeonBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -506,7 +510,9 @@ export const make = (
             ? "tier2.args.bytes"
             : maxCallBytes === settings.postgresBytes
               ? "runtime.postgres.bytes"
-              : "runtime.posthog.bytes";
+              : maxCallBytes === settings.posthogBytes
+                ? "runtime.posthog.bytes"
+                : "runtime.pidgeon.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -684,6 +690,7 @@ export const make = (
               input.op.startsWith("shared.") ||
               input.op.startsWith("postgres.") ||
               input.op.startsWith("posthog.") ||
+              input.op.startsWith("pidgeon.") ||
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();

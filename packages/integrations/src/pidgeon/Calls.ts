@@ -4,10 +4,10 @@ import * as ConnectionStore from "../ConnectionStore.js";
 import * as Source from "./Source.js";
 
 /**
- * How a call reaches a connected Pidgeon address, for the operations #825 adds: it waits for one
- * of the address's slots, then checks its caller and the connection again and loads the key as it
- * stands when the call is sent. A call that waited through Replace key sends the new key; one
- * whose connection was disconnected or moved meanwhile sends nothing.
+ * How a call reaches a connected Pidgeon address: it waits for one of the address's slots, then
+ * checks its caller and the connection again and loads the key as it stands when the call is
+ * sent. A call that waited through Replace key sends the new key; one whose connection was
+ * disconnected or moved meanwhile sends nothing.
  */
 
 /** Which connection a call goes to and until when, for a caller its door already admitted. */
@@ -20,8 +20,18 @@ export interface Target<E = never> {
   readonly recheck: Effect.Effect<void, E>;
 }
 
+export type Connection = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
+
+/** The address as a call found it once it held a slot, and a sender with its key as stored then. */
+export interface Address {
+  readonly connection: Connection;
+  readonly credentials: Source.Credentials;
+  /** Sends one request with that key, within the target's deadline. */
+  readonly call: (request: Source.Request) => Effect.Effect<Source.Answer, Source.CallError>;
+}
+
 /** The company's connected Pidgeon connection by this id and handle, and its key now. */
-export const connect = Effect.fn("PidgeonCalls.connect")(function* (
+const load = Effect.fn("PidgeonCalls.load")(function* (
   companyId: string,
   declared: Target["connection"]
 ) {
@@ -49,35 +59,45 @@ export const connect = Effect.fn("PidgeonCalls.connect")(function* (
     },
     connection.credentialRevision
   );
-  return yield* Source.parseCredentials(secret);
+  const credentials = yield* Source.parseCredentials(secret);
+  return { connection, credentials };
+});
+
+/** The company's connected Pidgeon connection by this id and handle, and its key now. */
+export const connect = Effect.fn("PidgeonCalls.connect")(function* (
+  companyId: string,
+  declared: Target["connection"]
+) {
+  return (yield* load(companyId, declared)).credentials;
 });
 
 /**
- * Sends `request` for the connection once it holds a slot, built from the key it loads then. The
- * deadline bounds both the wait and the call; a full gate refuses `busy` with nothing sent.
+ * Runs `use` for the connection once it holds a slot, with the connection and key it loads then.
+ * The deadline bounds both the wait and every call `use` sends; a full gate refuses `busy` with
+ * nothing sent.
  */
-export const send = Effect.fn("PidgeonCalls.send")(function* <E>(
+export const withAddress = Effect.fn("PidgeonCalls.withAddress")(function* <E, A, E2, R2>(
   target: Target<E>,
-  request: (credentials: Source.Credentials) => Source.Request
+  use: (address: Address) => Effect.Effect<A, E2, R2>
 ) {
-  const first = yield* connect(target.companyId, target.connection);
+  const first = yield* load(target.companyId, target.connection);
   const source = yield* Source.Source;
   return yield* source.withSlot(
-    first.identityId,
+    first.credentials.identityId,
     target.deadline
   )(
     Effect.gen(function* () {
       // The caller or the connection may have changed while this call waited: send only as they
       // stand now, with the key stored now, and never to an address the connection left.
       yield* target.recheck;
-      const current = yield* connect(target.companyId, target.connection);
-      if (current.identityId !== first.identityId)
+      const current = yield* load(target.companyId, target.connection);
+      if (current.credentials.identityId !== first.credentials.identityId)
         return yield* new ConnectionStore.ConnectionChanged({});
-      return yield* source.call(
-        Redacted.make(current.key.token),
-        request(current),
-        target.deadline
-      );
+      const token = Redacted.make(current.credentials.key.token);
+      return yield* use({
+        ...current,
+        call: (request) => source.call(token, request, target.deadline)
+      });
     })
   );
 });

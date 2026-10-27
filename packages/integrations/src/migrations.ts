@@ -65,5 +65,15 @@ export const migrations: Migrations = {
       ADD CONSTRAINT connections_company_id_integration_handle_key
         UNIQUE (company_id, integration, handle)`,
     `ALTER TABLE connection_snapshots ALTER COLUMN integration DROP DEFAULT`
+  ),
+  // Each Pidgeon connection's sends and replies per UTC day, counted before Pidgeon sees one, so
+  // the daily budget holds across processes and restarts. Rows go with their connection.
+  "0028_pidgeon_sends": ddl(
+    `CREATE TABLE pidgeon_sends (
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      day DATE NOT NULL,
+      sends INTEGER NOT NULL CHECK (sends > 0),
+      PRIMARY KEY (connection_id, day)
+    )`
   )
 };

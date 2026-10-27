@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { processResult } from "./processResult.js";
+import type { GuestAliases } from "./serverBuild.js";
 
 const decodeResult = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -26,6 +27,14 @@ const decodeResult = Schema.decodeUnknownSync(
 );
 const encodeToolchain = Schema.encodeSync(Schema.fromJsonString(ReleaseToolchain));
 const encodeModules = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeAliases = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sharedStores: Schema.Array(Schema.String),
+      pidgeon: Schema.Array(Schema.String)
+    })
+  )
+);
 // The bundled child in a release; its source when this CLI runs from the workspace.
 const ownChild = fileURLToPath(
   new URL(`./toolchainChild.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`, import.meta.url)
@@ -46,7 +55,7 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
         readonly server?: {
           readonly modules: readonly string[];
           readonly agentFiles: readonly string[];
-          readonly sharedStores: readonly string[];
+          readonly aliases: GuestAliases;
         };
       },
   child = ownChild
@@ -66,7 +75,7 @@ export const runToolchain = Effect.fn("runToolchain")(function* (
             ? []
             : [
                 encodeModules(operation.server.modules),
-                encodeModules(operation.server.sharedStores),
+                encodeAliases(operation.server.aliases),
                 encodeModules(operation.server.agentFiles)
               ])
         ])

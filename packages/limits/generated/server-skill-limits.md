@@ -26,6 +26,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `posthog.discovery.entries` | contract | 10000 | definitions | company | Event and property definitions one PostHog snapshot keeps | None | No | release |
 | `posthog.discovery.bytes` | contract | 4194304 | bytes | company | Encoded PostHog snapshot | None | No | release |
 | `posthog.discovery.description` | contract | 1000 | characters | company | One definition's description in a PostHog snapshot; a longer one is cut and marked [truncated] | None | No | release |
+| `runtime.pidgeon.bytes` | contract | 1048576 | bytes | viewer | Pidgeon operation arguments, enough for a 100,000-character body however it encodes | `too_large` | No | release |
+| `pidgeon.thread.messages` | contract | 20 | messages | viewer | Messages one page of a Pidgeon thread returns, oldest first | None | No | release |
+| `pidgeon.sends.daily` | contract | 200 | sends | company | Sends and replies one Pidgeon connection attempts per UTC day, counted before Pidgeon sees each, retries and refusals included | `source_rate_limited` | No | release |
 | `pidgeon.calls.concurrent` | contract | 4 | calls | host | Pidgeon calls per address at once in one server process, shared by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot | `timeout` | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |

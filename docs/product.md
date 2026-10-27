@@ -2,11 +2,11 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230), [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) and [Patchy MCP map](https://github.com/allisonmahmood/patchy-cloud/issues/730) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres and PostHog connections.
+Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres, PostHog and Pidgeon connections.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
-Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address; patches can declare them, and their operations are next. Signed-in pages share one sidebar shell and component set.
+Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address, which patches read and, with a send key, reply, send and triage from. Signed-in pages share one sidebar shell and component set.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches, is specified and not built. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
@@ -1286,9 +1286,43 @@ the key as it stands before it sends. Pidgeon's 429 and 402 fail
 retries a call Pidgeon might have run without its Idempotency-Key.
 
 A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
-`patchy add pidgeon/<handle>` writes it with the address's context. Its generated
-client has no operations yet; reading, replying, sending and triage come next,
-with their skill, and dev's live reads after.
+`patchy add pidgeon/<handle>` writes it with the address's client, context and
+`patchy-pidgeon` skill. There is no fixture; dev's live reads come next.
+
+**Operations.** Patch code calls operations Patchy writes, never a path, an
+address id or a key, and Patchy fills in the address on every call: a thread,
+message or attachment on another address answers `not_found`. Reads travel as
+`pidgeon.read`: `threads.list`, `threads.get` (the thread, its labels and a page
+of its messages, oldest first, with `nextCursor`), `messages.get`,
+`messages.search`, `labels.list` and `attachments.text`. A message is its
+parties, subject, time, `test` marker, Pidgeon's firewall-cleaned plain text with
+the verdict and the kinds it found, its attachments' metadata and, for mail it
+sent, its delivery state; a message the firewall holds for a person has none of
+its content and can't be read or answered until someone releases it in Pidgeon.
+No raw headers, HTML or source leave the host. With a `send` key,
+`pidgeon.write` carries `messages.reply`, `messages.send`, `threads.update`,
+`threads.label` and `threads.unlabel`; a `read` connection's client has none,
+and Patchy refuses one forced past its types, whatever Pidgeon's key would allow.
+
+**A draft is one email.** Every send and reply takes an `idempotencyKey` the
+patch keeps for that email; Pidgeon's Idempotency-Key is a hash of the
+connection, the patch and that key, so the same draft within Pidgeon's 24 hours
+is one email, answering the first send's result with `replayed: true`. Pidgeon's
+409 fails `idempotency_conflict`, sending nothing: `mismatch` when the key went
+with other mail or from another Pidgeon key, as after Replace key, and
+`in_progress`, with `retryAfter`, while the first send runs. A send answers
+`status`: `sent`, with the recipients the provider `rejected`, or
+`pending_approval`, when Pidgeon holds it as a draft for a person to approve and
+nothing was sent. The send policy, a rule, or text read from another
+conversation refuse a whole send `access_denied` with that `reason`.
+
+**Send budget.** Each connection makes at most `pidgeon.sends.daily` sends and
+replies a UTC day, counted durably by one atomic upsert before Pidgeon sees each,
+retries, refusals and held sends included. Past it a send fails
+`source_rate_limited` with `limit: "budget"`, and nothing is sent. The
+connection page shows today's count. Recent calls name each send's subject and
+recipients, each reply's message and CC, each triage's status or label and each
+read's ids, never a body or search text.
 
 ### Discovery and binding
 
@@ -1475,7 +1509,7 @@ Agent tools are for agents only. They are reached through Patchy MCP and `patchy
 
 To give agents a handler the page already uses, re-export it: `export { listDeals } from "../server/deals.js"` makes it `deals.listDeals` for the page and the tool `listDeals` for agents, with one contract; as a tool it must be described, and its `ctx.agent` is null when the page calls it. A tool of its own can hold agents to rules the page doesn't have, such as requiring fields the page leaves optional, with the shared logic in a helper both call; its schema then tells the agent the fields are required, and a call missing one is refused before the handler runs. Calls an agent's action makes through `ctx.run` see the same `ctx.agent`.
 
-**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a write is a type error. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes and file puts and deletes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres and PostHog reads count as reads only from a read-only action.
+**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a write is a type error. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes and file puts and deletes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog and Pidgeon reads count as reads only from a read-only action, which can't reply, send or triage.
 
 **Descriptions.** A tool's `description` is required. Any handler value takes `.describe(text)`. Every description is nonblank and at most 2,000 characters. Undescribed top-level arguments warn at publish; nested and result descriptions are optional. When a nullable wrapper and its value are both described, the outer description wins. Table columns take no `.describe()`: the types and the config check refuse it, and a row's schema carries its table's description instead.
 

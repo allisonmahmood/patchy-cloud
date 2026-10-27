@@ -57,7 +57,7 @@ const save = Effect.fnUntraced(function* (file: string, source: string) {
 });
 
 const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
-  const next = yield* watch(root, toolchain, [], tables);
+  const next = yield* watch(root, toolchain, { sharedStores: [], pidgeon: [] }, tables);
   const observed = next.pipe(
     Effect.flatMap(({ inspect, ...build }) =>
       inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
@@ -302,7 +302,10 @@ it.live(
       assert.strictEqual((yield* next.pipe(Effect.flip)).code, "invalid_manifest");
       // Publish inspects the same bundle.
       const published = yield* Effect.tryPromise(() =>
-        buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, [])
+        buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, {
+          sharedStores: [],
+          pidgeon: []
+        })
       );
       assert.deepInclude(yield* Inspection.inspect(published.server).pipe(Effect.flip), {
         reason: "refused",
@@ -363,7 +366,10 @@ it.live(
         handler("text").replace("export const read", "export const count")
       );
       const built = yield* Effect.tryPromise(() =>
-        buildServer(root, [], ["__proto__", "leads", "more"], toolchain, [])
+        buildServer(root, [], ["__proto__", "leads", "more"], toolchain, {
+          sharedStores: [],
+          pidgeon: []
+        })
       );
       assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
 
@@ -468,7 +474,7 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
 `
       );
       const build = Effect.tryPromise({
-        try: () => buildServer(root, ["leads"], [], toolchain, []),
+        try: () => buildServer(root, ["leads"], [], toolchain, { sharedStores: [], pidgeon: [] }),
         catch: (cause) => cause
       });
       assert.deepInclude(yield* build.pipe(Effect.flip), { code: "invalid_manifest" });

@@ -47,10 +47,14 @@ export class Forbidden extends Schema.TaggedError<Forbidden>()("PidgeonForbidden
     return `Pidgeon refused: ${this.details.message}`;
   }
 }
-/** The address's send policy, or a block, refused a send as a whole; nothing was sent. */
+/**
+ * Pidgeon refused a send as a whole, and nothing was sent: the address's send policy
+ * (`not_permitted`), a rule (`blocked`), or text a key read in another conversation
+ * (`exfiltration_blocked`), which can only go back as a reply in that conversation.
+ */
 export class Refused extends Schema.TaggedError<Refused>()("PidgeonRefused", {
   details: Schema.Struct({
-    reason: Schema.Literals(["not_permitted", "blocked"]),
+    reason: Schema.Literals(["not_permitted", "blocked", "exfiltration_blocked"]),
     message: Explanation
   })
 }) {
@@ -58,6 +62,18 @@ export class Refused extends Schema.TaggedError<Refused>()("PidgeonRefused", {
   readonly status = 403;
   override get message() {
     return `Pidgeon refused the send and sent nothing: ${this.details.message}`;
+  }
+}
+/**
+ * Pidgeon Firewall holds this message for a person: no key reads, replies to or forwards it until
+ * someone in the company releases it in Pidgeon.
+ */
+export class Held extends Schema.TaggedError<Held>()("PidgeonHeld", {}) {
+  readonly code = "access_denied" as const;
+  readonly status = 403;
+  readonly details = { reason: "held" } as const;
+  override get message() {
+    return "Pidgeon Firewall is holding this message for a person, so it can't be read or answered until someone releases it in Pidgeon.";
   }
 }
 /** Nothing by that id that this key reaches; Pidgeon answers a missing id and another's alike. */
@@ -95,6 +111,37 @@ const wait = (seconds: number | undefined) =>
     : seconds < 90
       ? `in ${seconds} ${seconds === 1 ? "second" : "seconds"}`
       : `in ${Math.ceil(seconds / 60)} minutes`;
+
+/**
+ * Pidgeon took this write's Idempotency-Key with a different request, or from a different key,
+ * within its 24 hours; this attempt did nothing.
+ */
+export class IdempotencyMismatch extends Schema.TaggedError<IdempotencyMismatch>()(
+  "PidgeonIdempotencyMismatch",
+  {}
+) {
+  readonly code = "idempotency_conflict" as const;
+  readonly status = 409;
+  readonly details = { reason: "mismatch" } as const;
+  override get message() {
+    return "Pidgeon already took this Idempotency-Key with a different request or from a different key, so this attempt did nothing.";
+  }
+}
+/**
+ * Pidgeon is still running the first request with this Idempotency-Key; this attempt did nothing.
+ * The same request sent again after `retryAfterSeconds` gets the first one's answer.
+ */
+export class IdempotencyInProgress extends Schema.TaggedError<IdempotencyInProgress>()(
+  "PidgeonIdempotencyInProgress",
+  { retryAfterSeconds: Schema.Int }
+) {
+  readonly code = "idempotency_conflict" as const;
+  readonly status = 409;
+  readonly details = { reason: "in_progress" } as const;
+  override get message() {
+    return `Pidgeon is still running the first request with this Idempotency-Key, so this attempt did nothing. Send the same request again ${wait(this.retryAfterSeconds)} for the first one's answer.`;
+  }
+}
 
 /** Pidgeon's rate or plan limit said no (429 and 402). Nothing changed, and Patchy never retries. */
 export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateLimited", {
@@ -164,8 +211,11 @@ export type CallError =
   | KeyRejected
   | Forbidden
   | Refused
+  | Held
   | NotFound
   | Conflict
+  | IdempotencyMismatch
+  | IdempotencyInProgress
   | Invalid
   | RateLimited
   | Unavailable
@@ -259,6 +309,11 @@ export interface Request {
    * nothing twice, so a write whose answer was lost can be sent again with the same key.
    */
   readonly idempotencyKey?: string;
+  /**
+   * What `call` does while Pidgeon is still running the first request with this key: wait as
+   * Pidgeon asks and send it again (the default), or fail with `IdempotencyInProgress`.
+   */
+  readonly inProgress?: "wait" | "fail";
 }
 /** A success: Pidgeon's whole envelope, and whether it replayed an earlier answer. */
 export interface Answer {
@@ -289,14 +344,6 @@ const retryAfter = (value: string | undefined): number | undefined => {
 };
 
 /**
- * Pidgeon is still answering the first request with this Idempotency-Key; `call` sends it again
- * after `seconds`, so it never leaves `call`.
- */
-export class InProgress extends Schema.TaggedError<InProgress>()("PidgeonInProgress", {
-  seconds: Schema.Int
-}) {}
-
-/**
  * Pidgeon's statuses as Patchy's refusals, from an answer already read under the cap. Pidgeon
  * says `{ error: { code, message, field? } }`; a refusal that isn't one of its own is unavailable,
  * test mode's dropped answer (504 `test_dropped`) included.
@@ -305,7 +352,7 @@ export const classify = (
   status: number,
   headers: Readonly<Record<string, string | undefined>>,
   text: string
-): Effect.Effect<Answer, CallError | InProgress> => {
+): Effect.Effect<Answer, CallError> => {
   if (status >= 200 && status < 300)
     return Option.match(decodeJson(text), {
       onNone: () => Effect.fail(new Unavailable({ stage: "response" })),
@@ -318,16 +365,22 @@ export const classify = (
   if (status === 402) return Effect.fail(new RateLimited({ limit: "plan", details: { message } }));
   if (status === 403)
     return Effect.fail(
-      error?.code === "not_permitted" || error?.code === "blocked"
+      error?.code === "not_permitted" ||
+        error?.code === "blocked" ||
+        error?.code === "exfiltration_blocked"
         ? new Refused({ details: { reason: error.code, message } })
-        : new Forbidden({ details: { message } })
+        : error?.code === "held"
+          ? new Held({})
+          : new Forbidden({ details: { message } })
     );
   if (status === 404) return Effect.fail(new NotFound({}));
   if (status === 409)
     return Effect.fail(
       error?.code === "idempotency_in_progress"
-        ? new InProgress({ seconds: retryAfter(headers["retry-after"]) ?? 1 })
-        : new Conflict({ details: { ...field, message } })
+        ? new IdempotencyInProgress({ retryAfterSeconds: retryAfter(headers["retry-after"]) ?? 1 })
+        : error?.code === "idempotency_mismatch"
+          ? new IdempotencyMismatch({})
+          : new Conflict({ details: { ...field, message } })
     );
   if ((status === 400 || status === 422) && error !== undefined)
     return Effect.fail(new Invalid({ details: { ...field, message } }));
@@ -352,7 +405,7 @@ export class Source extends Context.Service<
      * Sends one request with `token`, bounded by `deadline` (epoch milliseconds) and the answer
      * cap. Pidgeon's refusals come back classified; a success is its envelope. While Pidgeon is
      * still answering an earlier request with the same Idempotency-Key, it waits as Pidgeon asks
-     * and sends it again.
+     * and sends it again, unless the request asks to fail instead.
      */
     readonly call: (
       token: Redacted.Redacted<string>,
@@ -479,14 +532,17 @@ export const make = Effect.gen(function* () {
     deadline: number
   ): Effect.Effect<Answer, CallError> =>
     once(token, request, deadline).pipe(
-      Effect.catchTag("PidgeonInProgress", (busy) =>
-        Effect.flatMap(Clock.currentTimeMillis, (now) => {
-          const wait = busy.seconds * 1_000;
-          return now + wait >= deadline
-            ? Effect.fail(new Timeout({ milliseconds: Math.max(1, deadline - now) }))
-            : Effect.andThen(Effect.sleep(wait), call(token, request, deadline));
-        })
-      )
+      Effect.catchTags({
+        PidgeonIdempotencyInProgress: (busy) =>
+          request.inProgress === "fail"
+            ? Effect.fail(busy)
+            : Effect.flatMap(Clock.currentTimeMillis, (now) => {
+                const wait = busy.retryAfterSeconds * 1_000;
+                return now + wait >= deadline
+                  ? Effect.fail(new Timeout({ milliseconds: Math.max(1, deadline - now) }))
+                  : Effect.andThen(Effect.sleep(wait), call(token, request, deadline));
+              })
+      })
     );
 
   const withSlot =

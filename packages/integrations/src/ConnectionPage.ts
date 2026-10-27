@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -7,6 +8,7 @@ import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import { Users } from "@patchy/companies";
+import { ContractLimits } from "@patchy/limits";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
@@ -326,6 +328,21 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
     Effect.catchTags({ SqlError: () => Effect.succeed(null) })
   );
   const known = about(connection);
+  // A Pidgeon connection's sends today, against its budget; a count that can't be read says so.
+  const sends =
+    connection.integration === "pidgeon"
+      ? PidgeonPage.sendsToday(
+          connection,
+          yield* store
+            .sends(
+              viewer.company.id,
+              id,
+              DateTime.formatIsoDateUtc(DateTime.makeUnsafe(yield* Clock.currentTimeMillis))
+            )
+            .pipe(Effect.orElseSucceed(() => undefined)),
+          yield* ContractLimits.get("pidgeon.sends.daily")
+        )
+      : [];
   return {
     connection,
     page,
@@ -342,7 +359,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
         people === null
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
-      facts: known.facts,
+      facts: [...known.facts, ...sends],
       ...(known.standing === undefined ? {} : { standing: known.standing }),
       ...(known.tag === undefined ? {} : { tag: known.tag }),
       ...usage

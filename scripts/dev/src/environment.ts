@@ -24,7 +24,14 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
-import { isTestKey, recordAddress } from "./pidgeon.js";
+import {
+  decodeMail,
+  deliverMail,
+  isRecorded,
+  isTestKey,
+  MailFailed,
+  recordAddress
+} from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
@@ -261,6 +268,12 @@ const ReleaseJson = Schema.fromJsonString(
 const PublishJson = Schema.fromJsonString(
   Schema.Struct({ name: Schema.String, address: Schema.String })
 );
+const ConnectedJson = Schema.fromJsonString(
+  Schema.Struct({
+    snapshot: Schema.NullOr(Schema.Struct({ address: Schema.Struct({ email: Schema.String }) }))
+  })
+);
+const decodeConnected = Schema.decodeUnknownOption(ConnectedJson);
 const decodeRelease = Schema.decodeUnknownEffect(ReleaseJson);
 const decodePublish = Schema.decodeUnknownEffect(PublishJson);
 
@@ -646,6 +659,33 @@ const connectSource = Effect.fn("connectSource")(function* (
   });
 });
 
+/**
+ * A scenario connection an earlier start already made, by the environment's CLI: none when the
+ * instance has none by that name, else its address's local part, none inside when it can't be read.
+ */
+const connectedLocalPart = Effect.fn("connectedLocalPart")(function* (
+  layout: Layout,
+  env: Record<string, string>,
+  name: string
+) {
+  const result = yield* exec(
+    `Looking up ${name}`,
+    "patchy",
+    ["list", "connections", name, "--json"],
+    {
+      cwd: layout.dir,
+      env
+    }
+  );
+  if (result.exitCode !== 0) return Option.none<Option.Option<string>>();
+  return Option.some(
+    decodeConnected(result.stdout).pipe(
+      Option.flatMap((detail) => Option.fromNullishOr(detail.snapshot)),
+      Option.map((snapshot) => snapshot.address.email.slice(0, snapshot.address.email.indexOf("@")))
+    )
+  );
+});
+
 /** A connect page failure, its cause kept but never shown: it can quote the admin key. */
 export const connectFailed = (connection: string, step: string, cause: unknown) =>
   new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
@@ -758,9 +798,12 @@ const materialize = Effect.fn("materialize")(function* (
   const connections = scenario.connections ?? [];
   const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
   const pidgeonKey = connections.length === 0 ? Option.none() : yield* readPidgeonTestKey(devEnv);
+  // Connections not made, so the patches declaring them can't publish either.
+  const skipped = new Set<string>();
   for (const connection of connections) {
     const name = `${connection.integration}/${connection.handle}`;
     if (Option.isNone(pidgeonKey)) {
+      skipped.add(name);
       yield* Console.error(
         `  ${name}: skipped. Put a Pidgeon test admin key in ${devEnv} as PIDGEON_TEST_ADMIN_KEY to connect it.`
       );
@@ -772,20 +815,65 @@ const materialize = Effect.fn("materialize")(function* (
       Effect.orElseSucceed(() => false)
     );
     if (!test) {
+      skipped.add(name);
       yield* Console.error(
         `  ${name}: skipped. PIDGEON_TEST_ADMIN_KEY isn't a Pidgeon test key, and dev environments only use one.`
       );
       continue;
     }
-    // A code of this environment's after the local part makes the address its own. It's recorded
-    // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
-    const localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
-    yield* recordAddress(layout.pidgeon, localPart);
-    yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
-    yield* connectSource(manifest.apiUrl, publisher.email, connection, pidgeonKey.value, localPart);
+    // An earlier start that connected it, then stopped, left its address: its mail resumes there.
+    const existing = yield* connectedLocalPart(layout, env, name);
+    let localPart: string;
+    if (Option.isSome(existing)) {
+      if (
+        Option.isNone(existing.value) ||
+        !(yield* isRecorded(layout.pidgeon, existing.value.value))
+      ) {
+        yield* Console.error(
+          `  ${name}: already connected to an address this environment didn't make, so it gets no mail.`
+        );
+        continue;
+      }
+      localPart = existing.value.value;
+      yield* Console.error(`  ${name}: already connected`);
+    } else {
+      // A code of this environment's after the local part makes the address its own. It's recorded
+      // before Pidgeon is asked, so `down` finds the address even if the connect fails after it.
+      localPart = `${connection.localPart}-${(yield* Random.next).toString(36).slice(2, 8)}`;
+      yield* recordAddress(layout.pidgeon, localPart);
+      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+      yield* connectSource(
+        manifest.apiUrl,
+        publisher.email,
+        connection,
+        pidgeonKey.value,
+        localPart
+      );
+    }
+    if (connection.mail !== undefined) {
+      const mail = yield* decodeMail(
+        yield* fs.readFileString(path.join(scenarioDir, connection.mail))
+      ).pipe(Effect.mapError((cause) => new MailFailed({ step: "reading the mail", cause })));
+      const delivered = yield* deliverMail(pidgeonKey.value, localPart, mail).pipe(
+        Effect.provide(PidgeonSource.layer)
+      );
+      yield* Console.error(
+        Option.match(delivered, {
+          onNone: () => `  ${name}: its address isn't in Pidgeon any more, so it gets no mail.`,
+          onSome: (done) =>
+            `  ${name}: ${done.messages} messages in ${done.conversations} conversations delivered through Pidgeon's test inbound mail.`
+        })
+      );
+    }
   }
   for (const patch of scenario.patches) {
     const key = "repo" in patch ? patch.repo : patch.name;
+    const missing =
+      "repo" in patch ? (patch.connections ?? []).filter((name) => skipped.has(name)) : [];
+    if (missing.length > 0) {
+      yield* Console.error(`  ${key}: skipped, because ${missing.join(" and ")} wasn't connected.`);
+      continue;
+    }
     let entry = current.patches.find((done) => done.key === key);
     if ("repo" in patch) {
       const repo = path.join(layout.workspace, patch.repo);

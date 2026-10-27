@@ -197,7 +197,9 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "describe",
       "delete",
       "resolve",
-      "poolCredentials"
+      "poolCredentials",
+      "countSend",
+      "sends"
     ]),
     cause: Schema.Redacted(Schema.Defect())
   }
@@ -341,5 +343,22 @@ export class ConnectionStore extends Context.Service<
       declaration: ConnectionDeclaration,
       credentialRevision: number
     ) => Effect.Effect<Redacted.Redacted<string>, ConnectionError>;
+    /**
+     * Counts one send or reply from a Pidgeon connection on `day` (UTC, `YYYY-MM-DD`) before
+     * Pidgeon sees it, in one atomic statement, so the count holds across processes and restarts.
+     * Answers false, counting nothing, once the day's count has reached `budget`.
+     */
+    readonly countSend: (
+      companyId: string,
+      id: string,
+      day: string,
+      budget: number
+    ) => Effect.Effect<boolean, ConnectionStorageFailed>;
+    /** How many sends and replies a Pidgeon connection has counted on `day` (UTC). */
+    readonly sends: (
+      companyId: string,
+      id: string,
+      day: string
+    ) => Effect.Effect<number, ConnectionStorageFailed>;
   }
 >()("@patchy/integrations/ConnectionStore") {}

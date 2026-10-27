@@ -47,6 +47,7 @@ import type { Prepared } from "./devPreparation.js";
 import { AgentRequest, atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
 import * as DevServerWatch from "./devServerWatch.js";
+import { guestAliases } from "./serverBuild.js";
 
 const api = HttpApi.make("patchy").add(RuntimeGroup, RuntimeStreamGroup);
 const headers = {
@@ -91,9 +92,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
       ? yield* DevServerWatch.watch(
           record.root,
           toolchain,
-          Object.entries(prepared.manifest.uses)
-            .filter(([, declaration]) => declaration.kind === "sharedStore")
-            .map(([alias]) => alias),
+          guestAliases(prepared.manifest.uses),
           prepared.manifest.tables
         )
       : undefined;

@@ -7,17 +7,18 @@ import * as Path from "effect/Path";
 import { expect } from "vitest";
 import * as Companies from "@patchy/companies/Companies";
 import * as Testing from "@patchy/sql/testing";
+import { decodeMail } from "./pidgeon.js";
 import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const repo = new URL("../../..", import.meta.url).pathname;
 
 it.layer(Platform)("scenarios", (it) => {
-  it.effect("loads every committed scenario and finds each repo patch's source", () =>
+  it.effect("loads every committed scenario and finds each repo patch's source and its mail", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline"]) {
+      for (const name of ["team", "brightline", "pidgeon"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -26,6 +27,17 @@ it.layer(Platform)("scenarios", (it) => {
               : path.join(dir, "files", patch.file);
           expect(yield* fs.exists(source), source).toBe(true);
         }
+        for (const connection of scenario.connections ?? [])
+          if (connection.mail !== undefined) {
+            const mail = yield* decodeMail(
+              yield* fs.readFileString(path.join(dir, connection.mail))
+            );
+            const labels = new Set(mail.labels.map((label) => label.name));
+            for (const thread of mail.threads) {
+              expect(thread.messages[0].from).not.toBe("me");
+              for (const label of thread.labels ?? []) expect(labels.has(label), label).toBe(true);
+            }
+          }
       }
       const { scenario } = yield* loadScenario(repo, "brightline");
       expect(publisherToken(scenario)).toBe("patchy-env-brightline-allison");
@@ -53,6 +65,23 @@ it.layer(Platform)("scenarios", (it) => {
       );
       const error = yield* Effect.flip(loadScenario(root, "bad"));
       expect(error.message).toContain("the publisher must be an admin");
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("refuses a patch naming a connection the scenario doesn't make", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(root, "scenarios", "loose"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "scenarios", "loose", "scenario.json"),
+        `{"company":{"name":"Loose","handle":"loose"},"publisher":"a",
+          "people":[{"key":"a","name":"A","email":"a@loose.example","role":"admin"}],
+          "patches":[{"repo":"desk","tier":1,"description":"Desk","connections":["pidgeon/support"]}]}`
+      );
+      const error = yield* Effect.flip(loadScenario(root, "loose"));
+      expect(error.message).toContain("desk names pidgeon/support");
     }).pipe(Effect.scoped)
   );
 });

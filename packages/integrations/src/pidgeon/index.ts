@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import { defineIntegration } from "../definition.js";
 import { generate } from "./Generate.js";
 import * as Keys from "./Keys.js";
+import { operations } from "./Operations.js";
 import * as Source from "./Source.js";
 
 const metadata = {
@@ -13,9 +14,6 @@ const metadata = {
     return (yield* Keys.inspect(credentials, credentials.identityId, access)).snapshot;
   })
 };
-
-/** No operations yet: #825 adds reads and writes, and #826 dev's live reads. */
-const operations = {};
 
 // Keep declaration emission pointed at the operation module's public types.
 export const pidgeon: {

@@ -406,7 +406,7 @@ describe("patch-repo commands", () => {
     expect(JSON.parse(missing.stderr)).toMatchObject({ code: "connection_not_connected" });
   });
 
-  it("adds a Pidgeon declaration with its context alone, and removes it again", async () => {
+  it("adds a Pidgeon declaration with its client and skill, and removes them again", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
     const result = await runCli(["add", "pidgeon/support", "--json"], { cwd: dir, env });
@@ -415,8 +415,11 @@ describe("patch-repo commands", () => {
       ok: true,
       alias: "support",
       declaration: { kind: "pidgeon", handle: "support" },
-      generated: expect.arrayContaining(["patchy/_generated/context/support.md"]),
-      skills: [...coreProjectSkills].sort()
+      generated: expect.arrayContaining([
+        "patchy/_generated/uses/support.ts",
+        "patchy/_generated/context/support.md"
+      ]),
+      skills: [...coreProjectSkills, "patchy-pidgeon"].sort()
     });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
       '"support": { kind: "pidgeon", handle: "support" }'
@@ -427,7 +430,10 @@ describe("patch-repo commands", () => {
     expect(readFileSync(path.join(dir, "patchy/_generated/context/support.md"), "utf8")).toContain(
       "Address: <code>support@acme.example</code>"
     );
-    expect(existsSync(path.join(dir, "patchy/_generated/uses/support.ts"))).toBe(false);
+    expect(readFileSync(path.join(dir, "patchy/_generated/uses/support.ts"), "utf8")).toContain(
+      'export const address = "support@acme.example";'
+    );
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-pidgeon/SKILL.md"))).toBe(true);
     expect(existsSync(path.join(dir, "fixtures"))).toBe(false);
     // Only a connected Pidgeon connection of that name is added.
     const missing = await runCli(["add", "pidgeon/product", "--json"], { cwd: dir, env });
@@ -437,6 +443,8 @@ describe("patch-repo commands", () => {
     expect(removed).toMatchObject({ status: 0, stderr: "" });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).not.toContain("pidgeon");
     expect(existsSync(path.join(dir, "patchy/_generated/context/support.md"))).toBe(false);
+    expect(existsSync(path.join(dir, "patchy/_generated/uses/support.ts"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-pidgeon"))).toBe(false);
   });
 
   it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {

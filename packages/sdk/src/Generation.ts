@@ -150,6 +150,7 @@ const knownSkills = [
   "patchy-server",
   "patchy-postgres",
   "patchy-posthog",
+  "patchy-pidgeon",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -255,11 +256,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const uses: Array<
     (typeof Generated.Type)["uses"][number] & {
       declaration: (typeof GenerateRequest.Type)["manifest"]["uses"][string];
-      /** Absent while an integration has no project skill, as Pidgeon until #825. */
-      skill?: string;
+      skill: string;
       context: string;
-      /** Absent while an integration's client has no operations, as Pidgeon's until #825. */
-      client?: string;
+      client: string;
       fixture?: string;
     }
   > = [];
@@ -357,20 +356,22 @@ export const generate = Effect.fn("Generation.generate")(function* (
         });
         skills.add("patchy-postgres");
       } else if (stored.integration === "pidgeon") {
-        // Until its operations arrive (#825), a Pidgeon declaration brings its context alone: no
-        // client, no skill, no fixture.
+        // Pidgeon has no fixture: its mail can't be invented to resemble the real address.
         const declared = { kind: "pidgeon" as const, ...resolved };
         metadata.pidgeon[alias] = { declaration: declared, snapshot: stored.snapshot };
         const output = Pidgeon.pidgeon.generate({ ...described, kind: "pidgeon" }, stored.snapshot);
+        files.set(client, output.client);
         files.set(context, output.context);
         uses.push({
           alias,
           id: resolved.id,
           revision: resolved.revision,
           declaration: declared,
-          context
+          skill: ".agents/skills/patchy-pidgeon/SKILL.md",
+          context,
+          client
         });
-        continue;
+        skills.add("patchy-pidgeon");
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };

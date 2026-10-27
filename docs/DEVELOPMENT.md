@@ -320,7 +320,8 @@ An environment is this instance plus what a multi-person check or demo needs:
 is three people and no patches; `brightline` is a five-person agency with tier 0,
 1 and 2 patches, agent areas on its tier 2 ones and agent access on, and takes
 about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
-new Pidgeon test address. `up` is idempotent and resumes a
+new Pidgeon test address holding customer mail, and a tier 1 Support desk that
+answers it. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -593,8 +594,12 @@ can quote it.
   through the connect page in a browser with a test admin key,
   `PIDGEON_TEST_ADMIN_KEY` from the environment or from
   `~/.config/patchy-cloud/dev.env` as Clerk's keys are, creating a new test
-  address on pidgeon.email; without the key, or with one that isn't a test key,
-  it says so and skips Pidgeon. `up` records each test address it asks Pidgeon
+  address on pidgeon.email, then delivers the scenario's mail to it as mail from
+  outside, through Pidgeon's `POST /test/inbound` (which carries no
+  attachments), with the desk's replies sent from the address, its labels and
+  statuses, each write under its own Idempotency-Key so a resumed `up` sends
+  nothing twice. Without the key, or with one that isn't a test key, it says so
+  and skips Pidgeon and the patches that declare it. `up` records each test address it asks Pidgeon
   for in the environment folder, and `pnpm dev down` and `reset` take those
   down with the test key, needing no instance: they revoke each Patchy-named
   test key below admin that reaches only those addresses, delete the addresses,
@@ -619,8 +624,11 @@ can quote it.
   mints an hour and, on the free plan, 10 active keys, test keys included, two of
   them the admin keys. So the suite refuses a key that isn't a test key before
   changing anything, paces itself to about 48 calls a minute, keeps at most
-  three of its own keys alive at once, waits out a 429 or a full key count
-  (402), and stops using Pidgeon 20 minutes after it starts. Before it starts it
+  three of its own keys alive at once and fails a test that would mint past
+  six, prints the most it held, waits out a 429 or a full key count (402), and
+  stops using Pidgeon 20 minutes after it starts. It changes an address's send
+  policy, approval or holding only on its own run's test addresses, through the
+  harness. Before it starts it
   sweeps what nobody can still be using: run-tagged test addresses older than an
   hour, then Patchy-named test keys below admin that reach nothing; when it ends,
   its own, however it ended. The sweep never touches anything else. CI runs it in

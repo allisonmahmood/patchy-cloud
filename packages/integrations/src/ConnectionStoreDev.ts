@@ -15,6 +15,9 @@ export interface DevConnection {
 /** Metadata only: no platform SQL, credential keyring, credentials or network source. */
 export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
   const unavailable = () => Effect.fail(new ConnectionStore.ConnectionMutationUnavailable({}));
+  // Sends counted in this process only, by connection and UTC day.
+  const sends = new Map<string, number>();
+  const sendKey = (companyId: string, id: string, day: string) => `${companyId}\n${id}\n${day}`;
   return Layer.succeed(
     ConnectionStore.ConnectionStore,
     ConnectionStore.ConnectionStore.of({
@@ -111,7 +114,16 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       disconnect: unavailable,
       reconnect: unavailable,
       describe: unavailable,
-      delete: unavailable
+      delete: unavailable,
+      countSend: (companyId, id, day, budget) =>
+        Effect.sync(() => {
+          const key = sendKey(companyId, id, day);
+          const count = sends.get(key) ?? 0;
+          if (count >= budget) return false;
+          sends.set(key, count + 1);
+          return true;
+        }),
+      sends: (companyId, id, day) => Effect.sync(() => sends.get(sendKey(companyId, id, day)) ?? 0)
     })
   );
 };

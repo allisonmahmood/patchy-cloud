@@ -897,4 +897,67 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         assert.strictEqual(seen.length, 1);
       }).pipe(Effect.scoped)
   );
+  it.effect(
+    "Pidgeon runs only in actions, a read-only action reads but never writes, and its cap fits a 100,000-character body",
+    () =>
+      Effect.gen(function* () {
+        const capabilities = yield* InvocationCapabilities.make;
+        const maxBytes = yield* ContractLimits.get("runtime.pidgeon.bytes");
+        const ran: Array<string> = [];
+        const handler = (op: string): Runtime.JsonHandler => ({
+          kind: "integration",
+          connectionId: () => "pidgeon-connection",
+          run: () =>
+            Effect.sync(() => {
+              ran.push(op);
+              return { ok: true };
+            })
+        });
+        const gateway = yield* CallbackGateway.make({
+          "pidgeon.read": handler("pidgeon.read"),
+          "pidgeon.write": handler("pidgeon.write")
+        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+        const read = {
+          op: "pidgeon.read",
+          args: { connection: "inbox", operation: "labels.list" }
+        };
+        const reply = (text: string) => ({
+          op: "pidgeon.write",
+          args: {
+            connection: "inbox",
+            operation: "messages.reply",
+            input: { id: "msg_1", text, idempotencyKey: "draft-gateway-1" }
+          }
+        });
+        for (const kind of ["query", "mutation"] as const)
+          for (const call of [read, reply("Hi")]) {
+            const capability = yield* Fixtures.issue(capabilities, { kind });
+            assert.include(yield* gateway.callback(capability.token, capability.attempt, call), {
+              ok: false,
+              code: "access_denied"
+            });
+          }
+        assert.deepStrictEqual(ran, []);
+        const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+        assert.isTrue((yield* gateway.callback(readOnly.token, readOnly.attempt, read)).ok);
+        assert.include(yield* gateway.callback(readOnly.token, readOnly.attempt, reply("Hi")), {
+          ok: false,
+          code: "access_denied",
+          error: "A read-only action cannot write."
+        });
+        assert.deepStrictEqual(ran, ["pidgeon.read"]);
+        // 100,000 characters that JSON escapes to six bytes each, and as many four-byte ones.
+        const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+        for (const text of ["\u0001".repeat(100_000), "😀".repeat(50_000)]) {
+          assert.isBelow(Buffer.byteLength(JSON.stringify(reply(text))), maxBytes);
+          assert.isTrue((yield* gateway.callback(action.token, action.attempt, reply(text))).ok);
+        }
+        // Past the cap, nothing runs.
+        assert.include(
+          yield* gateway.callback(action.token, action.attempt, reply("\u0001".repeat(200_000))),
+          { ok: false, code: "too_large", limitId: "runtime.pidgeon.bytes", value: maxBytes }
+        );
+        assert.deepStrictEqual(ran, ["pidgeon.read", "pidgeon.write", "pidgeon.write"]);
+      }).pipe(Effect.scoped)
+  );
 });

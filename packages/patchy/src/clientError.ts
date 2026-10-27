@@ -33,16 +33,36 @@ export const errorCodes = {
   tier2_not_public: true,
   limit_exceeded: true,
   offset_exhausted: true,
-  source_rate_limited: true
+  source_rate_limited: true,
+  idempotency_conflict: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };
 type ColumnReason = "missing" | "duplicate" | "type" | "null" | "value" | "row_width";
 /**
  * Details follow the integration an operation belongs to. Postgres's are the default, so code
- * that narrows on the code alone keeps its types; PostHog's need its operation or integration.
+ * that narrows on the code alone keeps its types; PostHog's and Pidgeon's need its operation or
+ * integration.
  */
 type PostHogOperation = `posthog.${string}`;
+type PidgeonOperation = `pidgeon.${string}`;
+/** Pidgeon's refusals that carry its own details. */
+type PidgeonDetails<C extends ErrorCode> = C extends "source_rate_limited"
+  ? { readonly limit: "requests" | "plan" | "budget" }
+  : C extends "access_denied"
+    ? {
+        /**
+         * Why Pidgeon said no. A whole send, and nothing went: the send policy (`not_permitted`),
+         * a rule (`blocked`), or text read in another conversation (`exfiltration_blocked`). A
+         * message the firewall holds for a person (`held`) can't be read or answered.
+         */
+        readonly reason?: "not_permitted" | "blocked" | "exfiltration_blocked" | "held";
+        /** Pidgeon's own explanation, written to be shown to a person. */
+        readonly message?: string;
+      }
+    : C extends "invalid_request"
+      ? { readonly field?: string; readonly message?: string }
+      : Readonly<Record<string, unknown>>;
 export type ShapeMismatchDetails<O extends string = string> = O extends PostHogOperation
   ? {
       readonly column: string;
@@ -52,19 +72,32 @@ export type ShapeMismatchDetails<O extends string = string> = O extends PostHogO
     }
   : | { readonly column: string; readonly reason: ColumnReason }
     | { readonly relation: RelationIdentifier; readonly reason: "source_schema_changed" };
-export type ErrorDetails<C extends ErrorCode, O extends string = string> = C extends "invalid_query"
-  ? O extends PostHogOperation
-    ? { readonly message: string }
-    : { readonly sqlstate: string; readonly message: string; readonly position?: string }
-  : C extends "shape_mismatch"
-    ? ShapeMismatchDetails<O>
-    : C extends "relation_unknown"
-      ? { readonly relation: RelationIdentifier }
-      : C extends "offset_exhausted"
-        ? { readonly maxOffset: 10000 }
-        : C extends "too_large"
-          ? { readonly maxRows?: 1000; readonly maxItems?: number; readonly maxBytes?: number }
-          : Readonly<Record<string, unknown>>;
+export type ErrorDetails<C extends ErrorCode, O extends string = string> = C extends
+  "source_rate_limited" | "access_denied" | "invalid_request"
+  ? O extends PidgeonOperation
+    ? PidgeonDetails<C>
+    : Readonly<Record<string, unknown>>
+  : C extends "idempotency_conflict"
+    ? {
+        /**
+         * `mismatch`: the draft's key already went with different mail, or from another key.
+         * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
+         */
+        readonly reason: "mismatch" | "in_progress";
+      }
+    : C extends "invalid_query"
+      ? O extends PostHogOperation
+        ? { readonly message: string }
+        : { readonly sqlstate: string; readonly message: string; readonly position?: string }
+      : C extends "shape_mismatch"
+        ? ShapeMismatchDetails<O>
+        : C extends "relation_unknown"
+          ? { readonly relation: RelationIdentifier }
+          : C extends "offset_exhausted"
+            ? { readonly maxOffset: 10000 }
+            : C extends "too_large"
+              ? { readonly maxRows?: 1000; readonly maxItems?: number; readonly maxBytes?: number }
+              : Readonly<Record<string, unknown>>;
 
 export class PatchyError<C extends ErrorCode = ErrorCode, O extends string = string> extends Error {
   override readonly name = "PatchyError";
@@ -92,7 +125,7 @@ export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
 /** The integrations whose refusals carry their own details. */
-type Integration = "postgres" | "posthog";
+type Integration = "postgres" | "posthog" | "pidgeon";
 /**
  * An integration or one of its operations. Each names exactly one integration, so the details
  * it narrows to are never a guess.

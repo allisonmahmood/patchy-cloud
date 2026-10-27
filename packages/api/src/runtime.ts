@@ -13,6 +13,7 @@ import {
 } from "./schemas.js";
 import { postgresOperations } from "./postgres.js";
 import { posthogOperations } from "./posthog.js";
+import { pidgeonOperations } from "./pidgeon.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -33,6 +34,7 @@ export const runtimeByteLimits = {
   batchBytes: registry["runtime.batch.bytes"].default,
   postgresBytes: registry["runtime.postgres.bytes"].default,
   posthogBytes: registry["runtime.posthog.bytes"].default,
+  pidgeonBytes: registry["runtime.pidgeon.bytes"].default,
   serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
@@ -44,6 +46,7 @@ export type RuntimeBodyLimitId =
   | "runtime.batch.bytes"
   | "runtime.postgres.bytes"
   | "runtime.posthog.bytes"
+  | "runtime.pidgeon.bytes"
   | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
@@ -55,9 +58,11 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
         ? "runtime.postgres.bytes"
         : op.startsWith("posthog.")
           ? "runtime.posthog.bytes"
-          : op === "server.call"
-            ? "tier2.args.bytes"
-            : "runtime.call.bytes";
+          : op.startsWith("pidgeon.")
+            ? "runtime.pidgeon.bytes"
+            : op === "server.call"
+              ? "tier2.args.bytes"
+              : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -68,6 +73,7 @@ export function runtimeBodyLimit(
     readonly batchBytes: number;
     readonly postgresBytes: number;
     readonly posthogBytes: number;
+    readonly pidgeonBytes: number;
     readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
@@ -80,6 +86,8 @@ export function runtimeBodyLimit(
       return limits.postgresBytes;
     case "runtime.posthog.bytes":
       return limits.posthogBytes;
+    case "runtime.pidgeon.bytes":
+      return limits.pidgeonBytes;
     case "tier2.args.bytes":
       return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
@@ -344,6 +352,7 @@ export type ServerCall = typeof ServerCall.Type;
 export const runtimeOperations = {
   ...postgresOperations,
   ...posthogOperations,
+  ...pidgeonOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),
@@ -625,7 +634,8 @@ export const RuntimeCode = Schema.Literals([
   "tier2_not_public",
   "limit_exceeded",
   "offset_exhausted",
-  "source_rate_limited"
+  "source_rate_limited",
+  "idempotency_conflict"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 
