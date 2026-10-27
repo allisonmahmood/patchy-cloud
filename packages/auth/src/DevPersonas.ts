@@ -110,6 +110,9 @@ export const make = Effect.gen(function* () {
     signInUrl: (path) => new URL(`/dev/sign-in?return=${encodeURIComponent(path)}`, publicUrl).href,
     waitlistUrl: undefined,
     authenticate,
+    // Personas prove no real email ownership; they exist only on the guarded local instance.
+    account: ({ email }) =>
+      Effect.succeed({ verifiedEmails: [email.toLowerCase()], canCreateCompany: false }),
     // Deactivation is enforced through the users table, as it is for Clerk sessions.
     isActive: () => Effect.succeed(true),
     revoke: () => Effect.void,

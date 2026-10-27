@@ -1,3 +1,4 @@
+import { layerClerkAccounts } from "./testing.js";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -34,7 +35,7 @@ const localRevocation = Layer.effect(
     ...session,
     revoke: () => Effect.void
   }))
-);
+).pipe(Layer.provide(layerClerkAccounts));
 /**
  * Probes for receipts: a signed-in redirect, a signed-in page without the app shell, and one with
  * it, each the shape a real handler takes.

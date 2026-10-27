@@ -354,6 +354,25 @@ and comes back still signed out. Set the claims in the dashboard's session
 settings or with `clerk config patch` (`session.claims`). A production instance
 cloned from development copies them.
 
+### Patch-recipient enrollment
+
+A patch invitation sets Clerk public metadata `patchySignup: "patch-recipient"` only
+on the account created from its signup ticket. This is not patch authority: accepted
+Patchy grants and real company membership still decide access. Existing accounts and
+ordinary beta invitations retain their enrollment contract.
+
+To approve a patch recipient to create their own company, an operator sets
+`patchyCompanyCreationApproved: true` in that account's **private** Clerk metadata
+through the Backend API or dashboard. Enrollment reads the current account; unsafe
+metadata, form fields and stale session claims confer no approval. Removing approval
+blocks later company creation, but does not deactivate an existing membership or
+revoke a patch grant. An ordinary company invitation permits joining that company
+without company-creation approval. There is no self-service approval UI yet.
+
+Do not roll back to code that ignores the signup marker after enabling real patch
+invitations: those accounts could then self-create companies. Sharing is still
+loopback-only; this change does not enable a production rollout.
+
 ### The production instance
 
 Production is the **Patchy Cloud** application's production instance, on the

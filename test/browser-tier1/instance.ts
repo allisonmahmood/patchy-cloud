@@ -26,7 +26,12 @@ import type { BrowserContext } from "@playwright/test";
 import { RuntimeStreamFrame, type Manifest } from "../../packages/api/src/index.js";
 import { migrations } from "../../apps/server/src/migrations.js";
 import { layerFromUrl, migrate } from "../../packages/sql/src/index.js";
-import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/testing.js";
+import {
+  clerkAccount,
+  clerkEnv,
+  signedInCookies,
+  signSession
+} from "../../packages/auth/src/testing.js";
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
 import { escapeAttribute } from "../../packages/core/src/html.js";
@@ -325,6 +330,7 @@ export async function startInstance(options: {
   let proxy: Server | Http2SecureServer | undefined;
   const sessions = new Set<ServerHttp2Session>();
   let foreign: Server | undefined;
+  let clerkBackend: Server | undefined;
   const connections = new Set<Client>();
   let closed = false;
   const fleetDirectory = path.join(directory, "execution-fleet");
@@ -349,6 +355,9 @@ export async function startInstance(options: {
       },
       ...[...children].map((server) => () => stopChild(server)),
       async () => {
+        if (clerkBackend) await stopServer(clerkBackend);
+      },
+      async () => {
         if (fleetStarted)
           await Effect.runPromise(
             LocalTaskProvider.cleanup(fleetDirectory).pipe(
@@ -365,6 +374,25 @@ export async function startInstance(options: {
   try {
     database = await options.cluster.clonePlatform();
     const databaseUrl = database.url;
+    // Only account lookup is replaced; signed sessions and all Patchy access checks stay real.
+    clerkBackend = createServer(async (request, response) => {
+      const sub = decodeURIComponent(request.url?.split("/").at(-1) ?? "");
+      const member =
+        platform === undefined
+          ? undefined
+          : (await platform.query("SELECT email FROM users WHERE clerk_user_id=$1", [sub])).rows[0];
+      const email =
+        member?.email ?? (sub === "user_external_browser" ? "recipient@example.com" : undefined);
+      response.writeHead(email ? 200 : 404, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          email
+            ? clerkAccount(sub, email, { public_metadata: { patchySignup: "patch-recipient" } })
+            : { errors: [{ code: "resource_not_found", message: "Unknown account" }] }
+        )
+      );
+    });
+    const clerkApiUrl = `http://127.0.0.1:${await listen(clerkBackend)}`;
     const serverReservation = createServer();
     // The proxy follows the backend if a launch has to move to another port.
     let port = await listen(serverReservation);
@@ -606,6 +634,7 @@ export async function startInstance(options: {
           HOME: directory,
           NODE_ENV: "test",
           ...clerkEnv(),
+          PATCHY_TEST_CLERK_API_URL: clerkApiUrl,
           CLERK_AUTHORIZED_PARTIES: origin,
           PORT: String(serverPort),
           DATABASE_URL: databaseUrl,

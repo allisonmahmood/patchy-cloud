@@ -377,23 +377,27 @@ function account(user: AppShell["viewer"]["user"]): string {
 function appBody(app: AppShell, body: string): string {
   const place = (item: (typeof places)[number]["items"][number]) =>
     `<a class="app-place" href="${item.href}"${item.section === app.section ? ' aria-current="page"' : ""}>${item.label}</a>`;
-  const nav = app.viewer.company === null
-    ? '<a class="app-place" href="/" aria-current="page">Shared with you</a>'
-    : places
-    .map((group) =>
-      group.label === undefined
-        ? group.items.map(place).join("")
-        : `<div class="app-group" role="group" aria-labelledby="app-group-${group.label.toLowerCase()}"><p class="app-group-label" id="app-group-${group.label.toLowerCase()}">${group.label}</p>${group.items.map(place).join("")}</div>`
-    )
-    .join("");
-  const search = app.viewer.company === null ? "" : searchField({
-    action: "/",
-    id: "app-search",
-    query: app.query ?? "",
-    placeholder: "Search patches",
-    label: "Search patches",
-    className: "app-search"
-  });
+  const nav =
+    app.viewer.company === null
+      ? '<a class="app-place" href="/" aria-current="page">Shared with you</a>'
+      : places
+          .map((group) =>
+            group.label === undefined
+              ? group.items.map(place).join("")
+              : `<div class="app-group" role="group" aria-labelledby="app-group-${group.label.toLowerCase()}"><p class="app-group-label" id="app-group-${group.label.toLowerCase()}">${group.label}</p>${group.items.map(place).join("")}</div>`
+          )
+          .join("");
+  const search =
+    app.viewer.company === null
+      ? ""
+      : searchField({
+          action: "/",
+          id: "app-search",
+          query: app.query ?? "",
+          placeholder: "Search patches",
+          label: "Search patches",
+          className: "app-search"
+        });
   return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company?.name ?? "Patchy")}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${app.viewer.company === null ? "" : whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 

@@ -44,7 +44,8 @@ export class InviteMail extends Context.Service<
   {
     readonly create: (
       email: string,
-      redirectUrl?: string
+      redirectUrl?: string,
+      purpose?: "patch-recipient"
     ) => Effect.Effect<string, InviteMailError>;
     readonly revoke: (id: string) => Effect.Effect<void, InviteMailError | InvitationNotPending>;
   }
@@ -63,12 +64,17 @@ export const make = Effect.gen(function* () {
   // Company invitations keep Clerk's default Account Portal destination. A caller may
   // supply an Account Portal URL with a return destination; that page still consumes
   // the ticket, including when sign-up runs in waitlist mode.
-  const create = Effect.fn("InviteMail.create")(function* (email: string, redirectUrl?: string) {
+  const create = Effect.fn("InviteMail.create")(function* (
+    email: string,
+    redirectUrl?: string,
+    purpose?: "patch-recipient"
+  ) {
     const invitation = yield* Effect.tryPromise({
       try: () =>
         client.invitations.createInvitation({
           emailAddress: email,
           ...(redirectUrl === undefined ? {} : { redirectUrl }),
+          ...(purpose === undefined ? {} : { publicMetadata: { patchySignup: purpose } }),
           ignoreExisting: true,
           notify: true
         }),

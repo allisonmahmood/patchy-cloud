@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { connect as netConnect, type AddressInfo } from "node:net";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Session from "./Session.js";
 import * as ClientDocumentNetwork from "./ClientDocumentNetwork.js";
 
 /** Denied fetches, without credentials, query strings or fragments. */
@@ -104,6 +105,29 @@ const signJwt = (claims: Record<string, unknown>): string => {
   return `${content}.${sign("sha256", Buffer.from(content), privateKey).toString("base64url")}`;
 };
 
+/** Backend-account fixtures are independent from JWT claims; tests can make an email unverified. */
+export const accountProfiles = new Map<string, Record<string, unknown>>();
+export const clerkAccount = (
+  sub: string,
+  email: string,
+  metadata: Record<string, unknown> = {}
+) => ({
+  id: sub,
+  object: "user",
+  banned: false,
+  locked: false,
+  email_addresses: [
+    { id: "email_test", email_address: email, verification: { status: "verified" }, linked_to: [] }
+  ],
+  external_accounts: [],
+  phone_numbers: [],
+  web3_wallets: [],
+  public_metadata: {},
+  private_metadata: {},
+  unsafe_metadata: {},
+  ...metadata
+});
+
 export const signSession = (
   claims: Partial<{
     sub: string;
@@ -118,6 +142,9 @@ export const signSession = (
   }> = {}
 ): string => {
   const now = Math.floor(Date.now() / 1_000);
+  const sub = claims.sub ?? "user_dev";
+  if (!accountProfiles.has(sub))
+    accountProfiles.set(sub, clerkAccount(sub, claims.email ?? "dev@patchy.local"));
   return signJwt({
     sub: "user_dev",
     email: "dev@patchy.local",
@@ -253,3 +280,33 @@ export const layerClientDocumentNetwork = (documents: ReadonlyArray<ServedDocume
     ClientDocumentNetwork.ClientDocumentNetwork,
     Effect.map(clientDocumentHost(serveDocuments(documents)), ({ network }) => network)
   );
+
+/** The real Clerk SDK reads fresh account facts through this scoped offline HTTP boundary. */
+export const layerClerkAccounts = Layer.effect(
+  Session.backendApiUrl,
+  Effect.gen(function* () {
+    const host = createServer((request, response) => {
+      const sub = decodeURIComponent(request.url?.split("/").at(-1) ?? "");
+      const account = accountProfiles.get(sub);
+      response.writeHead(account === undefined ? 404 : 200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          account ?? { errors: [{ code: "resource_not_found", message: "Unknown account" }] }
+        )
+      );
+    });
+    const port = yield* Effect.acquireRelease(
+      Effect.callback<number>((resume) => {
+        host.listen(0, "127.0.0.1", () =>
+          resume(Effect.succeed((host.address() as AddressInfo).port))
+        );
+      }),
+      () =>
+        Effect.callback<void>((resume) => {
+          host.closeAllConnections();
+          host.close(() => resume(Effect.void));
+        })
+    );
+    return `http://127.0.0.1:${port}`;
+  })
+);

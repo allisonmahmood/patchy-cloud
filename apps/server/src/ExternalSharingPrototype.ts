@@ -134,7 +134,11 @@ export const make = Effect.gen(function* () {
   const grants = yield* PatchGrants.PatchGrants;
   const patches = yield* Patches.Patches;
   const content = yield* Content.Content;
-  const forRecipient = (claims: Claims) => grants.inbox(claims);
+  const recipient = Effect.fn("ExternalSharingPrototype.recipient")(function* (claims: Claims) {
+    const facts = yield* session.account(claims);
+    return { sub: claims.sub, verifiedEmails: facts.verifiedEmails };
+  });
+  const forRecipient = (claims: Claims) => Effect.flatMap(recipient(claims), grants.inbox);
   const canOpen = (claims: Claims, patchId: string, versionId?: string) =>
     Effect.map(grants.admit(claims.sub, patchId, versionId), (grant) => grant !== null);
   const redirect = (path: string) =>
@@ -167,7 +171,18 @@ export const make = Effect.gen(function* () {
     const query = (new URL(request.url, session.publicBaseUrl).searchParams.get("q") ?? "")
       .trim()
       .slice(0, 256);
-    const shares = yield* forRecipient(claims);
+    const facts = yield* session.account(claims);
+    const shares = yield* grants.inbox({ sub: claims.sub, verifiedEmails: facts.verifiedEmails });
+    const companyInvites =
+      user === null && facts.verifiedEmails.includes(claims.email.toLowerCase())
+        ? yield* companies.findInvitesByEmail(claims.email)
+        : [];
+    const enrollment =
+      user === null &&
+      (yield* users.findByClerkId(claims.sub)) === null &&
+      (companyInvites.length > 0 || facts.canCreateCompany)
+        ? `<p><a href="/join">${companyInvites.length > 0 ? "Join your company" : "Create company"}</a></p>`
+        : "";
     const company = user === null ? null : yield* companies.findById(user.companyId);
     if (user !== null && company === null)
       return yield* Effect.die(new Error("User company is missing"));
@@ -184,7 +199,7 @@ export const make = Effect.gen(function* () {
       {
         title: user === null ? "Home" : "Shared with you",
         heading: "",
-        body: `${renderSharedHome(shares, query, user === null ? "/" : "/shared")}<p class="supporting-text home-foot">Signed in as ${escapeHtml(claims.email)}. ${user === null ? "Your account can open shared patches. Creating and publishing patches requires company access." : 'Your company membership is unchanged. <a href="/">Your company home</a>'}</p>${management}`,
+        body: `${renderSharedHome(shares, query, user === null ? "/" : "/shared")}<p class="supporting-text home-foot">Signed in as ${escapeHtml(claims.email)}. ${user === null ? "Your account can open shared patches. Creating and publishing patches requires company access." : 'Your company membership is unchanged. <a href="/">Your company home</a>'}</p>${enrollment}${management}`,
         styles:
           homeStyles +
           ".shared-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; } .shared-link { overflow-wrap:anywhere; }",
@@ -209,7 +224,6 @@ export const make = Effect.gen(function* () {
     const user = yield* users.findByClerkId(claims.sub);
     // A company deactivates its own membership, not another company’s grant.
     const activeUser = user?.deactivatedAt ? null : user;
-    const invitations = yield* forRecipient(claims);
     const guest = activeUser === null;
     if (request.method === "GET" && path === "/" && guest) return yield* inbox(claims, null);
     if (request.method === "GET" && path === "/shared") return yield* inbox(claims, activeUser);
@@ -229,6 +243,7 @@ export const make = Effect.gen(function* () {
     }
     const invitation = path.match(/^\/~shared\/invite\/([^/]+)$/);
     if (request.method === "GET" && invitation) {
+      const invitations = yield* forRecipient(claims);
       const share = invitations.find((entry) => entry.id === invitation[1]);
       if (share === undefined)
         return page(
@@ -239,12 +254,12 @@ export const make = Effect.gen(function* () {
       if (share.subject !== null) return redirect(`/${share.handle}/${share.name}`);
       return page(
         `Open ${share.name}`,
-        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(claims.email)}.</p><p>You can use this live patch without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
+        `<p>${escapeHtml(share.company)} shared this page with ${escapeHtml(share.email)}.</p><p>You can use this live patch without joining the company.</p><form method="post" action="/~shared/accept/${escapeAttribute(share.id)}"><button class="btn btn-primary" type="submit">Accept invitation</button></form>${signOutForm(true, path)}`
       );
     }
     const accept = path.match(/^\/~shared\/accept\/([^/]+)$/);
     if (request.method === "POST" && accept) {
-      const accepted = yield* grants.accept(claims, accept[1]!);
+      const accepted = yield* grants.accept(yield* recipient(claims), accept[1]!);
       return accepted !== null
         ? redirect(`/${accepted.handle}/${accepted.name}`)
         : page(
@@ -277,6 +292,7 @@ export const make = Effect.gen(function* () {
       return (yield* grants.revoke(claims, revoke[1]!)) ? redirect("/shared") : refused();
 
     if (sharedPath) return Pages.notFound;
+    if (guest && path.toLowerCase() === "/join") return null;
     if (guest && /^\/(join|company|patches|guide|machines|login\/device|oauth)(\/|$)/i.test(path))
       return refused();
     if (request.method !== "GET") return null;

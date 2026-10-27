@@ -1,3 +1,4 @@
+import { layerClerkAccounts } from "./testing.js";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
@@ -130,7 +131,7 @@ const reported = (companyId: string) =>
 const services = Layer.mergeAll(
   AuthApi.layer,
   HttpServer.layerServices,
-  Session.layer,
+  Session.layer.pipe(Layer.provide(layerClerkAccounts)),
   Companies.layer,
   Users.layer,
   InviteMail.layerRecording

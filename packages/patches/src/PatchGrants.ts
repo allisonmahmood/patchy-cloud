@@ -23,6 +23,7 @@ export const Grant = Schema.Struct({
 });
 export type Grant = typeof Grant.Type;
 export type Account = { readonly sub: string; readonly email: string };
+export type Recipient = { readonly sub: string; readonly verifiedEmails: readonly string[] };
 
 export class CannotSharePatch extends Schema.TaggedError<CannotSharePatch>()("CannotSharePatch", {
   patchId: Schema.String
@@ -62,14 +63,14 @@ type ChangeError =
 export class PatchGrants extends Context.Service<
   PatchGrants,
   {
-    readonly inbox: (account: Account) => Effect.Effect<readonly Grant[], SqlError>;
+    readonly inbox: (account: Recipient) => Effect.Effect<readonly Grant[], SqlError>;
     readonly managed: (account: Account) => Effect.Effect<readonly Grant[], SqlError>;
     readonly admit: (
       subject: string,
       patchId: string,
       versionId?: string
     ) => Effect.Effect<Grant | null, SqlError>;
-    readonly accept: (account: Account, id: string) => Effect.Effect<Grant | null, SqlError>;
+    readonly accept: (account: Recipient, id: string) => Effect.Effect<Grant | null, SqlError>;
     readonly invite: (
       account: Account,
       input: {
@@ -102,9 +103,9 @@ export const make = Effect.gen(function* () {
     WHERE actor.clerk_user_id = ${subject} AND actor.deactivated_at IS NULL
     AND actor.company_id = p.company_id AND (actor.id = p.owner_user_id OR actor.role = 'admin'))`;
   const wake = (patchId: string) => wakes.publish([`patch:${patchId}`]);
-  const inbox = Effect.fn("PatchGrants.inbox")(function* (account: Account) {
+  const inbox = Effect.fn("PatchGrants.inbox")(function* (account: Recipient) {
     return yield* rows(sql`SELECT ${columns} ${joins()} WHERE NOT s.revoked AND ${live}
-      AND (s.subject = ${account.sub} OR (s.subject IS NULL AND s.email = ${account.email.toLowerCase()}))
+      AND (s.subject = ${account.sub} OR (s.subject IS NULL AND s.email = ANY(${[...account.verifiedEmails]}::text[])))
       ORDER BY c.name, p.name`);
   });
   const managed = Effect.fn("PatchGrants.managed")(function* (account: Account) {
@@ -125,11 +126,11 @@ export const make = Effect.gen(function* () {
 `);
     return found[0] ?? null;
   });
-  const accept = Effect.fn("PatchGrants.accept")(function* (account: Account, id: string) {
+  const accept = Effect.fn("PatchGrants.accept")(function* (account: Recipient, id: string) {
     // Email claims an invitation once. Accepted access subsequently follows the stable subject.
     const changed = yield* sql`UPDATE patch_grants s SET subject = ${account.sub}
       FROM patches p WHERE s.id = ${id} AND p.id = s.patch_id AND ${live} AND NOT s.revoked
-      AND ((s.subject IS NULL AND s.email = ${account.email.toLowerCase()}) OR s.subject = ${account.sub})
+      AND ((s.subject IS NULL AND s.email = ANY(${[...account.verifiedEmails]}::text[])) OR s.subject = ${account.sub})
       RETURNING s.patch_id AS "patchId"`;
     return changed[0] === undefined ? null : yield* admit(account.sub, String(changed[0].patchId));
   });
@@ -158,7 +159,7 @@ export const make = Effect.gen(function* () {
       yield* wake(input.patchId);
       if (input.destination !== undefined && grant.subject === null && grant.mailId === null) {
         const sent = yield* mail
-          .create(input.email.toLowerCase(), input.destination(grant.id))
+          .create(input.email.toLowerCase(), input.destination(grant.id), "patch-recipient")
           .pipe(Effect.mapError((cause) => new InvitationDeliveryFailed({ cause })));
         const attached = yield* sql`UPDATE patch_grants SET clerk_invitation_id = ${sent}
         WHERE id = ${grant.id} AND NOT revoked AND clerk_invitation_id IS NULL RETURNING id`;

@@ -37,6 +37,7 @@ test("a recipient without membership accepts one patch, cannot build, and loses 
     await installSessionRefreshBoundary(context, () => recipientSession(context, instance));
     const page = await context.newPage();
     expect((await page.goto(`${instance.origin}/`))?.status()).toBe(200);
+    await expect(page.getByRole("searchbox", { name: "Search shared patches" })).toBeVisible();
     await expect(page.getByText("Partner brief", { exact: true })).toBeVisible();
     await expect(page.getByText("Private forecast", { exact: true })).toHaveCount(0);
     for (const href of ["/company", "/patches", "/machines", "/join"])

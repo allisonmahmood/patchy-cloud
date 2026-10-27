@@ -31,6 +31,16 @@ const join = Effect.gen(function* () {
     requestedReturn && new URL(requestedReturn, session.publicBaseUrl).pathname !== "/join"
       ? requestedReturn
       : null;
+  const account = membership === null ? yield* session.account(claims) : null;
+  if (account !== null && !account.verifiedEmails.includes(claims.email.toLowerCase()))
+    return pageResponse(
+      {
+        title: "Verify your email",
+        status: 403,
+        body: `<p>Verify your sign-in email before joining or creating a company.</p>${signOutForm(true)}`
+      },
+      session
+    );
   const page: Join.JoinPage = yield* Join.handle(
     {
       clerkUserId: claims.sub,
@@ -38,7 +48,11 @@ const join = Effect.gen(function* () {
       name: claims.name
     },
     membership,
-    { returnTo: target, publicBaseUrl: session.publicBaseUrl }
+    {
+      returnTo: target,
+      publicBaseUrl: session.publicBaseUrl,
+      canCreateCompany: account?.canCreateCompany ?? false
+    }
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })

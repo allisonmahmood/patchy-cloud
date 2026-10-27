@@ -48,6 +48,7 @@ const suggestedHandle = (name: string) =>
 export interface Door {
   readonly returnTo: string | null;
   readonly publicBaseUrl: string;
+  readonly canCreateCompany: boolean;
 }
 
 type FieldRefusal = {
@@ -135,6 +136,12 @@ const render = Effect.fn("Join.render")(function* (
       status: refusal?.status
     };
   }
+  if (door.canCreateCompany === false)
+    return {
+      title: "Receive shared patches",
+      status: 403,
+      body: `<p>Your account can receive patches from different companies. To build and publish, ask a company admin to invite you or request approval to create a company.</p><div class="actions"><a class="btn btn-primary" href="/shared">Shared with you</a></div>`
+    };
   const name = fields?.name ?? `${displayName(claims)}'s company`;
   const handle = fields?.handle ?? suggestedHandle(name);
   const nameAt = fieldRefusal?.field === "name" ? fieldRefusal : undefined;
@@ -184,6 +191,7 @@ export const handle = Effect.fn("Join.handle")(function* (
           })
       );
     } else {
+      if (door.canCreateCompany === false) return yield* render(claims, door);
       if ((yield* companies.findInvitesByEmail(claims.email)).length > 0) {
         return yield* render(claims, door, entered, {
           message: "You have an invitation. Choose a company to join below.",

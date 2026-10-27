@@ -402,17 +402,21 @@ const home = Effect.fn("PortalPages.home")(function* () {
     {
       title: "Home",
       heading: "",
-      body: `${(yield* SharedInbox) ? '<div class="actions"><a class="btn" href="/shared">Shared with you</a></div>' : ""}${renderHome({
-        rows,
-        viewer,
-        opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
-        now,
-        publicBaseUrl: session.publicBaseUrl,
-        query,
-        connected: machine !== null,
-        note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
-        failures: yield* recentFailures(rows)
-      })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
+      body: `${(yield* SharedInbox) ? '<div class="actions"><a class="btn" href="/shared">Shared with you</a></div>' : ""}${renderHome(
+        {
+          rows,
+          viewer,
+          opens: new Map(
+            (yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])
+          ),
+          now,
+          publicBaseUrl: session.publicBaseUrl,
+          query,
+          connected: machine !== null,
+          note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
+          failures: yield* recentFailures(rows)
+        }
+      )}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
       styles: styles + homeStyles + finalStepStyles,
       app: {
         viewer,
