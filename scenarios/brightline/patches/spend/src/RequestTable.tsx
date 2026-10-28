@@ -29,12 +29,17 @@ export function RequestTable({ rows, people, selected, onSelect }: Props) {
       {rows.map((row) => {
         const requester = people.get(row.requester);
         return (
-          <button
-            type="button"
+          <div
             key={row.id}
             role="row"
+            tabIndex={0}
             class={`table-row${row.id === selected ? " is-selected" : ""}`}
             onClick={() => onSelect(row.id)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onSelect(row.id);
+            }}
           >
             <span class="cell-request" role="cell">
               <span class="row-title">{row.title}</span>
@@ -63,7 +68,7 @@ export function RequestTable({ rows, people, selected, onSelect }: Props) {
             <span role="cell" class="num muted">
               {age(row.submittedAt)}
             </span>
-          </button>
+          </div>
         );
       })}
     </div>
