@@ -86,13 +86,20 @@ export type Credentials = typeof Credentials.Type;
 export const Display = Schema.Struct({
   workspace: Schema.Struct({ id: Schema.String, name: Schema.String, slug: Schema.String }),
   keyHint: Schema.String,
+  /** The key's scopes as its latest check found them, every one a read. */
+  scopes: Schema.Array(Scope),
   /**
    * A check found the key can write, and the connection was disconnected for it: the write
    * scopes, the admin whose Test, Refresh or Reconnect ran the check, and when. Named on the page
    * until Replace key or a Reconnect's check finds a read-only key.
    */
   writable: Schema.optionalKey(
-    Schema.Struct({ scopes: Schema.Array(Scope), by: Schema.String, at: Schema.String })
+    Schema.Struct({
+      scopes: Schema.Array(Scope),
+      by: Schema.String,
+      at: Schema.String,
+      during: Schema.Literals(["test", "refresh", "reconnect"])
+    })
   )
 });
 export type Display = typeof Display.Type;

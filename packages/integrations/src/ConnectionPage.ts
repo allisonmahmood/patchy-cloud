@@ -42,14 +42,15 @@ export interface Page {
 }
 
 /** Every connections page's layout, the shared frame's and each integration's own. */
-export const styles = `${View.styles}${PidgeonPage.styles}`;
+export const styles = `${View.styles}${PidgeonPage.styles}${AttioPage.styles}`;
 
 type Submitted = Readonly<Record<string, string | undefined>>;
 
 /** An integration's page for new credentials, a new destination or new access. */
 interface CredentialsPage {
   readonly title: (name: string) => string;
-  readonly consequence: string;
+  /** What submitting does, in words that may name where the connection reads. */
+  readonly consequence: string | ((connection: ConnectionStore.Connection) => string);
   /** The submit button's label, where testing first isn't what it does. */
   readonly submit?: string;
   /** The fields; a refused submit keeps what the integration echoes, never secrets. */
@@ -334,6 +335,11 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
     Effect.catchTags({ SqlError: () => Effect.succeed(null) })
   );
   const known = about(connection);
+  // An Attio key a check found writable names whose check it was.
+  const standing =
+    connection.integration === "attio"
+      ? AttioPage.standing(connection, people ?? new Map(), yield* Clock.currentTimeMillis)
+      : known.standing;
   // A Pidgeon connection's sends today, against its budget; a count that can't be read says so.
   const sends =
     connection.integration === "pidgeon"
@@ -366,7 +372,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
       facts: [...known.facts, ...sends],
-      ...(known.standing === undefined ? {} : { standing: known.standing }),
+      ...(standing === undefined ? {} : { standing }),
       ...(known.tag === undefined ? {} : { tag: known.tag }),
       ...usage
     } satisfies View.Connection
@@ -450,7 +456,7 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
     readonly notice?: View.Notice;
   } = {}
 ) {
-  const { page, view } = yield* connectionView(viewer, id);
+  const { connection, page, view } = yield* connectionView(viewer, id);
   // Delete is offered only while nothing declares the connection; a stale link says why.
   if (action === "delete" && view.declared) return yield* connectionPage(viewer, id, inUse(id));
   const credentials =
@@ -466,7 +472,10 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
       actions: page.actions,
       form: credentials && {
         title: credentials.title(name),
-        consequence: credentials.consequence,
+        consequence:
+          typeof credentials.consequence === "string"
+            ? credentials.consequence
+            : credentials.consequence(connection),
         fields: credentials.fields(form.submitted ?? {}, form.notice),
         ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
       },

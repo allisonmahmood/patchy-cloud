@@ -420,7 +420,7 @@ it.layer(layer)("connections group", (it) => {
       yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
         status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
         VALUES ('conn_crm', 'cmp_foreign_connections', 'attio', 'crm', 'The CRM', 'company',
-          'connected', ${JSON.stringify({ workspace: { id: "ws", name: "Acme", slug: "acme" }, keyHint: "…abcd" })}::jsonb,
+          'connected', ${JSON.stringify({ workspace: { id: "ws", name: "Acme", slug: "acme" }, keyHint: "…abcd", scopes: [] })}::jsonb,
           'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
       // A CLI from before Attio names the integrations it decodes, and Attio isn't one.
       const older = yield* api.listConnections({

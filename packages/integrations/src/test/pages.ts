@@ -34,7 +34,10 @@ const origin = new URL(base).origin;
 /** Every business event the pages report, newest last. */
 export const events: Analytics.AnalyticsEvent[] = [];
 
-export const services = (pidgeon: Layer.Layer<PidgeonSource.Source>) =>
+export const services = (
+  pidgeon: Layer.Layer<PidgeonSource.Source>,
+  attio: Layer.Layer<AttioSource.Source> = AttioSource.layer
+) =>
   Layer.mergeAll(
     Session.layer,
     Companies.layer,
@@ -57,7 +60,7 @@ export const services = (pidgeon: Layer.Layer<PidgeonSource.Source>) =>
       )
     ),
     Layer.provideMerge(PostHogSource.layer),
-    Layer.provideMerge(AttioSource.layer),
+    Layer.provideMerge(attio),
     Layer.provideMerge(pidgeon),
     Layer.provideMerge(
       CredentialKeys.layerFromKeys(

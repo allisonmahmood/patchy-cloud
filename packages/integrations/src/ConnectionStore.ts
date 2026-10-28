@@ -173,6 +173,20 @@ export class ConnectionRetargetUnavailable extends Schema.TaggedError<Connection
     return "A Pidgeon connection is one address and can't move to another. Connect the other address as a new connection.";
   }
 }
+/** A connect by this name is still running in this process; a second submit doesn't start another. */
+export class ConnectInProgress extends Schema.TaggedError<ConnectInProgress>()(
+  "ConnectInProgress",
+  {
+    name: Schema.String,
+    startedAt: Schema.String
+  }
+) {
+  readonly code = "connect_in_progress";
+  readonly status = 409;
+  override get message() {
+    return `${this.name} is already connecting: another connect with this name started at ${this.startedAt.slice(11, 16)} UTC and is still running. Wait for it, at most a minute, then look for it in Integrations.`;
+  }
+}
 export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("ConnectionInUse", {}) {
   readonly code = "connection_in_use";
   readonly status = 409;
@@ -235,6 +249,7 @@ export type ConnectionError =
   | ConnectionRetargetRequired
   | ConnectionRetargetUnavailable
   | ConnectionInUse
+  | ConnectInProgress
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
   | PostgresSource.SourceError

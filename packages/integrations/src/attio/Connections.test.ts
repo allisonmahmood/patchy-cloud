@@ -80,7 +80,8 @@ it.layer(fixture)("Attio connections", (it) => {
       const sql = yield* SqlClient.SqlClient;
       assert.deepStrictEqual(attio(connection).display, {
         workspace: { id: "ws-acme", name: "Acme", slug: "acme" },
-        keyHint: `…${readKey.token.slice(-4)}`
+        keyHint: `…${readKey.token.slice(-4)}`,
+        scopes: [...readKey.scopes].sort()
       });
       const metadata = yield* store.snapshot(who.companyId, id, 1);
       if (metadata.integration !== "attio") return assert.fail("not an Attio snapshot");
@@ -142,6 +143,7 @@ it.layer(fixture)("Attio connections", (it) => {
         assert.strictEqual(after.metadataRevision, connection.metadataRevision);
         assert.deepStrictEqual(after.display.writable?.scopes, ["note:read-write"]);
         assert.strictEqual(after.display.writable?.by, other.userId);
+        assert.strictEqual(after.display.writable?.during, "refresh");
         // Patches are refused as for any disconnected connection: nothing reaches Attio.
         const sent = requests.length;
         assert.instanceOf(
@@ -328,6 +330,36 @@ it.layer(fixture)("Attio connections", (it) => {
           "ConnectionNotFound"
         ]
       );
+    })
+  );
+  it.effect("refuses a second connect by the same name while the first runs", () =>
+    Effect.gen(function* () {
+      let open = () => {};
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const honest = AttioDouble.workspace(readKey);
+      const double = AttioDouble.make(async (request) => {
+        if (request.url.pathname === "/v2/objects") await opened;
+        return honest(request);
+      });
+      const store = yield* SqlConnectionStore.make.pipe(Effect.provide(double.layer));
+      const connect = store.connect({
+        integration: "attio",
+        ...who,
+        handle: "crm-twice",
+        description: "",
+        credentials: Redacted.make(readKey.token)
+      });
+      const first = yield* connect.pipe(Effect.forkChild);
+      yield* TestClock.withLive(Effect.sleep("20 millis"));
+      const second = yield* connect.pipe(Effect.flip);
+      assert.instanceOf(second, ConnectionStore.ConnectInProgress);
+      assert.include(second.message, "attio/crm-twice is already connecting");
+      open();
+      assert.strictEqual((yield* Fiber.join(first)).handle, "crm-twice");
+      // Once it's done, the name is simply taken.
+      assert.instanceOf(yield* connect.pipe(Effect.flip), ConnectionStore.ConnectionHandleTaken);
     })
   );
 });

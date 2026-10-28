@@ -31,6 +31,7 @@ import {
   Connection,
   ConnectionChanged,
   ConnectionHandleTaken,
+  ConnectInProgress,
   ConnectionInUse,
   ConnectionNotConnected,
   ConnectionNotFound,
@@ -641,11 +642,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
 
     const attioSecret = (current: StoredAttio) =>
       keys.decrypt(current, current).pipe(Effect.flatMap(AttioSource.parseCredentials));
-    const attioDisplay = (self: AttioSource.Self, key: Redacted.Redacted<string>) =>
-      ({
-        workspace: self.workspace,
-        keyHint: AttioSource.keyHint(key)
-      }) satisfies AttioSource.Display;
+    /** What a passing check found, with no write scope left to name. */
+    const attioDisplay = (self: AttioSource.Self, keyHint: string): AttioSource.Display => ({
+      workspace: self.workspace,
+      keyHint,
+      scopes: self.scopes
+    });
     /** The key's workspace must be the connection's: a key never moves a connection. */
     const sameWorkspace = (current: StoredAttio, self: AttioSource.Self) =>
       self.workspace.id === current.display.workspace.id
@@ -662,7 +664,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
      * connection's, so a Replace key that landed meanwhile keeps its connection. Patchy never keeps
      * using a key it knows can write.
      */
-    const attioWritable = (input: Identity, checked: StoredAttio, error: AttioSource.WriteScopes) =>
+    const attioWritable = (
+      input: Identity,
+      checked: StoredAttio,
+      during: "test" | "refresh" | "reconnect",
+      error: AttioSource.WriteScopes
+    ) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         yield* sql.withTransaction(
@@ -674,7 +681,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               writable: {
                 scopes: error.scopes,
                 by: input.userId,
-                at: DateTime.formatIso(DateTime.makeUnsafe(now))
+                at: DateTime.formatIso(DateTime.makeUnsafe(now)),
+                during
               }
             };
             yield* sql`UPDATE connections SET display = ${encodeDisplay({ integration: "attio", display })}
@@ -685,61 +693,85 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         return yield* error;
       });
     /** The stored key's check, recorded in recent calls as the admin's. */
-    const attioCheck = (input: Identity, current: StoredAttio, op: string) =>
+    const attioCheck = (input: Identity, current: StoredAttio, during: "test" | "reconnect") =>
       Effect.gen(function* () {
         const { key } = yield* attioSecret(current);
         const self = yield* audited(
           { ...input, integration: "attio" },
-          op,
+          "attio.check",
           attio.check(Redacted.make(key))
         ).pipe(
-          Effect.catchTag("AttioWriteScopes", (error) => attioWritable(input, current, error))
+          Effect.catchTag("AttioWriteScopes", (error) =>
+            attioWritable(input, current, during, error)
+          )
         );
         yield* sameWorkspace(current, self);
         return self;
       });
 
+    /**
+     * Connects in progress in this process, by company and handle, and when each started: a second
+     * submit while discovery runs is refused rather than run beside it.
+     */
+    const connecting = new Map<string, number>();
     const attioConnect = Effect.fn("ConnectionStore.attioConnect")(function* (
       input: ConnectInput,
       report?: (connection: Connection) => Effect.Effect<void>
     ) {
-      const identity = { ...input, integration: "attio" as const, id: newInternalId("conn") };
-      const { self, snapshot } = yield* audited(
-        identity,
-        "attio.discover",
-        attio.inspect(input.credentials)
-      );
-      const encrypted = yield* keys.encrypt(
-        identity,
-        AttioSource.credentials({
-          key: Redacted.value(input.credentials),
-          workspaceId: self.workspace.id
-        })
-      );
-      const now = yield* Clock.currentTimeMillis;
-      return yield* reportedTransaction(
-        insert(
+      const slot = `${input.companyId}\n${input.handle}`;
+      const running = connecting.get(slot);
+      if (running !== undefined)
+        return yield* new ConnectInProgress({
+          name: `attio/${input.handle}`,
+          startedAt: DateTime.formatIso(DateTime.makeUnsafe(running))
+        });
+      connecting.set(slot, yield* Clock.currentTimeMillis);
+      return yield* Effect.gen(function* () {
+        const identity = { ...input, integration: "attio" as const, id: newInternalId("conn") };
+        const { self, snapshot } = yield* audited(
           identity,
-          input,
-          { integration: "attio", display: attioDisplay(self, input.credentials) },
-          encrypted,
-          { integration: "attio", snapshot },
-          now
-        ),
-        report
-      );
+          "attio.discover",
+          attio.inspect(input.credentials)
+        );
+        const encrypted = yield* keys.encrypt(
+          identity,
+          AttioSource.credentials({
+            key: Redacted.value(input.credentials),
+            workspaceId: self.workspace.id
+          })
+        );
+        const now = yield* Clock.currentTimeMillis;
+        return yield* reportedTransaction(
+          insert(
+            identity,
+            input,
+            {
+              integration: "attio",
+              display: attioDisplay(self, AttioSource.keyHint(input.credentials))
+            },
+            encrypted,
+            { integration: "attio", snapshot },
+            now
+          ),
+          report
+        );
+      }).pipe(Effect.ensuring(Effect.sync(() => connecting.delete(slot))));
     });
 
+    /** Test: the check, and what it found about the workspace and the key's scopes. */
     const attioTest = Effect.fn("ConnectionStore.attioTest")(function* (
       input: Identity,
       current: StoredAttio
     ) {
-      yield* attioCheck(input, current, "attio.check");
+      const self = yield* attioCheck(input, current, "test");
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* lock(input, current);
-          yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          const display = { ...current.display, workspace: self.workspace, scopes: self.scopes };
+          yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}),
+            display = ${encodeDisplay({ integration: "attio", display })}
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
         })
       );
@@ -770,8 +802,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           const revision = current.metadataRevision + 1;
           yield* writeSnapshot(input, revision, { integration: "attio", snapshot }, now);
           // A disconnected connection stays disconnected; the new key was checked read-only.
+          const display = attioDisplay(self, AttioSource.keyHint(input.credentials));
           yield* sql`UPDATE connections SET metadata_revision = ${revision},
-            display = ${encodeDisplay({ integration: "attio", display: attioDisplay(self, input.credentials) })},
+            display = ${encodeDisplay({ integration: "attio", display })},
             credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId},
             credential_revision = credential_revision + 1,
             last_tested_at = to_timestamp(${now / 1_000}),
@@ -793,7 +826,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         { ...input, integration: "attio" },
         "attio.discover",
         attio.inspect(Redacted.make(key))
-      ).pipe(Effect.catchTag("AttioWriteScopes", (error) => attioWritable(input, current, error)));
+      ).pipe(
+        Effect.catchTag("AttioWriteScopes", (error) =>
+          attioWritable(input, current, "refresh", error)
+        )
+      );
       yield* sameWorkspace(current, self);
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
@@ -801,8 +838,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           yield* lock(input, current);
           const revision = current.metadataRevision + 1;
           yield* writeSnapshot(input, revision, { integration: "attio", snapshot }, now);
+          const display = attioDisplay(self, current.display.keyHint);
           yield* sql`UPDATE connections SET metadata_revision = ${revision},
-            display = ${encodeDisplay({ integration: "attio", display: { ...current.display, workspace: self.workspace } })},
+            display = ${encodeDisplay({ integration: "attio", display })},
             last_tested_at = to_timestamp(${now / 1_000}),
             last_discovered_at = to_timestamp(${now / 1_000})
             WHERE id = ${input.id} AND company_id = ${input.companyId}`;
@@ -816,15 +854,12 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       input: Identity,
       current: StoredAttio
     ) {
-      yield* attioCheck(input, current, "attio.check");
+      const self = yield* attioCheck(input, current, "reconnect");
       const now = yield* Clock.currentTimeMillis;
-      const display: AttioSource.Display = {
-        workspace: current.display.workspace,
-        keyHint: current.display.keyHint
-      };
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* lock(input, current);
+          const display = attioDisplay(self, current.display.keyHint);
           yield* sql`UPDATE connections SET status = 'connected', credential_revision = credential_revision + 1,
             display = ${encodeDisplay({ integration: "attio", display })},
             last_tested_at = to_timestamp(${now / 1_000}) WHERE id = ${input.id} AND company_id = ${input.companyId}`;
