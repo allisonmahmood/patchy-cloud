@@ -1,0 +1,70 @@
+name: Attio live
+
+# Patchy's Attio connections against Attio itself: the probe workspace, read with its read-only
+# key. Offline tests carry correctness; this tier only catches Attio drifting, so `attio-live` is
+# informational and never a required check: a red run can't block a merge.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  attio-changes:
+    # Whether the live tier runs: on main, and on a pull request from this repository that touches
+    # Attio, when the repository has the read key. Fork and Dependabot pull requests never get it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          OURS: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+          HAS_KEY: ${{ secrets.ATTIO_TEST_READ_KEY != '' }}
+        run: |
+          if [ "$OURS" != "true" ] || [ "$HAS_KEY" != "true" ]; then
+            echo "No Attio read key for this run, so the live tier doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+            grep -qE '^(packages/integrations/(src/attio/|src/(Sql)?ConnectionStore\.ts$|live/(Attio|attio))|packages/api/src/attio|vitest\.attio-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/attio-live\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing Attio's live tier exercises changed, so it doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  attio-live:
+    # Every run shares the workspace's 100 reads a second and its query-complexity budget with
+    # developers' dev environments, so runs wait in one queue and none is cancelled, and the
+    # harness paces itself to about 20 requests a second. It only reads: nothing to sweep.
+    needs: attio-changes
+    if: needs.attio-changes.outputs.run == 'true'
+    concurrency:
+      group: attio-live
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ATTIO_TEST_READ_KEY: ${{ secrets.ATTIO_TEST_READ_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read Patchy's probe workspace through Attio connections
+        run: pnpm test:attio

@@ -410,4 +410,38 @@ it.layer(layer)("connections group", (it) => {
       );
     })
   );
+  it.effect("lists an Attio connection only to a caller that decodes Attio", () =>
+    Effect.gen(function* () {
+      const tokens = yield* MachineTokens.MachineTokens;
+      const api = yield* client(
+        (yield* tokens.mint({ userId: "connections-foreign", name: "Attio reader" })).token
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+        status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('conn_crm', 'cmp_foreign_connections', 'attio', 'crm', 'The CRM', 'company',
+          'connected', ${JSON.stringify({ workspace: { id: "ws", name: "Acme", slug: "acme" }, keyHint: "…abcd" })}::jsonb,
+          'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
+      // A CLI from before Attio names the integrations it decodes, and Attio isn't one.
+      const older = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon" }
+      });
+      assert.notInclude(
+        older.connections.map((connection) => connection.integration),
+        "attio"
+      );
+      const current = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon,attio", all: true }
+      });
+      assert.deepInclude(current.connections, {
+        id: "conn_crm",
+        handle: "crm",
+        integration: "attio",
+        description: "The CRM",
+        status: "connected",
+        hint: "patchy add attio/crm"
+      });
+      assert.deepInclude(current.offered ?? [], { integration: "attio", connected: true });
+    })
+  );
 });

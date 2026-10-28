@@ -659,9 +659,11 @@ const act = Effect.fn("ConnectionPage.act")(function* (
           );
         default: {
           const { page } = yield* connectionView(viewer, id);
-          // A Pidgeon key that stopped working is fixed by replacing it.
+          // A key that stopped working, or an Attio key that can write, is fixed by replacing it.
           const replace =
-            notice.code === "pidgeon_key_stopped"
+            notice.code === "pidgeon_key_stopped" ||
+            notice.code === "attio_key_unknown" ||
+            notice.code === "attio_write_scopes"
               ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace key…" } }
               : {};
           return yield* connectionPage(viewer, id, { ...atField(page, notice, []), ...replace });

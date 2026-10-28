@@ -1,5 +1,5 @@
 // First: the harness keeps Node's own fetch before anything replaces it.
-import * as Live from "./harness.js";
+import * as Live from "./pidgeonHarness.js";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, DevReadsGroup, type PidgeonSnapshot, WIRE_VERSION } from "@patchy/api";

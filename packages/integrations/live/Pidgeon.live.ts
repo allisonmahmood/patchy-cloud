@@ -1,5 +1,5 @@
 // First: the harness keeps Node's own fetch before the pages' offline Clerk fixture replaces it.
-import * as Live from "./harness.js";
+import * as Live from "./pidgeonHarness.js";
 import { assert, describe, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import * as Effect from "effect/Effect";

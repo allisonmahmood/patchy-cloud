@@ -287,4 +287,47 @@ it.layer(fixture)("Attio connections", (it) => {
       );
     })
   );
+  it.effect("stays hidden from the release before Attio, which still lists the rest", () =>
+    Effect.gen(function* () {
+      const { id } = yield* setup("crm-hidden");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+        VALUES ('pat_attio_hidden', ${who.companyId}, ${who.userId}, 'Deals', 'deals-hidden')`;
+      yield* sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key, content_hash,
+        file_size, created_by_machine_token_id, owner_user_id, tier, release, manifest_version,
+        wire_version, schema_revision, manifest, publish_key, payload_digest, publish_response,
+        publish_status)
+        VALUES ('ver_attio_hidden', 'pat_attio_hidden', 1, 'deals.html', 'test', 1, ${DEV_SEED.tokenId},
+          ${who.userId}, 1, 'test', 1, 1, 0,
+          ${JSON.stringify({ uses: { crm: { kind: "attio", handle: "crm-hidden", id, revision: 1 } } })}::jsonb,
+          'attio-hidden', 'test', '{}'::jsonb, 201)`;
+      // That release's queries: the same store, knowing only the integrations it shipped.
+      const before = yield* SqlConnectionStore.knowing(["postgres", "posthog", "pidgeon"]).pipe(
+        Effect.provide(AttioDouble.make(AttioDouble.workspace(readKey)).layer)
+      );
+      assert.notInclude(
+        (yield* before.list(who.companyId)).map((item) => item.id),
+        id
+      );
+      assert.isFalse((yield* before.usage(who.companyId)).has(id));
+      const declaration = { kind: "attio" as const, handle: "crm-hidden", id, revision: 1 };
+      const refusals = yield* Effect.all([
+        Effect.flip(before.get(who.companyId, id)),
+        Effect.flip(before.snapshot(who.companyId, id, 1)),
+        Effect.flip(before.resolve(who.companyId, declaration)),
+        Effect.flip(before.poolCredentials(who.companyId, declaration, 1)),
+        Effect.flip(before.disconnect(as(who, id)))
+      ]);
+      assert.deepStrictEqual(
+        refusals.map((error) => error._tag),
+        [
+          "ConnectionNotFound",
+          "ConnectionNotFound",
+          "ConnectionNotConnected",
+          "ConnectionNotConnected",
+          "ConnectionNotFound"
+        ]
+      );
+    })
+  );
 });
