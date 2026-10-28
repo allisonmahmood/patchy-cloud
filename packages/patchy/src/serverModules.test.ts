@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -128,8 +129,15 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-modules-" });
-      yield* fs.makeDirectory(path.join(root, "agent"));
+      // The repo's own compiler lists its files, as it does for pnpm typecheck.
+      yield* fs.makeDirectory(path.join(root, "node_modules"));
+      yield* fs.symlink(
+        path.dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+        path.join(root, "node_modules/typescript")
+      );
+      for (const folder of ["agent", "src"]) yield* fs.makeDirectory(path.join(root, folder));
       yield* fs.writeFileString(path.join(root, "agent/deals.ts"), "export {};");
+      yield* fs.writeFileString(path.join(root, "src/main.ts"), "export {};");
       const tsconfig = (include?: readonly string[]) =>
         fs.writeFileString(
           path.join(root, "tsconfig.json"),
@@ -138,13 +146,13 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
         );
       yield* tsconfig(["src", "server"]);
       assert.strictEqual(
-        agentTypecheckWarning(root, ["deals"]),
+        yield* agentTypecheckWarning(root, ["deals"]),
         'tsconfig.json doesn\'t include agent/, so pnpm typecheck skips your agent tools. Add "agent" to its include list.'
       );
-      assert.strictEqual(agentTypecheckWarning(root, []), undefined);
+      assert.strictEqual(yield* agentTypecheckWarning(root, []), undefined);
       for (const include of [["src", "agent"], ["agent/**/*.ts"], undefined]) {
         yield* tsconfig(include);
-        assert.strictEqual(agentTypecheckWarning(root, ["deals"]), undefined);
+        assert.strictEqual(yield* agentTypecheckWarning(root, ["deals"]), undefined);
       }
     })
   );

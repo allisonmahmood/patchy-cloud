@@ -127,7 +127,8 @@ it.each([
   ['import "patchy/preact";', "import_refused"],
   ['import "node:fs";', "import_refused"],
   ['if (false) void import("./never.ts");', "invalid_manifest"],
-  ['const source = "./never.ts"; void import(source);', "invalid_manifest"]
+  ['const source = "./never.ts"; void import(source);', "invalid_manifest"],
+  ['void import.defer("./never.ts");', "invalid_manifest"]
 ])("checks server graph imports before tree shaking: %s", async (source, code) => {
   const root = page(source);
   let refusal: LocalError | undefined;

@@ -2,14 +2,19 @@
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import * as path from "node:path";
+import { parse } from "@babel/parser";
+import type { Node } from "@babel/types";
 import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
-import ts from "typescript";
 import type { Plugin, ResolveFn } from "vite";
 import { SDK_ENTRY_POINTS } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 
 const modulePreloadPolyfill = "vite/modulepreload-polyfill";
+
+// Babel marks each AST node with a string `type`; locations and plain values have none.
+const isNode = (value: unknown): value is Node =>
+  typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
 
 /** Check each authored graph before aliases, tree shaking, or resolution hide imports. */
 export function pageImports(
@@ -97,45 +102,49 @@ export function pageImports(
     refuse(source, importer);
   };
   const checkJavaScript = (code: string, id: string) => {
-    const source = ts.createSourceFile(id, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    const visit = (node: ts.Node): void => {
-      if (ts.isImportDeclaration(node)) {
-        const clause = node.importClause;
+    // Only TypeScript files forbid JSX, whose tags would read as `<T>value` type assertions.
+    const typescriptOnly = /\.[cm]?ts(?:\?|$)/.test(id);
+    const program = parse(code, {
+      sourceType: "module",
+      plugins: [
+        "typescript",
+        "deferredImportEvaluation",
+        ...(typescriptOnly ? [] : (["jsx"] as const))
+      ]
+    }).program;
+    const literal = (node: Node | null | undefined) =>
+      node?.type === "StringLiteral"
+        ? node.value
+        : node?.type === "TemplateLiteral" && node.expressions.length === 0
+          ? (node.quasis[0]!.value.cooked ?? undefined)
+          : undefined;
+    const visit = (node: Node): void => {
+      if (node.type === "ImportDeclaration") {
         const onlyTypes =
-          clause?.isTypeOnly ||
-          (clause &&
-            !clause.name &&
-            clause.namedBindings &&
-            ts.isNamedImports(clause.namedBindings) &&
-            clause.namedBindings.elements.length > 0 &&
-            clause.namedBindings.elements.every((entry) => entry.isTypeOnly));
-        if (!onlyTypes && ts.isStringLiteral(node.moduleSpecifier))
-          check(node.moduleSpecifier.text, id);
-      } else if (ts.isExportDeclaration(node)) {
+          node.importKind === "type" ||
+          (node.specifiers.length > 0 &&
+            node.specifiers.every(
+              (entry) => entry.type === "ImportSpecifier" && entry.importKind === "type"
+            ));
+        if (!onlyTypes) check(node.source.value, id);
+      } else if (node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") {
         const onlyTypes =
-          node.isTypeOnly ||
-          (node.exportClause &&
-            ts.isNamedExports(node.exportClause) &&
-            node.exportClause.elements.length > 0 &&
-            node.exportClause.elements.every((entry) => entry.isTypeOnly));
-        if (!onlyTypes && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier))
-          check(node.moduleSpecifier.text, id);
+          node.exportKind === "type" ||
+          (node.type === "ExportNamedDeclaration" &&
+            node.specifiers.length > 0 &&
+            node.specifiers.every(
+              (entry) => entry.type === "ExportSpecifier" && entry.exportKind === "type"
+            ));
+        if (!onlyTypes && node.source) check(node.source.value, id);
       } else if (
-        ts.isImportEqualsDeclaration(node) &&
-        !node.isTypeOnly &&
-        ts.isExternalModuleReference(node.moduleReference)
+        node.type === "TSImportEqualsDeclaration" &&
+        node.importKind !== "type" &&
+        node.moduleReference.type === "TSExternalModuleReference"
       ) {
-        const argument = node.moduleReference.expression;
-        if (argument && ts.isStringLiteralLike(argument)) check(argument.text, id);
-      } else if (ts.isCallExpression(node)) {
-        const target = node.expression;
-        const moduleCall =
-          target.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(target) && target.text === "require") ||
-          (ts.isMetaProperty(target) &&
-            target.keywordToken === ts.SyntaxKind.ImportKeyword &&
-            target.name.text === "defer");
-        if (graph === "server" && target.kind === ts.SyntaxKind.ImportKeyword) {
+        check(node.moduleReference.expression.value, id);
+      } else if (node.type === "ImportExpression") {
+        // import() and import.defer() alike load a module at run time.
+        if (graph === "server") {
           const error = new LocalError({
             code: "invalid_manifest",
             message: `Server bundles must be closed modules without dynamic imports. Remove import() in ${path.relative(root, id)}.`
@@ -143,12 +152,22 @@ export function pageImports(
           refused(error);
           throw new Error(error.message);
         }
-        const argument = node.arguments[0];
-        if (moduleCall && argument && ts.isStringLiteralLike(argument)) check(argument.text, id);
+        const source = literal(node.source);
+        if (source !== undefined) check(source, id);
+      } else if (
+        node.type === "CallExpression" &&
+        node.callee.type === "Identifier" &&
+        node.callee.name === "require"
+      ) {
+        const [argument] = node.arguments;
+        const source = argument?.type === "SpreadElement" ? undefined : literal(argument);
+        if (source !== undefined) check(source, id);
       }
-      ts.forEachChild(node, visit);
+      const values: ReadonlyArray<unknown> = Object.values(node);
+      for (const value of values)
+        for (const child of Array.isArray(value) ? value : [value]) if (isNode(child)) visit(child);
     };
-    visit(source);
+    visit(program);
   };
   let resolveCss: ResolveFn;
   let publicDirectory: string;
