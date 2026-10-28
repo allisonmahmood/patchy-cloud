@@ -49,7 +49,7 @@ const isStaticSchema = (node) => {
   return expression.type === "CallExpression" && memberCall(expression.callee)?.object === "Schema";
 };
 
-/** @type {import("eslint").Rule.RuleModule} */
+/** @type {import("@oxlint/plugins").Rule} */
 export default {
   meta: {
     type: "problem",

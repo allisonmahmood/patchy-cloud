@@ -6,7 +6,6 @@ coverage/
 .env
 .env.*
 *.log
-.eslintcache
 tmp/
 .local/
 .scratch/

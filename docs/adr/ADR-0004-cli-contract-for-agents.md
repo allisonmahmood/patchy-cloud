@@ -479,8 +479,8 @@ Refresh reports required upgrades as text notices and JSON `warnings`, but
 never changes these builder-owned keys. It remains usable while the Vite config
 is incomplete. TypeScript and declaration packages are scaffold metadata, not
 additional dev/publish version gates.
-The scaffold's ESLint packages are builder-owned lint defaults, not loaded by
-dev or publish and not additional release compatibility gates. Hook lint
+The scaffold's Oxlint package and `.oxlintrc.json` are builder-owned lint defaults,
+not loaded by dev or publish and not additional release compatibility gates. Hook lint
 recognizes `useQuery` by its `use` prefix; it is not an effect callback with a
 dependency array.
 

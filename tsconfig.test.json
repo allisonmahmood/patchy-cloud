@@ -12,7 +12,7 @@
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.test.tsbuildinfo",
     "lib": ["ES2024", "DOM"],
-    // The ESLint rules under test are plain JS.
+    // The lint rules under test are plain JS.
     "allowJs": true,
     "customConditions": ["development"],
     // The browser fixture bundles the built package under these names; check it against source.
@@ -63,7 +63,7 @@
     "packages/*/scripts/**/*.ts",
     "test/**/*.ts",
     "scripts/*.ts",
-    "eslint/**/*.ts",
+    "lint/**/*.ts",
     "*.config.ts",
     "packages/*/vitest.config.ts",
     "apps/*/vitest.config.ts"

@@ -23,7 +23,7 @@ const RUNTIME_METHODS = new Set([
   "runSyncWith"
 ]);
 
-/** @type {import("eslint").Rule.RuleModule} */
+/** @type {import("@oxlint/plugins").Rule} */
 export default {
   meta: {
     type: "problem",

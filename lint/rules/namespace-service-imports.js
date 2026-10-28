@@ -9,7 +9,7 @@
 
 const SERVICE_MEMBERS = new Set(["make", "layer"]);
 
-/** @type {import("eslint").Rule.RuleModule} */
+/** @type {import("@oxlint/plugins").Rule} */
 export default {
   meta: {
     type: "problem",

@@ -1,0 +1,182 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc"],
+  "jsPlugins": [{ "name": "patchy", "specifier": "./lint/plugin.js" }],
+  // Correctness is Oxlint's own set; the rules below add what ESLint's and
+  // typescript-eslint's recommended sets held beyond it, then this repo's own.
+  "categories": { "correctness": "error" },
+  "options": { "typeAware": true },
+  // TypeScript only, as before; agent worktrees and disposable patch repos are not this
+  // workspace's projects.
+  "ignorePatterns": [
+    "**/*.{js,mjs,cjs}",
+    "**/dist/**",
+    "**/coverage/**",
+    "**/node_modules/**",
+    "**/.turbo/**",
+    ".claude/**",
+    ".local/**"
+  ],
+  "rules": {
+    "no-case-declarations": "error",
+    "no-empty": "error",
+    "no-fallthrough": "error",
+    "no-prototype-builtins": "error",
+    "no-regex-spaces": "error",
+    "no-unexpected-multiline": "error",
+    "no-useless-assignment": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "prefer-rest-params": "error",
+    "prefer-spread": "error",
+    "preserve-caught-error": "error",
+    "typescript/ban-ts-comment": "error",
+    "typescript/no-empty-object-type": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "no-control-regex": "off",
+    "no-console": "error",
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "process",
+        "property": "env",
+        "message": "Read the environment through Effect `Config` in the package that owns the setting."
+      }
+    ],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-floating-promises": "error",
+    "patchy/namespace-service-imports": "error",
+    "patchy/no-inline-schema-compile": "error",
+    "patchy/no-manual-effect-runtime-in-tests": "error",
+    // Correctness rules ESLint never ran here, off until #988 works through their findings.
+    "typescript/no-misused-spread": "off",
+    "typescript/no-redundant-type-constituents": "off",
+    "typescript/no-base-to-string": "off",
+    "typescript/require-array-sort-compare": "off",
+    "typescript/unbound-method": "off",
+    "typescript/restrict-template-expressions": "off",
+    "typescript/no-useless-default-assignment": "off",
+    "typescript/no-implied-eval": "off",
+    "typescript/no-duplicate-type-constituents": "off",
+    "unicorn/no-useless-spread": "off",
+    "unicorn/prefer-string-starts-ends-with": "off",
+    "unicorn/no-thenable": "off"
+  },
+  "overrides": [
+    {
+      // CLI imports stay wire-only except for isolated server-artifact inspection.
+      "files": ["packages/patchy/src/**"],
+      "excludeFiles": [
+        "**/*.test.ts",
+        "packages/patchy/src/test/**",
+        "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members,Agent}.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@patchy/**",
+                  "!@patchy/api",
+                  "!@patchy/api/handlers",
+                  "!@patchy/api/guest",
+                  "!@patchy/api/canonical-args",
+                  "!@patchy/api/query-config",
+                  "!@patchy/api/file-config",
+                  "!@patchy/api/csv-config",
+                  "!@patchy/core",
+                  "!@patchy/core/look",
+                  "!@patchy/execution/inspection"
+                ],
+                "message": "The CLI may depend only on @patchy/api, engine-neutral contract modules, @patchy/core and isolated execution/inspection."
+              },
+              {
+                "group": ["../**", "!../package.json"],
+                "message": "CLI imports may not traverse parent directories except for their own package metadata."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/patchy/src/dev{Preparation,Resources,Server,Execution,Log,Members,Agent}.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@patchy/**",
+                  "!@patchy/api",
+                  "!@patchy/core",
+                  "!@patchy/analytics/wide-events",
+                  "!@patchy/company-database/dev",
+                  "!@patchy/content-store",
+                  "!@patchy/execution/local",
+                  "!@patchy/integrations/dev",
+                  "!@patchy/primitives",
+                  "!@patchy/runtime/core",
+                  "!@patchy/runtime/dev",
+                  "!@patchy/limits",
+                  "!@patchy/serving/shell"
+                ],
+                "message": "The local runtime may compose only explicit local capability surfaces, never production auth or credential wiring."
+              },
+              {
+                "group": ["../**"],
+                "message": "Local runtime imports may not traverse parent directories."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/server/src/start.ts",
+        "packages/integrations/live/pidgeonHarness.ts",
+        "packages/integrations/live/attioHarness.ts",
+        "packages/integrations/live/sweep.ts",
+        "test/postgres.ts",
+        "test/clerk.ts",
+        "scripts/flake-report.ts",
+        "scripts/rollback-rehearsal.ts",
+        "scripts/test-clerk.ts",
+        "scripts/verify.ts"
+      ],
+      "rules": { "no-console": "off" }
+    },
+    {
+      // Test entrypoints configure the environment for workers and child processes;
+      // CI tooling outside Effect reads it directly.
+      "files": [
+        "packages/serving/src/render.test.ts",
+        "packages/patchy/src/cli*.test.ts",
+        "packages/patchy/src/test/cli.ts",
+        "packages/integrations/live/pidgeonHarness.ts",
+        "packages/integrations/live/attioHarness.ts",
+        "vitest.clerk.config.ts",
+        "test/clerk.ts",
+        "scripts/test-clerk.ts",
+        "scripts/flake-report.ts",
+        "scripts/rollback-rehearsal.ts",
+        "playwright.clerk.config.ts",
+        "playwright.tier1.config.ts",
+        "test/browser/fixtures.ts",
+        "test/browser/instance.ts",
+        "test/browser-tier1/instance.ts",
+        "test/browser-tier1/setup.ts"
+      ],
+      "rules": { "no-restricted-properties": "off" }
+    }
+  ]
+}
