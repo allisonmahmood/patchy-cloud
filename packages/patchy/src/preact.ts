@@ -36,7 +36,8 @@ export {
 } from "preact/compat";
 export { h } from "preact";
 export * from "@preact/signals";
-export type { ComponentChildren, ComponentType, FunctionComponent, JSX, VNode } from "preact";
+// Preact's own types, including the attribute and event types that Preact 11 moved out of `JSX`.
+export type * from "preact";
 export { useQuery } from "./useQuery.js";
 export { useFileUrl } from "./useFileUrl.js";
 export type { QuerySnapshot } from "./queryRegistry.js";

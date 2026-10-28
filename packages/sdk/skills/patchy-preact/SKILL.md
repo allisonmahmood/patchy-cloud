@@ -26,6 +26,13 @@ import { useEffect, useState } from "patchy/preact";
 import { patchy } from "../patchy/_generated/client.js";
 ```
 
+Name Preact's types with `import type` from `patchy/preact` too, for example
+`HTMLAttributes`, `CSSProperties`, `TargetedEvent` and `TargetedDragEvent`.
+`JSX` holds only what the compiler reads, such as `Element` and
+`IntrinsicElements`. Element types follow each element's allowed ARIA roles and
+input types, so `<aside role="dialog">` fails typecheck where `<div>` passes.
+`useRef` takes an initial value, for example `useRef<HTMLInputElement>(null)`.
+
 Keep a vanilla page on the same framework-free generated client when components
 are unnecessary. Refresh updates managed output, not your `src/` files.
 Tier 2 pages call `patchy.server.<module>.<handler>`; move direct resource calls
