@@ -745,6 +745,8 @@ Sharing decides who may open a live patch. The owner may publish, change sharing
 
 Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
 
+The companies schema now stores a separate `company_guests` identity for an existing Clerk account in each sharing company. It leaves member `users`, their credentials and directory unchanged. An ended relationship remains to identify past activity. This storage does not admit a guest to any patch; grants, viewer resolution and sharing remain future work under [the approved guest-access design](https://github.com/allisonmahmood/patchy-cloud/issues/969). An older server ignores the additive table, so rollback removes no member access and grants no guest access. Dropping the table would erase guest identities and is not part of a server rollback.
+
 Today a published patch is either company-scoped or explicitly public. A public patch's current version opens without a session; older versions and company patches have three outcomes: an active colleague gets the page; a signed-out reader gets a 401 login door with a **Sign in** link rather than a redirect; a signed-in reader from another company gets the same 404 as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees a 403 deactivated page instead of a sign-in loop. The door admits browser sessions, never machine tokens. When owner-only sharing is built, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
 ### Machines and tokens
@@ -760,7 +762,7 @@ A machine token is **the user's**, shared by every agent using that machine's sa
 ### Who's who
 
 - **Person** — the human. Never an authorization key: names and emails change, the account does not.
-- **User** — one person's one account, in exactly one company. The subject of every permission.
+- **User** — one person's full member/admin relationship in exactly one company. Existing builder permissions and credentials attach to this row; a separate company guest relationship grants none by itself.
 - **Agent** — software acting for a user. A **builder agent** works through the CLI with that user's machine token; a **worker agent** will use patches through Patchy MCP with their agent connection. Never a who, always a how: a builder agent is told apart from its user only by the token's machine name, a worker agent only by the client name its user approved.
 - **Member**, **admin** — the two roles a user has in the company.
 - **Owner**: the user a patch belongs to and the only user who publishes its code. Same-company admin actors may perform the other management acts; admitted viewers may write its data.

@@ -4,7 +4,7 @@
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
  * names the people stored without one, id 16 records the look's latest restore and id 20
- * adds the agent access switch.
+ * adds the agent access switch, and id 29 adds separate company guest relationships.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -137,5 +137,69 @@ export const migrations: Migrations = {
       ADD CONSTRAINT companies_agent_access_change_check CHECK (
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
+  ),
+  // Guest identity is company-scoped and never enters users. Ended rows remain for logs;
+  // the unique key deliberately prevents a second identity after deactivation or ending.
+  "0029_company_guests": ddl(
+    `CREATE TABLE company_guests (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      clerk_user_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      deactivated_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      UNIQUE (company_id, clerk_user_id)
+    )`,
+    `CREATE INDEX company_guests_clerk_user_id_idx ON company_guests(clerk_user_id)`,
+    // Both insert paths take the same transaction lock. Whichever commits first decides
+    // whether guest creation is refused or the new member ends the existing guest row.
+    // A hash collision only serializes unrelated identities; it cannot admit coexistence.
+    `CREATE FUNCTION companies_guest_member_lock(company_key TEXT, clerk_key TEXT)
+      RETURNS void LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended(company_key || ':' || clerk_key, 0));
+    END;
+    $$`,
+    `CREATE FUNCTION companies_guard_guest() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP = 'UPDATE' AND
+        (OLD.company_id, OLD.clerk_user_id) IS DISTINCT FROM
+        (NEW.company_id, NEW.clerk_user_id)
+      THEN
+        RAISE EXCEPTION 'company guest identity cannot change'
+          USING ERRCODE = '23514', CONSTRAINT = 'company_guests_identity';
+      END IF;
+      IF TG_OP = 'UPDATE' AND OLD.ended_at IS NOT NULL AND NEW.ended_at IS NULL THEN
+        RAISE EXCEPTION 'ended company guest cannot be reopened'
+          USING ERRCODE = '23514', CONSTRAINT = 'company_guests_ended';
+      END IF;
+      PERFORM companies_guest_member_lock(NEW.company_id, NEW.clerk_user_id);
+      IF NEW.ended_at IS NULL AND EXISTS (
+        SELECT 1 FROM users
+        WHERE company_id = NEW.company_id AND clerk_user_id = NEW.clerk_user_id
+      ) THEN
+        RAISE EXCEPTION 'company member cannot be a guest of the same company'
+          USING ERRCODE = '23514', CONSTRAINT = 'company_guests_no_member';
+      END IF;
+      RETURN NEW;
+    END;
+    $$`,
+    `CREATE TRIGGER company_guests_no_member
+      BEFORE INSERT OR UPDATE OF company_id, clerk_user_id, ended_at ON company_guests
+      FOR EACH ROW EXECUTE FUNCTION companies_guard_guest()`,
+    `CREATE FUNCTION companies_end_guest_on_member() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM companies_guest_member_lock(NEW.company_id, NEW.clerk_user_id);
+      UPDATE company_guests SET ended_at = now()
+        WHERE company_id = NEW.company_id AND clerk_user_id = NEW.clerk_user_id
+          AND ended_at IS NULL;
+      RETURN NULL;
+    END;
+    $$`,
+    `CREATE TRIGGER users_end_company_guest
+      AFTER INSERT OR UPDATE OF company_id, clerk_user_id ON users
+      FOR EACH ROW EXECUTE FUNCTION companies_end_guest_on_member()`
   )
 };

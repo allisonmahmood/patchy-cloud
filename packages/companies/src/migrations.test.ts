@@ -56,3 +56,28 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
     );
   }
 );
+
+it.layer(Testing.emptyLayer(before("0029_company_guests")))(
+  "the additive guest storage upgrade",
+  (it) => {
+    it.effect("keeps member rows and lets an older migration record start after upgrade", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id, handle, name)
+          VALUES ('cmp_upgrade_guest', 'guest-upgrade', 'Northwind')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES ('usr_upgrade_guest', 'clerk_upgrade_guest', 'cmp_upgrade_guest',
+            'guest-upgrade@example.com', 'Sam', 'admin')`;
+        const beforeUser = yield* sql`SELECT * FROM users`;
+        yield* migrate(migrations);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM users`, beforeUser);
+        yield* sql`INSERT INTO company_guests (id, company_id, clerk_user_id, email, name)
+          VALUES ('gst_upgrade', 'cmp_upgrade_guest', 'clerk_external',
+            'external@example.com', 'External')`;
+        yield* migrate(before("0029_company_guests"));
+        assert.deepStrictEqual(yield* sql`SELECT id FROM company_guests`, [{ id: "gst_upgrade" }]);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM users`, beforeUser);
+      })
+    );
+  }
+);

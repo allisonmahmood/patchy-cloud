@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Companies, users, roles, invitations and the company look, with their migrations.",
+  "description": "Companies, member users, guest relationships, invitations and the company look, with their migrations.",
   "exports": {
     "./Companies": {
       "development": "./src/Companies.ts",

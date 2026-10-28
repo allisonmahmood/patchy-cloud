@@ -1,6 +1,6 @@
 # Companies
 
-The tenant and who is in it: companies, users, roles, invitations, deactivation and reactivation, and the company's look. The future language of groups, verified domains, SSO and the operator is defined here; its product decisions live in [the product](../../docs/product.md#companies), while caller identity belongs to [Auth](../auth/GLOSSARY.md) and patch ownership to [Patches](../patches/GLOSSARY.md).
+The tenant and who is in it: companies, member users, guest relationships, invitations, deactivation and reactivation, and the company's look. The future language of groups, verified domains, SSO and the operator is defined here; its product decisions live in [the product](../../docs/product.md#companies), while caller identity belongs to [Auth](../auth/GLOSSARY.md) and patch ownership to [Patches](../patches/GLOSSARY.md).
 
 ## Language
 
@@ -13,8 +13,12 @@ A company's globally unique short name, fixed once created. It uses 3–32 lower
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
-One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
-_Avoid_: account, person (a user is the account, not the human), builder (every user is one)
+One individual's full membership in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does. The `users` table and its globally unique Clerk ID and email remain member-only.
+_Avoid_: account (the Clerk identity may also have guest relationships), person (the human), builder (every active user is one)
+
+**Company guest**:
+A company-scoped relationship for an existing Clerk account, held in `company_guests` rather than `users`. The same account may be a member of A and a guest of B and C, with one guest identity per company. Deactivation is reversible; ending keeps the row and its identity for historical attribution. A member join in the same company ends its guest relationship. This storage alone confers no patch access; grants and admission are separate work.
+_Avoid_: member, employee, user row
 
 **Member**:
 The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites, connection metadata and look without management actions.
