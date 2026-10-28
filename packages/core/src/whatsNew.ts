@@ -52,6 +52,30 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 20,
+    date: "2026-10-28",
+    through: "c5175bd033ed773f499368363c64ac8e9f9e9820",
+    changes: [
+      {
+        kind: "New",
+        title: "Patches can read and answer a company email address",
+        detail:
+          "If your company's mail runs through Pidgeon, an admin can connect one of its addresses from Integrations, choosing Read or Read and send. Patches can then read that inbox and, with Read and send, reply and send from it, up to 200 sends a day; mail Pidgeon holds for someone's approval shows as waiting, never as sent. While your agent builds one, it reads the real mail and sends nothing.",
+        prs: [921, 954, 955]
+      },
+      {
+        kind: "Fixed",
+        title: "The patchy command survives a Node update",
+        detail:
+          "Switching Node versions, as tools like nvm and mise do, used to make the patchy command disappear. Run your install line once more and it moves somewhere that lasts; if your terminal can't find it there yet, the install line shows the one line to add.",
+        prs: [944]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy keeps only a key for the one connected email address, never your Pidgeon admin key."
+    ]
+  },
+  {
     id: 19,
     date: "2026-10-25",
     through: "156a22858887452c3cd87ee70997912f2a536f31",

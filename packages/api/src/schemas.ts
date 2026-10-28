@@ -23,7 +23,7 @@ import {
 } from "./handlers.js";
 
 /** The `patchy` package version, `0.<id>.0` for the newest What's new release. */
-export const CURRENT_RELEASE = "0.19.0";
+export const CURRENT_RELEASE = "0.20.0";
 export const MANIFEST_VERSION = 1;
 export const WIRE_VERSION = 1;
 
