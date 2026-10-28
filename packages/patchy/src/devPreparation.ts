@@ -26,10 +26,13 @@ export type Prepared = typeof Prepared.Type;
 
 /**
  * Whether dev reads a declared connection through the instance, and so needs this machine's key
- * (ADR-0013): PostHog's and Pidgeon's have no fixture.
+ * (ADR-0013): PostHog's, Pidgeon's and Attio's have no fixture.
  */
 export const readsLive = (metadata: Prepared["metadata"]) =>
-  Object.keys(metadata.posthog).length + Object.keys(metadata.pidgeon).length > 0;
+  Object.keys(metadata.posthog).length +
+    Object.keys(metadata.pidgeon).length +
+    Object.keys(metadata.attio).length >
+  0;
 
 export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFixtureMissing", {
   path: Schema.String
@@ -84,11 +87,12 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
-          // PostHog and Pidgeon have no fixture: dev reads the real connection.
+          // PostHog, Pidgeon and Attio have no fixture: dev reads the real connection.
           if (
             declaration.kind === "members" ||
             declaration.kind === "posthog" ||
-            declaration.kind === "pidgeon"
+            declaration.kind === "pidgeon" ||
+            declaration.kind === "attio"
           )
             continue;
           const relative =
@@ -130,6 +134,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           Object.keys(metadata.postgres).length +
             Object.keys(metadata.posthog).length +
             Object.keys(metadata.pidgeon).length +
+            Object.keys(metadata.attio).length +
             Object.keys(metadata.shared).length !==
           Object.values(manifest.uses).filter((declaration) => declaration.kind !== "members")
             .length
@@ -146,7 +151,9 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
                 ? metadata.posthog[alias]?.declaration
                 : declaration.kind === "pidgeon"
                   ? metadata.pidgeon[alias]?.declaration
-                  : metadata.shared[alias]?.declaration;
+                  : declaration.kind === "attio"
+                    ? metadata.attio[alias]?.declaration
+                    : metadata.shared[alias]?.declaration;
           if (
             actual === undefined ||
             actual.kind !== declaration.kind ||
@@ -154,10 +161,12 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
             actual.revision !== declaration.revision ||
             ((actual.kind === "postgres" ||
               actual.kind === "posthog" ||
-              actual.kind === "pidgeon") &&
+              actual.kind === "pidgeon" ||
+              actual.kind === "attio") &&
               (declaration.kind === "postgres" ||
                 declaration.kind === "posthog" ||
-                declaration.kind === "pidgeon") &&
+                declaration.kind === "pidgeon" ||
+                declaration.kind === "attio") &&
               actual.handle !== declaration.handle) ||
             (actual.kind === "sharedTable" &&
               declaration.kind === "sharedTable" &&

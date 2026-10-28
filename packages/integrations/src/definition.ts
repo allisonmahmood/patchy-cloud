@@ -7,7 +7,12 @@ import type * as ConnectionStore from "./ConnectionStore.js";
 /** Which connection a call goes to and until when, for a caller its door already admitted. */
 export interface Target<E = never> {
   readonly companyId: string;
-  readonly connection: { readonly id: string; readonly handle: string };
+  readonly connection: {
+    readonly id: string;
+    readonly handle: string;
+    /** The snapshot the caller's client was generated from, for an integration that decodes by it. */
+    readonly revision?: number;
+  };
   /** When the caller stops waiting, in epoch milliseconds; a queued call gives up before it. */
   readonly deadline: number;
   /** The caller, checked again once the call holds a slot and before anything is sent. */

@@ -224,6 +224,17 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected company email address. Reads list conversations, read a thread a page at a time with nextCursor, search, list labels and read text attachments; message text is plain, cleaned by Pidgeon's firewall, with its verdict. With a send key, reply, send and triage: each email's idempotencyKey makes the same draft within 24 hours one email, a send answers sent or pending_approval, and each connection has a daily send budget, which its context names. ${runtimeByteLimits.pidgeonBytes / 1024 ** 2} MiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. Queries and mutations cannot use ctx.connections; Pidgeon reads are not live-query dependencies.`
   },
   {
+    id: "integrations.attio",
+    group: "Integrations",
+    name: "Company CRM reads on Attio",
+    entrypoints: [
+      "patchy/_generated/client.ts: patchy.connections",
+      "patchy/_generated/server.ts: ctx.connections"
+    ],
+    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev reads the real workspace through the instance as the machine key's person",
+    limits: `Declare a connected Attio workspace, read-only. objects.<slug>.list, get and getMany, lists.<slug>.list and get, and members.list, typed from the snapshot: eq, contains, range and orderBy by attribute slug, option titles exact, null for no value, limit 1–500 with a cursor. Each call checks the workspace's current attributes and fails shape_mismatch naming one that changed. At most 500 ids to getMany, ${runtimeByteLimits.attioBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. Attio's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; Attio reads are not live-query dependencies.`
+  },
+  {
     id: "helpers.csv",
     group: "Helpers",
     name: "CSV text codec",
@@ -238,7 +249,7 @@ const groups = ["Core", "Primitives", "Integrations", "Helpers"] as const;
 const unavailable: Partial<Record<(typeof groups)[number], string>> = {
   Core: "window.print() works in the frame, including browser print-to-PDF.",
   Integrations:
-    "Postgres, PostHog and Pidgeon are the shipped company integrations to call. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments.",
+    "Postgres, PostHog, Pidgeon and Attio are the shipped company integrations to call. Pidgeon has no thread assignment, per-person read state, HTML, raw headers, attachment downloads or sent attachments. Attio is read-only, with no notes, tasks, comments, meetings, emails, files, search, saved views or OR across attributes.",
   Helpers:
     "The SDK does not yet offer PDF generation, spreadsheets beyond CSV, time-zone arithmetic, phone parsing, component libraries, rich text, charts or HTML sanitisation."
 };

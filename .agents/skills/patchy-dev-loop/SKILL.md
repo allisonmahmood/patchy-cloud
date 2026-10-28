@@ -95,8 +95,8 @@ Done when `pnpm dev status` exits 0.
   A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
   an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,
   which calls one as a dev person, so open dev pages show its changes live.
-  Postgres declarations read invented fixtures. PostHog and Pidgeon declarations
-  have none: `patchy dev` reads the real connection through this instance, as
+  Postgres declarations read invented fixtures. PostHog, Pidgeon and Attio
+  declarations have none: `patchy dev` reads the real connection through this instance, as
   the CLI's key, and each read shows as a Dev call on the connection's page.
   Pidgeon's sends, replies and triage are simulated in the dev process and never
   sent; `pnpm patchy dev logs` names each with its recipients and subject.

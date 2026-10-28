@@ -566,7 +566,8 @@ it.effect("a single-row cap above the batch and postgres caps still admits the r
           "runtime.call.bytes": 512,
           "runtime.postgres.bytes": 512,
           "runtime.posthog.bytes": 512,
-          "runtime.pidgeon.bytes": 512
+          "runtime.pidgeon.bytes": 512,
+          "runtime.attio.bytes": 512
         }
       )
     )

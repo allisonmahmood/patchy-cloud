@@ -14,6 +14,7 @@ import {
 import { postgresOperations } from "./postgres.js";
 import { posthogOperations } from "./posthog.js";
 import { pidgeonOperations } from "./pidgeon.js";
+import { attioOperations } from "./attio.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -35,6 +36,7 @@ export const runtimeByteLimits = {
   postgresBytes: registry["runtime.postgres.bytes"].default,
   posthogBytes: registry["runtime.posthog.bytes"].default,
   pidgeonBytes: registry["runtime.pidgeon.bytes"].default,
+  attioBytes: registry["runtime.attio.bytes"].default,
   serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
@@ -47,6 +49,7 @@ export type RuntimeBodyLimitId =
   | "runtime.postgres.bytes"
   | "runtime.posthog.bytes"
   | "runtime.pidgeon.bytes"
+  | "runtime.attio.bytes"
   | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
@@ -60,9 +63,11 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
           ? "runtime.posthog.bytes"
           : op.startsWith("pidgeon.")
             ? "runtime.pidgeon.bytes"
-            : op === "server.call"
-              ? "tier2.args.bytes"
-              : "runtime.call.bytes";
+            : op.startsWith("attio.")
+              ? "runtime.attio.bytes"
+              : op === "server.call"
+                ? "tier2.args.bytes"
+                : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -74,6 +79,7 @@ export function runtimeBodyLimit(
     readonly postgresBytes: number;
     readonly posthogBytes: number;
     readonly pidgeonBytes: number;
+    readonly attioBytes: number;
     readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
@@ -88,6 +94,8 @@ export function runtimeBodyLimit(
       return limits.posthogBytes;
     case "runtime.pidgeon.bytes":
       return limits.pidgeonBytes;
+    case "runtime.attio.bytes":
+      return limits.attioBytes;
     case "tier2.args.bytes":
       return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
@@ -353,6 +361,7 @@ export const runtimeOperations = {
   ...postgresOperations,
   ...posthogOperations,
   ...pidgeonOperations,
+  ...attioOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),

@@ -27,9 +27,9 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog and Pidgeon
-have no fixture, and actions read the real project or address through the
-instance, as the publishing key's person for either viewer. Pidgeon's sends,
+rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog, Pidgeon and
+Attio have no fixture, and actions read the real project, address or workspace
+through the instance, as the publishing key's person for either viewer. Pidgeon's sends,
 replies and triage are simulated in dev and never sent. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
 Read `dev.log` for each call's viewer, handler, outcome and milliseconds, `ctx.log`
@@ -37,7 +37,7 @@ output, each thrown error's message and stack, which browsers never receive, and
 each simulated Pidgeon write with its recipients and subject.
 Starting with `--json` records full wide events, invocation JSON and simulated
 writes; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
-are written; the instance logs PostHog and Pidgeon dev reads.
+are written; the instance logs PostHog, Pidgeon and Attio dev reads.
 
 When someone says a published patch is broken, read its log before guessing:
 `pnpm patchy logs --failed --json`, or without `--failed` to see what led up to
@@ -129,7 +129,7 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
   forced past the types with `access_denied`. Only actions take the flag.
 
 Queries and read-only actions are reads; every other mutation or action is a
-change, even one that writes nothing. So Postgres, PostHog and Pidgeon reads
+change, even one that writes nothing. So Postgres, PostHog, Pidgeon and Attio reads
 count as reads only from a read-only action, and a read-only action can't reply,
 send or triage through Pidgeon.
 
@@ -161,11 +161,11 @@ refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
 Member-directory reads are outside the company snapshot.
 
-Queries have no `ctx.connections`. Company Postgres, PostHog and Pidgeon calls
+Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon and Attio calls
 belong in actions, not subscribed queries. The host enforces this kind rule, even
 if code bypasses the TypeScript context. A Pidgeon send takes the draft key the
 page made for that email, passed in the action's arguments; read
-`../patchy-pidgeon/SKILL.md`.
+`../patchy-pidgeon/SKILL.md`. Attio's reads are in `../patchy-attio/SKILL.md`.
 
 ### Atomic mutations
 
@@ -384,7 +384,7 @@ schema then tells the agent, and a call missing the field is refused before the
 handler runs.
 
 To agents, a query or read-only action is a read and anything else is a change,
-so Postgres, PostHog and Pidgeon reads count as reads only from a read-only action.
+so Postgres, PostHog, Pidgeon and Attio reads count as reads only from a read-only action.
 Clients decide whether to ask the person before a change, and most ask every
 time. Patchy's log records each change and action as "Person via Client",
 failures included. A query that succeeds without `ctx.log` leaves no row; a
@@ -470,6 +470,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot | `timeout` | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |
 | `pidgeon.addresses.listed` | contract | 1000 | addresses | company | Addresses the Pidgeon connect form lists from one admin key | None | No | release |
+| `runtime.attio.bytes` | contract | 262144 | bytes | viewer | Attio operation arguments: filters, order and up to 500 ids | `too_large` | No | release |
+| `attio.call.bytes` | contract | 16777216 | bytes | viewer | Raw Attio answers one call collects across its query and its schema and option reads together, before decoding | `too_large` | No | release |
+| `attio.call.concurrent` | contract | 4 | requests | viewer | Requests one Attio call has in flight at once: its query and its schema and option reads | None | No | release |
 | `attio.calls.concurrent` | contract | 4 | calls | host | Attio calls and discoveries per workspace at once in one server process, shared by every connection to it and by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
 | `attio.host.concurrent` | contract | 6 | calls | host | Attio calls and discoveries at once in one server process across every workspace, each held from its first request through decoding; an excess call waits within its deadline | `busy` | No | release |
 | `attio.discovery.deadline` | contract | 60000 | milliseconds | company | Connecting an Attio workspace, replacing its key or refreshing it: the key check and every discovery request | `timeout` | No | release |

@@ -50,6 +50,11 @@
       "development": "./src/postgresSnapshot.ts",
       "types": "./dist/postgresSnapshot.d.ts",
       "import": "./dist/postgresSnapshot.js"
+    },
+    "./attio-types": {
+      "development": "./src/attioTypes.ts",
+      "types": "./dist/attioTypes.d.ts",
+      "import": "./dist/attioTypes.js"
     }
   },
   "files": [

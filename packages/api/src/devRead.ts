@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { attioReads } from "./attio.js";
 import { PidgeonDevRead } from "./pidgeon.js";
 import { PostHogDevQuery } from "./posthog.js";
 
@@ -12,7 +13,13 @@ export const DEV_READ_PATH = "/connections/dev-read";
  */
 const DevReadConnection = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
-  handle: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64))
+  handle: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  /**
+   * The snapshot revision the repo was generated from, for an integration that decodes by it:
+   * the instance reads that snapshot of that connection, so a client generated before a Refresh
+   * decodes as generated.
+   */
+  revision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)))
 });
 
 /** What the instance reads before logging the call, so a refused operation or argument is logged too. */
@@ -22,6 +29,14 @@ export const DevReadEnvelope = Schema.Struct({
   args: Schema.Unknown
 }).annotate({ identifier: "DevReadEnvelope" });
 export type DevReadEnvelope = typeof DevReadEnvelope.Type;
+
+/** An Attio read, whose connection carries the revision the repo's client decodes by. */
+const attio = <const Name extends keyof typeof attioReads>(name: Name) =>
+  Schema.Struct({
+    op: Schema.Literal(`attio.${name}`),
+    connection: DevReadConnection,
+    args: attioReads[name].input
+  });
 
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
@@ -34,6 +49,12 @@ export const DevRead = Schema.Union([
     op: Schema.Literal("pidgeon.read"),
     connection: DevReadConnection,
     args: PidgeonDevRead
-  })
+  }),
+  attio("listRecords"),
+  attio("getRecord"),
+  attio("getManyRecords"),
+  attio("listEntries"),
+  attio("getEntry"),
+  attio("listMembers")
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;

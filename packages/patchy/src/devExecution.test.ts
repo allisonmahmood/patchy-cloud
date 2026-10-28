@@ -599,6 +599,130 @@ export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
 );
 
 it.live(
+  "an action reads Attio through the instance as the machine's person, carrying the revision it was generated from",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-dev-attio-" });
+      // The instance's dev door, as far as this repo can tell: it sees the key and the route.
+      const seen: Array<{ readonly authorization?: string; readonly body: unknown }> = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          createServer((request, response) => {
+            const chunks: Buffer[] = [];
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+              seen.push({
+                ...(request.headers.authorization === undefined
+                  ? {}
+                  : { authorization: request.headers.authorization }),
+                body: JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              });
+              response.writeHead(200, { "content-type": "application/json" });
+              response.end(
+                JSON.stringify({
+                  ok: true,
+                  value: {
+                    ok: true,
+                    rows: [
+                      {
+                        id: "00000000-0000-4000-8000-000000000001",
+                        url: "https://app.attio.com/lumen/deals/record/1",
+                        createdAt: "2026-10-27T23:49:28.945950775Z",
+                        values: { name: "Bikes for Lumen" }
+                      }
+                    ],
+                    cursor: null
+                  }
+                })
+              );
+            });
+          })
+        ),
+        (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void)))
+      );
+      yield* Effect.callback<void>(
+        (resume) => void server.listen(0, "127.0.0.1", () => resume(Effect.void))
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") return assert.fail("Expected TCP");
+      const declaration = { kind: "attio" as const, id: "conn_crm", handle: "crm", revision: 3 };
+      const resources = yield* DevResources.prepare(
+        {
+          ...prepared,
+          manifest: { ...prepared.manifest, uses: { crm: declaration } },
+          metadata: {
+            postgres: {},
+            shared: {},
+            posthog: {},
+            pidgeon: {},
+            attio: {
+              crm: {
+                declaration,
+                snapshot: {
+                  version: 1,
+                  workspace: { id: "ws", name: "Lumen", slug: "lumen" },
+                  scopes: ["record_permission:read"],
+                  objects: [],
+                  lists: [],
+                  excluded: []
+                }
+              }
+            }
+          }
+        },
+        root,
+        `${root}/.patchy/dev`,
+        {
+          instance: {
+            apiUrl: `http://127.0.0.1:${address.port}`,
+            token: Option.some(Redacted.make("pp_machine_key"))
+          },
+          server: yield* compile(`import { action, createGuest, t } from "patchy/server";
+const deals = action({args:{},result:t.json(),handler:async (ctx) => {
+  const page = await ctx.connections.crm.objects.deals.list({ eq: { stage: "Lead" }, limit: 5 });
+  return { viewer: ctx.viewer.user.id, names: page.rows.map((row) => row.values.name), cursor: page.cursor };
+}});
+export default createGuest({desk:{deals}}, [], {}, [], ["crm"]);`)
+        }
+      );
+      const invocation = Context.getUnsafe(resources.context, Invocation.Invocation);
+      const answered = yield* invocation.call(
+        { handler: "desk.deals", args: {} },
+        {
+          ...resources.version,
+          identity: viewer,
+          principal: { userId: viewer.user.id },
+          correlationId: "dev-attio"
+        },
+        Effect.succeed(viewer)
+      );
+      if (!answered.ok) return assert.fail(JSON.stringify(answered));
+      assert.deepStrictEqual(answered.value, {
+        viewer: viewer.user.id,
+        names: ["Bikes for Lumen"],
+        cursor: null
+      });
+      // The read went to the instance with the key and the declaration's revision, alias left behind.
+      assert.deepStrictEqual(seen, [
+        {
+          authorization: "Bearer pp_machine_key",
+          body: {
+            op: "attio.listRecords",
+            connection: { id: "conn_crm", handle: "crm", revision: 3 },
+            args: { object: "deals", eq: { stage: "Lead" }, limit: 5 }
+          }
+        }
+      ]);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(WideEvents.layerNoop)
+    ),
+  { timeout: 60_000 }
+);
+
+it.live(
   "swaps immutable bindings, retains nested work and discards subscription runs crossing a swap",
   () =>
     Effect.gen(function* () {

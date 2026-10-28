@@ -2,11 +2,11 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230), [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) and [Patchy MCP map](https://github.com/allisonmahmood/patchy-cloud/issues/730) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres, PostHog and Pidgeon connections.
+Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 0 static HTML pages, tier 1 sandboxed browser tools and tier 2 tools with hosted query, mutation and action handlers. Static pages publish from an HTML file or a repo; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches those resources through the shell broker as the viewer; tier 2 pages call handlers that enforce the patch's rules. Both tiers support live queries, read-only shared tables and stores, the member directory and company Postgres, PostHog, Pidgeon and Attio connections.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
-Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address, which patches read and, with a send key, reply, send and triage from. Signed-in pages share one sidebar shell and component set.
+Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address, which patches read and, with a send key, reply, send and triage from. Attio connections hold a read-only workspace key, through which patches read the workspace's records, list entries and members with a client typed from its snapshot. Signed-in pages share one sidebar shell and component set.
 
 Tier 2 repos publish an HTML artifact and an inspected server artifact. The local dev loop runs the hosted handler engine and callback path, with live server rebinding and a non-admin colleague mount. The fleet controller and ECS Fargate provider are built, including spare claims, stopping and drain, crash metering and the patch breaker. Production admission requires `EXECUTION_PROVIDER=ecs`; a local executor is refused. [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches, is specified and not built. Narrower sharing, other integrations, billing, source recovery and the remaining company lifecycle remain future work.
 
@@ -25,7 +25,7 @@ Each version has exactly one tier. The CLI checks the tree and bundle; the serve
 The **Patchy SDK** is the release-versioned code a patch imports: Core supplies
 the generated client, contract, Preact with compat semantics and shell operations,
 including generated-file downloads separate from stored-file access;
-Primitives supply tables and files; Integrations supply company Postgres, PostHog and Pidgeon;
+Primitives supply tables and files; Integrations supply company Postgres, PostHog, Pidgeon and Attio;
 Helpers include `patchy/csv`, a synchronous text codec based on PapaParse with
 Patchy's own API, importable on both page and server graphs. Everything else
 written or copied into the patch is **company code**, maintained by the company.
@@ -66,7 +66,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres, PostHog and Pidgeon connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres, PostHog, Pidgeon and Attio connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -142,7 +142,7 @@ there and the independent purpose into write-once `AGENTS.md`, alongside the
 skill paths, runtime-check guidance and the generated-index pointer.
 `CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
 never a production-data shortcut, except for an integration that reads the real
-connection in dev, today PostHog and Pidgeon ([Development](#development)).
+connection in dev, today PostHog, Pidgeon and Attio ([Development](#development)).
 
 For tiers 0, 1 and 2, a new `patchy dev` session checks the pin, CLI and runtime
 against the instance release, then authenticates as the machine token's user. It
@@ -266,12 +266,12 @@ obsolete instructions. Explicit remove may retire a declaration skill when no
 declaration of its kind remains.
 
 A **fixture stub** contains metadata and guidance, not company rows or bytes.
-PostHog and Pidgeon declarations have none. The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
+PostHog, Pidgeon and Attio declarations have none. The builder fills `fixtures/postgres-<handle>.sql` or `fixtures/shared-<alias>.sql`
 with invented local inserts, or `fixtures/shared-<alias>/` with invented files
 for the named source store. Refresh creates a missing directory and never
 overwrites an existing one. Dev loads shared fixtures at start; edit them and
 restart to change a local source. Authority changes are not simulated.
-Only metadata and inventory come from the instance, apart from PostHog's and Pidgeon's dev reads.
+Only metadata and inventory come from the instance, apart from PostHog's, Pidgeon's and Attio's dev reads.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
 A public tier 1 patch can read its declared member directory for a signed-in
@@ -1066,10 +1066,9 @@ Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
 Company Pidgeon connections connect one email address with a key Patchy mints for
-it, and publish binds them; reading and sending from patches is next. Company
-Attio connections read one workspace's shape through a read-only key, and publish
-binds them; reading its records from patches is next. Other integrations and
-personal connections remain planned.
+it, and patches read and send from it. Company Attio connections read one CRM
+workspace through a read-only key: its records, list entries and members. Other
+integrations and personal connections remain planned.
 
 An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, and Attio the fourth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -1081,8 +1080,9 @@ Today every integration supports **company** connections only: an admin connects
 a source, and every active company member may use it through a company-runtime
 patch that declares it. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
-the connection string, the admin's PostHog key, or the key Patchy minted for a
-Pidgeon address, not a separate identity for each person.
+the connection string, the admin's PostHog key, the key Patchy minted for a
+Pidgeon address, or the admin's read-only Attio workspace key, not a separate
+identity for each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
@@ -1387,6 +1387,40 @@ calls, inside 6 for all of Attio; an excess one waits within its deadline,
 keeping a second's reserve, then fails `busy` with nothing sent. Attio's 429s
 fail `source_rate_limited`, and nothing is retried.
 
+### Reading Attio
+
+Patches read a connected workspace's records, list entries and members, on
+tier 1 and in tier 2 actions.
+
+- **A typed client per object and list.** `objects.<slug>.list({ eq, contains,
+range, orderBy, limit, cursor })`, `get(id)` and `getMany(ids)`;
+  `lists.<slug>.list({ ..., parent })` and `get(entryId)`; `members.list()`.
+  Slugs are keys verbatim. A record is `{ id, url, createdAt, values }`, an entry
+  `{ id, parent, createdAt, values }`, and `values` holds every snapshot
+  attribute by slug as a plain value: one type table
+  (`@patchy/api/attio-types`) drives the client's types, the filters Patchy
+  builds and decoding. Select and status values and filters are option titles.
+- **Patchy builds every request.** There is no raw path, filter JSON or request
+  in patch code, no search, saved views or SQL. A filter on a slug the snapshot
+  lacks, an operator its type doesn't take, more than 100 values or a date-only
+  timestamp is refused before Attio sees it. `eq` ANDs attributes, `null` means
+  no value (excluding what an attribute can hold, read in the call), order is one
+  attribute then the id, and paging is an offset in a cursor bound to the call.
+  `getMany` sends one chunked `$or` and answers in the order asked.
+- **Identity follows names, checked on every call.** Beside its query, each call
+  reads the object's or list's current attributes and fails `shape_mismatch`
+  naming any snapshot attribute that's gone, archived, renamed (to what, by id),
+  retyped or changed between one value and many; nothing is decoded until it
+  passes. A reference to a renamed object or an entry under another parent fails
+  the same way, and every row is checked empty on each `null` it was asked for.
+  An object or list gone answers `not_found` until an admin refreshes and the
+  patch runs `patchy refresh`.
+- **Bounds.** Calls hold one of the workspace's slots and one of Attio's per
+  process, at most 4 requests at once, 15 seconds and 16 MiB of raw answer
+  together, and 8 MiB decoded. Attio's own limits fail `source_rate_limited` and
+  are never retried. Refusals carry Patchy's own details, never a supplied value
+  or Attio's words; recent calls name the object or list and the row count.
+
 ### Discovery and binding
 
 Discovery reads metadata, never company rows: tables (including foreign tables)
@@ -1491,19 +1525,22 @@ Each integration chooses its **dev binding**
 fixtures or a fake, never live source rows or production credentials. An
 integration whose fixtures wouldn't resemble production reads the real connection
 in dev instead, and its connect form says so; writes never run live in dev.
-Postgres keeps fixtures; PostHog and Pidgeon read live.
+Postgres keeps fixtures; PostHog, Pidgeon and Attio read live.
 
-**Dev reads.** PostHog and Pidgeon have no fixture. `patchy dev` sends each
-PostHog query and each Pidgeon read to the instance as the machine token's
+**Dev reads.** PostHog, Pidgeon and Attio have no fixture. `patchy dev` sends each
+PostHog query, each Pidgeon read and each Attio read to the instance as the machine token's
 person, for either local viewer; the instance runs it with the connection's own
 key, which never leaves it. The instance takes the company, person and machine
-from the token on every call, and again after any wait for one of the project's
-or address's slots, which dev and published patches share. The repo's declaration
+from the token on every call, and again after any wait for one of the project's,
+address's or workspace's slots, which dev and published patches share. The repo's declaration
 only routes the call: it must name a connected connection of the token's company.
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
 integrations. A Pidgeon dev read checks what comes back against the address and
-keeps held mail empty, as a published read does. Each read, refused or not, is a
+keeps held mail empty, as a published read does. An Attio dev read carries the
+revision the repo was generated from, and the instance decodes by that snapshot of
+that connection, so a client generated before a Refresh reads as generated; a
+revision of another connection isn't found. Each read, refused or not, is a
 dev call in the connection's recent calls, marked Dev and naming the machine, with
 no patch. An expired or revoked key, a deactivated person, a disconnected source,
 another company's connection or an unreachable instance stops the read with a
@@ -1585,7 +1622,7 @@ Agent tools are for agents only. They are reached through Patchy MCP and `patchy
 
 To give agents a handler the page already uses, re-export it: `export { listDeals } from "../server/deals.js"` makes it `deals.listDeals` for the page and the tool `listDeals` for agents, with one contract; as a tool it must be described, and its `ctx.agent` is null when the page calls it. A tool of its own can hold agents to rules the page doesn't have, such as requiring fields the page leaves optional, with the shared logic in a helper both call; its schema then tells the agent the fields are required, and a call missing one is refused before the handler runs. Calls an agent's action makes through `ctx.run` see the same `ctx.agent`.
 
-**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a write is a type error. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes and file puts and deletes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog and Pidgeon reads count as reads only from a read-only action, which can't reply, send or triage.
+**Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a write is a type error. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes and file puts and deletes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog, Pidgeon and Attio reads count as reads only from a read-only action, which can't reply, send or triage.
 
 **Descriptions.** A tool's `description` is required. Any handler value takes `.describe(text)`. Every description is nonblank and at most 2,000 characters. Undescribed top-level arguments warn at publish; nested and result descriptions are optional. When a nullable wrapper and its value are both described, the outer description wins. Table columns take no `.describe()`: the types and the config check refuse it, and a row's schema carries its table's description instead.
 

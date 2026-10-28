@@ -250,6 +250,35 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "runtime.attio.bytes": {
+    kind: "contract",
+    default: 262144,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "Attio operation arguments: filters, order and up to 500 ids",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.call.bytes": {
+    kind: "contract",
+    default: 16777216,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "Raw Attio answers one call collects across its query and its schema and option reads together, before decoding",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.call.concurrent": {
+    kind: "contract",
+    default: 4,
+    unit: "requests",
+    scope: "viewer",
+    measure:
+      "Requests one Attio call has in flight at once: its query and its schema and option reads",
+    refusal: null,
+    overridable: false
+  },
   "attio.calls.concurrent": {
     kind: "contract",
     default: 4,

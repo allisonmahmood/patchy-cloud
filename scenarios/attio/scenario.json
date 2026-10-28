@@ -1,5 +1,8 @@
 {
-  "company": { "name": "Northwind Sales", "handle": "northwind" },
+  "company": {
+    "name": "Northwind Sales",
+    "handle": "northwind"
+  },
   "people": [
     {
       "key": "allison",
@@ -7,7 +10,12 @@
       "email": "allison@northwind.example",
       "role": "admin"
     },
-    { "key": "priya", "name": "Priya Raman", "email": "priya@northwind.example", "role": "member" }
+    {
+      "key": "priya",
+      "name": "Priya Raman",
+      "email": "priya@northwind.example",
+      "role": "member"
+    }
   ],
   "publisher": "allison",
   "connections": [
@@ -17,5 +25,18 @@
       "description": "Northwind's CRM in Attio: companies, people, deals and the sales pipeline."
     }
   ],
-  "patches": []
+  "patches": [
+    {
+      "repo": "deal-desk",
+      "tier": 1,
+      "connections": ["attio/crm"],
+      "description": "Northwind's open deals by stage and owner, sorted by value, each with its company and its place in the sales pipeline."
+    },
+    {
+      "repo": "pipeline-review",
+      "tier": 2,
+      "connections": ["attio/crm"],
+      "description": "One stage of Northwind's pipeline totalled by owner on the server, with the largest deals and their companies."
+    }
+  ]
 }

@@ -960,4 +960,60 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
         assert.deepStrictEqual(ran, ["pidgeon.read", "pidgeon.write", "pidgeon.write"]);
       }).pipe(Effect.scoped)
   );
+  it.effect("Attio runs only in actions, read-only ones included, and caps its arguments", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const maxBytes = yield* ContractLimits.get("runtime.attio.bytes");
+      const ran: Array<string> = [];
+      const ops = [
+        "attio.listRecords",
+        "attio.getRecord",
+        "attio.getManyRecords",
+        "attio.listEntries",
+        "attio.getEntry",
+        "attio.listMembers"
+      ] as const;
+      const gateway = yield* CallbackGateway.make(
+        Object.fromEntries(
+          ops.map((op): [string, Runtime.JsonHandler] => [
+            op,
+            {
+              kind: "integration",
+              connectionId: () => "attio-connection",
+              run: () =>
+                Effect.sync(() => {
+                  ran.push(op);
+                  return { ok: true, rows: [] };
+                })
+            }
+          ])
+        )
+      ).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const call = (op: (typeof ops)[number]) => ({ op, args: { connection: "crm" } });
+      for (const kind of ["query", "mutation"] as const)
+        for (const op of ops) {
+          const capability = yield* Fixtures.issue(capabilities, { kind });
+          assert.include(yield* gateway.callback(capability.token, capability.attempt, call(op)), {
+            ok: false,
+            code: "access_denied"
+          });
+        }
+      assert.deepStrictEqual(ran, []);
+      // Every Attio operation reads, so a read-only action may make each.
+      for (const op of ops) {
+        const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+        assert.isTrue((yield* gateway.callback(readOnly.token, readOnly.attempt, call(op))).ok);
+      }
+      assert.deepStrictEqual(ran, [...ops]);
+      const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+      assert.include(
+        yield* gateway.callback(action.token, action.attempt, {
+          op: "attio.listRecords",
+          args: { connection: "crm", object: "deals", eq: { name: "x".repeat(maxBytes) } }
+        }),
+        { ok: false, code: "too_large", limitId: "runtime.attio.bytes", value: maxBytes }
+      );
+      assert.strictEqual(ran.length, ops.length);
+    }).pipe(Effect.scoped)
+  );
 });

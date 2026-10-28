@@ -128,6 +128,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.postgres.bytes",
     "runtime.posthog.bytes",
     "runtime.pidgeon.bytes",
+    "runtime.attio.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -389,6 +390,7 @@ export const config = Effect.all({
   postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
   posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
   pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
+  attioBytes: ContractLimits.get("runtime.attio.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -499,6 +501,7 @@ export const make = (
       settings.postgresBytes,
       settings.posthogBytes,
       settings.pidgeonBytes,
+      settings.attioBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -512,7 +515,9 @@ export const make = (
               ? "runtime.postgres.bytes"
               : maxCallBytes === settings.posthogBytes
                 ? "runtime.posthog.bytes"
-                : "runtime.pidgeon.bytes";
+                : maxCallBytes === settings.pidgeonBytes
+                  ? "runtime.pidgeon.bytes"
+                  : "runtime.attio.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -691,6 +696,7 @@ export const make = (
               input.op.startsWith("postgres.") ||
               input.op.startsWith("posthog.") ||
               input.op.startsWith("pidgeon.") ||
+              input.op.startsWith("attio.") ||
               input.op.startsWith("members."))
           )
             return yield* new ServerRequired();

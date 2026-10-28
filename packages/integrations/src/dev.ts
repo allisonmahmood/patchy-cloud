@@ -6,3 +6,4 @@ export * as PostgresExecution from "./postgres/Execution.js";
 export * as PostgresOperations from "./postgres/Operations.js";
 export * as PostHogDev from "./posthog/Dev.js";
 export * as PidgeonDev from "./pidgeon/Dev.js";
+export * as AttioDev from "./attio/Dev.js";

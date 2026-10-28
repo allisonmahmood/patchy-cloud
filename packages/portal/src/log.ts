@@ -107,7 +107,8 @@ const resource = (value: string) => value.replace(/"([a-z_][a-z0-9_]*)"/gu, "$1"
 /**
  * "postgres/warehouse.customers.list": the connection by name (its id once deleted), relation,
  * method. A PostHog query's resource is its name, shown as written: "posthog/product.query daily".
- * A Pidgeon call's resource names its operation: "pidgeon/support.threads.get thr_1".
+ * A Pidgeon call's resource names its operation: "pidgeon/support.threads.get thr_1". An Attio
+ * call's names its object or list, as a relation: "attio/crm.deals.listRecords".
  */
 const connectionCall = (item: InvocationLog.TreeItem, names: LogNames) => {
   const name =

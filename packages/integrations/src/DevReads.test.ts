@@ -37,13 +37,14 @@ import * as ConnectionStore from "./ConnectionStore.js";
 import * as CredentialKeys from "./CredentialKeys.js";
 import * as DevDoor from "./DevDoor.js";
 import * as DevReads from "./DevReads.js";
+import * as AttioDev from "./attio/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
-import * as AttioSource from "./attio/Source.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
+import * as AttioReads from "./test/attioReads.js";
 import * as PidgeonTest from "./test/pidgeon.js";
 import * as PostHogDouble from "./test/posthog.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
@@ -178,6 +179,50 @@ const mail = PidgeonTest.recorded([
     body: { error: { code: "held", message: "This message is held for review." } }
   }
 ]);
+/**
+ * The company's Attio workspace as dev reads it: `crm` was refreshed once, so its revision 1
+ * snapshot lacks the `forecast` attribute Attio has now, and `other` is another connection with
+ * revisions `crm` doesn't have.
+ */
+const crm = { id: "conn_dev_crm", handle: "crm" };
+const otherCrm = { id: "conn_dev_crm_other", handle: "sales" };
+const refreshed: typeof AttioReads.snapshot = {
+  ...AttioReads.snapshot,
+  objects: AttioReads.snapshot.objects.map((object) =>
+    object.slug !== "deals"
+      ? object
+      : {
+          ...object,
+          attributes: [
+            ...object.attributes,
+            {
+              id: AttioReads.uuid(990),
+              slug: "forecast",
+              title: "Forecast",
+              type: "number",
+              multiselect: false
+            }
+          ]
+        }
+  )
+};
+const deal = AttioReads.record("deals", AttioReads.uuid(1001), {
+  name: [AttioReads.items.text("Bikes for Lumen")]
+});
+/** A deal as Attio answers it now, with the attribute the Refresh found. */
+const withForecast = {
+  ...deal,
+  values: { ...deal.values, forecast: [AttioReads.items.number(0.6)] }
+};
+const workspace = AttioReads.scripted(
+  [
+    AttioReads.route("POST", "/objects/deals/records/query", {
+      body: { data: [withForecast] }
+    })
+  ],
+  refreshed
+);
+
 /** What Pidgeon heard: never anything but a read, and never the machine's key. */
 const heard = () => mail.requests;
 
@@ -197,6 +242,12 @@ const seed = Effect.gen(function* () {
   yield* PidgeonTest.seed({ ...who, id: support.id, handle: support.handle });
   yield* PidgeonTest.seed({ ...who, id: invoices.id, handle: invoices.handle, access: "read" });
   yield* PidgeonTest.seed({ ...who, id: closed.id, handle: closed.handle });
+  yield* AttioReads.seed({ ...who, ...crm, revisions: [AttioReads.snapshot, refreshed] });
+  yield* AttioReads.seed({
+    ...who,
+    ...otherCrm,
+    revisions: [refreshed, refreshed, refreshed]
+  });
 });
 
 /** The runtime this door drains with; it serves no published versions here. */
@@ -234,7 +285,7 @@ const serve = (
         Layer.provide(PostgresSource.layer),
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
-        Layer.provideMerge(AttioSource.layer)
+        Layer.provideMerge(workspace.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
@@ -809,6 +860,65 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
           yield* (yield* Runtime.Runtime).drain;
           const draining = yield* query(DEV_SEED.token).pipe(Effect.flip);
           assert.strictEqual(draining.code, "busy");
+        }),
+      30_000
+    );
+  }
+);
+
+it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
+  "Attio in patchy dev",
+  (it) => {
+    it.effect(
+      "reads by the snapshot the repo was generated from, and refuses another connection's revision",
+      () =>
+        Effect.gen(function* () {
+          const handlers = yield* AttioDev.handlers({
+            apiUrl: yield* origin,
+            token: Option.some(Redacted.make(DEV_SEED.token))
+          }).pipe(Effect.provide(FetchHttpClient.layer));
+          const list = (revision: number) =>
+            Effect.flatMap(Clock.currentTimeMillis, (now) =>
+              handlers["attio.listRecords"]
+                .run({ connection: "crm", object: "deals" })
+                .pipe(
+                  Effect.provideService(
+                    Binding.Binding,
+                    local({ crm: { kind: "attio", ...crm, revision } }, now)
+                  )
+                )
+            );
+          type Rows = { readonly rows: ReadonlyArray<{ readonly values: object }> };
+          // A client generated before the Refresh decodes as generated: without `forecast`.
+          const before = (yield* list(1)) as Rows;
+          assert.notProperty(before.rows[0]!.values, "forecast");
+          assert.propertyVal(before.rows[0]!.values, "name", "Bikes for Lumen");
+          const after = (yield* list(2)) as Rows;
+          assert.propertyVal(after.rows[0]!.values, "forecast", 0.6);
+          assert.deepInclude((yield* devCalls)[0], {
+            credentialKind: "machine",
+            userId: DEV_SEED.userId,
+            patchId: null,
+            op: "attio.listRecords",
+            resource: "deals",
+            connectionId: crm.id,
+            outcome: "success",
+            rowCount: 1
+          });
+          // A revision only another connection has is no snapshot of this one.
+          const foreign = Runtime.toFailure(yield* list(3).pipe(Effect.flip));
+          assert.include(foreign, { code: "access_denied" });
+          assert.include(foreign.error, "attio/crm");
+          // Straight to the door without a revision, an Attio read is refused, logged and unsent.
+          const sent = workspace.requests.length;
+          const bare = yield* door({
+            op: "attio.listRecords",
+            connection: crm,
+            args: { object: "deals" }
+          });
+          assert.strictEqual(bare.status, 400);
+          assert.include(refusal(bare.body), { code: "invalid_request" });
+          assert.strictEqual(workspace.requests.length, sent);
         }),
       30_000
     );

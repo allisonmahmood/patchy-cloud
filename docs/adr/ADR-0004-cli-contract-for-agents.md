@@ -509,7 +509,7 @@ production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and loca
 files, never production rows/bytes, Clerk, a connection keyring or the production
 runtime log store. The exception is an integration whose dev binding reads the
 real connection ([ADR-0013](ADR-0013-dev-bindings-per-integration.md)), today
-PostHog and Pidgeon: the daemon sends their reads to the instance's dev read door
+PostHog, Pidgeon and Attio: the daemon sends their reads to the instance's dev read door
 with the key, which it receives on stdin only when such a declaration exists and
 keeps out of argv, the environment, state files, `dev.log` and workerd. Both
 mounts read as the key's person; the instance logs each read as a machine call. A
