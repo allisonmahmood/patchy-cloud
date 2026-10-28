@@ -31,6 +31,7 @@ import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
+import * as AttioSource from "../attio/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
 import * as RuntimeTest from "../test/runtime.js";
@@ -181,7 +182,8 @@ const credentials = Layer.mergeAll(
       inspect: () => Effect.die("no Postgres here")
     })
   ),
-  PostHogSource.layer
+  PostHogSource.layer,
+  AttioSource.layer
 );
 
 const patchId = "pidgeontier1";

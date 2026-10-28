@@ -19,6 +19,7 @@ import * as CredentialKeys from "../CredentialKeys.js";
 import type * as PidgeonSource from "../pidgeon/Source.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
+import * as AttioSource from "../attio/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 
 /**
@@ -56,6 +57,7 @@ export const services = (pidgeon: Layer.Layer<PidgeonSource.Source>) =>
       )
     ),
     Layer.provideMerge(PostHogSource.layer),
+    Layer.provideMerge(AttioSource.layer),
     Layer.provideMerge(pidgeon),
     Layer.provideMerge(
       CredentialKeys.layerFromKeys(

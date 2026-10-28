@@ -29,6 +29,7 @@ import * as Source from "./postgres/Source.js";
 import * as SourceClient from "./postgres/SourceClient.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
+import * as AttioSource from "./attio/Source.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 
 const env = clerkEnv();
@@ -130,6 +131,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(source),
   Layer.provideMerge(posthog.layer),
   Layer.provideMerge(PidgeonSource.layer),
+  Layer.provideMerge(AttioSource.layer),
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),

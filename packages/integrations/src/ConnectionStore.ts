@@ -240,7 +240,9 @@ export type ConnectionError =
   | PostgresSource.SourceError
   | PostHogSource.SourceError
   | PidgeonSource.CallError
-  | PidgeonKeys.KeysError;
+  | PidgeonKeys.KeysError
+  | AttioSource.InspectError
+  | AttioSource.OtherWorkspace;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {

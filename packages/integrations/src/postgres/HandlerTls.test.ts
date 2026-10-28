@@ -44,6 +44,7 @@ import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 import * as PostHogSource from "../posthog/Source.js";
+import * as AttioSource from "../attio/Source.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -266,7 +267,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
         assert.instanceOf(wrongHostname, SourceClient.TlsRequired);
         const connections = yield* SqlConnectionStore.make.pipe(
           Effect.provideService(Source.Source, source),
-          Effect.provide([PostHogSource.layer, PidgeonSource.layer])
+          Effect.provide([PostHogSource.layer, PidgeonSource.layer, AttioSource.layer])
         );
         const connection = yield* connections.connect({
           integration: "postgres",
@@ -409,7 +410,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
         );
         const connections = yield* SqlConnectionStore.make.pipe(
           Effect.provideService(Source.Source, source),
-          Effect.provide([PostHogSource.layer, PidgeonSource.layer])
+          Effect.provide([PostHogSource.layer, PidgeonSource.layer, AttioSource.layer])
         );
         const connection = yield* connections.connect({
           integration: "postgres",
