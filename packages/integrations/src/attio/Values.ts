@@ -96,6 +96,7 @@ type One = Exclude<typeof AttioValue.Type, null | ReadonlyArray<unknown>>;
 type Item = Readonly<Record<string, unknown>>;
 type Read = (item: Item) => One | undefined;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 const finite = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -152,7 +153,8 @@ const reads: { readonly [T in AttioAttributeType]: Read } = {
   "record-reference": (item) => {
     const object = text(item.target_object);
     const id = text(item.target_record_id);
-    return object === undefined || id === undefined ? undefined : { object, id };
+    // A record's id is Attio's UUID, as the wire says; anything else isn't one.
+    return object === undefined || id === undefined || !UUID.test(id) ? undefined : { object, id };
   },
   "actor-reference": (item) => actor(item.referenced_actor_type, item.referenced_actor_id),
   interaction: (item) => {

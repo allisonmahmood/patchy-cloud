@@ -172,6 +172,11 @@ describe("decoding", () => {
         yield* failure({ associated_company: [items.reference("organisations", uuid(700))] }),
         { object: "deals", attribute: "associated_company", reason: "target" }
       );
+      // A reference whose record id isn't one of Attio's.
+      assert.deepStrictEqual(
+        yield* failure({ associated_company: [items.reference("companies", "not-a-uuid")] }),
+        { object: "deals", attribute: "associated_company", reason: "value" }
+      );
       // An attribute Attio left out is gone.
       const missing = record("deals", id);
       delete (missing.values as Record<string, unknown>).amount;

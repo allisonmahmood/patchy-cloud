@@ -1,4 +1,4 @@
-import { useEffect, useState } from "patchy/preact";
+import { useEffect, useRef, useState } from "patchy/preact";
 import { isPatchyError, patchy } from "../patchy/_generated/client.js";
 import type { Entries, Member, Records } from "../patchy/_generated/uses/crm.js";
 
@@ -44,8 +44,12 @@ export function App() {
     );
   }, []);
 
-  /** A page of deals, then the companies of every deal shown, in one getMany. */
+  /** Which filters the newest request is for: an older request's answer is dropped. */
+  const current = useRef(0);
+
+  /** A page of deals, then the companies the page brings, in one getMany. */
   const load = async (from: string | null) => {
+    const request = ++current.current;
     setLoading(true);
     setError(null);
     try {
@@ -55,22 +59,26 @@ export function App() {
         limit: PAGE,
         ...(from === null ? {} : { cursor: from })
       });
-      const shown = from === null ? page.rows : [...deals, ...page.rows];
-      setDeals(shown);
-      setCursor(page.cursor);
-      const ids = [...new Set(shown.flatMap((deal) => deal.values.associated_company?.id ?? []))];
+      const known = from === null ? new Map<string, string>() : companies;
+      const ids = [
+        ...new Set(page.rows.flatMap((deal) => deal.values.associated_company?.id ?? []))
+      ].filter((id) => !known.has(id));
       const found = await crm.objects.companies.getMany(ids);
+      if (request !== current.current) return;
+      setDeals(from === null ? page.rows : [...deals, ...page.rows]);
+      setCursor(page.cursor);
       setCompanies(
-        new Map(
-          found.flatMap((company) =>
+        new Map([
+          ...known,
+          ...found.flatMap((company) =>
             company === null ? [] : [[company.id, company.values.name ?? "Unnamed"] as const]
           )
-        )
+        ])
       );
     } catch (caught) {
-      setError(explain(caught));
+      if (request === current.current) setError(explain(caught));
     } finally {
-      setLoading(false);
+      if (request === current.current) setLoading(false);
     }
   };
 
