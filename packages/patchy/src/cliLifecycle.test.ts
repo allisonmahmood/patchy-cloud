@@ -684,7 +684,7 @@ describe("patchy list", () => {
       }
       // Connections are never filtered by the patch flags; the list names every integration
       // this release decodes.
-      expect(url.searchParams.get("integrations")).toBe("postgres,posthog,pidgeon");
+      expect(url.searchParams.get("integrations")).toBe("postgres,posthog,pidgeon,attio");
       respond(200, projectConnections);
     });
     const result = await runCli(
@@ -909,7 +909,7 @@ describe("patchy list", () => {
     };
     const instance = await stubInstance((request, respond) => {
       // A bare handle only one connection has finds its integration first.
-      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
+      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
         return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/posthog/product");
       respond(200, detail);
@@ -996,7 +996,7 @@ describe("patchy list", () => {
       }
     };
     const instance = await stubInstance((request, respond) => {
-      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
+      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
         return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/pidgeon/support");
       respond(200, detail);
@@ -1072,7 +1072,7 @@ describe("patchy list", () => {
       };
       const instance = await stubInstance((request, respond) => {
         // A bare handle is looked up among every integration's connections first.
-        if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon")
+        if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
           return respond(200, projectConnections);
         expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);

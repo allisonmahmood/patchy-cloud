@@ -1,4 +1,5 @@
 import {
+  AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
   integrations,
@@ -25,10 +26,12 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as ConnectionStore from "./ConnectionStore.js";
 import {
+  AttioConnection,
   Connection,
   ConnectionChanged,
   ConnectionHandleTaken,
   ConnectionInUse,
+  ConnectionMutationUnavailable,
   ConnectionNotConnected,
   ConnectionNotFound,
   ConnectionRetargetRequired,
@@ -52,27 +55,42 @@ import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
+import * as AttioSource from "./attio/Source.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
 const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot));
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSnapshot));
+const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
-const encodeSnapshot = (metadata: Metadata) =>
-  metadata.integration === "postgres"
-    ? encodePostgresSnapshot(metadata.snapshot)
-    : metadata.integration === "posthog"
-      ? encodePostHogSnapshot(metadata.snapshot)
-      : encodePidgeonSnapshot(metadata.snapshot);
-const encodeDisplay = (target: Target) =>
-  target.integration === "postgres"
-    ? encodePostgresDisplay(target.display)
-    : target.integration === "posthog"
-      ? encodePostHogDisplay(target.display)
-      : encodePidgeonDisplay(target.display);
+const encodeAttioDisplay = Schema.encodeSync(Schema.fromJsonString(AttioSource.Display));
+const encodeSnapshot = (metadata: Metadata) => {
+  switch (metadata.integration) {
+    case "postgres":
+      return encodePostgresSnapshot(metadata.snapshot);
+    case "posthog":
+      return encodePostHogSnapshot(metadata.snapshot);
+    case "pidgeon":
+      return encodePidgeonSnapshot(metadata.snapshot);
+    case "attio":
+      return encodeAttioSnapshot(metadata.snapshot);
+  }
+};
+const encodeDisplay = (target: Target) => {
+  switch (target.integration) {
+    case "postgres":
+      return encodePostgresDisplay(target.display);
+    case "posthog":
+      return encodePostHogDisplay(target.display);
+    case "pidgeon":
+      return encodePidgeonDisplay(target.display);
+    case "attio":
+      return encodeAttioDisplay(target.display);
+  }
+};
 /** Credentials for the same destination may replace each other; anything else is a retarget. */
 const sameTarget = (current: Target, next: Target) =>
   current.integration === "postgres"
@@ -84,12 +102,16 @@ const sameTarget = (current: Target, next: Target) =>
       ? next.integration === "posthog" &&
         next.display.region === current.display.region &&
         next.display.projectId === current.display.projectId
-      : next.integration === "pidgeon" && next.display.identityId === current.display.identityId;
+      : current.integration === "pidgeon"
+        ? next.integration === "pidgeon" && next.display.identityId === current.display.identityId
+        : next.integration === "attio" &&
+          next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
   Schema.Struct({ ...PostHogConnection.fields, ...secret }),
-  Schema.Struct({ ...PidgeonConnection.fields, ...secret })
+  Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
+  Schema.Struct({ ...AttioConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
@@ -115,6 +137,11 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("pidgeon"),
     snapshot: Schema.NullOr(PidgeonSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("attio"),
+    snapshot: Schema.NullOr(AttioSnapshot)
   })
 ]);
 const Lookup = Schema.Struct({
@@ -280,6 +307,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
         if (row.integration === "posthog")
+          return {
+            ...row,
+            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+          } satisfies ConnectionDetail;
+        if (row.integration === "attio")
           return {
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
@@ -606,6 +638,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
         if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
+        if (input.integration === "attio") return yield* new ConnectionMutationUnavailable({});
         const identity = { ...input, integration: input.integration, id: newInternalId("conn") };
         const inspected = yield* inspect(identity, input.credentials);
         const encrypted = yield* keys.encrypt(identity, input.credentials);
@@ -761,6 +794,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       function* (input: CredentialsInput) {
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonReplace(input);
+        if (current.integration === "attio") return yield* new ConnectionMutationUnavailable({});
         const target = yield* testTarget(current.integration, input.credentials);
         if (!sameTarget(current, target)) return yield* new ConnectionRetargetRequired({});
         const encrypted = yield* keys.encrypt(current, input.credentials);
@@ -800,6 +834,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       function* (input: Identity) {
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonTest(input, current);
+        if (current.integration === "attio") return yield* new ConnectionMutationUnavailable({});
         yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -857,6 +892,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* pidgeonRefresh(input, current);
       }
+      if (current.integration === "attio") return yield* new ConnectionMutationUnavailable({});
       if (credentials === undefined && current.status !== "connected")
         return yield* new ConnectionNotConnected({});
       const secret = credentials ?? (yield* keys.decrypt(current, current));
@@ -908,6 +944,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           yield* PidgeonKeys.test(yield* secretOf(current), current.display.email).pipe(
             Effect.provideService(PidgeonSource.Source, pidgeonSource)
           );
+        else if (current.integration === "attio")
+          return yield* new ConnectionMutationUnavailable({});
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(

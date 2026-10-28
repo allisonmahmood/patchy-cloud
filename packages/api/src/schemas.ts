@@ -13,6 +13,7 @@ import { registry } from "@patchy/limits/registry";
 import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
+import { AttioSnapshot } from "./attioSnapshot.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -509,11 +510,17 @@ export const PidgeonDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("pidgeon")
 });
+/** One Attio workspace, read-only. */
+export const AttioDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("attio")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
   PostHogDeclaration,
-  PidgeonDeclaration
+  PidgeonDeclaration,
+  AttioDeclaration
 ]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
@@ -602,6 +609,7 @@ export const Manifest = Schema.Struct({
       PostgresDeclaration,
       PostHogDeclaration,
       PidgeonDeclaration,
+      AttioDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -633,6 +641,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...AttioDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -647,7 +660,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon"] as const;
+export const integrations = ["postgres", "posthog", "pidgeon", "attio"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -687,11 +700,13 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
 export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
 export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
+export const AttioConnectionDetail = detail("attio", AttioSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,
   PostHogConnectionDetail,
-  PidgeonConnectionDetail
+  PidgeonConnectionDetail,
+  AttioConnectionDetail
 ]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
@@ -736,6 +751,11 @@ export const DeclarationMetadata = Schema.Struct({
   pidgeon: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: PidgeonDeclaration, snapshot: PidgeonSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // As for Pidgeon: a release before Attio generates none.
+  attio: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: AttioDeclaration, snapshot: AttioSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   shared: Schema.Record(
     Schema.String,

@@ -17,7 +17,7 @@ import {
   type TableDefinition
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { ConnectionStore, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
+import { Attio, ConnectionStore, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -59,11 +59,16 @@ export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>
     return "Generation refused: an output path is outside the managed project set.";
   }
 }
-const labels = { postgres: "Postgres", posthog: "PostHog", pidgeon: "Pidgeon" } as const;
+const labels = {
+  postgres: "Postgres",
+  posthog: "PostHog",
+  pidgeon: "Pidgeon",
+  attio: "Attio"
+} as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon"]),
+    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio"]),
     handle: Schema.String
   }
 ) {
@@ -118,7 +123,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "members" }
+    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "members" }
   >
 ) => {
   const source =
@@ -151,6 +156,7 @@ const knownSkills = [
   "patchy-postgres",
   "patchy-posthog",
   "patchy-pidgeon",
+  "patchy-attio",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -274,16 +280,22 @@ export const generate = Effect.fn("Generation.generate")(function* (
     postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]>;
     posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]>;
     pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]>;
+    attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
     posthog: Object.create(null),
     pidgeon: Object.create(null),
+    attio: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
   const available = Object.values(request.manifest.uses).some(
-    (entry) => entry.kind === "postgres" || entry.kind === "posthog" || entry.kind === "pidgeon"
+    (entry) =>
+      entry.kind === "postgres" ||
+      entry.kind === "posthog" ||
+      entry.kind === "pidgeon" ||
+      entry.kind === "attio"
   )
     ? yield* connections.list(companyId).pipe(
         Effect.mapError(
@@ -303,7 +315,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
     if (
       declaration.kind === "postgres" ||
       declaration.kind === "posthog" ||
-      declaration.kind === "pidgeon"
+      declaration.kind === "pidgeon" ||
+      declaration.kind === "attio"
     ) {
       const connection = available.find(
         (entry) =>
@@ -373,6 +386,24 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-pidgeon");
+      } else if (stored.integration === "attio") {
+        // Attio has no fixture: hand-written CRM rows wouldn't resemble a company's, so dev reads
+        // the real workspace.
+        const declared = { kind: "attio" as const, ...resolved };
+        metadata.attio[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Attio.attio.generate({ ...described, kind: "attio" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-attio/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-attio");
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };

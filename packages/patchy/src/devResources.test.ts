@@ -63,6 +63,7 @@ it.live(
           postgres: {},
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {
             contacts: {
               declaration,
@@ -190,6 +191,7 @@ it.live(
           postgres: {},
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {
             assets: {
               declaration: assets,
@@ -340,6 +342,7 @@ it.live(
           postgres: {},
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {
             contacts: {
               declaration,
@@ -469,6 +472,7 @@ it.live(
           postgres: {},
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {
             contacts: {
               declaration,
@@ -588,7 +592,7 @@ it.live(
           role: "admin",
           machine: { id: "local-machine", name: "Local machine" }
         }),
-        metadata: { postgres: {}, posthog: {}, pidgeon: {}, shared: {} }
+        metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, shared: {} }
       };
       const exercise = Effect.fn("test.publishedInventory")(function* (
         current: Prepared,
@@ -760,6 +764,7 @@ it.live(
           },
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {}
         }
       };

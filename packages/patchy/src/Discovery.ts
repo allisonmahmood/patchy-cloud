@@ -102,6 +102,34 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       `Taken at: ${snapshot.takenAt}`
     ];
   }
+  if (connection.integration === "attio") {
+    const snapshot = connection.snapshot;
+    const attributes = (items: (typeof snapshot.objects)[number]["attributes"]) =>
+      items.map(
+        (item) =>
+          `    ${item.slug}: ${item.type}${item.multiselect ? " multiselect" : ""}${item.targets === undefined ? "" : ` to ${item.targets.map((target) => target.slug).join(", ") || "nothing Patchy reads"}`}${item.optionsSkipped === true ? " options not read" : item.options === undefined ? "" : ` options ${item.options.map((option) => Output.toJson(option)).join(", ")}`}`
+      );
+    return [
+      ...lines,
+      `Workspace: ${snapshot.workspace.name} (${snapshot.workspace.slug})`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      "Objects:",
+      ...snapshot.objects.flatMap((object) => [
+        `  ${object.slug} (${object.name})`,
+        ...attributes(object.attributes)
+      ]),
+      "Lists:",
+      ...snapshot.lists.flatMap((list) => [
+        `  ${list.slug} (${list.name}) of ${list.parents.map((parent) => parent.slug).join(", ")}`,
+        ...attributes(list.attributes)
+      ]),
+      ...snapshot.excluded.map(
+        (item) =>
+          `Excluded ${item.kind} ${item.in === undefined ? "" : `${item.in}.`}${item.name}: ${item.reason}`
+      )
+    ];
+  }
   if (connection.integration === "posthog") {
     const snapshot = connection.snapshot;
     const described = (description: string | undefined) =>

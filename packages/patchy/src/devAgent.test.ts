@@ -41,7 +41,7 @@ const prepared: Prepared = {
     files: {},
     uses: {}
   },
-  metadata: { postgres: {}, posthog: {}, pidgeon: {}, shared: {} }
+  metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, shared: {} }
 };
 const patch = { name: "notes", description: "Team notes.", owner: "Builder" };
 

@@ -284,6 +284,11 @@ export const pidgeon = <const Handle extends string>(handle: Handle) => ({
   kind: "pidgeon" as const,
   handle
 });
+/** One company's Attio workspace, read-only, by its connection's handle. */
+export const attio = <const Handle extends string>(handle: Handle) => ({
+  kind: "attio" as const,
+  handle
+});
 export const sharedTable = <const Patch extends string, const Table extends string>(
   patchId: Patch,
   table: Table
@@ -305,6 +310,7 @@ export type Declaration =
   | { readonly kind: "postgres"; readonly handle: string }
   | { readonly kind: "posthog"; readonly handle: string }
   | { readonly kind: "pidgeon"; readonly handle: string }
+  | { readonly kind: "attio"; readonly handle: string }
   | { readonly kind: "sharedTable"; readonly patchId: string; readonly table: string }
   | { readonly kind: "sharedStore"; readonly patchId: string; readonly store: string }
   | { readonly kind: "members" };

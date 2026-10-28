@@ -7,6 +7,7 @@ import {
   postgres,
   pidgeon,
   posthog,
+  attio,
   sharedStore,
   sharedTable,
   t,
@@ -67,6 +68,7 @@ const config = defineConfig({
     sales: postgres("warehouse"),
     product: posthog("warehouse"),
     support: pidgeon("support"),
+    crm: attio("crm"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
   }
@@ -106,6 +108,8 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.uses.product.handle, "warehouse">>,
   Assert<Equal<typeof config.uses.support.kind, "pidgeon">>,
   Assert<Equal<typeof config.uses.support.handle, "support">>,
+  Assert<Equal<typeof config.uses.crm.kind, "attio">>,
+  Assert<Equal<typeof config.uses.crm.handle, "crm">>,
   Assert<Equal<typeof config.uses.logos.store, "logos">>,
   Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,
   Assert<Equal<typeof executeConfig, (path: string) => Promise<ExecutedManifest>>>,

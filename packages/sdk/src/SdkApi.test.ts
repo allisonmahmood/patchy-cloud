@@ -690,6 +690,7 @@ it.layer(layer)("SDK company generation", (it) => {
         postgres: {},
         posthog: {},
         pidgeon: {},
+        attio: {},
         shared: {}
       });
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
@@ -786,6 +787,7 @@ it.layer(layer)("SDK company generation", (it) => {
           },
           posthog: {},
           pidgeon: {},
+          attio: {},
           shared: {}
         });
         for (const path of [

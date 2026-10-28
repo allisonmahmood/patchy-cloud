@@ -470,6 +470,19 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot | `timeout` | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |
 | `pidgeon.addresses.listed` | contract | 1000 | addresses | company | Addresses the Pidgeon connect form lists from one admin key | None | No | release |
+| `attio.calls.concurrent` | contract | 4 | calls | host | Attio calls and discoveries per workspace at once in one server process, shared by every connection to it and by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
+| `attio.host.concurrent` | contract | 6 | calls | host | Attio calls and discoveries at once in one server process across every workspace, each held from its first request through decoding; an excess call waits within its deadline | `busy` | No | release |
+| `attio.discovery.deadline` | contract | 60000 | milliseconds | company | Connecting an Attio workspace, replacing its key or refreshing it: the key check and every discovery request | `timeout` | No | release |
+| `attio.discovery.requests` | contract | 3000 | requests | company | Requests one Attio discovery sends | `too_large` | No | release |
+| `attio.discovery.concurrent` | contract | 8 | requests | company | Requests one Attio discovery has in flight at once | None | No | release |
+| `attio.discovery.response` | contract | 2097152 | bytes | company | One raw Attio answer during discovery | `too_large` | No | release |
+| `attio.discovery.bytes` | contract | 8388608 | bytes | company | Encoded Attio snapshot, checked as discovery adds to it | `too_large` | No | release |
+| `attio.discovery.objects` | contract | 200 | objects | company | Objects one Attio snapshot keeps | `too_large` | No | release |
+| `attio.discovery.lists` | contract | 500 | lists | company | Lists one Attio snapshot keeps | `too_large` | No | release |
+| `attio.discovery.attributes` | contract | 500 | attributes | company | Attributes one Attio object or list keeps in a snapshot, archived ones included | `too_large` | No | release |
+| `attio.discovery.options` | contract | 2000 | options | company | Active options one Attio select or status keeps in a snapshot | `too_large` | No | release |
+| `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
+| `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |

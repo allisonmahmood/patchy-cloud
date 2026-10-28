@@ -49,6 +49,7 @@ import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
 import { generate as generatePostHog } from "../../../integrations/src/posthog/Generate.js";
 import { generate as generatePidgeon } from "../../../integrations/src/pidgeon/Generate.js";
+import { generate as generateAttio } from "../../../integrations/src/attio/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
 import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
@@ -360,6 +361,14 @@ export const projectConnections = {
       description: "Synthetic support inbox",
       status: "connected",
       hint: "patchy add pidgeon/support"
+    },
+    {
+      id: "conn-crm",
+      handle: "crm",
+      integration: "attio",
+      description: "Synthetic CRM",
+      status: "connected",
+      hint: "patchy add attio/crm"
     }
   ]
 };
@@ -437,6 +446,7 @@ export const generateProjectResponse = (
   const postgres: Record<string, (typeof DeclarationMetadata.Type)["postgres"][string]> = {};
   const posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]> = {};
   const pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]> = {};
+  const attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]> = {};
   const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
   const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
@@ -513,6 +523,50 @@ export const generateProjectResponse = (
       skills.add("patchy-pidgeon");
       continue;
     }
+    if (declaration.kind === "attio") {
+      const stamp = { ...declaration, id: "conn-crm", revision: 1 };
+      const snapshot = {
+        version: 1 as const,
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+        scopes: ["record_permission:read"],
+        objects: [
+          {
+            id: "obj-deals",
+            slug: "deals",
+            name: "Deals",
+            attributes: [
+              {
+                id: "att-name",
+                slug: "name",
+                title: "Deal name",
+                type: "text" as const,
+                multiselect: false
+              },
+              {
+                id: "att-stage",
+                slug: "stage",
+                title: "Deal stage",
+                type: "status" as const,
+                multiselect: false,
+                options: ["Lead", "Won 🎉"]
+              }
+            ]
+          }
+        ],
+        lists: [],
+        excluded: []
+      };
+      attio[alias] = { declaration: stamp, snapshot };
+      const generated = generateAttio(stamp, snapshot);
+      files.push(
+        { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
+        { path: `patchy/_generated/context/${alias}.md`, contents: generated.context }
+      );
+      connections[alias] = `./uses/${alias}.js`;
+      uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
+      skills.add("patchy-attio");
+      continue;
+    }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
     const stamp = { ...declaration, id: "conn-sales", revision: 1 };
     const snapshot = {
@@ -566,7 +620,7 @@ export const generateProjectResponse = (
   return {
     ok: true,
     files,
-    metadata: { postgres, posthog, pidgeon, shared: sharedMetadata },
+    metadata: { postgres, posthog, pidgeon, attio, shared: sharedMetadata },
     uses
   };
 };
