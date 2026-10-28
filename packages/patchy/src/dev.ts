@@ -85,7 +85,7 @@ export function run(): void {
     if (Option.isNone(token) && readsLive(prepared.metadata))
       return yield* new LocalError({
         message:
-          "patchy dev started without this machine's key, which PostHog and Pidgeon reads need."
+          "patchy dev started without this machine's key, which PostHog, Pidgeon and Attio reads need."
       });
     return yield* DevServer.serve(prepared, stateDir, record, prepared.toolchain, token).pipe(
       Effect.provide([DevServer.layer, DirectoryWatch.layer])
