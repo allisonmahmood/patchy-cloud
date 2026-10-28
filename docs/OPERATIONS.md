@@ -150,10 +150,10 @@ is recorded under `/api/*`; its 429 carries the refusing `limitId`.
 `method` and `status` are what the client sent and received. A 2xx or 3xx is
 `success`; a 4xx is `refused`, with the `code` from its body when it has one; a
 5xx or a defect is `failure`; a dropped connection is `interrupted`. `viewerId`
-and `companyId` name the signed-in user, or the user a machine token belongs to;
-the token itself is never recorded. Routes about one patch add `patchId` and a
-`versionId`: the version a page served, a publish created or a rollback made
-current, and otherwise the patch's current version.
+and `companyId` name the signed-in user, or the user a machine token or agent
+connection belongs to; the token itself is never recorded. Routes about one
+patch add `patchId` and a `versionId`: the version a page served, a publish
+created or a rollback made current, and otherwise the patch's current version.
 `requestBytes` is the declared length, and `responseBytes` is the body sent,
 compressed when it was. A content URL request adds where its document came from
 and how it was encoded, `contentLoad` and `contentEncoding`.
@@ -165,7 +165,9 @@ records `cliVersion` when the release is three dot-separated numbers, and
 `cliCommand` and `agent` when they are in the closed lists in
 `packages/api/src/cli.ts`. A field that does not parse is dropped, and a
 header that is not exactly three fields records none. A request without the
-header, from a browser or an older CLI, records none of the three.
+header, from a browser or an older CLI, records none of the three. A request to
+Patchy MCP's door adds the fields [Patchy MCP › Bounds](./product.md#bounds)
+lists under Events.
 
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.

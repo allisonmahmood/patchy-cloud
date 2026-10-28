@@ -1,6 +1,6 @@
 # Patchy MCP
 
-How a person's own agent uses their company's patches: one door, four fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. `docs/product.md` › Patchy MCP is the spec. Built so far: the door's revisions, request trust, bearer and limits, the agent access refusal, the catalogue calls, `read_patch`, `change_patch` with its change keys, and the call limits: each person's calls a minute on a patch, their calls in flight, and company admission shared with pages.
+How a person's own agent uses their company's patches: one door, four fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. Its product decisions live in [the product](../../docs/product.md#patchy-mcp).
 
 ## Language
 
