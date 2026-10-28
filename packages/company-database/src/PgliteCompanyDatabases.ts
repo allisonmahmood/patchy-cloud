@@ -195,6 +195,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
     const retained = yield* SqlClient.make({
       acquirer: Effect.succeed(acknowledged),
       compiler: PgliteClient.makeCompiler(),
+      driver: sql.driver,
       spanAttributes: []
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     const context = Context.make(SqlClient.SqlClient, retained).pipe(

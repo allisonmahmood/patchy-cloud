@@ -9,7 +9,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Companies, Users } from "@patchy/companies";
-import { BodyTooLarge } from "@patchy/api";
+import { BodyTooLarge, isBodyTooLarge } from "@patchy/api";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -285,9 +285,15 @@ const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, Pag
               400
             )
           ),
-        HttpServerError: () =>
+        HttpServerError: (error) =>
           reply(
-            message("Invalid form", "<p>Open the page again and submit the form again.</p>", 400)
+            isBodyTooLarge(error)
+              ? message("Invalid form", "<p>The submitted form is too large.</p>", 413)
+              : message(
+                  "Invalid form",
+                  "<p>Open the page again and submit the form again.</p>",
+                  400
+                )
           ),
         SqlError: () =>
           reply(message("Machine service unavailable", "<p>Please try again.</p>", 503)),

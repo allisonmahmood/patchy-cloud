@@ -174,7 +174,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   // the seed below always lands on the current schema. The supervisor has no
   // terminal, so a failure is written to dev.log, marked for `pnpm dev` to
   // print: a refusal (a duplicate id, or a ledger from before a squash says to
-  // reset) or a step's SQL error, which the Migrator raises as a defect.
+  // reset) or a step's SQL error, each a MigrationError.
   yield* migrate(migrations).pipe(
     Effect.provide(layerFromUrl(Redacted.make(plan.databaseUrl))),
     Effect.tapCause((cause) =>

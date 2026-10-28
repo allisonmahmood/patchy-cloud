@@ -113,16 +113,10 @@ it.layer(layer)("auth pages on a socket", (it) => {
           redirect: "manual",
           ...(streamed ? { duplex: "half" as const } : {})
         };
-        const request = Effect.tryPromise(() => fetch(url, options));
-        if (streamed) {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
-        } else {
-          const response = yield* request;
-          assert.strictEqual(response.status, 413);
-          assert.strictEqual(response.headers.get("location"), null);
-          assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
-        }
+        const response = yield* Effect.tryPromise(() => fetch(url, options));
+        assert.strictEqual(response.status, 413);
+        assert.strictEqual(response.headers.get("location"), null);
+        assert.include(yield* Effect.promise(() => response.text()), "Invalid form");
       }
     })
   );

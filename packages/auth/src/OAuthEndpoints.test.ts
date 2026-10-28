@@ -4,12 +4,14 @@
  * `Consents.test.ts`'s.
  */
 import { assert, it } from "@effect/vitest";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -784,6 +786,49 @@ it.layer(services)("the authorization server's endpoints", (it) => {
       assert.strictEqual(limited.status, 429);
       assert.match(limited.headers.get("retry-after")!, /^\d+$/);
       assert.strictEqual((yield* load(sessionOf(), "198.51.100.41")).status, 200);
+    })
+  );
+});
+
+// On a real socket the server reads the body itself, so a streamed one meets the cap as it arrives.
+it.layer(
+  HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+    Layer.provideMerge(NodeHttpServer.layerTest),
+    Layer.provide(services),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  )
+)("the token endpoint on a socket", (it) => {
+  it.effect("refuses an oversized token request, declared or streamed, with 413", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") return assert.fail("Expected a TCP listener");
+      const url = `http://127.0.0.1:${server.address.port}/oauth/token`;
+      const body = new TextEncoder().encode(
+        new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: "x".repeat(9_000)
+        }).toString()
+      );
+      for (const streamed of [false, true]) {
+        const response = yield* Effect.promise(() =>
+          fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: streamed
+              ? new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(body.subarray(0, 4_096));
+                    controller.enqueue(body.subarray(4_096));
+                    controller.close();
+                  }
+                })
+              : body,
+            ...(streamed ? { duplex: "half" } : {})
+          } as RequestInit & { duplex?: "half" })
+        );
+        assert.strictEqual(response.status, 413);
+        assert.strictEqual((yield* json(response)).error, "invalid_request");
+      }
     })
   );
 });

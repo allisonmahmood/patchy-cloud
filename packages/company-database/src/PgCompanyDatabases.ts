@@ -647,6 +647,7 @@ export const make = Effect.gen(function* () {
     const retained = yield* SqlClient.make({
       acquirer: Effect.succeed(connection),
       compiler: PgClient.makeCompiler(),
+      driver: "pg",
       spanAttributes: []
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
     const retainedContext = Context.make(SqlClient.SqlClient, retained).pipe(

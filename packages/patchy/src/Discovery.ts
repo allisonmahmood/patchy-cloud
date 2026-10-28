@@ -261,12 +261,10 @@ export const list = Effect.fn("Discovery.list")(function* (
   }
   const state = Option.getOrElse(options.state, () => "live" as const);
   if (isPatchList) {
-    const [patches, connections] = yield* Effect.all(
-      [
-        client.list({ query: { state, mine: Option.getOrElse(options.mine, () => false) } }),
-        client.listConnections({ query: { integrations: Api.decodable } })
-      ],
-      { concurrency: 2 }
+    const [patches, connections] = yield* Effect.zip(
+      client.list({ query: { state, mine: Option.getOrElse(options.mine, () => false) } }),
+      client.listConnections({ query: { integrations: Api.decodable } }),
+      { concurrent: true }
     ).pipe(Effect.catch(refusal));
     const now = yield* Clock.currentTimeMillis;
     const yours: string[] = ["Yours:"];

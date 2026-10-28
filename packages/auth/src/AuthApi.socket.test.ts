@@ -73,14 +73,9 @@ it.layer(layer)("anonymous device JSON bodies on a socket", (it) => {
           JSON.stringify({ machineNameHint }),
           framing
         );
-        if (framing === "chunked") {
-          // The server cuts an undeclared body off mid-stream, so the request fails.
-          yield* request.pipe(Effect.flip);
-        } else {
-          const response = yield* request;
-          assert.strictEqual(response.status, 413);
-          assert.deepStrictEqual(response.body, { ok: false, error: "Request body is too large." });
-        }
+        const response = yield* request;
+        assert.strictEqual(response.status, 413);
+        assert.deepStrictEqual(response.body, { ok: false, error: "Request body is too large." });
         // A stored hint is cut to 64 characters, so look for its start.
         const sql = yield* SqlClient.SqlClient;
         assert.deepStrictEqual(
