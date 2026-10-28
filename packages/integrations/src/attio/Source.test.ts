@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as AttioDouble from "../test/attio.js";
 import * as Source from "./Source.js";
 
@@ -188,8 +189,18 @@ it.effect(
           { kind: "object", name: "Workspace hidden", reason: "no_slug" },
           { kind: "list", name: "orphans", reason: "no_parent" },
           { kind: "list", name: "Untitled", reason: "no_slug" },
-          { kind: "attribute", in: "companies", name: "legacy_score", reason: "archived" },
-          { kind: "attribute", in: "deals", name: "forecast", reason: "unsupported_type" }
+          {
+            kind: "attribute",
+            in: { kind: "object", slug: "companies" },
+            name: "legacy_score",
+            reason: "archived"
+          },
+          {
+            kind: "attribute",
+            in: { kind: "object", slug: "deals" },
+            name: "forecast",
+            reason: "unsupported_type"
+          }
         ]
       );
       // Self, objects, lists, four containers' attributes, three option reads.
@@ -267,6 +278,49 @@ it.effect("refuses each bound the moment it's passed, returning nothing", () =>
       at(yield* refused({ "attio.discovery.bytes": 1_200 })).limitId,
       "attio.discovery.bytes"
     );
+  })
+);
+
+it.effect("counts what it leaves out toward the snapshot's bytes as it reads, not after", () =>
+  Effect.gen(function* () {
+    // An object of archived attributes: nothing kept, everything named, across two pages.
+    const archived = Array.from({ length: 600 }, (_, index) => ({
+      id: `att-${index}`,
+      slug: `old_field_${index}`,
+      type: "text",
+      archived: true
+    }));
+    const attic = {
+      ...acme,
+      objects: [{ id: "obj-attic", slug: "attic", name: "Attic", attributes: archived }],
+      lists: []
+    };
+    const { result, requests } = yield* inspect(
+      AttioDouble.workspace({ ...readKey, workspace: attic })
+    ).pipe(limits({ "attio.discovery.bytes": 4_000 }));
+    if (result._tag !== "Failure") return assert.fail("discovery succeeded");
+    assert.instanceOf(result.failure, Source.DiscoveryTooLarge);
+    assert.strictEqual(result.failure.limitId, "attio.discovery.bytes");
+    // The first page was enough to pass the bound: the second was never asked for.
+    assert.isFalse(requests.some((request) => request.url.searchParams.get("offset") === "500"));
+  })
+);
+
+it.effect("shares one call's byte budget between requests collecting at once", () =>
+  Effect.gen(function* () {
+    const { source: attio } = yield* source(() => AttioDouble.json(200, [1, 2, 34]));
+    const budget = { remaining: 10 };
+    const results = yield* Effect.all(
+      [1, 2].map(() =>
+        attio
+          .send(key(readKey.token), HttpClientRequest.get("/v2/objects"), { max: 100, budget })
+          .pipe(Effect.result)
+      ),
+      { concurrency: "unbounded" }
+    );
+    // Each answer is 8 bytes: the budget holds one of them, never both.
+    assert.deepStrictEqual(results.map((result) => result._tag).sort(), ["Failure", "Success"]);
+    assert.isAtLeast(budget.remaining, 0);
   })
 );
 

@@ -428,12 +428,19 @@ const checkSnapshot = Schema.decodeUnknownEffect(AttioSnapshot);
 const encodeSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
 const isAttributeType = Schema.is(Schema.Literals(attioAttributeTypes));
 
-/** Reads the whole body, refusing it once it passes its bound or its call's budget. */
+/**
+ * Reads the whole body, refusing it once it passes its bound or its call's budget. The budget is
+ * spent chunk by chunk as it arrives, so requests collecting at once share it rather than each
+ * seeing all of it.
+ */
 const collect = (response: HttpClientResponse.HttpClientResponse, bytes: Bytes) =>
   Effect.gen(function* () {
-    const max = Math.min(bytes.max, bytes.budget?.remaining ?? Number.POSITIVE_INFINITY);
     const declared = Number(response.headers["content-length"]);
-    if (Number.isFinite(declared) && declared > max) return yield* new Overflow({});
+    if (
+      Number.isFinite(declared) &&
+      declared > Math.min(bytes.max, bytes.budget?.remaining ?? Number.POSITIVE_INFINITY)
+    )
+      return yield* new Overflow({});
     const chunks = yield* response.stream.pipe(
       Stream.mapError(
         (cause) => new Unavailable({ stage: "response", cause: Redacted.make(cause) })
@@ -441,14 +448,17 @@ const collect = (response: HttpClientResponse.HttpClientResponse, bytes: Bytes) 
       Stream.runFoldEffect(
         () => ({ bytes: 0, chunks: [] as Uint8Array[] }),
         (state, chunk) => {
-          if (state.bytes + chunk.byteLength > max) return Effect.fail(new Overflow({}));
+          if (state.bytes + chunk.byteLength > bytes.max) return Effect.fail(new Overflow({}));
+          if (bytes.budget !== undefined) {
+            if (chunk.byteLength > bytes.budget.remaining) return Effect.fail(new Overflow({}));
+            bytes.budget.remaining -= chunk.byteLength;
+          }
           state.bytes += chunk.byteLength;
           state.chunks.push(chunk);
           return Effect.succeed(state);
         }
       )
     );
-    if (bytes.budget !== undefined) bytes.budget.remaining -= chunks.bytes;
     const body = new Uint8Array(chunks.bytes);
     let offset = 0;
     for (const chunk of chunks.chunks) {
@@ -751,6 +761,19 @@ export const make = Effect.gen(function* () {
     }
     if (lists.length > bounds.lists)
       return yield* new DiscoveryTooLarge({ limitId: "attio.discovery.lists" });
+    // Every kept object and list, and what's left out already, counts toward the snapshot's bytes.
+    for (const container of [...objects, ...lists])
+      yield* grow(
+        {
+          id: container.id,
+          slug: container.slug,
+          name: container.name,
+          ...(container.kind === "lists" ? { parents: container.parents } : {}),
+          attributes: []
+        },
+        container.slug
+      );
+    for (const item of excluded) yield* grow(item);
 
     /** A container's attributes, archived ones named among the exclusions. */
     const attributesOf = (container: Container) =>
@@ -766,16 +789,22 @@ export const make = Effect.gen(function* () {
           );
           for (const attribute of page.data) {
             const slug = attribute.api_slug ?? "";
-            const leave = (reason: AttioExclusion["reason"]) =>
-              left.push({
+            const leave = (reason: AttioExclusion["reason"]) => {
+              const item: AttioExclusion = {
                 kind: "attribute",
-                in: container.slug,
+                in: {
+                  kind: container.kind === "objects" ? "object" : "list",
+                  slug: container.slug
+                },
                 name: slug === "" ? attribute.title : slug,
                 reason
-              });
-            if (attribute.is_archived) leave("archived");
-            else if (slug === "") leave("no_slug");
-            else if (!isAttributeType(attribute.type)) leave("unsupported_type");
+              };
+              left.push(item);
+              return grow(item, container.slug);
+            };
+            if (attribute.is_archived) yield* leave("archived");
+            else if (slug === "") yield* leave("no_slug");
+            else if (!isAttributeType(attribute.type)) yield* leave("unsupported_type");
             else {
               const targets =
                 attribute.type === "record-reference"
@@ -803,7 +832,6 @@ export const make = Effect.gen(function* () {
           }
           if (page.data.length < ATTRIBUTES_PAGE) break;
         }
-        for (const item of left) yield* grow(item, container.slug);
         return { container, kept, left };
       });
     const read1 = yield* Effect.forEach([...objects, ...lists], attributesOf, {
@@ -840,7 +868,7 @@ export const make = Effect.gen(function* () {
               at: container.slug
             });
           kept[index] = { ...attribute, options };
-          yield* grow(options, container.slug);
+          yield* grow({ options }, container.slug);
         }),
       { concurrency: bounds.concurrent, discard: true }
     );

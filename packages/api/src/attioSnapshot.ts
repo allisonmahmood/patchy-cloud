@@ -93,8 +93,8 @@ export type AttioList = typeof AttioList.Type;
  */
 export const AttioExclusion = Schema.Struct({
   kind: Schema.Literals(["object", "list", "attribute"]),
-  /** The slug of the object or list an attribute belongs to. */
-  in: Schema.optionalKey(Slug),
+  /** The object or list an attribute belongs to: the two are named apart, so a slug may be both. */
+  in: Schema.optionalKey(Schema.Struct({ kind: Schema.Literals(["object", "list"]), slug: Slug })),
   /** Its slug, or its name when it has none. */
   name: Title,
   reason: Schema.Literals(["archived", "no_slug", "unsupported_type", "no_parent"])

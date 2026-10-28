@@ -692,17 +692,25 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         );
         return yield* error;
       });
-    /** The stored key's check, recorded in recent calls as the admin's. */
+    /**
+     * The stored key's check, recorded in recent calls as the admin's. Asking Attio may be
+     * interrupted; once the check finds the key can write, the disconnect runs to its end even if
+     * the request that asked goes away, so a writable key is never left connected.
+     */
     const attioCheck = (input: Identity, current: StoredAttio, during: "test" | "reconnect") =>
       Effect.gen(function* () {
         const { key } = yield* attioSecret(current);
-        const self = yield* audited(
-          { ...input, integration: "attio" },
-          "attio.check",
-          attio.check(Redacted.make(key))
-        ).pipe(
-          Effect.catchTag("AttioWriteScopes", (error) =>
-            attioWritable(input, current, during, error)
+        const self = yield* Effect.uninterruptibleMask((restore) =>
+          restore(
+            audited(
+              { ...input, integration: "attio" },
+              "attio.check",
+              attio.check(Redacted.make(key))
+            )
+          ).pipe(
+            Effect.catchTags({
+              AttioWriteScopes: (error) => attioWritable(input, current, during, error)
+            })
           )
         );
         yield* sameWorkspace(current, self);
@@ -822,13 +830,18 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     ) {
       if (current.status !== "connected") return yield* new ConnectionNotConnected({});
       const { key } = yield* attioSecret(current);
-      const { self, snapshot } = yield* audited(
-        { ...input, integration: "attio" },
-        "attio.discover",
-        attio.inspect(Redacted.make(key))
-      ).pipe(
-        Effect.catchTag("AttioWriteScopes", (error) =>
-          attioWritable(input, current, "refresh", error)
+      // As for the check: once Refresh finds the key can write, the disconnect isn't interrupted.
+      const { self, snapshot } = yield* Effect.uninterruptibleMask((restore) =>
+        restore(
+          audited(
+            { ...input, integration: "attio" },
+            "attio.discover",
+            attio.inspect(Redacted.make(key))
+          )
+        ).pipe(
+          Effect.catchTags({
+            AttioWriteScopes: (error) => attioWritable(input, current, "refresh", error)
+          })
         )
       );
       yield* sameWorkspace(current, self);

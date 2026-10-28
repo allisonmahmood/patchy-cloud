@@ -92,6 +92,6 @@ ${
 ${
   snapshot.excluded.length === 0
     ? "Nothing.\n"
-    : `${snapshot.excluded.map((item) => `- ${item.kind} ${markdown(item.name)}${item.in === undefined ? "" : ` on ${markdown(item.in)}`}: ${reasons[item.reason]}`).join("\n")}\n`
+    : `${snapshot.excluded.map((item) => `- ${item.kind} ${markdown(item.name)}${item.in === undefined ? "" : ` on the ${item.in.kind} ${markdown(item.in.slug)}`}: ${reasons[item.reason]}`).join("\n")}\n`
 }`
 });

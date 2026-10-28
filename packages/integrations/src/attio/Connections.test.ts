@@ -186,6 +186,40 @@ it.layer(fixture)("Attio connections", (it) => {
       })
   );
 
+  it.effect(
+    "disconnects a key Test found writable even when Test's request goes away while it waits",
+    () =>
+      Effect.gen(function* () {
+        const { store, keys, id } = yield* setup("crm-interrupted");
+        const sql = yield* SqlClient.SqlClient;
+        keys.set(readKey.token, { ...readKey, scopes: write });
+        // Another transaction holds the connection's row, so the disconnect waits for its lock.
+        let release = () => {};
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = yield* sql
+          .withTransaction(
+            sql`SELECT 1 FROM connections WHERE id = ${id} FOR UPDATE`.pipe(
+              Effect.andThen(Effect.promise(() => held))
+            )
+          )
+          .pipe(Effect.forkChild);
+        yield* TestClock.withLive(Effect.sleep("50 millis"));
+        const testing = yield* store.test(as(who, id)).pipe(Effect.forkChild);
+        yield* TestClock.withLive(Effect.sleep("200 millis"));
+        // The request goes away while the disconnect waits for the lock.
+        const interrupting = yield* Fiber.interrupt(testing).pipe(Effect.forkChild);
+        yield* TestClock.withLive(Effect.sleep("50 millis"));
+        release();
+        yield* Fiber.join(holder);
+        yield* Fiber.join(interrupting);
+        const after = attio(yield* store.get(who.companyId, id));
+        assert.strictEqual(after.status, "disconnected");
+        assert.deepStrictEqual(after.display.writable?.scopes, ["note:read-write"]);
+      })
+  );
+
   it.effect("leaves a newer key from a concurrent Replace key connected", () =>
     Effect.gen(function* () {
       const { store, keys, gates, id } = yield* setup("crm-race");

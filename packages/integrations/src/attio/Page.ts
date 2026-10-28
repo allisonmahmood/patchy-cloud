@@ -145,13 +145,21 @@ const table = (attributes: ReadonlyArray<AttioAttribute>) =>
 type Container = AttioSnapshot["objects"][number] & {
   readonly parents?: AttioSnapshot["lists"][number]["parents"];
 };
-const row = (container: Container, excluded: ReadonlyArray<AttioExclusion>) => {
-  const left = excluded.filter((item) => item.kind === "attribute" && item.in === container.slug);
+const row = (
+  kind: "object" | "list",
+  container: Container,
+  excluded: ReadonlyArray<AttioExclusion>
+) => {
+  // Objects and lists are named apart, so an object and a list may share a slug.
+  const left = excluded.filter(
+    (item) => item.kind === "attribute" && item.in?.kind === kind && item.in.slug === container.slug
+  );
   const skipped = container.attributes.filter((item) => item.optionsSkipped === true).length;
   return `<li class="list-row"><details><summary>${code(container.slug)} ${escapeHtml(container.name)}${container.parents === undefined ? "" : ` <span class="supporting-text">of ${escapeHtml(container.parents.map((parent) => parent.slug).join(", "))}</span>`} <span class="count">· ${plural(container.attributes.length, "attribute")}</span>${left.length === 0 ? "" : ` <span class="tag">${left.length} left out</span>`}${skipped === 0 ? "" : ` <span class="tag">${skipped} options skipped</span>`}</summary>${table(container.attributes)}${left.length === 0 ? "" : `<p class="supporting-text">Left out: ${left.map((item) => `${code(item.name)} (${reasons[item.reason]})`).join(", ")}.</p>`}</details></li>`;
 };
 const group = (
   title: string,
+  kind: "object" | "list",
   containers: ReadonlyArray<Container>,
   excluded: ReadonlyArray<AttioExclusion>
 ) =>
@@ -159,12 +167,12 @@ const group = (
     ? ""
     : `<h3>${escapeHtml(title)} <span class="count">${containers.length}</span></h3><ul class="list list-compact">${containers
         .slice(0, SHOWN)
-        .map((container) => row(container, excluded))
+        .map((container) => row(kind, container, excluded))
         .join("")}${
         containers.length > SHOWN
           ? `<li class="list-row"><details><summary>${escapeHtml(`${containers.length - SHOWN} more ${title.toLowerCase()}`)}</summary><ul class="list list-compact">${containers
               .slice(SHOWN)
-              .map((container) => row(container, excluded))
+              .map((container) => row(kind, container, excluded))
               .join("")}</ul></details></li>`
           : ""
       }</ul>`;
@@ -173,7 +181,7 @@ const group = (
 const leftOut = (excluded: ReadonlyArray<AttioExclusion>) => {
   if (excluded.length === 0) return "";
   const name = (item: AttioExclusion) =>
-    item.in === undefined ? item.name : `${item.in}.${item.name}`;
+    item.in === undefined ? item.name : `${item.in.slug}.${item.name}`;
   const archived = excluded.filter((item) => item.reason === "archived");
   const slugless = excluded.filter((item) => item.reason === "no_slug");
   const unsupported = excluded.filter((item) => item.reason === "unsupported_type");
@@ -210,7 +218,7 @@ export const reads = (snapshot: AttioSnapshot) => {
       skipped.length === 0
         ? ""
         : `<div class="note note-warn"><strong class="note-title">Options skipped on ${escapeHtml(plural(skipped.length, "attribute"))}</strong>Discovery ran out of time before reading their options. Patches still read and filter them; their context lists no options.<details><summary>The ${skipped.length} attributes</summary><p class="supporting-text">${skipped.map(code).join(" ")}</p></details></div>`
-    }${leftOut(snapshot.excluded)}${group("Objects", snapshot.objects, snapshot.excluded)}${group("Lists", snapshot.lists, snapshot.excluded)}`
+    }${leftOut(snapshot.excluded)}${group("Objects", "object", snapshot.objects, snapshot.excluded)}${group("Lists", "list", snapshot.lists, snapshot.excluded)}`
   };
 };
 

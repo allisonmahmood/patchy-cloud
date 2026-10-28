@@ -173,6 +173,26 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
   );
 });
 
+it("names an attribute left out of an object only on that object, though a list shares its slug", () => {
+  const container = { id: "x", slug: "deals", name: "Deals", attributes: [] };
+  const { detail } = Page.reads({
+    version: 1,
+    workspace: { id: "ws", name: "Acme", slug: "acme" },
+    scopes: [],
+    objects: [container],
+    lists: [{ ...container, id: "y", parents: [{ id: "x", slug: "deals" }] }],
+    excluded: [
+      {
+        kind: "attribute",
+        in: { kind: "object", slug: "deals" },
+        name: "old_stage",
+        reason: "archived"
+      }
+    ]
+  });
+  assert.strictEqual(detail.match(/1 left out/g)?.length, 1);
+});
+
 it("folds long groups and long attribute tables, so a large workspace stays scannable", () => {
   const container = (index: number, attributes: number) => ({
     id: `obj-${index}`,
