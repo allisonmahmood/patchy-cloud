@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { developerEnvFile, readPidgeonTestKey } from "./developerEnv.js";
+import { developerEnvFile, readAttioTestKey, readPidgeonTestKey } from "./developerEnv.js";
 import {
   decodeMail,
   deliverMail,
@@ -607,7 +607,7 @@ export const writeWorkers = Effect.fn("writeWorkers")(function* (
 const connectSource = Effect.fn("connectSource")(function* (
   apiUrl: string,
   email: string,
-  connection: ScenarioConnection,
+  connection: Extract<ScenarioConnection, { readonly integration: "pidgeon" }>,
   adminKey: Redacted.Redacted<string>,
   localPart: string
 ) {
@@ -651,6 +651,49 @@ const connectSource = Effect.fn("connectSource")(function* (
           page.waitForURL(/\/company\/connections\/conn_/),
           page.getByRole("button", { name: "Connect", exact: true }).click()
         ]);
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => connectFailed(name, step, cause)
+  });
+});
+
+/**
+ * Connects a scenario's Attio connection as `email` through its connect page, as an admin would:
+ * the name, the description and the developer's read key, in one submit. One already connected
+ * under its name is left be; answers whether it connected one.
+ */
+const connectAttio = Effect.fn("connectAttio")(function* (
+  apiUrl: string,
+  email: string,
+  connection: Extract<ScenarioConnection, { readonly integration: "attio" }>,
+  key: Redacted.Redacted<string>
+) {
+  const name = `${connection.integration}/${connection.handle}`;
+  let step = "starting the browser";
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        step = "signing in";
+        await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+        );
+        if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
+        step = "filling in the connect form";
+        await page.goto(`${apiUrl}/company/connections/connect/attio`);
+        await page.locator("#connection-handle").fill(connection.handle);
+        await page.locator("#connection-description").fill(connection.description);
+        await page.locator("#connection-key").fill(Redacted.value(key));
+        step = "checking the key and reading the workspace";
+        await Promise.all([
+          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 90_000 }),
+          page.getByRole("button", { name: "Test and connect", exact: true }).click()
+        ]);
+        return true;
       } finally {
         await browser.close();
       }
@@ -797,11 +840,35 @@ const materialize = Effect.fn("materialize")(function* (
     });
   const connections = scenario.connections ?? [];
   const devEnv = yield* developerEnvFile(yield* Config.String("HOME"));
-  const pidgeonKey = connections.length === 0 ? Option.none() : yield* readPidgeonTestKey(devEnv);
+  const pidgeonKey = connections.some((connection) => connection.integration === "pidgeon")
+    ? yield* readPidgeonTestKey(devEnv)
+    : Option.none();
+  const attioKey = connections.some((connection) => connection.integration === "attio")
+    ? yield* readAttioTestKey(devEnv)
+    : Option.none();
   // Connections not made, so the patches declaring them can't publish either.
   const skipped = new Set<string>();
   for (const connection of connections) {
     const name = `${connection.integration}/${connection.handle}`;
+    // Attio's is read-only: nothing is made in Attio, so `down` has nothing to take down there.
+    if (connection.integration === "attio") {
+      if (Option.isNone(attioKey)) {
+        skipped.add(name);
+        yield* Console.error(
+          `  ${name}: skipped. Put a read-only Attio key in ${devEnv} as ATTIO_TEST_READ_KEY to connect it.`
+        );
+        continue;
+      }
+      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+      const made = yield* connectAttio(
+        manifest.apiUrl,
+        publisher.email,
+        connection,
+        attioKey.value
+      );
+      if (!made) yield* Console.error(`  ${name}: already connected`);
+      continue;
+    }
     if (Option.isNone(pidgeonKey)) {
       skipped.add(name);
       yield* Console.error(

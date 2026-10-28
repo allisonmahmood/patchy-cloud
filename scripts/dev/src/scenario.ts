@@ -36,9 +36,10 @@ export const RepoPatch = Schema.Struct({
 /**
  * A company connection the publisher makes through its connect page, as an admin would, before
  * any patch publishes. Pidgeon's pastes the developer's test admin key and creates a new test
- * address on pidgeon.email, which Pidgeon deletes a day later.
+ * address on pidgeon.email, which Pidgeon deletes a day later. Attio's pastes the developer's
+ * read-only key to Patchy's probe workspace; it only reads, so there's nothing to take down.
  */
-export const ScenarioConnection = Schema.Struct({
+export const PidgeonScenarioConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
   handle: Slug,
   description: Schema.NonEmptyString,
@@ -49,6 +50,15 @@ export const ScenarioConnection = Schema.Struct({
   /** A file beside `scenario.json` holding the mail `up` delivers to the new address. */
   mail: Schema.optionalKey(Schema.NonEmptyString)
 });
+export const AttioScenarioConnection = Schema.Struct({
+  integration: Schema.Literal("attio"),
+  handle: Slug,
+  description: Schema.NonEmptyString
+});
+export const ScenarioConnection = Schema.Union([
+  PidgeonScenarioConnection,
+  AttioScenarioConnection
+]);
 export type ScenarioConnection = typeof ScenarioConnection.Type;
 
 /** A static page published from `files/<file>`. */

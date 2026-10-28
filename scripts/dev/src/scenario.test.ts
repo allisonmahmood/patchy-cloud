@@ -18,7 +18,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon"]) {
+      for (const name of ["team", "brightline", "pidgeon", "attio"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -28,7 +28,7 @@ it.layer(Platform)("scenarios", (it) => {
           expect(yield* fs.exists(source), source).toBe(true);
         }
         for (const connection of scenario.connections ?? [])
-          if (connection.mail !== undefined) {
+          if (connection.integration === "pidgeon" && connection.mail !== undefined) {
             const mail = yield* decodeMail(
               yield* fs.readFileString(path.join(dir, connection.mail))
             );

@@ -1,0 +1,21 @@
+{
+  "company": { "name": "Northwind Sales", "handle": "northwind" },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@northwind.example",
+      "role": "admin"
+    },
+    { "key": "priya", "name": "Priya Raman", "email": "priya@northwind.example", "role": "member" }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "attio",
+      "handle": "crm",
+      "description": "Northwind's CRM in Attio: companies, people, deals and the sales pipeline."
+    }
+  ],
+  "patches": []
+}
