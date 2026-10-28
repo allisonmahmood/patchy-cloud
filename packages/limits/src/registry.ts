@@ -339,7 +339,7 @@ export const registry = {
     default: 500,
     unit: "attributes",
     scope: "company",
-    measure: "Attributes one Attio object or list keeps in a snapshot, archived ones included",
+    measure: "Attributes one Attio object or list keeps in a snapshot",
     refusal: "too_large",
     overridable: false
   },

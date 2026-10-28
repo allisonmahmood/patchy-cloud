@@ -52,7 +52,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `attio.discovery.bytes` | contract | 8388608 | bytes | company | Encoded Attio snapshot, checked as discovery adds to it | `too_large` | No | release |
 | `attio.discovery.objects` | contract | 200 | objects | company | Objects one Attio snapshot keeps | `too_large` | No | release |
 | `attio.discovery.lists` | contract | 500 | lists | company | Lists one Attio snapshot keeps | `too_large` | No | release |
-| `attio.discovery.attributes` | contract | 500 | attributes | company | Attributes one Attio object or list keeps in a snapshot, archived ones included | `too_large` | No | release |
+| `attio.discovery.attributes` | contract | 500 | attributes | company | Attributes one Attio object or list keeps in a snapshot | `too_large` | No | release |
 | `attio.discovery.options` | contract | 2000 | options | company | Active options one Attio select or status keeps in a snapshot | `too_large` | No | release |
 | `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
 | `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |

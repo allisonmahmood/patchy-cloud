@@ -258,8 +258,18 @@ export class DiscoveryTooLarge extends Schema.TaggedError<DiscoveryTooLarge>()(
     return registry[this.limitId].default;
   }
   override get message() {
-    const limit = registry[this.limitId];
-    return `This workspace is larger than Patchy reads: ${limit.measure.toLowerCase()} is at most ${limit.default} ${limit.unit}${this.at === undefined ? "" : `, and ${this.at} has more`}. Nothing was saved.`;
+    const most = this.value.toLocaleString("en-US");
+    const at = this.at ?? "One object or list";
+    const what = {
+      "attio.discovery.requests": `reading it takes more than ${most} requests`,
+      "attio.discovery.response": `one of Attio's answers about ${at} is larger than ${this.value / 1024 ** 2} MiB`,
+      "attio.discovery.bytes": `its shape is larger than the ${this.value / 1024 ** 2} MiB Patchy keeps`,
+      "attio.discovery.objects": `it has more than ${most} objects`,
+      "attio.discovery.lists": `it has more than ${most} lists`,
+      "attio.discovery.attributes": `${at} has more than ${most} attributes`,
+      "attio.discovery.options": `an attribute on ${at} has more than ${most} options`
+    }[this.limitId];
+    return `This workspace is larger than Patchy reads: ${what}. Nothing was saved.`;
   }
 }
 
