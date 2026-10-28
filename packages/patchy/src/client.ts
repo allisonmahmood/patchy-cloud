@@ -21,6 +21,7 @@ import { createQueryRegistry, type QueryCallable, type QueryRegistry } from "./q
 import { createDownload, type Download } from "./download.js";
 export * from "./clientError.js";
 export * from "./pidgeon.js";
+export * from "./attio.js";
 export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";
@@ -153,7 +154,7 @@ type FactoryResults<F extends Factories> = {
 };
 type Aliases<
   C extends Config,
-  Kind extends "postgres" | "posthog" | "pidgeon" | "sharedTable" | "sharedStore"
+  Kind extends "postgres" | "posthog" | "pidgeon" | "attio" | "sharedTable" | "sharedStore"
 > = {
   [N in keyof C["uses"]]: C["uses"][N]["kind"] extends Kind ? N : never;
 }[keyof C["uses"]];
@@ -278,7 +279,8 @@ export function createClient<
   options: {
     readonly transport?: Transport;
     readonly shared: S & Record<Aliases<C, "sharedTable" | "sharedStore">, Factory>;
-    readonly connections: P & Record<Aliases<C, "postgres" | "posthog" | "pidgeon">, Factory>;
+    readonly connections: P &
+      Record<Aliases<C, "postgres" | "posthog" | "pidgeon" | "attio">, Factory>;
   }
 ): Client<C, S, P> {
   const transport = options.transport ?? createPostMessageTransport();
@@ -398,7 +400,7 @@ export function createClient<
     tables,
     files,
     shared: instantiate(options.shared, ["sharedTable", "sharedStore"]),
-    connections: instantiate(options.connections, ["postgres", "posthog", "pidgeon"]),
+    connections: instantiate(options.connections, ["postgres", "posthog", "pidgeon", "attio"]),
     ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
     download: createDownload(call),

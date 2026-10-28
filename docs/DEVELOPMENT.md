@@ -462,7 +462,7 @@ worktree, so they open `/join` here afterwards.
 
 The cloud (`pnpm dev`) supplies release bytes, identity and metadata; a patch's
 local runtime (`patchy dev`) runs its handlers over PGlite and invented fixtures.
-PostHog and Pidgeon declarations have no fixture: `patchy dev` reads the real
+PostHog, Pidgeon and Attio declarations have no fixture: `patchy dev` reads the real
 connection through the cloud's dev read door, as the CLI's machine key
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)), so the connection must
 exist on this instance. Pidgeon's sends, replies and triage are simulated in the

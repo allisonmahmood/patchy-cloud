@@ -33,6 +33,9 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `pidgeon.connect.deadline` | contract | 45000 | milliseconds | company | Connecting a Pidgeon address, changing its access or replacing its key: every call from checking the admin key to reading the snapshot | `timeout` | No | release |
 | `pidgeon.snapshot.labels` | contract | 500 | labels | company | Labels one Pidgeon snapshot keeps | None | No | release |
 | `pidgeon.addresses.listed` | contract | 1000 | addresses | company | Addresses the Pidgeon connect form lists from one admin key | None | No | release |
+| `runtime.attio.bytes` | contract | 262144 | bytes | viewer | Attio operation arguments: filters, order and up to 500 ids | `too_large` | No | release |
+| `attio.call.bytes` | contract | 16777216 | bytes | viewer | Raw Attio answers one call collects across its query and its schema and option reads together, before decoding | `too_large` | No | release |
+| `attio.call.concurrent` | contract | 4 | requests | viewer | Requests one Attio call has in flight at once: its query and its schema and option reads | None | No | release |
 | `attio.calls.concurrent` | contract | 4 | calls | host | Attio calls and discoveries per workspace at once in one server process, shared by every connection to it and by dev and published calls; an excess call waits within its deadline | `busy` | No | release |
 | `attio.host.concurrent` | contract | 6 | calls | host | Attio calls and discoveries at once in one server process across every workspace, each held from its first request through decoding; an excess call waits within its deadline | `busy` | No | release |
 | `attio.discovery.deadline` | contract | 60000 | milliseconds | company | Connecting an Attio workspace, replacing its key or refreshing it: the key check and every discovery request | `timeout` | No | release |

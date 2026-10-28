@@ -84,7 +84,13 @@ const connections: Readonly<Record<string, true>> = {
   "postgres.query": true,
   "posthog.query": true,
   "pidgeon.read": true,
-  "pidgeon.write": true
+  "pidgeon.write": true,
+  "attio.listRecords": true,
+  "attio.getRecord": true,
+  "attio.getManyRecords": true,
+  "attio.listEntries": true,
+  "attio.getEntry": true,
+  "attio.listMembers": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -118,7 +124,8 @@ const bounded = (
     | "tier2.log.bytes"
     | "runtime.postgres.bytes"
     | "runtime.posthog.bytes"
-    | "runtime.pidgeon.bytes",
+    | "runtime.pidgeon.bytes"
+    | "runtime.attio.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -153,7 +160,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     integrationDeadline: ContractLimits.get("integration.deadline"),
     postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
     posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
-    pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes")
+    pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
+    attioBytes: ContractLimits.get("runtime.attio.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -243,14 +251,17 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     if (
       argsLimitId === "runtime.postgres.bytes" ||
       argsLimitId === "runtime.posthog.bytes" ||
-      argsLimitId === "runtime.pidgeon.bytes"
+      argsLimitId === "runtime.pidgeon.bytes" ||
+      argsLimitId === "runtime.attio.bytes"
     ) {
       const maxBytes =
         argsLimitId === "runtime.postgres.bytes"
           ? limits.postgresBytes
           : argsLimitId === "runtime.posthog.bytes"
             ? limits.posthogBytes
-            : limits.pidgeonBytes;
+            : argsLimitId === "runtime.pidgeon.bytes"
+              ? limits.pidgeonBytes
+              : limits.attioBytes;
       if (Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > maxBytes)
         return remember(bounded(argsLimitId, maxBytes), 413);
     }

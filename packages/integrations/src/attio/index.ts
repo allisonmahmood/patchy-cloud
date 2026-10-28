@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { defineIntegration } from "../definition.js";
 import { generate } from "./Generate.js";
+import { operations } from "./Operations.js";
 import * as Source from "./Source.js";
 
 const metadata = {
@@ -12,9 +13,6 @@ const metadata = {
     return (yield* source.inspect(Redacted.make(credentials.key))).snapshot;
   })
 };
-
-// Reads arrive with #966; until then a declaration generates an empty client and its context.
-const operations = {};
 
 // Keep declaration emission pointed at the operation module's public types.
 export const attio: {
@@ -33,5 +31,5 @@ export const attio: {
   operations,
   generate,
   // Hand-written CRM rows wouldn't resemble a company's: dev reads the real workspace.
-  live: []
+  live: ["listRecords", "getRecord", "getManyRecords", "listEntries", "getEntry", "listMembers"]
 });

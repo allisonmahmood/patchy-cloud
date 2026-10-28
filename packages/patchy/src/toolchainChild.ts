@@ -14,7 +14,8 @@ const decodeAliases = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
       sharedStores: Schema.Array(Schema.String),
-      pidgeon: Schema.Array(Schema.String)
+      pidgeon: Schema.Array(Schema.String),
+      attio: Schema.Array(Schema.String)
     })
   )
 );

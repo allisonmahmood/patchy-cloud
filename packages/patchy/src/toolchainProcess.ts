@@ -31,7 +31,8 @@ const encodeAliases = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       sharedStores: Schema.Array(Schema.String),
-      pidgeon: Schema.Array(Schema.String)
+      pidgeon: Schema.Array(Schema.String),
+      attio: Schema.Array(Schema.String)
     })
   )
 );

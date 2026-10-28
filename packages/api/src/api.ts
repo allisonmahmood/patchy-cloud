@@ -749,9 +749,9 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
     }).annotateMerge(
       describe(
         "`patchy dev` reads a connection whose integration reads live in development, as the " +
-          "bearer: PostHog's `posthog.query` and Pidgeon's `pidgeon.read`. The machine token is " +
+          "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read` and Attio's six reads. The machine token is " +
           "the only authority: its person, company and machine are read from the token on every " +
-          "call and again after any wait for one of the project's or address's slots, which " +
+          "call and again after any wait for one of the project's, address's or workspace's slots, which " +
           "answers 401 when the token stopped working meanwhile. `connection` only selects: it " +
           "must name a connected connection of the operation's integration in the token's " +
           "company, which any active member reads through. Other operations, including every " +
@@ -760,11 +760,13 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "without its `connection` alias. The runtime's bounds apply: a body over the largest " +
           "live bound, `runtime.pidgeon.bytes`, answers 413 `too_large` as it streams, and each " +
           "operation's arguments keep their own (`runtime.posthog.bytes`, " +
-          "`runtime.pidgeon.bytes`); each call has the 15-second `integration.deadline` " +
+          "`runtime.pidgeon.bytes`, `runtime.attio.bytes`); each call has the 15-second `integration.deadline` " +
           "(`timeout`, 504), results keep the operation's own bounds and `runtime.result.bytes`, " +
-          "and published patches share the process's slots per PostHog project and per Pidgeon " +
-          "address (`busy`). A Pidgeon read checks what comes back against the address and " +
-          "keeps held mail empty, as a published read does. Calls are limited to " +
+          "and published patches share the process's slots per PostHog project, per Pidgeon " +
+          "address and per Attio workspace (`busy`). A Pidgeon read checks what comes back against the address and " +
+          "keeps held mail empty, as a published read does. An Attio read's `connection.revision` names the " +
+          "snapshot the repo was generated from: the instance decodes by that snapshot of that connection, " +
+          "and a revision it doesn't have answers 403 as an unknown connection does. Calls are limited to " +
           "`runtime.calls.perMinute` per person across every repo and integration " +
           "(`rate_limited`, 429), after the per-address protected-API limit. A draining host " +
           "answers `busy`. Every call with a valid token and envelope, refused or not, is " +
@@ -873,6 +875,22 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "and Pidgeon's own limits fail `source_rate_limited` with `details.limit`. Arguments are " +
           "bounded by `runtime.pidgeon.bytes`. Recent calls name each call's ids, a send's subject " +
           "and recipients and a reply's CC, never a body or search text. " +
+          "`attio.listRecords { connection, object, eq?, contains?, range?, orderBy?, limit?, cursor? }`, " +
+          "`attio.getRecord { connection, object, id }`, `attio.getManyRecords { connection, object, ids }`, " +
+          "`attio.listEntries { connection, list, eq?, contains?, range?, orderBy?, parent?, limit?, cursor? }`, " +
+          "`attio.getEntry { connection, list, id }` and `attio.listMembers { connection }` read one declared " +
+          "Attio workspace by the snapshot its declaration's revision names, and never write. Patchy builds " +
+          "every request from these arguments; an attribute the snapshot lacks, an operator its type doesn't " +
+          "take, more than 100 values or a date-only timestamp is refused `invalid_request` before Attio sees " +
+          "anything. Each call reads the object's or list's current attributes beside its query and fails " +
+          "`shape_mismatch` naming any snapshot attribute that changed; `null` filters are checked on every row " +
+          "returned. Lists answer `{ ok, rows, cursor }` with `limit` 1–500 (100 by default) and a cursor bound " +
+          "to the call (`invalid_cursor`); gets answer `{ ok, rows }`, no row for a missing record or entry, and " +
+          "`getManyRecords` one row per id asked, in order, `null` for a missing one. Attio's refusals carry " +
+          "Patchy's own details (`invalid_request`, `invalid_query`, `shape_mismatch`, `not_found`), never " +
+          "Attio's words or a supplied value. Arguments are bounded by `runtime.attio.bytes`, raw answers by " +
+          "`attio.call.bytes`, results by `runtime.result.bytes`. Recent calls name the object or list and the " +
+          "row count, never a filter, an id or a value. " +
           "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
           'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
           "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +

@@ -7,11 +7,12 @@ import { runToolchain } from "./toolchain.js";
 
 /**
  * The declared aliases the guest builds its own clients for, by kind: a shared store's and a
- * Pidgeon connection's differ from a shared table's and a Postgres connection's.
+ * Pidgeon or Attio connection's differ from a shared table's and a Postgres connection's.
  */
 export interface GuestAliases {
   readonly sharedStores: readonly string[];
   readonly pidgeon: readonly string[];
+  readonly attio: readonly string[];
 }
 export const guestAliases = (
   uses: Readonly<Record<string, { readonly kind: string }>>
@@ -20,7 +21,7 @@ export const guestAliases = (
     Object.entries(uses)
       .filter(([, declaration]) => declaration.kind === kind)
       .map(([alias]) => alias);
-  return { sharedStores: of("sharedStore"), pidgeon: of("pidgeon") };
+  return { sharedStores: of("sharedStore"), pidgeon: of("pidgeon"), attio: of("attio") };
 };
 
 export interface BuiltServer {
@@ -115,7 +116,7 @@ const buildConfig = (
     ),
     ...agentPaths.map((file, index) => `import * as agent${index} from ${JSON.stringify(file)};`),
     // Computed keys, so a file named __proto__ is a key rather than the object's prototype.
-    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)});`
+    `export default createGuest({${modules.map((name, index) => `[${JSON.stringify(name)}]: module${index}`).join(",")}},${JSON.stringify(aliases.sharedStores)},{${agent.files.map((name, index) => `[${JSON.stringify(name)}]: agent${index}`).join(",")}},${JSON.stringify(aliases.pidgeon)},${JSON.stringify(aliases.attio)});`
   ].join("\n");
   return {
     configFile: false,

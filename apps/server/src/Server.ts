@@ -67,6 +67,7 @@ import {
   PostHogOperations,
   PidgeonSource,
   AttioSource,
+  AttioOperations,
   PidgeonOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
@@ -191,7 +192,17 @@ const services = Layer.mergeAll(
       const postgres = yield* PostgresOperations.makeHandlers;
       const posthog = yield* PostHogOperations.makeHandlers;
       const pidgeon = yield* PidgeonOperations.makeHandlers;
-      const handlers = { me, ...tables, ...files, ...members, ...postgres, ...posthog, ...pidgeon };
+      const attio = yield* AttioOperations.makeHandlers;
+      const handlers = {
+        me,
+        ...tables,
+        ...files,
+        ...members,
+        ...postgres,
+        ...posthog,
+        ...pidgeon,
+        ...attio
+      };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
         Layer.provideMerge(

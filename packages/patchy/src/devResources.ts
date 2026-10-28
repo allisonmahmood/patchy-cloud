@@ -13,6 +13,7 @@ import {
   ConnectionStore,
   ConnectionStoreDev,
   DevDoor,
+  AttioDev,
   PidgeonDev,
   PostgresDev,
   PostgresExecution,
@@ -299,9 +300,10 @@ const make = Effect.fn("DevResources.make")(function* (
     ...(yield* Members.make),
     ...fileHandlers,
     ...postgres,
-    // PostHog and Pidgeon have no fixture: their reads go to the real connection, through the
-    // instance, and Pidgeon's writes are simulated here, reaching neither.
+    // PostHog, Pidgeon and Attio have no fixture: their reads go to the real connection, through
+    // the instance, and Pidgeon's writes are simulated here, reaching neither.
     ...(yield* PostHogDev.handlers(options.instance)),
+    ...(yield* AttioDev.handlers(options.instance)),
     ...(yield* PidgeonDev.handlers(
       options.instance,
       prepared.metadata.pidgeon,

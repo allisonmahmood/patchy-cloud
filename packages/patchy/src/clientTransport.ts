@@ -28,7 +28,8 @@ export type Operation =
   | `files.${"get" | "put" | "list" | "stat" | "delete"}`
   | `postgres.${"get" | "getMany" | "list" | "query"}`
   | "posthog.query"
-  | `pidgeon.${"read" | "write"}`;
+  | `pidgeon.${"read" | "write"}`
+  | `attio.${"listRecords" | "getRecord" | "getManyRecords" | "listEntries" | "getEntry" | "listMembers"}`;
 export type Call = (op: Operation, args: unknown, bytes?: Uint8Array) => Promise<unknown>;
 export interface Route {
   get(): Promise<string>;

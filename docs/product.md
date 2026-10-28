@@ -1066,10 +1066,9 @@ Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
 Company Pidgeon connections connect one email address with a key Patchy mints for
-it, and publish binds them; reading and sending from patches is next. Company
-Attio connections read one workspace's shape through a read-only key, and publish
-binds them; reading its records from patches is next. Other integrations and
-personal connections remain planned.
+it, and patches read and send from it. Company Attio connections read one CRM
+workspace through a read-only key: its records, list entries and members. Other
+integrations and personal connections remain planned.
 
 An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, and Attio the fourth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -1387,6 +1386,40 @@ calls, inside 6 for all of Attio; an excess one waits within its deadline,
 keeping a second's reserve, then fails `busy` with nothing sent. Attio's 429s
 fail `source_rate_limited`, and nothing is retried.
 
+### Reading Attio
+
+Patches read a connected workspace's records, list entries and members, on
+tier 1 and in tier 2 actions.
+
+- **A typed client per object and list.** `objects.<slug>.list({ eq, contains,
+range, orderBy, limit, cursor })`, `get(id)` and `getMany(ids)`;
+  `lists.<slug>.list({ ..., parent })` and `get(entryId)`; `members.list()`.
+  Slugs are keys verbatim. A record is `{ id, url, createdAt, values }`, an entry
+  `{ id, parent, createdAt, values }`, and `values` holds every snapshot
+  attribute by slug as a plain value: one type table
+  (`@patchy/api/attio-types`) drives the client's types, the filters Patchy
+  builds and decoding. Select and status values and filters are option titles.
+- **Patchy builds every request.** There is no raw path, filter JSON or request
+  in patch code, no search, saved views or SQL. A filter on a slug the snapshot
+  lacks, an operator its type doesn't take, more than 100 values or a date-only
+  timestamp is refused before Attio sees it. `eq` ANDs attributes, `null` means
+  no value (excluding what an attribute can hold, read in the call), order is one
+  attribute then the id, and paging is an offset in a cursor bound to the call.
+  `getMany` sends one chunked `$or` and answers in the order asked.
+- **Identity follows names, checked on every call.** Beside its query, each call
+  reads the object's or list's current attributes and fails `shape_mismatch`
+  naming any snapshot attribute that's gone, archived, renamed (to what, by id),
+  retyped or changed between one value and many; nothing is decoded until it
+  passes. A reference to a renamed object or an entry under another parent fails
+  the same way, and every row is checked empty on each `null` it was asked for.
+  An object or list gone answers `not_found` until an admin refreshes and the
+  patch runs `patchy refresh`.
+- **Bounds.** Calls hold one of the workspace's slots and one of Attio's per
+  process, at most 4 requests at once, 15 seconds and 16 MiB of raw answer
+  together, and 8 MiB decoded. Attio's own limits fail `source_rate_limited` and
+  are never retried. Refusals carry Patchy's own details, never a supplied value
+  or Attio's words; recent calls name the object or list and the row count.
+
 ### Discovery and binding
 
 Discovery reads metadata, never company rows: tables (including foreign tables)
@@ -1491,19 +1524,22 @@ Each integration chooses its **dev binding**
 fixtures or a fake, never live source rows or production credentials. An
 integration whose fixtures wouldn't resemble production reads the real connection
 in dev instead, and its connect form says so; writes never run live in dev.
-Postgres keeps fixtures; PostHog and Pidgeon read live.
+Postgres keeps fixtures; PostHog, Pidgeon and Attio read live.
 
-**Dev reads.** PostHog and Pidgeon have no fixture. `patchy dev` sends each
-PostHog query and each Pidgeon read to the instance as the machine token's
+**Dev reads.** PostHog, Pidgeon and Attio have no fixture. `patchy dev` sends each
+PostHog query, each Pidgeon read and each Attio read to the instance as the machine token's
 person, for either local viewer; the instance runs it with the connection's own
 key, which never leaves it. The instance takes the company, person and machine
-from the token on every call, and again after any wait for one of the project's
-or address's slots, which dev and published patches share. The repo's declaration
+from the token on every call, and again after any wait for one of the project's,
+address's or workspace's slots, which dev and published patches share. The repo's declaration
 only routes the call: it must name a connected connection of the token's company.
 Only reads the integration opts into run this way, under the runtime's argument
 and result bounds, its deadline, draining and a per-person rate limit across
 integrations. A Pidgeon dev read checks what comes back against the address and
-keeps held mail empty, as a published read does. Each read, refused or not, is a
+keeps held mail empty, as a published read does. An Attio dev read carries the
+revision the repo was generated from, and the instance decodes by that snapshot of
+that connection, so a client generated before a Refresh reads as generated; a
+revision of another connection isn't found. Each read, refused or not, is a
 dev call in the connection's recent calls, marked Dev and naming the machine, with
 no patch. An expired or revoked key, a deactivated person, a disconnected source,
 another company's connection or an unreachable instance stops the read with a

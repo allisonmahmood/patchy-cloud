@@ -1,12 +1,13 @@
 /**
  * The instance's door for `patchy dev` reads of integrations that read the real connection in
- * development (ADR-0013): PostHog's queries and Pidgeon's reads. A machine token is the only
+ * development (ADR-0013): PostHog's queries, Pidgeon's reads and Attio's. A machine token is the only
  * authority: its current person, company and machine decide every call, and are checked again
  * once a read holds its slot. The repo's manifest only routed the call here; the connection it
  * names must be the company's. Writes never come here: `patchy dev` simulates them.
  *
  * The runtime's bounds hold: each operation's argument and result sizes, the integration
- * deadline, the project's or address's slots shared with published patches, and draining. A
+ * deadline, the project's, address's or workspace's slots shared with published patches, and
+ * draining. A
  * per-person limit keys on no patch, so naming patches can't widen it. Every call with a valid
  * token and envelope is logged as a machine call with no patch or version, refusals included.
  * Published runtime calls still refuse bearer tokens; this door shares none of their admission.
@@ -32,6 +33,9 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as ConnectionStore from "./ConnectionStore.js";
+import { attio } from "./attio/index.js";
+import * as AttioOperations from "./attio/Operations.js";
+import * as AttioSource from "./attio/Source.js";
 import type { DevRead } from "./definition.js";
 import { pidgeon } from "./pidgeon/index.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
@@ -78,15 +82,15 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
  * Pidgeon write is refused.
  */
 const live = new Set(
-  [postgres, posthog, pidgeon].flatMap((integration) =>
+  [postgres, posthog, pidgeon, attio].flatMap((integration) =>
     (integration.live ?? []).map((operation) => `${integration.name}.${operation}`)
   )
 );
 const runners: {
-  readonly [Op in "posthog.query" | "pidgeon.read"]: DevRead<
-    PostHogSource.Source | PidgeonSource.Source
-  >;
-} = { ...PostHogOperations.devReads, ...PidgeonOperations.devReads };
+  readonly [
+    Op in "posthog.query" | "pidgeon.read" | keyof typeof AttioOperations.devReads
+  ]: DevRead<PostHogSource.Source | PidgeonSource.Source | AttioSource.Source>;
+} = { ...PostHogOperations.devReads, ...PidgeonOperations.devReads, ...AttioOperations.devReads };
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
 /** Each live operation's own argument bound, as the published runtime holds it. */
@@ -107,6 +111,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     const connections = yield* ConnectionStore.ConnectionStore;
     const posthogSource = yield* PostHogSource.Source;
     const pidgeonSource = yield* PidgeonSource.Source;
+    const attioSource = yield* AttioSource.Source;
     const settings = yield* Effect.all({
       callsPerMinute: ContractLimits.get("runtime.calls.perMinute"),
       deadlineMs: ContractLimits.get("integration.deadline")
@@ -202,6 +207,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           .pipe(
             Effect.provideService(PostHogSource.Source, posthogSource),
             Effect.provideService(PidgeonSource.Source, pidgeonSource),
+            Effect.provideService(AttioSource.Source, attioSource),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
               ConnectionNotFound: (cause) =>

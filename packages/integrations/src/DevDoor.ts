@@ -32,14 +32,29 @@ export class KeyRefused extends Schema.TaggedError<KeyRefused>()("DevDoorKeyRefu
 
 const integrations: Readonly<Record<DevRead["op"], string>> = {
   "posthog.query": "PostHog",
-  "pidgeon.read": "Pidgeon"
+  "pidgeon.read": "Pidgeon",
+  "attio.listRecords": "Attio",
+  "attio.getRecord": "Attio",
+  "attio.getManyRecords": "Attio",
+  "attio.listEntries": "Attio",
+  "attio.getEntry": "Attio",
+  "attio.listMembers": "Attio"
 };
 
 /** The instance couldn't be reached, or answered with something other than its wire. */
 export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>()(
   "DevDoorInstanceUnavailable",
   {
-    op: Schema.Literals(["posthog.query", "pidgeon.read"]),
+    op: Schema.Literals([
+      "posthog.query",
+      "pidgeon.read",
+      "attio.listRecords",
+      "attio.getRecord",
+      "attio.getManyRecords",
+      "attio.listEntries",
+      "attio.getEntry",
+      "attio.listMembers"
+    ]),
     instance: Schema.String,
     cause: Schema.optionalKey(Schema.Redacted(Schema.Defect()))
   }
@@ -102,7 +117,8 @@ export interface Instance {
  */
 export const read = Effect.fn("DevDoor.read")(function* <A>(
   instance: Instance,
-  payload: DevRead,
+  /** The arguments are the instance's to check; `decode` holds the answer to the wire. */
+  payload: Pick<DevRead, "op" | "connection"> & { readonly args: unknown },
   decode: (value: unknown) => Option.Option<A>
 ) {
   const http = yield* HttpClient.HttpClient;

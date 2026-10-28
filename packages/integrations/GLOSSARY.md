@@ -112,6 +112,14 @@ _Avoid_: event export, insight (PostHog's saved chart)
 One of the calls Patchy writes for a Pidgeon address: reads (`threads.list`, `threads.get`, `messages.get`, `messages.search`, `labels.list`, `attachments.text`) travel as `pidgeon.read`; replies, sends and triage as `pidgeon.write`, which only a connection whose key sends may make. Patchy fills in the address, so patch code never names a path, an address id or a key.
 _Avoid_: email API, inbox call
 
+**Attio operation**:
+One of the reads Patchy writes for an Attio workspace, each its own runtime operation: `attio.listRecords`, `attio.getRecord`, `attio.getManyRecords`, `attio.listEntries`, `attio.getEntry` and `attio.listMembers`. Patchy builds every request from typed arguments and the snapshot the caller's client was generated from, and none writes.
+_Avoid_: CRM API, Attio query (Attio's own word for one request)
+
+**Schema check**:
+The read each Attio call makes of its object's or list's current attributes beside its query. It fails `shape_mismatch` naming any snapshot attribute that's gone, archived, renamed, retyped or changed between one value and many, and nothing is decoded until it passes. A name another attribute took since reads under it if its type and cardinality match.
+_Avoid_: validation, schema refresh (an admin's Refresh takes a new snapshot)
+
 **Draft key**:
 The `idempotencyKey` a patch makes for one email when the person starts it and keeps until a send answers. Patchy sends Pidgeon a hash of the connection, the patch and the draft key as its Idempotency-Key, so the same draft within Pidgeon's 24 hours is one email.
 _Avoid_: request id, nonce
@@ -133,7 +141,7 @@ The calls one server process lets run at once against one Pidgeon address, share
 _Avoid_: pool, rate limit (Pidgeon's own)
 
 **Typed client**:
-The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query; the Pidgeon client exposes its address's operations, without the writes when its key only reads.
+The integration-specific surface patch code is handed for a declared connection, rather than raw HTTP or a credential. The Postgres client exposes relation reads and the escape hatch; the PostHog client exposes one HogQL query; the Pidgeon client exposes its address's operations, without the writes when its key only reads; the Attio client exposes each object's and list's reads, typed from the snapshot, and the members.
 _Avoid_: proxy (how it is carried out, not what the code sees), driver, raw API
 
 **Call log**:
@@ -141,11 +149,11 @@ See **Runtime log** in [Runtime](../runtime/GLOSSARY.md); connection calls and a
 _Avoid_: audit trail, analytics event (a business moment, not a call)
 
 **Dev binding**:
-How `patchy dev` runs an integration's operations, chosen per integration ([ADR-0013](../../docs/adr/ADR-0013-dev-bindings-per-integration.md)). By default it is local, over fixtures or a fake, with no production credentials or business rows. An integration whose fixtures wouldn't resemble production reads the real connection instead, through a dev read, and simulates its writes; PostHog and Pidgeon do, Postgres keeps fixtures. Writes never run live in dev.
+How `patchy dev` runs an integration's operations, chosen per integration ([ADR-0013](../../docs/adr/ADR-0013-dev-bindings-per-integration.md)). By default it is local, over fixtures or a fake, with no production credentials or business rows. An integration whose fixtures wouldn't resemble production reads the real connection instead, through a dev read, and simulates its writes; PostHog, Pidgeon and Attio do, Postgres keeps fixtures. Writes never run live in dev.
 _Avoid_: Mock integration, production proxy
 
 **Dev read**:
-One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person.
+One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person. An Attio dev read carries the revision the repo was generated from, and the instance decodes by that snapshot of that connection.
 _Avoid_: Dev proxy, impersonated read
 
 **Simulated write**:
