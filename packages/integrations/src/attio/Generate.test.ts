@@ -1,10 +1,21 @@
 import { assert, it } from "@effect/vitest";
+import type { attioTypes } from "@patchy/api/attio-types";
+import type { AttioTypes } from "../../../patchy/src/attio.js";
 import * as PatchyClient from "../../../patchy/src/client.js";
 import * as ts from "typescript";
 import { snapshot } from "../test/attioReads.js";
 import { generate } from "./Generate.js";
 
 const declaration = { kind: "attio" as const, handle: "crm", id: "connection", revision: 2 };
+
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+/**
+ * The client's copy of the type table is the host's, so a patch's types refuse exactly what the
+ * host refuses; a change to one alone fails the typecheck here.
+ */
+const sameTable: Equal<AttioTypes, typeof attioTypes> = true;
+void sameTable;
 
 /** TypeScript's verdict on `files` against the built `patchy/client`. */
 const diagnostics = (files: Readonly<Record<string, string>>) => {

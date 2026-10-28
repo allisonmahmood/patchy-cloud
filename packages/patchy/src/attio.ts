@@ -1,13 +1,54 @@
-import type { attioTypes, AttioType } from "@patchy/api/attio-types";
 import { decodeError } from "./clientError.js";
 
 /**
  * One Attio workspace's client, the same on a tier 1 page and in a tier 2 action. Generation
  * describes each object and list, and these types turn that description into typed values and
- * filters: `@patchy/api/attio-types` says which operator each attribute type takes. Patchy builds
+ * filters: `AttioTypes` says which operator each attribute type takes. Patchy builds
  * every request from the arguments, so nothing here can name a path, write filter JSON or change
  * anything in Attio. These types mirror `packages/api/src/attio.ts`, the wire they decode.
  */
+
+/**
+ * What each attribute type takes: `@patchy/api/attio-types`, which the host builds and decodes
+ * by, as a type. The package's declarations can't name that module; the integrations' generation
+ * test holds this copy to it.
+ */
+export interface AttioTypes {
+  readonly text: Capabilities<true, true, true, false, true, true>;
+  readonly number: Capabilities<true, true, false, true, true, true>;
+  readonly rating: Capabilities<true, true, false, true, true, true>;
+  readonly checkbox: Capabilities<true, false, false, false, false, true>;
+  readonly currency: Capabilities<true, true, false, true, true, true>;
+  readonly date: Capabilities<true, true, false, true, true, true>;
+  readonly timestamp: Capabilities<true, true, false, true, true, true>;
+  readonly select: Capabilities<true, true, false, false, true, true>;
+  readonly status: Capabilities<true, true, false, false, true, true>;
+  readonly "email-address": Capabilities<true, true, true, false, true, true>;
+  readonly domain: Capabilities<true, true, true, false, true, true>;
+  readonly "phone-number": Capabilities<true, true, true, false, true, true>;
+  readonly "personal-name": Capabilities<true, true, true, false, true, true>;
+  readonly location: Capabilities<true, true, true, false, false, true>;
+  readonly "record-reference": Capabilities<true, true, false, false, true, false>;
+  readonly "actor-reference": Capabilities<true, true, false, false, true, false>;
+  readonly interaction: Capabilities<false, false, false, true, true, true>;
+}
+/** Whether a type takes `eq`, any-of, `contains`, `range`, `null` and `orderBy`. */
+interface Capabilities<
+  Eq extends boolean,
+  AnyOf extends boolean,
+  Contains extends boolean,
+  Range extends boolean,
+  Empty extends boolean,
+  Order extends boolean
+> {
+  readonly eq: Eq;
+  readonly anyOf: AnyOf;
+  readonly contains: Contains;
+  readonly range: Range;
+  readonly empty: Empty;
+  readonly order: Order;
+}
+export type AttioType = keyof AttioTypes;
 
 /** An attribute as generation describes it. */
 export interface AttioAttributeSpec {
@@ -84,7 +125,7 @@ type Hint<Known extends string | undefined> = [Known] extends [string]
   ? Known | (string & {})
   : string;
 type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
-type Caps<A extends AttioAttributeSpec> = (typeof attioTypes)[A["type"]];
+type Caps<A extends AttioAttributeSpec> = AttioTypes[A["type"]];
 type Targets<A extends AttioAttributeSpec> = A["targets"] extends string ? A["targets"] : never;
 
 /** One value of the attribute, as Patchy decodes it. */
@@ -135,14 +176,14 @@ type EqOne<A extends AttioAttributeSpec> = A["type"] extends "number" | "rating"
             string;
 type Can<
   A extends AttioAttributeSpec,
-  C extends keyof (typeof attioTypes)[AttioType]
+  C extends keyof AttioTypes[AttioType]
 > = Caps<A>[C] extends true ? true : false;
 /** `eq`: a value, any of up to 100, or `null` for no value, as the type allows. */
 export type AttioEq<A extends AttioAttributeSpec> =
   | (Can<A, "eq"> extends true ? EqOne<A> : never)
   | (Can<A, "anyOf"> extends true ? readonly EqOne<A>[] : never)
   | (Can<A, "empty"> extends true ? null : never);
-type Slugs<As extends AttioAttributes, C extends keyof (typeof attioTypes)[AttioType]> = {
+type Slugs<As extends AttioAttributes, C extends keyof AttioTypes[AttioType]> = {
   [S in keyof As]: Can<As[S], C> extends true ? S : never;
 }[keyof As];
 type Sortable<As extends AttioAttributes> = {
