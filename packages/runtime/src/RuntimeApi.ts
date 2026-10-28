@@ -64,9 +64,9 @@ export const recordFailure = Effect.fnUntraced(function* (
   return failure(error, named);
 });
 
-/** Keep the stream finalizer in the request scope, after its refusal response.
- * A stream runner's inner scope would destroy Node's socket before sending 413.
- * Pulling stops at overflow; the unread remainder is never drained or buffered.
+/** Feed the body to `consume` a chunk at a time, stopping at its first refusal, such
+ * as an overflow. Nothing past that is buffered: after the response, Node's server
+ * discards up to 256 KiB of the unread rest to keep the connection, and closes it past that.
  */
 const forEachBodyChunk = Effect.fn("RuntimeApi.forEachBodyChunk")(function* (
   request: HttpServerRequest.HttpServerRequest,

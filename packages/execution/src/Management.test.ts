@@ -375,7 +375,7 @@ it.live(
         limitId: "execution.management.bodyBytes",
         value: 1024
       });
-      const streamed = yield* Effect.callback<number | "closed", Error>((resume) => {
+      const streamed = yield* Effect.callback<number, Error>((resume) => {
         const request = httpRequest(
           `${url}/bind`,
           {
@@ -391,16 +391,14 @@ it.live(
             resume(Effect.succeed(response.statusCode ?? 0));
           }
         );
-        request.once("error", (error: NodeJS.ErrnoException) => {
-          resume(error.code === "ECONNRESET" ? Effect.succeed("closed") : Effect.fail(error));
-        });
+        request.once("error", (error) => resume(Effect.fail(error)));
         request.write(`{"companyId":"com_overflow","bindingEpoch":9}`);
         request.end(" ".repeat(2048));
         return Effect.sync(() => {
           request.destroy();
         });
       });
-      expect([400, "closed"]).toContain(streamed);
+      expect(streamed).toBe(413);
       const first = yield* post(url, "bind", { companyId: bundle.companyId, bindingEpoch: 0 });
       expect(first.status).toBe(200);
       const status = yield* decodeStats(

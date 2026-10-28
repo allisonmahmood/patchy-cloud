@@ -23,11 +23,15 @@ const statusAnnotation = SchemaAST.resolveAt<number>("httpApiStatus");
 /**
  * The status HttpApi answers with. `HttpApiSchema.status` keeps it as a key
  * annotation, which a later check drops, unless the schema already carries
- * checks or a status annotation; a status annotation wins, as in HttpApi.
+ * checks or a status annotation. A status annotation wins, even `undefined`,
+ * as in HttpApi.
  */
 const statusOf = (ast: SchemaAST.AST) =>
-  statusAnnotation(ast) ??
-  (ast.checks === undefined ? ast.context?.annotations?.httpApiStatus : undefined);
+  "httpApiStatus" in (SchemaAST.resolve(ast) ?? {})
+    ? statusAnnotation(ast)
+    : ast.checks === undefined
+      ? ast.context?.annotations?.httpApiStatus
+      : undefined;
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
 export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
@@ -71,7 +75,10 @@ export class MalformedBody extends Schema.TaggedError<MalformedBody>()("Malforme
   }
 }
 
-/** The body is larger than the route reads. Refused before a byte of it is. */
+/**
+ * The body is larger than the route reads: a declared length is refused before
+ * a byte of it is read, a streamed body once it passes the cap.
+ */
 export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLarge", {
   maxBytes: Schema.Int
 }) {
