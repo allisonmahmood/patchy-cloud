@@ -27,7 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/backend": "3.23.0",
+    "@clerk/backend": "3.26.3",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/core": "workspace:*",
