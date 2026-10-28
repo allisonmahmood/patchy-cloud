@@ -80,6 +80,7 @@
           - "tsconfig*.json"
           - "*.config.js"
           - "*.config.ts"
+          - ".oxlintrc.json"
           - "mise.toml"
           - "skills-lock.json"
           - ".dockerignore"

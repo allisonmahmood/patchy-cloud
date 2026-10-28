@@ -9,7 +9,7 @@
   // TypeScript only, as before; agent worktrees and disposable patch repos are not this
   // workspace's projects.
   "ignorePatterns": [
-    "**/*.{js,mjs,cjs}",
+    "**/*.{js,jsx,mjs,cjs}",
     "**/dist/**",
     "**/coverage/**",
     "**/node_modules/**",
@@ -18,12 +18,16 @@
     ".local/**"
   ],
   "rules": {
+    "no-array-constructor": "error",
     "no-case-declarations": "error",
     "no-empty": "error",
     "no-fallthrough": "error",
     "no-prototype-builtins": "error",
     "no-regex-spaces": "error",
     "no-unexpected-multiline": "error",
+    // As typescript-eslint reported them: no underscore exemption, and a value read only
+    // through `typeof` is still unused.
+    "no-unused-vars": ["error", { "reportVarsOnlyUsedAsTypes": true }],
     "no-useless-assignment": "error",
     "no-var": "error",
     "prefer-const": "error",
@@ -96,7 +100,7 @@
                 "message": "The CLI may depend only on @patchy/api, engine-neutral contract modules, @patchy/core and isolated execution/inspection."
               },
               {
-                "group": ["../**", "!../package.json"],
+                "group": ["**/../**", "**/..", "!../package.json"],
                 "message": "CLI imports may not traverse parent directories except for their own package metadata."
               }
             ]
@@ -132,7 +136,7 @@
                 "message": "The local runtime may compose only explicit local capability surfaces, never production auth or credential wiring."
               },
               {
-                "group": ["../**"],
+                "group": ["**/../**", "**/..", "!../package.json"],
                 "message": "Local runtime imports may not traverse parent directories."
               }
             ]
