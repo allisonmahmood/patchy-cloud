@@ -10,6 +10,7 @@
  * against the address too, and drop or refuse anything that isn't on it.
  */
 import {
+  PidgeonDevRead,
   PidgeonRead,
   PidgeonWrite,
   pidgeonReads,
@@ -28,10 +29,12 @@ import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation } from "../definition.js";
+import { operation, type DevRead } from "../definition.js";
 import * as Calls from "./Calls.js";
 import * as Source from "./Source.js";
 
@@ -122,6 +125,10 @@ export const Errors = Schema.Union([
   Runtime.TooLarge
 ]);
 const isError = Schema.is(Errors);
+/** The connection is gone or disconnected: each door says which, its own way. */
+const isAbsent = Schema.is(
+  Schema.Union([ConnectionStore.ConnectionNotFound, ConnectionStore.ConnectionNotConnected])
+);
 
 const DEADLINE_MS = registry["integration.deadline"].default;
 const MAX_LABELS = registry["pidgeon.snapshot.labels"].default;
@@ -296,9 +303,12 @@ const label = (row: typeof LabelRow.Type): typeof PidgeonLabel.Type => ({
 
 // ---------- the operations ----------
 
-/** What one operation knows beyond its input: the address as the call found it, and the patch. */
+/** What one operation knows beyond its input: the address as the call found it. */
 interface Context {
   readonly address: Calls.Address;
+}
+/** A write knows the patch too, whose draft keys are its own. */
+interface Drafting extends Context {
   readonly patchId: string;
 }
 const email = ({ address }: Context) => address.connection.display.email;
@@ -314,15 +324,15 @@ const segment = (value: string) => encodeURIComponent(value);
 /** What an operation can fail with before its refusal is put as the wire says. */
 type Failure =
   Source.CallError | BudgetSpent | ConnectionStore.ConnectionStorageFailed | Schema.SchemaError;
-type Step<In> = (
-  context: Context,
+type Step<In, C extends Context = Context> = (
+  context: C,
   input: In
 ) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>;
 /** One operation and its result, encoded through its own wire schema: nothing else leaves. */
-const step = <In, A, I extends Json>(
+const step = <In, A, I extends Json, C extends Context = Context>(
   output: Schema.Codec<A, I>,
-  run: (context: Context, input: In) => Effect.Effect<A, Failure, ConnectionStore.ConnectionStore>
-): Step<In> => {
+  run: (context: C, input: In) => Effect.Effect<A, Failure, ConnectionStore.ConnectionStore>
+): Step<In, C> => {
   const encode = Schema.encodeEffect(output);
   return (context, input) => run(context, input).pipe(Effect.flatMap(encode));
 };
@@ -499,7 +509,7 @@ const DAY_MS = 86_400_000;
  * and one Pidgeon holds for a person's approval too.
  */
 const sendDraft = Effect.fn("PidgeonOperations.sendDraft")(function* (
-  context: Context,
+  context: Drafting,
   draft: string,
   request: Pick<Source.Request, "method" | "path" | "body">
 ) {
@@ -543,10 +553,10 @@ const sendDraft = Effect.fn("PidgeonOperations.sendDraft")(function* (
 
 type Writes = typeof pidgeonWrites;
 type WriteInputs = { readonly [K in PidgeonWriteOperation]: Writes[K]["input"]["Type"] };
-const writes: { readonly [K in PidgeonWriteOperation]: Step<WriteInputs[K]> } = {
+const writes: { readonly [K in PidgeonWriteOperation]: Step<WriteInputs[K], Drafting> } = {
   "messages.reply": step(
     pidgeonWrites["messages.reply"].output,
-    (context, input: WriteInputs["messages.reply"]) =>
+    (context: Drafting, input: WriteInputs["messages.reply"]) =>
       sendDraft(context, input.idempotencyKey, {
         method: "POST",
         path: `/messages/${segment(input.id)}/reply`,
@@ -555,7 +565,7 @@ const writes: { readonly [K in PidgeonWriteOperation]: Step<WriteInputs[K]> } = 
   ),
   "messages.send": step(
     pidgeonWrites["messages.send"].output,
-    (context, input: WriteInputs["messages.send"]) =>
+    (context: Drafting, input: WriteInputs["messages.send"]) =>
       sendDraft(context, input.idempotencyKey, {
         method: "POST",
         path: "/messages",
@@ -610,20 +620,89 @@ const writes: { readonly [K in PidgeonWriteOperation]: Step<WriteInputs[K]> } = 
 const readOne = <K extends PidgeonReadOperation>(context: Context, name: K, input: ReadInputs[K]) =>
   reads[name](context, input);
 const writeOne = <K extends PidgeonWriteOperation>(
-  context: Context,
+  context: Drafting,
   name: K,
   input: WriteInputs[K]
 ) => writes[name](context, input);
 
+/** The door refused its caller once the call held a slot; `atAddress` hands on what it said. */
+class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRefused", {}) {
+  override get message() {
+    return "The caller was refused once the call held a slot; nothing was sent.";
+  }
+}
+
 /**
- * One operation as its door admitted it: the declared connection and its viewer, then the call
- * once it holds one of the address's slots, with the viewer, the connection and its key as they
- * stand then. A write through a connection whose key only reads sends nothing.
+ * A call on the address its door admitted, once it holds one of the address's slots, with the
+ * caller, the connection and its key as they stand then; a write through a connection whose key
+ * only reads sends nothing. Pidgeon's refusals come back as the wire says them, and the door's
+ * refusal of its caller and the connection's absence as they are, for the door to say. Anything
+ * else, such as a stored key that can't be read or an address that moved, is Patchy's side being
+ * unavailable.
+ */
+const atAddress = Effect.fnUntraced(function* <E>(
+  target: Calls.Target<E>,
+  kind: "read" | "write",
+  run: (address: Calls.Address) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>
+) {
+  // The caller's refusal after the wait is its door's to say, so it waits here, apart from
+  // everything the call itself can fail with.
+  const caller = yield* Ref.make(Option.none<E>());
+  return yield* Calls.withAddress(
+    {
+      ...target,
+      recheck: target.recheck.pipe(
+        Effect.tapError((error) => Ref.set(caller, Option.some(error))),
+        Effect.mapError(() => new CallerRefused({}))
+      )
+    },
+    Effect.fnUntraced(function* (address: Calls.Address) {
+      if (kind === "write" && address.connection.display.access !== "send")
+        return yield* new ReadOnly({});
+      return yield* run(address);
+    })
+  ).pipe(
+    Effect.catchTags({
+      PidgeonKeyRejected: (cause) => Effect.fail(new ConnectionRefused({ cause })),
+      PidgeonRateLimited: (cause) =>
+        Effect.fail(
+          new RateLimited({
+            limit: cause.limit,
+            ...(cause.retryAfterSeconds === undefined
+              ? {}
+              : { retryAfterSeconds: cause.retryAfterSeconds }),
+            cause
+          })
+        ),
+      // A conflict with what's there, such as a label the thread can't take, is the request's.
+      PidgeonConflict: (cause) => Effect.fail(new Source.Invalid({ details: cause.details })),
+      PidgeonTooLarge: (cause) =>
+        Effect.fail(
+          new Runtime.TooLarge({ maxBytes: cause.maxBytes, limitId: "runtime.result.bytes" })
+        )
+    }),
+    Effect.catch((error) =>
+      Effect.flatMap(Ref.get(caller), (refused) =>
+        Effect.fail(
+          Option.isSome(refused)
+            ? refused.value
+            : isError(error) || isAbsent(error)
+              ? error
+              : new Runtime.SourceUnavailable({ cause: error })
+        )
+      )
+    )
+  );
+});
+
+/**
+ * One operation as a loaded version's door admitted it: the declared connection and its viewer,
+ * then the call on the address. A viewer or connection that stopped working is refused.
  */
 const perform = Effect.fn("PidgeonOperations.perform")(function* (
   connection: string,
   kind: "read" | "write",
-  run: (context: Context) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>
+  run: (context: Drafting) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>
 ) {
   const binding = yield* Binding.Binding;
   const declaration = binding.manifest.uses[connection];
@@ -650,40 +729,15 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
       member?.active === true ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
     )
   );
-  return yield* Calls.withAddress(
+  return yield* atAddress(
     { companyId, connection: declaration, deadline, recheck },
-    Effect.fnUntraced(function* (address: Calls.Address) {
-      if (kind === "write" && address.connection.display.access !== "send")
-        return yield* new ReadOnly({});
-      return yield* run({ address, patchId: binding.patchId });
-    })
+    kind,
+    (address) => run({ address, patchId: binding.patchId })
   ).pipe(
     Effect.catchTags({
       ConnectionNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
-      ConnectionNotConnected: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
-      PidgeonKeyRejected: (cause) => Effect.fail(new ConnectionRefused({ cause })),
-      PidgeonRateLimited: (cause) =>
-        Effect.fail(
-          new RateLimited({
-            limit: cause.limit,
-            ...(cause.retryAfterSeconds === undefined
-              ? {}
-              : { retryAfterSeconds: cause.retryAfterSeconds }),
-            cause
-          })
-        ),
-      // A conflict with what's there, such as a label the thread can't take, is the request's.
-      PidgeonConflict: (cause) => Effect.fail(new Source.Invalid({ details: cause.details })),
-      PidgeonTooLarge: (cause) =>
-        Effect.fail(
-          new Runtime.TooLarge({ maxBytes: cause.maxBytes, limitId: "runtime.result.bytes" })
-        )
-    }),
-    // Anything else, such as a stored key that can't be read or an address that moved, is
-    // Patchy's side being unavailable.
-    Effect.mapError((error) =>
-      isError(error) ? error : new Runtime.SourceUnavailable({ cause: error })
-    )
+      ConnectionNotConnected: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
+    })
   );
 });
 
@@ -787,7 +841,31 @@ export const recorded = {
   }
 };
 
-/** Published patches and connection administration share one Source, so an address's slots span both. */
+const decodeDevRead = Schema.decodeUnknownEffect(PidgeonDevRead, { onExcessProperty: "error" });
+
+/**
+ * The read the definition's `live` names, for `patchy dev` through the instance's dev door
+ * (ADR-0013): the caller is the door's, never a loaded version's, and the alias stays in the
+ * repo. It reads as a published read does, with the address's checks and slots, and held mail
+ * stays empty. Writes never come here: dev simulates them without reaching the instance.
+ */
+export const devReads: { readonly "pidgeon.read": DevRead<Source.Source> } = {
+  "pidgeon.read": {
+    ...recorded,
+    run: (target, args) =>
+      decodeDevRead(args).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })),
+        Effect.flatMap((read) =>
+          atAddress(target, "read", (address) => readOne({ address }, read.operation, read.input))
+        )
+      )
+  }
+};
+
+/**
+ * Published patches, the dev door and connection administration share one Source, so an
+ * address's slots span them all.
+ */
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;

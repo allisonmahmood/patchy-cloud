@@ -1,4 +1,5 @@
 import * as WideEvents from "@patchy/analytics/wide-events";
+import type { PidgeonDev } from "@patchy/integrations/dev";
 import type { Invocation } from "@patchy/runtime/dev";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -38,6 +39,21 @@ export const invocation = Effect.fn("DevLog.invocation")(function* (
     }
   }
   yield* Console.log(lines.join("\n"));
+});
+
+/**
+ * A write dev answered itself instead of sending, such as a Pidgeon send: who made it, on which
+ * connection, and its recipients and subject as recent calls name them.
+ */
+export const simulated = Effect.fn("DevLog.simulated")(function* (
+  write: PidgeonDev.Simulated,
+  json: boolean
+) {
+  yield* Console.log(
+    json
+      ? encodeJson({ type: "simulated", ...write })
+      : `${write.viewerId} ${write.connection} ${write.summary}: simulated in dev, nothing reached Pidgeon`
+  );
 });
 
 /**

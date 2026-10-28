@@ -142,7 +142,7 @@ there and the independent purpose into write-once `AGENTS.md`, alongside the
 skill paths, runtime-check guidance and the generated-index pointer.
 `CLAUDE.md` imports it. The local dev runtime uses real handlers over local data,
 never a production-data shortcut, except for an integration that reads the real
-connection in dev, today PostHog ([Development](#development)).
+connection in dev, today PostHog and Pidgeon ([Development](#development)).
 
 For tiers 0, 1 and 2, a new `patchy dev` session checks the pin, CLI and runtime
 against the instance release, then authenticates as the machine token's user. It
@@ -271,7 +271,7 @@ with invented local inserts, or `fixtures/shared-<alias>/` with invented files
 for the named source store. Refresh creates a missing directory and never
 overwrites an existing one. Dev loads shared fixtures at start; edit them and
 restart to change a local source. Authority changes are not simulated.
-Only metadata and inventory come from the instance, apart from PostHog's dev reads.
+Only metadata and inventory come from the instance, apart from PostHog's and Pidgeon's dev reads.
 On tier 1, every readable row is available to every admitted viewer;
 UI filters do not create access control. Tier 2 enforces rules in handlers.
 A public tier 1 patch can read its declared member directory for a signed-in
@@ -1287,7 +1287,8 @@ retries a call Pidgeon might have run without its Idempotency-Key.
 
 A Pidgeon declaration carries `{ kind: "pidgeon", handle, id, revision }`, and
 `patchy add pidgeon/<handle>` writes it with the address's client, context and
-`patchy-pidgeon` skill. There is no fixture; dev's live reads come next.
+`patchy-pidgeon` skill. There is no fixture: `patchy dev` reads the real address
+and simulates every write ([Development](#development)).
 
 **Operations.** Patch code calls operations Patchy writes, never a path, an
 address id or a key, and Patchy fills in the address on every call: a thread,
@@ -1426,25 +1427,38 @@ There is no bring-your-own source: no generic REST escape hatch and no "connect 
 Each integration chooses its **dev binding**
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)). The default is local
 fixtures or a fake, never live source rows or production credentials. An
-integration whose shapes can't be known ahead and which can't write may read the
-real connection in dev instead, and its connect form says so. Postgres keeps
-fixtures; PostHog reads live.
+integration whose fixtures wouldn't resemble production reads the real connection
+in dev instead, and its connect form says so; writes never run live in dev.
+Postgres keeps fixtures; PostHog and Pidgeon read live.
 
-**PostHog dev reads.** PostHog has no fixture. `patchy dev` sends each query to
-the instance as the machine token's person, for either local viewer; the instance
-runs it with the connection's own key, which never leaves it. The instance takes
-the company, person and machine from the token on every call, and again after any
-wait for one of the project's query slots, which dev and published patches share.
-The repo's declaration only routes the call: it must name a connected PostHog
-connection of the token's company. Only operations the integration opts into run
-this way, under the runtime's argument and result bounds, its deadline, draining
-and a per-person rate limit. Each read, refused or not, is a dev call in the
-connection's recent calls, marked Dev and naming the machine, with no patch. An
-expired or revoked key, a deactivated person, a disconnected source, another
-company's connection or an unreachable instance stops the read with a clear error;
-the rest of dev keeps working. The key reaches the dev daemon privately and stays
-out of generated files, logs and workerd; after `patchy login`, restart dev to use
-the new key.
+**Dev reads.** PostHog and Pidgeon have no fixture. `patchy dev` sends each
+PostHog query and each Pidgeon read to the instance as the machine token's
+person, for either local viewer; the instance runs it with the connection's own
+key, which never leaves it. The instance takes the company, person and machine
+from the token on every call, and again after any wait for one of the project's
+or address's slots, which dev and published patches share. The repo's declaration
+only routes the call: it must name a connected connection of the token's company.
+Only reads the integration opts into run this way, under the runtime's argument
+and result bounds, its deadline, draining and a per-person rate limit across
+integrations. A Pidgeon dev read checks what comes back against the address and
+keeps held mail empty, as a published read does. Each read, refused or not, is a
+dev call in the connection's recent calls, marked Dev and naming the machine, with
+no patch. An expired or revoked key, a deactivated person, a disconnected source,
+another company's connection or an unreachable instance stops the read with a
+clear error; the rest of dev keeps working. The key reaches the dev daemon
+privately and stays out of generated files, logs and workerd; after
+`patchy login`, restart dev to use the new key.
+
+**Pidgeon's simulated writes.** In dev, sends, replies and triage never reach the
+instance or Pidgeon. Dev checks each call's arguments and the connection's access
+as the host would, then answers with a well-formed result: a send or reply is
+`sent`, with ids starting `dev_` and `test: true`, and a triage returns the thread
+or labels as far as dev knows them. Dev's output names each one, with a send's
+recipients and subject. Nothing changes, so the next read doesn't show it, and
+reading a `dev_` id answers `not_found`. Dev doesn't check the send policy, since
+the snapshot can't tell who the address has written with, and keeps no daily send
+budget. A test-mode key wouldn't do instead: its replies and triage land in the
+real conversations the team reads.
 
 The Postgres **dev binding** supplies the same Postgres execution dependency without
 loading the keyring or runtime log. One PGlite database per connection under

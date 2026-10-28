@@ -509,14 +509,19 @@ production shell, CSP, sandbox, broker and dispatcher. It uses fixtures and loca
 files, never production rows/bytes, Clerk, a connection keyring or the production
 runtime log store. The exception is an integration whose dev binding reads the
 real connection ([ADR-0013](ADR-0013-dev-bindings-per-integration.md)), today
-PostHog: the daemon sends those calls to the instance's dev read door with the
-key, which it receives on stdin only when such a declaration exists and keeps out
-of argv, the environment, state files, `dev.log` and workerd. Both mounts read as
-the key's person; the instance logs each read as a machine call. A refused key
-fails the read `access_denied`, naming `patchy login` then a dev restart; an
-unreachable instance fails it `source_unavailable`; other dev work continues. Each call logs viewer, handler, outcome and milliseconds, plus
+PostHog and Pidgeon: the daemon sends their reads to the instance's dev read door
+with the key, which it receives on stdin only when such a declaration exists and
+keeps out of argv, the environment, state files, `dev.log` and workerd. Both
+mounts read as the key's person; the instance logs each read as a machine call. A
+refused key fails the read `access_denied`, naming `patchy login` then a dev
+restart; an unreachable instance fails it `source_unavailable`; other dev work
+continues. Writes never run live: the daemon answers each Pidgeon send, reply and
+triage itself and logs it as `<viewer> pidgeon/<handle> <summary>: simulated in
+dev, nothing reached Pidgeon`, the summary naming a send's recipients and subject.
+Each call logs viewer, handler, outcome and milliseconds, plus
 `ctx.log` output and dev-only failure message/stack, without PostHog delivery.
-A daemon started with `--json` writes full wide events and invocation JSON to
+A daemon started with `--json` writes full wide events, invocation JSON and
+`{ type: "simulated", viewerId, connection, operation, summary }` lines to
 `dev.log`; `dev logs --json` still returns `{ ok, log, text }`.
 Tier 0 retains its production shell policy with only the trusted local
 reload script and polling endpoint added; its content remains script-free.

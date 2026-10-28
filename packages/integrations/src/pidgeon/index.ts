@@ -23,11 +23,15 @@ export const pidgeon: {
   readonly metadata?: typeof metadata;
   readonly operations: typeof operations;
   readonly generate: typeof generate;
+  readonly live?: ReadonlyArray<keyof typeof operations>;
 } = defineIntegration({
   name: "pidgeon",
   modes: ["company"],
   credentials: Source.Credentials,
   metadata,
   operations,
-  generate
+  generate,
+  // Mail a builder's agent invents never resembles a company's: dev reads the real address. Its
+  // writes never run live in dev; `patchy dev` simulates them.
+  live: ["read"]
 });

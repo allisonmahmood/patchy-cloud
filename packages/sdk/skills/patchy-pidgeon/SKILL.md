@@ -13,7 +13,7 @@ Read `../patchy-loop/SKILL.md` first. A Pidgeon connection is one company email 
 2. Run `pnpm patchy add pidgeon/<handle> --as inbox`. It inserts `inbox: { kind: "pidgeon", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `inbox`: the address, its access, its send policy and its labels with their ids. A `read` connection's client has no reply, send or triage methods, so code using them doesn't typecheck.
 
-There is no fixture: mail invented for a fixture never resembles a company's. `patchy dev` doesn't run Pidgeon calls in this build; they fail `invalid_request` there. A published page reads the real address, and its sends are real mail.
+There is no fixture: mail invented for a fixture never resembles a company's. `patchy dev` reads the real address and simulates every write, as **In `patchy dev`** below says. A published page reads the real address, and its sends are real mail.
 
 ## Reading
 
@@ -64,6 +64,18 @@ if (sent.status === "sent")
 - After 24 hours the same draft can send again. When a send's outcome is unknown, look for it in the address's sent mail (`messages.search({ folder: "sent" })`) before sending it again.
 
 On tier 2, the page makes the draft key and passes it to an action, which calls `ctx.connections.inbox` with it. Queries and mutations can't use connections.
+
+## In `patchy dev`
+
+- **Reads are real.** `patchy dev` reads the address through Patchy, as the person your publishing key belongs to, from either local viewer: the colleague mount reads as you too. Each read appears in the connection's recent calls marked Dev, naming your machine. Held mail stays empty there too. Messages are real company mail; keep them out of commits, fixtures and transcripts beyond what the task needs.
+- **Writes are simulated.** Replies, sends and triage never leave dev, so nobody receives mail and nothing in Pidgeon changes. Dev checks each call's arguments and the connection's access as Patchy does: a `read` connection's write fails `access_denied`. Then it answers:
+  - a send or reply: `status: "sent"`, with a `messageId` and `threadId` starting `dev_`, `rejected: []`, `replayed: false` and `test: true`;
+  - `threads.update`: the thread with its id and new status, its other fields empty;
+  - `threads.label`: the label it named, if the context lists it; `threads.unlabel`: no labels.
+- `pnpm patchy dev logs` shows each simulated write, with a send's recipients and subject.
+- Nothing changed, so the next read shows the conversation as it was, and reading a `dev_` id fails `not_found`.
+- Dev doesn't apply Pidgeon's send policy, its approval holds, its replays or the daily send budget. A reply-only address sends to a stranger in dev, a send is never `pending_approval`, and the same draft sent twice answers twice. Those apply once the page is published.
+- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`, since a running session keeps the key it started with. A disconnected connection also fails reads `access_denied`; an admin reconnects it. An unreachable instance fails reads `source_unavailable`. In each case the rest of dev keeps working, simulated writes included. Dev reads share the address's slots with published patches, and the instance limits them per person and per network address with `rate_limited`.
 
 ## Bounds and refusals
 

@@ -49,3 +49,28 @@ it.effect("an agent's call reads as its person via the agent", () =>
     ]);
   })
 );
+
+it.effect(
+  "a simulated write names its viewer, connection, recipients and subject, as text or JSON",
+  () =>
+    Effect.gen(function* () {
+      const lines: unknown[] = [];
+      const console = yield* Console.Console;
+      const write = {
+        viewerId: "usr_dev",
+        connection: "pidgeon/support",
+        operation: "messages.send" as const,
+        summary: "messages.send “Your order” to ana@customer.example cc ops@acme.example"
+      };
+      yield* Effect.forEach([false, true], (json) => DevLog.simulated(write, json)).pipe(
+        Effect.provideService(Console.Console, {
+          ...console,
+          log: (...args) => lines.push(...args)
+        })
+      );
+      assert.deepStrictEqual(lines, [
+        "usr_dev pidgeon/support messages.send “Your order” to ana@customer.example cc ops@acme.example: simulated in dev, nothing reached Pidgeon",
+        JSON.stringify({ type: "simulated", ...write })
+      ]);
+    })
+);

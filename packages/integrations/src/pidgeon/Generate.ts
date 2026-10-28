@@ -66,6 +66,12 @@ Use the declared alias: \`patchy.connections.<alias>\` on a page, \`ctx.connecti
 - Read only: the client has no reply, send or triage methods, and Patchy refuses one forced past its types.`
 }
 
+In \`patchy dev\`, reads are this address's real mail, read through Patchy as you.${
+  send
+    ? " Replies, sends and triage are simulated: nothing is sent or changed, a send answers ids starting `dev_` with `test: true`, and `patchy dev logs` names its recipients and subject. Dev doesn't apply the send policy, approval holds or the daily budget."
+    : ""
+}
+
 Read \`.agents/skills/patchy-pidgeon/SKILL.md\` before ${send ? "writing or sending" : "building with it"}.`;
 
 /** The address a connection reads and sends from, as an agent building with it needs it. */

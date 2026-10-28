@@ -220,7 +220,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
       "patchy/_generated/client.ts: patchy.connections",
       "patchy/_generated/server.ts: ctx.connections"
     ],
-    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev doesn't run Pidgeon calls yet",
+    runs: "Tier 1 pages through the broker; tier 2 actions. patchy dev reads the real address through the instance as the machine key's person and simulates every write, sending nothing",
     limits: `Declare a connected company email address. Reads list conversations, read a thread a page at a time with nextCursor, search, list labels and read text attachments; message text is plain, cleaned by Pidgeon's firewall, with its verdict. With a send key, reply, send and triage: each email's idempotencyKey makes the same draft within 24 hours one email, a send answers sent or pending_approval, and each connection has a daily send budget, which its context names. ${runtimeByteLimits.pidgeonBytes / 1024 ** 2} MiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. Queries and mutations cannot use ctx.connections; Pidgeon reads are not live-query dependencies.`
   },
   {
