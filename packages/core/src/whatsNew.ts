@@ -52,6 +52,23 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 21,
+    date: "2026-10-28",
+    through: "f30d8fef1a615b41218f8e388359a483ab86a5e4",
+    changes: [
+      {
+        kind: "New",
+        title: "Patches can read your Attio CRM",
+        detail:
+          "If your company keeps its customers, deals and pipelines in Attio, an admin can connect the workspace from Integrations with a read-only key. Patches can then find, sort and open its records and lists, shaped to your own objects and fields, and nothing in Attio can be changed through Patchy. While your agent builds one, it reads your real CRM.",
+        prs: [967, 968]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy refuses an Attio key that can change anything, and stops using a connected key if it later gains that power."
+    ]
+  },
+  {
     id: 20,
     date: "2026-10-28",
     through: "c5175bd033ed773f499368363c64ac8e9f9e9820",
