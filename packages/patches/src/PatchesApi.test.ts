@@ -459,23 +459,18 @@ it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a so
         `/api/patches/${created.patchId}/description`
       ).pipe(HttpClientRequest.bearerToken(uploader.machine.id));
 
-      const declared = yield* http.execute(
-        request.pipe(HttpClientRequest.bodyText(padded, "application/json"))
-      );
-      assert.strictEqual(declared.status, 413);
-      expect(yield* declared.json).toEqual({ ok: false, error: expect.any(String) });
-      assert.deepStrictEqual(yield* snapshot, before);
-
-      const chunked = request.pipe(
+      for (const body of [
+        HttpClientRequest.bodyText(padded, "application/json"),
         HttpClientRequest.bodyStream(
           Stream.fromIterable([bytes.subarray(0, 1024), bytes.subarray(1024)]),
           { contentType: "application/json" }
         )
-      );
-      // Node closes the socket when an undeclared body crosses the cap.
-      const failure = yield* http.execute(chunked).pipe(Effect.flip);
-      assert.strictEqual(failure.reason._tag, "TransportError");
-      assert.deepStrictEqual(yield* snapshot, before);
+      ]) {
+        const response = yield* http.execute(request.pipe(body));
+        assert.strictEqual(response.status, 413);
+        expect(yield* response.json).toEqual({ ok: false, error: expect.any(String) });
+        assert.deepStrictEqual(yield* snapshot, before);
+      }
 
       for (const malformed of ["{", '{"description":null}']) {
         const response = yield* http.execute(

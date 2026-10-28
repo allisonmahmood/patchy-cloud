@@ -14,11 +14,20 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
+import type * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RateLimited } from "./schemas.js";
 
-const statusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+const statusAnnotation = SchemaAST.resolveAt<number>("httpApiStatus");
+/**
+ * The status HttpApi answers with. `HttpApiSchema.status` keeps it as a key
+ * annotation, which a later check drops, unless the schema already carries
+ * checks or a status annotation; a status annotation wins, as in HttpApi.
+ */
+const statusOf = (ast: SchemaAST.AST) =>
+  statusAnnotation(ast) ??
+  (ast.checks === undefined ? ast.context?.annotations?.httpApiStatus : undefined);
 const parseJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown));
 
 export const refuse = <S extends Schema.Top & Schema.Codec<unknown, unknown>>(
@@ -72,11 +81,19 @@ export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLar
 }
 
 /**
+ * Whether a body read failed on its `MaxBodySize` cap. The server drains a
+ * streamed body past the cap, so the refusal still reaches the client.
+ */
+export const isBodyTooLarge = (error: HttpServerError.HttpServerError) =>
+  error.reason._tag === "RequestParseError" && error.reason.reason === "BodyTooLarge";
+
+/**
  * The current request's body as JSON, capped at `maxBytes`. An absent or
  * blank body is `{}`; the route's schema decides whether it is valid.
- * A declared length over the cap is refused before the body is read; a body
- * that fails to read — the cap hit mid-stream, or the client gone — is
- * malformed, since there is no whole body to decode.
+ * A declared length over the cap is refused before the body is read, and a
+ * streamed body is refused when it passes the cap; a body that fails to read
+ * otherwise, such as the client going away, is malformed, since there is no
+ * whole body to decode.
  */
 export const readBody = (maxBytes: number) =>
   Effect.gen(function* () {
@@ -86,7 +103,9 @@ export const readBody = (maxBytes: number) =>
     }
     const text = yield* request.text.pipe(
       Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
-      Effect.mapError((cause) => new MalformedBody({ cause }))
+      Effect.mapError((cause) =>
+        isBodyTooLarge(cause) ? new BodyTooLarge({ maxBytes }) : new MalformedBody({ cause })
+      )
     );
     if (text.trim().length === 0) return {} as unknown;
     const parsed = parseJson(text);

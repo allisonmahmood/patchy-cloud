@@ -31,6 +31,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
+import { isBodyTooLarge } from "@patchy/api";
 import { Companies, Users } from "@patchy/companies";
 import { agentMark, avatar, escapeAttribute, escapeHtml, sentenceList } from "@patchy/core";
 import { DeploymentConfig, Limits } from "@patchy/limits";
@@ -289,7 +290,11 @@ const tokenParams = Effect.gen(function* () {
   const params = new URLSearchParams(
     yield* request.text.pipe(
       Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_BODY_BYTES)),
-      Effect.mapError(() => refused("The token request's body couldn't be read."))
+      Effect.mapError((error) =>
+        isBodyTooLarge(error)
+          ? refused(`The token request is larger than ${MAX_BODY_BYTES} bytes.`, 413)
+          : refused("The token request's body couldn't be read.")
+      )
     )
   );
   const twice = TOKEN_PARAMS.find((name) => params.getAll(name).length > 1);

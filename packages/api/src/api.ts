@@ -428,8 +428,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. " +
-          "An oversized declared body answers 413; " +
-          "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
+          "An oversized body answers 413, declared or streamed. Rejected requests leave the scope unchanged."
       )
     ),
     HttpApiEndpoint.post("retire", "/patches/:patchId/retire", {
@@ -443,7 +442,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Everything is retained indefinitely, including its names. Live dependants refuse with " +
           "`has_dependants` unless `force` is true. Ask the person you are working for before forcing. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
-          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "An oversized body answers 413, declared or streamed. " +
           "Rejected requests leave the patch unchanged."
       )
     ),
@@ -472,7 +471,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The current version's off sources refuse with `sources_off`, listing each source's table and " +
           "state, including gone, unless `force` is true. Ask the person you are working for before forcing. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
-          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "An oversized body answers 413, declared or streamed. " +
           "Rejected requests leave the patch unchanged."
       )
     ),
@@ -488,7 +487,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "422 `version_unavailable`; an off patch answers `wrong_state`. " +
           "A rollback to tier 2 while the patch is public answers `tier2_not_public`. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
-          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "An oversized body answers 413, declared or streamed. " +
           "Rejected requests leave the patch unchanged."
       )
     ),
@@ -505,7 +504,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`invalid_description`. An empty string clears it. Markup is stored literally. A no-op save " +
           "does not change its timestamp. Deleted patches answer `wrong_state`. " +
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
-          "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
+          "An oversized body answers 413, declared or streamed. " +
           "Rejected requests leave the patch unchanged."
       )
     )
@@ -609,7 +608,7 @@ export class LookGroup extends HttpApiGroup.make("look", { topLevel: true })
           "`<foreignObject>` or `on*` handlers, no NUL characters, a " +
           "non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The " +
           "note is one line of 1–200 characters. The JSON body is limited to three times " +
-          "`look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap."
+          "`look.bytes`: an overflow answers 413, declared or streamed."
       )
     ),
     HttpApiEndpoint.post("restoreLook", "/look/restore", {
@@ -664,7 +663,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
             "Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
-            "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."
+            "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a larger body answers 413, declared or streamed."
         )
       )
   )

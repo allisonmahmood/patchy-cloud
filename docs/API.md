@@ -150,7 +150,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. An oversized body answers 413, declared or streamed. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
@@ -169,7 +169,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/retire`
 
-Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
+Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized body answers 413, declared or streamed. Rejected requests leave the patch unchanged.
 
 Request body: [ForceRequest](#forcerequest)
 
@@ -202,7 +202,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/restore`
 
-Restore an owned retired or deleted patch to live, preserving its address and description. Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. The current version's off sources refuse with `sources_off`, listing each source's table and state, including gone, unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
+Restore an owned retired or deleted patch to live, preserving its address and description. Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. The current version's off sources refuse with `sources_off`, listing each source's table and state, including gone, unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized body answers 413, declared or streamed. Rejected requests leave the patch unchanged.
 
 Request body: [ForceRequest](#forcerequest)
 
@@ -220,7 +220,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/rollback`
 
-Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`. A rollback to tier 2 while the patch is public answers `tier2_not_public`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
+Move an owned live patch's address to a retained `versionNumber`, creating no version. Tables, files, sharing, name and description do not change. A missing version answers 422 `version_unavailable`; an off patch answers `wrong_state`. A rollback to tier 2 while the patch is public answers `tier2_not_public`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized body answers 413, declared or streamed. Rejected requests leave the patch unchanged.
 
 Request body: [RollbackRequest](#rollbackrequest)
 
@@ -239,7 +239,7 @@ Responses:
 
 ### `PUT /api/patches/:patchId/description`
 
-Set an owned live or retired patch's description without publishing a version. Whitespace runs collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at most 500 Unicode code points with no control characters; invalid text answers 422 `invalid_description`. An empty string clears it. Markup is stored literally. A no-op save does not change its timestamp. Deleted patches answer `wrong_state`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
+Set an owned live or retired patch's description without publishing a version. Whitespace runs collapse to spaces and surrounding whitespace is trimmed. The result is one paragraph of at most 500 Unicode code points with no control characters; invalid text answers 422 `invalid_description`. An empty string clears it. Markup is stored literally. A no-op save does not change its timestamp. Deleted patches answer `wrong_state`. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized body answers 413, declared or streamed. Rejected requests leave the patch unchanged.
 
 Request body: [DescriptionRequest](#descriptionrequest)
 
@@ -309,14 +309,14 @@ Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
 - `400` [RuntimeFailure](#runtimefailure) | { ok: false, error: string }
-- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3) | { ok: false, error: string }
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure) | { ok: false, error: string }
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ## look
 
@@ -334,7 +334,7 @@ Responses:
 
 ### `POST /api/look/publish`
 
-Admins only: store the files as the company's next look revision and make it current. A member answers 403 `admin_required` with the company's active `admins`. The instance runs the same checks as `patchy look publish` and refuses with 422 `invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` tokens each declared once in a `:root` rule directly inside `@layer look`, and nowhere else, colours opaque `#RRGGBB`, no `@property` at all, no `!important`, nothing but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a logo that is well-formed, namespace-valid XML 1.0 with no DOCTYPE, nested at most 64 elements deep, its namespaces written without surrounding spaces in at most 256 characters, and an `svg` root in the `http://www.w3.org/2000/svg` namespace, as browsers read an image, with no `<script>`, `<foreignObject>` or `on*` handlers, no NUL characters, a non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The note is one line of 1–200 characters. The JSON body is limited to three times `look.bytes`: a declared overflow answers 413; streaming bodies are cut off at the cap.
+Admins only: store the files as the company's next look revision and make it current. A member answers 403 `admin_required` with the company's active `admins`. The instance runs the same checks as `patchy look publish` and refuses with 422 `invalid_look`, one line per failure in `errors`, storing nothing: the 15 `--look-*` tokens each declared once in a `:root` rule directly inside `@layer look`, and nowhere else, colours opaque `#RRGGBB`, no `@property` at all, no `!important`, nothing but `@font-face` and a leading `@charset` outside `@layer look`, no backslash-escaped names, 4.5:1 contrast for every text colour on bg and on surface and for accent-fg on accent, no `@import` and only `data:` URLs (in `url()`, `image-set()` and `src()`), a logo that is well-formed, namespace-valid XML 1.0 with no DOCTYPE, nested at most 64 elements deep, its namespaces written without surrounding spaces in at most 256 characters, and an `svg` root in the `http://www.w3.org/2000/svg` namespace, as browsers read an image, with no `<script>`, `<foreignObject>` or `on*` handlers, no NUL characters, a non-empty LOOK.md within `look.brief.bytes`, and the files together within `look.bytes`. The note is one line of 1–200 characters. The JSON body is limited to three times `look.bytes`: an overflow answers 413, declared or streamed.
 
 Request body: [LookPublishRequest](#lookpublishrequest)
 
@@ -378,7 +378,7 @@ Responses:
 
 ### `POST /api/sdk/generate`
 
-Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap.
+Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a larger body answers 413, declared or streamed.
 
 Request body: { release: string, manifest: { manifestVersion: integer, release: string, name?: string, description?: string, tier: 0 | 1 | 2 | 3, tables: { [key: string]: { description: string, columns: { [key: string]: { kind: "text", optional?: boolean, default?: string } | { kind: "integer", optional?: boolean, default?: integer } | { kind: "number", optional?: boolean, default?: number } | { kind: "boolean", optional?: boolean, default?: boolean } | { kind: "timestamp", optional?: boolean, default?: "now" | string } | { kind: "json", optional?: boolean, default?: unknown } | { kind: "member", optional?: boolean, default?: unknown } | { kind: "ref", table: string, optional?: boolean, default?: string } }, indexes: { [key: string]: { columns: string[], unique?: boolean } }, shared?: boolean } }, files: { [key: string]: { description: string, shared?: boolean } }, uses: { [key: string]: { kind: "members" } | { kind: "postgres", handle: string, id?: string, revision?: integer } | { kind: "posthog", handle: string, id?: string, revision?: integer } | { kind: "pidgeon", handle: string, id?: string, revision?: integer } | { kind: "attio", handle: string, id?: string, revision?: integer } | { kind: "sharedTable", patchId: string, table: string, id?: string, revision?: integer } | { kind: "sharedStore", patchId: string, store: string, id?: string, revision?: integer } }, handlers?: { [key: string]: { kind: "query" | "mutation" | "action", description?: string, readOnly?: true, agentTool?: true, args: { [key: string]: [HandlerSchema](#handlerschema) }, result: [HandlerSchema](#handlerschema), errors?: string[] } }, sdkImports?: string[] }, serverModules: string[], patchId?: string, skills: string[] }
 
@@ -405,14 +405,14 @@ Responses:
 
 - `200` [ServerCallReply](#servercallreply)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `PUT /api/runtime/staged-files/:patchId/:versionId`
 
@@ -424,14 +424,14 @@ Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `GET /api/runtime/files/:patchId/:versionId/:store/*`
 
@@ -441,14 +441,14 @@ Responses:
 
 - `200` raw bytes (`application/octet-stream`)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `PUT /api/runtime/files/:patchId/:versionId/:store/*`
 
@@ -460,14 +460,14 @@ Responses:
 
 - `200` [RuntimeSuccess](#runtimesuccess)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `GET /api/runtime/shared-files/:patchId/:versionId/:alias/*`
 
@@ -477,14 +477,14 @@ Responses:
 
 - `200` raw bytes (`application/octet-stream`)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `GET /api/runtime/file-handles/:patchId/:versionId/:handle`
 
@@ -494,14 +494,14 @@ Responses:
 
 - `200` raw bytes (`application/octet-stream`)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ## runtimeStream
 
@@ -513,14 +513,14 @@ Responses:
 
 - `200` SSE (`text/event-stream`), JSON data: [RuntimeStreamFrame](#runtimestreamframe)
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ### `POST /api/runtime/subscriptions`
 
@@ -532,14 +532,14 @@ Responses:
 
 - `200` { ok: true }
 - `400` [RuntimeFailure](#runtimefailure)
-- `401` [RuntimeFailure_1](#runtimefailure_1)
-- `403` [RuntimeFailure_2](#runtimefailure_2)
-- `404` [RuntimeFailure_3](#runtimefailure_3)
-- `409` [RuntimeFailure_4](#runtimefailure_4)
-- `413` [RuntimeFailure_5](#runtimefailure_5)
-- `429` [RuntimeFailure_6](#runtimefailure_6)
-- `503` [RuntimeFailure_7](#runtimefailure_7)
-- `504` [RuntimeFailure_8](#runtimefailure_8)
+- `401` [RuntimeFailure](#runtimefailure)
+- `403` [RuntimeFailure](#runtimefailure)
+- `404` [RuntimeFailure](#runtimefailure)
+- `409` [RuntimeFailure](#runtimefailure)
+- `413` [RuntimeFailure](#runtimefailure)
+- `429` [RuntimeFailure](#runtimefailure)
+- `503` [RuntimeFailure](#runtimefailure)
+- `504` [RuntimeFailure](#runtimefailure)
 
 ## Agent tools
 
@@ -612,7 +612,7 @@ substituting the host's limit configuration.
 
 ## Shapes
 
-### RuntimeFailure_8
+### RuntimeFailure
 
 ```
 {
@@ -634,150 +634,6 @@ substituting the host's limit configuration.
 
 ```
 "connection_not_declared" | "access_denied" | "invalid_request" | "timeout" | "too_large" | "source_unavailable" | "table_not_declared" | "row_not_found" | "not_found" | "invalid_row" | "unique_violation" | "invalid_cursor" | "not_additive" | "relation_unknown" | "invalid_query" | "shape_mismatch" | "session_expired" | "session_refresh_required" | "principal_changed" | "not_available_on_public" | "shell_outdated" | "unknown_outcome" | "rate_limited" | "too_many_requests" | "busy" | "handler_failed" | "handler_timeout" | "write_conflict" | "patch_paused" | "server_required" | "tier2_not_public" | "limit_exceeded" | "offset_exhausted" | "source_rate_limited" | "idempotency_conflict"
-```
-
-### RuntimeFailure_7
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_6
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_5
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_4
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_3
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_2
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure_1
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
-```
-
-### RuntimeFailure
-
-```
-{
-  ok: false,
-  source: "patchy",
-  error: string,
-  code: RuntimeCode,
-  scope?: "viewer" | "patch" | "company" | "host",
-  limitId?: string,
-  value?: number,
-  retryAfter?: number,
-  details?: { [key: string]: unknown },
-  correlationId?: string,
-  operation?: string
-}
 ```
 
 ### RuntimeSuccess
@@ -810,7 +666,7 @@ RuntimeSuccess | HandlerFailure
 ### RuntimeCall
 
 ```
-{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: ((string | number | boolean | null) | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "posthog.query", args: { connection: string, name: string, query: string, values?: { [key: string]: string | number | boolean | null | (string | number | boolean | null)[] }, shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "pidgeon.read", args: { connection: string, operation: "threads.list", input: { status?: "open" | "waiting" | "resolved" | "human_review", limit?: integer, cursor?: string } } | { connection: string, operation: "threads.get", input: { id: string, cursor?: string } } | { connection: string, operation: "messages.get", input: { id: string } } | { connection: string, operation: "messages.search", input: { text?: string, from?: string, to?: string, labelId?: string, hasAttachment?: boolean, folder?: "inbox" | "sent" | "archive" | "spam", limit?: integer, cursor?: string } } | { connection: string, operation: "labels.list", input: {} } | { connection: string, operation: "attachments.text", input: { id: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "pidgeon.write", args: { connection: string, operation: "messages.reply", input: { id: string, text: string, cc?: string[], idempotencyKey: string } } | { connection: string, operation: "messages.send", input: { to: string[], cc?: string[], subject: string, text: string, idempotencyKey: string } } | { connection: string, operation: "threads.update", input: { id: string, status: "open" | "waiting" | "resolved" | "human_review" } } | { connection: string, operation: "threads.label", input: { id: string, labelId: string } } | { connection: string, operation: "threads.unlabel", input: { id: string, labelId: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listRecords", args: { connection: string, object: string, eq?: { [key: string]: null | string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string } | (string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string })[] }, contains?: { [key: string]: string }, range?: { attribute: string, gt?: number | string, gte?: number | string, lt?: number | string, lte?: number | string }, orderBy?: { attribute: string, direction?: "asc" | "desc" }, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getRecord", args: { connection: string, object: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getManyRecords", args: { connection: string, object: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listEntries", args: { connection: string, list: string, eq?: { [key: string]: null | string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string } | (string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string })[] }, contains?: { [key: string]: string }, range?: { attribute: string, gt?: number | string, gte?: number | string, lt?: number | string, lte?: number | string }, orderBy?: { attribute: string, direction?: "asc" | "desc" }, limit?: integer, cursor?: string, parent?: { object: string, id: string } | string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getEntry", args: { connection: string, list: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listMembers", args: { connection: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
+{ patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.list", args: { connection: string, relation: { schema: string, name: string }, eq?: { [key: string]: string | number | boolean | null }, range?: { column: string, gt?: string | number | boolean | null, gte?: string | number | boolean | null, lt?: string | number | boolean | null, lte?: string | number | boolean | null }, orderBy?: { column: string, direction: "asc" | "desc" }, select?: string[], limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.get", args: { connection: string, relation: { schema: string, name: string }, key: { [key: string]: string | number | boolean | null } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.getMany", args: { connection: string, relation: { schema: string, name: string }, keys: { [key: string]: string | number | boolean | null }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "postgres.query", args: { connection: string, sql: string, params: (string | number | boolean | null | (string | number | boolean | null)[])[], shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "posthog.query", args: { connection: string, name: string, query: string, values?: { [key: string]: string | number | boolean | null | (string | number | boolean | null)[] }, shape: { [key: string]: { kind: "text" | "integer" | "number" | "boolean" | "timestamp" | "json", optional?: boolean } } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "pidgeon.read", args: { connection: string, operation: "threads.list", input: { status?: "open" | "waiting" | "resolved" | "human_review", limit?: integer, cursor?: string } } | { connection: string, operation: "threads.get", input: { id: string, cursor?: string } } | { connection: string, operation: "messages.get", input: { id: string } } | { connection: string, operation: "messages.search", input: { text?: string, from?: string, to?: string, labelId?: string, hasAttachment?: boolean, folder?: "inbox" | "sent" | "archive" | "spam", limit?: integer, cursor?: string } } | { connection: string, operation: "labels.list", input: {} } | { connection: string, operation: "attachments.text", input: { id: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "pidgeon.write", args: { connection: string, operation: "messages.reply", input: { id: string, text: string, cc?: string[], idempotencyKey: string } } | { connection: string, operation: "messages.send", input: { to: string[], cc?: string[], subject: string, text: string, idempotencyKey: string } } | { connection: string, operation: "threads.update", input: { id: string, status: "open" | "waiting" | "resolved" | "human_review" } } | { connection: string, operation: "threads.label", input: { id: string, labelId: string } } | { connection: string, operation: "threads.unlabel", input: { id: string, labelId: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listRecords", args: { connection: string, object: string, eq?: { [key: string]: null | string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string } | (string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string })[] }, contains?: { [key: string]: string }, range?: { attribute: string, gt?: number | string, gte?: number | string, lt?: number | string, lte?: number | string }, orderBy?: { attribute: string, direction?: "asc" | "desc" }, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getRecord", args: { connection: string, object: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getManyRecords", args: { connection: string, object: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listEntries", args: { connection: string, list: string, eq?: { [key: string]: null | string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string } | (string | number | boolean | { object: string, id: string } | { locality?: string, region?: string, postcode?: string, countryCode?: string })[] }, contains?: { [key: string]: string }, range?: { attribute: string, gt?: number | string, gte?: number | string, lt?: number | string, lte?: number | string }, orderBy?: { attribute: string, direction?: "asc" | "desc" }, limit?: integer, cursor?: string, parent?: { object: string, id: string } | string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.getEntry", args: { connection: string, list: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "attio.listMembers", args: { connection: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "server.call", args: { handler: string, args: { [key: string]: unknown }, mutationKey?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "me", args: {} } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.list", args: { cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.search", args: { text: string, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.get", args: { id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "members.getMany", args: { ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.get", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.getMany", args: { table: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.list", args: { table: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.get", args: { alias: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.getMany", args: { alias: string, ids: string[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.list", args: { alias: string, index?: string, eq?: { [key: string]: unknown }, range?: { column: string, gt?: unknown, gte?: unknown, lt?: unknown, lte?: unknown }, order?: "asc" | "desc", limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insert", args: { table: string, row: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.insertMany", args: { table: string, rows: { [key: string]: unknown }[] } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.update", args: { table: string, id: string, patch: { [key: string]: unknown } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "tables.delete", args: { table: string, id: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.put", args: { store: string, name: string, contentType: string } | { store: string, name: string, upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stage", args: { contentType: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.discard", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.inspectUpload", args: { upload: { token: string, size: integer, contentType: string } } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.get", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.redeem", args: { handle: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.list", args: { store: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.stat", args: { store: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.get", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.list", args: { alias: string, prefix?: string, limit?: integer, cursor?: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "shared.files.stat", args: { alias: string, name: string } } | { patchId: string, versionId: string, principal: RuntimePrincipal, wire: integer, op: "files.delete", args: { store: string, name: string } }
 ```
 
 ### RuntimePrincipal
