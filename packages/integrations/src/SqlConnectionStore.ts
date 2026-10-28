@@ -727,43 +727,50 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       report?: (connection: Connection) => Effect.Effect<void>
     ) {
       const slot = `${input.companyId}\n${input.handle}`;
-      const running = connecting.get(slot);
-      if (running !== undefined)
-        return yield* new ConnectInProgress({
-          name: `attio/${input.handle}`,
-          startedAt: DateTime.formatIso(DateTime.makeUnsafe(running))
-        });
-      connecting.set(slot, yield* Clock.currentTimeMillis);
-      return yield* Effect.gen(function* () {
-        const identity = { ...input, integration: "attio" as const, id: newInternalId("conn") };
-        const { self, snapshot } = yield* audited(
-          identity,
-          "attio.discover",
-          attio.inspect(input.credentials)
-        );
-        const encrypted = yield* keys.encrypt(
-          identity,
-          AttioSource.credentials({
-            key: Redacted.value(input.credentials),
-            workspaceId: self.workspace.id
-          })
-        );
-        const now = yield* Clock.currentTimeMillis;
-        return yield* reportedTransaction(
-          insert(
-            identity,
-            input,
-            {
-              integration: "attio",
-              display: attioDisplay(self, AttioSource.keyHint(input.credentials))
-            },
-            encrypted,
-            { integration: "attio", snapshot },
-            now
-          ),
-          report
-        );
-      }).pipe(Effect.ensuring(Effect.sync(() => connecting.delete(slot))));
+      // The name is claimed and released as one bracket, so an interrupted connect never keeps it.
+      return yield* Effect.acquireUseRelease(
+        Effect.gen(function* () {
+          const running = connecting.get(slot);
+          if (running !== undefined)
+            return yield* new ConnectInProgress({
+              name: `attio/${input.handle}`,
+              startedAt: DateTime.formatIso(DateTime.makeUnsafe(running))
+            });
+          connecting.set(slot, yield* Clock.currentTimeMillis);
+        }),
+        () =>
+          Effect.gen(function* () {
+            const identity = { ...input, integration: "attio" as const, id: newInternalId("conn") };
+            const { self, snapshot } = yield* audited(
+              identity,
+              "attio.discover",
+              attio.inspect(input.credentials)
+            );
+            const encrypted = yield* keys.encrypt(
+              identity,
+              AttioSource.credentials({
+                key: Redacted.value(input.credentials),
+                workspaceId: self.workspace.id
+              })
+            );
+            const now = yield* Clock.currentTimeMillis;
+            return yield* reportedTransaction(
+              insert(
+                identity,
+                input,
+                {
+                  integration: "attio",
+                  display: attioDisplay(self, AttioSource.keyHint(input.credentials))
+                },
+                encrypted,
+                { integration: "attio", snapshot },
+                now
+              ),
+              report
+            );
+          }),
+        () => Effect.sync(() => connecting.delete(slot))
+      );
     });
 
     /** Test: the check, and what it found about the workspace and the key's scopes. */

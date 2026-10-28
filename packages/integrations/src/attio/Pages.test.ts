@@ -174,7 +174,21 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
 });
 
 it("names an attribute left out of an object only on that object, though a list shares its slug", () => {
-  const container = { id: "x", slug: "deals", name: "Deals", attributes: [] };
+  const container = {
+    id: "x",
+    slug: "deals",
+    name: "Deals",
+    attributes: [
+      {
+        id: "a",
+        slug: "stage",
+        title: "Stage",
+        type: "status" as const,
+        multiselect: false,
+        optionsSkipped: true as const
+      }
+    ]
+  };
   const { detail } = Page.reads({
     version: 1,
     workspace: { id: "ws", name: "Acme", slug: "acme" },
@@ -197,6 +211,7 @@ it("names an attribute left out of an object only on that object, though a list 
     ]
   });
   assert.strictEqual(detail.match(/1 left out/g)?.length, 2);
+  assert.include(detail, "<code>deals.stage</code>, <code>deals.stage</code> (list)");
   assert.include(
     detail,
     "2 archived attributes: <code>deals.old_stage</code>, <code>deals.old_owner</code> (list)"

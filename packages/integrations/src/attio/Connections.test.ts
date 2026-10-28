@@ -366,6 +366,29 @@ it.layer(fixture)("Attio connections", (it) => {
       );
     })
   );
+  it.effect("releases a connect's name however the connect is interrupted", () =>
+    Effect.gen(function* () {
+      const { store } = yield* setup("crm-released");
+      const connect = store.connect({
+        integration: "attio",
+        ...who,
+        handle: "crm-interrupted",
+        description: "",
+        credentials: Redacted.make(readKey.token)
+      });
+      for (let round = 0; round < 10; round++) {
+        const running = yield* connect.pipe(Effect.forkChild);
+        for (let step = 0; step < round; step++) yield* Effect.yieldNow;
+        yield* Fiber.interrupt(running);
+      }
+      // No interrupted attempt kept the name claimed: the next connect runs, and either saves it
+      // or finds an attempt that committed before its interruption already did.
+      const last = yield* connect.pipe(Effect.result);
+      if (last._tag === "Failure")
+        assert.instanceOf(last.failure, ConnectionStore.ConnectionHandleTaken);
+    })
+  );
+
   it.effect("refuses a second connect by the same name while the first runs", () =>
     Effect.gen(function* () {
       let open = () => {};

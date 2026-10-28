@@ -589,24 +589,33 @@ export const make = Effect.gen(function* () {
   const withSlot =
     (workspaceId: string, deadline: number) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy, R> => {
-      const take = (semaphore: Semaphore.Semaphore, limitId: Busy["limitId"]) =>
-        Effect.gen(function* () {
-          if (yield* semaphore.takeIfAvailable(1)) return;
-          const budget = deadline - SLOT_RESERVE_MS - (yield* Clock.currentTimeMillis);
-          if (budget <= 0) return yield* new Busy({ limitId });
-          const taken = yield* semaphore.take(1).pipe(Effect.timeoutOption(budget));
-          if (Option.isNone(taken)) return yield* new Busy({ limitId });
-        });
       const workspace = gate(workspaceId);
-      return Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          yield* restore(take(workspace, "attio.calls.concurrent"));
-          return yield* Effect.gen(function* () {
-            yield* restore(take(host, "attio.host.concurrent"));
-            return yield* restore(effect).pipe(Effect.ensuring(host.release(1)));
-          }).pipe(Effect.ensuring(workspace.release(1)));
-        })
-      );
+      return Effect.uninterruptibleMask((restore) => {
+        /**
+         * Takes a permit, as Semaphore's own `withPermits` does: only the waiting may be
+         * interrupted, never the taking, so an interrupted caller never holds a permit it won't
+         * release. Waiting ends when a permit frees up, then it tries again.
+         */
+        const take = (semaphore: Semaphore.Semaphore, limitId: Busy["limitId"]) =>
+          Effect.gen(function* () {
+            while (!(yield* semaphore.takeIfAvailable(1))) {
+              const budget = deadline - SLOT_RESERVE_MS - (yield* Clock.currentTimeMillis);
+              if (budget <= 0) return yield* new Busy({ limitId });
+              const freed = yield* restore(
+                semaphore.withPermits(1)(Effect.void).pipe(Effect.timeoutOption(budget))
+              );
+              if (Option.isNone(freed)) return yield* new Busy({ limitId });
+            }
+          });
+        return take(workspace, "attio.calls.concurrent").pipe(
+          Effect.andThen(
+            take(host, "attio.host.concurrent").pipe(
+              Effect.andThen(restore(effect).pipe(Effect.ensuring(host.release(1)))),
+              Effect.ensuring(workspace.release(1))
+            )
+          )
+        );
+      });
     };
 
   /** The key check's request; its refusals name what to change. */

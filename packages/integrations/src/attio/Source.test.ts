@@ -470,6 +470,32 @@ it.effect("shares a workspace's slots across its connections, and Attio's across
   })
 );
 
+it.effect("never leaves a slot held by a caller interrupted as one frees up", () =>
+  Effect.gen(function* () {
+    const { source: attio } = yield* source(AttioDouble.workspace(readKey)).pipe(
+      limits({ "attio.calls.concurrent": 1, "attio.host.concurrent": 1 })
+    );
+    for (let round = 0; round < 25; round++) {
+      const gate = yield* Deferred.make<void>();
+      const holding = yield* attio
+        .withSlot(
+          "ws-a",
+          600_000
+        )(Deferred.await(gate))
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const waiting = yield* attio.withSlot("ws-a", 600_000)(Effect.void).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      // The slot frees up and the waiting caller goes away in the same moment.
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.interrupt(waiting);
+      yield* Fiber.join(holding);
+      // Whatever the race, the next caller gets the slot at once.
+      yield* attio.withSlot("ws-a", 0)(Effect.void);
+    }
+  })
+);
+
 it.effect("refuses busy when Attio's host bound is full, sending nothing", () =>
   Effect.gen(function* () {
     const { source: attio, requests } = yield* source(AttioDouble.workspace(readKey)).pipe(

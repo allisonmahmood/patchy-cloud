@@ -1,4 +1,4 @@
-import type { AttioAttribute, AttioExclusion, AttioSnapshot } from "@patchy/api";
+import type { AttioAttribute, AttioExclusion, AttioObject, AttioSnapshot } from "@patchy/api";
 import { ago, escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
@@ -209,11 +209,14 @@ const leftOut = (excluded: ReadonlyArray<AttioExclusion>) => {
 export const reads = (snapshot: AttioSnapshot) => {
   const containers = [...snapshot.objects, ...snapshot.lists];
   const attributes = containers.reduce((sum, item) => sum + item.attributes.length, 0);
-  const skipped = containers.flatMap((container) =>
-    container.attributes
-      .filter((item) => item.optionsSkipped === true)
-      .map((item) => `${container.slug}.${item.slug}`)
-  );
+  // A list's are marked, as Left out marks them: an object and a list may share a slug.
+  const skippedIn = (containers: ReadonlyArray<AttioObject>, list: boolean) =>
+    containers.flatMap((container) =>
+      container.attributes
+        .filter((item) => item.optionsSkipped === true)
+        .map((item) => `${code(`${container.slug}.${item.slug}`)}${list ? " (list)" : ""}`)
+    );
+  const skipped = [...skippedIn(snapshot.objects, false), ...skippedIn(snapshot.lists, true)];
   return {
     summary: `${plural(snapshot.objects.length, "object")} and ${plural(snapshot.lists.length, "list")}, ${plural(attributes, "attribute")}.`,
     items: [],
@@ -221,7 +224,7 @@ export const reads = (snapshot: AttioSnapshot) => {
     detail: `${
       skipped.length === 0
         ? ""
-        : `<div class="note note-warn"><strong class="note-title">Options skipped on ${escapeHtml(plural(skipped.length, "attribute"))}</strong>Discovery ran out of time before reading their options. Patches still read and filter them; their context lists no options.<details><summary>The ${skipped.length} attributes</summary><p class="supporting-text">${skipped.map(code).join(" ")}</p></details></div>`
+        : `<div class="note note-warn"><strong class="note-title">Options skipped on ${escapeHtml(plural(skipped.length, "attribute"))}</strong>Discovery ran out of time before reading their options. Patches still read and filter them; their context lists no options.<details><summary>The ${skipped.length} attributes</summary><p class="supporting-text">${skipped.join(", ")}</p></details></div>`
     }${leftOut(snapshot.excluded)}${group("Objects", "object", snapshot.objects, snapshot.excluded)}${group("Lists", "list", snapshot.lists, snapshot.excluded)}`
   };
 };
