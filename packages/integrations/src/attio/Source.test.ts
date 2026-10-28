@@ -6,6 +6,8 @@ import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schema from "effect/Schema";
+import { AttioSnapshot } from "@patchy/api";
 import * as AttioDouble from "../test/attio.js";
 import * as Source from "./Source.js";
 
@@ -278,6 +280,23 @@ it.effect("refuses each bound the moment it's passed, returning nothing", () =>
       at(yield* refused({ "attio.discovery.bytes": 1_200 })).limitId,
       "attio.discovery.bytes"
     );
+  })
+);
+
+it.effect("keeps a snapshot exactly at the byte bound, and refuses one byte over", () =>
+  Effect.gen(function* () {
+    const { result } = yield* inspect(AttioDouble.workspace(readKey));
+    if (result._tag !== "Success") return assert.fail(String(result.failure));
+    const bytes = new TextEncoder().encode(
+      Schema.encodeSync(Schema.fromJsonString(AttioSnapshot))(result.success.snapshot)
+    ).byteLength;
+    const at = (bound: number) =>
+      Effect.map(
+        inspect(AttioDouble.workspace(readKey)).pipe(limits({ "attio.discovery.bytes": bound })),
+        ({ result }) => result._tag
+      );
+    assert.strictEqual(yield* at(bytes), "Success");
+    assert.strictEqual(yield* at(bytes - 1), "Failure");
   })
 );
 

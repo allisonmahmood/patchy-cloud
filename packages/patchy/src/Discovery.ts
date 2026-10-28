@@ -126,7 +126,7 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       ]),
       ...snapshot.excluded.map(
         (item) =>
-          `Excluded ${item.kind} ${item.in === undefined ? "" : `${item.in.slug}.`}${item.name}: ${item.reason}`
+          `Excluded ${item.kind} ${item.name}${item.in === undefined ? "" : ` on ${item.in.kind} ${item.in.slug}`}: ${item.reason}`
       )
     ];
   }

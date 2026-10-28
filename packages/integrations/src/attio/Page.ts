@@ -104,7 +104,6 @@ export const standing = (
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
 const code = (value: string) => `<code>${escapeHtml(value)}</code>`;
-const codes = (values: ReadonlyArray<string>) => values.map(code).join(", ");
 /** Rows a group shows before the rest fold behind "more", and attributes a row's table shows. */
 const SHOWN = 10;
 const ATTRIBUTES_SHOWN = 100;
@@ -180,8 +179,11 @@ const group = (
 /** What discovery left out, grouped by why. */
 const leftOut = (excluded: ReadonlyArray<AttioExclusion>) => {
   if (excluded.length === 0) return "";
-  const name = (item: AttioExclusion) =>
-    item.in === undefined ? item.name : `${item.in.slug}.${item.name}`;
+  // An attribute by its owner and name; a list's is marked, so it's never taken for an object's.
+  const owned = (item: AttioExclusion) =>
+    item.in === undefined
+      ? code(item.name)
+      : `${code(`${item.in.slug}.${item.name}`)}${item.in.kind === "list" ? " (list)" : ""}`;
   const archived = excluded.filter((item) => item.reason === "archived");
   const slugless = excluded.filter((item) => item.reason === "no_slug");
   const unsupported = excluded.filter((item) => item.reason === "unsupported_type");
@@ -189,11 +191,13 @@ const leftOut = (excluded: ReadonlyArray<AttioExclusion>) => {
   const rows = [
     archived.length === 0
       ? ""
-      : `${escapeHtml(plural(archived.length, "archived attribute"))}: ${codes(archived.map(name))}`,
+      : `${escapeHtml(plural(archived.length, "archived attribute"))}: ${archived.map(owned).join(", ")}`,
     slugless.length === 0
       ? ""
-      : `No API slug: ${slugless.map((item) => `the ${item.kind} <strong>${escapeHtml(name(item))}</strong>`).join(", ")}`,
-    unsupported.length === 0 ? "" : `A type Patchy doesn't read: ${codes(unsupported.map(name))}`,
+      : `No API slug: ${slugless.map((item) => (item.kind === "attribute" ? `the attribute ${owned(item)}` : `the ${item.kind} <strong>${escapeHtml(item.name)}</strong>`)).join(", ")}`,
+    unsupported.length === 0
+      ? ""
+      : `A type Patchy doesn't read: ${unsupported.map(owned).join(", ")}`,
     orphans.length === 0
       ? ""
       : `Its parent object isn't read: ${orphans.map((item) => `the list ${code(item.name)}`).join(", ")}`

@@ -667,9 +667,15 @@ export const make = Effect.gen(function* () {
         excluded: []
       })
     ).byteLength;
-    const grow = (value: unknown, at?: string) =>
+    /**
+     * Adds what `value` encodes to toward the snapshot's bytes: an element, or with `property`, an
+     * object's properties joining an attribute (its braces dropped, a comma added). It leaves out
+     * the commas between elements, so it never counts more than the snapshot holds; the exact size
+     * is checked once more at the end.
+     */
+    const grow = (value: unknown, at?: string, property = false) =>
       Effect.suspend(() => {
-        size += encoder.encode(toJson(value)).byteLength + 1;
+        size += encoder.encode(toJson(value)).byteLength - (property ? 1 : 0);
         return size > bounds.bytes
           ? Effect.fail(
               new DiscoveryTooLarge({
@@ -853,7 +859,7 @@ export const make = Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           if (now - started >= bounds.optionDeadline || sent >= bounds.optionRequests) {
             kept[index] = { ...attribute, optionsSkipped: true };
-            return yield* grow({ optionsSkipped: true }, container.slug);
+            return yield* grow({ optionsSkipped: true }, container.slug, true);
           }
           const body = yield* read(
             `/v2/${container.kind}/${container.id}/attributes/${attribute.id}/${attribute.type === "select" ? "options" : "statuses"}`,
@@ -868,7 +874,7 @@ export const make = Effect.gen(function* () {
               at: container.slug
             });
           kept[index] = { ...attribute, options };
-          yield* grow({ options }, container.slug);
+          yield* grow({ options }, container.slug, true);
         }),
       { concurrency: bounds.concurrent, discard: true }
     );

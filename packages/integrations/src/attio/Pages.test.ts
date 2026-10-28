@@ -187,10 +187,25 @@ it("names an attribute left out of an object only on that object, though a list 
         in: { kind: "object", slug: "deals" },
         name: "old_stage",
         reason: "archived"
+      },
+      {
+        kind: "attribute",
+        in: { kind: "list", slug: "deals" },
+        name: "old_owner",
+        reason: "archived"
       }
     ]
   });
-  assert.strictEqual(detail.match(/1 left out/g)?.length, 1);
+  assert.strictEqual(detail.match(/1 left out/g)?.length, 2);
+  assert.include(
+    detail,
+    "2 archived attributes: <code>deals.old_stage</code>, <code>deals.old_owner</code> (list)"
+  );
+  // Each row names only its own.
+  assert.match(
+    detail,
+    /Left out: <code>old_stage<\/code>[^<]*<\/p><\/details><\/li><\/ul><h3>Lists/
+  );
 });
 
 it("folds long groups and long attribute tables, so a large workspace stays scannable", () => {
