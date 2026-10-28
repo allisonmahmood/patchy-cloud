@@ -447,6 +447,41 @@ describe("patch-repo commands", () => {
     expect(existsSync(path.join(dir, ".agents/skills/patchy-pidgeon"))).toBe(false);
   });
 
+  it("adds an Attio declaration with its context and skill, and removes them again", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const result = await runCli(["add", "attio/crm", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      alias: "crm",
+      declaration: { kind: "attio", handle: "crm" },
+      generated: expect.arrayContaining([
+        "patchy/_generated/uses/crm.ts",
+        "patchy/_generated/context/crm.md"
+      ]),
+      skills: [...coreProjectSkills, "patchy-attio"].sort()
+    });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
+      '"crm": { kind: "attio", handle: "crm" }'
+    );
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      uses: { crm: { kind: "attio", handle: "crm", id: "conn-crm", revision: 1 } }
+    });
+    const context = readFileSync(path.join(dir, "patchy/_generated/context/crm.md"), "utf8");
+    expect(context).toContain("### <code>deals</code>: <code>Deals</code>");
+    expect(context).toContain(
+      "- <code>stage</code> (status): <code>Deal stage</code>. Options: <code>Lead</code>, <code>Won 🎉</code>"
+    );
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-attio/SKILL.md"))).toBe(true);
+    expect(existsSync(path.join(dir, "fixtures"))).toBe(false);
+    const removed = await runCli(["remove", "crm", "--json"], { cwd: dir, env });
+    expect(removed).toMatchObject({ status: 0, stderr: "" });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).not.toContain("attio");
+    expect(existsSync(path.join(dir, "patchy/_generated/context/crm.md"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-attio"))).toBe(false);
+  });
+
   it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
