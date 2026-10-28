@@ -117,6 +117,12 @@ Done when `pnpm dev status` exits 0.
   Pidgeon already deleted is named and passed over; its key reaches nothing,
   and `pnpm test:pidgeon:sweep` revokes it. An address you connect by hand
   isn't recorded: delete its connection before `down`, which revokes its key.
+  Attio here is Patchy's probe workspace on Attio itself: `pnpm dev up attio`
+  pastes the person's read-only key, `ATTIO_TEST_READ_KEY` from their dev.env
+  or the environment, into the connect page as `attio/crm`. Without it, it says
+  so and skips the connection; never ask for a key that can write. It only
+  reads, so `down` has nothing to take down in Attio. Every run shares the
+  workspace's 100 reads a second with the live tier and other environments.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.

@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog and Pidgeon connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon and Attio connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog and Pidgeon are built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon and Attio are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -41,7 +41,7 @@ An admin's hint about a connection's purpose, helping a builder choose it. It ne
 _Avoid_: permission, policy, grant
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
@@ -55,6 +55,18 @@ _Avoid_: event catalogue, schema (PostHog has none to snapshot)
 **Address snapshot**:
 An immutable description of one Pidgeon address: its email, display name and send policy, what Patchy's key for it may do, whether it's a test address, its labels and the account's plan, never mail. Refresh labels takes a new one with the stored key.
 _Avoid_: mailbox, inbox snapshot
+
+**Workspace snapshot**:
+An immutable description of one Attio workspace's shape: its objects and lists by API slug and id, a list's parent objects, each attribute's slug, title, type and cardinality, a record reference's targets, and the active options of each select and status, never a record. What discovery left out is named in it, and selects and statuses whose options it ran out of budget for are marked as skipped.
+_Avoid_: CRM schema, data model (Attio's word for the objects alone)
+
+**Key check**:
+Attio's `/v2/self`, asked at connect, Test, Refresh, Reconnect and Replace key, failing closed: the key must be an active workspace token holding the read scopes Patchy needs and no write scope. A check that finds the stored key can write disconnects the connection, naming the scopes and the admin whose check it was, unless a newer key replaced it meanwhile.
+_Avoid_: key test, token validation
+
+**Workspace gate**:
+The calls and discoveries one server process lets run at once against one Attio workspace, shared by every connection to it and by `patchy dev` and published patches, inside one gate for all of Attio. One that can't get a slot before its deadline is refused busy, having sent nothing.
+_Avoid_: pool, rate limit (Attio's own)
 
 **Admin key**:
 The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key, live or test. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key, both in its mode. Revoking it revokes every key minted from it.
@@ -81,7 +93,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection.
 _Avoid_: rename, new connection
 
 **Credential revision**:

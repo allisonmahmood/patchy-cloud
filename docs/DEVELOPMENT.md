@@ -322,7 +322,8 @@ is three people and no patches; `brightline` is a five-person agency with tier 0
 about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 1 Support desk that
 answers it; `patchy dev` in its workspace reads that address's mail through
-this instance and simulates its sends. `up` is idempotent and resumes a
+this instance and simulates its sends; `attio` is Northwind Sales with
+`attio/crm` connected to Patchy's probe workspace on Attio. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -642,6 +643,26 @@ can quote it.
   `pidgeon-suite` runs it one run at a time, queued and never cancelled, then
   `pnpm test:pidgeon:sweep` however it ended, and `pidgeon-live`, the check to
   require, passes only when the suite passed or had no reason or no key to run.
+  Attio is Attio itself: Patchy's probe workspace, seeded with synthetic CRM
+  data and read with its read-only key, `ATTIO_TEST_READ_KEY` from the
+  environment or `~/.config/patchy-cloud/dev.env`. `pnpm dev up attio` connects
+  `attio/crm` through the connect page with it, and skips the connection without
+  it; it only reads, so `down` has nothing to take down in Attio. The offline
+  suites carry correctness over a scripted Attio
+  (`packages/integrations/src/test/attio.ts`) answering in the shapes Attio
+  answered the probe with, hand-written, never its raw output, which holds a
+  member's name and email: the key check's every refusal, discovery's bounds,
+  budget and deadline, the write-scope disconnect, Replace key, admission and
+  every error class. The live tier, `pnpm test:attio` with the read key set,
+  only catches Attio drifting: the key check, discovery of the probe workspace
+  within its bounds and deadline, and Replace key with the same key. Runs share
+  the workspace's 100 reads a second, so it paces itself to about 20 requests a
+  second and sits out a 429 outside the call's deadline. The workspace's Pro
+  trial ends around 2026-11-10; on Attio's Free plan it keeps companies, people,
+  deals and lists but no custom object, and a case about one skips. CI runs it in
+  its own workflow, `Attio live`, on main and on this repository's pull requests
+  that touch Attio, one run at a time and never cancelled; `attio-live` is
+  informational and never a required check.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution
