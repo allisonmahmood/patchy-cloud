@@ -226,8 +226,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   ]);
   if (typecheck.code !== 0)
     return yield* new LocalError({
-      message:
-        "Typecheck failed. Run `pnpm exec tsc --noEmit` and fix the errors before publishing.",
+      message: `Typecheck failed. Run \`pnpm exec tsc --noEmit\` and fix the errors before publishing.${configured.tier === 1 || configured.tier === 2 ? " `.agents/skills/patchy-preact/SKILL.md` says where Preact's types live." : ""}`,
       cause: typecheck
     });
   const handlers =
