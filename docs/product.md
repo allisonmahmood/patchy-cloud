@@ -1080,8 +1080,9 @@ Today every integration supports **company** connections only: an admin connects
 a source, and every active company member may use it through a company-runtime
 patch that declares it. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
-the connection string, the admin's PostHog key, or the key Patchy minted for a
-Pidgeon address, not a separate identity for each person.
+the connection string, the admin's PostHog key, the key Patchy minted for a
+Pidgeon address, or the admin's read-only Attio workspace key, not a separate
+identity for each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
