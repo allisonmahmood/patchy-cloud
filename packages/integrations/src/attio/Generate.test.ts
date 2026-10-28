@@ -131,6 +131,42 @@ void [use, inspect];
   );
 });
 
+it("takes a bare id only where a reference has exactly one target", () => {
+  const deals = snapshot.objects[0]!;
+  const orphaned = {
+    ...snapshot,
+    objects: [
+      {
+        ...deals,
+        attributes: [
+          ...deals.attributes,
+          {
+            id: "att-orphan",
+            slug: "orphan",
+            title: "Orphan",
+            type: "record-reference" as const,
+            multiselect: false,
+            targets: []
+          }
+        ]
+      },
+      ...snapshot.objects.slice(1)
+    ]
+  };
+  assert.deepStrictEqual(
+    diagnostics({
+      "/generated.ts": generate(declaration, orphaned).client,
+      "/consumer.ts": `import { createClient } from "./generated.js";
+const crm = createClient("crm", async () => ({ ok: true, rows: [], cursor: null }));
+void crm.objects.deals.list({ eq: { associated_company: "00000000-0000-4000-8000-000000000001" } });
+// @ts-expect-error every target was left out, so a bare id names none
+void crm.objects.deals.list({ eq: { orphan: "00000000-0000-4000-8000-000000000001" } });
+`
+    }),
+    []
+  );
+});
+
 it("keeps any slug as a key and reads through the host's operations", async () => {
   const odd = {
     ...snapshot,

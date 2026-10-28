@@ -40,7 +40,7 @@ export interface Workspace {
 }
 
 /** The company's connected Attio connection by this id and handle, and its key now. */
-const load = Effect.fn("AttioCalls.load")(function* (
+export const current = Effect.fn("AttioCalls.current")(function* (
   companyId: string,
   declared: Target["connection"]
 ) {
@@ -93,7 +93,7 @@ export const withWorkspace = Effect.fn("AttioCalls.withWorkspace")(function* <E,
   target: Target<E>,
   use: (workspace: Workspace) => Effect.Effect<A, E2, R2>
 ) {
-  const first = yield* load(target.companyId, target.connection);
+  const first = yield* current(target.companyId, target.connection);
   const source = yield* Source.Source;
   return yield* source.withSlot(
     first.workspaceId,
@@ -103,10 +103,10 @@ export const withWorkspace = Effect.fn("AttioCalls.withWorkspace")(function* <E,
       // The caller or the connection may have changed while this call waited: send only as they
       // stand now, with the key stored now, and never to a workspace the connection left.
       yield* target.recheck;
-      const current = yield* load(target.companyId, target.connection);
-      if (current.workspaceId !== first.workspaceId)
+      const now = yield* current(target.companyId, target.connection);
+      if (now.workspaceId !== first.workspaceId)
         return yield* new ConnectionStore.ConnectionChanged({});
-      const key = Redacted.make(current.key);
+      const key = Redacted.make(now.key);
       const inFlight = yield* Semaphore.make(registry["attio.call.concurrent"].default);
       const budget = { remaining: registry["attio.call.bytes"].default };
       const milliseconds = Math.max(

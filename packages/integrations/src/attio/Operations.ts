@@ -166,7 +166,8 @@ const classify = Effect.fnUntraced(function* (answer: Source.Answer, of: Of, row
       return yield* new InvalidRequest({ ...of.where, ...attribute, reason: "attio" });
     return yield* new InvalidQuery({
       ...of.where,
-      reason: malformed.has(code) || /^[a-z_]{1,64}$/.test(code) ? code : "unknown"
+      // Only a code Patchy knows is repeated; anything else in Attio's body stays there.
+      reason: malformed.has(code) ? code : "unknown"
     });
   }
   return yield* new Source.Unavailable({ stage: "status", upstreamStatus: answer.status });
@@ -475,6 +476,15 @@ const prepare: { readonly [K in AttioRead]: (call: Call, input: Inputs[K]) => Pr
             >();
             for (const raw of answered)
               found.set(raw.id.record_id.toLowerCase(), yield* Values.record(read.container, raw));
+            // Duplicates repeat a row: the answer's size, counted before it's built, holds them to
+            // the decoded bound however many times one record is asked for.
+            const sizes = new Map(
+              [...found].map(([id, row]) => [id, encoder.encode(JSON.stringify(row)).byteLength])
+            );
+            let size = 0;
+            for (const id of input.ids) size += (sizes.get(id.toLowerCase()) ?? 4) + 1;
+            if (size > MAX_RESULT)
+              return yield* new TooLarge({ limitId: "runtime.result.bytes", advice: "ids" });
             // In the order asked, duplicates kept, null for an id Attio doesn't have.
             return yield* results.getManyRecords({
               ok: true,
@@ -558,7 +568,11 @@ const atWorkspace = Effect.fnUntraced(function* <K extends AttioRead, E>(
       },
       input
     );
-    if ("done" in prepared) return prepared.done;
+    // Nothing to ask Attio, but the connection must still be one the caller may read.
+    if ("done" in prepared) {
+      yield* Calls.current(target.companyId, target.connection);
+      return prepared.done;
+    }
     return yield* Calls.withWorkspace(
       {
         ...target,
@@ -716,22 +730,32 @@ const connectionId = (args: unknown, binding: Binding.Binding["Service"]): strin
   return declaration?.kind === "attio" ? declaration.id : null;
 };
 
+/** An object's or list's name as Attio gives slugs; anything else isn't recorded. */
+const SLUG = /^[A-Za-z0-9_-]{1,64}$/;
 /**
- * How a call reads in recent calls: the object or list it read, and how many rows. Never a
- * filter, an id, a value or an email. It runs on arguments not yet checked, so it reads them
- * defensively.
+ * How a call reads in recent calls: the object or list its operation names, and how many rows.
+ * Never a filter, an id, a value or an email. It runs on arguments not yet checked, so it reads
+ * only the field its operation names, and only a name shaped like a slug.
  */
-export const recorded = {
+const recordedBy = (field: "object" | "list" | null) => ({
   resource: (args: unknown): string | null => {
-    if (!Predicate.isObject(args)) return null;
-    const named = typeof args.object === "string" ? args.object : args.list;
-    return typeof named === "string" ? named.slice(0, 100) : null;
+    if (field === null || !Predicate.isObject(args)) return null;
+    const named = args[field];
+    return typeof named === "string" && SLUG.test(named) ? named : null;
   },
   rowCount: (value: unknown): number | null =>
     Predicate.isObject(value) && Array.isArray(value.rows)
       ? value.rows.filter((row) => row !== null).length
       : null
-};
+});
+export const recorded = {
+  listRecords: recordedBy("object"),
+  getRecord: recordedBy("object"),
+  getManyRecords: recordedBy("object"),
+  listEntries: recordedBy("list"),
+  getEntry: recordedBy("list"),
+  listMembers: recordedBy(null)
+} satisfies { readonly [K in AttioRead]: unknown };
 
 /**
  * One read the definition's `live` names, for `patchy dev` through the instance's dev door
@@ -745,7 +769,7 @@ const devRead = <K extends AttioRead>(
 ): DevRead<Source.Source> => {
   const decode = Schema.decodeUnknownEffect(input, { onExcessProperty: "error" });
   return {
-    ...recorded,
+    ...recorded[name],
     run: (target, args) => {
       const revision = target.connection.revision;
       return revision === undefined
@@ -786,26 +810,29 @@ export const makeHandlers = Effect.gen(function* () {
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
       Effect.provideService(Directory.Directory, directory)
     );
-  const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(definition: {
-    readonly input: I;
-    readonly output: typeof Schema.Json;
-    readonly run: (
-      args: I["Type"]
-    ) => Effect.Effect<
-      Json,
-      Runtime.RuntimeError,
-      Binding.Binding | Source.Source | ConnectionStore.ConnectionStore | Directory.Directory
-    >;
-  }) =>
-    Runtime.handler({ kind: "integration", ...definition, ...recorded, connectionId }, (args) =>
+  const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(
+    definition: {
+      readonly input: I;
+      readonly output: typeof Schema.Json;
+      readonly run: (
+        args: I["Type"]
+      ) => Effect.Effect<
+        Json,
+        Runtime.RuntimeError,
+        Binding.Binding | Source.Source | ConnectionStore.ConnectionStore | Directory.Directory
+      >;
+    },
+    record: ReturnType<typeof recordedBy>
+  ) =>
+    Runtime.handler({ kind: "integration", ...definition, ...record, connectionId }, (args) =>
       provide(definition.run(args))
     );
   return {
-    "attio.listRecords": handler(listRecords),
-    "attio.getRecord": handler(getRecord),
-    "attio.getManyRecords": handler(getManyRecords),
-    "attio.listEntries": handler(listEntries),
-    "attio.getEntry": handler(getEntry),
-    "attio.listMembers": handler(listMembers)
+    "attio.listRecords": handler(listRecords, recorded.listRecords),
+    "attio.getRecord": handler(getRecord, recorded.getRecord),
+    "attio.getManyRecords": handler(getManyRecords, recorded.getManyRecords),
+    "attio.listEntries": handler(listEntries, recorded.listEntries),
+    "attio.getEntry": handler(getEntry, recorded.getEntry),
+    "attio.listMembers": handler(listMembers, recorded.listMembers)
   };
 });

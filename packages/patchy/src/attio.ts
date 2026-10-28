@@ -125,6 +125,8 @@ type Hint<Known extends string | undefined> = [Known] extends [string]
   ? Known | (string & {})
   : string;
 type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
+/** Exactly one member: a bare id names it. None, as when every target was left out, is not one. */
+type IsOne<T> = [T] extends [never] ? false : IsUnion<T> extends false ? true : false;
 type Caps<A extends AttioAttributeSpec> = AttioTypes[A["type"]];
 type Targets<A extends AttioAttributeSpec> = A["targets"] extends string ? A["targets"] : never;
 
@@ -171,7 +173,7 @@ type EqOne<A extends AttioAttributeSpec> = A["type"] extends "number" | "rating"
         : A["type"] extends "record-reference"
           ? | AttioRecordRef<Targets<A>>
             // A bare id names the attribute's one target.
-            | (IsUnion<Targets<A>> extends false ? string : never)
+            | (IsOne<Targets<A>> extends true ? string : never)
           : // A member's id for an actor; a full name for a personal name; text otherwise.
             string;
 type Can<
@@ -255,7 +257,7 @@ export interface AttioListClient<L extends AttioListSpec> {
     options?: AttioListOptions<L["attributes"]> & {
       /** One record's entries: `{ object, id }`, or its id when the list has one parent object. */
       readonly parent?:
-        AttioRecordRef<L["parents"]> | (IsUnion<L["parents"]> extends false ? string : never);
+        AttioRecordRef<L["parents"]> | (IsOne<L["parents"]> extends true ? string : never);
     }
   ): Promise<AttioPage<AttioEntry<L["parents"], AttioValues<L["attributes"]>>>>;
   /** `null` when the entry is missing or another list's. */

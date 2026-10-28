@@ -244,7 +244,7 @@ it.layer(fixture)("Attio operations, offline", (it) => {
 
   it.effect("resolves many records in the order asked, duplicates kept, null for missing", () =>
     Effect.gen(function* () {
-      const { attio, call } = yield* setup([
+      const { attio, call, store, crm } = yield* setup([
         Reads.route("POST", "/objects/companies/records/query", () =>
           // Attio answers in id order, without the ids it doesn't have.
           page([record("companies", uuid(701)), record("companies", uuid(703))])
@@ -270,6 +270,15 @@ it.layer(fixture)("Attio operations, offline", (it) => {
           ok: true,
           rows: []
         }
+      );
+      assert.strictEqual(attio.requests.length, before);
+      // It still answers only for a connection the caller may read.
+      yield* store.disconnect({ ...who, id: crm.id });
+      assert.include(
+        Runtime.toFailure(
+          yield* call("attio.getManyRecords", { object: "companies", ids: [] }).pipe(Effect.flip)
+        ),
+        { code: "access_denied" }
       );
       assert.strictEqual(attio.requests.length, before);
     })
@@ -616,6 +625,11 @@ it.layer(fixture)("Attio operations, offline", (it) => {
           { code: "invalid_query", details: { object: "deals", reason: "invalid_filter_operator" } }
         ],
         [Reads.refusal(400, "filter_error"), { code: "invalid_query" }],
+        // A code Patchy doesn't know is never repeated.
+        [
+          Reads.refusal(400, "review_private_sentinel"),
+          { code: "invalid_query", details: { object: "deals", reason: "unknown" } }
+        ],
         [
           {
             ...Reads.refusal(429, "rate_limit_exceeded"),
@@ -788,8 +802,63 @@ it.layer(fixture)("Attio operations, offline", (it) => {
       assert.strictEqual(decoded.code, "too_large");
       assert.include(decoded.error, "Ask for fewer ids at once.");
       assert.deepStrictEqual(decoded.details, { maxBytes: 8 * 1024 ** 2 });
+      // One record asked 500 times is counted 500 times, before the answer is built.
+      const repeated = yield* refused("attio.getManyRecords", {
+        object: "companies",
+        ids: Array.from({ length: 500 }, () => uuid(2000))
+      });
+      assert.include(repeated, { code: "too_large", limitId: "runtime.result.bytes" });
     })
   );
+
+  it.effect("holds a call's requests together to one raw budget, however many run at once", () =>
+    Effect.gen(function* () {
+      // The query and the check, each 9 MiB and under the bound alone, read at the same time.
+      const pad = " ".repeat(9 * 1024 ** 2);
+      const { refused } = yield* setup([
+        Reads.route(
+          "GET",
+          "/objects/deals/attributes",
+          () =>
+            new Response(
+              `{"data":${JSON.stringify(Reads.currentAttributes(Reads.snapshot.objects[0]!.attributes))}${pad}}`,
+              { headers: { "content-type": "application/json" } }
+            )
+        ),
+        Reads.route(
+          "POST",
+          "/objects/deals/records/query",
+          () =>
+            new Response(`{"data":[]${pad}}`, { headers: { "content-type": "application/json" } })
+        )
+      ]);
+      assert.include(yield* refused("attio.listRecords", { object: "deals" }), {
+        code: "too_large",
+        limitId: "attio.call.bytes"
+      });
+    })
+  );
+
+  it("records the object or list a call names, only shaped as a slug, never a value", () => {
+    assert.strictEqual(Operations.recorded.listRecords.resource({ object: "deals" }), "deals");
+    assert.strictEqual(
+      Operations.recorded.getEntry.resource({ list: "sales_pipeline" }),
+      "sales_pipeline"
+    );
+    for (const args of [
+      { object: "person@example.invalid" },
+      { object: "Probe deal 0001" },
+      { list: "deals" },
+      { object: 7 },
+      "deals"
+    ])
+      assert.isNull(Operations.recorded.listRecords.resource(args), JSON.stringify(args));
+    assert.isNull(Operations.recorded.listMembers.resource({ object: "deals" }));
+    assert.strictEqual(
+      Operations.recorded.getManyRecords.rowCount({ ok: true, rows: [{}, null, {}] }),
+      2
+    );
+  });
 
   it.effect(
     "rechecks the viewer and the connection once a queued call holds its slot, and times out",
