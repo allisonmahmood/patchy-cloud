@@ -1,5 +1,5 @@
 // First: the harness keeps Node's own fetch before the pages' offline Clerk fixture replaces it.
-import * as Live from "./harness.js";
+import * as Live from "./pidgeonHarness.js";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
@@ -30,6 +30,7 @@ import * as Keys from "../src/pidgeon/Keys.js";
 import * as Operations from "../src/pidgeon/Operations.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
+import * as AttioSource from "../src/attio/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import { services as pageServices } from "../src/test/pages.js";
 import * as PidgeonTest from "../src/test/pidgeon.js";
@@ -671,6 +672,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
       })
     ),
     PostHogSource.layer,
+    AttioSource.layer,
     Live.layer,
     swept
   ).pipe(

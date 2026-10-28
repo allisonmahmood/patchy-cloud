@@ -1,9 +1,9 @@
 /**
- * Clerk development settings, the seed's optional Clerk user id and a Pidgeon test admin key, from
- * `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`).
- * Only Clerk settings reach the server; the user id is consumed by the seed, and the Pidgeon key
- * by a scenario's connect page. Other settings in this developer-owned file never enter the dev
- * instance.
+ * Clerk development settings, the seed's optional Clerk user id, a Pidgeon test admin key and an
+ * Attio read key, from `$XDG_CONFIG_HOME/patchy-cloud/dev.env` (`~/.config/patchy-cloud/dev.env`).
+ * Only Clerk settings reach the server; the user id is consumed by the seed, and the Pidgeon and
+ * Attio keys by a scenario's connect page. Other settings in this developer-owned file never enter
+ * the dev instance.
  */
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -64,8 +64,16 @@ export const developerEnvFile = Effect.fn("developerEnvFile")(function* (home: s
  * The Pidgeon test admin key a scenario's connections paste, `PIDGEON_TEST_ADMIN_KEY`: from the
  * environment, else from the developer's dev.env. None, and the scenario skips Pidgeon.
  */
-export const readPidgeonTestKey = Effect.fn("readPidgeonTestKey")(function* (file: string) {
-  const key = Config.option(Config.Redacted("PIDGEON_TEST_ADMIN_KEY"));
+export const readPidgeonTestKey = (file: string) => readKey("PIDGEON_TEST_ADMIN_KEY", file);
+
+/**
+ * The Attio read key a scenario's connections paste, `ATTIO_TEST_READ_KEY`: from the environment,
+ * else from the developer's dev.env. None, and the scenario skips Attio.
+ */
+export const readAttioTestKey = (file: string) => readKey("ATTIO_TEST_READ_KEY", file);
+
+const readKey = Effect.fn("readKey")(function* (name: string, file: string) {
+  const key = Config.option(Config.Redacted(name));
   const fromEnv = yield* key;
   if (Option.isSome(fromEnv)) return fromEnv;
   const fs = yield* FileSystem.FileSystem;

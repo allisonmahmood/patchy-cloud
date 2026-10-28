@@ -66,6 +66,7 @@ import {
   PostHogSource,
   PostHogOperations,
   PidgeonSource,
+  AttioSource,
   PidgeonOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
@@ -237,13 +238,14 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog source and one Pidgeon source, so connection administration and patches share
-      // each project's and each address's slots.
+      // One PostHog, Pidgeon and Attio source each, so connection administration and patches
+      // share each project's, address's and workspace's slots.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
           Layer.provideMerge(PostHogSource.layer),
-          Layer.provideMerge(PidgeonSource.layer)
+          Layer.provideMerge(PidgeonSource.layer),
+          Layer.provideMerge(AttioSource.layer)
         )
       ),
       Layer.provideMerge(Tables.layer),

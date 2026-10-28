@@ -115,6 +115,12 @@ A Pidgeon connection keeps only the key Patchy minted for its address, encrypted
 under this keyring; admin keys are never stored. The server calls only
 `https://pidgeon.ai/api/v1`, and needs no Pidgeon configuration of its own.
 
+### Attio
+
+An Attio connection keeps the workspace's read-only key, encrypted under this
+keyring. The server calls only `https://api.attio.com`, never following a
+redirect, and needs no Attio configuration of its own.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

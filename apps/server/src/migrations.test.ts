@@ -4,6 +4,7 @@ import {
   PostgresSource,
   PostHogSource,
   PidgeonSource,
+  AttioSource,
   SqlConnectionStore
 } from "@patchy/integrations";
 import { RuntimeLog } from "@patchy/runtime";
@@ -58,9 +59,10 @@ const services = Layer.mergeAll(
       inspect: () => Effect.die("discovery is not part of the upgrade")
     })
   ),
-  // Never called: the upgrade reads no PostHog project and no Pidgeon address.
+  // Never called: the upgrade reads no PostHog project, Pidgeon address or Attio workspace.
   PostHogSource.layer,
-  PidgeonSource.layer
+  PidgeonSource.layer,
+  AttioSource.layer
 );
 
 it.layer(Testing.emptyLayer(beforeIntegrations))(

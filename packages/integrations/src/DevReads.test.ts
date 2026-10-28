@@ -40,6 +40,7 @@ import * as DevReads from "./DevReads.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as AttioSource from "./attio/Source.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
@@ -232,7 +233,8 @@ const serve = (
       SqlConnectionStore.layer.pipe(
         Layer.provide(PostgresSource.layer),
         Layer.provideMerge(double.layer),
-        Layer.provideMerge(mail.layer)
+        Layer.provideMerge(mail.layer),
+        Layer.provideMerge(AttioSource.layer)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

@@ -8,6 +8,7 @@ export * from "./posthog.js";
 export * from "./posthogSnapshot.js";
 export * from "./pidgeon.js";
 export * from "./pidgeonSnapshot.js";
+export * from "./attioSnapshot.js";
 export * from "./devRead.js";
 export * from "./limits.js";
 export * from "./handlers.js";

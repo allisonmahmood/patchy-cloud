@@ -1,5 +1,5 @@
 // First: the harness keeps Node's own fetch before anything replaces it.
-import * as Live from "./harness.js";
+import * as Live from "./pidgeonHarness.js";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, DevReadsGroup, type PidgeonSnapshot, WIRE_VERSION } from "@patchy/api";
@@ -28,6 +28,7 @@ import * as PidgeonDev from "../src/pidgeon/Dev.js";
 import * as Keys from "../src/pidgeon/Keys.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
+import * as AttioSource from "../src/attio/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 
 /**
@@ -99,6 +100,7 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
         )
       ),
       Layer.provideMerge(PostHogSource.layer),
+      Layer.provideMerge(AttioSource.layer),
       Layer.provideMerge(Live.layer)
     )
   ),

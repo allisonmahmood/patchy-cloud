@@ -8,7 +8,7 @@ export default defineConfig({
   ...development,
   test: {
     ...development.test,
-    include: ["packages/integrations/live/**/*.live.ts"],
+    include: ["packages/integrations/live/Pidgeon*.live.ts"],
     globalSetup: fileURLToPath(new URL("./test/postgres.ts", import.meta.url)),
     fileParallelism: false,
     // The harness prints the run's call and mint counts, the account's shared budgets.

@@ -1,4 +1,5 @@
 import {
+  AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
   type Integration,
@@ -16,6 +17,7 @@ import * as PostgresSource from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import type * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
+import * as AttioSource from "./attio/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -49,8 +51,18 @@ export const PidgeonConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
   display: PidgeonSource.Display
 });
+export const AttioConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("attio"),
+  display: AttioSource.Display
+});
 /** A company connection; its integration decides what its display says. */
-export const Connection = Schema.Union([PostgresConnection, PostHogConnection, PidgeonConnection]);
+export const Connection = Schema.Union([
+  PostgresConnection,
+  PostHogConnection,
+  PidgeonConnection,
+  AttioConnection
+]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
 export type Target = {
@@ -61,7 +73,8 @@ export type Target = {
 export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("postgres"), snapshot: Snapshot }),
   Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
-  Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot })
+  Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -160,6 +173,20 @@ export class ConnectionRetargetUnavailable extends Schema.TaggedError<Connection
     return "A Pidgeon connection is one address and can't move to another. Connect the other address as a new connection.";
   }
 }
+/** A connect by this name is still running in this process; a second submit doesn't start another. */
+export class ConnectInProgress extends Schema.TaggedError<ConnectInProgress>()(
+  "ConnectInProgress",
+  {
+    name: Schema.String,
+    startedAt: Schema.String
+  }
+) {
+  readonly code = "connect_in_progress";
+  readonly status = 409;
+  override get message() {
+    return `${this.name} is already connecting: another connect with this name started at ${this.startedAt.slice(11, 16)} UTC and is still running. Wait for it, at most a minute, then look for it in Integrations.`;
+  }
+}
 export class ConnectionInUse extends Schema.TaggedError<ConnectionInUse>()("ConnectionInUse", {}) {
   readonly code = "connection_in_use";
   readonly status = 409;
@@ -222,12 +249,15 @@ export type ConnectionError =
   | ConnectionRetargetRequired
   | ConnectionRetargetUnavailable
   | ConnectionInUse
+  | ConnectInProgress
   | ConnectionMutationUnavailable
   | CredentialKeys.CredentialError
   | PostgresSource.SourceError
   | PostHogSource.SourceError
   | PidgeonSource.CallError
-  | PidgeonKeys.KeysError;
+  | PidgeonKeys.KeysError
+  | AttioSource.InspectError
+  | AttioSource.OtherWorkspace;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {

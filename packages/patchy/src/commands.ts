@@ -1519,7 +1519,7 @@ const add = Command.make(
   {
     integration: Argument.String("integration").pipe(
       Argument.withDescription(
-        "members, postgres/<handle>, posthog/<handle>, pidgeon/<handle>, shared-table or shared-store"
+        "members, postgres/<handle>, posthog/<handle>, pidgeon/<handle>, attio/<handle>, shared-table or shared-store"
       )
     ),
     target: Argument.String("target").pipe(
@@ -1540,7 +1540,7 @@ const add = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Add members, a Postgres, PostHog or Pidgeon connection, shared-table or shared-store declaration and generate its files."
+    "Add members, a Postgres, PostHog, Pidgeon or Attio connection, shared-table or shared-store declaration and generate its files."
   )
 );
 

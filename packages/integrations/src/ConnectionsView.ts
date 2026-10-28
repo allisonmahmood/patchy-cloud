@@ -300,6 +300,8 @@ export const renderCatalogue = (input: {
 export interface Step {
   readonly title: string;
   readonly text: string;
+  /** Markup after the text, such as a table of what to set; the integration escapes its values. */
+  readonly detail?: string;
 }
 /** The steps around a connect form: what to do first, the form's own step, and what comes next. */
 export interface Walkthrough {
@@ -336,7 +338,7 @@ export const renderConnect = (input: {
       ? form
       : `<ol class="steps">${[
           ...walkthrough.before.map((item) =>
-            step("done", "✓", item.title, `<p>${escapeHtml(item.text)}</p>`)
+            step("done", "✓", item.title, `<p>${escapeHtml(item.text)}</p>${item.detail ?? ""}`)
           ),
           step(
             "current",
@@ -349,7 +351,7 @@ export const renderConnect = (input: {
               "upcoming",
               String(walkthrough.before.length + 2 + index),
               item.title,
-              `<p>${escapeHtml(item.text)}</p>`
+              `<p>${escapeHtml(item.text)}</p>${item.detail ?? ""}`
             )
           )
         ].join("")}</ol>`;
@@ -381,8 +383,13 @@ export interface Standing {
   readonly tone: "ok" | "warn" | "refused";
   readonly title: string;
   readonly text: string;
-  /** An action that settles it, such as Replace key. */
-  readonly action?: { readonly href: string; readonly label: string; readonly primary?: boolean };
+  /** Actions that settle it, such as Reconnect or Replace key; `post` submits rather than links. */
+  readonly actions?: ReadonlyArray<{
+    readonly href: string;
+    readonly label: string;
+    readonly primary?: boolean;
+    readonly post?: boolean;
+  }>;
 }
 
 /** What the connection's current metadata lets patches read, in the integration's words. */
@@ -392,6 +399,8 @@ export interface Reads {
   readonly summary: string;
   readonly items: ReadonlyArray<string>;
   readonly more: number;
+  /** Markup after the summary, in place of the items, where a list of names isn't enough. */
+  readonly detail?: string;
   readonly revision: number;
   readonly foundAt: string | null;
 }
@@ -517,8 +526,8 @@ const usedByFact = (usage: Usage) => {
     : `${first.join(", ")}<details><summary>${escapeHtml(`and ${rest.length} more`)}</summary>${listed(rest)}</details>`;
 };
 
-const postButton = (path: string, label: string) =>
-  `<form method="post" action="${escapeAttribute(path)}"><button class="btn" type="submit">${escapeHtml(label)}</button></form>`;
+const postButton = (path: string, label: string, tone = "") =>
+  `<form method="post" action="${escapeAttribute(path)}"><button class="btn${tone}" type="submit">${escapeHtml(label)}</button></form>`;
 const linkButton = (path: string, label: string, tone = "") =>
   `<a class="btn${tone}" href="${escapeAttribute(path)}">${escapeHtml(label)}</a>`;
 
@@ -532,8 +541,8 @@ const adminActions = (connection: Connection, actions: Actions) => {
 const tag = (value: string | undefined) =>
   value === undefined ? "" : `<span class="tag">${escapeHtml(value)}</span>`;
 
-const standing = (item: Standing) =>
-  `<div class="note note-${item.tone}" role="${item.tone === "ok" ? "status" : "alert"}"><strong class="note-title">${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p>${item.action === undefined ? "" : `<div class="actions">${linkButton(item.action.href, item.action.label, item.action.primary === true ? " btn-primary" : "")}</div>`}</div>`;
+const standing = (item: Standing, admin: boolean) =>
+  `<div class="note note-${item.tone}" role="${item.tone === "ok" ? "status" : "alert"}"><strong class="note-title">${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p>${!admin || item.actions === undefined || item.actions.length === 0 ? "" : `<div class="actions">${item.actions.map((action) => (action.post === true ? postButton : linkButton)(action.href, action.label, action.primary === true ? " btn-primary" : "")).join("")}</div>`}</div>`;
 
 /** `/company/connections/:id`: the same layout for every integration. */
 export const renderConnection = (input: {
@@ -560,10 +569,10 @@ export const renderConnection = (input: {
   const readsSection = `<section class="section" aria-labelledby="connection-reads"><h2 class="section-heading" id="connection-reads">${escapeHtml(reads?.heading ?? "What patches can read")}</h2>${
     reads === null
       ? "<p>Its current metadata is unavailable. Refresh it to see what patches can read.</p>"
-      : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
+      : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.detail ?? (reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`)}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
   }</section>`;
   const facts = `<dl class="facts">${connection.facts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}<dt>Added by</dt><dd>${escapeHtml(connection.addedBy)}</dd><dt>Used by</dt><dd>${usedByFact(connection)}</dd></dl>`;
-  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map(standing).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
+  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map((item) => standing(item, input.admin)).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
 };
 
 // ---------- confirmations ----------

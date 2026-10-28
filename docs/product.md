@@ -641,7 +641,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres, PostHog and Pidgeon — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres, PostHog, Pidgeon and Attio — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/company/connections`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`),
@@ -1066,10 +1066,12 @@ Company Postgres connections, discovery, publish binding and constrained runtime
 reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
 Company Pidgeon connections connect one email address with a key Patchy mints for
-it, and publish binds them; reading and sending from patches is next. Other
-integrations and personal connections remain planned.
+it, and publish binds them; reading and sending from patches is next. Company
+Attio connections read one workspace's shape through a read-only key, and publish
+binds them; reading its records from patches is next. Other integrations and
+personal connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second and Pidgeon the third, the first that can write; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, and Attio the fourth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1324,6 +1326,66 @@ retries, refusals and held sends included. Past it a send fails
 connection page shows today's count. Recent calls name each send's subject and
 recipients, each reply's message and CC, each triage's status or label and each
 read's ids, never a body or search text.
+
+### Connecting Attio
+
+Attio is read-only and company-wide: one connection reads one Attio workspace
+through a workspace access token. Nothing in Attio can be changed through
+Patchy; a patch that needs its own state beside the CRM keeps it in its own
+tables. An admin follows the connect walkthrough: Workspace settings ›
+Developers › New access token, with Read on Records, Object configuration, List
+entries, List configuration and User management, anything else Read or off, and
+never Read-write. The walkthrough says that every member reads everything the
+key reads through any patch that declares it, that Attio's own member
+permissions don't carry over, and that builders' agents read the real workspace
+while building.
+
+**The key check** calls `GET /v2/self` and fails closed. It refuses unless the
+key is active, a workspace token, holds every scope above and no `:read-write`
+scope at all, and names a workspace; extra read scopes are accepted and unused.
+Each refusal names what to change: the write scopes ("Notes is Read-write"), the
+missing ones, a token Attio doesn't know (deleted, revoked or mistyped; a
+deleted key answers as an unknown one), one that isn't a token, or one that is
+an app's or a person's. Connect is one submit: the check refuses within a
+second, then discovery runs, for at most 60 seconds, and nothing is saved until
+both pass. A second submit by the same name while one runs is refused. The key
+is encrypted under the same keyring, bound to its workspace, and Patchy calls
+only `https://api.attio.com`, never following a redirect, reading every answer
+under a byte bound before it's decoded.
+
+**Discovery** reads shape, never records: every object and list with its id,
+API slug and name, a list's parent objects, and each attribute's id, slug,
+title, type, whether it's multiselect, a record reference's allowed target
+objects, and the active options of every select and status in Attio's order.
+Archived attributes, objects or lists without an API slug, attributes of a type
+Patchy doesn't read and lists whose parent objects aren't in the snapshot are
+left out and named on the connection page and in the context. A standard object
+an admin hasn't enabled isn't listed by Attio, so isn't kept. Options come last,
+while discovery has budget (45 seconds or 2,000 requests); the selects and
+statuses it skips are marked rather than dropped. Every bound refuses the moment
+it's passed, saving nothing: 200 objects, 500 lists, 500 attributes each, 2,000
+options an attribute, 3,000 requests, 8 at once, 2 MiB an answer and 8 MiB of
+snapshot as it grows. Snapshots, revisions, `stale_generated` and deletion
+protection work as for Postgres.
+
+**Lifecycle.** Test runs the check. Refresh runs the check and discovery, as
+the admin who asked. Replace key runs both for the new key and saves the key and
+snapshot together or not at all; it refuses a key for another workspace, since a
+connection never moves, and a disconnected connection stays disconnected.
+Disconnect and Delete work as for PostHog; there is no retarget and no Rotate
+key. A check at Test, Refresh or Reconnect that finds the stored key has gained
+a write scope disconnects the connection exactly as Disconnect does, unless a
+newer key replaced it meanwhile, and the page keeps naming the scopes, the admin
+whose check found them and when, with the way back: set them to Read or off in
+Attio, or replace the key, then Reconnect, which runs the check again. Patchy
+never keeps using a key it knows can write, and its guarantee doesn't rest on
+the key: the integration has no write operation.
+
+**Admission.** Each server process lets at most 4 calls and discoveries run
+per Attio workspace, shared by every connection to it and by dev and published
+calls, inside 6 for all of Attio; an excess one waits within its deadline,
+keeping a second's reserve, then fails `busy` with nothing sent. Attio's 429s
+fail `source_rate_limited`, and nothing is retried.
 
 ### Discovery and binding
 

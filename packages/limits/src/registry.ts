@@ -250,6 +250,128 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "attio.calls.concurrent": {
+    kind: "contract",
+    default: 4,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Attio calls and discoveries per workspace at once in one server process, shared by every connection to it and by dev and published calls; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "attio.host.concurrent": {
+    kind: "contract",
+    default: 6,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "Attio calls and discoveries at once in one server process across every workspace, each held from its first request through decoding; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "attio.discovery.deadline": {
+    kind: "contract",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Connecting an Attio workspace, replacing its key or refreshing it: the key check and every discovery request",
+    refusal: "timeout",
+    overridable: false
+  },
+  "attio.discovery.requests": {
+    kind: "contract",
+    default: 3000,
+    unit: "requests",
+    scope: "company",
+    measure: "Requests one Attio discovery sends",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.concurrent": {
+    kind: "contract",
+    default: 8,
+    unit: "requests",
+    scope: "company",
+    measure: "Requests one Attio discovery has in flight at once",
+    refusal: null,
+    overridable: false
+  },
+  "attio.discovery.response": {
+    kind: "contract",
+    default: 2097152,
+    unit: "bytes",
+    scope: "company",
+    measure: "One raw Attio answer during discovery",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.bytes": {
+    kind: "contract",
+    default: 8388608,
+    unit: "bytes",
+    scope: "company",
+    measure: "Encoded Attio snapshot, checked as discovery adds to it",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.objects": {
+    kind: "contract",
+    default: 200,
+    unit: "objects",
+    scope: "company",
+    measure: "Objects one Attio snapshot keeps",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.lists": {
+    kind: "contract",
+    default: 500,
+    unit: "lists",
+    scope: "company",
+    measure: "Lists one Attio snapshot keeps",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.attributes": {
+    kind: "contract",
+    default: 500,
+    unit: "attributes",
+    scope: "company",
+    measure: "Attributes one Attio object or list keeps in a snapshot",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.options": {
+    kind: "contract",
+    default: 2000,
+    unit: "options",
+    scope: "company",
+    measure: "Active options one Attio select or status keeps in a snapshot",
+    refusal: "too_large",
+    overridable: false
+  },
+  "attio.discovery.optionRequests": {
+    kind: "contract",
+    default: 2000,
+    unit: "requests",
+    scope: "company",
+    measure:
+      "Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked",
+    refusal: null,
+    overridable: false
+  },
+  "attio.discovery.optionDeadline": {
+    kind: "contract",
+    default: 45000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Time into an Attio discovery after which it reads no more options; the rest are skipped and marked",
+    refusal: null,
+    overridable: false
+  },
   "tier2.query.deadline": {
     kind: "contract",
     default: 3000,

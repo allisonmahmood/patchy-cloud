@@ -34,6 +34,7 @@ import {
   CredentialKeys,
   PostgresSource,
   PostHogSource,
+  AttioSource,
   PidgeonSource
 } from "@patchy/integrations";
 import { RuntimeLog, Wakes } from "@patchy/runtime";
@@ -243,6 +244,7 @@ export const integrations = SqlConnectionStore.layer.pipe(
       PostgresSource.layer,
       PostHogSource.layer,
       PidgeonSource.layer,
+      AttioSource.layer,
       RuntimeLog.layer
     )
   )

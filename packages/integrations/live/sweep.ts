@@ -5,7 +5,7 @@
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Effect from "effect/Effect";
-import * as Live from "./harness.js";
+import * as Live from "./pidgeonHarness.js";
 
 NodeRuntime.runMain(
   Live.ADMIN_KEY === undefined

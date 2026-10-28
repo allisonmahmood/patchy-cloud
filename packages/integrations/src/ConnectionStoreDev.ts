@@ -56,25 +56,32 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           return Effect.succeed({ ...base, integration, snapshot: null });
         const stamp = { revision, takenAt: found.takenAt };
         const kept = found.metadata;
-        return Effect.succeed(
-          kept.integration === "postgres"
-            ? {
-                ...base,
-                integration: "postgres" as const,
-                snapshot: { ...kept.snapshot, ...stamp }
-              }
-            : kept.integration === "posthog"
-              ? {
-                  ...base,
-                  integration: "posthog" as const,
-                  snapshot: { ...kept.snapshot, ...stamp }
-                }
-              : {
-                  ...base,
-                  integration: "pidgeon" as const,
-                  snapshot: { ...kept.snapshot, ...stamp }
-                }
-        );
+        switch (kept.integration) {
+          case "postgres":
+            return Effect.succeed({
+              ...base,
+              integration: kept.integration,
+              snapshot: { ...kept.snapshot, ...stamp }
+            });
+          case "posthog":
+            return Effect.succeed({
+              ...base,
+              integration: kept.integration,
+              snapshot: { ...kept.snapshot, ...stamp }
+            });
+          case "pidgeon":
+            return Effect.succeed({
+              ...base,
+              integration: kept.integration,
+              snapshot: { ...kept.snapshot, ...stamp }
+            });
+          case "attio":
+            return Effect.succeed({
+              ...base,
+              integration: kept.integration,
+              snapshot: { ...kept.snapshot, ...stamp }
+            });
+        }
       },
       snapshot: (companyId, id, revision) => {
         const item = metadata.find(
