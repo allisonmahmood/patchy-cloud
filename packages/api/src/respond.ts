@@ -80,7 +80,9 @@ export class MalformedBody extends Schema.TaggedError<MalformedBody>()("Malforme
  * a byte of it is read, a streamed body once it passes the cap.
  */
 export class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLarge", {
-  maxBytes: Schema.Int
+  maxBytes: Schema.Int,
+  /** The read that passed the cap; absent for a declared length refused unread. */
+  cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
     return `Request body is larger than ${this.maxBytes} bytes.`;
@@ -111,7 +113,7 @@ export const readBody = (maxBytes: number) =>
     const text = yield* request.text.pipe(
       Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(maxBytes)),
       Effect.mapError((cause) =>
-        isBodyTooLarge(cause) ? new BodyTooLarge({ maxBytes }) : new MalformedBody({ cause })
+        isBodyTooLarge(cause) ? new BodyTooLarge({ maxBytes, cause }) : new MalformedBody({ cause })
       )
     );
     if (text.trim().length === 0) return {} as unknown;

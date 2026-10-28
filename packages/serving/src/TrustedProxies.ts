@@ -6,12 +6,11 @@
  * the networks whose `X-Forwarded-For` is believed; from a direct peer the
  * header is ignored, since anyone can write one.
  *
- * Effect's `HttpMiddleware.xForwardedHeaders` takes the header's first address
- * and has no allow-list, so the walk is done here: from the socket address
- * leftward through the chain, the first address outside a trusted network is
- * the client's. Blanket trust — a list that covers a whole address family, or
- * the IPv4-mapped IPv6 alias of one — is refused at startup, because it would
- * let any direct peer choose its own attribution.
+ * The walk goes from the socket address leftward through the chain: the first
+ * address outside a trusted network is the client's. Blanket trust — a list
+ * that covers a whole address family, or the IPv4-mapped IPv6 alias of one —
+ * is refused at startup, because it would let any direct peer choose its own
+ * attribution.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- `isIP` has no Effect equivalent.
 import { isIP } from "node:net";
