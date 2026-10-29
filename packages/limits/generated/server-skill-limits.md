@@ -92,8 +92,8 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
 | `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |
 | `execution.breaker.pause` | operating | 600000 | milliseconds | patch | Pause after repeated kills; a publish clears it | `patch_paused` | Yes | deployment |
-| `execution.task.cpu` | operating | 0.5 | vCPU | company | Fargate CPU allocation | None | Yes | deployment |
-| `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
+| `execution.task.cpu` | operating | 1 | vCPU | company | Company task CPU. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads | None | Yes | deployment |
+| `execution.task.memory` | operating | 2147483648 | bytes | company | Company task memory, 2048 MiB. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads | None | Yes | deployment |
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
 | `execution.process.idle` | operating | 600000 | milliseconds | company | Ready process idle window before reap, since its last call or touch; residency still evicts idle processes first | None | Yes | deployment |

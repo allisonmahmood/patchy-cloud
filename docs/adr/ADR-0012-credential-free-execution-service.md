@@ -540,14 +540,16 @@ The **app stack** is one release, pinned to an image digest:
   and a 3,600-second idle timeout. Hosts are one target group with the load
   balancer's one-day cookie stickiness (ADR-0010), a 90-second deregistration
   delay and the shallow `/healthz` check.
-- **Hosts.** One ECS service of two tasks at 0.5 vCPU and 2 GiB, rolling at
+- **Hosts.** One ECS service of two tasks at 1 vCPU and 2 GiB, rolling at
   100/200 percent with circuit-breaker rollback, as user 1000 with a 120-second
   stop timeout. Settings come from the host secret by key. The host task role is
   the fleet policy in [Operations](../OPERATIONS.md#ecs-provider-configuration).
-- **Exec.** A task definition with no service and no task role, as user 0 with
-  the spike's capability drops, and an execution role that only pulls the image
-  and ships logs. Replaced revisions stay registered so hosts still on the
-  previous release can launch from theirs.
+- **Exec.** A task definition at 1 vCPU and 2 GiB with no service and no task
+  role, as user 0 with the spike's capability drops, and an execution role that
+  only pulls the image and ships logs. Replaced revisions stay registered so
+  hosts still on the previous release can launch from theirs. The hosts set a
+  fleet budget of 24 tasks, sized to the account's Fargate vCPU quota, and a
+  floor of three spares.
 - **Uptime.** A Route 53 HTTPS check on `/healthz/deep` through the public name
   raises a CloudWatch alarm that emails through SNS.
 
@@ -571,17 +573,19 @@ both slots readable.
 
 1. **One company per task, then stop.** An ECS Fargate task in `us-east-1` serves
    one company and is stopped on release, never wiped and returned to the pool.
-   No other company's code has run in that task's kernel. The starting task size
-   is 0.5 vCPU and 2 GiB. A distinct unprivileged uid per workerd process is the
+   No other company's code has run in that task's kernel. A task is 1 vCPU and
+   2 GiB, up from the starting 0.5 vCPU because a responsive patch matters more
+   than its task-hour cost. A distinct unprivileged uid per workerd process is the
    inexpensive hardening; the task remains the security boundary.
-2. **A global spare pool.** The target is the larger of two spares and the wake
-   rate over 15 minutes multiplied by measured cold-start time, under a fleet
-   budget. An empty pool waits at most 40 seconds behind the shell's starting
-   state, then returns `busy`. Residency is separate: at most 12 loaded-version
-   processes and 1.5 GiB aggregate, including supervisor, bundles and overlapping
-   versions. Evict idle processes first; refuse `busy` if none is idle. Reap at
-   ten minutes idle, where an active document's touch counts as use, and kill a
-   process at 512 MiB RSS. Dormant patches spawn nothing.
+2. **A global spare pool.** The target is the larger of a spare floor, two by
+   default and three in production, and the wake rate over 15 minutes multiplied
+   by measured cold-start time, under a fleet budget. An empty pool waits at most
+   40 seconds behind the shell's starting state, then returns `busy`. Residency
+   is separate: at most 12 loaded-version processes and 1.5 GiB aggregate,
+   including supervisor, bundles and overlapping versions. Evict idle processes
+   first; refuse `busy` if none is idle. Reap at ten minutes idle, where an
+   active document's touch counts as use, and kill a process at 512 MiB RSS.
+   Dormant patches spawn nothing.
 3. **Idle release counts all work.** Release follows 30 minutes with no active
    tier 2 documents and no work in flight. Retries, nested calls after document
    departure and transaction cleanup count. A worker agent's call keeps the task

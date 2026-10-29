@@ -718,6 +718,14 @@ use 326 of the Neon compute's 446 non-superuser connections. The rest covers
 operator sessions and draining or stopping hosts, which may still hold
 connections. Raise it together with the compute's connection ceiling.
 
+Hosts and company boxes each run at 1 vCPU and 2 GiB, and the hosts'
+`PATCHY_LIMITS_JSON` lets the fleet run 24 boxes with a floor of three warm
+spares. The account's Fargate On-Demand vCPU quota must cover the whole fleet
+budget, the four hosts of a rolling deploy and the promote task: 24 + 4 + 1 = 29
+vCPUs, inside the account's current 30. Fargate refuses a launch past the quota,
+so raising the budget or a task's size needs the quota raised first; the budget
+goes to 30 once it is.
+
 ### Setting up production
 
 An administrator did this once, for [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416),
@@ -800,9 +808,10 @@ If a run fails, times out or is cancelled after recording its release, the
 release stays pending, and the workflow refuses any other release until it is
 settled: re-run the failed run, whose finished stack deploys are then no-ops and
 whose promote step tries again (it returns at once if the promotion did happen),
-or [roll back](#rolling-back) to the promoted release. Promotion needs two ready spares of
-the new revision within the fleet budget of 15 tasks. A fleet whose bound tasks
-and old spares already fill the budget cannot warm them until companies go idle.
+or [roll back](#rolling-back) to the promoted release. Promotion needs three ready spares of
+the new revision within the fleet budget of 24 tasks. A fleet whose bound tasks
+and old spares already fill the budget cannot warm them until companies go idle
+or [its surplus spares are freed](#freeing-budget-for-a-promotion).
 
 The run's log is public. The workflow masks the account id, certificate and alert
 addresses, keeps stack outputs and resource ids out of it, and leaves the promote
@@ -818,7 +827,13 @@ its recorded settings. Once a later release is promoted, re-running an overlap o
 seal run is refused; start a new run on its commit instead. The
 build is reproducible, so it produces the image ECR already holds for that
 commit; the run fails if the digests differ. The app stack returns to that
-release, and promotion stages and promotes its revision.
+release, and promotion stages and promotes its revision. Its task sizes, fleet
+budget and spare floor come back with it, and its promotion needs its floor of
+ready spares inside its own budget. Every live task counts against that budget:
+bound boxes, draining tasks and the newer release's spares, which housekeeping
+never trims while that release is current. Going back to a smaller budget can
+therefore stall promotion with no company bound; when it does,
+[free budget for the promotion](#freeing-budget-for-a-promotion).
 
 Migrations do not roll back. Each release must work against the schema the next
 one leaves, so roll back only to a release that accepts the current schema. It
@@ -866,6 +881,71 @@ or the fleet, and reaches only what the brightline scenario and its patches use.
 A change that writes a new shape without a migration is not rehearsed at all;
 the PR's Release impact answers
 ([#788](https://github.com/allisonmahmood/patchy-cloud/issues/788)) cover it.
+
+#### Freeing budget for a promotion
+
+Releases before the full-vCPU fleet have a budget of 15 tasks and a floor of two
+spares, so a rollback to one is where this bites, but any promotion can stall
+the same way: every live task counts against the staged release's budget, and
+housekeeping never trims the current revision's spares. The run's promote step
+fails after five minutes, and the promote task's log says `Deployment revision
+<sha> did not reach <n> ready spares in time; it stays staged.` Count on the
+platform database, with the staged release's budget and floor for `<budget>` and
+`<floor>`:
+
+```sql
+SELECT r.current_revision, r.staged_revision,
+  count(*) FILTER (WHERE t.state IN ('starting', 'spare', 'bound')) AS live,
+  count(*) FILTER (WHERE t.state = 'stopping') AS stopping,
+  count(*) FILTER (WHERE t.state = 'spare'
+    AND t.deployment_revision = r.current_revision) AS current_spares,
+  count(*) FILTER (WHERE t.state IN ('starting', 'spare')
+    AND t.deployment_revision = r.staged_revision) AS staged_spares,
+  greatest(0, count(*) FILTER (WHERE t.state IN ('starting', 'spare', 'bound'))
+    + greatest(0, <floor> - count(*) FILTER (WHERE t.state IN ('starting', 'spare')
+      AND t.deployment_revision = r.staged_revision))
+    - <budget>) AS stops
+FROM execution_rollout r LEFT JOIN execution_tasks t ON true
+GROUP BY r.current_revision, r.staged_revision;
+```
+
+`stops` is how many tasks must go before the staged revision can reach its
+floor. It counts every `starting`, `spare` and `bound` task of either revision,
+so it covers a fleet already over the staged budget, and it credits the staged
+revision's spares, starting ones included. `stopping` tasks are already on their
+way out and don't count. When `stops` is zero, the next housekeeping passes warm
+the staged spares on their own.
+
+Otherwise fence that many of the current revision's spares, newest first, since
+a company's first open claims the oldest:
+
+```sql
+WITH picked AS (
+  SELECT task_id FROM execution_tasks
+  WHERE state = 'spare'
+    AND deployment_revision = (SELECT current_revision FROM execution_rollout)
+  ORDER BY requested_at DESC LIMIT <stops>
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE execution_tasks t SET state = 'stopping'
+FROM picked WHERE t.task_id = picked.task_id AND t.state = 'spare'
+RETURNING t.task_id;
+```
+
+This is the fence the controller itself puts on a spare before stopping it, and
+the one row change this runbook makes. It locks each spare it takes and skips any
+a claim holds, and a claim skips a spare it holds, so it never takes a company's
+box and a company never gets a fenced spare. On its next pass housekeeping stops
+each `stopping` task through ECS and marks it `stopped`, which frees its slot.
+The pass after reserves the staged revision's spares, which are replenished
+before the current revision's.
+
+If `stops` is more than `current_spares`, fence them all: the rest of the room
+comes only from bound companies going idle, whose boxes turn `stopping` and then
+`stopped` on release. Claims and releases move the counts, so count again after
+each round. When `staged_spares` reaches the floor, re-run the failed run; its
+stack deploys are no-ops and its promote step promotes. The superseded
+revision's remaining spares then drain on their own.
 
 ### Restoring data
 

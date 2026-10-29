@@ -102,8 +102,8 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `execution.breaker.kills` | operating | 3 | kills | patch | Kills across all versions of one patch within the breaker window | `patch_paused` | Yes | deployment |
 | `execution.breaker.window` | operating | 600000 | milliseconds | patch | Window counting process kills; breaker is off in dev | None | Yes | deployment |
 | `execution.breaker.pause` | operating | 600000 | milliseconds | patch | Pause after repeated kills; a publish clears it | `patch_paused` | Yes | deployment |
-| `execution.task.cpu` | operating | 0.5 | vCPU | company | Fargate CPU allocation | None | Yes | deployment |
-| `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
+| `execution.task.cpu` | operating | 1 | vCPU | company | Company task CPU. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads | None | Yes | deployment |
+| `execution.task.memory` | operating | 2147483648 | bytes | company | Company task memory, 2048 MiB. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads | None | Yes | deployment |
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
 | `execution.process.idle` | operating | 600000 | milliseconds | company | Ready process idle window before reap, since its last call or touch; residency still evicts idle processes first | None | Yes | deployment |
@@ -188,6 +188,8 @@ The local executor applies the aggregate ceiling only to supervised workerd proc
 Process reports retain CPU seconds and peak RSS sampled before the operating system removes the process record. The host receives and acknowledges these reports over the private management channel. CPU is attributed to the patch version, not individual invocations. The company task is the security boundary; process separation provides availability isolation. Local execution uses the same watchdog but proves neither Fargate containment nor per-invocation CPU or memory isolation.
 
 ## Company tasks and the fleet
+
+A company task's CPU and memory come from its exec task definition in `apps/infra`. `execution.task.cpu` and `execution.task.memory` mirror it and are not read.
 
 The controller targets max(2, company wakes per millisecond over 900000 ms times measured cold-start milliseconds), rounded up. Spares, bound tasks and draining tasks share the 100-task fleet budget. One replica holds the 15000 ms housekeeping lease; passes run every 5000 ms.
 

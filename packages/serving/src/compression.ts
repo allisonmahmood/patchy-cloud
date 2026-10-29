@@ -28,8 +28,8 @@ const onThreadpool = (
 /**
  * Compresses `body` in every coding, one after the other on libuv's threadpool, so the event loop
  * keeps serving and only one pool thread is busy: about 30 ms for a 230 KB patch document and
- * 50 ms for the broker, but never per request. A host task has half a vCPU, so running the
- * codings at once would finish no sooner. Brotli quality 9 is about 8% larger than quality 11 for
+ * 50 ms for the broker, but never per request. A host task has one vCPU, so running the codings
+ * at once would finish no sooner. Brotli quality 9 is about 8% larger than quality 11 for
  * a fiftieth of its CPU (the broker: 89 KB in 30 ms against 83 KB in 1.5 s).
  *
  * Interrupting it stops the wait, not zlib: a caller bounding this work holds its permit until
