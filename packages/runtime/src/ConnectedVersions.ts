@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Executor from "./Executor.js";
 import * as ExecutionLifecycle from "./ExecutionLifecycle.js";
@@ -17,11 +18,13 @@ import * as StreamLimits from "./StreamLimits.js";
 
 /**
  * What a warmup came to: the process was `resident` or `loading` already, a bind `loaded` it,
- * a supervisor without touches took a normal bind (`bound`), or `paused`, `unbound` and
- * `failed`, which leave the version to load on demand.
+ * a supervisor without touches took a normal bind (`bound`), residency had no room for it
+ * (`full`), or `paused`, `unbound` and `failed`, which leave the version to load on demand.
  */
 export type WarmupOutcome =
-  "resident" | "loading" | "loaded" | "bound" | "paused" | "unbound" | "failed";
+  "resident" | "loading" | "loaded" | "bound" | "full" | "paused" | "unbound" | "failed";
+
+const isExecutionError = Schema.is(Executor.ExecutionError);
 
 /**
  * Fractions of the idle window the supervisor reaps by. Each touch starts 30 to 40 % of it after
@@ -48,18 +51,23 @@ const settled = (touched: ExecutionLifecycle.TouchOutcome): WarmupOutcome | unde
   }
 };
 
+/** Who holds a version warm: an active document, or a portal view's prewarm. */
+export type Holder = "document" | "prewarm";
+
 /**
- * One version's keepalive on this host: its active connected documents, and a loop that touches
- * the version's process until the last of them goes idle or leaves.
+ * One version's keepalive on this host: its holders, active connected documents and prewarms,
+ * and a loop that touches the version's process until the last of them lets go.
  */
 interface Keepalive {
   readonly version: LoadedVersion;
+  holders: number;
   documents: number;
   peakDocuments: number;
-  /** Why the last document let go: it went idle, or it left. */
-  endReason: "idle" | "left" | undefined;
-  /** A document's first stream asked for a warmup the loop has not tried yet. */
-  warm: boolean;
+  prewarms: number;
+  /** Why the last holder let go: its document went idle or left, or its prewarm ended. */
+  endReason: "idle" | "left" | "prewarm" | undefined;
+  /** Whose warmup the loop has not tried yet, if any asked for one. */
+  warm: Holder | undefined;
   /** Rings the loop to touch, and warm if asked, before its next turn. */
   wake: Deferred.Deferred<void>;
   readonly closed: Deferred.Deferred<void>;
@@ -76,16 +84,22 @@ export class ConnectedVersions extends Context.Service<
   {
     /**
      * Holds the version warm for the caller's scope, which an active document's warm-hold owner
-     * owns. Its first holder on this host starts touching the version's process before each idle
-     * window ends; the last one to let go, by going idle, disconnecting or suspending while
-     * hidden, stops it. A touch never loads, so an evicted version waits for demand. With
-     * `warm`, a document's first stream also loads the version now, unless a touch finds it
-     * loaded. `idle`, asked as the hold ends, says whether its document went idle rather than
-     * left. Never fails or waits.
+     * or a prewarm owns. Its first holder on this host starts touching the version's process
+     * before each idle window ends; the last one to let go, by going idle, disconnecting,
+     * suspending while hidden or its prewarm ending, stops it. A touch never loads, so an
+     * evicted version waits for demand. With `warm`, a document's first stream or a prewarm
+     * also loads the version now, unless a touch finds it loaded; a prewarm's load runs neither
+     * of its company's idle clocks. `idle`, asked as a document's hold ends, says whether it
+     * went idle rather than left. Never fails or waits.
      */
     readonly connect: (
       version: LoadedVersion,
-      options: { readonly warm: boolean; readonly idle?: () => boolean }
+      options: {
+        readonly warm: boolean;
+        /** A `document` unless given. */
+        readonly holder?: Holder;
+        readonly idle?: () => boolean;
+      }
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@patchy/runtime/ConnectedVersions") {}
@@ -100,24 +114,41 @@ export const make = Effect.gen(function* () {
   const keepalives = new Map<string, Keepalive>();
 
   // A bind under a call's admission, so it follows the current binding and the patch's pause,
-  // and is bounded and may evict like a call's: it loads only what that first call would. As a
-  // call's, admission stays interruptible, so a keepalive that ends while it waits claims and
-  // binds nothing; once admitted, its release always runs.
-  const load = (version: LoadedVersion) =>
+  // and is bounded and may evict like a call's: it loads only what that first call would. A
+  // prewarm's is speculative instead: it takes only a free slot, never evicting, and the next
+  // demanded load may evict it. As a call's, admission stays interruptible, so a keepalive that
+  // ends while it waits claims and binds nothing; once admitted, its release always runs.
+  const load = (version: LoadedVersion, holder: Holder) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const admission = yield* restore(
-          lifecycle.acquire(version.companyId, version.patchId, "page")
+          lifecycle.acquire(
+            version.companyId,
+            version.patchId,
+            holder === "prewarm" ? "prewarm" : "page"
+          )
         );
         yield* restore(
           bundles
             .load(version)
-            .pipe(Effect.flatMap((bundle) => executor.bind(bundle, admission.binding)))
+            .pipe(
+              Effect.flatMap((bundle) =>
+                executor.bind(
+                  bundle,
+                  admission.binding,
+                  holder === "prewarm" ? { speculative: true } : undefined
+                )
+              )
+            )
         ).pipe(Effect.ensuring(admission.release));
       })
     ).pipe(
-      Effect.as(true),
-      Effect.catch(() => Effect.succeed(false))
+      Effect.as<WarmupOutcome>("loaded"),
+      Effect.catch((error) =>
+        Effect.succeed<WarmupOutcome>(
+          isExecutionError(error) && error.reason === "busy" ? "full" : "failed"
+        )
+      )
     );
 
   const run = (keepalive: Keepalive) =>
@@ -150,8 +181,8 @@ export const make = Effect.gen(function* () {
         const started = yield* Clock.currentTimeMillis;
         // Replaced in the step that reads the warm request, so a later request rings the new one.
         keepalive.wake = Deferred.makeUnsafe<void>();
-        const warm = keepalive.warm && !warming;
-        if (warm) keepalive.warm = false;
+        const warm = warming ? undefined : keepalive.warm;
+        if (warm !== undefined) keepalive.warm = undefined;
         const touch = yield* Effect.gen(function* () {
           binding ??= yield* bundles.load(version).pipe(
             Effect.map((bundle): GuestProtocol.BundleBinding => ({
@@ -170,18 +201,18 @@ export const make = Effect.gen(function* () {
         if (touch.idleMs !== undefined) acknowledged = touch.idleMs;
         const touched = touch.outcome;
         keepalive.touches[touched] = (keepalive.touches[touched] ?? 0) + 1;
-        const outcome = warm ? settled(touched) : undefined;
+        const outcome = warm === undefined ? undefined : settled(touched);
         if (outcome !== undefined) count(outcome);
-        else if (warm) {
+        else if (warm !== undefined) {
           // A load runs beside the touches, which keep their schedule; one warmup at a time.
           warming = true;
-          yield* load(version).pipe(
-            Effect.flatMap((bound) =>
+          yield* load(version, warm).pipe(
+            Effect.flatMap((loaded) =>
               Effect.sync(() => {
-                count(bound ? (touched === "unsupported" ? "bound" : "loaded") : "failed");
+                count(loaded === "loaded" && touched === "unsupported" ? "bound" : loaded);
                 warming = false;
                 // A warm request held back while this one ran is served at once.
-                if (keepalive.warm) Deferred.doneUnsafe(keepalive.wake, Effect.void);
+                if (keepalive.warm !== undefined) Deferred.doneUnsafe(keepalive.wake, Effect.void);
               })
             ),
             Effect.forkChild
@@ -214,6 +245,7 @@ export const make = Effect.gen(function* () {
             Effect.suspend(() =>
               WideEvents.enrich({
                 peakDocuments: keepalive.peakDocuments,
+                ...(keepalive.prewarms === 0 ? {} : { prewarms: keepalive.prewarms }),
                 touches: keepalive.touches,
                 warmups: keepalive.warmups,
                 ...(keepalive.endReason === undefined ? {} : { endReason: keepalive.endReason })
@@ -229,33 +261,44 @@ export const make = Effect.gen(function* () {
       Effect.acquireRelease(
         // One synchronous step, so concurrent first holders find each other's keepalive.
         Effect.suspend(() => {
+          const holder = options.holder ?? "document";
           const key = canonicalArgs([version.companyId, version.patchId, version.versionId]);
           const existing = keepalives.get(key);
           const keepalive: Keepalive = existing ?? {
             version,
+            holders: 0,
             documents: 0,
             peakDocuments: 0,
+            prewarms: 0,
             endReason: undefined,
-            warm: options.warm,
+            warm: undefined,
             wake: Deferred.makeUnsafe<void>(),
             closed: Deferred.makeUnsafe<void>(),
             touches: {},
             warmups: {}
           };
+          // The latest request names whose admission the warmup takes. A document holds its
+          // company before it connects, so a prewarm's admission serves its warmup as well.
+          if (options.warm) keepalive.warm = holder;
           if (existing === undefined) keepalives.set(key, keepalive);
-          else if (options.warm) {
-            keepalive.warm = true;
-            Deferred.doneUnsafe(keepalive.wake, Effect.void);
-          }
-          keepalive.documents++;
+          else if (options.warm) Deferred.doneUnsafe(keepalive.wake, Effect.void);
+          keepalive.holders++;
+          if (holder === "prewarm") keepalive.prewarms++;
+          else keepalive.documents++;
           keepalive.peakDocuments = Math.max(keepalive.peakDocuments, keepalive.documents);
           const held = { key, keepalive };
           return existing === undefined ? Effect.as(start(keepalive), held) : Effect.succeed(held);
         }),
         ({ key, keepalive }) =>
           Effect.suspend(() => {
-            if (--keepalive.documents > 0) return Effect.void;
-            keepalive.endReason = options.idle?.() === true ? "idle" : "left";
+            if (options.holder !== "prewarm") keepalive.documents--;
+            if (--keepalive.holders > 0) return Effect.void;
+            keepalive.endReason =
+              options.holder === "prewarm"
+                ? "prewarm"
+                : options.idle?.() === true
+                  ? "idle"
+                  : "left";
             if (keepalives.get(key) === keepalive) keepalives.delete(key);
             return Deferred.succeed(keepalive.closed, undefined);
           })

@@ -18,6 +18,8 @@ import {
   Invocation,
   InvocationCapabilities,
   InvocationLog,
+  type LoadedVersions,
+  Prewarm,
   Runtime,
   type MutationTransaction as RuntimeMutationTransaction,
   type QuerySnapshot as RuntimeQuerySnapshot,
@@ -62,6 +64,7 @@ type Dependencies =
   | RuntimeQuerySnapshot.QuerySnapshot
   | RuntimeMutationTransaction.MutationTransaction
   | OperatingLimits.OperatingLimits
+  | LoadedVersions.LoadedVersions
   | WideEvents.WideEvents;
 
 export const enabled = Config.map(
@@ -69,7 +72,10 @@ export const enabled = Config.map(
   (provider) => provider === "local-fleet" || provider === "ecs"
 );
 
-/** The same controller runs on ECS in production and isolated local tasks in development. */
+/**
+ * The same controller runs on ECS in production and isolated local tasks in development, with
+ * the portal's prewarms beside it.
+ */
 export const make: (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ) => Effect.Effect<
@@ -77,6 +83,7 @@ export const make: (
     | Invocation.Invocation
     | ExecutionLifecycle.ExecutionLifecycle
     | ConnectedVersions.ConnectedVersions
+    | Prewarm.Prewarm
   >,
   StartupError,
   Dependencies
@@ -136,14 +143,21 @@ export const make: (
     Effect.provideService(Executor.Executor, fleet.executor),
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle)
   );
+  const streamLimits = yield* StreamLimits.make;
   const connectedVersions = yield* ConnectedVersions.make.pipe(
     Effect.provideService(Executor.Executor, fleet.executor),
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle),
-    Effect.provideServiceEffect(StreamLimits.StreamLimits, StreamLimits.make)
+    Effect.provideService(StreamLimits.StreamLimits, streamLimits)
+  );
+  const prewarm = yield* Prewarm.make.pipe(
+    Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle),
+    Effect.provideService(ConnectedVersions.ConnectedVersions, connectedVersions),
+    Effect.provideService(StreamLimits.StreamLimits, streamLimits)
   );
   return Context.make(Invocation.Invocation, invocation).pipe(
     Context.add(ExecutionLifecycle.ExecutionLifecycle, fleet.lifecycle),
-    Context.add(ConnectedVersions.ConnectedVersions, connectedVersions)
+    Context.add(ConnectedVersions.ConnectedVersions, connectedVersions),
+    Context.add(Prewarm.Prewarm, prewarm)
   );
 });
 
@@ -152,13 +166,15 @@ export const layer = (
 ): Layer.Layer<
   | Invocation.Invocation
   | ExecutionLifecycle.ExecutionLifecycle
-  | ConnectedVersions.ConnectedVersions,
+  | ConnectedVersions.ConnectedVersions
+  | Prewarm.Prewarm,
   StartupError,
   | Crypto.Crypto
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | Wakes.Wakes
   | OperatingLimits.OperatingLimits
+  | LoadedVersions.LoadedVersions
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
   | SqlClient.SqlClient

@@ -54,7 +54,9 @@ const lostMs = registry["tier2.settlement.cleanup"].default + 5_000;
  * touches numbered in `lost`, counting from zero, never arrive and fail after `lostMs`.
  * `touchedAt` records when each touch was sent, `landedAt` when one restarted an idle clock.
  * `windows` holds the company's configured idle window and the one the supervisor reaps by,
- * which its answers report. A warmup's admission waits for `admissions.gate` when it is set.
+ * which its answers report. A warmup's admission waits for `admissions.gate` when it is set,
+ * and records whom it was admitted for in `admissions.callers`; `admissions.speculative` records
+ * whether each bind was sent speculative.
  */
 const harness = Effect.gen(function* () {
   const steps = yield* Queue.unbounded<Step>();
@@ -71,7 +73,11 @@ const harness = Effect.gen(function* () {
   const admissions = {
     gate: undefined as Deferred.Deferred<void> | undefined,
     admitted: 0,
-    interrupted: 0
+    interrupted: 0,
+    callers: [] as ExecutionLifecycle.Caller[],
+    speculative: [] as boolean[],
+    /** Versions whose binds the supervisor refuses `busy`, as residency with no room would. */
+    full: new Set<string>()
   };
   const local = yield* StreamLimits.StreamLimits.pipe(Effect.provide(StreamLimits.layerLocal));
   const recorded = yield* Queue.unbounded<WideEvents.WideEvent>();
@@ -82,9 +88,11 @@ const harness = Effect.gen(function* () {
   );
   const connected = yield* ConnectedVersions.make.pipe(
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+      prewarm: () => Effect.die("Nothing here prewarms."),
       connect: () => Effect.void,
-      acquire: (_companyId, patchId) =>
+      acquire: (_companyId, patchId, caller) =>
         Effect.gen(function* () {
+          admissions.callers.push(caller);
           yield* Queue.offer(steps, { kind: "admission", versionId: patchId });
           if (admissions.gate !== undefined) yield* Deferred.await(admissions.gate);
           admissions.admitted++;
@@ -117,9 +125,16 @@ const harness = Effect.gen(function* () {
       })
     }),
     Effect.provideService(Executor.Executor, {
-      bind: Effect.fnUntraced(function* ({ companyId, patchId, versionId, sha256 }) {
-        resident.add(versionId);
+      bind: Effect.fnUntraced(function* (
+        { companyId, patchId, versionId, sha256 },
+        _binding,
+        options
+      ) {
+        admissions.speculative.push(options?.speculative === true);
         yield* Queue.offer(steps, { kind: "bind", versionId });
+        if (admissions.full.has(versionId))
+          return yield* new Executor.ExecutionError({ operation: "bind", reason: "busy" });
+        resident.add(versionId);
         return { binding: { companyId, patchId, versionId, sha256 }, processGeneration: 1 };
       }),
       invoke: () => Effect.die("A keepalive never invokes a handler.")
@@ -166,8 +181,17 @@ const harness = Effect.gen(function* () {
       .pipe(Scope.provide(scope));
     return scope;
   });
+  /** A prewarm's hold on this host, which warms the version, until `Scope.close`. */
+  const prewarm = Effect.fnUntraced(function* (versionId: string) {
+    const scope = yield* Scope.make();
+    yield* connected
+      .connect(version(versionId), { warm: true, holder: "prewarm" })
+      .pipe(Scope.provide(scope));
+    return scope;
+  });
   return {
     open,
+    prewarm,
     resident,
     outcomes,
     touchedAt,
@@ -228,6 +252,57 @@ it.effect("warms a version once per document and only touches it for renewals", 
       peakDocuments: 1,
       warmups: {}
     });
+  }).pipe(Effect.scoped)
+);
+
+it.effect("warms for a prewarm under its own admission, and counts it as no document", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    const prewarmed = yield* host.prewarm("ver_a");
+    assert.deepStrictEqual(yield* host.next, {
+      kind: "touch",
+      versionId: "ver_a",
+      outcome: "absent"
+    });
+    assert.deepStrictEqual(yield* host.next, { kind: "admission", versionId: "pat_connected" });
+    assert.deepStrictEqual(yield* host.next, { kind: "bind", versionId: "ver_a" });
+    assert.deepStrictEqual(host.admissions.callers, ["prewarm"]);
+    // Its load takes only a free slot; the supervisor never evicts for it.
+    assert.deepStrictEqual(host.admissions.speculative, [true]);
+    // The document the prewarm was for finds its version loaded.
+    const document = yield* host.open("ver_a", true);
+    assert.deepStrictEqual(yield* host.next, {
+      kind: "touch",
+      versionId: "ver_a",
+      outcome: "touched"
+    });
+    yield* Scope.close(document, Exit.void);
+    yield* Scope.close(prewarmed, Exit.void);
+    assert.deepInclude(yield* host.event, {
+      type: "keepalive",
+      peakDocuments: 1,
+      prewarms: 1,
+      endReason: "prewarm",
+      warmups: { loaded: 1, resident: 1 }
+    });
+  }).pipe(Effect.scoped)
+);
+
+it.effect("counts a prewarm residency had no room for as full", () =>
+  Effect.gen(function* () {
+    const host = yield* harness;
+    host.admissions.full.add("ver_a");
+    const prewarmed = yield* host.prewarm("ver_a");
+    assert.deepStrictEqual(yield* host.next, {
+      kind: "touch",
+      versionId: "ver_a",
+      outcome: "absent"
+    });
+    assert.deepStrictEqual(yield* host.next, { kind: "admission", versionId: "pat_connected" });
+    assert.deepStrictEqual(yield* host.next, { kind: "bind", versionId: "ver_a" });
+    assert.isFalse(host.resident.has("ver_a"));
+    yield* Scope.close(prewarmed, Exit.void);
+    assert.deepInclude(yield* host.event, { type: "keepalive", warmups: { full: 1 } });
   }).pipe(Effect.scoped)
 );
 

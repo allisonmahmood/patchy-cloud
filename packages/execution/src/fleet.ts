@@ -95,6 +95,9 @@ const executionError = (cause: TaskProvider.TaskProviderError) =>
     cause
   });
 
+/** A prewarm leaves at least this many spares ready for opens that cannot wait. */
+const prewarmReserve = 1;
+
 /** A revision promotes once this many of its spares are ready. */
 const minimumSparesOf = (config: Effect.Success<typeof DeploymentConfig.load>) =>
   Math.max(1, Math.min(config.get("execution.pool.spares"), config.get("execution.fleet.budget")));
@@ -671,7 +674,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
   /**
    * The company's admissible binding, claiming a spare for `caller` when it has none and
    * waiting for a launched one when the pool is empty, until the search's one
-   * `execution.pool.wait` runs out. It records how it found the server on `search`.
+   * `execution.pool.wait` runs out. It records how it found the server on `search`. A
+   * prewarm's work is refused at once instead: its prewarm already claimed what it could.
    */
   const find = Effect.fn("Fleet.find")(
     function* (companyId: string, caller: ExecutionLifecycle.Caller, search: Search) {
@@ -679,6 +683,7 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
       // against the same epoch, state and task; any miss takes the claim loop, which fences.
       const warm = (yield* store.findAdmissible(companyId))[0];
       if (warm) return warm;
+      if (caller === "prewarm") return yield* busy(0);
       const wait = yield* limits.get({ companyId, limitId: "execution.pool.wait" });
       search.until ??= search.startedAt + wait.value;
       if (search.found === "bound") search.found = "spare";
@@ -781,6 +786,52 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
         .touch(companyId, yield* Clock.currentTimeMillis)
         .pipe(Effect.mapError(lifecycleFailure));
     }),
+    prewarm: Effect.fn("Fleet.prewarm")(
+      function* (companyId) {
+        const startedAt = yield* Clock.currentTimeMillis;
+        // Before any claim, so no pass finds the claimed binding with no clock run and no holder.
+        yield* Effect.acquireRelease(activity.hold(FleetStore.prewarmLock(companyId)), (unlock) =>
+          unlock.pipe(Effect.orDie)
+        ).pipe(Effect.asVoid);
+        const followed = store.findCompany(companyId).pipe(
+          Effect.map(
+            ([binding]) =>
+              binding !== undefined &&
+              Math.max(binding.lastActivityAt, binding.agentActivityAt) >= startedAt
+          ),
+          Effect.catch(() => Effect.succeed(false))
+        );
+        if ((yield* store.findAdmissible(companyId))[0])
+          return { found: "bound" as const, followed };
+        const now = yield* Clock.currentTimeMillis;
+        const claimed = yield* store.claim(
+          companyId,
+          options.replicaId,
+          now,
+          0,
+          FleetStore.clocksOf("prewarm", now),
+          { reserve: prewarmReserve, budget: config.get("execution.fleet.budget") }
+        );
+        if (claimed === undefined) return { found: "full" as const, followed };
+        if (claimed.state === "active") return { found: "bound" as const, followed };
+        if (!(yield* store.isAdmissibleTask(claimed.taskId))) {
+          yield* fence(claimed, "deployment");
+          return { found: "full" as const, followed };
+        }
+        // A bind that fails leaves the claim for housekeeping to bind, as a call's would.
+        const reply = yield* provider
+          .bind(claimed.taskId, {
+            companyId,
+            bindingEpoch: claimed.bindingEpoch,
+            ...(yield* supervisorLimits(companyId))
+          })
+          .pipe(Effect.catchTags({ TaskProviderError: () => Effect.void }));
+        if (reply) yield* store.activate(claimed);
+        return { found: "spare" as const, followed };
+      },
+      Effect.catchTags({ SchemaError: Effect.die }),
+      Effect.mapError((cause) => (isLifecycleError(cause) ? cause : lifecycleFailure(cause)))
+    ),
     acquire: Effect.fn("Fleet.acquire")(function* (companyId, patchId, caller) {
       const now = yield* Clock.currentTimeMillis;
       const paused = yield* store
@@ -881,7 +932,11 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
     })
   );
   const executor = Executor.Executor.of({
-    bind: Effect.fn("Fleet.bindBundle")(function* (bundle: GuestProtocol.Bundle, selected) {
+    bind: Effect.fn("Fleet.bindBundle")(function* (
+      bundle: GuestProtocol.Bundle,
+      selected,
+      options
+    ) {
       const binding = yield* route(bundle.companyId, selected, "bind");
       const settings = yield* supervisorLimits(bundle.companyId).pipe(
         Effect.mapError(
@@ -893,7 +948,8 @@ export const make = Effect.fn("Fleet.make")(function* (options: Options) {
           companyId: bundle.companyId,
           bindingEpoch: binding.bindingEpoch,
           bundle,
-          ...settings
+          ...settings,
+          ...(options?.speculative === true ? { speculative: true } : {})
         })
         .pipe(Effect.mapError(executionError));
       if (!reply.binding || reply.processGeneration === undefined)

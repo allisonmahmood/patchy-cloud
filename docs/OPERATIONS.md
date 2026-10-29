@@ -247,11 +247,14 @@ active until `execution.document.idle` (ten minutes, overridable per company)
 passes without a change to its desired set or a call from its viewer; then it lets
 go of the version and its company task, and its next activity takes both back.
 Each host emits one `type: "keepalive"` event per company version when its last
-active document lets go: `endReason` says whether that document went `idle` or
-`left`, then `peakDocuments`, `touches` counted by what each found (`touched`, `loading`,
+holder lets go: `endReason` says whether that document went `idle` or `left`, or
+that a [prewarm](#prewarming-from-the-portal) let go last (`prewarm`), then
+`peakDocuments`, `prewarms` (the prewarms that held it, which count as no document),
+`touches` counted by what each found (`touched`, `loading`,
 `absent`, `unsupported`, `paused`, `unbound`, `failed`) and `warmups` counted by
-what each came to (`resident`, `loading`, `loaded`, `bound`, `paused`, `unbound`,
-`failed`). `touches.absent` is a version evicted, or reaped by a missed touch, while
+what each came to (`resident`, `loading`, `loaded`, `bound`, `full`, `paused`,
+`unbound`, `failed`; `full` is a load residency had no room for, which for a prewarm
+means no free slot, since it never evicts). `touches.absent` is a version evicted, or reaped by a missed touch, while
 open. A process event with `callsServed = 0` after a `loaded` warmup is an unused
 warmup, and `cause = "evicted"` is residency churn:
 
@@ -272,6 +275,36 @@ fields @timestamp, companyId, documentId, idled, reactivated, closeReason
 | filter type = "stream" and tier = 2 and reactivated > 0
 | sort @timestamp desc
 ```
+
+#### Prewarming from the portal
+
+A signed-in member's Home or All patches view prewarms their company in the
+background: the host holds the company's task and keeps up to three of the live
+tier 2 versions they are likeliest to open loaded for `execution.prewarm.window`
+(three minutes, overridable per company), without running either idle clock
+(ADR-0012 › Fleet controller). Its loads are speculative: they take only free
+residency slots, and an open displaces them. It claims a spare only while another stays ready and
+the fleet has room under its budget to replace it, and never waits for a launch. A
+host prewarms each company at most once per 30 seconds. Agents and public readers
+never prewarm.
+
+Each prewarm emits one `type: "prewarm"` event when it lets go, a child of the page
+view's request event. `prewarm` says what it came to: `warmed`, or skipped as
+`cooldown`, `full` (no spare it could take, with `outcome = "refused"`) or `none`
+(no listed version still serves tier 2). A warmed one carries `companyBind`, `bound`
+already or a `spare` it claimed, `versions` held, and `followed`: whether a page's or
+an agent's work ran either of the company's idle clocks while it held the task. A
+claimed task nobody used is released at the next pass as `releaseCause = "unused"` on
+its binding event, without `agentOnly`. Whether prewarming pays off:
+
+```
+filter type = "prewarm" and prewarm = "warmed"
+| stats count(*) as prewarms by companyBind, followed
+```
+
+A `full` prewarm is one the pool had no room for; many of them argue for more spares.
+On the document's side, a keepalive whose `warmups.resident` counts the open of a
+version a prewarm loaded is a first call that found its process ready.
 
 #### Timing process starts
 

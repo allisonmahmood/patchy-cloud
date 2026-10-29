@@ -97,8 +97,12 @@ A management request that restarts the idle clock of a version's ready process o
 _Avoid_: heartbeat (presence is the connection), keepalive bind, bind by hash
 
 **Warmup**:
-Loading a tier 2 document's version as its first stream becomes ready, while the client boots, unless a touch finds the process loaded. A document warms once: its reconnects, reauthentications, resumes and returns from idle only touch.
+Loading a tier 2 document's version as its first stream becomes ready, while the client boots, unless a touch finds the process loaded. A document warms once: its reconnects, reauthentications, resumes and returns from idle only touch. A prewarm warms its versions the same way.
 _Avoid_: prefetch, preload (page assets)
+
+**Prewarm**:
+A signed-in member's portal view readying their company's task and the live tier 2 versions they are likeliest to open, before they open one, for `execution.prewarm.window`. It holds the task without running either idle clock, takes a spare only while another stays ready and the fleet can replace it, and keeps its versions warm as a holder that is no document. Its loads are speculative: they take only free residency slots, never evicting a process, and a demanded load evicts them first. A task claimed for a prewarm that nobody used is released as **unused**.
+_Avoid_: warmup (a document's own load), preload, warm-hold (a document's holds)
 
 **Process generation**:
 The identity of one loaded version's process lifetime. A replacement process gets a new generation; a call from the previous generation has no authority.

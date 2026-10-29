@@ -578,6 +578,52 @@ it.live(
 );
 
 it.live(
+  "evicts a speculative process before an older demanded one, until demand binds it",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener(idleHost);
+      const make = Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: { ...largeAggregate, "execution.residency.processes": 2 }
+      });
+      const speculative = (supervisor: Supervisor.Supervisor["Service"], versionId: string) =>
+        supervisor.bind({
+          companyId: "com_supervisor",
+          bindingEpoch: 1,
+          bundle: bundle(versionId),
+          speculative: true
+        });
+      const resident = (supervisor: Supervisor.Supervisor["Service"]) =>
+        supervisor
+          .stats({ bindingEpoch: 1 })
+          .pipe(
+            Effect.map((stats) => stats.processes.map((entry) => entry.binding.versionId).sort())
+          );
+      const supervisor = yield* make;
+      yield* bind(supervisor, "ver_demanded");
+      const guessed = yield* speculative(supervisor, "ver_guessed");
+      // At the limit a speculative bind evicts nothing; a demanded one takes the guess first.
+      expect(yield* speculative(supervisor, "ver_another").pipe(Effect.result)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "busy" }
+      });
+      yield* bind(supervisor, "ver_clicked");
+      expect(yield* resident(supervisor)).toEqual(["ver_clicked", "ver_demanded"]);
+      expect(yield* reportFor(supervisor, guessed.processGeneration!)).toMatchObject({
+        cause: "evicted"
+      });
+      // Bound on demand, a guessed version is an ordinary process: the oldest idle one goes.
+      const claimed = yield* make;
+      yield* bind(claimed, "ver_old");
+      yield* speculative(claimed, "ver_guessed");
+      yield* bind(claimed, "ver_guessed");
+      yield* bind(claimed, "ver_new");
+      expect(yield* resident(claimed)).toEqual(["ver_guessed", "ver_new"]);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live(
   "evicts the oldest idle version past the process limit and fences its replaced generation",
   () =>
     Effect.gen(function* () {

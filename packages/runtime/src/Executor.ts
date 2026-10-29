@@ -42,9 +42,14 @@ export interface BoundVersion {
 export class Executor extends Context.Service<
   Executor,
   {
+    /**
+     * Loads the bundle's version on the binding's task. A `speculative` load, one nobody has
+     * asked for yet, takes only a free residency slot and is refused `busy` rather than evicting.
+     */
     readonly bind: (
       bundle: GuestProtocol.Bundle,
-      binding?: ExecutionBinding
+      binding?: ExecutionBinding,
+      options?: { readonly speculative?: boolean }
     ) => Effect.Effect<BoundVersion, ExecutionError>;
     readonly invoke: (
       request: GuestProtocol.Invoke,

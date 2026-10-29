@@ -340,6 +340,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.gen(function* () {
@@ -421,6 +422,7 @@ it.layer(layer)("document streams", (it) => {
           Effect.provide(authority.layer),
           Effect.provide(WideEvents.layerNoop),
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            prewarm: () => Effect.die("Nothing here prewarms."),
             connect: () => Effect.void,
             acquire: () => Effect.die("A stream cannot admit an invocation."),
             touch: () => Effect.die("Only the keepalive touches.")
@@ -478,6 +480,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.fail(
@@ -527,6 +530,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.acquireRelease(Effect.void, () =>
@@ -582,6 +586,7 @@ it.layer(layer)("document streams", (it) => {
         Effect.provide(authority.layer),
         Effect.provide(WideEvents.layerNoop),
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () =>
             Effect.gen(function* () {
@@ -1198,6 +1203,7 @@ const fleetStreams = Effect.fnUntraced(function* (
         })
     }),
     Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+      prewarm: () => Effect.die("Nothing here prewarms."),
       connect: () =>
         Effect.gen(function* () {
           yield* Effect.acquireRelease(

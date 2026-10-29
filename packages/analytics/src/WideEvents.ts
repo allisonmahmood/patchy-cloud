@@ -232,8 +232,13 @@ const count = Schema.optionalKey(Schema.Number);
 const keepaliveMetrics = {
   /** The most active documents connected to the version on this host at once. */
   peakDocuments: Schema.optionalKey(Schema.Number),
-  /** Whether the last of them went idle or left. Unset when the host shut down first. */
-  endReason: Schema.optionalKey(Schema.Literals(["idle", "left"])),
+  /** Portal views' prewarms that held the version; unset for none. */
+  prewarms: count,
+  /**
+   * Whether the last holder's document went idle or left, or its prewarm ended. Unset when the
+   * host shut down first.
+   */
+  endReason: Schema.optionalKey(Schema.Literals(["idle", "left", "prewarm"])),
   /** Touches by what each found: a ready process, one loading, none, or why none was sent. */
   touches: Schema.optionalKey(
     Schema.Struct({
@@ -248,7 +253,8 @@ const keepaliveMetrics = {
   ),
   /**
    * Warmups by what each came to: the process was `resident` or `loading` already, a bind
-   * `loaded` it, a supervisor without touches was `bound` normally, or none was tried.
+   * `loaded` it, a supervisor without touches was `bound` normally, residency had no room for
+   * it (`full`; a prewarm's never evicts), or none was tried.
    */
   warmups: Schema.optionalKey(
     Schema.Struct({
@@ -256,11 +262,28 @@ const keepaliveMetrics = {
       loading: count,
       loaded: count,
       bound: count,
+      full: count,
       paused: count,
       unbound: count,
       failed: count
     })
   )
+};
+
+/**
+ * A member's portal view readying their company's task and likeliest tier 2 versions: what it
+ * came to, how it found the task, as `companyBind` (`bound` or a `spare` it claimed), the
+ * versions it held, and whether anyone's work then ran the company's idle clocks.
+ */
+const prewarmMetrics = {
+  /**
+   * `warmed`, or why it was skipped: the company was prewarmed on this host moments ago
+   * (`cooldown`), taking a spare would have left none ready or no room to replace it (`full`),
+   * or none of its versions serves tier 2 any more (`none`).
+   */
+  prewarm: Schema.optionalKey(Schema.Literals(["warmed", "cooldown", "full", "none"])),
+  versions: count,
+  followed: Schema.optionalKey(Schema.Boolean)
 };
 
 /** Enrichment is local to the current event. Each emitter retains only its own fields. */
@@ -278,7 +301,8 @@ export const EventFields = Schema.Struct({
   ...streamMetrics,
   ...processMetrics,
   ...bindingMetrics,
-  ...keepaliveMetrics
+  ...keepaliveMetrics,
+  ...prewarmMetrics
 });
 export type EventFields = typeof EventFields.Type;
 
@@ -361,13 +385,23 @@ export const KeepaliveEvent = Schema.Struct({
   ...keepaliveMetrics
 });
 export type KeepaliveEvent = typeof KeepaliveEvent.Type;
+export const PrewarmEvent = Schema.Struct({
+  ...common,
+  type: Schema.Literal("prewarm"),
+  companyId: attribution.companyId,
+  viewerId: attribution.viewerId,
+  companyBind: invocationMetrics.companyBind,
+  ...prewarmMetrics
+});
+export type PrewarmEvent = typeof PrewarmEvent.Type;
 export const WideEvent = Schema.Union([
   RequestEvent,
   RerunEvent,
   StreamEvent,
   ProcessEvent,
   BindingEvent,
-  KeepaliveEvent
+  KeepaliveEvent,
+  PrewarmEvent
 ]);
 export type WideEvent = typeof WideEvent.Type;
 
@@ -497,7 +531,8 @@ const schemas = {
   stream: StreamEvent,
   process: ProcessEvent,
   binding: BindingEvent,
-  keepalive: KeepaliveEvent
+  keepalive: KeepaliveEvent,
+  prewarm: PrewarmEvent
 };
 const bestEffort = (work: Effect.Effect<void>) =>
   work.pipe(

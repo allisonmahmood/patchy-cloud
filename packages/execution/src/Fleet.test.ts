@@ -103,6 +103,13 @@ const fleetBudget = ConfigProvider.layer(
     PATCHY_LIMITS_JSON: '{"execution.fleet.budget":2,"execution.pool.spares":4}'
   })
 );
+// A hold that must last across a jump of the clock: with the activity session's liveness check
+// a day apart, no check times out against a real query while TestClock runs past it.
+const quietActivity = ConfigProvider.layer(
+  ConfigProvider.fromUnknown({
+    PATCHY_LIMITS_JSON: '{"execution.housekeeping.interval":86400000}'
+  })
+);
 const liveChildren = Effect.fn("FleetTest.liveChildren")(function* (directory: string) {
   return yield* Effect.promise(async () => {
     let total = 0;
@@ -781,6 +788,131 @@ it.layer(services)("host fleet controller", (it) => {
         assert.strictEqual(yield* state, "stopped");
       }).pipe(Effect.scoped),
     30_000
+  );
+
+  it.effect(
+    "prewarms a spare only while another stays ready, and lets a task nobody used go at once",
+    () =>
+      Effect.gen(function* () {
+        const { sql, companyId, provider, left, right, bundle } = yield* setupMemory("prewarm");
+        const other = `${companyId}_other`;
+        yield* sql`INSERT INTO companies(id, handle, name) VALUES (${other}, 'fleet-prewarm-other', 'Fleet test')`;
+        const spares = sql<{
+          total: number;
+        }>`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
+        // A prewarm's work never claims: its prewarm claimed what it could.
+        const unbound = yield* left.lifecycle
+          .acquire(companyId, bundle.patchId, "prewarm")
+          .pipe(Effect.flip);
+        assert.strictEqual(unbound.code, "busy");
+        assert.strictEqual((yield* spares)[0]!.total, 2);
+        const held = yield* Scope.make();
+        const prewarmed = yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(held));
+        assert.strictEqual(prewarmed.found, "spare");
+        // The last spare stays for an open that can't wait.
+        const refused = yield* Scope.make();
+        const full = yield* right.lifecycle.prewarm(other).pipe(Scope.provide(refused));
+        assert.strictEqual(full.found, "full");
+        yield* Scope.close(refused, Exit.void);
+        assert.strictEqual((yield* spares)[0]!.total, 1);
+        const again = yield* Scope.make();
+        const bound = yield* right.lifecycle.prewarm(companyId).pipe(Scope.provide(again));
+        assert.strictEqual(bound.found, "bound");
+        yield* Scope.close(again, Exit.void);
+        // Its work runs neither clock.
+        const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "prewarm");
+        yield* admission.release;
+        assert.deepStrictEqual(
+          yield* sql`SELECT last_activity_at, agent_activity_at FROM execution_bindings
+            WHERE company_id = ${companyId} AND state = 'active'`,
+          [{ last_activity_at: 0, agent_activity_at: 0 }]
+        );
+        const state = Effect.map(
+          provider.list,
+          (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+        );
+        yield* TestClock.adjust(10 * 60_000);
+        yield* left.housekeeping();
+        assert.strictEqual(yield* state, "running");
+        assert.isFalse(yield* prewarmed.followed);
+        yield* Scope.close(held, Exit.void);
+        yield* left.housekeeping();
+        assert.strictEqual(yield* state, "stopped");
+        const history = (yield* left.history(companyId))[0]!;
+        assert.strictEqual(history.releaseCause, "unused");
+        assert.isNull(history.agentOnly);
+      }).pipe(Effect.scoped, Effect.provide(quietActivity)),
+    30_000
+  );
+
+  it.effect("never prewarms a spare the fleet budget has no room to replace", () =>
+    Effect.gen(function* () {
+      const { sql, companyId, left } = yield* setupMemory("prewarm-budget");
+      // Both spares are ready, and they are all the budget allows.
+      const live = yield* sql<{
+        total: number;
+      }>`SELECT count(*)::integer AS total FROM execution_tasks WHERE state = 'spare'`;
+      assert.strictEqual(live[0]!.total, 2);
+      const held = yield* Scope.make();
+      assert.strictEqual(
+        (yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(held))).found,
+        "full"
+      );
+      yield* Scope.close(held, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(fleetBudget))
+  );
+
+  it.effect("keeps a prewarmed task someone opened on the documents' clock", () =>
+    Effect.gen(function* () {
+      const { companyId, provider, left } = yield* setupMemory("prewarm-opened");
+      const held = yield* Scope.make();
+      const prewarmed = yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(held));
+      const document = yield* Scope.make();
+      yield* left.lifecycle.connect(companyId).pipe(Scope.provide(document));
+      assert.isTrue(yield* prewarmed.followed);
+      const bound = yield* left.ensureBinding(companyId);
+      const state = Effect.map(
+        provider.list,
+        (tasks) => tasks.find((task) => task.taskId === bound.taskId)?.state
+      );
+      yield* Scope.close(document, Exit.void);
+      yield* Scope.close(held, Exit.void);
+      yield* left.housekeeping();
+      yield* TestClock.adjust(30 * 60_000 - 1);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "running");
+      yield* TestClock.adjust(1);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "stopped");
+      const history = (yield* left.history(companyId))[0]!;
+      assert.strictEqual(history.releaseCause, "idle");
+      assert.isFalse(history.agentOnly);
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect("holds a used task through a prewarm without restarting its documents' window", () =>
+    Effect.gen(function* () {
+      const { companyId, provider, left, bundle } = yield* setupMemory("prewarm-defers");
+      const admission = yield* left.lifecycle.acquire(companyId, bundle.patchId, "page");
+      yield* admission.release;
+      const state = Effect.map(
+        provider.list,
+        (tasks) => tasks.find((task) => task.taskId === admission.binding.taskId)?.state
+      );
+      // The window starts at the first pass to find no document, and a prewarm doesn't move it.
+      yield* left.housekeeping();
+      yield* TestClock.adjust(29 * 60_000);
+      const held = yield* Scope.make();
+      const prewarmed = yield* left.lifecycle.prewarm(companyId).pipe(Scope.provide(held));
+      assert.strictEqual(prewarmed.found, "bound");
+      yield* TestClock.adjust(2 * 60_000);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "running");
+      yield* Scope.close(held, Exit.void);
+      yield* left.housekeeping();
+      assert.strictEqual(yield* state, "stopped");
+      assert.strictEqual((yield* left.history(companyId))[0]!.releaseCause, "idle");
+    }).pipe(Effect.scoped, Effect.provide(quietActivity))
   );
 
   it.effect(

@@ -51,7 +51,14 @@ export const BindRequest = Schema.Struct({
   operatingLimits: Schema.optionalKey(SupervisorLimits),
   configRevision: Schema.optionalKey(LimitRevision),
   /** Authenticated hosts register their private callback address during rolling replacement. */
-  callbackUrls: Schema.optionalKey(CallbackUrls)
+  callbackUrls: Schema.optionalKey(CallbackUrls),
+  /**
+   * A load nobody has asked for yet, such as a prewarm's. It takes only a free slot and is
+   * refused `busy` rather than evicting anything, and a demanded load evicts it first, even
+   * while it initializes. Older supervisors refuse the unknown key before any effect, and a
+   * speculative bind is never sent again without it.
+   */
+  speculative: Schema.optionalKey(Schema.Boolean)
 }).check(
   Schema.makeFilter(
     (request) =>

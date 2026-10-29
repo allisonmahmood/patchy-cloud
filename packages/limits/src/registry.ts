@@ -931,6 +931,16 @@ export const registry = {
     refusal: null,
     overridable: true
   },
+  "execution.prewarm.window": {
+    kind: "operating",
+    default: 180000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Time a member's portal view holds their company task and likeliest tier 2 versions warm before an open; a task nobody used meanwhile is released at the next pass",
+    refusal: null,
+    overridable: true
+  },
   "execution.document.idle": {
     kind: "operating",
     default: 600000,

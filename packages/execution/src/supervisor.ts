@@ -120,6 +120,11 @@ interface Resident {
   engine?: Executor.Executor["Service"];
   alive: boolean;
   loading: boolean;
+  /**
+   * Loaded by a speculative bind and not yet bound or invoked on demand: eviction takes it
+   * before any demanded process, even while it initializes.
+   */
+  speculative: boolean;
   probing: boolean;
   lastHealthy: number;
   idleSince: number;
@@ -324,26 +329,32 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     yield* Deferred.succeed(resident.reaped, undefined);
   }, Effect.uninterruptible);
 
+  /** The residency limit `reserve` more processes would leave exceeded, if any. */
+  const exceeded = (reserve: number) =>
+    aggregateRss() >= limit("execution.residency.bytes")
+      ? ("execution.residency.bytes" as const)
+      : residents.size + reserve > limit("execution.residency.processes")
+        ? ("execution.residency.processes" as const)
+        : undefined;
   const evict = Effect.fnUntraced(function* (reserve: number, protectedResident?: Resident) {
-    while (
-      residents.size + reserve > limit("execution.residency.processes") ||
-      aggregateRss() >= limit("execution.residency.bytes")
-    ) {
+    while (exceeded(reserve) !== undefined) {
       const memoryPressure = aggregateRss() >= limit("execution.residency.bytes");
       let victim: Resident | undefined;
       for (const resident of residents.values()) {
         if (
           resident === protectedResident ||
           !resident.alive ||
-          resident.loading ||
+          (resident.loading && !resident.speculative) ||
           resident.invocations.size !== 0
         )
           continue;
         if (
           victim === undefined ||
-          (memoryPressure
-            ? resident.rssBytes > victim.rssBytes
-            : resident.idleSince < victim.idleSince)
+          (resident.speculative !== victim.speculative
+            ? resident.speculative
+            : memoryPressure
+              ? resident.rssBytes > victim.rssBytes
+              : resident.idleSince < victim.idleSince)
         )
           victim = resident;
       }
@@ -607,7 +618,11 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         companyId = request.companyId;
         bindingEpoch = request.bindingEpoch;
         // Loading or ready, a held version is returned as it is; the caller awaits its readiness.
-        if (held !== undefined) return held;
+        // A demanded bind makes it an ordinary process.
+        if (held !== undefined) {
+          if (request.speculative !== true) held.speculative = false;
+          return held;
+        }
         const bundle = request.bundle;
         // Only a company bind gets here without a bundle: a bind by hash was held or refused.
         if (bundle === undefined) return undefined;
@@ -615,7 +630,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         // A dying resident of this version finishes its reap before its replacement loads.
         if (existing !== undefined) yield* Deferred.await(existing.reaped);
         // Eviction does not await bundle initialization. A spinning load cannot own the watchdog.
-        const blockedBy = yield* evict(1);
+        // A speculative load takes only a free slot; it never evicts anything.
+        const blockedBy = request.speculative === true ? exceeded(1) : yield* evict(1);
         if (blockedBy !== undefined)
           return yield* new SupervisorError({
             operation: "bind",
@@ -653,6 +669,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           epoch: bindingEpoch,
           alive: true,
           loading: true,
+          speculative: request.speculative === true,
           probing: false,
           lastHealthy: now,
           idleSince: now,
@@ -806,6 +823,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             result
           });
           resident.callsServed++;
+          resident.speculative = false;
           let uncertain = false;
           // The supervisor owns dispatch. Losing the HTTP caller must not erase a running deadline.
           yield* engine.invoke({ ...request, callback: { ...request.callback, url: target } }).pipe(
