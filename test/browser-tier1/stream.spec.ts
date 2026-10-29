@@ -1,7 +1,14 @@
 import type { Frame, Page, Route } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
 import type { Instance } from "./instance.js";
-import { test, expect, open, notice, installSessionRefreshBoundary } from "./fixtures.js";
+import {
+  test,
+  expect,
+  open,
+  notice,
+  installSessionRefreshBoundary,
+  streamAdmitted
+} from "./fixtures.js";
 import { RuntimeSubscriptionRequest, type RuntimeFailure } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
 
@@ -19,6 +26,26 @@ const generations = (frame: Frame) =>
       reply.event === "stream" && reply.data?.type === "hello" ? [reply.data.generation] : []
     )
   );
+
+test("a page that never handshakes renders without a notice and opens no stream", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish(
+    "company",
+    "<!doctype html><html><head><title>Plain page</title></head><body><h1>Plain page</h1></body></html>"
+  );
+  await page.clock.install();
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const heading = page.frameLocator("#patch").getByRole("heading", { name: "Plain page" });
+  await expect(heading).toBeVisible();
+  // A frame that stays silent is a page without the SDK, not one that failed to start.
+  await page.clock.fastForward(30_000);
+  await expect(heading).toBeVisible();
+  expect(page.url()).toBe(patch.address);
+  expect(instance.runtimeRequests).toEqual([]);
+  expect(instance.streamConnections.size).toBe(0);
+});
 
 test("publish preserves editing, dismissal lasts until the next publish, and rollback clears the bar", async ({
   page,
@@ -690,6 +717,7 @@ test("admitted subscriptions wait the reconcile interval for their answers befor
   });
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await streamAdmitted(frame);
   const pill = page.locator('[data-stream-status="reconnecting"]');
   const replaces = () =>
     commands.flatMap((command) => (command.type === "replace" ? [command.sequence] : []));
@@ -731,6 +759,7 @@ test("a lost subscribe POST or admitted frame is repaired within a second", asyn
   });
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await streamAdmitted(frame);
   const sent = () => commands.map((command) => `${command.type} ${command.sequence}`);
   // Pause ahead of real time; no reconciliation timer is armed for the reconciled empty set.
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
@@ -795,6 +824,7 @@ test("a current-generation loss reconnects at once, then waits until a stream re
   });
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await streamAdmitted(frame);
   // Pause ahead of real time; no timer is armed for the reconciled empty set. From here a
   // reconnect that lands without runFor skipped the backoff.
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
@@ -851,6 +881,7 @@ test("stale, session, principal and rate-limit refusals of a POST keep their han
   });
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await streamAdmitted(frame);
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
 
   // A refusal that arrives after the shell moved past its sequence leaves the stream alone.
@@ -953,6 +984,7 @@ for (const scenario of [
     );
     const frame = await open(page, await instance.publish());
     await expect.poll(() => generations(frame)).toHaveLength(1);
+    await streamAdmitted(frame);
     // Pause ahead of real time; no timer is armed for the reconciled empty set.
     await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
     // Runs out each lost stream's backoff, up to its step's longest delay.
@@ -1010,6 +1042,7 @@ test("a session refresh during a refused streak reconnects at once and keeps the
   );
   const frame = await open(page, await instance.publish());
   await expect.poll(() => generations(frame)).toHaveLength(1);
+  await streamAdmitted(frame);
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
 
   refusing = true;

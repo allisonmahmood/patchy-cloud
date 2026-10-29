@@ -86,6 +86,47 @@ async function add(frame: Frame, wire: number, id: string) {
   );
 }
 
+test("a tier 2 page opens its stream, which starts its tools, before its frame loads", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance);
+  const content = Promise.withResolvers<void>();
+  await page.route("**/~content/**", async (route) => {
+    await content.promise;
+    await route.continue();
+  });
+  const generations: Array<string | undefined> = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/runtime/stream")
+      generations.push(request.headers()["x-patchy-generation"]);
+  });
+  instance.holdStreamFrames(true);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.goto(patch.address, { waitUntil: "commit" });
+  await expect.poll(() => instance.streamConnections.size).toBe(1);
+  // A first stream names no earlier generation, so its host warms the version once it is ready.
+  expect(generations).toEqual([undefined]);
+  const cover = page.getByRole("dialog", { name: "Starting your tools" });
+  await page.clock.fastForward(2_000);
+  await expect(cover).toBeVisible();
+  instance.holdStreamFrames(false);
+  await expect(cover).toBeHidden();
+  await page.clock.resume();
+  content.resolve();
+  await expect(page.frameLocator("#patch").locator("#identity")).not.toHaveText("waiting");
+  const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"))!;
+  await add(frame, instance.wire, "after-load");
+  await expect
+    .poll(() => reply(frame, "after-load"))
+    .toMatchObject({ kind: "result", value: { label: "after-load" } });
+  // The call ran on the stream that opened at mount; the frame's ready opened no other.
+  expect(
+    instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
+  ).toHaveLength(1);
+});
+
 test("starting holds calls before stream bytes, covers first open and resume, and survives a drop", async ({
   page,
   instance

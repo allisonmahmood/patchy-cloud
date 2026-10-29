@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, open, notice, prepare } from "./fixtures.js";
+import { test, expect, open, notice, prepare, streamAdmitted } from "./fixtures.js";
 
 test("broker admits server arguments up to 1 MiB and stamps local and runtime refusals", async ({
   page,
@@ -439,6 +439,7 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
   }
 
   const frame = await open(page, patch);
+  await streamAdmitted(frame);
   const beforeMalformed = instance.runtimeRequests.length;
   await frame.evaluate((wire) => {
     const h = (window as unknown as FixtureWindow).harness;
@@ -654,6 +655,7 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
   for (const user of ["none", "expired", "colleague"] as const) {
     await instance.session(context);
     const frame = await open(page, patch, "/items/2?return=this");
+    await streamAdmitted(frame);
     await instance.session(context, user);
     await frame.evaluate(() => {
       void (window as unknown as FixtureWindow).harness.client.tables.rows!.list().catch(() => {});
@@ -905,6 +907,9 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
   const unbound = await instance.publish("public", wrongNonce);
   const callsBefore = instance.runtimeRequests.length;
   await page.goto(unbound.address);
-  await notice(page, "bootstrap_failed");
+  // Another document's nonce binds nothing: the page stays up and never asks who is viewing.
+  await page.waitForTimeout(300);
+  expect(page.url()).toBe(unbound.address);
+  await expect(page.locator("#patch")).toHaveCount(1);
   expect(instance.runtimeRequests).toHaveLength(callsBefore);
 });

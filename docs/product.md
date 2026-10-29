@@ -358,7 +358,10 @@ content has `connect-src 'none'`, and the shell's `frame-src 'self'` contains
 frame navigation. The shell validates operation arguments with the same wire
 schemas as the server; patch code has no direct runtime HTTP channel.
 
-Every company document on tiers 1 and 2 opens a shell-owned stream at bootstrap.
+Every company document on tiers 1 and 2 opens a shell-owned stream: tier 2 at bootstrap,
+because it carries the cold start, and tier 1 once its page connects through the SDK. A
+page that never loads the SDK just renders without a stream, so no notice stops it and no
+new version is announced to it.
 Publish and rollback announce the served version without reloading the frame or
 discarding input. A bottom-centre notice offers Reload; Not now lasts until the
 next publish, and Hide collapses it without dismissing. The tier-upgrade state

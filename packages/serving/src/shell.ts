@@ -132,7 +132,7 @@ const notices = {
   bootstrap_failed: {
     kicker: "Patch stopped",
     title: "This patch could not start",
-    message: "The patch did not connect to Patchy in time. Open its address again to retry.",
+    message: "The patch did not connect to Patchy. Open its address again to retry.",
     signIn: false
   },
   needs_rebuild: {
