@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ReleaseToolchain } from "@patchy/api";
+import { NodeCryptography } from "@patchy/core";
 import { Prepared, readsLive } from "./devPreparation.js";
 import { Daemon, atomicJson, readRecord } from "./devState.js";
 import * as DevServer from "./devServer.js";
@@ -104,7 +105,7 @@ export function run(): void {
         return yield* Effect.fail(error);
       })
     ),
-    Effect.provide(NodeServices.layer),
+    Effect.provide([NodeServices.layer, NodeCryptography.layer]),
     NodeRuntime.runMain
   );
 }

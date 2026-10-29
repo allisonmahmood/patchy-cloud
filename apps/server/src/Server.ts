@@ -22,6 +22,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
+import { Cryptography } from "@patchy/core";
 import {
   AgentConnections,
   AuthApi,
@@ -143,7 +144,8 @@ const identity = Layer.unwrap(
       | Config.ConfigError
       | Session.SessionError
       | DevPersonas.DevPersonasOutsideDevelopment
-      | DevPersonas.DevPersonasOnPublicOrigin
+      | DevPersonas.DevPersonasOnPublicOrigin,
+      Cryptography.Cryptography
     > =>
       personas
         ? Layer.merge(DevPersonas.layer, recordedInvites)

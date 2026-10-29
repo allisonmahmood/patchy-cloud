@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import { capabilityMigrations, migrations } from "./migrations.js";
+import { NodeCryptography } from "@patchy/core";
 
 it("allocates migration ids once each, with no gaps", () => {
   const count = capabilityMigrations.reduce(
@@ -47,7 +48,9 @@ const secret = Redacted.make(
   "postgresql://reader:do-not-log-this@warehouse.example/sales?sslmode=verify-full"
 );
 const services = Layer.mergeAll(
-  CredentialKeys.layerFromKeys(Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)),
+  CredentialKeys.layerFromKeys(
+    Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)
+  ).pipe(Layer.provide(NodeCryptography.layer)),
   RuntimeLog.layer,
   Layer.succeed(
     PostgresSource.Source,

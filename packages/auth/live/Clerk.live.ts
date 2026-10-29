@@ -18,6 +18,7 @@ import * as DeviceLogins from "../src/DeviceLogins.js";
 import * as MachineTokens from "../src/MachineTokens.js";
 import * as Session from "../src/Session.js";
 import { liveClient } from "./fixtures.js";
+import { NodeCryptography } from "@patchy/core";
 
 const settings = inject("clerk");
 // Closed configuration: even an ambient CLERK_JWT_KEY cannot bypass JWKS.
@@ -43,7 +44,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(AgentConnections.layer),
   Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(config))
+  Layer.provide(ConfigProvider.layer(config)),
+  Layer.provide(NodeCryptography.layer)
 );
 const decodeClaims = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ azp: Schema.optional(Schema.Null), iat: Schema.Number }))

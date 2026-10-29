@@ -18,6 +18,7 @@ import * as SourceClient from "./postgres/SourceClient.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import { NodeCryptography } from "@patchy/core";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -86,7 +87,8 @@ const fixture = SqlConnectionStore.layer.pipe(
       AttioSource.layer
     )
   ),
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Testing.layer()),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
@@ -335,7 +337,11 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const sql = yield* SqlClient.SqlClient;
         const connected = yield* store.connect(input("old-key-row"));
         const restarted = yield* SqlConnectionStore.make.pipe(
-          Effect.provide(CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey},old:${oldKey}`)))
+          Effect.provide(
+            CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey},old:${oldKey}`)).pipe(
+              Layer.provide(NodeCryptography.layer)
+            )
+          )
         );
         const tested = yield* restarted.test(identity(connected));
         assert.strictEqual(postgresDisplay(tested).database, "sales");
@@ -350,7 +356,11 @@ it.layer(fixture)("ConnectionStore", (it) => {
           [{ key_id: "new" }]
         );
         const currentOnly = yield* SqlConnectionStore.make.pipe(
-          Effect.provide(CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey}`)))
+          Effect.provide(
+            CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey}`)).pipe(
+              Layer.provide(NodeCryptography.layer)
+            )
+          )
         );
         assert.strictEqual((yield* currentOnly.test(identity(connected))).id, connected.id);
         assert.notInclude(

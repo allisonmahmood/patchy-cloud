@@ -4,6 +4,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { NodeCryptography } from "@patchy/core";
 import * as Management from "./management.js";
 import * as Supervisor from "./supervisor.js";
 
@@ -72,5 +73,5 @@ NodeRuntime.runMain(
     }
     // An open IPC channel must not keep a stopped supervisor alive after its scope closes.
     if (process.connected) process.disconnect();
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
+  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
 );

@@ -21,6 +21,7 @@ import { ClientDocumentNetwork } from "@patchy/auth";
 import { clerkEnv } from "@patchy/auth/testing";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * `network` is where client documents come from: the real, pinned network unless a test
@@ -53,7 +54,7 @@ export const server = (
         )
       );
     })
-  ).pipe(Layer.provide([NodeFileSystem.layer, NodeCrypto.layer]));
+  ).pipe(Layer.provide([NodeFileSystem.layer, NodeCrypto.layer, NodeCryptography.layer]));
 
 /** One request to the server, as the socket sees it. */
 export const send = (request: HttpClientRequest.HttpClientRequest) =>

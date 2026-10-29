@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { AgentConnections } from "@patchy/auth";
+import { NodeCryptography } from "@patchy/core";
 import { layerFromUrl } from "@patchy/sql";
 
 export const agentTokensWork = (databaseUrl: string, tokens: ReadonlyArray<string>) =>
@@ -16,6 +17,9 @@ export const agentTokensWork = (databaseUrl: string, tokens: ReadonlyArray<strin
     )
   ).pipe(
     Effect.provide(
-      AgentConnections.layer.pipe(Layer.provideMerge(layerFromUrl(Redacted.make(databaseUrl))))
+      AgentConnections.layer.pipe(
+        Layer.provide(NodeCryptography.layer),
+        Layer.provideMerge(layerFromUrl(Redacted.make(databaseUrl)))
+      )
     )
   );

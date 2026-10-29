@@ -31,6 +31,7 @@ import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
+import { NodeCryptography } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -136,7 +137,8 @@ const services = Layer.mergeAll(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 const cookie = (user: Users.User) =>

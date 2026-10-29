@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import { NodeCryptography } from "@patchy/core";
 import * as Management from "@patchy/execution/management";
 import * as Supervisor from "@patchy/execution/supervisor";
 import * as DeploymentConfig from "@patchy/limits/deployment-config";
@@ -42,5 +43,8 @@ NodeRuntime.runMain(
     }).pipe(Effect.provideService(Supervisor.Supervisor, supervisor));
     yield* Console.log(`Patchy execution supervisor listening on ${listener.url}`);
     return yield* Effect.never;
-  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCrypto.layer]))
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([FetchHttpClient.layer, NodeCrypto.layer, NodeCryptography.layer])
+  )
 );

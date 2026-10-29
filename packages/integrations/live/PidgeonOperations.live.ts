@@ -5,7 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { sha256 } from "@patchy/core";
+import { sha256, NodeCryptography } from "@patchy/core";
 import { Directory } from "@patchy/companies";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
@@ -308,7 +308,7 @@ const page = Layer.mergeAll(
   }))
 )
   .pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept))
-  .pipe(Layer.provideMerge(NodeServices.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
 
 describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test mode", () => {
   it.layer(page, { timeout: "300 seconds", excludeTestServices: true })(

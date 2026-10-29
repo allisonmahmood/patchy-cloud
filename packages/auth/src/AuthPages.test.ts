@@ -21,6 +21,7 @@ import * as AuthPages from "./AuthPages.js";
 import { clerkEnv, signSession, signedInCookies } from "./testing.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
+import { NodeCryptography } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -73,7 +74,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(recordedAnalytics),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(services)("first-party pages in memory", (it) => {
@@ -428,7 +430,10 @@ it.layer(services)("first-party pages in memory", (it) => {
               new Session.SessionError({ operation: "revoke", cause: new Error("Unavailable") })
             )
         }))
-      ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))));
+      ).pipe(
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+        Layer.provide(NodeCryptography.layer)
+      );
       const response = yield* send("/logout", post({}, cookie("user_revoke_failure"))).pipe(
         Effect.provide(failure)
       );
@@ -458,7 +463,8 @@ it.layer(
     Layer.provideMerge(Analytics.layerNoop),
     Layer.provide(Limits.layer),
     Layer.provideMerge(Testing.layer()),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+    Layer.provide(NodeCryptography.layer)
   )
 )("logout without a company", (it) => {
   it.effect("revokes the signed-in Clerk session and no other", () =>
@@ -501,7 +507,8 @@ it.layer(
               PATCHY_PUBLIC_BASE_URL: publicUrl
             })
           )
-        )
+        ),
+        Layer.provide(NodeCryptography.layer)
       );
       const suffix = createHash("sha1")
         .update(env.CLERK_PUBLISHABLE_KEY!)

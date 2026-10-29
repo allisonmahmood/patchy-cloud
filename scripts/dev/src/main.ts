@@ -39,6 +39,7 @@ import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } f
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AgentConnections } from "@patchy/auth";
+import { NodeCryptography } from "@patchy/core";
 import { mintDevAgentConnection } from "@patchy/auth/seed";
 import { layerFromUrl } from "@patchy/sql";
 import { Capture, checkChromium, compareMarkdown, type Pair, shootAll } from "./compare.js";
@@ -1722,6 +1723,6 @@ dev.pipe(
   ]),
   Command.run({ version: "0.0.0" }),
   Effect.scoped,
-  Effect.provide([NodeServices.layer, FetchHttpClient.layer, CliSurface]),
+  Effect.provide([NodeServices.layer, NodeCryptography.layer, FetchHttpClient.layer, CliSurface]),
   NodeRuntime.runMain
 );

@@ -25,6 +25,7 @@ import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { ServerBinding } from "./devExecution.js";
 import type { Json } from "./config.js";
+import { NodeCryptography } from "@patchy/core";
 
 /** These repos declare no PostHog or Pidgeon connection, so dev never reaches an instance. */
 const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
@@ -287,7 +288,7 @@ it.live(
         /dev failure diagnostic/
       );
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop),
       Effect.provideService(ContractLimits.overrides, { "tier2.query.resultBytes": 128 })
@@ -441,7 +442,7 @@ it.live(
         }
       });
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -591,7 +592,7 @@ export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
         ]
       );
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -715,7 +716,7 @@ export default createGuest({desk:{deals}}, [], {}, [], ["crm"]);`)
         }
       ]);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -845,7 +846,7 @@ it.live(
       assert.include(yield* Queue.take(frames), { type: "snapshot", id: "healthy", result: "old" });
       assert.strictEqual((yield* Queue.poll(frames))._tag, "None");
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),

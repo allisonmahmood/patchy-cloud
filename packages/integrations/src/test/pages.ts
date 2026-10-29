@@ -21,6 +21,7 @@ import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * The connections pages as a signed-in person sees them, over a migrated database and `pidgeon`:
@@ -68,7 +69,8 @@ export const services = (
       )
     ),
     Layer.provideMerge(Testing.layer()),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+    Layer.provide(NodeCryptography.layer)
   );
 
 export const cookie = (user: Users.User) =>

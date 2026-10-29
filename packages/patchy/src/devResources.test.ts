@@ -21,6 +21,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import { RELEASE, MANIFEST_VERSION } from "./release.js";
+import { NodeCryptography } from "@patchy/core";
 
 /** These repos declare no PostHog or Pidgeon connection, so dev never reaches an instance. */
 const offline = { instance: { apiUrl: "http://127.0.0.1:1", token: Option.none() } };
@@ -141,7 +142,7 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
       assert.propertyVal(undeclared, "_tag", "TableNotDeclared");
       assert.strictEqual(yield* fs.readFileString(fixturePath), fixture);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -293,7 +294,7 @@ it.live(
         "Fixture instructions"
       );
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -423,7 +424,7 @@ it.live(
         contacts: ["Updated contact"]
       });
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -532,7 +533,7 @@ it.live(
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
       assert.deepStrictEqual(yield* session().pipe(Effect.scoped), expected);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -712,7 +713,7 @@ it.live(
         "recreated@example.test"
       ).pipe(Effect.scoped);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),
@@ -814,7 +815,7 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
         }
       }).pipe(Effect.scoped);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),

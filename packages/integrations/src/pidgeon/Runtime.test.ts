@@ -6,7 +6,7 @@ import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv } from "@patchy/auth/testing";
 import { Companies, Directory, Users } from "@patchy/companies";
-import { sha256 } from "@patchy/core";
+import { sha256, NodeCryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   Binding,
@@ -203,7 +203,7 @@ const tier1 = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
 
 it.layer(tier1)("Pidgeon in a tier 1 page", (it) => {
   it.effect(

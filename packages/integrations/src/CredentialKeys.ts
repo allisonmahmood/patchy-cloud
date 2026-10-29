@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- AES-256-GCM encryption has no Effect equivalent.
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { Integration } from "@patchy/api";
+import { Cryptography } from "@patchy/core";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -77,7 +76,7 @@ const isBase64 = Schema.is(
   )
 );
 const associatedData = (identity: Identity, keyId: string) =>
-  Buffer.from(JSON.stringify([identity.companyId, identity.id, identity.integration, keyId]));
+  JSON.stringify([identity.companyId, identity.id, identity.integration, keyId]);
 
 const parseKeys = Effect.fn("CredentialKeys.parseKeys")(function* (
   configuration: Redacted.Redacted<string>
@@ -107,49 +106,39 @@ export const makeFromKeys = Effect.fn("CredentialKeys.makeFromKeys")(function* (
   const { keys, activeId } = yield* parseKeys(configuration);
   const activeKey = keys.get(activeId)!;
 
+  const cryptography = yield* Cryptography.Cryptography;
+
   const encrypt = Effect.fn("CredentialKeys.encrypt")(
     (identity: Identity, credentials: Redacted.Redacted<string>) =>
-      Effect.try({
-        try: () => {
-          const nonce = randomBytes(12);
-          const cipher = createCipheriv("aes-256-gcm", activeKey, nonce);
-          cipher.setAAD(associatedData(identity, activeId));
-          const ciphertext = Buffer.concat([
-            cipher.update(Redacted.value(credentials), "utf8"),
-            cipher.final()
-          ]);
-          return {
-            keyId: activeId,
-            credentials: Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString("base64")
-          };
-        },
-        catch: (cause) => new CredentialEncryptionFailed({ cause: Redacted.make(cause) })
-      })
+      cryptography
+        .seal(activeKey, Redacted.value(credentials), associatedData(identity, activeId))
+        .pipe(
+          Effect.map((sealed) => ({ keyId: activeId, credentials: sealed })),
+          Effect.mapError(
+            (cause) => new CredentialEncryptionFailed({ cause: Redacted.make(cause) })
+          )
+        )
   );
 
-  const decrypt = Effect.fn("CredentialKeys.decrypt")(
-    (identity: Identity, encrypted: EncryptedCredentials) =>
-      Effect.try({
-        try: () => {
-          const key = keys.get(encrypted.keyId);
-          if (key === undefined || !isBase64(encrypted.credentials)) {
-            throw new CredentialDecryptionFailed({});
-          }
-          const bytes = Buffer.from(encrypted.credentials, "base64");
-          if (bytes.length < 28 || bytes.toString("base64") !== encrypted.credentials) {
-            throw new CredentialDecryptionFailed({});
-          }
-          const decipher = createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
-          decipher.setAAD(associatedData(identity, encrypted.keyId));
-          decipher.setAuthTag(bytes.subarray(12, 28));
-          return Redacted.make(
-            Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString("utf8")
-          );
-        },
-        // Authentication failures deliberately do not retain crypto implementation diagnostics.
-        catch: () => new CredentialDecryptionFailed({})
-      })
-  );
+  const decrypt = Effect.fn("CredentialKeys.decrypt")(function* (
+    identity: Identity,
+    encrypted: EncryptedCredentials
+  ) {
+    const key = keys.get(encrypted.keyId);
+    if (
+      key === undefined ||
+      !isBase64(encrypted.credentials) ||
+      Buffer.from(encrypted.credentials, "base64").toString("base64") !== encrypted.credentials
+    )
+      return yield* new CredentialDecryptionFailed({});
+    // Authentication failures deliberately do not retain crypto implementation diagnostics.
+    return yield* cryptography
+      .open(key, encrypted.credentials, associatedData(identity, encrypted.keyId))
+      .pipe(
+        Effect.map(Redacted.make),
+        Effect.catchTags({ OpenFailed: () => Effect.fail(new CredentialDecryptionFailed({})) })
+      );
+  });
 
   return CredentialKeys.of({ encrypt, decrypt });
 });

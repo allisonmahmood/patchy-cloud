@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- the persona cookie's HMAC and constant-time compare are Node crypto.
-import { createHmac, timingSafeEqual } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -13,7 +11,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Users } from "@patchy/companies";
-import { escapeAttribute, escapeHtml, randomToken, sha256 } from "@patchy/core";
+import { Cryptography, escapeAttribute, escapeHtml, randomToken, sha256 } from "@patchy/core";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, withCookies } from "./page.js";
 
@@ -61,7 +59,9 @@ export const config = Config.all({
 export const COOKIE = "patchy_dev_person";
 const LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 
-const decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(Session.SessionClaims));
+const Claims = Schema.fromJsonString(Session.SessionClaims);
+const decodeClaims = Schema.decodeUnknownOption(Claims);
+const encodeClaims = Schema.encodeSync(Claims);
 
 /** Settings checked once, plus the cookie codec both the Session and the route use. */
 const persona = Effect.gen(function* () {
@@ -70,23 +70,22 @@ const persona = Effect.gen(function* () {
     return yield* new DevPersonasOutsideDevelopment({ environment });
   if (!Session.isLoopback(publicUrl))
     return yield* new DevPersonasOnPublicOrigin({ origin: publicUrl.origin });
-  const mac = (payload: string) =>
-    createHmac("sha256", Redacted.value(secret)).update(payload).digest();
+  const cryptography = yield* Cryptography.Cryptography;
+  const mac = (payload: string) => cryptography.hmacSha256(Redacted.value(secret), payload);
   const attributes = `Path=/; HttpOnly; SameSite=Lax${publicUrl.protocol === "https:" ? "; Secure" : ""}`;
   return {
     publicUrl,
-    seal: (claims: typeof Session.SessionClaims.Type) => {
-      const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-      return `${COOKIE}=${payload}.${mac(payload).toString("base64url")}; ${attributes}; Max-Age=${LIFETIME_SECONDS}`;
-    },
-    open: (value: string) => {
+    seal: Effect.fnUntraced(function* (claims: typeof Session.SessionClaims.Type) {
+      const payload = Buffer.from(encodeClaims(claims)).toString("base64url");
+      const signature = Buffer.from(yield* mac(payload)).toString("base64url");
+      return `${COOKIE}=${payload}.${signature}; ${attributes}; Max-Age=${LIFETIME_SECONDS}`;
+    }),
+    open: Effect.fnUntraced(function* (value: string) {
       const [payload = "", signature = ""] = value.split(".");
-      const given = Buffer.from(signature, "base64url");
-      const expected = mac(payload);
-      if (given.length !== expected.length || !timingSafeEqual(given, expected))
+      if (!(yield* cryptography.equal(Buffer.from(signature, "base64url"), yield* mac(payload))))
         return Option.none();
       return decodeClaims(Buffer.from(payload, "base64url").toString());
-    },
+    }),
     cleared: `${COOKIE}=; ${attributes}; Max-Age=0`
   };
 });
@@ -98,7 +97,7 @@ export const make = Effect.gen(function* () {
   const authenticate = Effect.fn("DevPersonas.authenticate")(function* (request: Request) {
     const value = Cookies.parseHeader(request.headers.get("cookie") ?? "")[COOKIE];
     if (value === undefined) return signedOut("dev-persona-missing");
-    const claims = open(value);
+    const claims = yield* open(value);
     if (Option.isNone(claims)) return signedOut("dev-persona-invalid", [cleared]);
     if (claims.value.exp * 1_000 <= (yield* Clock.currentTimeMillis))
       return signedOut("dev-persona-expired", [cleared]);
@@ -153,7 +152,7 @@ const picker = (people: ReadonlyArray<typeof Person.Type>, target: string, notic
 /** `GET /dev/sign-in`: the picker, or with `as`, a cookie for that email and a redirect back. */
 const signIn = Effect.fn("DevPersonas.signIn")(function* (
   publicUrl: URL,
-  seal: (claims: typeof Session.SessionClaims.Type) => string
+  seal: (claims: typeof Session.SessionClaims.Type) => Effect.Effect<string>
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = new URL(request.url, publicUrl);
@@ -195,7 +194,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
       status: 303,
       headers: { "cache-control": "private, no-store" }
     }),
-    [seal(claims)]
+    [yield* seal(claims)]
   );
 });
 

@@ -12,6 +12,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Management from "./management.js";
 import * as Supervisor from "./supervisor.js";
+import { NodeCryptography } from "@patchy/core";
 
 const secret = "deployment-current-secret";
 const previousSecret = "deployment-previous-secret";
@@ -117,7 +118,7 @@ it.live(
       expect(
         (yield* post(url, "stats", { bindingEpoch: 1 }, "older-deployment-secret")).status
       ).toBe(401);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -153,7 +154,7 @@ it.live("returns the enforced residency bound when no process can be evicted", (
         }
       ]
     });
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
+  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
 );
 
 it.live(
@@ -201,7 +202,7 @@ it.live(
       expect(
         (yield* post(anonymous.url, "stats", { bindingEpoch: 0, taskId: "task-a" })).status
       ).toBe(421);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -257,7 +258,7 @@ it.live(
       expect((yield* stats(1)).processes).toMatchObject([
         { processGeneration: loaded.processGeneration }
       ]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -346,7 +347,7 @@ it.live(
       expect(
         yield* decodeStats(yield* (yield* post(url, "stats", { bindingEpoch: 2 })).json)
       ).toMatchObject({ companyId: bundle.companyId, stopped: true, processes: [] });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   30_000
 );
 
@@ -413,7 +414,7 @@ it.live(
         processes: [],
         reports: []
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -441,7 +442,7 @@ it.live(
         _tag: "Failure",
         failure: { reason: "invalid_body_limit" }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -455,6 +456,6 @@ it.live(
         _tag: "Failure",
         failure: { _tag: "ListenerUnavailable", host: "127.0.0.1", port }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );

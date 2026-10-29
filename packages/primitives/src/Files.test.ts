@@ -21,6 +21,7 @@ import {
   slowSweepDeleteContract
 } from "./test/filesContract.js";
 import * as TestWakes from "./test/wakes.js";
+import { NodeCryptography } from "@patchy/core";
 
 const postgres = Layer.merge(
   filesystem,
@@ -42,7 +43,7 @@ const local = Layer.merge(
       );
     })
   ).pipe(Layer.provide(NodeFileSystem.layer))
-).pipe(Layer.provideMerge(NodeCrypto.layer));
+).pipe(Layer.provideMerge(Layer.merge(NodeCrypto.layer, NodeCryptography.layer)));
 
 /** A backend with test wakes and a version lookup that finds nothing. */
 const withRuntime = <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>

@@ -22,6 +22,7 @@ import { readRecord } from "./devState.js";
 import type { Prepared } from "./devPreparation.js";
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
 import toolchain from "./toolchain.json" with { type: "json" };
+import { NodeCryptography } from "@patchy/core";
 
 const identity = new Identity({
   user: { id: "local-user", email: "local@example.test", name: "Local" },
@@ -301,7 +302,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(NodeHttpServer.layerTest),
-      Effect.provide([NodeServices.layer, DirectoryWatch.layer])
+      Effect.provide([NodeServices.layer, NodeCryptography.layer, DirectoryWatch.layer])
     ),
   { timeout: 30_000 }
 );
@@ -384,7 +385,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(NodeHttpServer.layerTest),
-      Effect.provide([NodeServices.layer, DirectoryWatch.layer])
+      Effect.provide([NodeServices.layer, NodeCryptography.layer, DirectoryWatch.layer])
     ),
   { timeout: 30_000 }
 );

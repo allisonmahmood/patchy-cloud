@@ -30,6 +30,7 @@ import * as StreamAdmission from "../StreamAdmission.js";
 import { me } from "../me.js";
 import * as SubscriptionReads from "../SubscriptionReads.js";
 import * as Wakes from "../Wakes.js";
+import { NodeCryptography } from "@patchy/core";
 
 export const patchId = "runtimepatch";
 export const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -123,7 +124,7 @@ export const layer = (
       Layer.succeed(ContractLimits.overrides, { "runtime.calls.perMinute": 3, ...limits })
     ),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
-    Layer.provideMerge(NodeCrypto.layer)
+    Layer.provideMerge(Layer.merge(NodeCrypto.layer, NodeCryptography.layer))
   );
 
 // Only the outgoing encoder is permissive, so tests can send hostile bodies.

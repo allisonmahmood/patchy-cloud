@@ -35,5 +35,7 @@ export {
   searchField,
   tileOptions
 } from "./components.js";
+export * as Cryptography from "./Cryptography.js";
+export * as NodeCryptography from "./NodeCryptography.js";
 export * as WhatsNew from "./whatsNew.js";
 export { isPublicAddress } from "./addresses.js";

@@ -13,6 +13,7 @@
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import { NodeCryptography } from "@patchy/core";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -63,7 +64,7 @@ const server = Layer.effectDiscard(
   })
 ).pipe(
   Layer.provideMerge(Server.layer),
-  Layer.provide([Sql.layer, ClientDocumentNetwork.layer]),
+  Layer.provide([Sql.layer, ClientDocumentNetwork.layer, NodeCryptography.layer]),
   Layer.provide(httpServer)
 );
 

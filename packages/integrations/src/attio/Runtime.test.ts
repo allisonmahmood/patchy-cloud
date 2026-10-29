@@ -31,6 +31,7 @@ import * as Reads from "../test/attioReads.js";
 import * as RuntimeTest from "../test/runtime.js";
 import { generate } from "./Generate.js";
 import * as Operations from "./Operations.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Attio journeys over answers in the probe's shapes: the generated tier 1 client over the runtime
@@ -182,7 +183,7 @@ const tier1 = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
 
 it.layer(tier1)("Attio in a tier 1 page", (it) => {
   it.effect(

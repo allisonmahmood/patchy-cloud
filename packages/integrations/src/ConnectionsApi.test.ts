@@ -22,6 +22,7 @@ import * as PostHogSource from "./posthog/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PidgeonTest from "./test/pidgeon.js";
+import { NodeCryptography } from "@patchy/core";
 
 const snapshot = {
   version: 1,
@@ -99,7 +100,8 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
       ])
     )
   ),
-  Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer())))
+  Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()))),
+  Layer.provide(NodeCryptography.layer)
 );
 const client = (token: string) =>
   HttpApiTest.groups(PatchyApi, ["connections"]).pipe(
@@ -397,7 +399,7 @@ it.layer(layer)("connections group", (it) => {
           Effect.provide(
             CredentialKeys.layerFromKeys(
               Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
-            )
+            ).pipe(Layer.provide(NodeCryptography.layer))
           )
         );
       const listed = yield* api.listConnections({ query: { integrations: "pidgeon" } });

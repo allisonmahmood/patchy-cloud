@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
-import { newInternalId, sha256 } from "@patchy/core";
+import { newInternalId, sha256, NodeCryptography } from "@patchy/core";
 import { OperatingLimits } from "@patchy/limits";
 import {
   Binding,
@@ -241,7 +241,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(FetchHttpClient.layer),
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 71).toString("base64")}`))
-  )
+  ),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {

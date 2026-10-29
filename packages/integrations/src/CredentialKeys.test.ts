@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { NodeCryptography } from "@patchy/core";
 import * as CredentialKeys from "./CredentialKeys.js";
 
 const oldKey = Buffer.alloc(32, 11).toString("base64");
@@ -39,7 +40,23 @@ it.effect(
         Redacted.value(yield* currentOnly.decrypt(identity, rewritten)),
         Redacted.value(credentials)
       );
-    })
+    }).pipe(Effect.provide(NodeCryptography.layer))
+);
+
+it.effect("decrypts what it encrypted before Cryptography sealed for it", () =>
+  Effect.gen(function* () {
+    const keys = yield* CredentialKeys.makeFromKeys(
+      Redacted.make(`fixture:${Buffer.alloc(32, 42).toString("base64")}`)
+    );
+    const decrypted = yield* keys.decrypt(
+      { companyId: "co_fixture", id: "conn_fixture", integration: "postgres" },
+      {
+        keyId: "fixture",
+        credentials: "gtxl9rswjUkFIgoebsAzU602U/AFH/VL23RskvhjiMvTgPJJhJScQkVxogRHGVJEhuRTV3/QSkQ="
+      }
+    );
+    assert.strictEqual(Redacted.value(decrypted), '{"url":"postgres://fixture"}');
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("uses fresh nonces and rejects tampering with every authenticated part", () =>
@@ -75,7 +92,7 @@ it.effect("uses fresh nonces and rejects tampering with every authenticated part
         "credential_decryption_failed"
       );
     }
-  })
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("rejects malformed, truncated and noncanonical ciphertext with one safe failure", () =>
@@ -88,7 +105,7 @@ it.effect("rejects malformed, truncated and noncanonical ciphertext with one saf
       assert.strictEqual(error.code, "credential_decryption_failed");
       assert.strictEqual(error.status, 503);
     }
-  })
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("rejects invalid keyrings before startup without exposing their contents", () =>
