@@ -726,6 +726,12 @@ vCPUs, inside the account's current 30. Fargate refuses a launch past the quota,
 so raising the budget or a task's size needs the quota raised first; the budget
 goes to 30 once it is.
 
+Two monthly cost budgets in the base stack email the alert addresses when the
+month's forecast passes their amount: `patchy-monthly` at $300 and
+`patchy-monthly-600` at $600. Add another threshold as another budget, not as a
+notification on an existing one: CloudFormation replaces a budget to change its
+notifications, and the replacement collides with the budget's unique name.
+
 ### Setting up production
 
 An administrator did this once, for [#416](https://github.com/allisonmahmood/patchy-cloud/issues/416),
@@ -755,8 +761,14 @@ outside the deploy workflow:
 6. Point `cloud.patchyhq.com` at the app stack's `LoadBalancerDnsName` output with
    a CNAME. Keep the certificate's validation record: ACM renews the certificate
    only while it resolves.
-7. Each alert address confirms its SNS subscription from AWS's email. Budget
-   alerts need no confirmation. The uptime alarm fires until the CNAME resolves.
+7. Each alert address confirms its SNS subscription from AWS's email. A budget
+   emails a newly added address only once it is verified in the account: AWS
+   sends it a verification email whose link must be opened while signed in to
+   the account, and one verification covers every budget. An address already
+   verified in the account is active at once, and recipients added before AWS
+   introduced verification keep receiving alerts unchanged. Check each budget's
+   recipients in the Budgets console after a deploy adds one. The uptime alarm
+   fires until the CNAME resolves.
 
 ### Deploying
 

@@ -174,6 +174,33 @@ it("lets only this repository's production environment assume the deploy role", 
   });
 });
 
+it("emails a forecast past $300 a month and another past $600, from two budgets", () => {
+  base.resourceCountIs("AWS::Budgets::Budget", 2);
+  for (const [name, amount] of [
+    ["patchy-monthly", 300],
+    ["patchy-monthly-600", 600]
+  ] as const)
+    base.hasResourceProperties("AWS::Budgets::Budget", {
+      Budget: {
+        BudgetName: name,
+        BudgetType: "COST",
+        TimeUnit: "MONTHLY",
+        BudgetLimit: { Amount: amount, Unit: "USD" }
+      },
+      NotificationsWithSubscribers: [
+        {
+          Notification: {
+            NotificationType: "FORECASTED",
+            ComparisonOperator: "GREATER_THAN",
+            Threshold: 100,
+            ThresholdType: "PERCENTAGE"
+          },
+          Subscribers: [{ SubscriptionType: "EMAIL", Address: "alerts@example.com" }]
+        }
+      ]
+    });
+});
+
 it("leaves the host secret to a person and generates the management secret once", () => {
   base.hasResourceProperties("AWS::SecretsManager::Secret", {
     Name: "patchy/production/host",
