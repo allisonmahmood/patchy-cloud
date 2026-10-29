@@ -192,10 +192,11 @@ export class AppStack extends Stack {
     execLogs.grantWrite(execExecutionRole);
 
     // CfnTaskDefinition, because the L2 always adds a task role. The host
-    // launches each task with its identity and secrets as overrides.
+    // launches each task with its identity and secrets as overrides, never a
+    // size: every company box is this definition's full vCPU and 2 GiB.
     const execDefinition = new ecs.CfnTaskDefinition(this, "ExecDefinition", {
       family: name.execFamily,
-      cpu: "512",
+      cpu: "1024",
       memory: "2048",
       networkMode: "awsvpc",
       requiresCompatibilities: ["FARGATE"],
@@ -289,7 +290,7 @@ export class AppStack extends Stack {
 
     const hostDefinition = new ecs.FargateTaskDefinition(this, "HostDefinition", {
       family: name.hostFamily,
-      cpu: 512,
+      cpu: 1024,
       memoryLimitMiB: 2048,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
@@ -317,7 +318,14 @@ export class AppStack extends Stack {
         PATCHY_PUBLIC_BASE_URL: origin,
         CLERK_AUTHORIZED_PARTIES: origin,
         PATCHY_TRUST_PROXY: vpc.vpcCidrBlock,
-        PATCHY_LIMITS_JSON: this.toJsonString({ "execution.fleet.budget": 15 }),
+        // At most 24 company boxes, three of them warm spares: with four hosts
+        // during a rolling deploy and the promote task, 29 vCPUs inside the
+        // account's 30-vCPU Fargate quota. The budget goes to 30 once the
+        // quota is raised (docs/OPERATIONS.md, Production).
+        PATCHY_LIMITS_JSON: this.toJsonString({
+          "execution.fleet.budget": 24,
+          "execution.pool.spares": 3
+        }),
         // Four hosts during a rolling deploy must fit Neon's connection limit;
         // raise it with the compute (docs/OPERATIONS.md, Production).
         PATCHY_COMPANY_DB_MAX_BACKENDS: "64",

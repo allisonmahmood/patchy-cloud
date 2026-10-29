@@ -802,10 +802,11 @@ export const registry = {
   },
   "execution.task.cpu": {
     kind: "operating",
-    default: 0.5,
+    default: 1,
     unit: "vCPU",
     scope: "company",
-    measure: "Fargate CPU allocation",
+    measure:
+      "Company task CPU. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads",
     refusal: null,
     overridable: true
   },
@@ -814,7 +815,8 @@ export const registry = {
     default: 2147483648,
     unit: "bytes",
     scope: "company",
-    measure: "Fargate memory allocation, 2048 MiB",
+    measure:
+      "Company task memory, 2048 MiB. Not read: the exec task definition sets every task's size; the id stays so existing configuration loads",
     refusal: null,
     overridable: true
   },

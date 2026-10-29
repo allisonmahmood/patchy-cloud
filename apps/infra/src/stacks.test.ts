@@ -131,6 +131,29 @@ it("rolls hosts out beside the promoted release, back if they cannot start, and 
   });
 });
 
+it("gives hosts and company boxes a full vCPU, and the fleet 24 boxes with three spares", () => {
+  // The account's Fargate vCPU quota must cover these (docs/OPERATIONS.md, Production).
+  for (const family of ["patchy-production-host", "patchy-production-exec"])
+    template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+      Family: family,
+      Cpu: "1024",
+      Memory: "2048"
+    });
+  template.hasResourceProperties("AWS::ECS::TaskDefinition", {
+    Family: "patchy-production-host",
+    ContainerDefinitions: [
+      Match.objectLike({
+        Environment: Match.arrayWith([
+          {
+            Name: "PATCHY_LIMITS_JSON",
+            Value: JSON.stringify({ "execution.fleet.budget": 24, "execution.pool.spares": 3 })
+          }
+        ])
+      })
+    ]
+  });
+});
+
 it("lets only this repository's production environment assume the deploy role", () => {
   base.hasResourceProperties("AWS::IAM::Role", {
     RoleName: "patchy-production-deploy",
