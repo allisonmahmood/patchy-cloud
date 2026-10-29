@@ -645,6 +645,7 @@ describe("help", () => {
     const failures = [
       [["init", "notes", "--tier", "7", "--json"], tier],
       [["init", "notes", "--tier", "7", "--json=true"], tier],
+      [["init", "notes", "--tier", "7", "-json=true"], tier],
       [["publish", "--bogus", "--json"], "Unrecognized flag: --bogus in command patchy publish"],
       [["look", "publish", "./x", "--json"], "Missing required flag: --note"],
       [["look", "publish", "--note", "darker", "--json"], "Missing required argument: dir"],

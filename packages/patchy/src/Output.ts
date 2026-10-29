@@ -30,14 +30,15 @@ const falseLiterals = new Set(["false", "no", "off", "0", "n"]);
 
 /**
  * Whether argv asks for `--json`, read as Effect reads the flag: the first `--json`,
- * `--json=<b>`, `--json <b>` or `--no-json` before `--` decides. The entrypoint needs
- * it before any handler runs, because that is where a parse error is rendered.
+ * `--json=<b>`, `-json=<b>`, `--json <b>` or `--no-json` before `--` decides. The
+ * entrypoint needs it before any handler runs, because that is where a parse error
+ * is rendered.
  */
 export const jsonRequested = (args: ReadonlyArray<string>) => {
   for (const [index, arg] of args.entries()) {
     if (arg === "--" || arg === "--no-json") return false;
     if (arg === "--json") return !falseLiterals.has(args[index + 1] ?? "");
-    if (arg.startsWith("--json=")) return !falseLiterals.has(arg.slice("--json=".length));
+    if (/^--?json=/.test(arg)) return !falseLiterals.has(arg.slice(arg.indexOf("=") + 1));
   }
   return false;
 };

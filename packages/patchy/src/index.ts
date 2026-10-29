@@ -81,9 +81,10 @@ const jsonConsole = Layer.effect(
 
 Command.run(root, { version: RELEASE }).pipe(
   // A global flag's own bad value, such as `--log-level loud`, fails without Effect rendering it.
-  Effect.catchTag("InvalidValue", (error) =>
-    Console.error(renderErrors([error])).pipe(Effect.andThen(new Failed({ code: 1 })))
-  ),
+  Effect.catchTags({
+    InvalidValue: (error) =>
+      Console.error(renderErrors([error])).pipe(Effect.andThen(new Failed({ code: 1 })))
+  }),
   Effect.ensuring(Effect.suspend(() => (heldHelp === "" ? Effect.void : Console.log(heldHelp)))),
   Effect.provide(
     Layer.mergeAll(
