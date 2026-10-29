@@ -79,7 +79,13 @@ async function main(): Promise<void> {
         EXECUTION_MANAGEMENT_PORT: "0",
         EXECUTION_CALLBACK_URLS: JSON.stringify(request.callbackUrls),
         EXECUTION_DEPLOYMENT_REVISION: request.deploymentRevision,
-        EXECUTION_TASK_ID: request.taskId
+        EXECUTION_TASK_ID: request.taskId,
+        // As an exec task's definition does; the rest of its limits arrive with each bind.
+        ...(request.processLoad === undefined
+          ? {}
+          : {
+              PATCHY_LIMITS_JSON: JSON.stringify({ "execution.process.load": request.processLoad })
+            })
       }
     }
   );

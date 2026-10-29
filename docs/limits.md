@@ -106,7 +106,8 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `execution.task.memory` | operating | 2147483648 | bytes | company | Fargate memory allocation, 2048 MiB | None | Yes | deployment |
 | `execution.residency.processes` | operating | 12 | processes | company | Loaded version processes; idle processes evicted first | `busy` | Yes | deployment |
 | `execution.residency.bytes` | operating | 1610612736 | bytes | company | Aggregate RSS including supervisor, bundles and overlapping versions | `busy` | Yes | deployment |
-| `execution.process.idle` | operating | 60000 | milliseconds | company | Process idle window before reap and maximum unfinished initialization lifetime | None | Yes | deployment |
+| `execution.process.idle` | operating | 600000 | milliseconds | company | Ready process idle window before reap, since its last call or touch; residency still evicts idle processes first | None | Yes | deployment |
+| `execution.process.load` | operating | 60000 | milliseconds | patch | Maximum unfinished initialization lifetime from spawn, even while health probes succeed | None | No | deployment |
 | `execution.fleet.budget` | operating | 100 | tasks | host | Maximum live tasks across bound companies, draining tasks and spares | `busy` | No | deployment |
 | `execution.housekeeping.interval` | operating | 5000 | milliseconds | host | Interval between fleet reconciliation and replenishment passes | None | No | deployment |
 | `execution.housekeeping.lease` | operating | 15000 | milliseconds | host | Exclusive fleet housekeeping ownership window | None | No | deployment |
@@ -177,9 +178,9 @@ At a caller deadline, effects are fenced and cancellation begins. It does not pr
 
 ## Runaway code and residency
 
-The execution supervisor probes and samples process CPU/RSS every 250 ms. It kills a process still running at its caller deadline plus 1000 ms, after 6000 ms without a successful probe, or at 536870912 bytes RSS. Every in-flight attempt is reported to the host for commit-outcome classification; a kill alone never establishes rollback.
+The execution supervisor probes and samples process CPU/RSS every 250 ms while a process loads or serves a call, and an idle one once its last good probe is a second old. It kills a process still running at its caller deadline plus 1000 ms, after 6000 ms without a successful probe, or at 536870912 bytes RSS. Every in-flight attempt is reported to the host for commit-outcome classification; a kill alone never establishes rollback.
 
-Residency permits 12 loaded version processes and 1610612736 bytes aggregate RSS, including the supervisor, bundles, reports and overlapping versions. Enforcement continues while processes are loaded. Memory pressure evicts the largest idle process first; otherwise the oldest idle process goes first. If none is idle, new work receives busy. Processes idle for 60000 ms are reaped.
+Residency permits 12 loaded version processes and 1610612736 bytes aggregate RSS, including the supervisor, bundles, reports and overlapping versions. Enforcement continues while processes are loaded. Memory pressure evicts the largest idle process first; otherwise the oldest idle process goes first. If none is idle, new work receives busy. Processes idle for 600000 ms are reaped.
 
 The local executor applies the aggregate ceiling only to supervised workerd processes. Its PGlite, fixture and Vite host does not consume that budget. The dedicated fleet supervisor retains host-inclusive accounting; both modes keep the same process count, per-process RSS and watchdog enforcement.
 

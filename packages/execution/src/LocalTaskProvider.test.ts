@@ -290,6 +290,53 @@ it.live(
 );
 
 it.live(
+  "expires an unfinished load at the deployment's load deadline, which no bind carries",
+  () =>
+    Effect.gen(function* () {
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              PATCHY_LIMITS_JSON: '{"execution.process.load":1000}'
+            })
+          )
+        )
+      );
+      const task = yield* provider.start({ taskId: "load-task", deploymentRevision: "deployment" });
+      // Its describe never finishes, though the process keeps answering health probes.
+      const source = `export default { async fetch() { while (true) { const tick = Promise.withResolvers(); setTimeout(tick.resolve, 10); await tick.promise; } } };`;
+      const started = Date.now();
+      const error = yield* provider
+        .bind(task.taskId, {
+          companyId: "company",
+          bindingEpoch: 1,
+          bundle: {
+            companyId: "company",
+            patchId: "patch",
+            versionId: "version",
+            bundle: source,
+            sha256: createHash("sha256").update(source).digest("hex")
+          }
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "load_failed");
+      // The registry's 60 seconds would outlast the provider's management timeout.
+      assert.isBelow(Date.now() - started, 10_000);
+      // The refusal answers the bind before the reap that records it finishes.
+      const report = yield* Effect.gen(function* () {
+        while (true) {
+          const stats = yield* provider.stats(task.taskId, { bindingEpoch: 1 });
+          if (stats.reports[0] !== undefined) return stats.reports[0];
+          yield* Effect.sleep("20 millis");
+        }
+      }).pipe(Effect.timeout("5 seconds"));
+      assert.strictEqual(report.cause, "load_failed");
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  { timeout: 20_000 }
+);
+
+it.live(
   "reaps a task that misses readiness instead of retaining a running fleet slot",
   () =>
     Effect.gen(function* () {

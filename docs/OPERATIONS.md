@@ -516,14 +516,14 @@ Clerk configuration or running dev instance is needed.
 
 The supervisor reads execution operating limits from `PATCHY_LIMITS_JSON`.
 It enforces `execution.probe.interval`, `execution.process.rss`,
-`execution.process.idle`, `execution.residency.processes` and
-`execution.residency.bytes`; its report configuration hash covers these values.
+`execution.process.idle`, `execution.process.load`, `execution.residency.processes`
+and `execution.residency.bytes`; its report configuration hash covers these values.
 The probe interval must be less than the six-second stall contract.
 Defaults are 12 resident processes, 1.5 GiB aggregate RSS, a 512 MiB per-process
-kill, 60 seconds idle and a 250 ms probe. The units are binary: one GiB is
-2^30 bytes and one MiB is 2^20 bytes. An unfinished initializer also expires at
-`execution.process.idle`, even when health probes succeed. Its bind refusal and
-process-report end cause are `load_failed`. The six-second stall and one-second
+kill, ten minutes idle and a 250 ms probe. The units are binary: one GiB is
+2^30 bytes and one MiB is 2^20 bytes. An unfinished initializer expires at
+`execution.process.load`, 60 seconds from spawn, even when health probes succeed.
+Its bind refusal and process-report end cause are `load_failed`. The six-second stall and one-second
 post-deadline termination grace are release contracts. Linux uses `/proc` and
 macOS uses `ps` for metering; other platforms refuse supervised execution.
 Unexpected sampling failures kill only the affected resident with report end
@@ -553,8 +553,9 @@ platform database. Local hosts on one Linux machine share a durable task directo
 `flock` serializes launches, and detached task owners retain readiness, final process
 reports and observed stop times independently of the host that launched them.
 Each task still has a separate supervisor process. Children receive only local
-management identity, a generated deployment secret and trusted callback URLs, not
-the host's database, storage or login environment. A task keeps the checkout it
+management identity, a generated deployment secret, trusted callback URLs and the
+host's `execution.process.load`, which no bind carries; not the host's database,
+storage or login environment. A task keeps the checkout it
 started from, so after an update a restarted host may reach an older supervisor:
 its bind by hash is refused `invalid_request` before any effect, and the host sends
 the bundle instead.

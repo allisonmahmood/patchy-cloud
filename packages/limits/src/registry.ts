@@ -837,12 +837,23 @@ export const registry = {
   },
   "execution.process.idle": {
     kind: "operating",
-    default: 60000,
+    default: 600000,
     unit: "milliseconds",
     scope: "company",
-    measure: "Process idle window before reap and maximum unfinished initialization lifetime",
+    measure:
+      "Ready process idle window before reap, since its last call or touch; residency still evicts idle processes first",
     refusal: null,
     overridable: true
+  },
+  "execution.process.load": {
+    kind: "operating",
+    default: 60000,
+    unit: "milliseconds",
+    scope: "patch",
+    measure:
+      "Maximum unfinished initialization lifetime from spawn, even while health probes succeed",
+    refusal: null,
+    overridable: false
   },
   "execution.fleet.budget": {
     kind: "operating",

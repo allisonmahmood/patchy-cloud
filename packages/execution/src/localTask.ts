@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- IPC connects only the credential-free supervisor and its detached local provider owner.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as DeploymentConfig from "@patchy/limits/deployment-config";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -31,7 +32,13 @@ NodeRuntime.runMain(
     );
     const deploymentRevision = yield* Config.String("EXECUTION_DEPLOYMENT_REVISION");
     const taskId = yield* Config.String("EXECUTION_TASK_ID");
-    const supervisor = yield* Supervisor.make({ callbackUrls, deploymentRevision, taskId });
+    const limits = yield* DeploymentConfig.load;
+    const supervisor = yield* Supervisor.make({
+      callbackUrls,
+      deploymentRevision,
+      taskId,
+      operatingLimits: { "execution.process.load": limits.get("execution.process.load") }
+    });
     // Even a failed bundle load may have installed the requested epoch before it failed.
     const epochs = new Set([0]);
     const listener = yield* Management.serve(options).pipe(
