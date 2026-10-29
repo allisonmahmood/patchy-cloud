@@ -152,6 +152,7 @@ const coreSkills = ["patchy-loop", "patchy-look", "patchy-tables", "patchy-files
 const knownSkills = [
   ...coreSkills,
   "patchy-preact",
+  "patchy-hotkeys",
   "patchy-server",
   "patchy-postgres",
   "patchy-posthog",
@@ -242,7 +243,10 @@ export const generate = Effect.fn("Generation.generate")(function* (
   if (request.manifest.manifestVersion !== MANIFEST_VERSION)
     return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
   const skills = new Set([...coreSkills, ...request.skills]);
-  if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
+  if (request.manifest.tier === 1 || request.manifest.tier === 2) {
+    skills.add("patchy-preact");
+    skills.add("patchy-hotkeys");
+  }
   if (request.manifest.tier === 2) skills.add("patchy-server");
   else skills.delete("patchy-server");
   if (request.manifest.uses.members?.kind === "members") skills.add("patchy-members");

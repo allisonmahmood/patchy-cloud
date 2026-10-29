@@ -1,0 +1,59 @@
+/* Layout only: colours, fonts and element styles come from the look. */
+main {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: calc(var(--look-space, 8px) * 6) calc(var(--look-space, 8px) * 4);
+}
+
+nav {
+  display: flex;
+  gap: calc(var(--look-space, 8px) * 2);
+  align-items: center;
+}
+nav .hint {
+  margin-left: auto;
+}
+.keys {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.step {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+.then {
+  margin: 0 4px;
+  opacity: 0.6;
+}
+kbd {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 0.85em;
+}
+.tasks li.selected {
+  outline: 2px solid currentColor;
+}
+.dialog {
+  position: fixed;
+  inset: 15% 25% auto;
+  padding: calc(var(--look-space, 8px) * 3);
+  background: Canvas;
+  border: 1px solid;
+}
+.sheet li {
+  display: flex;
+  justify-content: space-between;
+}
+.controls {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, 1fr);
+}
+.editable {
+  border: 1px dashed;
+  padding: 4px;
+}
