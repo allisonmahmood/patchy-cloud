@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import { registry, type OperatingLimitId } from "./registry.js";
 
@@ -61,7 +62,11 @@ const config = Config.schema(valuesJson, "PATCHY_LIMITS_JSON").pipe(
   Config.withDefault<Readonly<Record<string, number>>>({})
 );
 
-/** Load managed operating values once, with a revision derived from resolved defaults and overrides. */
+/**
+ * Load managed operating values once from resolved defaults and overrides. `revision` is their
+ * SHA-256, the same on every host that resolves the same values; only the callers that record
+ * it compute it.
+ */
 export const load = Effect.gen(function* () {
   const overrides = yield* config;
   for (const [limitId, value] of Object.entries(overrides)) {
@@ -74,7 +79,13 @@ export const load = Effect.gen(function* () {
     managedIds.map((limitId) => [limitId, overrides[limitId] ?? registry[limitId].default])
   ) as Record<ManagedOperatingLimitId, number>;
   return {
-    revision: createHash("sha256").update(encodeValues(values)).digest("hex"),
+    revision: Crypto.Crypto.pipe(
+      Effect.flatMap((crypto) =>
+        crypto.digest("SHA-256", new TextEncoder().encode(encodeValues(values)))
+      ),
+      Effect.map(Hex.encode),
+      Effect.orDie
+    ),
     get: (limitId: ManagedOperatingLimitId): number => values[limitId]
   };
 });

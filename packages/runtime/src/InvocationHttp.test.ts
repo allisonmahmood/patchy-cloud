@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -83,40 +84,44 @@ const layer = Layer.unwrap(
     ).pipe(Effect.provideService(Invocation.Invocation, invocation));
     return RuntimeApi.layer.pipe(Layer.provide(Layer.succeed(Runtime.Runtime, runtime)));
   })
-).pipe(
-  Layer.provideMerge(HttpServer.layerServices),
-  Layer.provide(WideEvents.layerNoop),
-  Layer.provide(
-    Layer.succeed(Executor.Executor, {
-      bind: () =>
-        Effect.succeed({
-          binding: {
-            companyId: bundle.companyId,
-            patchId: bundle.patchId,
-            versionId: bundle.versionId,
-            sha256: bundle.sha256
-          },
-          processGeneration: 1
-        }),
-      invoke: () =>
-        Effect.succeed({ outcome: "returned", reply: { ok: true, value: 42 }, guestMs: 0 })
-    })
-  ),
-  Layer.provide(Layer.succeed(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })),
-  Layer.provide(
-    Layer.succeed(LoadedVersions.LoadedVersions, {
-      find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
-    })
-  ),
-  Layer.provide(
-    Layer.mergeAll(
-      Limits.layer,
-      OperatingLimits.layer,
-      InvocationLog.layer,
-      InvocationCapabilities.layer
-    ).pipe(Layer.provideMerge(Testing.layer()))
+)
+  .pipe(
+    Layer.provideMerge(HttpServer.layerServices),
+    Layer.provide(WideEvents.layerNoop),
+    Layer.provide(
+      Layer.succeed(Executor.Executor, {
+        bind: () =>
+          Effect.succeed({
+            binding: {
+              companyId: bundle.companyId,
+              patchId: bundle.patchId,
+              versionId: bundle.versionId,
+              sha256: bundle.sha256
+            },
+            processGeneration: 1
+          }),
+        invoke: () =>
+          Effect.succeed({ outcome: "returned", reply: { ok: true, value: 42 }, guestMs: 0 })
+      })
+    ),
+    Layer.provide(
+      Layer.succeed(ServerBundles.ServerBundles, { load: () => Effect.succeed(bundle) })
+    ),
+    Layer.provide(
+      Layer.succeed(LoadedVersions.LoadedVersions, {
+        find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
+      })
+    ),
+    Layer.provide(
+      Layer.mergeAll(
+        Limits.layer,
+        OperatingLimits.layer,
+        InvocationLog.layer,
+        InvocationCapabilities.layer
+      ).pipe(Layer.provideMerge(Testing.layer()))
+    )
   )
-);
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 const api = HttpApi.make("patchy").add(RuntimeGroup);
 
 it.effect(
@@ -290,7 +295,9 @@ const callbackRuntime = Layer.unwrap(
 const callbackSocket = HttpRouter.serve(
   HttpApiBuilder.layer(api).pipe(Layer.provide(callbackRuntime)),
   { disableLogger: true, disableListenLog: true }
-).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+)
+  .pipe(Layer.provideMerge(NodeHttpServer.layerTest))
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 it.layer(callbackSocket)("Invocation callback refusal HTTP", (it) => {
   it.effect("preserves host-issued 403, 413, 429 and 504 responses and retry metadata", () =>

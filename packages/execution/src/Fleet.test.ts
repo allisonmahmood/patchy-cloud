@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off -- actual child supervisors use wall-clock deadlines; TestClock controls the host's idle and breaker windows.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -38,11 +39,13 @@ const source = `let count = 0; export default { async fetch(request) {
   return Response.json({ ok: true, value: ++count });
 } };`;
 const sha256 = createHash("sha256").update(source).digest("hex");
-const services = OperatingLimits.layer.pipe(
-  Layer.provideMerge(Testing.layer()),
-  Layer.merge(WideEvents.layerNoop),
-  Layer.merge(FetchHttpClient.layer)
-);
+const services = OperatingLimits.layer
+  .pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.merge(WideEvents.layerNoop),
+    Layer.merge(FetchHttpClient.layer)
+  )
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 const setup = Effect.fn("FleetTest.setup")(function* (
   name: string,
   provider: TaskProvider.TaskProvider["Service"],

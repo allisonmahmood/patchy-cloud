@@ -2,6 +2,7 @@ import { runtimeOperations } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Binding, LoadedVersions, Runtime, SubscriptionReads, Wakes } from "@patchy/runtime/core";
 import type * as Config from "effect/Config";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -213,6 +214,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
 });
 
 type Dependencies =
+  | Crypto.Crypto
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | LoadedVersions.LoadedVersions

@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- Clerk verifies JWT expiry against Date, independently of Effect's clock.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { vi } from "vitest";
@@ -118,11 +119,13 @@ const dependencies = Layer.mergeAll(
   Layer.succeed(LoadedVersions.LoadedVersions, {
     find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
   })
-).pipe(
-  Layer.provideMerge(session),
-  Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
-);
+)
+  .pipe(
+    Layer.provideMerge(session),
+    Layer.provideMerge(Testing.layer()),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+  )
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 const admit = Effect.fn("RuntimeProductionTest.admit")(function* (token = signSession()) {
   yield* TestClock.setTime(NOW);

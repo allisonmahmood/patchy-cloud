@@ -1,6 +1,8 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -17,7 +19,7 @@ const host = Effect.gen(function* () {
   return { wakes, received };
 });
 
-it.layer(Testing.layer())("cross-host wakes", (it) => {
+it.layer(Layer.merge(Testing.layer(), NodeCrypto.layer))("cross-host wakes", (it) => {
   it.effect("wakes the writing host once and every other host once", () =>
     Effect.gen(function* () {
       const pg = yield* PgClient.PgClient;

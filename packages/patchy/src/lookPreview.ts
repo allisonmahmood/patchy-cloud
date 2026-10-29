@@ -7,6 +7,7 @@
  * page has no script and passes tier 0 validation, so an agent can publish it to show someone;
  * the two-look page's one script sizes its frames.
  */
+// @effect-diagnostics nodeBuiltinImport:off -- the frames script's CSP hash is a module constant, computed once at load.
 import { createHash } from "node:crypto";
 import * as CssTree from "css-tree";
 import { escapeAttribute, escapeHtml, framedDocument } from "@patchy/core";

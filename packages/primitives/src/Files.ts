@@ -1,8 +1,12 @@
 import { Buffer } from "node:buffer";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off -- file handles need HMAC-SHA256 and a constant-time compare, which Effect Crypto lacks.
+import { createHmac, timingSafeEqual } from "node:crypto";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -220,6 +224,9 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     Runtime.RuntimeError
   >
 ) {
+  const crypto = yield* Crypto.Crypto;
+  const sha256 = (bytes: Uint8Array) =>
+    crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode), Effect.orDie);
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
   const versions = yield* LoadedVersions.LoadedVersions;
@@ -407,10 +414,10 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     );
     const row = {
       objectId: newInternalId("obj"),
-      token: randomBytes(32).toString("base64url"),
+      token: Base64Url.encode(yield* crypto.randomBytes(32).pipe(Effect.orDie)),
       size: bytes.byteLength,
       contentType,
-      sha256: createHash("sha256").update(bytes).digest("hex")
+      sha256: yield* sha256(bytes)
     };
     yield* withCompany(
       binding.companyId,
@@ -672,7 +679,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
               objectId: newInternalId("obj"),
               size: bytes.byteLength,
               contentType: args.contentType,
-              sha256: createHash("sha256").update(bytes).digest("hex")
+              sha256: yield* sha256(bytes)
             };
             yield* content
               .putBytes(objectKey(binding.patchId, row.objectId), bytes)

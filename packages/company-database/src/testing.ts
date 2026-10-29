@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -60,4 +61,8 @@ export const layer = (options?: {
         Inventory.layer
       );
     })
-  ).pipe(Layer.provideMerge(Testing.layer()));
+  ).pipe(
+    Layer.provideMerge(Testing.layer()),
+    // Operating limits fingerprint their configuration with the host's Crypto.
+    Layer.provideMerge(NodeCrypto.layer)
+  );

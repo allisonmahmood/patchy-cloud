@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -121,7 +122,8 @@ export const layer = (
     Layer.provide(
       Layer.succeed(ContractLimits.overrides, { "runtime.calls.perMinute": 3, ...limits })
     ),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
+    Layer.provideMerge(NodeCrypto.layer)
   );
 
 // Only the outgoing encoder is permissive, so tests can send hostile bodies.

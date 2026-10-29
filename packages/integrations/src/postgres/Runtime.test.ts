@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -126,10 +127,12 @@ const services = Layer.mergeAll(
   RuntimeLog.layer,
   NodeServices.layer,
   versions
-).pipe(
-  Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
-);
+)
+  .pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+  )
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 it.layer(services)("declared Postgres over the runtime wire", (it) => {
   it.effect(

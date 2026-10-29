@@ -19,6 +19,7 @@ import {
   type Wakes
 } from "@patchy/runtime";
 import * as Config from "effect/Config";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -35,6 +36,7 @@ export type StartupError =
 
 type Dependencies =
   | Scope.Scope
+  | Crypto.Crypto
   | HttpClient.HttpClient
   | RuntimeLog.RuntimeLog
   | ServerBundles.ServerBundles
@@ -109,6 +111,7 @@ export const layer = (
 ): Layer.Layer<
   Invocation.Invocation,
   StartupError,
+  | Crypto.Crypto
   | CompanyDatabases.CompanyDatabases
   | Inventory.Inventory
   | Wakes.Wakes

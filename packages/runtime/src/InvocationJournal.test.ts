@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -64,7 +65,9 @@ const services = Layer.mergeAll(
   OperatingLimits.layer,
   Limits.layer,
   InvocationCapabilities.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+)
+  .pipe(Layer.provideMerge(Testing.layer()))
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
     Effect.provideService(MutationTransaction.MutationTransaction, mutations),

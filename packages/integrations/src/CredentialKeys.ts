@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- AES-256-GCM encryption has no Effect equivalent.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { Integration } from "@patchy/api";
 import * as Config from "effect/Config";

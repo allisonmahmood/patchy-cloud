@@ -1,4 +1,5 @@
 // First: the harness keeps Node's own fetch before the pages' offline Clerk fixture replaces it.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Live from "./pidgeonHarness.js";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -307,7 +308,9 @@ const page = Layer.mergeAll(
       revision: 1
     }
   }))
-).pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept));
+)
+  .pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept))
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test mode", () => {
   it.layer(page, { timeout: "300 seconds", excludeTestServices: true })(

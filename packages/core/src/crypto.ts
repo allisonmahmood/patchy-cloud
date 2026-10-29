@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- synchronous hashes and tokens for callers outside Effect, the CLI included; Effect Crypto returns Effects.
 import { createHash, randomBytes } from "node:crypto";
 
 export function sha256(value: string): string {
