@@ -52,6 +52,28 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 24,
+    date: "2026-10-29",
+    through: "9ee90e3a5d5aaa286fda468c550d1e6f154e1875",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Company data goes through a patch's own rules",
+        detail:
+          "A patch that reads a company connection such as Postgres, PostHog, Pidgeon or Attio, another patch's shared data, or the member directory now does it from its server code, where the patch's rules hold and nobody viewing it can go around them. A patch that runs only in the browser reaches its own tables and files. One that already read any of these stops getting that data until it moves to server code, and Patchy tells your agent what to change.",
+        prs: [1047]
+      },
+      {
+        kind: "Fixed",
+        title: "Plain pages no longer say they could not start",
+        detail:
+          "A page that doesn't use Patchy's code, such as hand-written HTML in a patch repo, was covered by \"This patch could not start\" after ten seconds. It now just shows.",
+        prs: [1044]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 23,
     date: "2026-10-29",
     through: "ed80fc7df41fb4f8c93120caa59d41ee0dd6d48a",
