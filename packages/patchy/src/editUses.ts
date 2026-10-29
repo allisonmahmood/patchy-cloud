@@ -151,8 +151,6 @@ export function editUses(source: string, change: UsesChange): string {
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const lineStart = (offset: number) =>
     Math.max(...["\n", "\r"].map((terminator) => source.lastIndexOf(terminator, offset - 1))) + 1;
-  /** The rest of the line from `offset`, up to its line break. */
-  const restOfLine = (offset: number) => source.slice(offset).split(lineBreak)[0]!;
   /** Where the separator after `offset` ends, when one follows before `limit`, past comments. */
   const commaAfter = (offset: number, limit: number) => {
     const comma = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)*,/.exec(
@@ -160,7 +158,19 @@ export function editUses(source: string, change: UsesChange): string {
     );
     return comma ? offset + comma[0].length : undefined;
   };
-  const onlyComment = /^[ \t]*(?:\/\/.*|\/\*.*\*\/[ \t]*)?$/;
+  /**
+   * Where the line from `offset` ends when it holds at most one comment, which may run onto more
+   * lines: a comment there trails what precedes it. `undefined` when anything else follows.
+   */
+  const commentLineEnd = (offset: number) => {
+    const trailing = /^[ \t]*(?:\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)?[ \t]*/.exec(
+      source.slice(offset)
+    )![0];
+    const lineEnd = offset + trailing.length;
+    return lineEnd === source.length || lineBreak.test(source[lineEnd]!) ? lineEnd : undefined;
+  };
+  /** Horizontal whitespace just before `offset`. */
+  const spaceBefore = (offset: number) => /[ \t]*$/.exec(source.slice(0, offset))![0].length;
   if (change.kind === "remove") {
     const removed = matches[0]!;
     const index = entries.indexOf(removed);
@@ -170,27 +180,29 @@ export function editUses(source: string, change: UsesChange): string {
     const { start, end } = span(removed);
     const comma = commaAfter(end, next ? span(next).start : object.end - 1);
     const after = comma ?? end;
-    const separatorBefore = previous ? commaAfter(span(previous).end, start) : undefined;
-    // An entry on lines of its own goes with them, and with a comment ending its last line. The
-    // comments on other lines belong to the entries beside them and stay.
-    if (
-      source.slice(lineStart(start), start).trim() === "" &&
-      onlyComment.test(restOfLine(after))
-    ) {
-      const lineEnd = after + restOfLine(after).length;
+    // A last entry without its own trailing comma leaves the previous one's trailing; it goes
+    // too, so the object keeps its style.
+    const previousComma =
+      !next && previous && comma === undefined ? commaAfter(span(previous).end, start) : undefined;
+    const removing = (from: number, to: number) => {
+      const edited = replace(from, to, "");
+      if (previousComma !== undefined)
+        return edited.slice(0, previousComma - 1) + edited.slice(previousComma);
+      // An object left with nothing but whitespace closes up, as `patchy init` writes it.
+      const inner = edited.slice(object.start + 1, object.end - 1 - (to - from));
+      return previous || next || inner.trim() !== ""
+        ? edited
+        : replace(object.start, object.end, "{}");
+    };
+    // An entry on lines of its own goes with them, and with a comment trailing its last line.
+    // Comments anywhere else belong to the entries beside them and stay.
+    const lineEnd = commentLineEnd(after);
+    if (source.slice(lineStart(start), start).trim() === "" && lineEnd !== undefined) {
       const breakEnd = source.startsWith("\r\n", lineEnd) ? lineEnd + 2 : lineEnd + 1;
-      const edited = replace(lineStart(start), breakEnd, "");
-      // A last entry without its own trailing comma leaves the previous one's trailing; it goes,
-      // so the object keeps its style.
-      return !next && comma === undefined && separatorBefore !== undefined
-        ? edited.slice(0, separatorBefore - 1) + edited.slice(separatorBefore)
-        : edited;
+      return removing(lineStart(start), breakEnd);
     }
     if (next) return replace(start, after + /^[ \t]*/.exec(source.slice(after))![0].length, "");
-    if (separatorBefore !== undefined) return replace(separatorBefore - 1, end, "");
-    const edited = replace(start, after, "");
-    const inner = edited.slice(object.start + 1, object.end - 1 - (after - start));
-    return inner.trim() === "" ? replace(object.start, object.end, "{}") : edited;
+    return removing(start - spaceBefore(start), after);
   }
   /** Insert a property after the object's last one, in the object's own layout. */
   const insert = (object: ObjectExpression, text: string) => {
@@ -215,9 +227,8 @@ export function editUses(source: string, change: UsesChange): string {
       return replace(at, at, `${separator} ${text}${closing}`);
     // Indent like the line the last property starts on.
     const indent = /^[ \t]*/.exec(source.slice(lineStart(span(last).start)))![0];
-    // A comment that ends the last property's line stays on that line.
-    const rest = restOfLine(at);
-    const line = rest.trim() !== "" && onlyComment.test(rest) ? at + rest.length : at;
+    // A comment trailing the last property stays with it.
+    const line = commentLineEnd(at) ?? at;
     return (
       source.slice(0, after) +
       separator +

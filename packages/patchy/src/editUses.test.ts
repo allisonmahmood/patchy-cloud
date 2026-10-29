@@ -1,3 +1,4 @@
+import { parse } from "@babel/parser";
 import { expect, it } from "vitest";
 import { editUses, isUsesEditRefused, type UsesChange } from "./editUses.js";
 
@@ -39,6 +40,16 @@ const layouts: ReadonlyArray<readonly [string, string, string]> = [
     "a multi-line object without a trailing comma",
     "uses: {\n    people: members() /* Kept. */\n  }",
     `uses: {\n    people: members(), /* Kept. */\n    ${declaration}\n  }`
+  ],
+  [
+    "a multi-line object whose last entry's comment runs onto another line",
+    "uses: {\n    people: members() /* Kept,\n       twice. */\n  }",
+    `uses: {\n    people: members(), /* Kept,\n       twice. */\n    ${declaration}\n  }`
+  ],
+  [
+    "an empty object with an inline comment",
+    "uses: { /* Nothing yet. */ }",
+    `uses: { /* Nothing yet. */ ${declaration} }`
   ],
   [
     "an empty object that holds only comments",
@@ -83,9 +94,21 @@ it.each([
     "one above an entry with its own comment, leaving the comment",
     `uses: {\n    sales: { kind: "postgres", handle: "sales-db" },\n    // Keep member access: the approval screen reads it.\n    people: members()\n  }`,
     "uses: {\n    // Keep member access: the approval screen reads it.\n    people: members()\n  }"
+  ],
+  [
+    "the last, whose comment runs onto another line, leaving the previous one's comment",
+    `uses: {\n    people: members(), // Keep this note.\n    sales: { kind: "postgres", handle: "sales-db" } /* removed entry\n       ending note */\n  }`,
+    "uses: {\n    people: members() // Keep this note.\n  }"
+  ],
+  [
+    "the last of a one-line object, leaving a comment between entries",
+    `uses: { people: members(), /* Keep this note. */ sales: { kind: "postgres", handle: "sales-db" } }`,
+    "uses: { people: members() /* Keep this note. */ }"
   ]
 ])("removes %s with one separator", (_, before, after) => {
   expect(editUses(config(before), remove("sales"))).toBe(config(after));
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+  expect(editUses(crlf(config(before)), remove("sales"))).toBe(crlf(config(after)));
 });
 
 it.each([
@@ -117,3 +140,30 @@ it("follows a default export through a local, a satisfies and defineConfig's ali
     source.replace("uses: {}", `uses: { ${declaration} }`)
   );
 });
+
+// Each fixture comment names the entry it belongs to; removing an entry may take only its own.
+const entry = (alias: string) => `${alias}: { kind: "postgres", handle: "${alias}-db" }`;
+const commented = [
+  `uses: { ${entry("a")}, /* a b */ ${entry("b")}, /* b c */ ${entry("c")} }`,
+  `uses: { /* a */ ${entry("a")}, ${entry("b")} /* b */ }`,
+  `uses: {\n    ${entry("a")}, // a\n    ${entry("b")}, // b\n    ${entry("c")} // c\n  }`,
+  `uses: {\n    // a\n    ${entry("a")},\n    // b\n    ${entry("b")},\n  }`,
+  `uses: {\n    ${entry("a")} /* a\n       a */,\n    ${entry("b")} /* b\n       b */\n  }`,
+  `uses: {\n    ${entry("a")}, ${entry("b")}, // b\n    ${entry("c")}\n  }`
+];
+const comments = (source: string) =>
+  (parse(source, { sourceType: "module", plugins: ["typescript"] }).comments ?? []).map(
+    (comment) => comment.value
+  );
+
+it.each(commented.flatMap((layout) => [config(layout), config(layout).replaceAll("\n", "\r\n")]))(
+  "removing any entry keeps every other entry's comments and undoes an add: %j",
+  (source) => {
+    for (const alias of ["a", "b", "c"].filter((name) => source.includes(`${name}: {`))) {
+      const removed = editUses(source, remove(alias));
+      const lost = comments(source).filter((comment) => !comments(removed).includes(comment));
+      expect(lost.filter((comment) => !comment.split(/\s+/).includes(alias))).toEqual([]);
+      expect(editUses(editUses(removed, add("sales")), remove("sales"))).toBe(removed);
+    }
+  }
+);
