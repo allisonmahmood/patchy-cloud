@@ -1,3 +1,4 @@
+import { createCipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,29 @@ import { DEV_SEED, mintDevAgentConnection } from "./seed.js";
 // Agent connections run on the database's clock, so these tests move time by
 // moving the stored stamps back, never with TestClock.
 const CLAUDE = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+
+/**
+ * A retry copy as the release before Cryptography sealed it: AES-256-GCM under HKDF of the
+ * rotated refresh token, bound to the connection id, stored as base64 of nonce, tag and ciphertext.
+ */
+const legacyRetry = (
+  refreshToken: string,
+  connectionId: string,
+  tokens: { readonly accessToken: string; readonly refreshToken: string }
+) => {
+  const key = hkdfSync("sha256", refreshToken, "", "patchy agent connection retry", 32);
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", Buffer.from(key), nonce);
+  cipher.setAAD(Buffer.from(connectionId));
+  const sealed = Buffer.concat([
+    cipher.update(
+      JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken }),
+      "utf8"
+    ),
+    cipher.final()
+  ]);
+  return Buffer.concat([nonce, cipher.getAuthTag(), sealed]).toString("base64");
+};
 
 /** A fresh member of the dev company, so one test's endings never reach another's. */
 const person = (key: string) =>
@@ -208,6 +232,23 @@ it.layer(layer)("AgentConnections", (it) => {
       yield* ageRotation(second.refreshToken, 61);
       yield* AgentConnections.AgentConnections.use((connections) => connections.sweepRetries);
       assert.deepStrictEqual(yield* copies(), []);
+    })
+  );
+
+  it.effect("a retry copy sealed by the release before Cryptography still opens", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { connection, tokens: first } = yield* connect(yield* person("legacy-retry"));
+      const second = yield* refresh(first.refreshToken);
+      yield* sql`
+        UPDATE agent_connection_refresh_tokens
+        SET retry = ${legacyRetry(first.refreshToken, connection.id, second)}
+        WHERE token_hash = ${sha256(first.refreshToken)}`;
+      const retried = yield* refresh(first.refreshToken);
+      assert.deepStrictEqual(
+        { accessToken: retried.accessToken, refreshToken: retried.refreshToken },
+        { accessToken: second.accessToken, refreshToken: second.refreshToken }
+      );
     })
   );
 

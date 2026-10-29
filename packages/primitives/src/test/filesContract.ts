@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -642,6 +642,31 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   assert.deepStrictEqual((yield* fresh).bytes, new Uint8Array([2]));
 });
 
+/**
+ * A file handle as the release before Cryptography made it: an HMAC-SHA256 under the company's
+ * handle key of the call's binding and the object's locator, cut to 24 bytes, base64url.
+ */
+const legacyHandle = (
+  secret: string,
+  binding: { companyId: string; patchId: string; versionId: string },
+  userId: string,
+  locator: string
+) =>
+  `${locator}.${createHmac("sha256", Buffer.from(secret, "hex"))
+    .update(
+      JSON.stringify([
+        "patchy-file-handle-1",
+        binding.companyId,
+        userId,
+        binding.patchId,
+        binding.versionId,
+        locator
+      ])
+    )
+    .digest()
+    .subarray(0, 24)
+    .toString("base64url")}`;
+
 const handlesContract = Effect.fn("test.filesContract.handles")(function* (companyId: string) {
   const fixture = yield* setup(companyId, "filehandles", { ...manifest, tier: 2 });
   const identity = {
@@ -658,6 +683,17 @@ const handlesContract = Effect.fn("test.filesContract.handles")(function* (compa
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodePage));
   const handle = page.files[0]!.handle!;
   assert.strictEqual(handle.length, 57);
+  // Handles a page holds from before a deploy still redeem: the same key makes the same handle.
+  const keys = yield* fixture.databases.withCompany(companyId)(
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ secret: string }>`SELECT secret FROM patchy.file_handle_key`
+    )
+  );
+  assert.strictEqual(
+    handle,
+    legacyHandle(keys[0]!.secret, binding, identity.user.id, handle.slice(0, 24))
+  );
   const stat = yield* fixture.handlers["files.stat"]
     .run({ store: "docs", name })
     .pipe(Effect.provideService(Binding.Binding, binding), Effect.flatMap(decodeMetadata));
