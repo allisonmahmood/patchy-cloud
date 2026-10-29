@@ -38,10 +38,23 @@ export const typecheck = (files: Readonly<Record<string, string>>): readonly str
         files: Object.keys(files)
       })
     );
-    const { stdout, stderr } = spawnSync(process.execPath, [tsc, "-p", dir, "--pretty", "false"], {
+    const result = spawnSync(process.execPath, [tsc, "-p", dir, "--pretty", "false"], {
       encoding: "utf8"
     });
-    return `${stdout}${stderr}`.split("\n").filter((line) => line.trim() !== "");
+    if (result.error) throw result.error;
+    const lines = `${result.stdout}${result.stderr}`
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+    // Only a compiler that finished has a verdict: one killed, or failing without diagnostics,
+    // checked nothing.
+    if (
+      result.signal !== null ||
+      (result.status !== 0 && !lines.some((line) => /error TS\d+:/.test(line)))
+    )
+      throw new Error(
+        `tsc did not finish (${result.signal ?? `exit ${result.status}`}):\n${lines.join("\n")}`
+      );
+    return lines;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
