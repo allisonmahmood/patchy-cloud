@@ -17,13 +17,13 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { framedDocument } from "@patchy/core";
 import {
   FRONTEND_API_HOST,
   signedInCookies,
   signHandshake,
   signSession
 } from "@patchy/auth/testing";
+import { brokerSrc } from "@patchy/serving/shell";
 import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const publicBaseUrl = "https://patchy.example";
@@ -43,6 +43,9 @@ const attributes = (tag: string): Record<string, string> =>
         .replaceAll("&amp;", "&")
     ])
   );
+/** Every script a shell loads; a public page's shell loads only Patchy's broker. */
+const scriptSources = (page: string) =>
+  [...page.matchAll(/<script\b[^>]*>/g)].map(([tag]) => attributes(tag).src);
 
 it.effect("refuses startup without an explicit public base URL", () =>
   Effect.gen(function* () {
@@ -123,7 +126,8 @@ it.layer(
         assert.strictEqual(page.status, 200);
         const frame = (yield* page.text).match(/<iframe\b[^>]*>/)?.[0];
         assert.isDefined(frame, "the restored patch opens its document");
-        assert.strictEqual(attributes(frame!).srcdoc, framedDocument(document));
+        const content = yield* send(signedRequest(attributes(frame!)["data-content-src"]!, cookie));
+        assert.strictEqual(yield* content.text, document);
       }
     })
   );
@@ -281,7 +285,7 @@ it.layer(
         assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
         const content = yield* page.text;
         assert.include(content, "Booted");
-        assert.notInclude(content, "<script");
+        assert.deepStrictEqual(scriptSources(content), [brokerSrc]);
         assert.notInclude(page.headers["content-security-policy"]!, FRONTEND_API_HOST);
 
         const head = yield* send(HttpClientRequest.head(path));
@@ -416,7 +420,7 @@ it.layer(
         assert.strictEqual(page.headers["cache-control"], "private, no-store");
         const body = yield* page.text;
         assert.include(body, "Company secret");
-        assert.include(body, 'sandbox=""');
+        assert.include(body, 'sandbox="allow-scripts allow-modals"');
         assert.include(
           body,
           `https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js`
@@ -527,7 +531,7 @@ it.layer(
         assert.strictEqual(page.status, 200);
         assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
         assert.deepStrictEqual(Cookies.toSetCookieHeaders(page.cookies), []);
-        assert.notInclude(yield* page.text, "<script");
+        assert.deepStrictEqual(scriptSources(yield* page.text), [brokerSrc]);
         const companyPage = yield* send(
           signedRequest(new URL(privatePatch.address).pathname, cookie)
         );
@@ -733,7 +737,7 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
       assert.deepStrictEqual(yield* Queue.take(frames), {
         type: "served",
         versionId: created.versionId,
-        tier: 0
+        tier: 1
       });
       const shared = yield* send(
         HttpClientRequest.post(`/api/patches/${created.patchId}/share`).pipe(
@@ -766,7 +770,7 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
       assert.deepStrictEqual(yield* Queue.take(resumedFrames), {
         type: "served",
         versionId: created.versionId,
-        tier: 0
+        tier: 1
       });
       const retired = yield* send(
         HttpClientRequest.post(`/api/patches/${created.patchId}/retire`).pipe(

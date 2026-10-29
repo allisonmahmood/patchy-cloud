@@ -94,7 +94,7 @@ export const test = base.extend<object, { live: Live }>({
             manifest: {
               manifestVersion,
               release,
-              tier: 0,
+              tier: 1,
               tables: {},
               files: {},
               uses: {}

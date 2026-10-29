@@ -1444,7 +1444,7 @@ const init = Command.make(
       Argument.withDescription("Directory for the new repo; defaults to the current directory"),
       Argument.optional
     ),
-    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(
+    tier: Flag.Literals("tier", ["1", "2"]).pipe(
       Flag.withDescription("Runtime tier for the new repo; defaults to 1"),
       Flag.withDefault("1")
     ),
@@ -1463,14 +1463,14 @@ const init = Command.make(
           yield* Cwd,
           token,
           options.dir,
-          options.tier === "0" ? 0 : options.tier === "1" ? 1 : 2,
+          options.tier === "1" ? 1 : 2,
           options.purpose
         );
       })
     )
 ).pipe(
   Command.withDescription(
-    "Create a patch repo at tier 1 by default, tier 2 with server handlers, or tier 0 without scripts."
+    "Create a patch repo at tier 1 by default, or tier 2 with server handlers."
   )
 );
 

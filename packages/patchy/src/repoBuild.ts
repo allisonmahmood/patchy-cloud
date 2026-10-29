@@ -1,6 +1,5 @@
 import { Manifest } from "@patchy/api";
 import { workerdVersion } from "@patchy/api/guest";
-import { validateHtml } from "@patchy/core";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -141,6 +140,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
       }),
     catch: configFailure
   });
+  yield* refuseTierZero(configured.tier);
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
   const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
@@ -261,6 +261,18 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   return { manifest, html: built.html, server: built.server, warnings };
 });
 
+/**
+ * Tier 0 is folding into tier 1, so a repo still configured at tier 0 neither publishes nor runs
+ * under `patchy dev`; nothing this release sends is tier 0.
+ */
+export const refuseTierZero = Effect.fn("refuseTierZero")(function* (tier: number) {
+  if (tier === 0)
+    return yield* new LocalError({
+      message: "Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`.",
+      code: "tier_mismatch"
+    });
+});
+
 /** Publish and watched dev builds enforce the same artifact and tier contract. */
 export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
   cwd: string,
@@ -269,6 +281,7 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  yield* refuseTierZero(manifest.tier);
   yield* checkBundle(html, manifest.tier);
   if (manifest.tier > 2)
     return yield* new LocalError({ message: "Tier 3 is not served yet.", code: "tier_mismatch" });
@@ -288,14 +301,6 @@ export const validateRepoBundle = Effect.fn("validateRepoBundle")(function* (
     if (present && manifest.tier < 2)
       return yield* new LocalError({
         message: `${folder}/ requires tier 2. Change the tier and run \`patchy refresh\`, or remove ${folder}/.`,
-        code: "tier_mismatch"
-      });
-  }
-  if (manifest.tier === 0) {
-    const validation = validateHtml(html);
-    if (!validation.ok)
-      return yield* new LocalError({
-        message: `Tier 0 HTML failed the static-page policy. Browser code requires tier 1 in patchy.config.ts:\n- ${validation.errors.join("\n- ")}`,
         code: "tier_mismatch"
       });
   }

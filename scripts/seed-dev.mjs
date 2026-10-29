@@ -20,7 +20,7 @@ for (const fixture of fixtures) {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      manifest: { manifestVersion, release, tier: 0, tables: {}, files: {}, uses: {} },
+      manifest: { manifestVersion, release, tier: 1, tables: {}, files: {}, uses: {} },
       html: fixture.html,
       publishKey: randomUUID(),
       metadata: { filename: fixture.filename }

@@ -71,7 +71,7 @@ export const publishBody = (body: Record<string, unknown>) => ({
   manifest: {
     manifestVersion: MANIFEST_VERSION,
     release: CURRENT_RELEASE,
-    tier: 0,
+    tier: 1,
     tables: {},
     files: {},
     uses: {}

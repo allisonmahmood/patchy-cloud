@@ -168,14 +168,12 @@ On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
 config and its imports, or the named `patchy.json.description` field. On a build failure, fix the repo rather than publishing
 `dist/index.html` as a single file.
 `too_large` means reduce the largest contributors reported: the local HTML cap
-is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. `tier_mismatch` means the
-code does not fit the tier: browser code needs at least tier 1 and `server/`
-needs tier 2.
+is 10 MiB. `tier_mismatch` means the code does not fit the tier: `server/` needs
+tier 2, and a repo still at tier 0 must set `tier: 1` in `patchy.config.ts` and run
+`pnpm patchy refresh`.
 Bundle inspection requires embedded resources and inline scripts/styles;
-CSS `@import` is unsupported. It is a resource-completeness check, while core's
-safe-HTML policy owns tier 0 safety. Fragment, relative and external anchors
-have identical bundle acceptance across supported tiers; the runtime sandbox governs
-navigation.
+CSS `@import` is unsupported. It is a resource-completeness check. Fragment,
+relative and external anchors are accepted; the runtime sandbox governs navigation.
 
 Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
 `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed
@@ -421,7 +419,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   A `release_mismatch` names both releases and the instance's install line:
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 1 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables and stores; only tier 2 declares shared tables,
+  tiers 1 and 2 with tables and stores; only tier 2 declares shared tables,
   shared stores, members and Postgres, PostHog, Pidgeon and Attio connections.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
   fleet in production and the local executor in dev and tests. Tier 2 is company-only.
