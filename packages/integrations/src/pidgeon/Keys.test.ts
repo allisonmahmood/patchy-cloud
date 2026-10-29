@@ -39,9 +39,12 @@ type Step =
 /** The production source over `steps`, answered in order; "lost" never answers. */
 const scripted = (steps: Array<Step>) => {
   const sent: string[] = [];
+  /** Each request's Idempotency-Key, beside `sent`. */
+  const keys: Array<string | undefined> = [];
   const http = HttpClient.make((request, url) =>
     Effect.gen(function* () {
       sent.push(`${request.method} ${url.pathname.replace(/^\/api\/v1/, "")}`);
+      keys.push(request.headers["idempotency-key"]);
       const step = steps.shift() ?? { status: 500, body: {} };
       if (step === "lost")
         return yield* new HttpClientError.HttpClientError({
@@ -55,6 +58,7 @@ const scripted = (steps: Array<Step>) => {
   );
   return {
     sent,
+    keys,
     layer: Layer.effect(Source.Source, Source.make).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, http))
     )
@@ -76,7 +80,7 @@ it.effect(
   "names a key it may have minted when the ask again is refused, keeping when to retry",
   () =>
     Effect.gen(function* () {
-      const { sent, layer } = scripted([
+      const { sent, keys, layer } = scripted([
         { status: 200, body: me },
         { status: 200, body: identity },
         "lost",
@@ -92,7 +96,43 @@ it.effect(
       assert.include(error.message, "named Patchy support attempt00001");
       assert.include(error.message, "Try again in 30 seconds.");
       assert.deepStrictEqual(sent.slice(2), ["POST /api-keys", "POST /api-keys"]);
+      // The ask again repeats the lost one under its key, so Pidgeon mints at most once.
+      assert.match(
+        keys[2]!,
+        /^patchy-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      );
+      assert.strictEqual(keys[3], keys[2]);
     }).pipe(Effect.provide(NodeCryptography.layer))
+);
+
+it.effect("creates an address under the key earlier releases gave the same attempt", () =>
+  Effect.gen(function* () {
+    const { sent, keys, layer } = scripted([
+      { status: 200, body: me },
+      { status: 400, body: { error: { code: "invalid", message: "Not that one." } } }
+    ]);
+    yield* Keys.provision({
+      request: {
+        adminKey: "pgn_test_scriptedAdminKey0001",
+        attempt: "attempt00001",
+        access: "send",
+        address: {
+          create: {
+            localPart: "support",
+            domain: "acme.example",
+            displayName: "Support",
+            sendPolicy: "reply_only"
+          }
+        }
+      },
+      handle: "support",
+      scope: "company"
+    }).pipe(Effect.provide(layer), Effect.flip);
+    assert.deepStrictEqual(sent, ["GET /me", "POST /identities"]);
+    // SHA-256 of ["company", "attempt00001", body], as the release before Cryptography sent it:
+    // a connect retried across a deploy still makes no second address.
+    assert.strictEqual(keys[1], "83c73ab09ef5243cc294dde94e2c40a3c68ca22dc3891aedf6ce3f6e5d110e81");
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("refuses an admin key that doesn't reach the whole account, or isn't admin", () =>
