@@ -970,7 +970,10 @@ The default command is `node dist/start.js`, as user `node`; exec tasks override
 it with `node dist/exec.js`. Only the supervisor runs as root, retaining the
 capabilities needed to chown temporary files, switch child uid/gid, sample and
 kill children. Workerd children have distinct unprivileged uids and empty
-environments. Neither image assembly nor CI publishes or deploys to production.
+environments. The execution package's build bundles their loader worker into
+`dist/loader.js`, so the image carries no bundler and a task's first process
+starts as fast as any other. Neither image assembly nor CI publishes or deploys
+to production.
 Exec task definitions must declare a root supervisor user explicitly, such as
 `user: "0"`. The ECS provider rejects a missing user or a non-root user rather
 than relying on the image's default user.

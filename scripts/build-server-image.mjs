@@ -145,11 +145,16 @@ async function stageRuntime(destination) {
     await access(path.join(app, file));
   const executionRoot = path.join(app, "node_modules/@patchy/execution");
   const execution = createRequire(await realpath(path.join(executionRoot, "package.json")));
-  await access(path.join(executionRoot, "dist/loader.js"));
+  // Supervisors read the loader worker as built; the image carries no bundler to make one.
+  const lexer = await import(
+    createRequire(path.join(root, "packages/execution/package.json")).resolve("es-module-lexer")
+  );
+  await lexer.init;
+  const [imports] = lexer.parse(await readFile(path.join(executionRoot, "dist/loader.js"), "utf8"));
+  if (imports.some(({ specifier }) => specifier !== "cloudflare:workers"))
+    throw new Error("The execution loader in dist/loader.js is not bundled.");
   const workerd = createRequire(execution.resolve("workerd/package.json"));
   await access(workerd.resolve("@cloudflare/workerd-linux-64/bin/workerd"));
-  const esbuild = createRequire(execution.resolve("esbuild/package.json"));
-  await access(esbuild.resolve("@esbuild/linux-x64/bin/esbuild"));
   const sdkRoot = path.join(app, "node_modules/@patchy/sdk");
   const release = JSON.parse(await readFile(path.join(sdkRoot, "artifacts/release.json"), "utf8"));
   const sdkArchive = await readFile(

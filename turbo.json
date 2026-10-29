@@ -17,6 +17,11 @@
       ],
       "outputs": ["dist/**", "artifacts/**", "skills/**", "LICENSE"]
     },
+    "@patchy/execution#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/build-execution-loader.mjs"],
+      "outputs": ["dist/**"]
+    },
     "@patchy/sdk#build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/copy-sdk-artifact.mjs"],
