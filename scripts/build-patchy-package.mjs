@@ -161,7 +161,6 @@ const common = {
   sourcemap: true,
   tsconfig: path.join(packageDir, "tsconfig.json"),
   conditions: ["development"],
-  define: { __PATCHY_PACKED_LOADER__: "true" },
   // Its WASM/data and worker-relative imports must remain a real package. npm packs it with Patchy.
   external: ["@electric-sql/pglite", "@electric-sql/pglite/*", "esbuild"],
   // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.

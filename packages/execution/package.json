@@ -66,7 +66,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "effect-tsgo tsc -p tsconfig.json",
+    "build": "effect-tsgo tsc -p tsconfig.json && node ../../scripts/build-execution-loader.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -79,12 +79,12 @@
     "@patchy/runtime": "workspace:*",
     "@patchy/sql": "workspace:*",
     "effect": "catalog:",
-    "es-module-lexer": "3.0.4",
-    "esbuild": "0.28.2",
     "workerd": "1.20260924.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "es-module-lexer": "3.0.4",
+    "esbuild": "0.28.2",
     "vitest": "^5.0.5"
   }
 }
