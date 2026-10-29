@@ -13,7 +13,7 @@ const config = (uses: string) =>
   `export default defineConfig({\n  name: "notes",\n  tier: 1,\n  ${uses}\n});\n`;
 const declaration = '"sales": { kind: "postgres", handle: "sales-db" }';
 
-it.each([
+const layouts: ReadonlyArray<readonly [string, string, string]> = [
   ["an empty object", "uses: {}", `uses: { ${declaration} }`],
   [
     "a one-line object",
@@ -39,9 +39,25 @@ it.each([
     "a multi-line object without a trailing comma",
     "uses: {\n    people: members() /* Kept. */\n  }",
     `uses: {\n    people: members(), /* Kept. */\n    ${declaration}\n  }`
+  ],
+  [
+    "an empty object that holds only comments",
+    "uses: {\n    // Nothing yet.\n  }",
+    `uses: {\n    // Nothing yet.\n    ${declaration}\n  }`
   ]
-])("adds a declaration to %s", (_, before, after) => {
+];
+
+it.each(layouts)("adds a declaration to %s", (_, before, after) => {
   expect(editUses(config(before), add("sales"))).toBe(config(after));
+});
+
+it.each(
+  layouts.flatMap(([name, before]) => [
+    [`${name}, LF`, config(before)],
+    [`${name}, CRLF`, config(before).replaceAll("\n", "\r\n")]
+  ])
+)("removes what it added to %s, byte for byte", (_, source) => {
+  expect(editUses(editUses(source, add("sales")), remove("sales"))).toBe(source);
 });
 
 it("adds uses to a config without one, in the config's layout and line endings", () => {
@@ -62,7 +78,12 @@ it.each([
     `uses: {\n    people: members(),\n    sales: { kind: "postgres", handle: "sales-db" },\n  }`,
     "uses: {\n    people: members(),\n  }"
   ],
-  ["the only one", `uses: { sales: { kind: "postgres", handle: "sales-db" } }`, "uses: {}"]
+  ["the only one", `uses: { sales: { kind: "postgres", handle: "sales-db" } }`, "uses: {}"],
+  [
+    "one above an entry with its own comment, leaving the comment",
+    `uses: {\n    sales: { kind: "postgres", handle: "sales-db" },\n    // Keep member access: the approval screen reads it.\n    people: members()\n  }`,
+    "uses: {\n    // Keep member access: the approval screen reads it.\n    people: members()\n  }"
+  ]
 ])("removes %s with one separator", (_, before, after) => {
   expect(editUses(config(before), remove("sales"))).toBe(config(after));
 });

@@ -148,41 +148,76 @@ export function editUses(source: string, change: UsesChange): string {
 
   const replace = (start: number, end: number, text: string) =>
     source.slice(0, start) + text + source.slice(end);
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const lineStart = (offset: number) =>
+    Math.max(...["\n", "\r"].map((terminator) => source.lastIndexOf(terminator, offset - 1))) + 1;
+  /** The rest of the line from `offset`, up to its line break. */
+  const restOfLine = (offset: number) => source.slice(offset).split(lineBreak)[0]!;
+  /** Where the separator after `offset` ends, when one follows before `limit`, past comments. */
+  const commaAfter = (offset: number, limit: number) => {
+    const comma = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)*,/.exec(
+      source.slice(offset, limit)
+    );
+    return comma ? offset + comma[0].length : undefined;
+  };
+  const onlyComment = /^[ \t]*(?:\/\/.*|\/\*.*\*\/[ \t]*)?$/;
   if (change.kind === "remove") {
     const removed = matches[0]!;
     const index = entries.indexOf(removed);
     const previous = entries[index - 1];
     const next = entries[index + 1];
-    // Take one separator with the entry: up to the next entry, else back to the previous one.
-    if (next) return replace(span(removed).start, span(next).start, "");
-    if (previous) return replace(span(previous).end, span(removed).end, "");
-    return replace(span(uses!).start, span(uses!).end, "{}");
+    const object = span(uses!);
+    const { start, end } = span(removed);
+    const comma = commaAfter(end, next ? span(next).start : object.end - 1);
+    const after = comma ?? end;
+    const separatorBefore = previous ? commaAfter(span(previous).end, start) : undefined;
+    // An entry on lines of its own goes with them, and with a comment ending its last line. The
+    // comments on other lines belong to the entries beside them and stay.
+    if (
+      source.slice(lineStart(start), start).trim() === "" &&
+      onlyComment.test(restOfLine(after))
+    ) {
+      const lineEnd = after + restOfLine(after).length;
+      const breakEnd = source.startsWith("\r\n", lineEnd) ? lineEnd + 2 : lineEnd + 1;
+      const edited = replace(lineStart(start), breakEnd, "");
+      // A last entry without its own trailing comma leaves the previous one's trailing; it goes,
+      // so the object keeps its style.
+      return !next && comma === undefined && separatorBefore !== undefined
+        ? edited.slice(0, separatorBefore - 1) + edited.slice(separatorBefore)
+        : edited;
+    }
+    if (next) return replace(start, after + /^[ \t]*/.exec(source.slice(after))![0].length, "");
+    if (separatorBefore !== undefined) return replace(separatorBefore - 1, end, "");
+    const edited = replace(start, after, "");
+    const inner = edited.slice(object.start + 1, object.end - 1 - (after - start));
+    return inner.trim() === "" ? replace(object.start, object.end, "{}") : edited;
   }
   /** Insert a property after the object's last one, in the object's own layout. */
   const insert = (object: ObjectExpression, text: string) => {
     const { start, end } = span(object);
     const first = object.properties[0];
     const last = object.properties.at(-1);
-    if (!first || !last) return replace(start, end, `{ ${text} }`);
+    if (!first || !last) {
+      const inner = source.slice(start + 1, end - 1).trimEnd();
+      if (inner.trim() === "") return replace(start, end, `{ ${text} }`);
+      // An empty object's comments stay; the entry follows them, indented like the last.
+      const at = start + 1 + inner.length;
+      if (!lineBreak.test(inner)) return replace(at, at, ` ${text}`);
+      const indent = /^[ \t]*/.exec(inner.split(lineBreak).at(-1)!)![0];
+      return replace(at, at, `${newline}${indent}${text}`);
+    }
     const after = span(last).end;
     // The separator may sit behind comments that belong to the last property.
-    const comma = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)*,/.exec(
-      source.slice(after, end - 1)
-    );
-    const at = comma ? after + comma[0].length : after;
+    const comma = commaAfter(after, end - 1);
+    const at = comma ?? after;
     const [separator, closing] = comma ? ["", ","] : [",", ""];
     if (!lineBreak.test(source.slice(start, span(first).start)))
       return replace(at, at, `${separator} ${text}${closing}`);
     // Indent like the line the last property starts on.
-    const lineStart =
-      Math.max(
-        ...["\n", "\r"].map((terminator) => source.lastIndexOf(terminator, span(last).start))
-      ) + 1;
-    const indent = /^[ \t]*/.exec(source.slice(lineStart))![0];
-    const newline = source.includes("\r\n") ? "\r\n" : "\n";
+    const indent = /^[ \t]*/.exec(source.slice(lineStart(span(last).start)))![0];
     // A comment that ends the last property's line stays on that line.
-    const rest = source.slice(at).split(lineBreak)[0]!;
-    const line = /^[ \t]*(?:\/\/.*|\/\*.*\*\/[ \t]*)$/.test(rest) ? at + rest.length : at;
+    const rest = restOfLine(at);
+    const line = rest.trim() !== "" && onlyComment.test(rest) ? at + rest.length : at;
     return (
       source.slice(0, after) +
       separator +
