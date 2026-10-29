@@ -1,6 +1,7 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import { protocol, type PGliteInterface } from "@electric-sql/pglite";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
   options: Options,
   dispose: () => Effect.Effect<void>
 ) {
+  const crypto = yield* Crypto.Crypto;
   const changes = yield* ResourceChanges.ResourceChanges;
   const timed = yield* ConnectionTiming.make(PgliteClient.makeCompiler());
   const sql = timed.sql;
@@ -104,6 +106,7 @@ export const make = Effect.fn("PgliteCompanyDatabases.make")(function* (
       .withTransaction(
         Effect.gen(function* () {
           yield* Inventory.initialize.pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
             Effect.mapError(
               (cause) =>
                 new CompanyDatabases.CompanyDatabaseError({

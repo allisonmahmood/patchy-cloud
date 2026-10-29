@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- synchronous ids for callers outside Effect, the CLI included; Effect Crypto returns Effects.
 import { randomInt } from "node:crypto";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";

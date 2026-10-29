@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import type { GuestProtocol, RuntimeStreamFrame } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -38,9 +39,9 @@ const viewer = {
   admin: true
 };
 
-const services = Layer.mergeAll(InvocationLog.layer, OperatingLimits.layer, Limits.layer).pipe(
-  Layer.provideMerge(Testing.layer())
-);
+const services = Layer.mergeAll(InvocationLog.layer, OperatingLimits.layer, Limits.layer)
+  .pipe(Layer.provideMerge(Testing.layer()))
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 const fixture = Effect.gen(function* () {
   const scope = yield* Scope.fork(yield* Scope.Scope);

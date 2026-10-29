@@ -191,12 +191,13 @@ const tier1 = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  NodeServices.layer,
   versions
-).pipe(
-  Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
-);
+)
+  .pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+  )
+  .pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(tier1)("PostHog in a tier 1 page", (it) => {
   it.effect(

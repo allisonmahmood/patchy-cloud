@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -212,35 +213,34 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
   );
 });
 
-it.layer(Layer.mergeAll(NodeFileSystem.layer, TestWakes.layer, TestMemberDirectory.layer))(
-  "TableOperations / PGlite",
-  (it) => {
-    it.effect(
-      "runs the same operations, cursors and bounds over the dev database",
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-table-operations-" });
-          const local = Tables.layer.pipe(
-            Layer.provideMerge(
-              Layer.mergeAll(
-                Inventory.layer,
-                PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }),
-                versions
-              )
+it.layer(
+  Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer, TestWakes.layer, TestMemberDirectory.layer)
+)("TableOperations / PGlite", (it) => {
+  it.effect(
+    "runs the same operations, cursors and bounds over the dev database",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-table-operations-" });
+        const local = Tables.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Inventory.layer,
+              PgliteCompanyDatabases.layer({ companyId: "local-company", dataDir }),
+              versions
             )
-          );
-          yield* Effect.gen(function* () {
-            yield* operationsContract("local-company");
-            yield* memberAssignmentsContract("local-company");
-            yield* revisionsContract("local-company");
-            yield* sharedOperationsContract("local-company");
-            yield* boundsContract("local-company");
-            yield* expandedResultsContract("local-company");
-            yield* indexKeyContract("local-company");
-          }).pipe(Effect.provide(local));
-        }).pipe(Effect.scoped),
-      60_000
-    );
-  }
-);
+          )
+        );
+        yield* Effect.gen(function* () {
+          yield* operationsContract("local-company");
+          yield* memberAssignmentsContract("local-company");
+          yield* revisionsContract("local-company");
+          yield* sharedOperationsContract("local-company");
+          yield* boundsContract("local-company");
+          yield* expandedResultsContract("local-company");
+          yield* indexKeyContract("local-company");
+        }).pipe(Effect.provide(local));
+      }).pipe(Effect.scoped),
+    60_000
+  );
+});

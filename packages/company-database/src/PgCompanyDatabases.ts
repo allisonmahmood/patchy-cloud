@@ -3,6 +3,7 @@ import type * as PgConnection from "@effect/sql-pg/PgConnection";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -155,6 +156,7 @@ export const placementLayer = Layer.fresh(OperatingLimits.layer).pipe(
 );
 
 export const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const changes = yield* ResourceChanges.ResourceChanges;
   const platform = yield* PlacementClient;
   const limits = yield* OperatingLimits.OperatingLimits;
@@ -256,6 +258,7 @@ export const make = Effect.gen(function* () {
               );
               yield* Inventory.initialize.pipe(
                 Effect.provideService(SqlClient.SqlClient, data),
+                Effect.provideService(Crypto.Crypto, crypto),
                 Effect.mapError(
                   (cause) =>
                     new CompanyDatabases.CompanyDatabaseError({

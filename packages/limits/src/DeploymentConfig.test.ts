@@ -1,8 +1,13 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as DeploymentConfig from "./DeploymentConfig.js";
 import { registry } from "./registry.js";
+
+// The revision is the SHA-256 of the effective values, computed with the host's Crypto.
+const revisionOf = (deployment: Effect.Success<typeof DeploymentConfig.load>) =>
+  deployment.revision.pipe(Effect.provide(NodeCrypto.layer));
 
 const load = (values: Readonly<Record<string, unknown>> = {}) =>
   DeploymentConfig.load.pipe(
@@ -47,12 +52,12 @@ it.effect(
         defaults.get("company.connections"),
         registry["company.connections"].default
       );
-      assert.strictEqual(explicitDefaults.revision, defaults.revision);
+      assert.strictEqual(yield* revisionOf(explicitDefaults), yield* revisionOf(defaults));
       const first = yield* load({ "company.connections": 8, "execution.pool.spares": 3 });
       const reordered = yield* load({ "execution.pool.spares": 3, "company.connections": 8 });
-      assert.strictEqual(reordered.revision, first.revision);
+      assert.strictEqual(yield* revisionOf(reordered), yield* revisionOf(first));
       const changed = yield* load({ "execution.pool.spares": 3, "company.connections": 9 });
-      assert.notStrictEqual(changed.revision, first.revision);
+      assert.notStrictEqual(yield* revisionOf(changed), yield* revisionOf(first));
     })
 );
 
@@ -68,10 +73,10 @@ it.effect(
         definition.default = originalDefault + 1;
         const after = yield* load();
         assert.strictEqual(after.get("company.connections"), originalDefault + 1);
-        assert.notStrictEqual(after.revision, before.revision);
+        assert.notStrictEqual(yield* revisionOf(after), yield* revisionOf(before));
         assert.strictEqual(before.get("company.connections"), originalDefault);
         const overriddenAfter = yield* load({ "company.connections": 8 });
-        assert.strictEqual(overriddenAfter.revision, overriddenBefore.revision);
+        assert.strictEqual(yield* revisionOf(overriddenAfter), yield* revisionOf(overriddenBefore));
       } finally {
         definition.default = originalDefault;
       }
@@ -91,7 +96,7 @@ it.effect(
         const originalDefault = mutable.default;
         try {
           mutable.default = originalDefault + 1;
-          assert.strictEqual((yield* load()).revision, before.revision);
+          assert.strictEqual(yield* revisionOf(yield* load()), yield* revisionOf(before));
         } finally {
           mutable.default = originalDefault;
         }
@@ -106,7 +111,7 @@ it.effect(
           )
         )
       );
-      assert.strictEqual(namedSettings.revision, before.revision);
+      assert.strictEqual(yield* revisionOf(namedSettings), yield* revisionOf(before));
     })
 );
 

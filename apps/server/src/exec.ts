@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Management from "@patchy/execution/management";
 import * as Supervisor from "@patchy/execution/supervisor";
@@ -25,7 +26,7 @@ NodeRuntime.runMain(
       callbackUrls,
       deploymentRevision,
       taskId,
-      configRevision: { deploymentRevision: limits.revision, overrideRevision: "0" },
+      configRevision: { deploymentRevision: yield* limits.revision, overrideRevision: "0" },
       operatingLimits: {
         "execution.probe.interval": limits.get("execution.probe.interval"),
         "execution.process.rss": limits.get("execution.process.rss"),
@@ -41,5 +42,5 @@ NodeRuntime.runMain(
     }).pipe(Effect.provideService(Supervisor.Supervisor, supervisor));
     yield* Console.log(`Patchy execution supervisor listening on ${listener.url}`);
     return yield* Effect.never;
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
+  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCrypto.layer]))
 );

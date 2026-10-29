@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -14,7 +15,7 @@ import * as PgliteCompanyDatabases from "./PgliteCompanyDatabases.js";
 import { inventoryContract } from "./test/inventoryContract.js";
 import * as Testing from "./testing.js";
 
-it.layer(Layer.merge(NodeFileSystem.layer, Testing.resourceChangesLayer))(
+it.layer(Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer, Testing.resourceChangesLayer))(
   "PgliteCompanyDatabases",
   (it) => {
     it.effect(

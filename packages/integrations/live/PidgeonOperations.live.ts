@@ -298,7 +298,6 @@ const page = Layer.mergeAll(
   WideEvents.layerNoop,
   Limits.layer,
   OperatingLimits.layer,
-  NodeServices.layer,
   RuntimeTest.versions(patchId, versionId, () => ({
     support: {
       kind: "pidgeon",
@@ -307,7 +306,9 @@ const page = Layer.mergeAll(
       revision: 1
     }
   }))
-).pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept));
+)
+  .pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept))
+  .pipe(Layer.provideMerge(NodeServices.layer));
 
 describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test mode", () => {
   it.layer(page, { timeout: "300 seconds", excludeTestServices: true })(

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- index names derive synchronously from table definitions; Effect Crypto returns Effects.
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";

@@ -6,6 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { inject } from "vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -52,7 +53,7 @@ export const server = (
         )
       );
     })
-  ).pipe(Layer.provide(NodeFileSystem.layer));
+  ).pipe(Layer.provide([NodeFileSystem.layer, NodeCrypto.layer]));
 
 /** One request to the server, as the socket sees it. */
 export const send = (request: HttpClientRequest.HttpClientRequest) =>

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -41,7 +42,7 @@ const local = Layer.merge(
       );
     })
   ).pipe(Layer.provide(NodeFileSystem.layer))
-);
+).pipe(Layer.provideMerge(NodeCrypto.layer));
 
 /** A backend with test wakes and a version lookup that finds nothing. */
 const withRuntime = <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>

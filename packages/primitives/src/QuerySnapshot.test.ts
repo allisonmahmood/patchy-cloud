@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { runtimeOperations, sharedStoreId, sharedTableId, TablePage } from "@patchy/api";
@@ -493,14 +494,16 @@ const local = Layer.unwrap(
       )
     );
   })
-).pipe(
-  Layer.provideMerge(TestWakes.layer),
-  Layer.provideMerge(TestMemberDirectory.layer),
-  Layer.provide(NodeFileSystem.layer),
-  Layer.provideMerge(
-    Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+)
+  .pipe(
+    Layer.provideMerge(TestWakes.layer),
+    Layer.provideMerge(TestMemberDirectory.layer),
+    Layer.provide(NodeFileSystem.layer),
+    Layer.provideMerge(
+      Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    )
   )
-);
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 
 it.layer(local)("Invocation query snapshots / PGlite", (it) => {
   it.effect("reads own and shared fixtures through the single retained connection", () =>

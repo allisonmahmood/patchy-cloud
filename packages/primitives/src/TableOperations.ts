@@ -1,7 +1,6 @@
-import { randomBytes } from "node:crypto";
 import { Buffer } from "node:buffer";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -245,14 +244,6 @@ const validateRow = Effect.fn("TableOperations.validateRow")(function* (
       }
     }
 });
-const newId = Effect.map(Clock.currentTimeMillis, (milliseconds) => {
-  const bytes = randomBytes(16);
-  bytes.writeUIntBE(milliseconds, 0, 6);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-});
 const resource: Runtime.Handler["resource"] = (args) =>
   typeof args === "object" && args !== null && "table" in args && isDefinitionName(args.table)
     ? args.table
@@ -368,6 +359,9 @@ export const makeAccess = Effect.gen(function* () {
 });
 
 export const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  // Row ids are UUIDv7: time-ordered on the Effect clock, so inserts stay index-friendly.
+  const newId = crypto.randomUUIDv7().pipe(Effect.orDie);
   const { withTable, withSharedTable } = yield* makeAccess;
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;

@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off globalDateInEffect:off -- SDK fixtures carry Date timestamps derived from TestClock.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import type { Task, TaskDefinition } from "@aws-sdk/client-ecs";
 import { assert, it } from "@effect/vitest";
 import * as WideEvents from "@patchy/analytics/wide-events";
@@ -827,10 +828,9 @@ it.effect("never keeps or re-sends a request whose reply was lost or malformed",
   })
 );
 
-const services = OperatingLimits.layer.pipe(
-  Layer.provideMerge(Testing.layer()),
-  Layer.merge(WideEvents.layerNoop)
-);
+const services = OperatingLimits.layer
+  .pipe(Layer.provideMerge(Testing.layer()), Layer.merge(WideEvents.layerNoop))
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 const setupFleet = Effect.fn("EcsFleetTest.setup")(function* () {
   yield* TestClock.setTime(1_000_000);
   const sql = yield* SqlClient.SqlClient;

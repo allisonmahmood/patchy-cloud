@@ -125,6 +125,7 @@ export const make = Effect.gen(function* () {
         )
     })
   );
+  const deploymentRevision = yield* deployment.revision;
   const readState = SqlSchema.findOneOption({
     Request: ReadRequest,
     Result: State,
@@ -184,7 +185,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
     if (Option.isNone(state)) return yield* new CompanyNotFound({ companyId: input.companyId });
     const configRevision = new ConfigRevision({
-      deploymentRevision: deployment.revision,
+      deploymentRevision,
       overrideRevision: state.value.overrideRevision
     });
     const { overrides } = state.value;
@@ -245,7 +246,7 @@ export const make = Effect.gen(function* () {
         old_value, new_value, old_override, new_override, actor, changed_at
       ) VALUES (
         ${input.companyId}, ${limitId}, ${revision},
-        ${deployment.revision}, ${previous.value}, ${value}, ${previous.overrideValue},
+        ${deploymentRevision}, ${previous.value}, ${value}, ${previous.overrideValue},
         ${validated.value}, ${validated.actor}, to_timestamp(${now / 1_000})
       )`;
     return new EffectiveLimit({
@@ -254,7 +255,7 @@ export const make = Effect.gen(function* () {
       value,
       overrideValue: validated.value,
       configRevision: new ConfigRevision({
-        deploymentRevision: deployment.revision,
+        deploymentRevision,
         overrideRevision: revision
       })
     });

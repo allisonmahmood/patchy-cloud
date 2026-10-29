@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -10,18 +11,20 @@ import * as DeploymentConfig from "./DeploymentConfig.js";
 import * as OperatingLimits from "./OperatingLimits.js";
 import { registry } from "./registry.js";
 
-const services = OperatingLimits.layer.pipe(
-  Layer.provide(
-    ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        PATCHY_LIMITS_JSON: JSON.stringify({ "company.connections": 6 }),
-        PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "999",
-        PATCHY_COMPANY_DB_MAX_BACKENDS: "999"
-      })
-    )
-  ),
-  Layer.provideMerge(Testing.layer())
-);
+const services = OperatingLimits.layer
+  .pipe(
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          PATCHY_LIMITS_JSON: JSON.stringify({ "company.connections": 6 }),
+          PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE: "999",
+          PATCHY_COMPANY_DB_MAX_BACKENDS: "999"
+        })
+      )
+    ),
+    Layer.provideMerge(Testing.layer())
+  )
+  .pipe(Layer.provideMerge(NodeCrypto.layer));
 const createCompany = Effect.fn("createCompany")(function* (name: string) {
   const sql = yield* SqlClient.SqlClient;
   const companyId = `cmp_limits_${name}`;
