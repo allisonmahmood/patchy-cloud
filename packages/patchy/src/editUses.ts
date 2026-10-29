@@ -165,7 +165,10 @@ export function editUses(source: string, change: UsesChange): string {
     const last = object.properties.at(-1);
     if (!first || !last) return replace(start, end, `{ ${text} }`);
     const after = span(last).end;
-    const comma = /^\s*,/.exec(source.slice(after, end - 1));
+    // The separator may sit behind comments that belong to the last property.
+    const comma = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)*,/.exec(
+      source.slice(after, end - 1)
+    );
     const at = comma ? after + comma[0].length : after;
     const [separator, closing] = comma ? ["", ","] : [",", ""];
     if (!lineBreak.test(source.slice(start, span(first).start)))

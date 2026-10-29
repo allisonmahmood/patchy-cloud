@@ -62,6 +62,37 @@ document.body.textContent = "Types stay outside the page graph";
   expect(script).not.toContain("lodash");
 });
 
+it("builds what browsers and TypeScript accept: data blocks, HTML comments, decorators", async () => {
+  const root = page(`function sealed(target: Function) { Object.seal(target); }
+@sealed class Model {}
+class Service { constructor(@sealed readonly name: string) {} }
+document.body.textContent = [Model.name, new Service("decorated").name].join(" ");
+`);
+  writeFileSync(
+    path.join(root, "tsconfig.json"),
+    '{"compilerOptions":{"experimentalDecorators":true}}'
+  );
+  writeFileSync(
+    path.join(root, "index.html"),
+    "<!doctype html><html><body>" +
+      '<script type="application/json" id="data">{"import":"lodash"}</script>' +
+      '<script type="importmap">{"imports":{"lodash":"/lodash.js"}}</script>' +
+      "<script><!-- classic scripts may open with an HTML comment\nwindow.ready = true;</script>" +
+      '<script type="module" src="/main.ts"></script></body></html>'
+  );
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [pageImports(root, () => {})],
+    build: { write: false }
+  });
+  if (!("output" in result)) throw new Error("Expected a completed Vite build.");
+  expect(
+    result.output.map((file) => (file.type === "chunk" ? file.code : "")).join("\n")
+  ).toContain("decorated");
+});
+
 it.each(["page", "server"] as const)(
   "builds and executes patchy/csv on the %s graph",
   async (graph) => {
@@ -260,6 +291,7 @@ it("rechecks nested CSS edits, refuses the actual importer, and recovers through
 // or Vite's resolver can hide it. The CLI build suite keeps the rows that prove the wiring.
 it.each([
   { source: 'require("lodash");', aliased: true },
+  { source: 'if (false) require?.("lodash");', aliased: true },
   { source: 'void import.defer("lodash");', aliased: true },
   { source: 'import value = require("lodash"); console.log(value);', aliased: true },
   { source: 'void import("lodash");' },

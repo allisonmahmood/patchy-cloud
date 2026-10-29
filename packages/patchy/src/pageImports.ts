@@ -2,7 +2,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import * as path from "node:path";
-import { parse } from "@babel/parser";
+import { parse, type ParserPlugin } from "@babel/parser";
 import type { Node } from "@babel/types";
 import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
@@ -11,6 +11,10 @@ import { SDK_ENTRY_POINTS } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 
 const modulePreloadPolyfill = "vite/modulepreload-polyfill";
+
+// The script types HTML runs as classic JavaScript; an empty type means the default.
+const javascriptType =
+  /^(?:|(?:text|application)\/(?:x-)?(?:java|ecma)script|text\/(?:jscript|livescript))$/;
 
 // Babel marks each AST node with a string `type`; locations and plain values have none.
 const isNode = (value: unknown): value is Node =>
@@ -101,17 +105,29 @@ export function pageImports(
     }
     refuse(source, importer);
   };
-  const checkJavaScript = (code: string, id: string) => {
-    // Only TypeScript files forbid JSX, whose tags would read as `<T>value` type assertions.
-    const typescriptOnly = /\.[cm]?ts(?:\?|$)/.test(id);
-    const program = parse(code, {
-      sourceType: "module",
-      plugins: [
-        "typescript",
-        "deferredImportEvaluation",
-        ...(typescriptOnly ? [] : (["jsx"] as const))
-      ]
-    }).program;
+  /**
+   * Check one script's imports. HTML's inline scripts are plain JavaScript, classic or module.
+   * Files read as TypeScript with decorators, and JSX except in `.ts`, `.mts` and `.cts`, where
+   * its tags would read as `<T>value` type assertions.
+   */
+  const checkJavaScript = (code: string, id: string, inline?: "classic" | "module") => {
+    const plugins: ParserPlugin[] =
+      inline !== undefined || id.includes("html-proxy")
+        ? ["deferredImportEvaluation"]
+        : [
+            "typescript",
+            "decorators",
+            "deferredImportEvaluation",
+            ...(/\.[cm]?ts(?:\?|$)/.test(id) ? [] : (["jsx"] as const))
+          ];
+    const { program, errors } = parse(code, {
+      sourceType: inline === "classic" ? "script" : "module",
+      plugins,
+      errorRecovery: true
+    });
+    // TypeScript's legacy parameter decorators are the one recoverable error Vite still builds.
+    const error = errors.find((entry) => entry.reasonCode !== "UnsupportedParameterDecorator");
+    if (error !== undefined) throw error;
     const literal = (node: Node | null | undefined) =>
       node?.type === "StringLiteral"
         ? node.value
@@ -155,7 +171,7 @@ export function pageImports(
         const source = literal(node.source);
         if (source !== undefined) check(source, id);
       } else if (
-        node.type === "CallExpression" &&
+        (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
         node.callee.type === "Identifier" &&
         node.callee.name === "require"
       ) {
@@ -195,17 +211,17 @@ export function pageImports(
         const visit = (node: parse5.DefaultTreeAdapterMap["node"]) => {
           if ("tagName" in node && node.tagName === "script") {
             const src = node.attrs.find((attribute) => attribute.name === "src");
+            const type = node.attrs
+              .find((attribute) => attribute.name === "type")
+              ?.value.trim()
+              .toLowerCase();
             if (src) {
-              if (
-                node.attrs.some(
-                  (attribute) => attribute.name === "type" && attribute.value === "module"
-                )
-              )
-                check(src.value, id);
-            } else {
+              if (type === "module") check(src.value, id);
+            } else if (type === "module" || type === undefined || javascriptType.test(type)) {
+              // Any other type, such as JSON or an import map, is a data block browsers never run.
               for (const child of node.childNodes)
                 if (child.nodeName === "#text" && "value" in child)
-                  checkJavaScript(child.value, id);
+                  checkJavaScript(child.value, id, type === "module" ? "module" : "classic");
             }
           }
           if ("childNodes" in node) for (const child of node.childNodes) visit(child);

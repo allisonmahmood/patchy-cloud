@@ -31,6 +31,11 @@ it.each([
     `uses: {\n    // Everyone.\n    people: members(), // Kept.\n    ${declaration},\n  }`
   ],
   [
+    "a multi-line object whose last comma follows a comment",
+    "uses: {\n    people: members() /* Kept. */,\n  }",
+    `uses: {\n    people: members() /* Kept. */,\n    ${declaration},\n  }`
+  ],
+  [
     "a multi-line object without a trailing comma",
     "uses: {\n    people: members() /* Kept. */\n  }",
     `uses: {\n    people: members(), /* Kept. */\n    ${declaration}\n  }`

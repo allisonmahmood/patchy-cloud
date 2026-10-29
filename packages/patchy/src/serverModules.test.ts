@@ -149,6 +149,12 @@ it.layer(NodeServices.layer)("server source module discovery", (it) => {
         yield* agentTypecheckWarning(root, ["deals"]),
         'tsconfig.json doesn\'t include agent/, so pnpm typecheck skips your agent tools. Add "agent" to its include list.'
       );
+      // An include that matches no file at all leaves agent/ out too.
+      yield* tsconfig(["lib"]);
+      assert.strictEqual(
+        yield* agentTypecheckWarning(root, ["deals"]),
+        'tsconfig.json doesn\'t include agent/, so pnpm typecheck skips your agent tools. Add "agent" to its include list.'
+      );
       assert.strictEqual(yield* agentTypecheckWarning(root, []), undefined);
       for (const include of [["src", "agent"], ["agent/**/*.ts"], undefined]) {
         yield* tsconfig(include);

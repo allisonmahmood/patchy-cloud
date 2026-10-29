@@ -116,8 +116,13 @@ export const agentTypecheckWarning = Effect.fn("agentTypecheckWarning")(function
     "-p",
     "tsconfig.json"
   ]).pipe(Effect.option);
+  // TypeScript 6 refuses a config that matches no files (TS18003); 7 prints it without `files`.
+  const config = Option.flatMap(shown, (result) =>
+    result.stdout.includes("error TS18003")
+      ? Option.some({ files: [] })
+      : decodeShownConfig(result.stdout)
+  );
   // Without a compiler or a readable tsconfig.json, publish's own typecheck reports the problem.
-  const config = Option.flatMap(shown, (result) => decodeShownConfig(result.stdout));
   if (Option.isNone(config)) return undefined;
   const checked = new Set((config.value.files ?? []).map((file) => path.resolve(root, file)));
   return files.every((file) => checked.has(path.resolve(root, "agent", `${file}.ts`)))
