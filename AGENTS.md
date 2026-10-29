@@ -18,15 +18,14 @@ There are two life cycles a patch can be thought of. The development stage and t
 
 ## Runtime tiers
 
-Patchy implements tier 0 static pages, tier 1 sandboxed browser tools and tier 2 request-scoped server handlers, all live in production at `cloud.patchyhq.com`. `docs/product.md` records the built contracts and what remains future work.
+Patchy implements tier 1 sandboxed browser pages and tier 2 request-scoped server handlers, both live in production at `cloud.patchyhq.com`. Tiers count from 1. `docs/product.md` records the built contracts and what remains future work.
 
-- Tier 0 is a static page with no patch execution, browser or server. A tier 0 repo may provision resources, but its page cannot call them.
-- Tier 1 runs patch code in a sandboxed browser frame. It reaches only its own patch: it acts as the viewer through Patchy for its own tables and files, `me()` and routing, and has no outbound fetch, hosted patch code, integrations, other patches' shared tables or stores, or member directory.
+- Tier 1 runs patch code in a sandboxed browser frame, from a repo or a single HTML file. It reaches only its own patch: it acts as the viewer through Patchy for its own tables and files, `me()` and routing, and has no outbound fetch, hosted patch code, integrations, other patches' shared tables or stores, or member directory.
 - Tier 2 runs query, mutation and action handlers in credential-free workerd processes while a viewer has the patch open or their agent is calling it. Mutations are atomic; the page calls handlers instead of resources directly. People's own agents call a patch's `agent/` tools as them through Patchy MCP at `/mcp`. Production runs it on the ECS fleet, with its infrastructure in `apps/infra`, released through the deploy workflow.
 - Tier 3 is next: execution without a viewer, including inbound routes, webhooks, schedules and unattended automation. It is not built.
 - Tier 4, a sandbox for agents, remains future work.
 
-Tables and files are patch-owned. Both scripted tiers support live queries of their own tables and a two-viewer local dev loop. Tier 2 handlers also reach read-only shared tables and stores, the member directory, and company Postgres, PostHog, Pidgeon and Attio connections. More integrations, including Gmail and Salesforce, remain future work.
+Tables and files are patch-owned. Both tiers support live queries of their own tables and a two-viewer local dev loop. Tier 2 handlers also reach read-only shared tables and stores, the member directory, and company Postgres, PostHog, Pidgeon and Attio connections. More integrations, including Gmail and Salesforce, remain future work.
 
 ## Final note from Patchy
 
@@ -77,7 +76,7 @@ The most common defect here is a change that lands on the path you tested and is
 - **Vocabulary and product shape.** A new or renamed concept follows through to the owning `GLOSSARY.md` glossary, `GLOSSARY-MAP.md` when a context gains or loses a package, and `docs/product.md` when the product's shape moved. An ADR the change contradicts is updated or deleted, never left standing.
 - **Migrations.** A capability's migrations live in its `src/migrations.ts`; `apps/server/src/migrations.ts` composes them for the server, the dev runner and the vitest template. Allocate ids in landing order: the migrator only applies ids above its ledger's highest id and never backfills gaps, and the record's test fails on a duplicate or skipped id.
 - **Company resources.** Read [ADR-0009](docs/adr/ADR-0009-one-postgres-database-per-company.md) before adding a company-database caller. Provisioning/reclamation take the platform row lock before `withPatchLock`; keep primitive-free patches off that path. Runtime files use company-only per-name index locks, with blob I/O outside leases and liveness supplied by Runtime.
-- **Served pages.** What a reader receives, including the portal's index, cards, confirmation and user pick pages, runs through the `ui-consistency` spec. What HTML is accepted or rejected lands as fixtures under `packages/core/fixtures`, which the policy tests and `pnpm seed:dev` both read.
+- **Served pages.** What a reader receives, including the portal's index, cards, confirmation and user pick pages, runs through the `ui-consistency` spec. What a page may carry is the CLI's self-contained check in `packages/patchy/src/bundleCheck.ts`, shared by single-file and repo publishes; a change to it lands with its cases in `repoBuild.test.ts`.
 - **Reverse states.** If you add a way in, add the way out and the way to see it. An invite needs revoke, deactivation needs reactivation, a machine token needs revoke. A one-way door is a bug.
 - **The repo layout.** Adding, renaming or removing a package follows through to the README's layout list, and to Where to look above if it is a doc an agent needs.
 

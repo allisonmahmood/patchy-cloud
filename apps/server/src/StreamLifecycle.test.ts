@@ -156,7 +156,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
         assert.deepStrictEqual(otherFrame, {
           type: "served",
           versionId: otherUpdate.versionId,
-          tier: 0
+          tier: 1
         });
         yield* Deferred.succeed(resume, undefined);
         for (const versionId of [firstUpdate.versionId, latest.versionId]) {
@@ -166,7 +166,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
               .slice(6)
               .trim()
           );
-          assert.deepStrictEqual(frame, { type: "served", versionId, tier: 0 });
+          assert.deepStrictEqual(frame, { type: "served", versionId, tier: 1 });
         }
         assert.strictEqual(reads, 2);
         const afterCompletion = yield* publish(patchId, "update");
@@ -179,7 +179,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
         assert.deepStrictEqual(next, {
           type: "served",
           versionId: afterCompletion.versionId,
-          tier: 0
+          tier: 1
         });
         shuttingDown = true;
         yield* publish(patchId, "update");

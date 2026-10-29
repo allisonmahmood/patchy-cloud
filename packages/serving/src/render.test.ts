@@ -70,7 +70,7 @@ describe("patch pages", () => {
     id: "ver_1",
     patchId: patch.id,
     versionNumber: 2,
-    tier: 0,
+    tier: 1,
     release: CURRENT_RELEASE,
     manifestVersion: MANIFEST_VERSION,
     wireVersion: WIRE_VERSION,
@@ -78,7 +78,7 @@ describe("patch pages", () => {
     manifest: {
       manifestVersion: MANIFEST_VERSION,
       release: CURRENT_RELEASE,
-      tier: 0,
+      tier: 1,
       tables: {},
       files: {},
       uses: {}
@@ -166,39 +166,42 @@ describe("patch pages", () => {
     expect(ended).toContain('href="/patches/render-fixture"');
   });
 
-  it("keeps a public patch in a script-free sandboxed frame", () => {
+  it("frames a public page's content URL, with no chrome and no script but the broker", () => {
     const html = renderPatchWrapper({
       patch,
       version,
       scope: "public",
-      // Led by a byte order mark, which has to give way to the frame's base.
-      html: '\uFEFF<p title="a&b">hi</p><script>alert(1)</script>'
+      nonce: "document-nonce",
+      base: "/acme/render-fixture"
     });
 
-    // The document reaches the frame through the escaped attribute, never raw, led by the
-    // frame's own base so its same-page links scroll.
-    expect(html).toContain('sandbox=""');
+    expect(html).toContain('sandbox="allow-scripts allow-modals"');
     expect(html).toContain('referrerpolicy="no-referrer"');
     expect(html).toContain(
-      'srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;&lt;p title=&quot;a&amp;b&quot;&gt;hi&lt;/p&gt;'
+      `data-content-src="/~content/${patch.id}/${version.id}?n=document-nonce"`
     );
-    expect(html).not.toContain("<script>alert");
+    expect(html).not.toContain("srcdoc");
 
-    // No chrome around it: no footer, no link out, no form, no script of its own.
+    // No chrome around it: no footer, no link out, no form.
     expect(html).not.toContain("<footer");
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("<form");
-    expect(html).not.toContain("<script");
+    expect(
+      [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
+    ).toEqual([expect.stringMatching(/^\/~shell\/broker\.js\?v=/)]);
+    expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
 
     expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
   });
 
-  it("adds only session scripts outside a company patch's escaped sandbox", () => {
+  it("adds only session scripts and the broker outside a company patch's frame", () => {
     const html = renderPatchWrapper({
       patch: { ...patch, title: "<b>Company</b>" },
       version,
       scope: "company",
-      html: '<p title="a&b">Private</p><script>alert(1)</script>',
+      viewerId: "viewer-1",
+      nonce: "document-nonce",
+      base: "/acme/render-fixture",
       head: sessionScripts({
         clerk: { frontendApiHost: "clerk.example.test", publishableKey: "pk_test_example" }
       })
@@ -207,15 +210,11 @@ describe("patch pages", () => {
       [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
     ).toEqual([
       "https://clerk.example.test/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js",
-      "/auth/session.js"
+      "/auth/session.js",
+      expect.stringMatching(/^\/~shell\/broker\.js\?v=/)
     ]);
     expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
-    expect(html).toContain('sandbox=""');
     expect(html).toContain('title="&lt;b&gt;Company&lt;/b&gt;"');
-    expect(html).toContain(
-      'srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;&lt;p title=&quot;a&amp;b&quot;&gt;Private&lt;/p&gt;'
-    );
-    expect(html).not.toContain("<script>alert");
   });
 
   it("escapes the patch title into both the document and the frame", () => {
@@ -223,7 +222,8 @@ describe("patch pages", () => {
       patch: { ...patch, title: "<b>Q3</b> & beyond" },
       version,
       scope: "public",
-      html: "<p>hi</p>"
+      nonce: "document-nonce",
+      base: "/acme/render-fixture"
     });
 
     expect(html).toContain("<title>&lt;b&gt;Q3&lt;/b&gt; &amp; beyond</title>");
@@ -237,7 +237,6 @@ describe("patch pages", () => {
       version: { ...version, tier: 1 },
       scope: "company",
       viewerId: "viewer-1",
-      html: "<script>window.secret = 1</script>",
       nonce: "document-nonce",
       base: "/acme/report/~v/2",
       route: "/items/first"
@@ -251,7 +250,6 @@ describe("patch pages", () => {
     expect(html).toContain('data-base="/acme/report/~v/2"');
     expect(html).toMatch(/src="\/~shell\/broker\.js\?v=[0-9a-f]{64}"/);
     expect(html).not.toContain("srcdoc=");
-    expect(html).not.toContain("window.secret");
   });
 
   it("keeps handler-kind metadata inside its tier-two attribute, never executable markup", () => {
@@ -260,7 +258,6 @@ describe("patch pages", () => {
       version: { ...version, tier: 2 },
       scope: "company" as const,
       viewerId: "viewer-1",
-      html: "<p>Tool</p>",
       nonce: "document-nonce",
       base: "/acme/report",
       handlerKinds: { ['demo."><img src=x onerror=alert(1)>']: "query" as const }
@@ -282,7 +279,6 @@ describe("patch pages", () => {
         patch,
         version: { ...version, tier: 1 },
         scope,
-        html: "<p>Private data</p>",
         nonce: "document-nonce",
         base: "/acme/report"
       };
@@ -299,7 +295,6 @@ describe("patch pages", () => {
       version: { ...version, tier: 1 },
       scope: "public",
       viewerId: "private-viewer",
-      html: "<p>Public data</p>",
       nonce: "document-nonce",
       base: "/acme/report"
     });

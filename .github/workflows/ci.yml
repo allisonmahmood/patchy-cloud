@@ -139,7 +139,7 @@ jobs:
         env:
           PATCHY_API_TOKEN: ambient-invalid-token
           PATCHY_API_URL: http://127.0.0.1:9/ambient-poison
-          PATCHY_MAX_HTML_BYTES: "1"
+          PATCHY_MAX_BUNDLE_BYTES: "1"
           PATCHY_UNKNOWN_AMBIENT_POISON: must-not-leak
           PATCHY_S3_BUCKET: ambient-poison
           PATCHY_S3_ENDPOINT: http://127.0.0.1:9/must-not-reach-storage

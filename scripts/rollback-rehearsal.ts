@@ -26,9 +26,9 @@
  * The exercise is the same at every step: the deep health check, the build's
  * own CLI (whoami, list, a publish), and in Chromium, as the scenario's admin,
  * the portal and every patch. Each page must answer with no server error or
- * uncaught exception and settle; a patch with code must have the server deliver
- * its first live queries, every one step 1 saw; a patch with sample data must
- * not show its empty state. Meanwhile the server must log no failed request,
+ * uncaught exception and settle; a patch whose page subscribes must have the
+ * server deliver its live queries, every one step 1 saw; a patch with sample
+ * data must not show its empty state. Meanwhile the server must log no failed request,
  * call or live query.
  *
  * From step 2 on, the exercise also covers what HEAD's CLI writes into handler
@@ -882,7 +882,7 @@ interface Baseline {
 }
 
 interface PageExpectation {
-  /** A tier 1 or 2 patch's id: the server must deliver its first live queries. */
+  /** A repo patch's id: the server must deliver the live queries its page subscribes to. */
   readonly patchId?: string;
   /** What step 1 saw delivered, which must be delivered again. */
   readonly delivers?: Deliveries;
@@ -910,9 +910,9 @@ const deliveries = (log: string, patchId: string): Deliveries => {
 
 /**
  * Opens `url` and waits for it to settle: a tier 2 patch's tools started, its
- * stream not reconnecting, and for a patch with code, its live queries
- * delivered (as many of each as step 1 saw) and `/api/runtime/` quiet for a
- * second and a half. Answers what went wrong and what was delivered.
+ * stream not reconnecting, and for a repo patch, the live queries its page
+ * subscribes to delivered (as many of each as step 1 saw) and `/api/runtime/`
+ * quiet for a second and a half. Answers what went wrong and what was delivered.
  */
 const exercisePage = async (page: Page, url: string, expect: PageExpectation, log: string) => {
   const problems: Array<string> = [];
@@ -920,6 +920,22 @@ const exercisePage = async (page: Page, url: string, expect: PageExpectation, lo
   const opened = await logSize(log);
   let delivered: Deliveries = new Map();
   let lastRuntimeCall = 0;
+  // Whether the page asked for any live query; a page that never loads the SDK asks for none.
+  let subscribed = false;
+  page.on("request", (request) => {
+    const target = new URL(request.url());
+    if (target.origin !== origin || target.pathname !== "/api/runtime/subscriptions") return;
+    const body: unknown = request.postDataJSON();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      (("type" in body && body.type === "subscribe") ||
+        ("subscriptions" in body &&
+          Array.isArray(body.subscriptions) &&
+          body.subscriptions.length > 0))
+    )
+      subscribed = true;
+  });
   page.on("response", (response) => {
     const target = new URL(response.url());
     if (target.origin !== origin) return;
@@ -934,6 +950,8 @@ const exercisePage = async (page: Page, url: string, expect: PageExpectation, lo
   const response = await page.goto(url);
   if (response?.status() !== 200)
     return { problems: [...problems, `answered ${response?.status() ?? "nothing"}`], delivered };
+  // A page subscribes once its SDK has loaded: give it the same quiet window to start.
+  lastRuntimeCall = Date.now();
   const unsettled = async () => {
     const reasons: Array<string> = [];
     if ((await page.locator('dialog[data-stream-status="starting"][open]').count()) > 0)
@@ -946,7 +964,8 @@ const exercisePage = async (page: Page, url: string, expect: PageExpectation, lo
       const seen = delivered.get(query) ?? 0;
       return seen < count ? [`${seen} of the ${count} ${query} snapshots`] : [];
     });
-    if (delivered.size === 0) reasons.push("the server never delivered a live query");
+    if ((subscribed || (expect.delivers?.size ?? 0) > 0) && delivered.size === 0)
+      reasons.push("the server never delivered a live query");
     else if (missing.length > 0)
       reasons.push(`the server delivered ${missing.join(", ")} step 1 saw`);
     else if (Date.now() - lastRuntimeCall < 1_500) reasons.push("its calls never went quiet");
@@ -992,7 +1011,7 @@ const exercisePages = async (
     ...scenario.patches.map((patch) => {
       if (!("repo" in patch)) return [environment.addresses.get(patch.name)!, none] as const;
       const url = environment.addresses.get(patch.repo)!;
-      const patchId = patch.tier > 0 ? patchIds.get(patch.repo) : undefined;
+      const patchId = patchIds.get(patch.repo);
       const delivers = baseline?.delivered.get(url);
       return [
         url,

@@ -132,7 +132,7 @@ for (const name of ["createHttpTransport", "createPortTransport", "createPostMes
   await writeFile(
     path.join(consumer, "patchy.config.ts"),
     `import { defineConfig, table, t } from "patchy/config";
-export default defineConfig({ name: "packed-config", tier: 0, tables: {
+export default defineConfig({ name: "packed-config", tier: 1, tables: {
   notes: table("Notes identified by id; at is an ISO timestamp.", { title: t.text(), at: t.timestamp().default("now") })
 }, files: {}, uses: {} });\n`
   );

@@ -316,7 +316,7 @@ export type Declaration =
   | { readonly kind: "members" };
 export interface Config {
   readonly name: string;
-  readonly tier: 0 | 1 | 2 | 3;
+  readonly tier: 1 | 2 | 3;
   readonly tables: Readonly<Record<string, TableDefinition>>;
   readonly files: Readonly<Record<string, FileStoreDefinition>>;
   readonly uses: Readonly<Record<string, Declaration>>;

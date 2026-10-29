@@ -5,7 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { previewPage } from "../../packages/patchy/src/lookPreview.js";
-import { LOOK_FIXTURES, lookFixtureDir, readLookFixture } from "../look-fixtures.js";
+import {
+  LOOK_FIXTURES,
+  embeddedFontFace,
+  lookFixtureDir,
+  readLookFixture
+} from "../look-fixtures.js";
 
 // `patchy look preview` from the bundled CLI, opened as a person would: a file, offline. Needs no
 // instance, so it uses Playwright's own `test` rather than this suite's instance fixtures.
@@ -147,9 +152,7 @@ test("a look's embedded font and logo render offline, and its remote URLs are ne
 }) => {
   const dir = path.join(tempDir(), "look");
   cpSync(lookFixtureDir("patchy"), dir, { recursive: true });
-  const fontFace = /@font-face\s*{[^}]*}/.exec(
-    readFileSync(path.join(repo, "packages/core/fixtures/accept/embedded-font.html"), "utf8")
-  )?.[0];
+  const fontFace = /@font-face\s*{[^}]*}/.exec(embeddedFontFace())?.[0];
   expect(fontFace).toBeDefined();
   const css = readFileSync(path.join(dir, "look.css"), "utf8");
   // Publish refuses the remote URLs; preview still renders, and the page's CSP refuses them too.

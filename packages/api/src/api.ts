@@ -23,7 +23,6 @@ import {
   DeviceLoginPoll,
   DeviceLoginStarted,
   Identity,
-  InvalidHtml,
   LoggedOut,
   NotFound,
   NameTaken,
@@ -205,7 +204,6 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [
         PatchQuotaExceeded,
         ...protectedErrors,
-        InvalidHtml,
         PublishKeyConflict,
         NameTaken,
         NotOwner,
@@ -228,8 +226,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "and `publishKey` before limits or release validation: identical payloads return the " +
           "stored response and status, even after an upgrade; changed payloads answer 409 " +
           "`publish_key_conflict`. New attempts require the exact current release and manifest " +
-          "version from `GET /api/release`. Tiers 0, 1 and 2 may define tables and file stores, provisioned additively; " +
-          "tier 3 answers `tier_mismatch`. Tier 2 is admitted on dev and test instances; production requires the fleet executor. " +
+          "version from `GET /api/release`. Tiers 1 and 2 may define tables and file stores, provisioned additively; " +
+          "tier 3 answers `tier_mismatch`, and so does tier 0, naming the move to tier 1. Tier 2 is admitted on dev and test instances; production requires the fleet executor. " +
           "Tier 2 requires `server`, a closed JavaScript module. Stored bytes are inspected in a throwaway process: " +
           "descriptor disagreement, load failure or timeout answers `invalid_manifest`, and so does a blank handler or value " +
           "description or one over 2,000 code points, with an error naming the handler and how to fix it. A server artifact below tier 2 is `tier_mismatch`. " +
@@ -282,8 +280,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
           "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
           "Reports and schema revision are persisted for replay. " +
-          "A tier 0 manifest answers `tier_mismatch`: tier 0 is now tier 1, and stored tier 0 versions are only served. " +
-          "Tier 1 and 2 HTML bundles are stored raw, without safe-HTML validation or transformation. " +
+          "HTML bundles are stored raw, without validation or transformation. " +
           "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
@@ -303,7 +300,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`warnings` names the current revision and how to catch up. The check is advisory: a failed " +
           "read warns and the publish goes ahead. Absent `metadata.look` skips the check. " +
           "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
-          "The JSON body cap is three times the sum of the larger configured HTML or bundle cap and the server bundle cap."
+          "The JSON body cap is three times the sum of the page and server bundle caps."
       )
     ),
     HttpApiEndpoint.get("list", "/patches", {
@@ -406,7 +403,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "viewer and the `agent` they called through (null for their page's call), outcome and code, timings, correlation id, `ctx.log` lines (including a thrown error's " +
           "message and stack) and up to 50 retained steps: nested handlers and the operations each made, " +
           "successful or not, with `stepsTruncated` when it made more. Quiet successful queries roll up " +
-          "without entries, so tiers 0 and 1 have none. `limit` is 1 to 25, default 10, and a page stops " +
+          "without entries, so tier 1 has none. `limit` is 1 to 25, default 10, and a page stops " +
           "early rather than pass about 2 MiB, always holding at least one entry. `before` takes a previous " +
           "page's `next`; an id from elsewhere yields an empty page. A bare `?failed` or `failed=true` keeps " +
           "handler errors, failures and timeouts, searching 1,000 entries at a time: `windowEnded` says the " +
@@ -428,7 +425,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
-          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. " +
+          "The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
       )
@@ -443,7 +440,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         "Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. " +
           "Everything is retained indefinitely, including its names. Live dependants refuse with " +
           "`has_dependants` unless `force` is true. Ask the person you are working for before forcing. " +
-          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "The JSON body is bounded at 1.5 MiB, before decoding. " +
           "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
           "Rejected requests leave the patch unchanged."
       )
@@ -472,7 +469,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Deleted patches require the current time to be before `purgeAt`, otherwise `patch_deleted`. " +
           "The current version's off sources refuse with `sources_off`, listing each source's table and " +
           "state, including gone, unless `force` is true. Ask the person you are working for before forcing. " +
-          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "The JSON body is bounded at 1.5 MiB, before decoding. " +
           "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
           "Rejected requests leave the patch unchanged."
       )
@@ -488,7 +485,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Tables, files, sharing, name and description do not change. A missing version answers " +
           "422 `version_unavailable`; an off patch answers `wrong_state`. " +
           "A rollback to tier 2 while the patch is public answers `tier2_not_public`. " +
-          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "The JSON body is bounded at 1.5 MiB, before decoding. " +
           "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
           "Rejected requests leave the patch unchanged."
       )
@@ -505,7 +502,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "most 500 Unicode code points with no control characters; invalid text answers 422 " +
           "`invalid_description`. An empty string clears it. Markup is stored literally. A no-op save " +
           "does not change its timestamp. Deleted patches answer `wrong_state`. " +
-          "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. " +
+          "The JSON body is bounded at 1.5 MiB, before decoding. " +
           "An oversized declared body answers 413; streaming bodies are cut off at the cap. " +
           "Rejected requests leave the patch unchanged."
       )
@@ -664,7 +661,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
             "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch, and `uses` below tier 2 with tier_mismatch. " +
             "Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
-            "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
+            "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tier 1 sends an empty list. Generation uses them only for type-only imports and never loads handler code. " +
             "Unknown fields anywhere in the body answer 400. The JSON body cap is 1 MiB: a declared larger length answers 413, and streaming bodies are cut off at the cap."
         )
       )

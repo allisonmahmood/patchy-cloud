@@ -1361,7 +1361,7 @@ it.layer(
       assert.isTrue(before!.tables.notes!.shared);
       const [detail] = yield* service.read({ ...access, state: "live", patchRef: source.name });
       assert.strictEqual(detail!.currentVersion, 2);
-      assert.strictEqual(detail!.tier, 0);
+      assert.strictEqual(detail!.tier, 1);
     })
   );
 

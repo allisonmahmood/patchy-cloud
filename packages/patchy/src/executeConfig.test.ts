@@ -199,11 +199,11 @@ describe("executeConfig", () => {
   });
 
   it("does not execute cached config exports from an earlier attempt", async () => {
-    const path = await fixture('export default defineConfig({ name: "first-name", tier: 0 });');
+    const path = await fixture('export default defineConfig({ name: "first-name", tier: 1 });');
     expect((await executeConfig(path)).name).toBe("first-name");
     await writeFile(
       path,
-      'export default { name: "second-name", tier: 0, tables: {}, files: {}, uses: {} };'
+      'export default { name: "second-name", tier: 1, tables: {}, files: {}, uses: {} };'
     );
     expect((await executeConfig(path)).name).toBe("second-name");
   });
@@ -289,6 +289,24 @@ describe("executeConfig", () => {
       sales: { kind: "postgres", handle: "warehouse" }
     });
   });
+
+  it.each([true, false])(
+    "refuses a config still at tier 0, saying how to move it, with resolution %s",
+    async (resolve) => {
+      const path = await fixture(
+        // Execution strips types without checking them, so a config written before still runs.
+        'export default { name: "old-page", tier: 0, tables: {}, files: {}, uses: {} };'
+      );
+      const result = resolve
+        ? executeConfig(path)
+        : ConfigExecution.executeConfig(path, { resolve: false });
+      const failure = await result.then(() => undefined, ConfigExecution.configFailure);
+      expect(failure).toMatchObject({
+        code: "tier_mismatch",
+        message: "Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."
+      });
+    }
+  );
 
   it("refuses declarations without generated stamps instead of inventing ids or revisions", async () => {
     const path = await fixture(

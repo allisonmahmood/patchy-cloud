@@ -40,7 +40,7 @@ export const manifest: typeof Manifest.Type = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
   name: "file-test",
-  tier: 0,
+  tier: 1,
   tables: {},
   files: {
     docs: { description: "Documents identified by file name." },

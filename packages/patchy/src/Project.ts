@@ -939,7 +939,7 @@ export const init = Effect.fn("Project.init")(function* (
   cwd: string,
   token: Redacted.Redacted,
   directory: Option.Option<string>,
-  tier: 0 | 1 | 2,
+  tier: 1 | 2,
   purposeOption: Option.Option<string>
 ) {
   const fs = yield* FileSystem.FileSystem;

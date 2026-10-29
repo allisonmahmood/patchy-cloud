@@ -169,13 +169,6 @@ export const PatchQuotaExceeded = failure(403, {
   quota: Schema.Int
 });
 
-/** The document failed the safe-HTML policy. Nothing was stored. */
-export const InvalidHtml = Schema.Struct({
-  ok: Schema.Literal(false),
-  errors: Schema.Array(Schema.String),
-  warnings: Schema.Array(Schema.String)
-}).pipe(HttpApiSchema.status(422));
-
 // --- auth -----------------------------------------------------------------
 
 /** `GET /api/me`: who the bearer token is. */
@@ -601,7 +594,7 @@ export const Manifest = Schema.Struct({
   release: NonEmptyText,
   name: Schema.optionalKey(PatchName),
   description: Schema.optionalKey(Schema.String),
-  tier: Schema.Literals([0, 1, 2, 3]),
+  tier: Schema.Literals([1, 2, 3]),
   tables: definitions(TableDefinition),
   files: definitions(FileStoreDefinition),
   uses: definitions(
@@ -627,7 +620,7 @@ export const Manifest = Schema.Struct({
 export const usesRefusal = (tier: number, aliases: readonly string[]): string | undefined =>
   tier >= 2 || aliases.length === 0
     ? undefined
-    : `uses requires tier 2: ${tier === 0 ? "tier 0 runs no code" : `tier ${tier} reaches only its own tables and files`}, so it cannot declare ${aliases.map((alias) => JSON.stringify(alias)).join(", ")}. Set tier 2 and reach them from server handlers, or delete them all from uses in patchy.config.ts; then run \`patchy refresh\`.`;
+    : `uses requires tier 2: tier ${tier} reaches only its own tables and files, so it cannot declare ${aliases.map((alias) => JSON.stringify(alias)).join(", ")}. Set tier 2 and reach them from server handlers, or delete them all from uses in patchy.config.ts; then run \`patchy refresh\`.`;
 
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
@@ -729,7 +722,7 @@ export const GenerateRequest = Schema.Struct({
   manifest: GenerationManifest,
   serverModules: Schema.Array(HandlerModuleName).annotate({
     description:
-      "One-level server/*.ts filename stems discovered locally for tier 2; empty for tiers 0 and 1. Used only for type-only imports, independently of manifest.handlers."
+      "One-level server/*.ts filename stems discovered locally for tier 2; empty for tier 1. Used only for type-only imports, independently of manifest.handlers."
   }),
   patchId: Schema.optionalKey(PatchId),
   skills: Schema.Array(NonEmptyText)
@@ -975,7 +968,7 @@ const publishFields = {
   address: Schema.String,
   publicUrl: Schema.String,
   scope: SharingScope,
-  tier: Schema.Int,
+  tier: Manifest.fields.tier,
   schemaRevision: Schema.Int,
   provisioned: ProvisioningReport,
   unused: ProvisioningReport,

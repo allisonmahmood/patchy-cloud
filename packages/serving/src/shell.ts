@@ -1,11 +1,4 @@
-import {
-  escapeAttribute,
-  escapeHtml,
-  faviconLink,
-  framedDocument,
-  htmlPage,
-  shellStyles
-} from "@patchy/core/html";
+import { escapeAttribute, escapeHtml, faviconLink, htmlPage, shellStyles } from "@patchy/core/html";
 import type { HandlerKind } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
@@ -26,27 +19,23 @@ interface PatchPage {
     readonly tier: number;
     readonly wireVersion: number;
   };
-  readonly html: string;
   readonly scope: "company" | "public" | "local";
   readonly viewerId?: string;
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
-  readonly nonce?: string;
+  readonly nonce: string;
   readonly route?: string;
   /** Address prefix, including the version selector on a historical address. */
-  readonly base?: string;
+  readonly base: string;
 }
 
-/** One renderer, selected by the loaded version rather than the patch's current tier. */
+/** One renderer: the shell frames the loaded version's content URL, whatever the patch serves now. */
 export function renderPatchWrapper(options: PatchPage): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
-  const scripted = options.version.tier >= 1;
-  if (scripted && (!options.nonce || !options.base))
-    throw new Error("A scripted shell needs its document nonce and address base.");
-  if (scripted && options.scope !== "public" && !options.viewerId)
+  if (options.scope !== "public" && !options.viewerId)
     throw new Error("A company or local shell needs its admitted viewer.");
-  const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce ?? "")}`;
+  const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce)}`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -55,9 +44,9 @@ export function renderPatchWrapper(options: PatchPage): string {
   <title>${title}</title>
   ${faviconLink}
   ${options.head ?? ""}
-  ${scripted ? `<script defer src="${brokerSrc}"></script>` : ""}
+  <script defer src="${brokerSrc}"></script>
   <style>
-    ${scripted ? shellStyles : ""}
+    ${shellStyles}
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
@@ -65,14 +54,10 @@ export function renderPatchWrapper(options: PatchPage): string {
 </head>
 <body>
   <iframe id="patch" class="patch-frame" title="${title}"
-    sandbox="${scripted ? "allow-scripts allow-modals" : ""}" referrerpolicy="no-referrer"
-    ${scripted ? 'allow="clipboard-write *"' : ""}
-    ${
-      scripted
-        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
-        : `srcdoc="${escapeAttribute(framedDocument(options.html))}"`
-    }
-    ${scripted && options.version.tier === 2 ? `data-handler-kinds="${escapeAttribute(JSON.stringify(options.handlerKinds ?? {}))}"` : ""}></iframe>
+    sandbox="allow-scripts allow-modals" referrerpolicy="no-referrer"
+    allow="clipboard-write *"
+    data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"
+    ${options.version.tier === 2 ? `data-handler-kinds="${escapeAttribute(JSON.stringify(options.handlerKinds ?? {}))}"` : ""}></iframe>
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;

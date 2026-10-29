@@ -4,7 +4,6 @@ import path from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
-import { starterFiles } from "./initProject.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import {
   decodePublishRequest,
@@ -16,7 +15,6 @@ import {
   publishTree,
   runCli,
   stubInstance,
-  tarballPath,
   tempDir
 } from "./test/cli.js";
 import { lookRevision } from "../../../test/look-fixtures.js";
@@ -148,13 +146,7 @@ describe("patch-repo builds", () => {
     const dir = publishTree(instance.url);
     writeFileSync(
       path.join(dir, "vite.config.ts"),
-      starterFiles({
-        instance: instance.url,
-        name: "cli-project",
-        tier: 0,
-        purpose: "Synthetic notes",
-        tarball: `${instance.url}${tarballPath}`
-      })["vite.config.ts"]!
+      'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()] });\n'
     );
     writeFileSync(path.join(dir, "src/main.tsx"), 'document.body.textContent = "Vanilla page";');
     const options = { cwd: dir, env, stateDir: tempDir() };

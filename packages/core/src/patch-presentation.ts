@@ -29,10 +29,10 @@ export const ago = (iso: string, now: number): string => {
 };
 
 /**
- * A page runs only in the viewer's browser: a tier 1 patch, or a tier 0 one until those rows
- * become tier 1. A tool is tier 2, with code on the server. Shelves and marks tell them apart.
+ * A page runs only in the viewer's browser: a tier 1 patch. A tool is tier 2, with code on the
+ * server. Shelves and marks tell them apart.
  */
-export const isPage = (patch: { readonly tier: number }): boolean => patch.tier <= 1;
+export const isPage = (patch: { readonly tier: number }): boolean => patch.tier === 1;
 
 /**
  * A person's welcome page, as onboarding publishes it: a page named `welcome`, or `welcome-<n>`

@@ -62,8 +62,6 @@ import * as Fixtures from "./test/fixtures.js";
 import { readLookFixture } from "../../../test/look-fixtures.js";
 
 const { admin, reader, sibling, uploader } = Fixtures.identities;
-/** What a current CLI sends for a single file: publish refuses tier 0. */
-const pageManifest = { ...Fixtures.manifest, tier: 1 as const };
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => Fixtures.memoryStore().service);
 const looks = Looks.layer.pipe(Layer.provide([NodeFileSystem.layer, NodePath.layer]));
@@ -78,7 +76,7 @@ const html = (title: string) =>
 type PublishPayload = Pick<PublishRequest, "html"> & Partial<PublishRequest>;
 const publishRequest = (payload: PublishPayload) =>
   new PublishRequest({
-    manifest: pageManifest,
+    manifest: Fixtures.manifest,
     publishKey: crypto.randomUUID(),
     metadata: {},
     ...payload
@@ -218,7 +216,7 @@ it.layer(layer)("patches group", (it) => {
         html: html("Fourth"),
         patchId: created.patchId,
         scope: "company",
-        manifest: { ...pageManifest, name: "launch-notes" }
+        manifest: { ...Fixtures.manifest, name: "launch-notes" }
       }).pipe(Effect.provide(Fixtures.as(uploader)));
       assert.strictEqual(restricted.scope, "company");
       assert.deepStrictEqual(
@@ -452,7 +450,7 @@ it.layer(Layer.fresh(lifecycleSocketLayer))("owner lifecycle body bounds on a so
       const created = yield* owner.publish({
         payload: publishRequest({
           html: html("Bounded description"),
-          manifest: { ...pageManifest, description: "Original description" }
+          manifest: { ...Fixtures.manifest, description: "Original description" }
         })
       });
       const http = yield* HttpClient.HttpClient;
@@ -518,7 +516,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
       const first = yield* owner.publish({
         payload: publishRequest({
           html: html("Lifecycle first"),
-          manifest: { ...pageManifest, description: "  Tracks\u2003orders.  " }
+          manifest: { ...Fixtures.manifest, description: "  Tracks\u2003orders.  " }
         })
       });
       assert.strictEqual(first.description, "Tracks orders.");
@@ -622,7 +620,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
             payload: publishRequest({
               ...params,
               html: "<script>bad()</script>",
-              manifest: { ...pageManifest, release: "not-current" }
+              manifest: { ...Fixtures.manifest, release: "not-current" }
             }),
             responseMode: "response-only"
           }),
@@ -710,7 +708,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         const created = yield* owner.publish({
           payload: publishRequest({
             html: html("Description bounds"),
-            manifest: { ...pageManifest, description: "Manifest text" },
+            manifest: { ...Fixtures.manifest, description: "Manifest text" },
             metadata: { description: " File\u00a0description " }
           })
         });
@@ -747,7 +745,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         const reserved = yield* owner.publish({
           payload: publishRequest({
             html: html("Reserved name"),
-            manifest: { ...pageManifest, name: "patches" }
+            manifest: { ...Fixtures.manifest, name: "patches" }
           }),
           responseMode: "response-only"
         });
@@ -805,7 +803,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         payload: publishRequest({
           html: html("Lifecycle source"),
           manifest: {
-            ...pageManifest,
+            ...Fixtures.manifest,
             name: "lifecycle-source",
             tables: {
               orders: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
@@ -818,7 +816,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         payload: yield* consumingRequest({
           html: html("Lifecycle reader"),
           manifest: {
-            ...pageManifest,
+            ...Fixtures.manifest,
             name: "lifecycle-reader",
             uses: {
               orders: {
@@ -915,7 +913,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
       const created = yield* owner.publish({
         payload: publishRequest({
           html: html("No company database"),
-          manifest: { ...pageManifest, name: "discovery-no-database" }
+          manifest: { ...Fixtures.manifest, name: "discovery-no-database" }
         })
       });
       const [detail, response] = yield* colleague.detail({
@@ -943,7 +941,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
         payload: publishRequest({
           html: html("State resolution"),
           manifest: {
-            ...pageManifest,
+            ...Fixtures.manifest,
             name: "discovery-states",
             tables: { notes: { description: "Notes.", columns: {}, indexes: {}, shared: true } }
           }
@@ -1022,7 +1020,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
         payload: publishRequest({
           html: html("Shared inventory"),
           manifest: {
-            ...pageManifest,
+            ...Fixtures.manifest,
             name: "discovery-inventory",
             description: "Records for other tools.",
             tables: {
@@ -1049,7 +1047,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
         payload: yield* consumingRequest({
           html: html("Reader"),
           manifest: {
-            ...pageManifest,
+            ...Fixtures.manifest,
             name: "discovery-reader",
             uses: {
               sourceNotes: {
@@ -1078,7 +1076,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
           payload: publishRequest({
             patchId: patch.patchId,
             html: html("Dropped declarations"),
-            manifest: { ...pageManifest, name: patch.name }
+            manifest: { ...Fixtures.manifest, name: patch.name }
           })
         });
       }
@@ -1258,7 +1256,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       Effect.gen(function* () {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const manifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "primitive-descriptions",
           tables: { notes: { description: "Notes keyed by id.", columns: {}, indexes: {} } },
           files: { attachments: { description: "Attachments keyed by file name." } }
@@ -1296,7 +1294,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           payload: publishRequest({
             ...params,
             html: html("Omitted definitions"),
-            manifest: { ...pageManifest, name: manifest.name }
+            manifest: { ...Fixtures.manifest, name: manifest.name }
           })
         });
         assert.strictEqual(omitted.schemaRevision, first.schemaRevision);
@@ -1313,7 +1311,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const other = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
         const manifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "inventory-notes",
           tables: {
             notes: {
@@ -1358,7 +1356,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           payload: publishRequest({
             patchId: created.patchId,
             html: html("No longer uses primitives"),
-            manifest: { ...pageManifest, name: manifest.name }
+            manifest: { ...Fixtures.manifest, name: manifest.name }
           })
         });
         assert.strictEqual(omitted.schemaRevision, 1);
@@ -1387,7 +1385,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
             payload: publishRequest({
               patchId: created.patchId,
               html: html("Single file"),
-              manifest: { ...pageManifest, ...(name === undefined ? {} : { name }) },
+              manifest: { ...Fixtures.manifest, ...(name === undefined ? {} : { name }) },
               metadata: { filename: "notes.html" }
             }),
             responseMode: "response-only"
@@ -1449,7 +1447,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const payload = publishRequest({
         html: "<!doctype html><html><body><script>window.answer = 42;</script></body></html>",
         manifest: {
-          ...pageManifest,
+          ...Fixtures.manifest,
           tier: 1,
           name: "lost-repo-reply",
           tables: {
@@ -1583,7 +1581,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.strictEqual(latest.version.release, CURRENT_RELEASE);
         assert.strictEqual(latest.version.wireVersion, WIRE_VERSION);
         assert.strictEqual(latest.version.tier, 1);
-        assert.deepStrictEqual(latest.version.manifest, pageManifest);
+        assert.deepStrictEqual(latest.version.manifest, Fixtures.manifest);
         const refused = yield* upgraded
           .publish({
             payload: publishRequest({ html: html("New attempt"), patchId: created.patchId })
@@ -1640,7 +1638,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           const payload = publishRequest({
             html: html("Concurrent"),
             manifest: {
-              ...pageManifest,
+              ...Fixtures.manifest,
               name: `concurrent-${identity.user.id.replace(/_/g, "-")}`
             }
           });
@@ -1674,7 +1672,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           api.publish({
             payload: publishRequest({
               html: html(`Last quota slot ${index}`),
-              manifest: { ...pageManifest, name: `last-quota-slot-${index}` }
+              manifest: { ...Fixtures.manifest, name: `last-quota-slot-${index}` }
             }),
             responseMode: "response-only"
           })
@@ -1700,7 +1698,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
           api.publish({
             payload: publishRequest({
               html: html(`Exact name from ${identity.user.name}`),
-              manifest: { ...pageManifest, name: "company-name-race" }
+              manifest: { ...Fixtures.manifest, name: "company-name-race" }
             }),
             responseMode: "response-only"
           })
@@ -1815,13 +1813,13 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const alpha = yield* owner.publish({
         payload: publishRequest({
           html: html("Alpha"),
-          manifest: { ...pageManifest, name: "rename-alpha" }
+          manifest: { ...Fixtures.manifest, name: "rename-alpha" }
         })
       });
       const beta = yield* owner.publish({
         payload: publishRequest({
           html: html("Beta"),
-          manifest: { ...pageManifest, name: "rename-beta" }
+          manifest: { ...Fixtures.manifest, name: "rename-beta" }
         })
       });
       const api = yield* client.pipe(
@@ -1839,7 +1837,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
             payload: publishRequest({
               patchId: patch.patchId,
               html: html("Rename"),
-              manifest: { ...pageManifest, name }
+              manifest: { ...Fixtures.manifest, name }
             }),
             responseMode: "response-only"
           })
@@ -1860,7 +1858,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         payload: publishRequest({
           patchId: alpha.patchId,
           html: html("Gamma"),
-          manifest: { ...pageManifest, name: "rename-gamma" }
+          manifest: { ...Fixtures.manifest, name: "rename-gamma" }
         })
       });
       assert.strictEqual(renamed.name, "rename-gamma");
@@ -1876,7 +1874,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         payload: publishRequest({
           patchId: alpha.patchId,
           html: html("Alpha restored"),
-          manifest: { ...pageManifest, name: alpha.name }
+          manifest: { ...Fixtures.manifest, name: alpha.name }
         })
       });
       assert.isTrue(
@@ -1892,7 +1890,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
   it.effect("titles a scripted patch from its page, its name, or the version rolled back to", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
-      const manifest = { ...pageManifest, tier: 1 as const, name: "titled-script" };
+      const manifest = { ...Fixtures.manifest, tier: 1 as const, name: "titled-script" };
       const created = yield* api.publish({
         payload: publishRequest({
           html: "<!doctype html><title>Launch queue</title><div id=root></div><script>1</script>",
@@ -1921,7 +1919,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         '\uFEFF<!DOCTYPE html>\r\n<HTML><body><script>window.answer = "東京 & < >";</script></body></HTML>\r\n';
       const payload = publishRequest({
         html: raw,
-        manifest: { ...pageManifest, tier: 1, name: "raw-script" }
+        manifest: { ...Fixtures.manifest, tier: 1, name: "raw-script" }
       });
       const [created, response] = yield* api.publish({
         payload,
@@ -1947,35 +1945,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
-  it.effect("refuses a tier 0 publish, naming tier 1, without changing published content", () =>
-    Effect.gen(function* () {
-      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
-      const safe = html("Page original");
-      const created = yield* api.publish({ payload: publishRequest({ html: safe }) });
-      const store = yield* ContentStore.ContentStore;
-      const before = yield* Stream.runCollect(store.list("patches/"));
-      const refused = yield* api.publish({
-        payload: publishRequest({
-          patchId: created.patchId,
-          html: html("Static claim"),
-          manifest: Fixtures.manifest
-        }),
-        responseMode: "response-only"
-      });
-      assert.strictEqual(refused.status, 422);
-      expect(yield* refused.json).toMatchObject({
-        code: "tier_mismatch",
-        error: expect.stringContaining("Tier 0 is now tier 1.")
-      });
-      const version = Option.getOrThrow(
-        yield* (yield* Patches.Patches).find(created.patchId)
-      ).version;
-      assert.strictEqual(version.id, created.versionId);
-      assert.strictEqual(yield* (yield* Content.Content).read(version), safe);
-      assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
-    })
-  );
-
   it.effect("enforces the UTF-8 bundle cap and the enclosing request cap", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(
@@ -1985,7 +1954,6 @@ it.layer(publishLayer)("publish attempts", (it) => {
             PatchesApi.layer.pipe(
               Layer.provide(
                 publishConfig(CURRENT_RELEASE, 100, 100, 100, {
-                  PATCHY_MAX_HTML_BYTES: "512",
                   PATCHY_MAX_BUNDLE_BYTES: "1024"
                 })
               )
@@ -1997,7 +1965,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const atLimit = raw + " ";
       const payload = publishRequest({
         html: atLimit,
-        manifest: { ...pageManifest, tier: 1 }
+        manifest: { ...Fixtures.manifest, tier: 1 }
       });
       const created = yield* api.publish({ payload });
       const version = Option.getOrThrow(
@@ -2047,27 +2015,23 @@ it.layer(publishLayer)("publish attempts", (it) => {
       };
       const cases = [
         {
-          payload: publishRequest({ html: html("Unsupported"), manifest: Fixtures.manifest }),
-          code: "tier_mismatch"
-        },
-        {
           payload: publishRequest({
             html: html("Unsupported"),
-            manifest: { ...pageManifest, tier: 2 }
+            manifest: { ...Fixtures.manifest, tier: 2 }
           }),
           code: "invalid_manifest"
         },
         {
           payload: publishRequest({
             html: html("Unsupported"),
-            manifest: { ...pageManifest, tier: 3 }
+            manifest: { ...Fixtures.manifest, tier: 3 }
           }),
           code: "tier_mismatch"
         },
         {
           payload: yield* consumingRequest({
             html: html("Unsupported"),
-            manifest: { ...pageManifest, uses: sales }
+            manifest: { ...Fixtures.manifest, uses: sales }
           }),
           code: "connection_not_connected"
         }
@@ -2077,6 +2041,31 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.strictEqual(response.status, 422);
         assert.include(yield* response.json, { code });
       }
+      // A manifest from before tier 0 became tier 1 is told the fix, as the release before says it.
+      const tierZero = publishRequest({ html: html("Unsupported") });
+      const raw = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+            next(
+              request.pipe(
+                HttpClientRequest.bearerToken(admin.machine.id),
+                HttpClientRequest.bodyJsonUnsafe({
+                  ...tierZero,
+                  manifest: { ...tierZero.manifest, tier: 0 }
+                })
+              )
+            )
+          )
+        )
+      );
+      const refused = yield* raw.publish({ payload: tierZero, responseMode: "response-only" });
+      assert.strictEqual(refused.status, 422);
+      assert.deepStrictEqual(yield* refused.json, {
+        ok: false,
+        code: "tier_mismatch",
+        error:
+          "Tier 0 is now tier 1. Publish with a tier 1 manifest; a current patchy CLI sends one."
+      });
       assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
     })
   );
@@ -2105,7 +2094,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const response = yield* api.publish({
           payload: publishRequest({
             html: html("Own patch only"),
-            manifest: { ...pageManifest, uses }
+            manifest: { ...Fixtures.manifest, uses }
           }),
           responseMode: "response-only"
         });
@@ -2141,7 +2130,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
   it.effect("charges refused creates before validation but never charges stored replays", () =>
     Effect.gen(function* () {
       for (const [manifest, code] of [
-        [{ ...pageManifest, release: "9.0.0" }, "release_mismatch"],
+        [{ ...Fixtures.manifest, release: "9.0.0" }, "release_mismatch"],
         [null, "invalid_manifest"]
       ] as const) {
         yield* Effect.gen(function* () {
@@ -2197,7 +2186,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         const payload = publishRequest({ html: html("Wire stamp") });
         // Manifest shape rules are the api schema's; one case proves the raw body is checked.
         for (const [body, status] of [
-          [{ ...payload, manifest: { ...pageManifest, files: { docs: {} } } }, 422],
+          [{ ...payload, manifest: { ...Fixtures.manifest, files: { docs: {} } } }, 422],
           [{ ...payload, wireVersion: 999 }, 201],
           [{ publishKey: payload.publishKey, manifest: null }, 409]
         ] as const) {
@@ -2241,7 +2230,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const consumer = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
         const patches = yield* Patches.Patches;
         const sourceManifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "shared-contacts",
           tables: {
             contacts: {
@@ -2286,7 +2275,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           payload: publishRequest({
             patchId: source.patchId,
             html: html("Source omits contacts"),
-            manifest: { ...pageManifest, name: source.name }
+            manifest: { ...Fixtures.manifest, name: source.name }
           })
         });
         assert.deepStrictEqual(omitted.unused.tables, ["contacts"]);
@@ -2304,7 +2293,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           payload: new ShareRequest({ scope: "public" })
         });
         const consumerManifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "shared-consumer",
           tables: {
             notes: {
@@ -2362,7 +2351,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           payload: yield* consumingRequest({
             html: html("Historical declaration"),
             manifest: {
-              ...pageManifest,
+              ...Fixtures.manifest,
               name: "historical-declaration",
               uses: { contacts: declaration }
             }
@@ -2372,7 +2361,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           payload: publishRequest({
             patchId: historical.patchId,
             html: html("No current declaration"),
-            manifest: { ...pageManifest, name: historical.name }
+            manifest: { ...Fixtures.manifest, name: historical.name }
           })
         });
         const sql = yield* SqlClient.SqlClient;
@@ -2381,7 +2370,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
             payload: yield* consumingRequest({
               html: html(state),
               manifest: {
-                ...pageManifest,
+                ...Fixtures.manifest,
                 name: `shared-${state}`,
                 uses: { contacts: declaration }
               }
@@ -2460,7 +2449,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const consumer = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
         const manifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "stable-source-name",
           tables: {
             contacts: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
@@ -2486,7 +2475,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           const refused = yield* consumer.publish({
             payload: yield* consumingRequest({
               html: html("Refused consumer"),
-              manifest: { ...pageManifest, uses: { contacts: unavailable } }
+              manifest: { ...Fixtures.manifest, uses: { contacts: unavailable } }
             }),
             responseMode: "response-only"
           });
@@ -2501,7 +2490,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const foreign = yield* consumer.publish({
           payload: yield* consumingRequest({
             html: html("Foreign consumer"),
-            manifest: { ...pageManifest, uses: { contacts: declaration } }
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
           responseMode: "response-only"
         });
@@ -2512,7 +2501,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const retired = yield* consumer.publish({
           payload: yield* consumingRequest({
             html: html("Retired source"),
-            manifest: { ...pageManifest, uses: { contacts: declaration } }
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
           responseMode: "response-only"
         });
@@ -2529,7 +2518,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const refused = yield* consumer.publish({
           payload: yield* consumingRequest({
             html: html("Old identity"),
-            manifest: { ...pageManifest, uses: { contacts: declaration } }
+            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
           responseMode: "response-only"
         });
@@ -2593,7 +2582,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const payload = yield* consumingRequest({
           html: html("Warehouse report"),
-          manifest: { ...pageManifest, name: "warehouse-report", uses: { sales: declaration } }
+          manifest: { ...Fixtures.manifest, name: "warehouse-report", uses: { sales: declaration } }
         });
         const created = yield* api.publish({ payload });
         const patches = yield* Patches.Patches;
@@ -2666,7 +2655,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
           payload: publishRequest({
             html: html("No current declaration"),
             patchId: created.patchId,
-            manifest: { ...pageManifest, name: "warehouse-report" }
+            manifest: { ...Fixtures.manifest, name: "warehouse-report" }
           })
         });
         assert.instanceOf(
@@ -2705,7 +2694,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
       const payload = yield* consumingRequest({
         html: html("Analytics report"),
         manifest: {
-          ...pageManifest,
+          ...Fixtures.manifest,
           name: "analytics-report",
           uses: { analytics: declaration }
         }
@@ -2769,7 +2758,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
       const payload = yield* consumingRequest({
         html: html("Support desk"),
-        manifest: { ...pageManifest, name: "support-desk", uses: { mail: declaration } }
+        manifest: { ...Fixtures.manifest, name: "support-desk", uses: { mail: declaration } }
       });
       const created = yield* api.publish({ payload });
       const patches = yield* Patches.Patches;
@@ -2824,7 +2813,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
                 html: html("Locked connection"),
                 title: "Locked connection",
                 manifest: {
-                  ...pageManifest,
+                  ...Fixtures.manifest,
                   name: "locked-connection",
                   uses: { sales: declaration }
                 }
@@ -2922,7 +2911,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         const server = yield* tier2Bundle;
         const page = html("Two artifacts 東京");
         const manifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           tier: 2 as const,
           handlers: tier2Handlers,
           // The manifest is client supplied; analytics reports only listed SDK entry points,
@@ -2970,7 +2959,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           payload: publishRequest({
             patchId: created.patchId,
             html: html("Tier one"),
-            manifest: { ...pageManifest, tier: 1 }
+            manifest: { ...Fixtures.manifest, tier: 1 }
           })
         });
         yield* api.share({ params, payload: new ShareRequest({ scope: "public" }) });
@@ -3081,7 +3070,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           })
         );
         const server = built.outputFiles[0]!.text;
-        const manifest = { ...pageManifest, tier: 2 as const, handlers };
+        const manifest = { ...Fixtures.manifest, tier: 2 as const, handlers };
         const created = yield* api.publish({
           payload: publishRequest({ html: html("Agent area"), server, manifest })
         });
@@ -3178,7 +3167,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
             payload: publishRequest({
               html: html("Described"),
               server: built.outputFiles[0]!.text,
-              manifest: { ...pageManifest, tier: 2 as const, handlers }
+              manifest: { ...Fixtures.manifest, tier: 2 as const, handlers }
             }),
             responseMode: "response-only"
           });
@@ -3270,7 +3259,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           const payload = publishRequest({
             html: html("Agent area"),
             server: yield* agentBundle(tools),
-            manifest: { ...pageManifest, tier: 2 as const }
+            manifest: { ...Fixtures.manifest, tier: 2 as const }
           });
           const raw = yield* client.pipe(
             Effect.provide(
@@ -3324,7 +3313,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
             html: html("Server agent module"),
             server: built.outputFiles[0]!.text,
             manifest: {
-              ...pageManifest,
+              ...Fixtures.manifest,
               tier: 2 as const,
               handlers: {
                 "agent.listDeals": {
@@ -3358,7 +3347,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           `{ addLead: mutation({ description: "Adds a lead.", args: { email: t.text() }, result: t.text(), handler: async () => "added" }) }`
         );
         const manifest = {
-          ...pageManifest,
+          ...Fixtures.manifest,
           tier: 2 as const,
           handlers: {
             "agent.addLead": {
@@ -3411,7 +3400,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
       Effect.gen(function* () {
         const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
         const server = yield* tier2Bundle;
-        const manifest = { ...pageManifest, tier: 2 as const, handlers: tier2Handlers };
+        const manifest = { ...Fixtures.manifest, tier: 2 as const, handlers: tier2Handlers };
         const created = yield* api.publish({
           payload: publishRequest({ html: html("Retained"), server, manifest })
         });
@@ -3499,7 +3488,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           payload: publishRequest({
             html: html("Corrupt"),
             server,
-            manifest: { ...pageManifest, tier: 2, handlers: tier2Handlers }
+            manifest: { ...Fixtures.manifest, tier: 2, handlers: tier2Handlers }
           }),
           responseMode: "response-only"
         });
@@ -3525,7 +3514,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           payload: publishRequest({
             html: html("No handlers"),
             server: built.outputFiles[0]!.text,
-            manifest: { ...pageManifest, tier: 2, handlers: {} }
+            manifest: { ...Fixtures.manifest, tier: 2, handlers: {} }
           })
         });
         assert.deepStrictEqual(empty.handlers, []);

@@ -40,7 +40,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   duringGeneration = () => Effect.void
 }: {
   readonly index: unknown;
-  readonly tier?: 0 | 1 | 2;
+  readonly tier?: 1 | 2;
   readonly uses?: string;
   readonly generatedServer?: string;
   readonly generatedFiles?: ReadonlyArray<{ readonly path: string; readonly contents: string }>;

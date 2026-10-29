@@ -425,7 +425,7 @@ it.layer(
         manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,
         publish_response, publish_status)
         VALUES (${versionId}, ${patchId}, 1, 'runtime/deleted.html', 'test', 1,
-          ${DEV_SEED.tokenId}, ${userId}, 0, 'test', 1, 1, 0, '{}'::jsonb,
+          ${DEV_SEED.tokenId}, ${userId}, 1, 'test', 1, 1, 0, '{}'::jsonb,
           'runtime-deleted', 'test', '{}'::jsonb, 201)`;
       yield* log.begin({ ...mutation(correlationId), userId, patchId, versionId });
       yield* sql`DELETE FROM patch_versions WHERE id = ${versionId}`;

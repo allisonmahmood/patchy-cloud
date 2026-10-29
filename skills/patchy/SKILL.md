@@ -169,11 +169,11 @@ config and its imports, or the named `patchy.json.description` field. On a build
 `dist/index.html` as a single file.
 `too_large` means reduce the largest contributors reported: the local HTML cap
 is 10 MiB. `tier_mismatch` means the code does not fit the tier: `server/` needs
-tier 2, and a repo still at tier 0 must set `tier: 1` in `patchy.config.ts` and run
-`pnpm patchy refresh`.
+tier 2, and a config still at tier 0 needs `tier: 1` and `pnpm patchy refresh`.
 Bundle inspection requires embedded resources and inline scripts/styles;
-CSS `@import` is unsupported. It is a resource-completeness check. Fragment,
-relative and external anchors are accepted; the runtime sandbox governs navigation.
+CSS `@import` is unsupported. It is a resource-completeness check; the runtime
+sandbox governs what a page may do. Fragment, relative and external anchors are
+navigation, not missing resources.
 
 Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
 `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed

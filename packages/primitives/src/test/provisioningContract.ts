@@ -9,7 +9,7 @@ import * as Tables from "../Tables.js";
 const manifest = (tables: (typeof Manifest.Type)["tables"]): typeof Manifest.Type => ({
   manifestVersion: 1,
   release: "test",
-  tier: 0,
+  tier: 1,
   tables,
   files: {},
   uses: {}

@@ -1,41 +1,10 @@
-import * as CssTree from "css-tree";
 import * as parse5 from "parse5";
-import type { HtmlValidationResult } from "./types.js";
-
-const BLOCKED_TAG_LOOKUP = {
-  script: true,
-  form: true,
-  iframe: true,
-  object: true,
-  embed: true,
-  applet: true,
-  base: true,
-  link: true
-} as const satisfies Record<string, true>;
-
-type BlockedTag = keyof typeof BLOCKED_TAG_LOOKUP;
-
-export const BLOCKED_TAGS = Object.freeze(Object.keys(BLOCKED_TAG_LOOKUP) as BlockedTag[]);
-
-const URL_ATTRS = new Set([
-  "href",
-  "src",
-  "action",
-  "formaction",
-  "poster",
-  "srcdoc",
-  "xlink:href"
-]);
-
-export const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"] as const;
-
-export const DEFAULT_MAX_HTML_BYTES = 512 * 1024;
 
 /**
  * Bounds on the work markup can ask of the parser, and of every walk over what it builds. Steps of
  * the HTML parsing algorithm cost time in proportion to how deep the markup nests, how many
  * attributes an element carries and how many nodes error recovery moves or clones, so a page under
- * the size limit could otherwise hold the server for most of a minute. Each bound is far beyond
+ * the read limit could otherwise hold the server for most of a minute. Each bound is far beyond
  * what a page needs; Chromium's parser stops nesting at the same depth.
  */
 const MAX_DEPTH = 512;
@@ -44,7 +13,7 @@ const MAX_ATTRIBUTES = 256;
 const MAX_REPAIR_WORK = 1 << 24;
 /**
  * Counted in elements and their attributes as they are created, and in the characters of those
- * attributes. Both are far beyond what 512 KiB of markup spells out, but error recovery reopens
+ * attributes. Both are far beyond what the markup read spells out, but error recovery reopens
  * formatting elements left open across blocks by cloning them, attributes and all, so a short page
  * could otherwise ask for hundreds of millions, and every check of an attribute would read each
  * clone's copy again.
@@ -56,115 +25,6 @@ const TOO_DEEP = `HTML nests elements more than ${MAX_DEPTH} deep.`;
 const TOO_MANY_ATTRIBUTES = `An element has more than ${MAX_ATTRIBUTES} attributes.`;
 const TOO_MUCH_REPAIR =
   "HTML needs too much repair to check: close elements in the order they were opened, and keep table content inside cells.";
-
-export interface ValidateHtmlOptions {
-  maxBytes?: number;
-}
-
-export function validateHtml(
-  html: string,
-  options: ValidateHtmlOptions = {}
-): HtmlValidationResult {
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_HTML_BYTES;
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  if (typeof html !== "string" || html.trim() === "") {
-    errors.push("HTML document is empty.");
-    return { ok: false, errors, warnings, title: null };
-  }
-
-  const byteLength = Buffer.byteLength(html, "utf8");
-  if (byteLength > maxBytes) {
-    errors.push(`HTML document is ${byteLength} bytes; maximum is ${maxBytes} bytes.`);
-    return { ok: false, errors, warnings, title: null };
-  }
-
-  let document: parse5.DefaultTreeAdapterMap["document"];
-  try {
-    // Static pages run with scripts off, so a browser reads <noscript> content as markup.
-    document = BoundedParser.parse(html, {
-      treeAdapter: boundedTreeAdapter(),
-      scriptingEnabled: false
-    });
-  } catch (error) {
-    errors.push(
-      error instanceof ParseLimitExceeded ? error.message : "HTML document could not be parsed."
-    );
-    return { ok: false, errors, warnings, title: null };
-  }
-
-  function walk(node: HtmlNode): void {
-    if ("tagName" in node && node.tagName) {
-      const tagName = node.tagName.toLowerCase();
-
-      if (Object.hasOwn(BLOCKED_TAG_LOOKUP, tagName)) {
-        errors.push(`Blocked <${tagName}> tag found.`);
-      }
-
-      for (const attr of node.attrs || []) {
-        const name = attr.name.toLowerCase();
-        const value = String(attr.value || "").trim();
-
-        if (name.startsWith("on")) {
-          errors.push(`Blocked inline event handler attribute "${name}" found.`);
-        }
-
-        if (name === "srcdoc") {
-          errors.push('Blocked "srcdoc" attribute found.');
-        }
-
-        if (URL_ATTRS.has(name)) {
-          const normalized = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
-          if (BLOCKED_PROTOCOLS.some((protocol) => normalized.startsWith(protocol))) {
-            errors.push(`Blocked unsafe URL in "${name}" attribute.`);
-          }
-        }
-
-        if (
-          name === "style" &&
-          /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i.test(value)
-        ) {
-          errors.push("Blocked unsafe inline CSS.");
-        }
-      }
-
-      if (tagName === "meta") {
-        const httpEquiv = (node.attrs || []).find(
-          (attr) => attr.name.toLowerCase() === "http-equiv"
-        );
-        if (httpEquiv && httpEquiv.value.trim().toLowerCase() === "refresh") {
-          errors.push("Blocked meta refresh tag found.");
-        }
-      }
-
-      if (tagName === "style") {
-        // Not spread: a stylesheet can name tens of thousands of sources, each a stack slot.
-        for (const warning of blockedStyleSources(collectText(node))) warnings.push(warning);
-      }
-    }
-
-    if ("childNodes" in node) {
-      for (const child of node.childNodes || []) {
-        walk(child);
-      }
-    }
-  }
-
-  walk(document);
-
-  const title = firstTitle(document, false);
-  if (!title) {
-    warnings.push("No <title> found; Patchy Cloud will use a generic title.");
-  }
-
-  return {
-    ok: errors.length === 0,
-    errors: [...new Set(errors)],
-    warnings: [...new Set(warnings)],
-    title
-  };
-}
 
 type HtmlNode = parse5.DefaultTreeAdapterMap["node"];
 
@@ -206,8 +66,7 @@ export function parseBoundedFragment(
 
 /**
  * parse5's default tree, built under the depth, attribute and repair bounds. Most tags scan the
- * stack of open elements, so the stack is what depth counts. The bound on depth also bounds the
- * recursion of `validateHtml`'s walk.
+ * stack of open elements, so the stack is what depth counts.
  */
 function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> {
   const tree = parse5.defaultTreeAdapter;
@@ -280,47 +139,13 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
   };
 }
 
-/**
- * What a `<style>` asks for that tier 0's content policy blocks, one warning per source:
- * `@font-face` sources that aren't a `data:` URL or an in-page `#fragment`, and every `@import`.
- */
-function blockedStyleSources(css: string): string[] {
-  const warnings: string[] = [];
-  try {
-    // css-tree keeps escapes in names, and a browser reads `\73rc` as `src`.
-    const named = (name: string | undefined, expected: string) =>
-      CssTree.ident.decode(name ?? "").toLowerCase() === expected;
-    CssTree.walk(CssTree.parse(css), function (node) {
-      if (node.type === "Atrule" && named(node.name, "import")) {
-        const target = node.prelude?.type === "AtrulePrelude" ? node.prelude.children.first : null;
-        if (target?.type === "String" || target?.type === "Url")
-          warnings.push(
-            `@import "${target.value}" won't load: static pages can't load other stylesheets. Inline its CSS, with any fonts embedded as data: URLs.`
-          );
-      } else if (
-        node.type === "Url" &&
-        named(this.atrule?.name, "font-face") &&
-        named(this.declaration?.property, "src") &&
-        !/^(?:data:|#)/i.test(node.value.trim())
-      ) {
-        warnings.push(
-          `@font-face source "${node.value}" won't load: static pages load fonts only from data: URLs. Embed the font as a data: URL or use a system font stack.`
-        );
-      }
-    });
-  } catch {
-    // css-tree recurses, so deeply nested rules overflow the stack; a warning never fails a page.
-  }
-  return warnings;
-}
-
-/** A scripted bundle's title comes before its inline code, which runs to megabytes. */
+/** A page's title comes before its inline code, which runs to megabytes. */
 const TITLE_SEARCH_CHARACTERS = 64 * 1024;
 
 /**
- * A scripted page's title, for publish and `patchy dev`; tier 0's comes from `validateHtml`. Only
- * the start of the bundle is read, under the same bounds as a static page. A title past that
- * limit, cut by it, or in markup past a bound gives null, and the patch keeps its name.
+ * A page's title, for publish and `patchy dev`. Only the start of the page is read, under the
+ * parser's bounds. A title past that limit, cut by it, or in markup past a bound gives null, and
+ * the patch keeps its name.
  */
 export function documentTitle(html: string): string | null {
   const cut = html.length > TITLE_SEARCH_CHARACTERS;

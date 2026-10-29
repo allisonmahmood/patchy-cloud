@@ -16,7 +16,7 @@ A repo patch's source is `patches/<repo>/`, holding only builder-owned files: `s
 
 The rollback rehearsal (`pnpm test:rollback-rehearsal`) seeds `brightline` with the live release, then opens every patch after each upgrade and rollback; a `sampleData` patch fails it if its empty state comes back.
 
-File patches are static pages in `files/`, published with their `name` and `description`.
+File patches are single-file pages in `files/`, published as tier 1 with their `name` and `description`.
 
 An agent started from the environment's `agent` launcher makes new patches and pages in the workspace beside these repos, as the workspace's `CLAUDE.md` tells it, so `pnpm dev down` removes them with the rest. One builder agent per patch is the norm; nothing enforces it.
 

@@ -225,7 +225,7 @@ redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
 address once signed in.
 
 The seed holds identity rows only; a fresh portal shows the guide to a first patch.
-`pnpm seed:dev` publishes the accepted HTML fixtures as live tier 1 pages.
+`pnpm seed:dev` publishes two single-file pages, one with a script.
 
 ### Seeing what a person sees
 

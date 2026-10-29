@@ -11,7 +11,6 @@ Talk through edge cases and product behaviour with the person before building.
 
 1. Read `AGENTS.md` for the purpose and layout, then `patchy/_generated/README.md` and `patchy/_generated/index.json` for available skills, declarations, context paths and revision stamps. Initialization already installed dependencies: use the pinned `pnpm patchy` command, not a global copy, and do not reinstall as a setup ritual. `pnpm patchy --help` lists commands in this release.
 2. Read `patchy.config.ts` for the tier, owned tables and file stores, and, on tier 2, the declarations in `uses`. Choose the page workflow from the tier and existing source:
-   - Tier 0 is static HTML. Edit `index.html`; the page cannot run scripts or call resources. It does not need Preact or `src/App.tsx`.
    - Tiers 1 and 2 start with Preact in `src/App.tsx`, mounted by `src/main.tsx`. Read `../patchy-preact/SKILL.md` before changing components or hooks.
    - Tier 2 puts handlers in `server/`. Read `../patchy-server/SKILL.md`; the page calls `patchy.server.<module>.<handler>`, not tables, named files or connections directly. Tools for people's agents go in `agent/`, the agent area, which the same skill covers.
    - A vanilla tier 1 repo keeps its existing entrypoint and framework-free generated client. Refresh does not convert it to Preact.
@@ -53,7 +52,7 @@ keep the same patch id and its data. The typecheck must pass before publishing.
 
 ## Source and import boundaries
 
-For scripted pages, `src/` owns the page; tier 0 keeps static HTML in `index.html`.
+`src/` owns the page.
 On every tier, `index.html`'s `<title>` names the patch's browser tab; init starts
 it from the patch's name, so give it the tool's name as people say it.
 Put reusable company code in `helpers/`; page-only helpers

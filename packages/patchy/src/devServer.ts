@@ -12,13 +12,13 @@ import {
   StreamAdmission,
   StreamLimits
 } from "@patchy/runtime/dev";
-import { Cryptography, documentTitle, validateHtml } from "@patchy/core";
+import { Cryptography, documentTitle } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
   renderPatchWrapper,
-  contentSecurityPolicy,
-  shellContentSecurityPolicy,
+  CONTENT_SECURITY_POLICY,
+  SHELL_SECURITY_POLICY,
   PATCH_PERMISSIONS_POLICY,
   PATCH_ROBOTS_TAG,
   NO_REFERRER_POLICY
@@ -115,11 +115,9 @@ export const serve = Effect.fn("Dev.serve")(function* (
     Effect.provide(FetchHttpClient.layer)
   );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
-  // As publish reads it: a tier 0 page whole, a scripted bundle only from its start.
-  const titleOf = (page: string) =>
-    prepared.manifest.tier === 0 ? validateHtml(page).title : documentTitle(page);
   let html = yield* nextBuild(prepared.manifest);
-  let title = titleOf(html);
+  // As publish reads it: only from the page's start.
+  let title = documentTitle(html);
   let revision = 1;
   // A failed rebuild keeps the last good binding serving, and `patchy dev agent` says so until a
   // newer build installs. Recording the build that was serving keeps the two in step.
@@ -165,12 +163,6 @@ export const serve = Effect.fn("Dev.serve")(function* (
     identity: NonNullable<Binding.Binding["Service"]["identity"]>
   ) {
     const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
-    const shellPolicy = shellContentSecurityPolicy(prepared.manifest.tier);
-    // Tier 0 keeps its production policy, permitting only the trusted reload script and poll.
-    const localShellPolicy =
-      prepared.manifest.tier >= 1
-        ? shellPolicy
-        : `${shellPolicy}; script-src ${origin}/~dev/reload.js; connect-src ${origin}/~dev/build`;
     const version = resources.version;
     const base = `/dev/${version.patchId}` as const;
     const content = `/~content/${version.patchId}/${version.versionId}` as const;
@@ -240,7 +232,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
               contentType: "text/html; charset=utf-8",
               headers: {
                 ...headers,
-                "content-security-policy": contentSecurityPolicy(prepared.manifest.tier)
+                "content-security-policy": CONTENT_SECURITY_POLICY
               }
             })
           )
@@ -265,7 +257,6 @@ export const serve = Effect.fn("Dev.serve")(function* (
                 tier: prepared.manifest.tier,
                 wireVersion: version.wireVersion
               },
-              html,
               nonce: Buffer.from(yield* cryptography.randomBytes(24)).toString("hex"),
               route,
               base,
@@ -273,7 +264,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
             }),
             {
               contentType: "text/html; charset=utf-8",
-              headers: { ...headers, "content-security-policy": localShellPolicy }
+              headers: { ...headers, "content-security-policy": SHELL_SECURITY_POLICY }
             }
           );
         });
@@ -327,15 +318,12 @@ export const serve = Effect.fn("Dev.serve")(function* (
     company: prepared.identity.company,
     admin: prepared.identity.role === "admin"
   });
-  let colleagueUrl: string | undefined;
-  if (prepared.manifest.tier >= 1) {
-    const colleagueServer = yield* Layer.build(Layer.fresh(layer));
-    colleagueUrl = yield* mount({
-      user: colleague,
-      company: prepared.identity.company,
-      admin: false
-    }).pipe(Effect.provideContext(colleagueServer));
-  }
+  const colleagueServer = yield* Layer.build(Layer.fresh(layer));
+  const colleagueUrl = yield* mount({
+    user: colleague,
+    company: prepared.identity.company,
+    admin: false
+  }).pipe(Effect.provideContext(colleagueServer));
   const ready = {
     ...record,
     pid: process.pid,
@@ -345,13 +333,13 @@ export const serve = Effect.fn("Dev.serve")(function* (
       return value;
     }),
     url,
-    ...(colleagueUrl === undefined ? {} : { colleagueUrl })
+    colleagueUrl
   };
   yield* io("Could not record the healthy dev daemon.", () =>
     atomicJson(stateDir, "daemon.json", ready)
   );
   yield* Console.log(`Ready: ${ready.url}`);
-  if (colleagueUrl !== undefined) yield* Console.log(`Colleague: ${colleagueUrl}`);
+  yield* Console.log(`Colleague: ${colleagueUrl}`);
   yield* Effect.addFinalizer(() =>
     io("Could not clear the stopped dev daemon.", async () => {
       const current = await readRecord(stateDir);
@@ -368,7 +356,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
       Effect.tap((bundle) =>
         Effect.sync(() => {
           html = bundle;
-          title = titleOf(bundle);
+          title = documentTitle(bundle);
           revision++;
         })
       ),

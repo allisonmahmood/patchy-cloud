@@ -5,9 +5,8 @@
  * open a patch can read it: public by URL, company through its user's browser.
  * `X-Robots-Tag: noindex` keeps every patch out of search results.
  *
- * Tier-zero content runs no script; tier-one shells load Patchy's broker,
- * and company shells also maintain the session. Neither runs analytics.
- * Exact content URLs use their stored version's tier and sandbox policy.
+ * Every shell loads Patchy's broker, and company shells also maintain the
+ * session. None runs analytics. Content URLs carry the frame's sandbox policy.
  *
  * Only a public patch's current version is public, at its latest and version
  * URLs; older versions stay behind the company door. Public pages cache for at
@@ -21,8 +20,8 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   NO_STORE_CACHE_CONTROL,
-  SCRIPTED_SHELL_SECURITY_POLICY,
-  SCRIPTED_CONTENT_SECURITY_POLICY,
+  SHELL_SECURITY_POLICY,
+  CONTENT_SECURITY_POLICY,
   PATCH_PERMISSIONS_POLICY
 } from "./shell-headers.js";
 export * from "./shell-headers.js";
@@ -52,11 +51,11 @@ export const servingHeaders = HttpMiddleware.make((httpEffect) =>
       "x-content-type-options": "nosniff",
       // Redirects and errors cannot become an unsandboxed navigation escape.
       ...(response.headers["content-security-policy"] === undefined
-        ? { "content-security-policy": SCRIPTED_SHELL_SECURITY_POLICY }
+        ? { "content-security-policy": SHELL_SECURITY_POLICY }
         : {}),
       ...(contentUrl && response.status !== 200
         ? {
-            "content-security-policy": SCRIPTED_CONTENT_SECURITY_POLICY,
+            "content-security-policy": CONTENT_SECURITY_POLICY,
             "permissions-policy": PATCH_PERMISSIONS_POLICY
           }
         : {}),

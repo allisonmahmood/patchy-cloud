@@ -42,11 +42,11 @@ import {
 } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
+  CONTENT_SECURITY_POLICY,
   PATCH_CONTENT_SECURITY_POLICY,
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
-  contentSecurityPolicy,
   PATCH_PERMISSIONS_POLICY,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
@@ -149,7 +149,6 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   documents: Documents
 ) {
   const cryptography = yield* Cryptography.Cryptography;
-  const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
   const analytics = yield* Analytics.Analytics;
   const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
@@ -243,7 +242,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     );
     return isPublic ? response : withCookies(response, cookies);
   }
-  if (served.value.version.tier >= 1 && served.value.version.wireVersion !== WIRE_VERSION) {
+  if (served.value.version.wireVersion !== WIRE_VERSION) {
     return withCookies(
       HttpServerResponse.text(renderShellNotice("needs_rebuild", request.url), {
         contentType: "text/html",
@@ -270,13 +269,6 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           })
         )
       : undefined;
-  // Only a tier 0 shell embeds its document; a scripted one frames the content URL.
-  const html =
-    kind === "address" && served.value.version.tier === 0
-      ? yield* content
-          .read(served.value.version)
-          .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
-      : "";
   // Count only successful requests that reach the origin. Cached reads may
   // undercount visits. A failed counter write must not deny the fetched page.
   yield* patches.recordVisit(served.value.patch.id).pipe(
@@ -328,11 +320,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     ...patchUrlHeaders,
     "content-security-policy":
       kind === "content"
-        ? contentSecurityPolicy(served.value.version.tier)
-        : shellContentSecurityPolicy(
-            served.value.version.tier,
-            isPublic ? undefined : session.clerk?.frontendApiHost
-          ),
+        ? CONTENT_SECURITY_POLICY
+        : shellContentSecurityPolicy(isPublic ? undefined : session.clerk?.frontendApiHost),
     ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
     "cache-control":
       isPublic && url?.searchParams.get("__patchy_shell_reload") !== "1"
@@ -353,18 +342,14 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     : HttpServerResponse.text(
         renderPatchWrapper({
           ...served.value,
-          html,
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
           viewerId,
           head: isPublic ? undefined : sessionScripts(session),
-          ...(selection !== undefined && served.value.version.tier >= 1
-            ? {
-                nonce: yield* cryptography.internalId("boot"),
-                base: `/${served.value.patch.companyHandle}/${served.value.patch.name}${selection.versionNumber === undefined ? "" : `/~v/${selection.versionNumber}`}`,
-                route: selection.route
-              }
-            : {})
+          // Only an address renders a shell, so its route selection is always there.
+          nonce: yield* cryptography.internalId("boot"),
+          base: `/${served.value.patch.companyHandle}/${served.value.patch.name}${selection?.versionNumber === undefined ? "" : `/~v/${selection.versionNumber}`}`,
+          ...(selection === undefined ? {} : { route: selection.route })
         }),
         { contentType: "text/html", headers }
       );

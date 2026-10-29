@@ -13,7 +13,7 @@ The human-readable label unique within a company's patch namespace, forming the 
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs. Tier 0 is static; tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan.
+Where a patch's code runs, counted from 1. Tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:
@@ -101,7 +101,7 @@ The owner-scoped identity of one publish attempt. Resending its unchanged payloa
 _Avoid_: patch id, machine token, version id
 
 **Bundle**:
-A self-contained artifact of one version: the HTML content or the closed server module. A single HTML file publishes as a tier 1 bundle, checked for embedded resources as a repo's built page is. Publish refuses tier 0; a tier 0 bundle already stored was checked against the safe-HTML policy. Scripted HTML runs only inside the sandbox.
+A self-contained artifact of one version: the HTML content or the closed server module. A single HTML file publishes as a tier 1 bundle, checked for embedded resources as a repo's built page is. HTML runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
 **Deletion sweep**:

@@ -216,7 +216,7 @@ it.layer(layer)("document streams", (it) => {
       assert.deepStrictEqual(frame(yield* first.pull), {
         type: "served",
         versionId: Fixtures.versionId,
-        tier: 0
+        tier: 1
       });
       const second = yield* open("generation_document", hello.generation);
       const nextHello = frame(yield* second.pull);

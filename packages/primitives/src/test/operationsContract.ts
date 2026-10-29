@@ -31,7 +31,7 @@ const decodePage = Schema.decodeUnknownEffect(TablePage);
 export const manifest: typeof Manifest.Type = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
-  tier: 0,
+  tier: 1,
   files: {},
   uses: {},
   tables: {

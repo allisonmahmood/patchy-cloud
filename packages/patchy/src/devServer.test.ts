@@ -3,7 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Identity, RuntimeStreamFrame } from "@patchy/api";
-import { brokerScript, brokerSrc, shellContentSecurityPolicy } from "@patchy/serving/shell";
+import { brokerScript, brokerSrc, SHELL_SECURITY_POLICY } from "@patchy/serving/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
@@ -106,7 +106,7 @@ it.live(
       const content = `/~content/${prepared.patchId}/ver_000000000000000000000000`;
       const shell = yield* http.get(base);
       assert.strictEqual(shell.status, 200);
-      assert.strictEqual(shell.headers["content-security-policy"], shellContentSecurityPolicy(1));
+      assert.strictEqual(shell.headers["content-security-policy"], SHELL_SECURITY_POLICY);
       const shellHtml = yield* shell.text;
       assert.include(shellHtml, content);
       // The local server answers the hosted shell's versioned broker URL, uncached.

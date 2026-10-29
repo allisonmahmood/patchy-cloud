@@ -196,7 +196,7 @@ const readHtml = Effect.fn("readHtml")(function* (file: string) {
  */
 const checkedPage = Effect.fn("checkedPage")(function* (html: string) {
   if (html.trim() === "") return yield* new LocalError({ message: "HTML document is empty." });
-  yield* checkBundle(html, 1);
+  yield* checkBundle(html);
   return documentTitle(html) === null
     ? ["No <title> found; Patchy Cloud will use a generic title."]
     : [];
