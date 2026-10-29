@@ -208,49 +208,41 @@ export function editUses(source: string, change: UsesChange): string {
   /** Insert a property after the object's last one, in the object's own layout. */
   const insert = (object: ObjectExpression, text: string) => {
     const { start, end } = span(object);
-    const first = object.properties[0];
     const last = object.properties.at(-1);
-    if (!first || !last) {
-      const inner = source.slice(start + 1, end - 1).trimEnd();
+    if (!last) {
+      const inner = source.slice(start + 1, end - 1);
       if (inner.trim() === "") return replace(start, end, `{ ${text} }`);
-      // An empty object's comments stay; the entry follows them, indented like the last.
-      const at = start + 1 + inner.length;
-      if (!lineBreak.test(inner)) return replace(at, at, ` ${text}`);
-      const indent = /^[ \t]*/.exec(inner.split(lineBreak).at(-1)!)![0];
-      return replace(at, at, `${newline}${indent}${text}`);
+      // An empty object's comments stay; the entry follows them, on a line of its own when the
+      // object ends on one.
+      const point = start + 1 + inner.trimEnd().length;
+      if (!lineBreak.test(source.slice(point, end - 1))) return replace(point, point, ` ${text}`);
+      const lastLine = lineStart(point);
+      const lineIndent = /^[ \t]*/.exec(source.slice(lastLine))![0];
+      return replace(
+        point,
+        point,
+        `${newline}${lastLine > start ? lineIndent : `${lineIndent}  `}${text}`
+      );
     }
     const after = span(last).end;
-    // The separator may sit behind comments that belong to the last property.
+    // Between the last property and the closing brace sit only its separator and comments,
+    // which stay with it: the new entry goes after all of them.
     const comma = commaAfter(after, end - 1);
-    const at = comma ?? after;
-    const [separator, closing] = comma ? ["", ","] : [",", ""];
-    if (!lineBreak.test(source.slice(start, span(first).start))) {
-      // Comments trailing the last property stay with it; the new entry follows them.
-      const point = at + /^(?:[ \t]*\/\*[^]*?\*\/)*/.exec(source.slice(at))![0].length;
-      return comma
-        ? replace(point, point, ` ${text}${closing}`)
-        : replace(point, point, `${separator} ${text}`);
-    }
-    // Indent like the line the last property starts on.
-    const indent = /^[ \t]*/.exec(source.slice(lineStart(span(last).start)))![0];
-    // Comments after the last property stay with it, its trailing ones and those on lines of
-    // their own before the closing brace: the new entry goes after them, last in the object.
-    const closingLine = lineStart(end - 1);
-    if (closingLine > at && source.slice(closingLine, end - 1).trim() === "")
-      return (
-        source.slice(0, after) +
-        separator +
-        source.slice(after, closingLine) +
-        `${indent}${text}${closing}${newline}` +
-        source.slice(closingLine)
-      );
-    const line = commentLineEnd(at) ?? at;
+    const point = after + source.slice(after, end - 1).trimEnd().length;
+    if (!lineBreak.test(source.slice(point, end - 1)))
+      return comma ? replace(point, point, ` ${text},`) : replace(point, point, `, ${text}`);
+    // An object ending on lines of its own gets the entry on a line of its own, indented like
+    // the last property, or a step in from the line it shares with the opening brace.
+    const lastLine = lineStart(span(last).start);
+    const lineIndent = /^[ \t]*/.exec(source.slice(lastLine))![0];
+    const indent =
+      source.slice(lastLine, span(last).start).trim() === "" ? lineIndent : `${lineIndent}  `;
     return (
       source.slice(0, after) +
-      separator +
-      source.slice(after, line) +
-      `${newline}${indent}${text}${closing}` +
-      source.slice(line)
+      (comma === undefined ? "," : "") +
+      source.slice(after, point) +
+      `${newline}${indent}${text}${comma === undefined ? "" : ","}` +
+      source.slice(point)
     );
   };
   // Literal declarations need no second managed edit to the user's imports.
