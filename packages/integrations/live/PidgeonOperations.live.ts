@@ -121,6 +121,26 @@ const decodeDelivered = Schema.decodeUnknownEffect(
     })
   })
 );
+const decodeApproval = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    data: Schema.Struct({
+      identity_id: Schema.String,
+      status: Schema.String,
+      reason: Schema.String,
+      message_id: Schema.NullOr(Schema.String)
+    })
+  })
+);
+const decodeApprovalEvents = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    data: Schema.Array(
+      Schema.Struct({
+        type: Schema.String,
+        data: Schema.Struct({ draft_id: Schema.String, reason: Schema.String })
+      })
+    )
+  })
+);
 
 /** A customer: another test address of the run's, open, which writes to the desk as mail does. */
 const createCustomer = Effect.fn("live.createCustomer")(function* (tag: string) {
@@ -267,7 +287,7 @@ const wholeThread = Effect.fn("live.wholeThread")(function* (call: Call, id: str
   return messages;
 });
 /** Asks `ready` until it answers, every few seconds, for mail Pidgeon delivers in its own time. */
-const eventually = <A>(ready: Effect.Effect<A | undefined, unknown>, what: string) =>
+const eventually = <A, R>(ready: Effect.Effect<A | undefined, unknown, R>, what: string) =>
   Effect.gen(function* () {
     for (let tries = 0; tries < 20; tries++) {
       const found = yield* ready;
@@ -527,7 +547,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
       );
 
       it.effect(
-        "a send held for a person's approval is pending, and so is its replay; a rejected@ recipient comes back the same twice",
+        "a send held for a person's approval is pending, and so is its replay, with the approval and its event recorded; a rejected@ recipient comes back the same twice",
         () =>
           Effect.gen(function* () {
             const store = yield* SqlConnectionStore.make;
@@ -559,7 +579,47 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
                 replayed: true
               }
             );
-            yield* Live.reconfigure(connection.display.identityId, { send_approval: "none" });
+            // Pidgeon records the approval and its event as it would live, but in test mode it
+            // tells no person. The draft is deleted so no run leaves one in the approval queue.
+            const identityId = connection.display.identityId;
+            const draftId = (held as { draftId: string }).draftId;
+            const approval = `/drafts/${encodeURIComponent(draftId)}/approval`;
+            assert.deepStrictEqual(
+              (yield* decodeApproval(
+                (yield* Live.call(Live.admin(), { method: "GET", path: approval })).body
+              )).data,
+              {
+                identity_id: identityId,
+                status: "pending",
+                reason: "first_contact",
+                message_id: null
+              }
+            );
+            const requested = yield* eventually(
+              Live.call(Live.admin(), {
+                method: "GET",
+                path: "/events",
+                query: { type: "draft.approval_requested", identity_id: identityId }
+              }).pipe(
+                Effect.flatMap((answer) => decodeApprovalEvents(answer.body)),
+                Effect.map(({ data }) => data.find((event) => event.data.draft_id === draftId))
+              ),
+              "The draft.approval_requested event"
+            );
+            assert.deepStrictEqual(requested, {
+              type: "draft.approval_requested",
+              data: { draft_id: draftId, reason: "first_contact" }
+            });
+            yield* Live.call(Live.admin(), {
+              method: "DELETE",
+              path: `/drafts/${encodeURIComponent(draftId)}`
+            });
+            assert.strictEqual(
+              (yield* Live.call(Live.admin(), { method: "GET", path: approval }).pipe(Effect.flip))
+                ._tag,
+              "PidgeonNotFound"
+            );
+            yield* Live.reconfigure(identityId, { send_approval: "none" });
             const draft = `${Live.RUN}-rejected`;
             const recipients = [customer.email, "rejected@customer.example"];
             const sent = yield* send(draft, recipients);
