@@ -1,6 +1,6 @@
 import type { Frame, Page, Request } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, notice, installSessionRefreshBoundary } from "./fixtures.js";
+import { test, expect, notice, installSessionRefreshBoundary, streamAdmitted } from "./fixtures.js";
 import type { Instance, Published } from "./instance.js";
 import { RuntimeSubscriptionRequest } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
@@ -77,21 +77,12 @@ async function load(page: Page, patch: Published): Promise<Frame> {
 const lazy = (instance: Instance) =>
   instance.html.replace("<body><h1>", '<body data-me="lazy"><h1>');
 
-/**
- * Loads a lazy patch and waits for its fixture client and its stream's first admission. The
- * stream opens on ready, so a test that then changes the session finds it already settled.
- */
+/** Loads a lazy patch and waits for its fixture client and its stream's first admission. */
 async function loadLazy(page: Page, patch: Published): Promise<Frame> {
   expect((await page.goto(patch.address))?.status()).toBe(200);
   await expect(page.frameLocator("#patch").locator("#identity")).toHaveText("waiting");
   const frame = contentFrame(page);
-  await frame.waitForFunction(
-    () =>
-      "harness" in window &&
-      (window as unknown as FixtureWindow).harness.replies.some(
-        (reply) => reply.event === "stream" && reply.data?.type === "admitted"
-      )
-  );
+  await streamAdmitted(frame);
   return frame;
 }
 
@@ -178,6 +169,7 @@ for (const scope of ["company", "local"] as const) {
     try {
       const frame = await load(page, patch);
       await expect.poll(() => instance.streamConnections.size).toBe(1);
+      await streamAdmitted(frame);
       await instance.session(context, "expired");
       // The shell aborts the refused update before its body can be read; the refresh shows its code.
       const refused = page.waitForResponse(
@@ -209,6 +201,7 @@ for (const scope of ["company", "local"] as const) {
     try {
       const frame = await load(page, patch);
       await expect.poll(() => instance.streamConnections.size).toBe(1);
+      await streamAdmitted(frame);
       await instance.session(context, "colleague");
       await frame.evaluate(() => (window as unknown as FixtureWindow).harness.subscribeRows());
       await notice(page, "principal_changed");

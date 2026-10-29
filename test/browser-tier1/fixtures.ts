@@ -85,6 +85,20 @@ export async function open(page: Page, patch: Published, suffix = ""): Promise<F
   expect(await frame.evaluate(() => (window as unknown as FixtureWindow).harness.ready)).toBe(true);
   return frame;
 }
+/**
+ * Waits for the frame's stream to admit its first desired set. A tier 1 stream opens on ready,
+ * which can be after `open` returns, so a test that next changes the session, pauses the clock
+ * or snapshots requests waits for this first.
+ */
+export async function streamAdmitted(frame: Frame) {
+  await frame.waitForFunction(
+    () =>
+      "harness" in window &&
+      (window as unknown as FixtureWindow).harness.replies.some(
+        (reply) => reply.event === "stream" && reply.data?.type === "admitted"
+      )
+  );
+}
 export async function notice(page: Page, code: string) {
   await expect(page).toHaveURL(new RegExp(`/~shell/notice/${code}\\?`));
   await expect(page.locator("iframe")).toHaveCount(0);

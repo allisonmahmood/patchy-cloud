@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { FixtureWindow } from "./fixture-client.js";
-import { test, expect, open, notice, prepare } from "./fixtures.js";
+import { test, expect, open, notice, prepare, streamAdmitted } from "./fixtures.js";
 
 test("broker admits server arguments up to 1 MiB and stamps local and runtime refusals", async ({
   page,
@@ -439,16 +439,7 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
   }
 
   const frame = await open(page, patch);
-  // The stream opens on ready; wait for its first admission so its own POST precedes the snapshot.
-  await expect
-    .poll(() =>
-      frame.evaluate(() =>
-        (window as unknown as FixtureWindow).harness.replies.some(
-          (reply) => reply.event === "stream" && reply.data?.type === "admitted"
-        )
-      )
-    )
-    .toBe(true);
+  await streamAdmitted(frame);
   const beforeMalformed = instance.runtimeRequests.length;
   await frame.evaluate((wire) => {
     const h = (window as unknown as FixtureWindow).harness;
@@ -664,6 +655,7 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
   for (const user of ["none", "expired", "colleague"] as const) {
     await instance.session(context);
     const frame = await open(page, patch, "/items/2?return=this");
+    await streamAdmitted(frame);
     await instance.session(context, user);
     await frame.evaluate(() => {
       void (window as unknown as FixtureWindow).harness.client.tables.rows!.list().catch(() => {});
