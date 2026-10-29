@@ -96,7 +96,6 @@
     "@types/semver": "^7.7.1",
     "css-tree": "^3.2.1",
     "effect": "catalog:",
-    "eslint-plugin-react-hooks": "^7.1.1",
     "papaparse": "5.7.0",
     "parse5": "catalog:",
     "semver": "^7.7.2",

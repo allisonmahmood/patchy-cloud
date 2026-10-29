@@ -28,9 +28,7 @@ if ((mode !== "check" && mode !== "verify") || flags.some((flag) => flag !== "--
 
 const check: ReadonlyArray<Suite> = [
   { name: "format", commands: [pnpm("format:check")] },
-  // ESLint's cache is per file, so a changed type can leave an unchanged caller's
-  // stale pass (no-floating-promises). verify lints from scratch, as CI does.
-  { name: "lint", commands: [mode === "verify" ? pnpm("lint", "--no-cache") : pnpm("lint")] },
+  { name: "lint", commands: [pnpm("lint")] },
   { name: "typecheck", commands: [pnpm("typecheck")] },
   { name: "synth", commands: [pnpm("--filter", "@patchy/infra", "synth:example")] },
   { name: "test", commands: [pnpm("test")] }

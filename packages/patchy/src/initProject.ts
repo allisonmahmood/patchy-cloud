@@ -32,7 +32,7 @@ export function starterFiles(options: {
       scripts: {
         typecheck: "tsc --noEmit",
         build: "vite build",
-        ...(tier >= 1 ? { lint: "eslint ." } : {})
+        ...(tier >= 1 ? { lint: "oxlint" } : {})
       },
       devDependencies: {
         patchy: tarball,
@@ -40,13 +40,7 @@ export function starterFiles(options: {
         vite: versions.vite.accepted,
         "vite-plugin-singlefile": versions["vite-plugin-singlefile"].accepted,
         "@types/node": versions["@types/node"].accepted,
-        ...(tier >= 1
-          ? {
-              eslint: "^10.11.0",
-              "typescript-eslint": "^8.70.1",
-              "eslint-plugin-react-hooks": "^7.1.1"
-            }
-          : {})
+        ...(tier >= 1 ? { oxlint: "^1.90.0" } : {})
       }
     }),
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,
@@ -133,29 +127,32 @@ ${
   );
 }
 `,
-          "eslint.config.js": `import tseslint from "typescript-eslint";
-import reactHooks from "eslint-plugin-react-hooks";
-
-export default [
-  { ignores: ["patchy/_generated/**", "dist/**", "node_modules/**"] },
-  {
-    files: ["src/**/*.{js,jsx,ts,tsx}", "helpers/**/*.{js,jsx,ts,tsx}", "server/**/*.{js,jsx,ts,tsx}", "agent/**/*.{js,jsx,ts,tsx}"],
-    languageOptions: { parser: tseslint.parser },
-    plugins: { "react-hooks": reactHooks },
-    rules: {
-      // useQuery is recognized by its use-prefix; it has no effect dependency array.
-      "react-hooks/rules-of-hooks": "error",
-      "react-hooks/exhaustive-deps": "error",
-      "no-restricted-imports": ["error", {
-        patterns: [{
-          regex: "^(?:react|react-dom|preact)(?:/|$)",
-          message: "Import Preact with compat semantics from patchy/preact."
-        }]
-      }]
-    }
-  }
-];
-`
+          ".oxlintrc.json": json({
+            plugins: ["eslint", "react"],
+            categories: { correctness: "off" },
+            ignorePatterns: ["patchy/_generated/**", "dist/**"],
+            overrides: [
+              {
+                files: ["src/**", "helpers/**", "server/**", "agent/**"],
+                rules: {
+                  // useQuery is recognized by its use-prefix; it has no effect dependency array.
+                  "react/rules-of-hooks": "error",
+                  "react/exhaustive-deps": "error",
+                  "no-restricted-imports": [
+                    "error",
+                    {
+                      patterns: [
+                        {
+                          regex: "^(?:react|react-dom|preact)(?:/|$)",
+                          message: "Import Preact with compat semantics from patchy/preact."
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          })
         }
       : {
           "src/main.ts": `import { patchy } from "../patchy/_generated/client.js";\n\nconst form = document.querySelector<HTMLFormElement>("#notes")!;\nconst list = document.querySelector<HTMLUListElement>("#list")!;\nconst error = document.querySelector<HTMLParagraphElement>("#error")!;\nasync function render() {\n  const page = await patchy.tables.notes.list({ limit: 100 });\n  list.replaceChildren(...page.rows.map((note) => {\n    const item = document.createElement("li");\n    item.textContent = note.title;\n    return item;\n  }));\n}\nfunction save() {\n  if (!form.reportValidity()) return;\n  const title = String(new FormData(form).get("title") ?? "").trim();\n  if (!title) return;\n  void (async () => {\n    await patchy.tables.notes.insert({ title });\n    form.reset();\n    await render();\n  })().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n}\n// The sandbox blocks native form submission; save through the broker instead.\nform.querySelector("button")!.addEventListener("click", save);\nform.addEventListener("keydown", (event) => {\n  if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {\n    event.preventDefault();\n    save();\n  }\n});\nvoid render().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n`

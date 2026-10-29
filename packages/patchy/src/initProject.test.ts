@@ -52,7 +52,7 @@ it.each([1, 2] as const)("typechecks and lints agent/ beside server/ at tier %i"
   expect(JSON.parse(files["tsconfig.json"]!).include).toEqual(
     expect.arrayContaining(["server", "agent"])
   );
-  expect(files["eslint.config.js"]).toContain('"agent/**/*.{js,jsx,ts,tsx}"');
+  expect(files[".oxlintrc.json"]).toContain('"agent/**"');
   expect(files["AGENTS.md"]).toContain(
     "- `agent/`: tools for people's agents, used through Patchy MCP (tier 2)."
   );

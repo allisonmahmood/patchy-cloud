@@ -1,9 +1,9 @@
 /**
  * Each rule against the shape it exists to catch and the shape it must let
- * through. Plain ESLint `RuleTester` on JavaScript sources: the rules read
- * ESTree, so TypeScript syntax adds nothing here.
+ * through, on Oxlint's own parser and plugin runtime. Sources are JavaScript:
+ * the rules read ESTree, so TypeScript syntax adds nothing here.
  */
-import { RuleTester } from "eslint";
+import { RuleTester } from "oxlint/plugins-dev";
 import { describe, it } from "vitest";
 import namespaceServiceImports from "./rules/namespace-service-imports.js";
 import noInlineSchemaCompile from "./rules/no-inline-schema-compile.js";
@@ -13,9 +13,7 @@ RuleTester.describe = describe;
 RuleTester.it = it;
 RuleTester.itOnly = it.only;
 
-const tester = new RuleTester({
-  languageOptions: { ecmaVersion: 2022, sourceType: "module" }
-});
+const tester = new RuleTester({ languageOptions: { sourceType: "module" } });
 
 tester.run("namespace-service-imports", namespaceServiceImports, {
   valid: [

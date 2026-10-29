@@ -16,7 +16,7 @@ export const test = base.extend<
   serverEnvironment: [{}, { option: true }],
   // Never a global setup shared by workers: a cluster must serve one test at a time.
   cluster: [
-    // eslint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this pattern.
+    // oxlint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this pattern.
     async ({}, use) => {
       const cluster = await startCluster();
       try {

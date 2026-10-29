@@ -115,7 +115,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 
 ### Guardrails
 
-`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `effect-language-service patch` runs from `prepare`). Tests are typechecked too, through `tsconfig.test.json`, which keeps the correctness rules and drops the style ones. A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` runs the repo's own rules from `eslint/`: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
+`@effect/language-service` diagnostics fail `pnpm typecheck` (rule set in `tsconfig.base.json`, every rule an error; `effect-language-service patch` runs from `prepare`). Tests are typechecked too, through `tsconfig.test.json`, which keeps the correctness rules and drops the style ones. A Node API with no Effect equivalent is allowed per file with `// @effect-diagnostics <rule>:off` and a reason. `pnpm lint` is Oxlint (`.oxlintrc.json`), type-aware through `oxlint-tsgolint`; it runs the repo's own rules from `lint/` as a JS plugin: namespace imports for Effect and service modules, no manual runtimes in tests, no Schema compiles in function bodies. `/code-review` loads the service review spec above whenever a diff touches an Effect service.
 
 ## Pull requests
 

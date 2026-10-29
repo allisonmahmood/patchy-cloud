@@ -67,7 +67,7 @@
           - ".github/**"
           - "scripts/**"
           - "test/**"
-          - "eslint/**"
+          - "lint/**"
           - "patches/**"
           # What `pnpm dev up` builds an environment from.
           - "scenarios/**"
@@ -80,6 +80,7 @@
           - "tsconfig*.json"
           - "*.config.js"
           - "*.config.ts"
+          - ".oxlintrc.json"
           - "mise.toml"
           - "skills-lock.json"
           - ".dockerignore"

@@ -30,6 +30,13 @@ updates:
           - "@effect/sql-pg"
           - "@effect/sql-pglite"
           - "@effect/vitest"
+      # Oxlint, its rule types and its type-aware companion release together; the
+      # plugin types must match the linter that loads lint/plugin.js.
+      oxlint:
+        patterns:
+          - oxlint
+          - "@oxlint/plugins"
+          - oxlint-tsgolint
       # The CDK library and CLI release weekly, in step; review them together.
       aws-cdk:
         patterns:

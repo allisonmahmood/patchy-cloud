@@ -590,7 +590,7 @@ index.html, src/main.tsx, src/App.tsx  tiers 1 and 2 Preact page
 src/styles.css                the page's layout: a centred main column, after the look
 server/                       tier 2 starter handlers
 vite.config.ts, tsconfig.json  single-file build, JSX settings, typechecking
-eslint.config.js              tiers 1 and 2 import and hooks lint
+.oxlintrc.json                tiers 1 and 2 import and hooks lint
 helpers/                      company-owned helpers
 AGENTS.md, CLAUDE.md            purpose, layout, skills, index; @AGENTS.md
 patchy/_generated/             README, index, client, manifest, context, look.css; logo.svg when the look has one; server.ts on tier 2

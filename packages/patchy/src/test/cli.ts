@@ -767,16 +767,9 @@ export const localPackageRegistry = async () => {
       await pack(optional);
     }
   };
-  for (const name of [
-    "typescript",
-    "vite-plugin-singlefile",
-    "@types/node",
-    "eslint",
-    "typescript-eslint"
-  ])
+  for (const name of ["typescript", "vite-plugin-singlefile", "@types/node", "oxlint"])
     await pack(resolvePackage(name, import.meta.url));
   await pack(resolvePackage("vite", require.resolve("vitest/package.json")));
-  await pack(resolvePackage("eslint-plugin-react-hooks", path.join(packageDir, "package.json")));
   await pack(resolvePackage("workerd", path.join(packageDir, "../execution/package.json")));
   const server = createServer((request, response) => {
     const name = decodeURIComponent((request.url ?? "/").slice(1));

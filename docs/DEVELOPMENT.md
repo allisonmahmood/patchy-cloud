@@ -61,9 +61,9 @@ to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
 `node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
 
-Format and lint cache their results, so a repeat run rechecks only the files
-that changed. ESLint's cache cannot tell when a changed type alters an unchanged
-file's result, so `pnpm verify` lints from scratch, as CI does.
+Format caches its results, so a repeat run rechecks only the files that changed.
+Lint is Oxlint, with its type-aware rules run by `oxlint-tsgolint`; it keeps no
+cache and checks the whole repo in seconds.
 
 For a focused loop:
 

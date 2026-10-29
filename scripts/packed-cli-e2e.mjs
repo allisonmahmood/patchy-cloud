@@ -1386,7 +1386,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
         "export function useData(handler: Parameters<typeof useQuery>[0]) { return useQuery(handler, {}); }\n"
     )
   );
-  await run("pnpm", ["exec", "eslint", "helpers/lint-probe.ts"], options);
+  await run("pnpm", ["exec", "oxlint", "helpers/lint-probe.ts"], options);
   const forbiddenImports = [
     "react",
     "react/jsx-runtime",
@@ -1411,20 +1411,20 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   try {
     const refused = await run(
       "pnpm",
-      ["exec", "eslint", "helpers/lint-probe.ts", "--format", "json"],
+      ["exec", "oxlint", "helpers/lint-probe.ts", "--format", "json"],
       {
         ...options,
         allowFailure: true
       }
     );
     assert.equal(refused.code, 1);
-    const messages = JSON.parse(refused.stdout).flatMap((file) => file.messages);
+    const codes = JSON.parse(refused.stdout).diagnostics.map((diagnostic) => diagnostic.code);
     assert.equal(
-      messages.filter((message) => message.ruleId === "no-restricted-imports").length,
+      codes.filter((code) => code === "eslint(no-restricted-imports)").length,
       forbiddenImports.length
     );
-    assert.ok(messages.some((message) => message.ruleId === "react-hooks/rules-of-hooks"));
-    assert.ok(messages.some((message) => message.ruleId === "react-hooks/exhaustive-deps"));
+    assert.ok(codes.includes("react-hooks(rules-of-hooks)"));
+    assert.ok(codes.includes("react-hooks(exhaustive-deps)"));
   } finally {
     await checkedCall(() => rm(lintProbePath));
   }
