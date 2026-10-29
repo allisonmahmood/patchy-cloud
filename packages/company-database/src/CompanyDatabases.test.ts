@@ -1161,160 +1161,367 @@ it.layer(
   );
 });
 
-for (const [name, limits, resource] of [
-  ["retained backend budget", { maxBackends: 4 }, "backend budget"],
-  ["registry capacity", { capacity: 1 }, "pool registry"]
-] as const) {
-  it.layer(Testing.layer(limits).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
-    name,
-    (it) => {
-      it.effect(
-        "counts idle pools, evicts after 60 seconds, and admits the previously refused company",
-        () =>
-          Effect.gen(function* () {
-            yield* createCompany("capacity-second");
-            const service = yield* CompanyDatabases.CompanyDatabases;
-            yield* service.ensureReady("cmp_dev");
-            yield* service.ensureReady("capacity-second");
-            yield* service.withCompany("cmp_dev")(currentDatabase);
-            const refused = yield* service
-              .withCompany("capacity-second")(currentDatabase)
-              .pipe(Effect.flip);
-            assert.strictEqual(refused._tag, "Busy");
-            if (refused._tag === "Busy") assert.strictEqual(refused.resource, resource);
-            yield* TestClock.adjust("59 seconds");
-            assert.strictEqual(
-              (yield* service.withCompany("capacity-second")(currentDatabase).pipe(Effect.flip))
-                ._tag,
-              "Busy"
-            );
-            yield* TestClock.adjust("1 second");
-            assert.strictEqual(
-              yield* service.withCompany("capacity-second")(currentDatabase),
-              (yield* service.claim("capacity-second")).databaseName
-            );
-          })
-      );
-    }
-  );
-}
+it.layer(Testing.layer({ capacity: 1 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "registry capacity",
+  (it) => {
+    it.effect(
+      "counts idle pools, evicts after 60 seconds, and admits the previously refused company",
+      () =>
+        Effect.gen(function* () {
+          yield* createCompany("capacity-second");
+          const service = yield* CompanyDatabases.CompanyDatabases;
+          yield* service.ensureReady("cmp_dev");
+          yield* service.ensureReady("capacity-second");
+          yield* service.withCompany("cmp_dev")(currentDatabase);
+          const refused = yield* service
+            .withCompany("capacity-second")(currentDatabase)
+            .pipe(Effect.flip);
+          assert.strictEqual(refused._tag, "Busy");
+          if (refused._tag === "Busy") assert.strictEqual(refused.resource, "pool registry");
+          yield* TestClock.adjust("59 seconds");
+          assert.strictEqual(
+            (yield* service.withCompany("capacity-second")(currentDatabase).pipe(Effect.flip))._tag,
+            "Busy"
+          );
+          yield* TestClock.adjust("1 second");
+          assert.strictEqual(
+            yield* service.withCompany("capacity-second")(currentDatabase),
+            (yield* service.claim("capacity-second")).databaseName
+          );
+        })
+    );
+  }
+);
 
-it.layer(
-  Testing.layer({ maxBackends: 8, capacity: 2 }).pipe(
-    Layer.provideMerge(Testing.resourceChangesLayer)
-  )
-)("Failed pool opens", (it) => {
-  it.effect("does not retain a registry slot when the backend budget refuses a pool", () =>
-    Effect.gen(function* () {
-      const service = yield* CompanyDatabases.CompanyDatabases;
-      const limits = yield* OperatingLimits.make;
-      for (const companyId of ["too-large", "fits-budget"]) {
-        yield* createCompany(companyId);
-        yield* service.ensureReady(companyId);
-      }
-      yield* service.ensureReady("cmp_dev");
-      yield* service.withCompany("cmp_dev")(currentDatabase);
-      yield* limits.setOverride({
-        companyId: "too-large",
-        limitId: "company.connections",
-        value: 8,
-        actor: "pool-open-test"
-      });
-      const refused = yield* service.withCompany("too-large")(currentDatabase).pipe(Effect.flip);
-      assert.strictEqual(refused._tag, "Busy");
-      if (refused._tag === "Busy")
-        assert.strictEqual(refused.limitId, "company.connections.hostBackends");
-      assert.strictEqual(
-        yield* service.withCompany("fits-budget")(currentDatabase),
-        (yield* service.claim("fits-budget")).databaseName
-      );
-    })
+// Held transactions sit idle in transaction; pooled connections between leases are idle.
+const companyBackends = (state: "idle" | "idle in transaction") =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql<{ count: number }>`SELECT count(*)::integer AS count FROM pg_stat_activity
+      WHERE state = ${state}
+        AND datname IN (SELECT database_name FROM company_databases)`.pipe(
+      Effect.map((rows) => rows[0]!.count)
+    )
   );
+
+/** A clock that reports each one-second connection wait as it starts. */
+const queueSignal = Effect.gen(function* () {
+  const started = yield* Queue.unbounded<void>();
+  const clock = yield* Clock.Clock;
+  return {
+    started,
+    clock: {
+      ...clock,
+      sleep: (duration: Duration.Duration) =>
+        Duration.toMillis(duration) === 1_000
+          ? Queue.offer(started, undefined).pipe(Effect.andThen(clock.sleep(duration)))
+          : clock.sleep(duration)
+    }
+  };
 });
 
-it.layer(Testing.layer({ maxBackends: 8 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
-  "Refused pool resize",
+const readyCompanies = Effect.fn("test.readyCompanies")(function* (prefix: string, count: number) {
+  const service = yield* CompanyDatabases.CompanyDatabases;
+  const companies = Array.from({ length: count }, (_, index) => `${prefix}-${index}`);
+  for (const companyId of companies) {
+    yield* createCompany(companyId);
+    yield* service.ensureReady(companyId);
+  }
+  return companies;
+});
+
+it.layer(Testing.layer({ maxBackends: 64 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Host backend budget",
   (it) => {
-    it.effect("retains the working pool and its budget until a replacement fits", () =>
-      Effect.gen(function* () {
-        const service = yield* CompanyDatabases.CompanyDatabases;
-        const limits = yield* OperatingLimits.make;
-        const companyId = "cmp_dev";
-        const otherId = "resize-budget-holder";
-        yield* createCompany(otherId);
-        yield* service.ensureReady(companyId);
-        yield* service.ensureReady(otherId);
-        const pid = Effect.flatMap(SqlClient.SqlClient, (sql) =>
-          sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.pipe(
-            Effect.map((rows) => rows[0]!.pid)
-          )
-        );
-        const before = yield* service.withCompany(companyId)(pid);
-        yield* service.withCompany(otherId)(currentDatabase);
-        yield* limits.setOverride({
-          companyId,
-          limitId: "company.connections",
-          value: 6,
-          actor: "test"
-        });
-        const refused = yield* service.withCompany(companyId)(currentDatabase).pipe(Effect.flip);
-        assert.strictEqual(refused._tag, "Busy");
-        if (refused._tag === "Busy") {
-          assert.strictEqual(refused.limitId, "company.connections.hostBackends");
-          assert.strictEqual(refused.value, 8);
-        }
-        const platform = yield* SqlClient.SqlClient;
-        assert.deepStrictEqual(
-          yield* platform<{ pid: number }>`SELECT pid FROM pg_stat_activity WHERE pid = ${before}`,
-          [{ pid: before }]
-        );
-        yield* limits.removeOverride({ companyId, limitId: "company.connections", actor: "test" });
-        assert.strictEqual(yield* service.withCompany(companyId)(pid), before);
-      })
+    it.effect(
+      "serves forty companies at once from a 64-backend budget",
+      () =>
+        Effect.gen(function* () {
+          const companies = yield* readyCompanies("forty", 40);
+          // Reserving each pool's maximum of four refused the seventeenth.
+          for (const companyId of companies) yield* holdConnections(companyId, 1);
+          assert.strictEqual(yield* companyBackends("idle in transaction"), 40);
+        }).pipe(Effect.scoped),
+      60_000
     );
   }
 );
 
 it.layer(Testing.layer({ maxBackends: 8 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
-  "Overridden retained maxima",
+  "Saturated host backend budget",
   (it) => {
-    it.effect("resizes without double reserving and still budgets idle pool maxima", () =>
+    it.effect("bursts each company to its maximum and refuses only true saturation", () =>
       Effect.gen(function* () {
+        const [first, second, third] = yield* readyCompanies("saturated", 3);
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        yield* holdConnections(first!, 4);
+        yield* holdConnections(second!, 4);
+        assert.strictEqual(yield* companyBackends("idle in transaction"), 8);
+        const queued = yield* queueSignal;
+        const waiting = yield* service
+          .withCompany(third!)(currentDatabase)
+          .pipe(Effect.flip, Effect.provideService(Clock.Clock, queued.clock), Effect.forkScoped);
+        yield* Queue.take(queued.started);
+        yield* TestClock.adjust("999 millis");
+        assert.isUndefined(waiting.pollUnsafe());
+        yield* TestClock.adjust("1 millis");
+        const refused = yield* Fiber.join(waiting);
+        assert.strictEqual(refused._tag, "Busy");
+        if (refused._tag !== "Busy") return;
+        assert.strictEqual(refused.resource, "backend budget");
+        assert.strictEqual(refused.scope, "host");
+        assert.strictEqual(refused.limitId, "company.connections.hostBackends");
+        assert.strictEqual(refused.value, 8);
+        assert.strictEqual(refused.retryAfterSeconds, 1);
+      }).pipe(Effect.scoped)
+    );
+  }
+);
+
+it.layer(Testing.layer({ maxBackends: 4 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Idle backend eviction",
+  (it) => {
+    it.effect("closes other companies' idle connections for a company that needs one", () =>
+      Effect.gen(function* () {
+        const [idle, ...others] = yield* readyCompanies("evict", 4);
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        // Four finished transactions leave four open, idle connections.
+        yield* Effect.forEach(yield* holdConnections(idle!, 4), Fiber.interrupt);
+        for (const companyId of others) {
+          assert.strictEqual(
+            yield* service.withCompany(companyId)(currentDatabase),
+            (yield* service.claim(companyId)).databaseName
+          );
+        }
+        const held = yield* Effect.forEach(others, (companyId) => holdConnections(companyId, 1));
+        assert.strictEqual(yield* companyBackends("idle in transaction"), 3);
+        assert.strictEqual(
+          yield* service.withCompany(idle!)(currentDatabase),
+          (yield* service.claim(idle!)).databaseName
+        );
+        yield* Effect.forEach(held.flat(), Fiber.interrupt);
+      }).pipe(Effect.scoped)
+    );
+
+    it.effect("admits a waiting company as soon as another company's connection idles", () =>
+      Effect.gen(function* () {
+        const [busy, waiting] = yield* readyCompanies("starve", 2);
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        const holders = yield* holdConnections(busy!, 4);
+        const queued = yield* queueSignal;
+        const waiter = yield* service
+          .withCompany(waiting!)(currentDatabase)
+          .pipe(Effect.provideService(Clock.Clock, queued.clock), Effect.forkScoped);
+        yield* Queue.take(queued.started);
+        yield* TestClock.adjust("500 millis");
+        assert.isUndefined(waiter.pollUnsafe());
+        yield* Fiber.interrupt(holders[0]!);
+        assert.strictEqual(
+          yield* Fiber.join(waiter),
+          (yield* service.claim(waiting!)).databaseName
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
+);
+
+/**
+ * An admission whose connection `hold` keeps checked out after it ends, so a
+ * company evicting its idle slot stays mid-close until `hold` closes. `end`
+ * ends the admission.
+ */
+const admissionHeldOpen = Effect.fn("test.admissionHeldOpen")(function* (
+  companyId: string,
+  hold: Scope.Scope
+) {
+  const service = yield* CompanyDatabases.CompanyDatabases;
+  const entered = yield* Deferred.make<void>();
+  const gate = yield* Deferred.make<void>();
+  const admission = yield* service
+    .withCompany(companyId)(
+      Effect.flatMap(SqlClient.SqlClient, (sql) => sql.reserve.pipe(Scope.provide(hold))).pipe(
+        Effect.andThen(Deferred.succeed(entered, undefined)),
+        Effect.andThen(Deferred.await(gate))
+      )
+    )
+    .pipe(Effect.forkScoped);
+  yield* Deferred.await(entered);
+  return { end: Deferred.succeed(gate, undefined).pipe(Effect.andThen(Fiber.join(admission))) };
+});
+
+/**
+ * Fills a host with `owner`'s held-open slot and one held `other` connection,
+ * queues `evictor`, then idles the owner's slot and then `other`'s, so the
+ * evictor takes the owner's slot and stays closing it until `hold` closes.
+ */
+const evictionInFlight = Effect.fn("test.evictionInFlight")(function* (
+  owner: string,
+  other: string,
+  evictor: string,
+  hold: Scope.Scope
+) {
+  const service = yield* CompanyDatabases.CompanyDatabases;
+  const held = yield* admissionHeldOpen(owner, hold);
+  const [otherHolder] = yield* holdConnections(other, 1);
+  const queued = yield* queueSignal;
+  const evicting = yield* service
+    .withCompany(evictor)(currentDatabase)
+    .pipe(Effect.provideService(Clock.Clock, queued.clock), Effect.forkScoped);
+  yield* Queue.take(queued.started);
+  yield* held.end;
+  yield* Fiber.interrupt(otherHolder!);
+  return evicting;
+});
+
+/** Whether a company's next admission waits in its queue or is admitted at once. */
+const nextAdmission = Effect.fn("test.nextAdmission")(function* (companyId: string) {
+  const service = yield* CompanyDatabases.CompanyDatabases;
+  const queued = yield* queueSignal;
+  const admission = yield* service
+    .withCompany(companyId)(currentDatabase)
+    .pipe(Effect.provideService(Clock.Clock, queued.clock), Effect.forkScoped);
+  const outcome = yield* Effect.raceFirst(
+    Queue.take(queued.started).pipe(Effect.as("queued" as const)),
+    Fiber.join(admission).pipe(Effect.as("admitted" as const))
+  );
+  return { outcome, admission };
+});
+
+it.layer(Testing.layer({ maxBackends: 5 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Eviction racing reacquisition",
+  (it) => {
+    it.effect("counts an evicted connection against its company until it has closed", () =>
+      Effect.gen(function* () {
+        const [owner, other, evictor] = yield* readyCompanies("reacquire", 3);
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        const hold = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
+        yield* holdConnections(owner!, 3);
+        const evicting = yield* evictionInFlight(owner!, other!, evictor!, hold);
+        // Three leases and the connection still closing are the owner's four.
+        const next = yield* nextAdmission(owner!);
+        yield* Scope.close(hold, Exit.void);
+        assert.strictEqual(next.outcome, "queued");
+        assert.strictEqual(
+          yield* Fiber.join(evicting),
+          (yield* service.claim(evictor!)).databaseName
+        );
+        assert.strictEqual(
+          yield* Fiber.join(next.admission),
+          (yield* service.claim(owner!)).databaseName
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
+);
+
+it.layer(Testing.layer({ maxBackends: 2 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Eviction racing an override",
+  (it) => {
+    it.effect("drains an evicted connection before the next generation opens", () =>
+      Effect.gen(function* () {
+        const [owner, other, evictor] = yield* readyCompanies("override", 3);
         const service = yield* CompanyDatabases.CompanyDatabases;
         const limits = yield* OperatingLimits.make;
-        const companyId = "cmp_dev";
-        const otherId = "overridden-budget";
-        yield* createCompany(otherId);
-        yield* service.ensureReady(companyId);
-        yield* service.ensureReady(otherId);
-        yield* service.withCompany(companyId)(currentDatabase);
+        const hold = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
+        const evicting = yield* evictionInFlight(owner!, other!, evictor!, hold);
+        // Raising the maximum leaves room, so only the drain can hold the next generation back.
         yield* limits.setOverride({
-          companyId,
+          companyId: owner!,
           limitId: "company.connections",
           value: 6,
           actor: "test"
         });
-        // Old four plus new six would exceed eight; drain and replace reserves only six.
-        yield* service.withCompany(companyId)(currentDatabase);
-        const refused = yield* service.withCompany(otherId)(currentDatabase).pipe(Effect.flip);
-        assert.strictEqual(refused._tag, "Busy");
-        if (refused._tag === "Busy") {
-          assert.strictEqual(refused.limitId, "company.connections.hostBackends");
-          assert.strictEqual(refused.value, 8);
-          assert.strictEqual(refused.scope, "host");
-        }
-        yield* limits.setOverride({
-          companyId,
-          limitId: "company.connections",
-          value: 2,
-          actor: "test"
-        });
-        yield* service.withCompany(companyId)(currentDatabase);
+        const next = yield* nextAdmission(owner!);
+        yield* Scope.close(hold, Exit.void);
+        assert.strictEqual(next.outcome, "queued");
         assert.strictEqual(
-          yield* service.withCompany(otherId)(currentDatabase),
-          (yield* service.claim(otherId)).databaseName
+          yield* Fiber.join(evicting),
+          (yield* service.claim(evictor!)).databaseName
         );
-      })
+        assert.strictEqual(
+          yield* Fiber.join(next.admission),
+          (yield* service.claim(owner!)).databaseName
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
+);
+
+it.layer(Testing.layer({ maxBackends: 2 }).pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Eviction racing registry expiry",
+  (it) => {
+    it.effect("never spends a backend its expiring company is still closing", () =>
+      Effect.gen(function* () {
+        const [expiring, other, evictor] = yield* readyCompanies("expiry", 3);
+        const service = yield* CompanyDatabases.CompanyDatabases;
+        const hold = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
+        yield* (yield* admissionHeldOpen(expiring!, hold)).end;
+        yield* holdConnections(other!, 1);
+        // The idle TTL closes the expiring company's pool, which waits on `hold`.
+        yield* TestClock.adjust("60 seconds");
+        const next = yield* nextAdmission(evictor!);
+        yield* Scope.close(hold, Exit.void);
+        assert.strictEqual(next.outcome, "queued");
+        assert.strictEqual(
+          yield* Fiber.join(next.admission),
+          (yield* service.claim(evictor!)).databaseName
+        );
+      }).pipe(Effect.scoped)
+    );
+  }
+);
+
+it.layer(Testing.layer().pipe(Layer.provideMerge(Testing.resourceChangesLayer)))(
+  "Service shutdown racing a connection opening",
+  (it) => {
+    it.effect("leaves no connection open for an admission still opening one", () =>
+      Effect.gen(function* () {
+        const [idle, opening] = yield* readyCompanies("shutdown", 2);
+        const databases = yield* CompanyDatabases.CompanyDatabases;
+        const platform = yield* SqlClient.SqlClient;
+        const limits = yield* OperatingLimits.make;
+        const url = Redacted.make(inject("postgres").adminUrl);
+        const serviceScope = yield* Scope.make();
+        const service = yield* PgCompanyDatabases.make.pipe(
+          Effect.provideService(PgCompanyDatabases.PlacementClient, platform),
+          Effect.provideService(PgCompanyDatabases.AdminClient, platform),
+          Effect.provideService(PgCompanyDatabases.CompanyDatabaseConfig, {
+            adminUrl: url,
+            dataUrl: url,
+            maxBackends: 1,
+            capacity: 10
+          }),
+          Effect.provideService(OperatingLimits.OperatingLimits, limits),
+          Effect.provide(Reactivity.layer),
+          Scope.provide(serviceScope)
+        );
+        const hold = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
+        const held = yield* admissionHeldOpen(idle!, hold).pipe(
+          Effect.provideService(CompanyDatabases.CompanyDatabases, service)
+        );
+        // The host is full, so the opening company queues for a backend.
+        const queued = yield* queueSignal;
+        const admission = yield* service
+          .withCompany(opening!)(currentDatabase)
+          .pipe(Effect.provideService(Clock.Clock, queued.clock), Effect.exit, Effect.forkScoped);
+        yield* Queue.take(queued.started);
+        // It evicts the idle company's slot, then waits on `hold` to finish closing it.
+        yield* held.end;
+        yield* Effect.yieldNow;
+        const shutdown = yield* Scope.close(serviceScope, Exit.void).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Scope.close(hold, Exit.void);
+        const exit = yield* Fiber.join(admission);
+        yield* Fiber.join(shutdown);
+        const [backends] = yield* platform<{ count: number }>`
+          SELECT count(*)::integer AS count FROM pg_stat_activity
+          WHERE datname = ${(yield* databases.claim(opening!)).databaseName}`;
+        assert.strictEqual(backends!.count, 0);
+        assert.isTrue(Exit.isFailure(exit));
+      }).pipe(Effect.scoped)
     );
   }
 );

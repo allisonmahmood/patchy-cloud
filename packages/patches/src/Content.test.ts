@@ -1157,8 +1157,11 @@ it.layer(
       assert.deepStrictEqual(yield* sql`SELECT company_id FROM company_databases`, []);
       const databases = yield* CompanyDatabases.CompanyDatabases;
       yield* databases.ensureReady(identity.company.id);
+      // A zero budget refuses each lease after its one-second connection wait.
       assert.strictEqual(
-        (yield* databases.withCompany(identity.company.id)(Effect.void).pipe(Effect.flip))._tag,
+        (yield* databases
+          .withCompany(identity.company.id)(Effect.void)
+          .pipe(Effect.flip, TestClock.withLive))._tag,
         "Busy"
       );
       const second = yield* publish("<p>company pool unavailable</p>", null, owner);

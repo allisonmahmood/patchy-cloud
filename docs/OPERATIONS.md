@@ -52,12 +52,14 @@ The company admin URL targets a maintenance database with a provisioning login
 allowed to `CREATE DATABASE` and assign the data role as owner. The data URL is a
 template: its database path is replaced by the company's placement. Production
 uses separate logins; the embedded superuser is only for disposable local runs.
-`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 retained company-pool slots per
-process. Budget this across replicas, plus ordinary platform connections, two
-independent placement connections, one admin connection, and temporary provisioning
-data connections, against the server limit. Each company's pool defaults to four
-connections, with per-company overrides through `OperatingLimits.setOverride`.
-At saturation, up to 32 acquisitions wait at most one second within their caller's
+`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 open company database
+connections per process, working or idle. Budget this across replicas, plus
+ordinary platform connections, two independent placement connections, one admin
+connection, and temporary provisioning data connections, against the server limit.
+Each company opens up to four connections as it needs them, with per-company
+overrides through `OperatingLimits.setOverride`. When the budget is full, a company
+that needs a connection closes another company's longest-idle one. At saturation,
+up to 32 acquisitions per company wait at most one second within their caller's
 deadline; overflow or expiry returns `busy` with retry and limit metadata.
 The Runtime company token bucket separately defaults to 100 calls/second with a
 burst of 200, including company-scoped calls that use no company connection.

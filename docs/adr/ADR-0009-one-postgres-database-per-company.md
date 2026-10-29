@@ -28,7 +28,7 @@ Company inventory uses no platform migration id.
 
 ## Pools and locks
 
-Use direct connections and a scoped `RcMap` registry: at most 100 retained company pools, idle TTL 60 seconds, and minimum 0 connections. `company.connections` defaults to 4 per company per host replica, with per-company operating overrides. Leases last one operation. When those slots are occupied, both tiers wait behind at most 32 queued acquisitions (`company.connections.waiters`) for at most 1 second (`company.connections.wait`), still inside the caller's deadline. Queue overflow or expiry returns `busy` with `retryAfter`, scope, limit id and value. Request events record the queue wait. Interrupted waiters release their queue slot.
+Use direct connections and a scoped `RcMap` registry: at most 100 retained company pools, idle TTL 60 seconds, and minimum 0 connections. `company.connections` defaults to 4 per company per host replica, with per-company operating overrides. Leases last one operation and hold one connection each, opened on demand. When those slots, or the host's backends below, are occupied, both tiers wait behind at most 32 queued acquisitions (`company.connections.waiters`) for at most 1 second (`company.connections.wait`), still inside the caller's deadline. Queue overflow or expiry returns `busy` with `retryAfter`, scope, limit id and value. Request events record the queue wait. Interrupted waiters release their queue slot.
 
 The connection wait bounds contention for company slots, not placement reads,
 socket establishment, or SQL execution. A caller's earlier deadline or cancellation
@@ -42,11 +42,16 @@ the four-connection default and bounded acquisition queue are unchanged.
 Database-held time excludes acquisition wait and includes a nested mutation's
 connection time in its parent action.
 
-Pool overrides change only the named company. Existing leases drain before a
-replacement pool opens, so old and new maxima do not overlap. New leases can
-return `busy` during this drain; an increase does not bypass existing leases.
-`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 and budgets retained pool maxima,
-not only currently executing queries. Operators must sum budgets across replicas
+Pool overrides change only the named company. Existing leases drain and the
+company's previous connections close before it opens another, so old and new
+maxima do not overlap. New leases can return `busy` during this drain; an
+increase does not bypass existing leases.
+`PATCHY_COMPANY_DB_MAX_BACKENDS` defaults to 200 and budgets the company
+connections a host has open, working or idle. A company's maximum is a ceiling
+it grows to, not a reservation. When the budget is full, a lease that needs a
+connection closes the one idle longest in another company's pool; only when every
+connection is working does it queue as above and then return `busy` for
+`company.connections.hostBackends`. Operators must sum budgets across replicas
 and leave separate platform/provisioning/administration headroom below the server's
 available user connections. Admission counts are per host replica in v1.
 

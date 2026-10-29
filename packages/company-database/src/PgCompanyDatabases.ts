@@ -8,7 +8,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as RcMap from "effect/RcMap";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -89,10 +88,21 @@ interface PoolTarget {
   readonly connections: OperatingLimits.EffectiveLimit;
 }
 
-interface CompanyPool extends PoolTarget {
+/** One company connection: a one-connection pool holding one host backend while open. */
+interface Slot {
   readonly scope: Scope.Closeable;
   readonly context: Context.Context<SqlClient.SqlClient | CompanyDatabases.CompanyConnection>;
   readonly reserve: ConnectionTiming.Client["reserve"];
+  /** Set by whichever path starts closing it, so no other path closes it again. */
+  closing: boolean;
+  /** Settles once its connection has closed and its host backend is free. */
+  readonly closed: Deferred.Deferred<void>;
+  /**
+   * For another company evicting this idle slot: takes it from its company's
+   * idle slots at once and returns its close. Its company counts it until the
+   * close completes, so it never overlaps the connection that replaces it.
+   */
+  readonly retire: () => Effect.Effect<void>;
 }
 
 const samePool = (left: PoolTarget, right: PoolTarget) =>
@@ -305,19 +315,133 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  // One registry entry per company. A changed maximum drains and closes its
-  // previous pool before opening another, never retaining overlapping generations.
-  let reservedBackends = 0;
+  // Every open company slot holds one of the host's backends, working or idle.
+  // Idle slots wait here, longest idle first, so a company that finds the host
+  // full can close another company's idle connection and open its own.
+  let openBackends = 0;
+  const idleSlots = new Map<Scope.Closeable, Slot>();
+  let backendFreed = yield* Deferred.make<void>();
+  const notifyHost = Effect.sync(() => {
+    const previous = backendFreed;
+    backendFreed = Deferred.makeUnsafe<void>();
+    Deferred.doneUnsafe(previous, Effect.void);
+  });
+
+  // A slot's lifecycle. It is counted in `openBackends` from the moment a
+  // company decides to open it until its last finalizer runs.
+  //   opening: counted, its admission already in `active`, in no idle list.
+  //     Its scope is a child of its company's, so teardown reaches it while it
+  //     is built; forked after its company closed, it closes at once and the
+  //     admission is refused without a connection.
+  //   idle: in its company's `idle` and in `idleSlots`. Its company takes it
+  //     back first; another company finding the host full may evict it.
+  //   leased: held by one admission, in no idle list, never evicted. If its
+  //     connection dies, the driver retires it: an ordinary admission's next
+  //     statement outside a transaction opens a new one, but a retained lease
+  //     pins its connection, so its later statements fail too and only a later
+  //     admission reconnects. Nothing reconnects or replays inside a retained
+  //     transaction.
+  //   closing: out of `idleSlots`, so no other company evicts it. An eviction's
+  //     or drain's close also takes it out of its company's `idle`; an eviction
+  //     still counts against its company (`retiring`) and a drain holds it
+  //     (`draining`) until the close completes. Company or service teardown
+  //     leaves it in the closed company's `idle`, so a request that already
+  //     held that registry entry can take it and run SQL until the pool shuts,
+  //     then fails or is interrupted. Anyone else who asks to close it waits
+  //     on `closed`.
+  //   closed: its pool has shut its connection, and its backend is free. A
+  //     discarded company entry may still reference it; it holds no connection.
+  // closeSlot is the one close: whichever path asks first starts it, marking
+  // the slot closing and taking it out of the eviction candidates before
+  // yielding. Every caller then waits on `closed`. Company teardown closes the
+  // slot's scope directly, as its parent; the slot's first finalizer marks it
+  // closing, and an eviction that chose it just before then also waits on
+  // `closed`, never on a second Scope.close, which would return at once.
+  const closeSlot = (slot: Slot) => {
+    const close = slot.closing ? Effect.void : Scope.close(slot.scope, Exit.void);
+    slot.closing = true;
+    idleSlots.delete(slot.scope);
+    return close.pipe(Effect.andThen(Deferred.await(slot.closed)));
+  };
+
+  // The caller has already counted this slot's backend; closing the slot returns it.
+  const openSlot = Effect.fnUntraced(function* (
+    companyId: string,
+    owner: Scope.Scope,
+    target: PoolTarget,
+    retire: (slot: Slot) => Effect.Effect<void>
+  ) {
+    // A child of the company's scope, so its teardown reaches a slot still
+    // opening. Forked from a closed company, it is closed already, and every
+    // finalizer below runs as soon as it is added.
+    const scope = yield* Scope.fork(owner);
+    const closed = yield* Deferred.make<void>();
+    // Registered first, so it runs after the pool has closed its connection.
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.suspend(() => {
+        idleSlots.delete(scope);
+        openBackends--;
+        Deferred.doneUnsafe(closed, Effect.void);
+        return notifyHost;
+      })
+    );
+    const timed = yield* timedPool(target.placement.databaseName, 1).pipe(
+      Effect.provideService(Reactivity.Reactivity, reactivity),
+      Scope.provide(scope),
+      Effect.onError(() => Scope.close(scope, Exit.void)),
+      Effect.mapError(
+        (cause) =>
+          new CompanyDatabases.CompanyDatabaseError({ companyId, operation: "connect", cause })
+      )
+    );
+    const slot: Slot = {
+      scope,
+      reserve: timed.reserve,
+      context: Context.make(SqlClient.SqlClient, timed.sql).pipe(
+        Context.add(CompanyDatabases.CompanyConnection, timed.sql)
+      ),
+      closing: false,
+      closed,
+      retire: () => retire(slot)
+    };
+    // Registered last, so it runs first: a closing slot leaves the candidates.
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.sync(() => {
+        slot.closing = true;
+        idleSlots.delete(scope);
+      })
+    );
+    // Its company closed while it was opening: no connection was opened, and
+    // its backend is already returned.
+    if (slot.closing) {
+      return yield* new CompanyDatabases.CompanyDatabaseError({
+        companyId,
+        operation: "connect",
+        cause: new Error("The company pool closed while a connection was opening.")
+      });
+    }
+    return slot;
+  });
+
+  // One registry entry per company. Each admission holds one slot, so a
+  // company's backends are its admissions, its idle slots and any slots
+  // another company is still closing. A changed
+  // maximum or placement drains and closes the previous slots before opening
+  // another, never retaining overlapping generations.
   const pools = yield* RcMap.make({
     capacity: settings.capacity,
     idleTimeToLive: "60 seconds",
     lookup: Effect.fn("CompanyDatabases.companyPool")(function* (companyId: string) {
       const owner = yield* Effect.scope;
-      let current: CompanyPool | undefined;
+      // Slots belong to `pool`; a newer `target` replaces it once they drain.
+      let pool: PoolTarget | undefined;
       let target: PoolTarget | undefined;
-      let opening = false;
-      let failed: CompanyDatabases.Busy | CompanyDatabases.CompanyDatabaseError | undefined;
-      let invalidated = false;
+      // Most recently released last, so surplus slots age out and are evicted first.
+      const idle: Array<Slot> = [];
+      let draining = false;
+      let retiring = 0;
       let active = 0;
       let waiters = 0;
       let changed = yield* Deferred.make<void>();
@@ -326,123 +450,96 @@ export const make = Effect.gen(function* () {
         changed = Deferred.makeUnsafe<void>();
         Deferred.doneUnsafe(previous, Effect.void);
       });
-      const release = Effect.sync(() => {
-        active--;
-      }).pipe(Effect.andThen(notify));
-
-      const open = Effect.fn("CompanyDatabases.openPool")(function* (next: PoolTarget) {
-        const scope = yield* Scope.fork(owner);
-        return yield* Effect.gen(function* () {
-          const maximum = next.connections.value;
-          yield* Effect.acquireRelease(
+      const release = (slot: Slot) =>
+        Effect.sync(() => {
+          active--;
+          // Service teardown can close a leased slot; it never idles again.
+          if (slot.closing) return;
+          idle.push(slot);
+          idleSlots.set(slot.scope, slot);
+        }).pipe(Effect.andThen(notify), Effect.andThen(notifyHost));
+      const retire = (slot: Slot) => {
+        idle.splice(idle.indexOf(slot), 1);
+        retiring++;
+        return closeSlot(slot).pipe(
+          Effect.ensuring(
             Effect.suspend(() => {
-              if (
-                reservedBackends - (current?.connections.value ?? 0) + maximum >
-                settings.maxBackends
-              ) {
-                return Effect.fail(
-                  new CompanyDatabases.Busy({
-                    resource: "backend budget",
-                    scope: "host",
-                    limitId: "company.connections.hostBackends",
-                    value: settings.maxBackends,
-                    retryAfterSeconds: 1
-                  })
-                );
-              }
-              reservedBackends += maximum;
-              return Effect.void;
-            }),
-            () =>
-              Effect.sync(() => {
-                reservedBackends -= maximum;
-              })
-          );
-          // Reserve the replacement before teardown can let another company take its budget.
-          if (current) {
-            const previous = current;
-            current = undefined;
-            yield* Scope.close(previous.scope, Exit.void);
-          }
-          const timed = yield* timedPool(next.placement.databaseName, maximum).pipe(
-            Effect.mapError(
-              (cause) =>
-                new CompanyDatabases.CompanyDatabaseError({
-                  companyId,
-                  operation: "connect",
-                  cause
-                })
-            )
-          );
-          current = {
-            ...next,
-            scope,
-            reserve: timed.reserve,
-            context: Context.make(SqlClient.SqlClient, timed.sql).pipe(
-              Context.add(CompanyDatabases.CompanyConnection, timed.sql)
-            )
-          };
-        }).pipe(
-          Effect.provideService(Reactivity.Reactivity, reactivity),
-          Scope.provide(scope),
-          Effect.onError(() => Scope.close(scope, Exit.void)),
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              if (!current) failed = error;
+              retiring--;
+              return notify;
             })
           )
         );
-      });
+      };
+      const enrichActive = Effect.suspend(() =>
+        WideEvents.enrich({
+          limits: [
+            {
+              limitId: "company.connections",
+              value: target!.connections.value,
+              peak: active,
+              configRevision: target!.connections.configRevision
+            }
+          ]
+        })
+      );
 
+      // Every check and count change runs without yielding in between, so
+      // contenders interleaving at a yield always see the counts it left.
       const tryAcquire = (reserveAuthority: boolean) =>
-        Effect.suspend(() => {
-          let opened = false;
-          return Effect.gen(function* () {
-            if (failed) return yield* failed;
-            if (opening) return Option.none();
-            if (active + 1 > target!.connections.value - (reserveAuthority ? 1 : 0)) {
-              yield* WideEvents.enrich({
-                limits: [
-                  {
-                    limitId: "company.connections",
-                    value: target!.connections.value,
-                    peak: active,
-                    configRevision: target!.connections.configRevision
-                  }
-                ]
-              });
-              return Option.none();
+        Effect.gen(function* () {
+          while (true) {
+            if (draining) return "company" as const;
+            const limit = target!.connections.value - (reserveAuthority ? 1 : 0);
+            if (active + retiring + 1 > limit) {
+              yield* enrichActive;
+              return "company" as const;
             }
-            if (!current || !samePool(current, target!)) {
-              if (active > 0) return Option.none();
-              opening = true;
-              opened = true;
-              yield* open(target!);
+            if (!pool || !samePool(pool, target!)) {
+              if (active > 0 || retiring > 0) return "company" as const;
+              const closes = idle.splice(0).map(closeSlot);
+              pool = target!;
+              if (closes.length === 0) continue;
+              draining = true;
+              yield* Effect.all(closes, { discard: true }).pipe(
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    draining = false;
+                    return notify;
+                  })
+                )
+              );
+              continue;
             }
-            if (!samePool(current!, target!)) return Option.none();
+            let slot = idle.pop();
+            let evicting: Effect.Effect<void> | undefined;
+            if (slot) idleSlots.delete(slot.scope);
+            else if (openBackends >= settings.maxBackends) {
+              // This company has none idle, so the longest idle is another company's.
+              const victim = idleSlots.values().next().value;
+              if (!victim) return "host" as const;
+              evicting = victim.retire();
+            }
             active++;
-            yield* Effect.addFinalizer(() => release);
-            yield* WideEvents.enrich({
-              limits: [
-                {
-                  limitId: "company.connections",
-                  value: target!.connections.value,
-                  peak: active,
-                  configRevision: target!.connections.configRevision
-                }
-              ]
-            });
-            return Option.some(current!);
-          }).pipe(
-            Effect.ensuring(
-              Effect.suspend(() => {
-                if (!opened) return Effect.void;
-                // Claim the opener's lease before waking waiters, which resume synchronously.
-                opening = false;
-                return notify;
-              })
-            )
-          );
+            if (!slot) {
+              // Counted before the evicted slot closes, so no contender takes its backend.
+              openBackends++;
+              const generation = pool;
+              slot = yield* Effect.gen(function* () {
+                if (evicting) yield* evicting;
+                return yield* openSlot(companyId, owner, generation, retire);
+              }).pipe(
+                Effect.onError(() =>
+                  Effect.sync(() => {
+                    active--;
+                  }).pipe(Effect.andThen(notify))
+                )
+              );
+            }
+            const acquired = slot;
+            yield* Effect.addFinalizer(() => release(acquired));
+            yield* enrichActive;
+            return acquired;
+          }
         }).pipe(Effect.uninterruptible);
 
       const acquire = Effect.fn("CompanyDatabases.acquire")(function* (
@@ -462,7 +559,8 @@ export const make = Effect.gen(function* () {
           target = next;
         }
         const immediate = yield* tryAcquire(reserveAuthority);
-        if (Option.isSome(immediate)) return immediate.value;
+        if (typeof immediate !== "string") return immediate;
+        let limited: "company" | "host" = immediate;
         const startedAt = yield* Clock.monotonicTimeNanos;
         return yield* Effect.acquireUseRelease(
           Effect.suspend(() => {
@@ -505,23 +603,34 @@ export const make = Effect.gen(function* () {
           () =>
             Effect.gen(function* () {
               while (true) {
-                const signal = changed;
+                const company = changed;
+                const host = backendFreed;
                 const acquired = yield* tryAcquire(reserveAuthority);
-                if (Option.isSome(acquired)) return acquired.value;
-                yield* Deferred.await(signal);
+                if (typeof acquired !== "string") return acquired;
+                limited = acquired;
+                // A full host wakes when any company's slot idles or closes.
+                yield* Deferred.await(acquired === "host" ? host : company);
               }
             }).pipe(
               Effect.timeoutOrElse({
                 duration: waitLimit.value,
                 orElse: () =>
                   Effect.fail(
-                    new CompanyDatabases.Busy({
-                      resource: "connection wait",
-                      scope: "company",
-                      limitId: waitLimit.limitId,
-                      value: waitLimit.value,
-                      retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
-                    })
+                    limited === "host"
+                      ? new CompanyDatabases.Busy({
+                          resource: "backend budget",
+                          scope: "host",
+                          limitId: "company.connections.hostBackends",
+                          value: settings.maxBackends,
+                          retryAfterSeconds: 1
+                        })
+                      : new CompanyDatabases.Busy({
+                          resource: "connection wait",
+                          scope: "company",
+                          limitId: waitLimit.limitId,
+                          value: waitLimit.value,
+                          retryAfterSeconds: Math.max(1, Math.ceil(waitLimit.value / 1_000))
+                        })
                   )
               })
             ),
@@ -543,15 +652,7 @@ export const make = Effect.gen(function* () {
             })
         );
       });
-      return {
-        acquire,
-        // Old borrowers must fail, not reopen a second pool after this entry is removed.
-        retireFailed: Effect.sync(() => {
-          if (!failed || invalidated) return false;
-          invalidated = true;
-          return true;
-        })
-      };
+      return { acquire };
     })
   });
 
@@ -606,16 +707,7 @@ export const make = Effect.gen(function* () {
           )
       })
     );
-    const context = yield* entry
-      .acquire({ placement, connections }, waiters, wait, reserveAuthority)
-      .pipe(
-        Effect.tapError(() =>
-          entry.retireFailed.pipe(
-            Effect.flatMap((retire) => (retire ? RcMap.invalidate(pools, companyId) : Effect.void))
-          )
-        )
-      );
-    return context;
+    return yield* entry.acquire({ placement, connections }, waiters, wait, reserveAuthority);
   });
 
   const withCompany: CompanyDatabases.CompanyDatabases["Service"]["withCompany"] =
