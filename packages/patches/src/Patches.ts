@@ -342,6 +342,17 @@ export interface ReadPatch {
  */
 export type ListedPatch = Omit<ReadPatch, "reads" | "dependants">;
 
+/** A named guest share for discovery; opening its address still requires serving admission. */
+const GuestSharedPatch = Schema.Struct({
+  patchId: Schema.String,
+  name: Schema.String,
+  title: Schema.String,
+  companyId: Schema.String,
+  companyName: Schema.String,
+  companyHandle: Schema.String
+});
+export type GuestSharedPatch = typeof GuestSharedPatch.Type & { readonly address: string };
+
 /** One member's record of opening one patch, read only to build that member's own Home. */
 export interface Open {
   readonly patchId: string;
@@ -903,6 +914,11 @@ export class Patches extends Context.Service<
       patchId: string,
       guestId: string
     ) => Effect.Effect<GuestGrants.Lookup | null, SqlError>;
+    /** The caller supplies the verified session subject, never a member ID or email. */
+    readonly sharedWithGuest: (
+      clerkUserId: string,
+      publicBaseUrl: string
+    ) => Effect.Effect<ReadonlyArray<GuestSharedPatch>, SqlError>;
     /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
       companyHandle: string,
@@ -2451,6 +2467,37 @@ export const make = Effect.gen(function* () {
       )
   );
 
+  const guestSharedRows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({ ...GuestSharedPatch.fields, guestId: Schema.String }),
+    execute: (clerkUserId) => sql`SELECT patches.id AS "patchId", patches.name, patches.title,
+      patches.company_id AS "companyId", companies.name AS "companyName",
+      companies.handle AS "companyHandle", guest.id AS "guestId"
+      FROM company_guests guest
+      JOIN patch_guest_grants g ON g.guest_id = guest.id AND g.company_id = guest.company_id
+      JOIN patches ON patches.id = g.patch_id AND patches.company_id = g.company_id
+      JOIN companies ON companies.id = patches.company_id
+      JOIN patch_versions v ON v.id = patches.current_version_id AND v.patch_id = patches.id
+      WHERE guest.clerk_user_id = ${clerkUserId}
+        AND guest.ended_at IS NULL AND guest.deactivated_at IS NULL
+        AND g.ended_at IS NULL AND v.tier = 0
+      ORDER BY companies.handle, patches.name, patches.id`
+  });
+  const sharedWithGuest = Effect.fn("Patches.sharedWithGuest")(function* (
+    clerkUserId: string,
+    publicBaseUrl: string
+  ) {
+    const rows = yield* guestSharedRows(clerkUserId).pipe(Effect.catchTags(dieOnSchemaError));
+    const shares: GuestSharedPatch[] = [];
+    for (const { guestId, ...patch } of rows) {
+      // Reuse the serving door's grant/lifecycle decision; membership is independent.
+      const grant = yield* guestGrant(patch.companyId, patch.patchId, guestId);
+      if (grant?.access === "active")
+        shares.push({ ...patch, address: address(publicBaseUrl, patch.companyHandle, patch.name) });
+    }
+    return shares;
+  });
+
   const retire = Effect.fn("Patches.retire")(function* (
     patchId: string,
     actor: Actor,
@@ -2833,6 +2880,7 @@ export const make = Effect.gen(function* () {
     grantGuest,
     revokeGuest,
     guestGrant,
+    sharedWithGuest,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,
