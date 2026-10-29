@@ -449,7 +449,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       files.set(
         context,
         definitionContext(`Shared file store ${alias}`, { ...source, fixture }) +
-          "\nThe whole store is read-only. Tier 1 provides list, get, url and download. Tier 2 queries provide list and stat; actions also provide get bytes. Every read checks source access and sharing live.\n"
+          "\nThe whole store is read-only. Queries provide list and stat; actions also provide get bytes. Every read checks source access and sharing live.\n"
       );
       files.set(
         fixture,

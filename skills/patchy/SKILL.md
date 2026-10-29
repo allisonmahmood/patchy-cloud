@@ -420,7 +420,8 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   A `release_mismatch` names both releases and the instance's install line:
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres, PostHog, Pidgeon and Attio declarations.
+  tiers 0, 1 and 2 with tables and stores; only tier 2 declares shared tables,
+  shared stores, members and Postgres, PostHog, Pidgeon and Attio connections.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
   fleet in production and the local executor in dev and tests. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a

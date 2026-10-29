@@ -28,7 +28,7 @@ const policy = (sendPolicy: string) =>
 
 const client = (email: string, send: boolean) => {
   const kind = send ? "PidgeonSender" : "PidgeonReader";
-  return `// Generated from an immutable Pidgeon snapshot. Browser-only; transport is supplied by the host.
+  return `// Generated from an immutable Pidgeon snapshot. Tier 2 handlers type ctx.connections with it; the host supplies the transport.
 // Patchy writes every Pidgeon request and fills in the address, so this client reaches no other.
 import { createPidgeonClient } from "patchy/client";
 import type { Call, Errors, BoundaryError as ClientBoundaryError, ${kind} } from "patchy/client";
@@ -48,7 +48,7 @@ export function createClient(connection: string, call: Call): Client {
 
 const operations = (send: boolean) => `## Operations
 
-Use the declared alias: \`patchy.connections.<alias>\` on a page, \`ctx.connections.<alias>\` in a tier 2 action. Every call is for this one address; there's no way to name another, and a thread, message or attachment that isn't on it answers \`not_found\`. The client module's \`address\` export is the address itself.
+Use the declared alias: \`ctx.connections.<alias>\` in an action; the page calls the action. Every call is for this one address; there's no way to name another, and a thread, message or attachment that isn't on it answers \`not_found\`. The client module's \`address\` export is the address itself.
 
 - \`threads.list({ status, limit, cursor })\`: conversations, newest first, with \`nextCursor\` for the next page.
 - \`threads.get(id, { cursor })\`: the thread, its labels and ${registry["pidgeon.thread.messages"].default} of its messages, oldest first, with \`nextCursor\` until the last page.
