@@ -106,9 +106,11 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         const { resource, capability, capabilities } = yield* open(binding);
         assert.deepStrictEqual(resource.watermark, {});
         const viewer = yield* resource.run(
-          Effect.map(Binding.Binding, (current) => current.identity?.user.id).pipe(
-            Effect.provideService(Binding.Binding, capability.binding)
-          )
+          Effect.map(Binding.Binding, (current) =>
+            current.identity !== null && "user" in current.identity
+              ? current.identity.user.id
+              : undefined
+          ).pipe(Effect.provideService(Binding.Binding, capability.binding))
         );
         assert.strictEqual(viewer, "usr_dev");
         const entered = yield* Deferred.make<void>();

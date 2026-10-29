@@ -18,7 +18,7 @@ import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Guests, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionPages from "./ConnectionPages.js";
@@ -305,6 +305,32 @@ it.layer(services)("company connection pages", (it) => {
           connectionId: connection.id,
           deadlineMs: 15_000
         };
+        const guest = yield* Guests.create({
+          companyId: owner.company.id,
+          clerkUserId: foreign.user.clerkUserId,
+          email: foreign.user.email,
+          name: "Guest <historical>"
+        });
+        yield* audit.begin({
+          ...begin,
+          userId: null,
+          effectivePrincipal: guest.id,
+          guest: { id: guest.id, grantId: "grt_historical" },
+          correlationId: "visible-guest"
+        });
+        yield* audit.finish({
+          correlationId: "visible-guest",
+          outcome: "failure",
+          outcomeCode: "access_denied",
+          durationMs: 1,
+          rowCount: null
+        });
+        yield* Guests.setDeactivated({
+          companyId: owner.company.id,
+          clerkUserId: foreign.user.clerkUserId,
+          deactivated: true
+        });
+        yield* Guests.end({ companyId: owner.company.id, clerkUserId: foreign.user.clerkUserId });
         yield* audit.begin({ ...begin, correlationId: "visible-query", sql });
         yield* audit.finish({
           correlationId: "visible-query",
@@ -403,6 +429,9 @@ it.layer(services)("company connection pages", (it) => {
         const rows = html.split("<tr><td><time").slice(1);
         const row = (correlationId: string) =>
           rows.find((item) => item.includes(`<code>${correlationId}</code>`))!;
+        assert.include(row("visible-guest"), "<td>Guest &lt;historical&gt;</td>");
+        assert.include(row("visible-guest"), "<code>access_denied</code>");
+        assert.notInclude(row("visible-guest"), "<historical>");
         assert.include(row("visible-query"), `<td>${owner.user.name}</td>`);
         assert.include(row("visible-query"), "<td>A patch since deleted</td>");
         assert.include(row("visible-list"), "<code>orders.list</code>");

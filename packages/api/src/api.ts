@@ -740,8 +740,9 @@ const runtimeFileParams = {
 };
 const runtimeAdmission =
   "Browser-only: no bearer middleware, and machine tokens are refused. Every request requires " +
-  "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or " +
-  '`{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. ' +
+  "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null`, `{ userId }`, " +
+  'or `{ kind: "guest", guestId, companyId, patchId, versionId, grantId }`). ' +
+  "Admission resolves the loaded patch/version before validating an operation. " +
   "A public version answers `me` with null. Public tier 1 versions admit declared `members.*` reads " +
   "only for active signed-in members of the patch's company; all other data operations, including " +
   "unknown ones, return `not_available_on_public`. Public HTML contains no viewer identity. " +
@@ -750,6 +751,13 @@ const runtimeAdmission =
   "Company versions require a browser session " +
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
   "matching that session's user (`principal_changed`); company `me` may bootstrap with null. " +
+  'A granted guest\'s `me` instead returns `{ ok: true, value: { kind: "guest", guest: { id, name, email }, ' +
+  "company: { id }, patchId, versionId, grantId } }`. Admission resolves the verified session in the " +
+  "loaded patch's company, checks the current live private version and existing grant decision, and " +
+  "pins that full authority. Rechecks refuse a revoked/replaced grant, suspended/ended guest or stale " +
+  "version. Only `me` is allowed for guests: resources, streams, subscriptions and tier 2 calls remain " +
+  "denied, and scripted guest sharing is not enabled. Request events and call logs retain the real " +
+  "guest and grant; member log IDs and the member wire shape stay unchanged. " +
   "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +
   "and integrations with `server_required`, even after rollback to a lower served tier. A loaded " +
   "lower-tier document cannot redeem handles and gets only `me` while tier 2 is served. " +

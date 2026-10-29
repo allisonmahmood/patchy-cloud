@@ -66,6 +66,8 @@ export const key = Effect.fnUntraced(function* (
   handler: string,
   args: unknown
 ) {
+  if (binding.identity === null || "guest" in binding.identity)
+    return yield* new Runtime.AccessDenied({});
   const encoded = yield* decodeKey(value).pipe(
     Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
   );
@@ -81,7 +83,7 @@ export const key = Effect.fnUntraced(function* (
     patchId: binding.patchId,
     versionId: binding.versionId,
     handler,
-    viewerId: binding.identity!.user.id,
+    viewerId: binding.identity.user.id,
     fingerprint: createHash("sha256").update(canonicalArgs(args)).digest("hex")
   } satisfies Key;
 });

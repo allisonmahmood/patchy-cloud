@@ -308,9 +308,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
               : Infinity
         )
       );
-      const effectivePrincipal = viewerAuthority(request.op)
-        ? capability.binding.identity!.user.id
-        : "patch";
+      if (!Binding.allowsOperation(capability.binding, request.op))
+        return yield* new Runtime.AccessDenied({});
+      const actor = capability.binding.identity;
+      if (actor === null || "guest" in actor) return yield* new Runtime.AccessDenied({});
+      const effectivePrincipal = viewerAuthority(request.op) ? actor.user.id : "patch";
       let binding = Binding.Binding.of({
         ...capability.binding,
         effectivePrincipal,
@@ -325,8 +327,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         if (viewerAuthority(request.op)) {
           const identity = yield* capability.reauthorize;
           if (
+            "guest" in identity ||
             identity.company.id !== binding.companyId ||
-            identity.user.id !== capability.binding.identity?.user.id
+            identity.user.id !== actor.user.id
           )
             return yield* new Runtime.AccessDenied({});
           binding = { ...binding, identity };

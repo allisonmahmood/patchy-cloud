@@ -4,6 +4,10 @@ Runtime binds a loaded patch's operations and handler invocations to its version
 
 ## Language
 
+**Guest authority**:
+A verified browser session's explicit guest relationship in the target company, bound to one patch's current live private version and active grant. It is separate from a member identity and carries no admin or builder powers. The runtime currently permits only the `me` handshake; unlisted operations, resource reads, streams and server calls are refused. Rechecks retain the same guest, company, patch, version and grant. The call log keeps the guest and grant separately from member user IDs, including after access ends.
+_Avoid_: guest member, owner impersonation
+
 **Operation**:
 One named request a patch makes through Patchy, with its own input and result contract. Direct resource operations and handler calls are distinct operations; a handler can make several resource callbacks.
 _Avoid_: endpoint (the transport, not the operation), arbitrary request

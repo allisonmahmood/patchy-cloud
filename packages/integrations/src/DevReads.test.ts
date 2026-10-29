@@ -56,7 +56,7 @@ import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
  */
 
 type Declaration = typeof PostHogDeclaration.Type;
-type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
+type Viewer = Exclude<NonNullable<Binding.Binding["Service"]["identity"]>, { kind: "guest" }>;
 
 /** Queries named `hold…` wait here until a test lets them answer. */
 let held: PromiseWithResolvers<void> | undefined;
@@ -257,7 +257,7 @@ const runtime = Layer.effect(
     {},
     {
       origin: "https://patchy.example",
-      identity: Effect.fail(new Runtime.AccessDenied({})),
+      identity: () => Effect.fail(new Runtime.AccessDenied({})),
       bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({}))
     }
   )

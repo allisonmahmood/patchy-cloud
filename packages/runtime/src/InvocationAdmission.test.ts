@@ -73,7 +73,7 @@ it.effect(
         {
           origin: "http://localhost",
           bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       );
       for (const op of operations) {
@@ -122,7 +122,7 @@ it.effect(
         {
           origin: "http://localhost",
           bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
           called: (call) => Effect.sync(() => called.push(call))
         }
       );
@@ -193,7 +193,7 @@ it.effect(
         {
           origin: "http://localhost",
           bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       ).pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
@@ -258,7 +258,7 @@ it.effect(
         { me },
         {
           origin: "http://localhost",
-          identity: Effect.fail(new Runtime.SessionExpired({})),
+          identity: () => Effect.fail(new Runtime.SessionExpired({})),
           bootstrapIdentity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       ).pipe(
@@ -313,7 +313,7 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
       {
         origin: "http://localhost",
         bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     );
     const error = yield* runtime

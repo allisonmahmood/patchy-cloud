@@ -371,7 +371,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
       const identity = yield* admission.admit;
-      if (principal === null || principal.userId !== identity.viewerId)
+      if (principal === null || !("userId" in principal) || principal.userId !== identity.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const find = (versionId?: string) =>
         versions
@@ -857,7 +857,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
       const identity = yield* admission.admit;
-      if (principal === null || principal.userId !== identity.viewerId)
+      if (principal === null || !("userId" in principal) || principal.userId !== identity.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
       const entry = entries.get(key);

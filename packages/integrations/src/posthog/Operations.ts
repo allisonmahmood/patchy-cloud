@@ -277,7 +277,9 @@ const query = operation({
     if (
       binding.scope !== "company" ||
       binding.identity === null ||
+      "guest" in binding.identity ||
       binding.principal === null ||
+      !("userId" in binding.principal) ||
       binding.identity.company.id !== binding.companyId ||
       binding.identity.user.id !== binding.principal.userId
     )

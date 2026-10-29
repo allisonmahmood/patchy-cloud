@@ -630,7 +630,9 @@ const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioR
   if (
     binding.scope !== "company" ||
     identity === null ||
+    "guest" in identity ||
     principal === null ||
+    !("userId" in principal) ||
     identity.company.id !== companyId ||
     identity.user.id !== principal.userId
   )

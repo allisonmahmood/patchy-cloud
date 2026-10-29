@@ -313,11 +313,18 @@ export const make = Effect.gen(function* () {
         ...(input.binding.identity === null
           ? {}
           : {
-              identity: Object.freeze({
-                ...input.binding.identity,
-                user: Object.freeze({ ...input.binding.identity.user }),
-                company: Object.freeze({ ...input.binding.identity.company })
-              })
+              identity:
+                "guest" in input.binding.identity
+                  ? Object.freeze({
+                      ...input.binding.identity,
+                      guest: Object.freeze({ ...input.binding.identity.guest }),
+                      company: Object.freeze({ ...input.binding.identity.company })
+                    })
+                  : Object.freeze({
+                      ...input.binding.identity,
+                      user: Object.freeze({ ...input.binding.identity.user }),
+                      company: Object.freeze({ ...input.binding.identity.company })
+                    })
             })
       }),
       attempt: Object.freeze({ ...input.attempt }),

@@ -5,6 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { runtimePrincipal, sameRuntimePrincipal, type RuntimeMe } from "@patchy/api";
 import { RequireSession, Session } from "@patchy/auth";
 import type { Limits, OperatingLimits } from "@patchy/limits";
 import * as CompanyAdmission from "./CompanyAdmission.js";
@@ -21,7 +22,10 @@ type Dependencies =
   | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
   | StreamAdmission.StreamAdmission
-  | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
+  | Exclude<
+      Effect.Services<ReturnType<typeof RequireSession.resolveCompanyIdentity>>,
+      RequireSession.SignedIn
+    >;
 
 export const make = (
   handlers: Readonly<Record<string, Runtime.Handler>>
@@ -29,6 +33,7 @@ export const make = (
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
     const session = yield* Session.Session;
+    const versions = yield* LoadedVersions.LoadedVersions;
     // The company's bucket, which Patchy MCP's door spends agents' calls from too.
     const companyAdmission = yield* CompanyAdmission.CompanyAdmission;
     const principalAdmission = yield* StreamAdmission.StreamAdmission;
@@ -38,51 +43,77 @@ export const make = (
     // Capture Auth's viewer resolver requirements, without importing its Companies dependencies.
     const viewerContext =
       yield* Effect.context<
-        Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>
+        Exclude<
+          Effect.Services<ReturnType<typeof RequireSession.resolveCompanyIdentity>>,
+          RequireSession.SignedIn
+        >
       >();
-    const identity = Effect.gen(function* () {
-      const admission = yield* RequireSession.admission.pipe(
-        Effect.provideService(Session.Session, session),
-        Effect.mapError((cause) => new Runtime.SessionExpired({ cause }))
-      );
-      if (HttpServerResponse.isHttpServerResponse(admission.result))
-        return yield* new Runtime.SessionExpired({});
-      const claims = admission.result;
-      const resolveViewer = RequireSession.resolveViewer.pipe(
-        Effect.provideContext(viewerContext),
-        Effect.provideService(RequireSession.SignedIn, claims),
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      );
-      const viewer = yield* resolveViewer;
-      if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
-        return yield* new Runtime.AccessDenied({});
-      // Admission covers the JWT's remaining lifetime. After expiry, concurrent
-      // callbacks share one backend result for this invocation, including failures.
-      const activeAfterExpiry = yield* session.isActive(claims).pipe(
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
-        Effect.cached
-      );
-      return {
-        viewer: { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" },
-        reauthorize: Effect.gen(function* () {
-          if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
-            return yield* new Runtime.SessionExpired({});
-          const current = yield* resolveViewer;
-          if (
-            current === null ||
-            HttpServerResponse.isHttpServerResponse(current) ||
-            current.user.id !== viewer.user.id ||
-            current.company.id !== viewer.company.id
-          )
+    const identity: Runtime.Options["identity"] = Effect.fn("RuntimeProduction.identity")(
+      function* (version: LoadedVersions.LoadedVersion) {
+        const admission = yield* RequireSession.admission.pipe(
+          Effect.provideService(Session.Session, session),
+          Effect.mapError((cause) => new Runtime.SessionExpired({ cause }))
+        );
+        if (HttpServerResponse.isHttpServerResponse(admission.result))
+          return yield* new Runtime.SessionExpired({});
+        const claims = admission.result;
+        const resolve = Effect.gen(function* (): Effect.fn.Return<
+          NonNullable<RuntimeMe>,
+          Runtime.RuntimeError
+        > {
+          const relationship = yield* RequireSession.resolveCompanyIdentity(version.companyId).pipe(
+            Effect.provideContext(viewerContext),
+            Effect.provideService(RequireSession.SignedIn, claims),
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+          );
+          if (relationship === null || HttpServerResponse.isHttpServerResponse(relationship))
             return yield* new Runtime.AccessDenied({});
+          if (relationship.kind === "member") {
+            const { viewer } = relationship;
+            return { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" };
+          }
+          if (versions.guestGrant === undefined) return yield* new Runtime.AccessDenied({});
+          const grantId = yield* versions
+            .guestGrant({
+              companyId: version.companyId,
+              patchId: version.patchId,
+              versionId: version.versionId,
+              guestId: relationship.guest.id
+            })
+            .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+          if (grantId === null) return yield* new Runtime.AccessDenied({});
           return {
-            user: current.user,
-            company: current.company,
-            admin: current.role === "admin"
+            kind: "guest",
+            guest: relationship.guest,
+            company: { id: version.companyId },
+            patchId: version.patchId,
+            versionId: version.versionId,
+            grantId
           };
-        })
-      };
-    });
+        });
+        const viewer = yield* resolve;
+        // Admission covers the JWT's remaining lifetime. After expiry, concurrent
+        // callbacks share one backend result for this invocation, including failures.
+        const activeAfterExpiry = yield* session.isActive(claims).pipe(
+          Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+          Effect.cached
+        );
+        return {
+          viewer,
+          reauthorize: Effect.gen(function* () {
+            if (
+              (yield* Clock.currentTimeMillis) >= claims.exp * 1_000 &&
+              !(yield* activeAfterExpiry)
+            )
+              return yield* new Runtime.SessionExpired({});
+            const current = yield* resolve;
+            if (!sameRuntimePrincipal(runtimePrincipal(current), runtimePrincipal(viewer)))
+              return yield* new Runtime.AccessDenied({});
+            return current;
+          })
+        };
+      }
+    );
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
@@ -100,7 +131,16 @@ export const make = (
               companyId: binding.companyId,
               patchId: binding.patchId,
               versionId: binding.versionId,
-              userId: binding.identity!.user.id,
+              userId:
+                binding.identity !== null && "user" in binding.identity
+                  ? binding.identity.user.id
+                  : null,
+              ...(binding.identity !== null && "guest" in binding.identity
+                ? {
+                    guest: { id: binding.identity.guest.id, grantId: binding.identity.grantId },
+                    effectivePrincipal: binding.identity.guest.id
+                  }
+                : {}),
               credentialKind: "session",
               op: input.op,
               resource: operation.resource?.(input.args) ?? null,

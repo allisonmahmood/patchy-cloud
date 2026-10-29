@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
-import type { RuntimeMe } from "@patchy/api";
+import type { RuntimeMember } from "@patchy/api";
 import * as Runtime from "./Runtime.js";
 
 type Dependencies =
@@ -15,7 +15,7 @@ export interface Identity {
   readonly companyId: string;
   readonly viewerId: string;
   readonly expiresAt: number;
-  readonly identity: NonNullable<RuntimeMe>;
+  readonly identity: RuntimeMember;
 }
 
 /** Production verifies cookies; dev supplies its two explicit mount identities.

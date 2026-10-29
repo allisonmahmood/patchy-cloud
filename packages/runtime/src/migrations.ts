@@ -142,5 +142,13 @@ export const migrations: Migrations = {
         THEN agent_name IS NOT NULL AND patch_id IS NOT NULL AND version_id IS NOT NULL
         ELSE agent_name IS NULL END)`,
     `ALTER TABLE runtime_invocations ADD COLUMN agent_name TEXT`
+  ),
+  // Snapshot guest attribution independently of member IDs and terminal grants.
+  "0032_runtime_guest_attribution": ddl(
+    `ALTER TABLE runtime_calls ADD COLUMN guest_id TEXT, ADD COLUMN grant_id TEXT,
+      ADD CONSTRAINT runtime_calls_guest_check CHECK (
+        (guest_id IS NULL AND grant_id IS NULL) OR
+        (guest_id IS NOT NULL AND grant_id IS NOT NULL AND user_id IS NULL
+          AND credential_kind = 'session' AND patch_id IS NOT NULL AND version_id IS NOT NULL))`
   )
 };

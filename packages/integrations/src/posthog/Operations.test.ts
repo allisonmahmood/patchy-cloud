@@ -318,8 +318,9 @@ it.effect("refuses undeclared aliases, other kinds, public versions and other co
         ...binding,
         companyId: "cmp_other",
         identity: {
-          ...binding.identity!,
-          company: { ...binding.identity!.company, id: "cmp_other" }
+          user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
+          admin: false,
+          company: { id: "cmp_other", handle: "other", name: "Other" }
         }
       }),
       "access_denied"

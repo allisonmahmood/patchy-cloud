@@ -36,7 +36,7 @@ import {
   readAnswer,
   runtimeRefusal,
   type RuntimeFailure,
-  type RuntimeMe,
+  type RuntimeMember,
   type ServerCallReply,
   toolAnswer,
   type ToolCallResult,
@@ -103,7 +103,7 @@ export interface Target {
 export type Reached = { readonly target: Target } | { readonly refused: ToolCallResult };
 
 /** The person a connection acts as, as Runtime's viewer: the role is read with the identity. */
-const personOf = (identity: AgentConnections.AgentIdentity): NonNullable<RuntimeMe> => ({
+const personOf = (identity: AgentConnections.AgentIdentity): NonNullable<RuntimeMember> => ({
   user: identity.user,
   company: identity.company,
   admin: identity.role === "admin"

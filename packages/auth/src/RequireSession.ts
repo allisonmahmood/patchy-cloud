@@ -192,7 +192,7 @@ const memberViewer = Effect.fn("RequireSession.memberViewer")(function* (
   });
 });
 
-/** Existing member pages, enrollment and runtime calls never resolve a guest as a Viewer. */
+/** Member-only callers never resolve a guest as a Viewer; runtime admission names its target company. */
 export const resolveViewer = refreshMembership.pipe(Effect.flatMap(memberViewer));
 
 /**

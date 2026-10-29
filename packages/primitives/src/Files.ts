@@ -14,6 +14,7 @@ import {
   FileMetadata,
   FileName,
   runtimeOperations,
+  runtimeActorId,
   sharedStoreId,
   type FileList,
   type SharedStoreDeclaration
@@ -175,7 +176,7 @@ const handleMac = (secret: Uint8Array, binding: Binding.Binding["Service"], loca
       encodeHandleBinding([
         "patchy-file-handle-1",
         binding.companyId,
-        binding.identity?.user.id ?? null,
+        binding.identity === null ? null : runtimeActorId(binding.identity),
         binding.patchId,
         binding.versionId,
         locator
@@ -280,6 +281,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     if (
       declaration.id !== sharedStoreId(declaration.patchId, declaration.store) ||
       binding.identity === null ||
+      "guest" in binding.identity ||
       binding.identity.company.id !== binding.companyId
     )
       return yield* new Runtime.AccessDenied({});
@@ -380,6 +382,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     if (
       binding.manifest.tier !== 2 ||
       binding.identity === null ||
+      "guest" in binding.identity ||
       binding.identity.company.id !== binding.companyId
     )
       return yield* new Runtime.AccessDenied({});
@@ -424,8 +427,8 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
             viewerBytes: number;
             companyBytes: number;
           }>`SELECT
-            count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
-            coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
+            count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${runtimeActorId(binding.identity!)})::integer AS count,
+            coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${runtimeActorId(binding.identity!)}), 0)::double precision AS "viewerBytes",
             coalesce(sum(size), 0)::double precision AS "companyBytes"
             FROM patchy.file_uploads
             WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
@@ -456,7 +459,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
           yield* sql`INSERT INTO patchy.file_uploads
             (object_id, patch_id, token, viewer_id, version_id, size, content_type, sha256, expires_at, state)
             VALUES (${row.objectId}, ${binding.patchId}, ${row.token},
-              ${binding.identity!.user.id}, ${binding.versionId},
+              ${runtimeActorId(binding.identity!)}, ${binding.versionId},
               ${row.size}, ${row.contentType}, ${row.sha256},
               ${now}::timestamptz + ${stageLimits.lifetime} * interval '1 millisecond', 'writing')`;
         })
@@ -498,7 +501,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       yield* sql`SELECT object_id AS "objectId", size::double precision AS size,
       content_type AS "contentType", sha256 FROM patchy.file_uploads
       WHERE token = ${token} AND patch_id = ${binding.patchId}
-        AND viewer_id = ${binding.identity!.user.id} AND version_id = ${binding.versionId}
+        AND viewer_id = ${runtimeActorId(binding.identity!)} AND version_id = ${binding.versionId}
         AND state = 'staged' AND expires_at > ${now}::timestamptz FOR UPDATE`
     );
     if (rows.length === 0) return yield* new UploadNotFound();
@@ -729,7 +732,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     run: (input: unknown) =>
       Effect.gen(function* () {
         const binding = yield* Binding.Binding;
-        if (binding.manifest.tier !== 2 || binding.identity === null)
+        if (binding.manifest.tier !== 2 || binding.identity === null || "guest" in binding.identity)
           return yield* new Runtime.AccessDenied({});
         const { handle } = yield* decodeRedeem(input).pipe(
           Effect.mapError((cause) => new Runtime.AccessDenied({ cause }))

@@ -20,6 +20,13 @@ export interface LoadedVersion {
 export class LoadedVersions extends Context.Service<
   LoadedVersions,
   {
+    /** Production supplies the existing patch grant decision. Local member-only adapters omit it. */
+    readonly guestGrant?: (input: {
+      readonly companyId: string;
+      readonly patchId: string;
+      readonly versionId: string;
+      readonly guestId: string;
+    }) => Effect.Effect<string | null, SqlError>;
     /** Loads the served tier in the same snapshot; omit versionId for the current source. */
     readonly find: (
       patchId: string,

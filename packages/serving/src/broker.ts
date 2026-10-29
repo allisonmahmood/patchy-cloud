@@ -3,6 +3,7 @@
 // This browser entry owns platform I/O; it never creates an Effect runtime.
 import {
   RuntimeRequest,
+  runtimePrincipal,
   RuntimeFailure,
   HandlerFailure,
   FileName,
@@ -545,8 +546,7 @@ function mount(frame: HTMLIFrameElement): void {
         release(heldBytes);
         throw lost();
       }
-      if (frame.dataset.scope !== "public")
-        principal = value === null ? null : { userId: value.user.id };
+      if (frame.dataset.scope !== "public") principal = runtimePrincipal(value);
       // The cached identity remains accounted for until this document closes.
       return value;
     });

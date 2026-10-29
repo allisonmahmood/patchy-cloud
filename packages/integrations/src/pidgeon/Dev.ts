@@ -106,7 +106,7 @@ export const handlers = Effect.fn("PidgeonDev.handlers")(function* (
       Effect.fn("PidgeonDev.write")(function* (write) {
         const { binding, declaration } = yield* declared(write.connection);
         const snapshot = snapshots.get(declaration.id);
-        if (binding.identity === null || snapshot === undefined)
+        if (binding.identity === null || "guest" in binding.identity || snapshot === undefined)
           return yield* new Runtime.AccessDenied({});
         // A read connection never changes anything in Pidgeon, in dev as published.
         if (snapshot.access !== "send") return yield* new ReadOnly({});

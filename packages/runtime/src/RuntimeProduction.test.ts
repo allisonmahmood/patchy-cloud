@@ -199,7 +199,7 @@ it.effect(
       assert.strictEqual(yield* Ref.get(calls), 0);
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE users SET role = 'member' WHERE id = ${DEV_SEED.userId}`;
-      assert.isFalse((yield* reauthorize).admin);
+      assert.include(yield* reauthorize, { admin: false });
       assert.strictEqual(yield* Ref.get(calls), 0);
 
       yield* TestClock.setTime(NOW + 60_000);
@@ -220,7 +220,7 @@ it.effect(
         "signed-out"
       );
       yield* sql`UPDATE users SET role = 'admin' WHERE id = ${DEV_SEED.userId}`;
-      assert.isTrue((yield* reauthorize).admin);
+      assert.include(yield* reauthorize, { admin: true });
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${DEV_SEED.userId}`;
       assert.instanceOf(yield* reauthorize.pipe(Effect.flip), Runtime.AccessDenied);
       assert.strictEqual(yield* Ref.get(calls), 1);

@@ -273,7 +273,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     parent?: Parent
   ): Effect.fn.Return<ServerCallReply, Runtime.RuntimeError> {
     if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
-    if (binding.identity === null || binding.manifest.tier !== 2)
+    if (binding.identity === null || "guest" in binding.identity || binding.manifest.tier !== 2)
       return yield* new Runtime.AccessDenied({});
     const viewer = binding.identity;
     const input = yield* decodeCall(args).pipe(
@@ -1097,7 +1097,7 @@ export interface AgentCall {
  */
 export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: AgentCall) {
   const invocation = yield* Invocation;
-  if (input.person.company.id !== input.version.companyId)
+  if ("guest" in input.person || input.person.company.id !== input.version.companyId)
     return yield* new Runtime.AccessDenied({});
   return yield* invocation.call(
     {

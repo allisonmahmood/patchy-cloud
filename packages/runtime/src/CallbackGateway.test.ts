@@ -194,7 +194,12 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
                 assert.deepStrictEqual(args, { store: "docs", name: "photo.png", upload });
                 const binding = yield* Binding.Binding;
                 correlationId = binding.correlationId;
-                assert.strictEqual(binding.identity?.user.id, Fixtures.identity.user.id);
+                assert.strictEqual(
+                  binding.identity !== null && "user" in binding.identity
+                    ? binding.identity.user.id
+                    : undefined,
+                  Fixtures.identity.user.id
+                );
                 assert.strictEqual(binding.versionId, Fixtures.binding.versionId);
                 const pending = yield* log
                   .find({ companyId: binding.companyId, correlationId })
@@ -316,7 +321,7 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
               const binding = yield* Binding.Binding;
               return binding.effectivePrincipal === "patch"
                 ? "own"
-                : binding.identity!.admin
+                : binding.identity !== null && "user" in binding.identity && binding.identity.admin
                   ? "admin"
                   : "member";
             })
@@ -872,7 +877,12 @@ it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway
           value: { ok: true, rows: [] }
         });
         // Reauthorised on this callback, bounded by the integration deadline inside the action's.
-        assert.strictEqual(seen[0]!.identity?.user.name, "Renamed");
+        assert.strictEqual(
+          seen[0]!.identity !== null && "user" in seen[0]!.identity
+            ? seen[0]!.identity.user.name
+            : undefined,
+          "Renamed"
+        );
         assert.strictEqual(seen[0]!.effectivePrincipal, Fixtures.identity.user.id);
         assert.isAtMost(seen[0]!.deadline!, action.attempt.deadline);
         // A viewer deactivated mid-action loses access on the next call.

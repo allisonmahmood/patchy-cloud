@@ -173,9 +173,17 @@ export const RuntimeVersionId = Schema.String.check(
 );
 
 /** Null bootstraps `me` or the shell-only public-directory `principal` handshake. */
-export const RuntimePrincipal = Schema.NullOr(Schema.Struct({ userId: NonEmptyText })).annotate({
-  identifier: "RuntimePrincipal"
+export const RuntimeGuestPrincipal = Schema.Struct({
+  kind: Schema.Literal("guest"),
+  guestId: NonEmptyText,
+  companyId: NonEmptyText,
+  patchId: PatchId,
+  versionId: RuntimeVersionId,
+  grantId: NonEmptyText
 });
+export const RuntimePrincipal = Schema.NullOr(
+  Schema.Union([Schema.Struct({ userId: NonEmptyText }), RuntimeGuestPrincipal])
+).annotate({ identifier: "RuntimePrincipal" });
 export type RuntimePrincipal = typeof RuntimePrincipal.Type;
 
 /** One shell-owned SSE connection, bound to the document nonce rather than its URL. */
@@ -297,15 +305,58 @@ export const RuntimeEventStream = Schema.String.pipe(
   HttpApiSchema.asText({ contentType: "text/event-stream" })
 );
 
+/** The existing member wire shape stays unchanged. */
+export const RuntimeMember = Schema.Struct({
+  user: Identity.fields.user,
+  company: Identity.fields.company,
+  admin: Schema.Boolean
+});
+export type RuntimeMember = typeof RuntimeMember.Type;
+export const RuntimeGuest = Schema.Struct({
+  kind: Schema.Literal("guest"),
+  guest: Identity.fields.user,
+  company: Schema.Struct({ id: NonEmptyText }),
+  patchId: PatchId,
+  versionId: RuntimeVersionId,
+  grantId: NonEmptyText
+});
+export type RuntimeGuest = typeof RuntimeGuest.Type;
 /** Public versions return null, including when their viewer has a session. */
-export const RuntimeMe = Schema.NullOr(
-  Schema.Struct({
-    user: Identity.fields.user,
-    company: Identity.fields.company,
-    admin: Schema.Boolean
-  })
-).annotate({ identifier: "RuntimeMe" });
+export const RuntimeMe = Schema.NullOr(Schema.Union([RuntimeMember, RuntimeGuest])).annotate({
+  identifier: "RuntimeMe"
+});
 export type RuntimeMe = typeof RuntimeMe.Type;
+
+export const runtimeActorId = (identity: NonNullable<RuntimeMe>): string =>
+  "guest" in identity ? identity.guest.id : identity.user.id;
+
+/** The shell echoes the entire authority; it cannot choose another grant or target. */
+export const runtimePrincipal = (identity: RuntimeMe): RuntimePrincipal =>
+  identity === null
+    ? null
+    : "guest" in identity
+      ? {
+          kind: "guest",
+          guestId: identity.guest.id,
+          companyId: identity.company.id,
+          patchId: identity.patchId,
+          versionId: identity.versionId,
+          grantId: identity.grantId
+        }
+      : { userId: identity.user.id };
+
+export const sameRuntimePrincipal = (a: RuntimePrincipal, b: RuntimePrincipal): boolean => {
+  if (a === null || b === null) return a === b;
+  if ("userId" in a) return "userId" in b && a.userId === b.userId;
+  return (
+    !("userId" in b) &&
+    a.guestId === b.guestId &&
+    a.companyId === b.companyId &&
+    a.patchId === b.patchId &&
+    a.versionId === b.versionId &&
+    a.grantId === b.grantId
+  );
+};
 
 export const TableRow = Schema.Record(Schema.String, Schema.Json);
 export const TableRange = Schema.Struct({

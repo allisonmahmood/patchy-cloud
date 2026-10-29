@@ -162,7 +162,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
     ).pipe(Effect.forkScoped);
   }
   const mount = Effect.fn("Dev.mount")(function* (
-    identity: NonNullable<Binding.Binding["Service"]["identity"]>
+    identity: Exclude<NonNullable<Binding.Binding["Service"]["identity"]>, { kind: "guest" }>
   ) {
     const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
     const shellPolicy = shellContentSecurityPolicy(prepared.manifest.tier);

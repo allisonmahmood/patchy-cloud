@@ -33,6 +33,20 @@ export const loaded = ({
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   return LoadedVersions.LoadedVersions.of({
+    guestGrant: Effect.fn("LoadedVersions.guestGrant")(function* (input) {
+      const found = yield* patches.find(input.patchId);
+      if (Option.isNone(found)) return null;
+      const { patch, version } = found.value;
+      if (
+        patch.companyId !== input.companyId ||
+        patch.scope !== "company" ||
+        patch.currentVersionId !== input.versionId ||
+        version.id !== input.versionId
+      )
+        return null;
+      const grant = yield* patches.guestGrant(input.companyId, input.patchId, input.guestId);
+      return grant?.access === "active" ? grant.grant.id : null;
+    }),
     find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId) {
       return Option.map(yield* patches.find(patchId, undefined, versionId), loaded);
     })

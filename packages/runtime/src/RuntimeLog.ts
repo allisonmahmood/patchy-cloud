@@ -25,6 +25,7 @@ const encoder = new TextEncoder();
 interface BeginFields {
   readonly companyId: string;
   readonly userId: string | null;
+  readonly guest?: { readonly id: string; readonly grantId: string };
   readonly effectivePrincipal?: string;
   readonly invocationId?: string | null;
   readonly op: string;
@@ -75,6 +76,7 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   patchId: Schema.NullOr(Schema.String),
   versionId: Schema.NullOr(Schema.String),
   userId: Schema.NullOr(Schema.String),
+  guest: Schema.NullOr(Schema.Struct({ id: Schema.String, grantId: Schema.String })),
   effectivePrincipal: Schema.String,
   invocationId: Schema.NullOr(Schema.String),
   credentialKind: Schema.Literals(credentialKinds),
@@ -130,7 +132,10 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = (now: number) => sql`
     id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
-    user_id AS "userId", effective_principal AS "effectivePrincipal",
+    user_id AS "userId",
+    CASE WHEN guest_id IS NULL THEN NULL
+      ELSE json_build_object('id', guest_id, 'grantId', grant_id) END AS guest,
+    effective_principal AS "effectivePrincipal",
     invocation_id AS "invocationId", credential_kind AS "credentialKind",
     CASE WHEN machine_id IS NULL THEN NULL
       ELSE json_build_object('id', machine_id, 'name', machine_name) END AS machine,
@@ -208,14 +213,14 @@ export const make = Effect.gen(function* () {
     yield* sql`
       INSERT INTO runtime_calls (id, at, company_id, patch_id, version_id, user_id,
         effective_principal, invocation_id, credential_kind, machine_id, machine_name,
-        agent_name, op, resource, connection_id, correlation_id, deadline_ms, sql)
+        agent_name, op, resource, connection_id, correlation_id, deadline_ms, sql, guest_id, grant_id)
       VALUES (${id}, to_timestamp(${now / 1_000}), ${input.companyId}, ${input.patchId},
         ${input.versionId}, ${input.userId}, ${input.effectivePrincipal ?? input.userId},
         ${input.invocationId ?? null}, ${input.credentialKind}, ${machine?.id ?? null},
         ${machine?.name ?? null}, ${agent?.name ?? null}, ${input.op},
         ${input.resource === null ? null : toPostgresText(input.resource)}, ${input.connectionId},
         ${input.correlationId},
-        ${input.deadlineMs ?? MUTATION_DEADLINE_MS}, ${query})`;
+        ${input.deadlineMs ?? MUTATION_DEADLINE_MS}, ${query}, ${input.guest?.id ?? null}, ${input.guest?.grantId ?? null})`;
     return id;
   });
 

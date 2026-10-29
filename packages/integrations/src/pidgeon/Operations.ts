@@ -712,7 +712,9 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
   if (
     binding.scope !== "company" ||
     identity === null ||
+    "guest" in identity ||
     principal === null ||
+    !("userId" in principal) ||
     identity.company.id !== companyId ||
     identity.user.id !== principal.userId
   )

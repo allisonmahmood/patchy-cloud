@@ -580,7 +580,7 @@ it.layer(harness)("read_patch", (it) => {
               yield* Effect.orDie(step);
               seen.push(
                 yield* handed.recheck.pipe(
-                  Effect.map((person) => (person.admin ? "admin" : "member")),
+                  Effect.map((person) => ("user" in person && person.admin ? "admin" : "member")),
                   Effect.catch((error) => Effect.succeed(error.code))
                 )
               );

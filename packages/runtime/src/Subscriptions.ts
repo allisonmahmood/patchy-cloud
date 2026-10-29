@@ -338,7 +338,9 @@ export const make = Effect.gen(function* () {
       companyId: binding.companyId,
       patchId: binding.patchId,
       versionId: binding.versionId,
-      ...(binding.principal === null ? {} : { viewerId: binding.principal.userId }),
+      ...(binding.principal === null || !("userId" in binding.principal)
+        ? {}
+        : { viewerId: binding.principal.userId }),
       tier: binding.manifest.tier,
       handler: sub.input.op === "server.call" ? String(sub.input.args.handler) : sub.input.op,
       kind: "query",

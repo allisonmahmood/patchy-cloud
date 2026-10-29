@@ -316,7 +316,10 @@ it.effect(
             run: () =>
               Effect.map(Binding.Binding, (binding) => ({
                 companyId: binding.companyId,
-                userId: binding.principal?.userId,
+                userId:
+                  binding.principal !== null && "userId" in binding.principal
+                    ? binding.principal.userId
+                    : undefined,
                 patchId: binding.patchId,
                 versionId: binding.versionId
               }))

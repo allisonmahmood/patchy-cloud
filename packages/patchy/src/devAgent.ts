@@ -18,7 +18,7 @@ import {
   runtimeRefusal,
   toolAnswer,
   unknownToolRefusal,
-  type RuntimeMe,
+  type RuntimeMember,
   type ToolCallResult
 } from "@patchy/api";
 import { MutationTransaction } from "@patchy/runtime/core";
@@ -46,7 +46,7 @@ export interface Dev {
 
 /** A dev mount: the person its pages and agent calls act as, at its dev URL. */
 export interface Mount {
-  readonly person: NonNullable<RuntimeMe>;
+  readonly person: NonNullable<RuntimeMember>;
   readonly address: string;
 }
 

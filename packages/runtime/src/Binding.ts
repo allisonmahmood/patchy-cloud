@@ -36,3 +36,7 @@ export class Binding extends Context.Service<
     readonly deadline?: number;
   }
 >()("@patchy/runtime/Binding") {}
+
+/** Guests have only the explicit identity handshake until resource reads are implemented. */
+export const allowsOperation = (binding: Binding["Service"], op: string): boolean =>
+  binding.identity === null || !("guest" in binding.identity) || op === "me";

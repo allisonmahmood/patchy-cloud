@@ -7,12 +7,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
+import { Guests } from "@patchy/companies";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
 import { newPatchId } from "@patchy/core";
@@ -98,6 +100,81 @@ const holdNextWake = Effect.gen(function* () {
 });
 
 it.layer(layer)("committed patch lifecycle streams", (it) => {
+  it.effect("refuses guest streams and subscription updates even with a current patch grant", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_stream_guest', 'stream-guest', 'Elsewhere')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_stream_guest', 'clerk_stream_guest', 'cmp_stream_guest', 'guest@stream.test', 'Guest', 'admin')`;
+      const guest = yield* Guests.create({
+        companyId: identity.company.id,
+        clerkUserId: "clerk_stream_guest",
+        email: "guest@stream.test",
+        name: "Guest"
+      });
+      const patch = yield* publish(newPatchId(), "create");
+      const grant = yield* (yield* Patches.Patches).grantGuest(patch.patchId, guest.id, actor);
+      const streams = yield* RuntimeStream.RuntimeStream;
+      const input = {
+        patchId: patch.patchId,
+        versionId: patch.versionId,
+        documentId: "guest_document_123456"
+      };
+      for (const principal of [
+        {
+          kind: "guest",
+          guestId: guest.id,
+          companyId: identity.company.id,
+          patchId: patch.patchId,
+          versionId: patch.versionId,
+          grantId: grant.id
+        },
+        { userId: "usr_stream_guest" }
+      ]) {
+        const guestRequest = HttpServerRequest.fromWeb(
+          new Request(`${PUBLIC_BASE_URL}/api/runtime/stream`, {
+            headers: {
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify(principal),
+              "sec-fetch-site": "same-origin",
+              cookie: signedInCookies(
+                signSession({
+                  sub: "clerk_stream_guest",
+                  email: "guest@stream.test",
+                  name: "Guest"
+                })
+              )
+            }
+          })
+        );
+        const opened = yield* streams
+          .open(input)
+          .pipe(
+            Effect.flip,
+            Effect.provideService(HttpServerRequest.HttpServerRequest, guestRequest)
+          );
+        assert.isTrue(
+          opened instanceof Runtime.AccessDenied || opened instanceof Runtime.PrincipalChanged
+        );
+        if ("guestId" in principal) {
+          const updated = yield* streams
+            .update({
+              ...input,
+              generation: "stream_guest_123",
+              sequence: 1,
+              type: "replace",
+              subscriptions: []
+            })
+            .pipe(
+              Effect.flip,
+              Effect.provideService(HttpServerRequest.HttpServerRequest, guestRequest)
+            );
+          assert.instanceOf(updated, Runtime.PrincipalChanged);
+        }
+      }
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("publishes, rolls back and rechecks lifecycle eligibility on reconnect", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
@@ -139,14 +216,15 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
         {
           origin: PUBLIC_BASE_URL,
           bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-          identity: Effect.succeed({
-            viewer: { user: identity.user, company: identity.company, admin: false },
-            reauthorize: Effect.succeed({
-              user: identity.user,
-              company: identity.company,
-              admin: false
+          identity: () =>
+            Effect.succeed({
+              viewer: { user: identity.user, company: identity.company, admin: false },
+              reauthorize: Effect.succeed({
+                user: identity.user,
+                company: identity.company,
+                admin: false
+              })
             })
-          })
         }
       );
       const refused = yield* runtime

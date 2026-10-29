@@ -179,7 +179,10 @@ it.layer(harness)("admission", (it) => {
                 yield* Queue.offer(started, stage);
                 return yield* restore(Effect.never);
               }
-              const hers = binding.identity?.user.id === priya.id;
+              const hers =
+                (binding.identity !== null && "user" in binding.identity
+                  ? binding.identity.user.id
+                  : undefined) === priya.id;
               const gate = yield* Deferred.make<ServerCallReply, Runtime.RuntimeError>();
               gates.set(stage, gate);
               if (hers) most = Math.max(most, ++running);

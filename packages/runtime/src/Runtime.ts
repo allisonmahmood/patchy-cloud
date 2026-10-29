@@ -8,6 +8,9 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import {
   RuntimePrincipal,
+  runtimeActorId,
+  runtimePrincipal,
+  sameRuntimePrincipal,
   runtimeBodyLimit,
   runtimeBodyLimitId,
   WIRE_VERSION,
@@ -456,13 +459,11 @@ export interface AdmittedIdentity {
 /** Environment adapters choose identity and recording; admission and execution stay shared. */
 export interface Options {
   readonly origin: string;
-  readonly identity: Effect.Effect<
-    AdmittedIdentity,
-    RuntimeError,
-    HttpServerRequest.HttpServerRequest
-  >;
+  readonly identity: (
+    version: LoadedVersions.LoadedVersion
+  ) => Effect.Effect<AdmittedIdentity, RuntimeError, HttpServerRequest.HttpServerRequest>;
   /** The read-only shell handshake may recover a stale cookie before binding its principal. */
-  readonly bootstrapIdentity: Options["identity"];
+  readonly bootstrapIdentity: ReturnType<Options["identity"]>;
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   /**
@@ -646,16 +647,23 @@ export const make = (
         )
           return yield* new PublicUnavailable({});
         if (version.scope !== "public" || input.op !== "me") {
-          const admitted = yield* principalBootstrap ? options.bootstrapIdentity : options.identity;
+          const admitted = yield* principalBootstrap
+            ? options.bootstrapIdentity
+            : options.identity(version);
           identity = admitted.viewer;
           reauthorize = admitted.reauthorize;
-          yield* WideEvents.enrich({ viewerId: identity.user.id });
+          yield* WideEvents.enrich({
+            viewerId: runtimeActorId(identity),
+            ...("guest" in identity
+              ? { guestId: identity.guest.id, grantId: identity.grantId }
+              : {})
+          });
           if (identity.company.id !== version.companyId) return yield* new AccessDenied({});
         }
         const binding = Binding.Binding.of({
           ...version,
           identity,
-          principal: identity === null ? null : { userId: identity.user.id },
+          principal: runtimePrincipal(identity),
           correlationId: newInternalId("call")
         });
         const admit = Effect.gen(function* () {
@@ -676,15 +684,17 @@ export const make = (
               const bodyPrincipal = yield* decodeBodyPrincipal(input.principal).pipe(
                 Effect.mapError((cause) => new InvalidRequest({ cause }))
               );
-              if (principal?.userId !== bodyPrincipal?.userId) return yield* new InvalidRequest({});
+              if (!sameRuntimePrincipal(principal, bodyPrincipal))
+                return yield* new InvalidRequest({});
             }
             if (
               principal === null
                 ? input.op !== "me" && !principalBootstrap
-                : principal.userId !== identity.user.id
+                : !sameRuntimePrincipal(principal, binding.principal)
             )
               return yield* new PrincipalChanged({});
           }
+          if (!Binding.allowsOperation(binding, input.op)) return yield* new AccessDenied({});
           if (
             version.manifest.tier === 2 &&
             input.op !== "files.redeem" &&
@@ -711,7 +721,7 @@ export const make = (
           if (input.op !== "me" && version.manifest.tier < 2 && version.patchTier === 2)
             return yield* new ServerRequired();
           const attempt = yield* limits.consume({
-            key: `runtime:${identity?.user.id ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
+            key: `runtime:${(identity === null ? undefined : runtimeActorId(identity)) ?? `anonymous:${Option.getOrElse(request.remoteAddress, () => "")}`}:${version.patchId}`,
             limit: settings.callsPerMinute,
             window: "1 minute"
           });
@@ -756,7 +766,7 @@ export const make = (
               companyId: version.companyId,
               patchId: version.patchId,
               versionId: version.versionId,
-              viewerId: identity.user.id
+              viewerId: runtimeActorId(identity)
             });
           return yield* run({
             kind: "read",
@@ -769,7 +779,8 @@ export const make = (
             if (integration) yield* admit;
             return yield* run(operation);
           }).pipe(Effect.provideService(Binding.Binding, bound));
-        if (operation.kind === "read") return yield* execute(binding);
+        if (operation.kind === "read" && (identity === null || !("guest" in identity)))
+          return yield* execute(binding);
         const deadlineMs =
           operation.kind === "mutation"
             ? settings.mutationDeadlineMs

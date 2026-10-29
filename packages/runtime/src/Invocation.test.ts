@@ -1,5 +1,11 @@
 import { assert, it } from "@effect/vitest";
-import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
+import {
+  CURRENT_RELEASE,
+  WIRE_VERSION,
+  runtimePrincipal,
+  type RuntimeGuest,
+  type GuestProtocol
+} from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
@@ -131,6 +137,46 @@ const recorder = Effect.gen(function* () {
 });
 
 it.layer(services)("Invocation", (it) => {
+  it.effect("refuses explicit guests before tier 2 or agent execution", () =>
+    Effect.gen(function* () {
+      const identity: RuntimeGuest = {
+        kind: "guest",
+        guest: { id: "gst_viewer", email: viewer.user.email, name: viewer.user.name },
+        company: { id: binding.companyId },
+        patchId: binding.patchId,
+        versionId: binding.versionId,
+        grantId: "grt_viewer"
+      };
+      const guestBinding = { ...binding, identity, principal: runtimePrincipal(identity) };
+      const invocation = yield* makeInvocation(() => Effect.die("A guest reached the executor"));
+      for (const handler of [
+        "demo.query",
+        "demo.mutation",
+        "demo.action",
+        "demo.peek",
+        "agent.lookup"
+      ]) {
+        assert.instanceOf(
+          yield* invocation
+            .call({ handler, args: { id: 1 } }, guestBinding, Effect.succeed(identity))
+            .pipe(Effect.flip),
+          Runtime.AccessDenied
+        );
+      }
+      assert.instanceOf(
+        yield* Invocation.callAgent({
+          version: binding,
+          person: identity,
+          agent: { name: "forged" },
+          tool: "lookup",
+          args: {},
+          recheck: Effect.succeed(identity)
+        }).pipe(Effect.provideService(Invocation.Invocation, invocation), Effect.flip),
+        Runtime.AccessDenied
+      );
+    })
+  );
+
   it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(
@@ -972,7 +1018,7 @@ it.layer(services)("Invocation", (it) => {
           {
             origin: "http://localhost",
             bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
-            identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+            identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
           }
         ).pipe(
           Effect.provideService(Invocation.Invocation, invocations),

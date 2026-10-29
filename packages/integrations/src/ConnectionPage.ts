@@ -7,7 +7,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
-import { Users } from "@patchy/companies";
+import { Guests, Users } from "@patchy/companies";
 import { ContractLimits } from "@patchy/limits";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
@@ -414,7 +414,14 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
           viewer.company.id,
           list.flatMap((call) => (call.versionId === null ? [] : [call.versionId]))
         );
-        return { list, names: { people, versions } };
+        const actors = new Map(people);
+        if (list.some((call) => call.guest !== null)) {
+          const guests = yield* Guests.listByCompany(viewer.company.id).pipe(
+            Effect.catchTags({ SqlError: () => Effect.succeed([]) })
+          );
+          for (const guest of guests) actors.set(guest.id, guest.name);
+        }
+        return { list, names: { people: actors, versions } };
       }).pipe(
         Effect.catch(() =>
           Effect.succeed({

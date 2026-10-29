@@ -43,7 +43,7 @@ const fixture = Layer.mergeAll(
   PidgeonSource.layer
 ).pipe(Layer.provideMerge(Testing.layer()));
 
-type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
+type Viewer = Exclude<NonNullable<Binding.Binding["Service"]["identity"]>, { kind: "guest" }>;
 const viewer: Viewer = {
   user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
