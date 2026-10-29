@@ -11,7 +11,7 @@ const remove = (alias: string): UsesChange => ({ kind: "remove", alias });
 const config = (uses: string) =>
   `import { defineConfig, members } from "patchy/config";\n\n` +
   `// Builder notes stay put.\n` +
-  `export default defineConfig({\n  name: "notes",\n  tier: 1,\n  ${uses}\n});\n`;
+  `export default defineConfig({\n  name: "notes",\n  tier: 2,\n  ${uses}\n});\n`;
 const declaration = '"sales": { kind: "postgres", handle: "sales-db" }';
 
 const layouts: ReadonlyArray<readonly [string, string, string]> = [

@@ -25,8 +25,7 @@ export const layer = (
     Runtime.Runtime,
     Runtime.make(handlers, {
       origin: options.origin,
-      identity,
-      bootstrapIdentity: identity
+      identity
     })
   );
 };

@@ -3,28 +3,18 @@ import { patchy } from "../patchy/_generated/client.js";
 import type { Member, People } from "./model.js";
 
 /**
- * Resolves member ids for display. Active colleagues come from the directory's first page;
- * anyone else (more than 50 people, or someone who has left) is resolved with getMany.
- * Both reads are live, so renames and departures show up without a reload.
+ * Resolves member ids for display through server/people.ts, including people who have left.
+ * The read is live, so renames and departures show up without a reload.
  */
 export function usePeople(ids: readonly string[]): People {
-  const directory = useQuery(patchy.members.list, undefined);
-  const listed = directory.data?.rows;
-  const missing = useMemo(() => {
-    if (!listed) return [];
-    const known = new Set(listed.map((member) => member.id));
-    return [...new Set(ids)].filter((id) => !known.has(id)).sort();
-  }, [ids, listed]);
-  const extra = useQuery(patchy.members.getMany, missing);
-
+  const unique = useMemo(() => [...new Set(ids)].sort(), [ids]);
+  const resolved = useQuery(patchy.server.people.people, { ids: unique });
   return useMemo(() => {
     const people = new Map<string, Member | null>();
-    for (const member of listed ?? []) people.set(member.id, member);
-    if (extra.data?.length === missing.length) {
-      extra.data.forEach((member, index) => people.set(missing[index]!, member));
-    }
+    if (resolved.data?.length === unique.length)
+      resolved.data.forEach((member, index) => people.set(unique[index]!, member));
     return people;
-  }, [listed, extra.data, missing]);
+  }, [resolved.data, unique]);
 }
 
 /** Display name for a resolved id: blank while loading, a neutral label once it can't resolve. */

@@ -180,9 +180,9 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
             contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} }
           }
         });
-        const { prepare } = yield* harness({ index, uses, metadata: shared(contacts) });
+        const { prepare } = yield* harness({ index, tier: 2, uses, metadata: shared(contacts) });
         assert.deepStrictEqual((yield* prepare).manifest.uses, { contacts });
-        const stale = yield* harness({ index, uses, metadata: shared({ revision: 4 }) });
+        const stale = yield* harness({ index, tier: 2, uses, metadata: shared({ revision: 4 }) });
         const exit = yield* Effect.exit(stale.prepare);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit))
@@ -245,9 +245,14 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
             }
           }
         });
-        const { prepare } = yield* harness({ index, uses, metadata: metadata(analytics) });
+        const { prepare } = yield* harness({ index, tier: 2, uses, metadata: metadata(analytics) });
         assert.deepStrictEqual((yield* prepare).manifest.uses, { analytics });
-        const stale = yield* harness({ index, uses, metadata: metadata({ revision: 3 }) });
+        const stale = yield* harness({
+          index,
+          tier: 2,
+          uses,
+          metadata: metadata({ revision: 3 })
+        });
         assert.strictEqual(
           (yield* stale.prepare.pipe(Effect.flip)).message,
           "Generation returned inconsistent metadata for analytics."
@@ -255,10 +260,26 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       }),
     { timeout: 30_000 }
   );
+  it.effect("refuses uses below tier 2 before generating anything", () =>
+    Effect.gen(function* () {
+      const { generated, prepare } = yield* harness({
+        index: currentIndex,
+        tier: 1,
+        uses: '{ members: members(), analytics: posthog("product") }'
+      });
+      const error = yield* Effect.flip(prepare);
+      if (error._tag !== "LocalError") return assert.fail(`Unexpected ${error._tag}`);
+      assert.strictEqual(error.code, "tier_mismatch");
+      assert.include(error.message, 'cannot declare "members", "analytics"');
+      assert.include(error.message, "server handlers");
+      assert.deepStrictEqual(generated, []);
+    })
+  );
   it.effect("prepares members without requiring a fixture or declaration snapshot", () =>
     Effect.gen(function* () {
       const { prepare } = yield* harness({
         index: currentIndex,
+        tier: 2,
         uses: "{ members: members() }"
       });
       const prepared = yield* prepare;
@@ -283,6 +304,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         revision: 3
       };
       const fixture = yield* harness({
+        tier: 2,
         uses: '{ assets: sharedStore("abcdefghijkl", "documents") }',
         index: {
           ...currentIndex,

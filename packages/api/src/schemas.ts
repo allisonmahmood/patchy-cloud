@@ -619,6 +619,16 @@ export const Manifest = Schema.Struct({
   sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText))
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
+/**
+ * Below tier 2 a patch reaches only its own tables and files, so it declares no `uses`:
+ * connections, other patches' shared tables and stores, and the member directory are reached
+ * through tier 2 handlers. Publish, generation and the CLI refuse with this message.
+ */
+export const usesRefusal = (tier: number, aliases: readonly string[]): string | undefined =>
+  tier >= 2 || aliases.length === 0
+    ? undefined
+    : `uses requires tier 2: ${tier === 0 ? "tier 0 runs no code" : `tier ${tier} reaches only its own tables and files`}, so it cannot declare ${aliases.map((alias) => JSON.stringify(alias)).join(", ")}. Set tier 2 and reach them from server handlers, or delete them all from uses in patchy.config.ts; then run \`patchy refresh\`.`;
+
 /** Generation resolves declarations; existing stamps are hints, never authority. */
 export const GenerationManifest = Schema.Struct({
   ...Manifest.fields,

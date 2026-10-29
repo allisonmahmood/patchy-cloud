@@ -67,6 +67,7 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION,
   agentToolEntries,
+  usesRefusal,
   type HandlerDescriptors
 } from "@patchy/api";
 import { Companies, Looks, Users } from "@patchy/companies";
@@ -577,6 +578,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             return rejected("tier_mismatch", "Tier 2 requires the fleet executor in production.");
           if (manifest.tier < 2 && payload.server !== undefined)
             return rejected("tier_mismatch", "Server code requires tier 2.");
+          const lowerTierUses = usesRefusal(manifest.tier, Object.keys(manifest.uses));
+          if (lowerTierUses !== undefined) return rejected("tier_mismatch", lowerTierUses);
           if (manifest.tier === 2 && payload.server === undefined)
             return rejected("invalid_manifest", "Tier 2 requires a server artifact.");
           const serverBytes =

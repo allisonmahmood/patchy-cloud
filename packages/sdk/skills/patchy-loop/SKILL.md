@@ -10,7 +10,7 @@ description: Build in a Patchy repo, discover company tools and data sources, re
 Talk through edge cases and product behaviour with the person before building.
 
 1. Read `AGENTS.md` for the purpose and layout, then `patchy/_generated/README.md` and `patchy/_generated/index.json` for available skills, declarations, context paths and revision stamps. Initialization already installed dependencies: use the pinned `pnpm patchy` command, not a global copy, and do not reinstall as a setup ritual. `pnpm patchy --help` lists commands in this release.
-2. Read `patchy.config.ts` for the tier, owned tables and file stores, and the declarations in `uses`. Choose the page workflow from the tier and existing source:
+2. Read `patchy.config.ts` for the tier, owned tables and file stores, and, on tier 2, the declarations in `uses`. Choose the page workflow from the tier and existing source:
    - Tier 0 is static HTML. Edit `index.html`; the page cannot run scripts or call resources. It does not need Preact or `src/App.tsx`.
    - Tiers 1 and 2 start with Preact in `src/App.tsx`, mounted by `src/main.tsx`. Read `../patchy-preact/SKILL.md` before changing components or hooks.
    - Tier 2 puts handlers in `server/`. Read `../patchy-server/SKILL.md`; the page calls `patchy.server.<module>.<handler>`, not tables, named files or connections directly. Tools for people's agents go in `agent/`, the agent area, which the same skill covers.
@@ -24,19 +24,23 @@ Talk through edge cases and product behaviour with the person before building.
 
 ## Moving tiers
 
-Tier 1 is the default. Use tier 2 for enforced rules, atomic multi-row writes or
-server-side work. Tier 1 already supports live sync and sequential operations;
-neither requires tier 2.
+Tier 1 is the default. It reaches only its own patch: its tables and files, the
+viewer and routing, with live sync and sequential operations. Use tier 2 for
+enforced rules, atomic multi-row writes or server-side work, and for anything
+outside the patch: company connections, other patches' shared tables and stores,
+and the member directory with its member columns. Below tier 2, `uses` declares
+nothing: refresh, dev and publish refuse a declaration with `tier_mismatch`.
 
 - To move from tier 1 to 2, set `tier: 2` in `patchy.config.ts`, create handler
   modules in `server/`, then run `pnpm patchy refresh`. It adds the exact
   `workerd` pin, config-bound `patchy/_generated/server.ts` and `patchy-server`.
   Run `pnpm typecheck`; the server-only client identifies every direct call to
   move into a handler. Use queries for reads, mutations for atomic owned-table
-  writes and actions for files or integrations. Publish with `--share company`
-  if the patch is currently public.
-- To move from tier 2 to 1, set `tier: 1`, remove `server/` and `agent/`, then
-  run `pnpm patchy refresh`. It removes the `workerd` pin, generated `server.ts`
+  writes and actions for files or integrations. Then add the connections, shared
+  sources or members the handlers need. Publish with `--share company` if the
+  patch is currently public.
+- To move from tier 2 to 1, remove every `uses` declaration and member column,
+  set `tier: 1`, remove `server/` and `agent/`, then run `pnpm patchy refresh`. It removes the `workerd` pin, generated `server.ts`
   and `patchy-server` skill. The server skill follows the tier; the members skill
   follows its declaration. Other installed skills stay sticky.
   Run `pnpm typecheck` and rewrite every `patchy.server.*` call it names.
@@ -248,15 +252,15 @@ through `ctx.shared` and `ctx.connections`; PostHog, Pidgeon and Attio actions r
 the real project, address or workspace through the instance, as the publishing key's
 person for either viewer.
 
-On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables, Postgres, PostHog and Attio are read-only, checked against live source access; an Attio connection reads everything its workspace key reads, for every viewer. A Pidgeon connection whose key sends replies, sends and triages as its address, for the viewer. A public tier 1 patch returns null from `me()`. Signed-in company members can read its declared member directory; anonymous viewers and outsiders cannot. Tables, files and integrations still return `not_available_on_public` for everyone. Tier 2 cannot be public.
+On tier 1, every readable row is available to every admitted company viewer, and owned-table and file writes act as the viewer. UI filters and `me()` are not row-level authorization or a place to hide secrets. Tier 2 puts enforced rules in handlers; owned resources act as the patch, while company data is authorized as the initiating viewer. Writes are logged for company admins. Shared tables, Postgres, PostHog and Attio are read-only, checked against live source access; an Attio connection reads everything its workspace key reads, for every viewer. A Pidgeon connection whose key sends replies, sends and triages as its address, for the viewer. A public tier 1 patch reaches no data: `me()` returns null, and tables and files return `not_available_on_public` for everyone. Tier 2 cannot be public.
 
 ## Presence and live screens
 
 Patchy owns presence through each document's stream, including reconnect and
 access-loss notices. Keep presence out of patch tables and heartbeat code.
 Render from the subscription's latest result rather than copying mutation
-replies into a second query-state cache. Tier 1 table and member-directory
-subscriptions and tier 2 query subscriptions use the same document stream in
+replies into a second query-state cache. Tier 1 table subscriptions and tier 2
+query subscriptions use the same document stream in
 local dev and hosted company pages. Read `patchy-server` for handler and
 subscription limits.
 
@@ -264,7 +268,7 @@ subscription limits.
 
 A tier 1 patch acts as the viewer only through Patchy and never holds their login. Use the generated client through the shell's broker; there is no direct runtime HTTP access from a frame.
 
-- No outbound fetches, external links, external scripts, styles or assets. Bundle code and styles into one HTML file; use embedded data or blob URLs for images, fonts and media. Outside systems are reached only through company integrations.
+- No outbound fetches, external links, external scripts, styles or assets. Bundle code and styles into one HTML file; use embedded data or blob URLs for images, fonts and media. Outside systems, other patches and the member directory are tier 2's.
 - No client storage: `localStorage`, IndexedDB and cookies are unavailable. Save durable state in declared tables and file stores; keep transient UI state in memory.
 - No popups, `target=_blank`, top navigation, in-frame downloads or workers. Shell-mediated routing and downloads belong to the broker; do not invent unsupported client methods or navigate around the sandbox. Address segments beginning with `~` belong to Patchy.
 - Native form submission is blocked, including its `submit` event. Use `type="button"` click handlers and an Enter key handler for inputs, calling the generated client. `reportValidity()` still checks fields; `patchy-look` says how a failing one shows as invalid.

@@ -210,19 +210,21 @@ const inbound = Effect.fn("live.inbound")(function* (
   return { messageId: delivered.message_id!, threadId: delivered.thread_id! };
 });
 
-/** One operation as a page calls it. */
+/** One operation as a tier 2 action's callback makes it. */
 type Call = (
   op: "pidgeon.read" | "pidgeon.write",
   operation: string,
   input: unknown
 ) => Effect.Effect<unknown, Runtime.RuntimeError>;
 
-/** The handlers as the server builds them, over Pidgeon, and calls as page `patchId` makes them. */
+/**
+ * The handlers as the server builds them, over Pidgeon, and calls as tier 2 patch `patchId`'s
+ * handlers make them: connections are tier 2's.
+ */
 const desk = Effect.fn("live.desk")(function* (
   store: ConnectionStore.ConnectionStore["Service"],
   connection: Pidgeon,
-  patchId: string,
-  tier: 1 | 2
+  patchId: string
 ) {
   const handlers = yield* Operations.makeHandlers.pipe(
     Effect.provide(Layer.merge(Live.layer, Directory.layer)),
@@ -240,13 +242,13 @@ const desk = Effect.fn("live.desk")(function* (
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
-      tier,
+      tier: 2,
       tables: {},
       files: {},
       uses: {
         support: { kind: "pidgeon", handle: connection.handle, id: connection.id, revision: 1 }
       },
-      ...(tier === 2 ? { handlers: PidgeonTest.desk.handlers } : {})
+      handlers: PidgeonTest.desk.handlers
     }
   });
   const call: Call = (op, operation, input) =>
@@ -334,7 +336,7 @@ const page = Layer.mergeAll(
 
 describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test mode", () => {
   it.layer(page, { timeout: "300 seconds", excludeTestServices: true })(
-    "on a tier 1 page and through the operations",
+    "through the operations, as a tier 2 action's callbacks make them",
     (it) => {
       it.effect("connects the desk, and mail arrives from a customer and from outside", () =>
         Effect.gen(function* () {
@@ -363,7 +365,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               inReplyTo: last.messageId
             });
           made.order = last;
-          const { call } = yield* desk(store, connection, patchId, 1);
+          const { call } = yield* desk(store, connection, patchId);
           made.chainstay = yield* eventually(
             call("pidgeon.read", "threads.list", { status: "open" }).pipe(
               Effect.map(
@@ -385,14 +387,14 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
       );
 
       it.effect(
-        "a tier 1 page lists open mail, reads a thread past a page and an attachment, replies once though sent twice, and marks it waiting",
+        "the generated client, through an action's callbacks, lists open mail, reads a thread past a page and an attachment, replies once though sent twice, and marks it waiting",
         () =>
           Effect.gen(function* () {
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
             const chainstay = need(made.chainstay, "The chainstay thread").threadId;
             const order = need(made.order, "The order thread").threadId;
-            const { handlers } = yield* desk(store, connection, patchId, 1);
+            const { handlers } = yield* desk(store, connection, patchId);
             // Two messages a page, so the order thread's three take two.
             const small = {
               ...handlers,
@@ -472,7 +474,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
             const order = need(made.order, "The order thread");
-            const { call } = yield* desk(store, connection, patchId, 1);
+            const { call } = yield* desk(store, connection, patchId);
             const before = (yield* wholeThread(call, order.threadId)).length;
             const reply = (draft: string, text: string) =>
               call("pidgeon.write", "messages.reply", {
@@ -531,7 +533,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
             const customer = need(made.customer, "The customer");
-            const { call } = yield* desk(store, connection, patchId, 1);
+            const { call } = yield* desk(store, connection, patchId);
             const draft = `${Live.RUN}-policy`;
             const send = (to: string) =>
               call("pidgeon.write", "messages.send", {
@@ -553,7 +555,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
             const customer = need(made.customer, "The customer");
-            const { call } = yield* desk(store, connection, patchId, 1);
+            const { call } = yield* desk(store, connection, patchId);
             const send = (draft: string, to: ReadonlyArray<string>) =>
               call("pidgeon.write", "messages.send", {
                 to,
@@ -644,7 +646,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
       it.effect("answers not_found for the customer's own copy of a conversation", () =>
         Effect.gen(function* () {
           const store = yield* SqlConnectionStore.make;
-          const { call } = yield* desk(store, need(made.connection, "The desk"), patchId, 1);
+          const { call } = yield* desk(store, need(made.connection, "The desk"), patchId);
           const copy = need(made.customerCopy, "The customer's sent mail");
           assert.include(
             yield* failure(call("pidgeon.read", "threads.get", { id: copy.thread_id })),
@@ -662,7 +664,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
         Effect.gen(function* () {
           const store = yield* SqlConnectionStore.make;
           const connection = need(made.connection, "The desk");
-          const { call } = yield* desk(store, connection, patchId, 1);
+          const { call } = yield* desk(store, connection, patchId);
           yield* Live.reconfigure(connection.display.identityId, { hold_suspicious: true });
           const suspicious = yield* inbound(connection.display.email, {
             from: "Press Desk <press@news.example>",
@@ -708,7 +710,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               access: "send"
             })
           });
-          const { call } = yield* desk(store, connection, patchId, 1);
+          const { call } = yield* desk(store, connection, patchId);
           const before = (yield* wholeThread(call, chainstay)).length;
           yield* refusedWith(
             call("pidgeon.write", "messages.reply", {
@@ -766,7 +768,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               text: "My frame warranty claim, with the receipt.",
               receipt
             });
-            const { handlers, binding, call } = yield* desk(store, connection, "pidgeonlive2", 2);
+            const { handlers, binding, call } = yield* desk(store, connection, "pidgeonlive2");
             yield* eventually(
               call("pidgeon.read", "threads.list", { status: "open" }).pipe(
                 Effect.map((listed) =>

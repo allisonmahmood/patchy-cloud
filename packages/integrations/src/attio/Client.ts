@@ -34,7 +34,7 @@ const attributes = (items: ReadonlyArray<AttioAttribute>, indent: string) =>
 
 export const client = (
   snapshot: AttioSnapshot
-) => `// Generated from an immutable Attio snapshot. Browser-only; transport is supplied by the host.
+) => `// Generated from an immutable Attio snapshot. Tier 2 handlers type ctx.connections with it; the host supplies the transport.
 // Patchy builds every Attio request from these typed arguments and reads only: nothing here can
 // name a path, write filter JSON or change anything in Attio.
 import { createAttioClient } from "patchy/client";

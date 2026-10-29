@@ -58,9 +58,9 @@ A read failure is not an empty successful result.
 
 ## useQuery
 
-`useQuery(query, args)` accepts a tier 1 table's `list` or `get` callable,
-including shared tables, a declared member-directory read, or a tier 2 generated
-server query. Pass list options, a get row id, or the handler's declared arguments:
+`useQuery(query, args)` accepts a tier 1 page's own table `list` or `get`
+callable, or a tier 2 generated server query. Shared tables and the member
+directory are read inside tier 2 queries. Pass list options, a get row id, or the handler's declared arguments:
 
 ```tsx
 const snapshot = useQuery(patchy.server.leads.list, { stage: "open" });
@@ -90,12 +90,11 @@ outside the query's company-database snapshot. See `../patchy-server/SKILL.md`
 for handler dependencies, failures and bounds, or `../patchy-tables/SKILL.md`
 for whole-result rendering and table-grain wakes on tier 1.
 
-Tier 1 table and member-directory subscriptions and tier 2 query subscriptions
-run in hosted company pages and `patchy dev`. Production tier 2 execution uses
+Tier 1 table subscriptions and tier 2 query subscriptions run in hosted company
+pages and `patchy dev`. Production tier 2 execution uses
 the fleet; local dev uses the supervised local executor.
 Arbitrary promises, table `getMany`, integrations, mutations and actions are not
-query callables. Read `../patchy-members/SKILL.md` for all four subscribable
-directory reads and search arguments. For tier 2 file inputs, stage in the event
+query callables. For tier 2 file inputs, stage in the event
 handler and pass the Upload to an action. See `../patchy-files/SKILL.md` for
 adoption, discard and partial saves.
 

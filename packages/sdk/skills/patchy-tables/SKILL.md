@@ -13,9 +13,9 @@ Before duplicating company data, use the loop skill's discovery chain:
 `pnpm patchy list` for descriptions, `list <patch>` for tables and reads, then
 `list <patch> <table>` for keys, types, defaults, refs, indexes and revision.
 Check retired patches before concluding absence; no match means none you can
-use. If a table is `declarable: true`, add it with
+use. If a table is `declarable: true`, a tier 2 repo adds it with
 `pnpm patchy add shared-table <patchId>/<table>` using its canonical id and
-follow the generated shared-table skill. Define an owned table when the patch
+follows the generated shared-table skill; a tier 1 page reads only its own tables. Define an owned table when the patch
 needs its own writes; another patch's shared table stays read-only.
 
 ## Define, refresh, use
@@ -67,8 +67,9 @@ described in `../patchy-server/SKILL.md`, and call those handlers from the page.
 
 Kinds: `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`, `t.timestamp()` (ISO string), `t.json()` (read as `unknown`), `t.ref("notes")` (typed row id). Refs have an automatic index named exactly after their column: the example's `parent` ref is queried with `list({ index: "parent", eq: { parent: note.id } })`. They are not foreign keys; deleting a target may leave dangling refs. Validate unknown JSON before using its fields.
 
-For a column that assigns a person, run `pnpm patchy add members` and use
-`t.member()` or `t.member().optional()`. Read `../patchy-members/SKILL.md` for
+For a column that assigns a person, a tier 2 repo runs `pnpm patchy add members`
+and uses `t.member()` or `t.member().optional()`; member columns need the
+directory, so they are tier 2's. Read `../patchy-members/SKILL.md` for
 candidate checks, deactivated users and batch resolution. This is a string user
 id, not a table reference, and it has no automatic index.
 

@@ -19,7 +19,8 @@ import {
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
-  sharedTableId
+  sharedTableId,
+  usesRefusal
 } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import type {
@@ -202,16 +203,39 @@ const describedColumn = (config: unknown) => {
   return undefined;
 };
 
+/** Below tier 2 a config declares no `uses`: publish's refusal, made before building. */
+export class LowerTierUses extends Error {
+  readonly code = "tier_mismatch";
+}
+
 /** Only known config errors supply public diagnostics; arbitrary config exceptions stay in cause. */
 export const configFailure = (cause: unknown) =>
   new LocalError({
     message:
-      isPrimitiveNameCollision(cause) || isDescribedColumn(cause) || cause instanceof StaleGenerated
+      isPrimitiveNameCollision(cause) ||
+      isDescribedColumn(cause) ||
+      cause instanceof StaleGenerated ||
+      cause instanceof LowerTierUses
         ? cause.message
         : "Could not execute patchy.config.ts. Check the config, its imports and primitive descriptions.",
-    code: cause instanceof StaleGenerated ? cause.code : "invalid_manifest",
+    code:
+      cause instanceof StaleGenerated || cause instanceof LowerTierUses
+        ? cause.code
+        : "invalid_manifest",
     cause
   });
+
+/**
+ * The same refusal for refresh and dev, which execute config unresolved, before they generate.
+ * Removing a declaration evaluates the config as it was, so that evaluation never refuses.
+ */
+export const lowerTierUses = (manifest: {
+  readonly tier: number;
+  readonly uses: Readonly<Record<string, unknown>>;
+}): LocalError | undefined => {
+  const message = usesRefusal(manifest.tier, Object.keys(manifest.uses));
+  return message === undefined ? undefined : new LocalError({ message, code: "tier_mismatch" });
+};
 
 const runConfig = (path: string): Promise<unknown> => {
   const { promise, resolve: accept, reject } = Promise.withResolvers<unknown>();
@@ -299,6 +323,8 @@ export async function executeConfig(
   if (options?.resolve === false) {
     return config;
   }
+  const refused = usesRefusal(config.tier, Object.keys(config.uses));
+  if (refused !== undefined) throw new LowerTierUses(refused);
   const indexPath = resolve(dirname(absolutePath), "patchy/_generated/index.json");
   const index = await readFile(indexPath, "utf8").catch((cause: unknown) => {
     throw new StaleGenerated({ cause });

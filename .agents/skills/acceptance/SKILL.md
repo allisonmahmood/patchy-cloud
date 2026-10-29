@@ -191,8 +191,8 @@ way back. A PR that adds a journey people rely on adds its entry here.
   without a session. Back: `share … company`, and the door returns.
 - **Find and open a tool.** `brightline`, Jordan. Home lists the studio's
   patches, a search finds Kudos, and it opens in its frame.
-- **Use a tier 1 tool live.** `brightline`, Jordan and Priya. Jordan gives
-  kudos; it appears on Priya's open page without a reload.
+- **Use a tool live.** `brightline`, Jordan and Priya. Jordan gives kudos
+  (tier 2); it appears on Priya's open page without a reload.
 - **Use a tier 2 tool.** `brightline`, Jordan and Allison. New Business opens
   with its sample deals, and a deal Jordan moves to another stage moves on
   Allison's open board. Spend refuses anyone approving their own request.

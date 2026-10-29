@@ -79,7 +79,6 @@ const layer = Layer.unwrap(
       {},
       {
         origin: "http://localhost",
-        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
         identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     ).pipe(Effect.provideService(Invocation.Invocation, invocation));
@@ -269,7 +268,6 @@ const callbackRuntime = Layer.unwrap(
       {},
       {
         origin: "http://localhost",
-        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
         identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     ).pipe(Effect.provideService(Invocation.Invocation, invocation));

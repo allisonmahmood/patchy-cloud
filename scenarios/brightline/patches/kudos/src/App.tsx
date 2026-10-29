@@ -12,8 +12,8 @@ type Me = Awaited<ReturnType<typeof patchy.me>>;
 const EVERYONE: Filter = { recipient: null, value: null };
 
 export function App() {
-  // undefined while loading; null on a public page, where nobody is signed in.
-  const [me, setMe] = useState<Me | undefined>(undefined);
+  // undefined while loading; null when Patchy couldn't say who is signed in.
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [filter, setFilter] = useState<Filter>(EVERYONE);
   const now = useNow();
 

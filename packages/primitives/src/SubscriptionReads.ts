@@ -13,7 +13,6 @@ import * as TableOperations from "./TableOperations.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 import * as ResourceRevisions from "./ResourceRevisions.js";
 import * as MemberDirectory from "./MemberDirectory.js";
-import * as Members from "./Members.js";
 
 class LifecycleChanged extends Schema.TaggedError<LifecycleChanged>()(
   "SubscriptionLifecycleChanged",
@@ -32,34 +31,7 @@ const decoders = {
   }),
   "tables.get": Schema.decodeUnknownEffect(runtimeOperations["tables.get"].request.fields.args, {
     onExcessProperty: "error"
-  }),
-  "shared.list": Schema.decodeUnknownEffect(runtimeOperations["shared.list"].request.fields.args, {
-    onExcessProperty: "error"
-  }),
-  "shared.get": Schema.decodeUnknownEffect(runtimeOperations["shared.get"].request.fields.args, {
-    onExcessProperty: "error"
-  }),
-  "members.list": Schema.decodeUnknownEffect(
-    runtimeOperations["members.list"].request.fields.args,
-    {
-      onExcessProperty: "error"
-    }
-  ),
-  "members.search": Schema.decodeUnknownEffect(
-    runtimeOperations["members.search"].request.fields.args,
-    {
-      onExcessProperty: "error"
-    }
-  ),
-  "members.get": Schema.decodeUnknownEffect(runtimeOperations["members.get"].request.fields.args, {
-    onExcessProperty: "error"
-  }),
-  "members.getMany": Schema.decodeUnknownEffect(
-    runtimeOperations["members.getMany"].request.fields.args,
-    {
-      onExcessProperty: "error"
-    }
-  )
+  })
 };
 type Operation = keyof typeof decoders;
 const isOperation = (op: string): op is Operation => Object.hasOwn(decoders, op);
@@ -74,7 +46,6 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   const handlers = yield* TableOperations.make;
   const access = yield* TableOperations.makeAccess;
   const directory = yield* MemberDirectory.MemberDirectory;
-  const memberHandlers = yield* Members.make;
   const withCompany = <A, R>(
     companyId: string,
     effect: Effect.Effect<A, Runtime.RuntimeError, R>
@@ -105,43 +76,17 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     if (!isOperation(input.op)) return yield* new Runtime.InvalidRequest({});
     const decoded: Effect.Effect<unknown, Schema.SchemaError> = decoders[input.op](input.args);
     yield* decoded.pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));
-    if (
-      input.op === "members.list" ||
-      input.op === "members.search" ||
-      input.op === "members.get" ||
-      input.op === "members.getMany"
-    ) {
-      const keys = [`members:${input.binding.companyId}`];
-      for (const key of keys) input.onDependency?.(key);
-      return { keys, op: input.op, members: true as const };
-    }
-    const shared = input.op.startsWith("shared.");
-    const name = shared ? input.args.alias : input.args.table;
+    const name = input.args.table;
     if (typeof name !== "string") return yield* new Runtime.InvalidRequest({});
-    const declaration =
-      shared && Object.hasOwn(input.binding.manifest.uses, name)
-        ? input.binding.manifest.uses[name]
-        : undefined;
-    if (shared && declaration?.kind !== "sharedTable")
-      return yield* new TableOperations.TableNotDeclared({ table: name });
-    const patchId =
-      declaration?.kind === "sharedTable" ? declaration.patchId : input.binding.patchId;
-    const table = declaration?.kind === "sharedTable" ? declaration.table : name;
-    const keys = [`table:${patchId}:${table}`, `patch:${patchId}`];
+    const keys = [`table:${input.binding.patchId}:${name}`, `patch:${input.binding.patchId}`];
     for (const key of keys) input.onDependency?.(key);
-    return { keys, name, shared, op: input.op, members: false as const };
+    return { keys, name, op: input.op };
   });
   const admit = Effect.fn("SubscriptionReads.admit")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
-    if (dependency.members) {
-      yield* Members.authorize.pipe(Effect.provideService(Binding.Binding, input.binding));
-      return dependency.keys;
-    }
-    yield* (
-      dependency.shared
-        ? access.withSharedTable(dependency.name, () => Effect.void)
-        : access.withTable(dependency.name, () => Effect.void)
-    ).pipe(Effect.provideService(Binding.Binding, input.binding));
+    yield* access
+      .withTable(dependency.name, () => Effect.void)
+      .pipe(Effect.provideService(Binding.Binding, input.binding));
     return dependency.keys;
   });
   const revisions = Effect.fn("SubscriptionReads.revisions")(function* (
@@ -167,16 +112,6 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   });
   const read = Effect.fn("SubscriptionReads.read")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
-    if (dependency.members) {
-      yield* Members.authorize.pipe(Effect.provideService(Binding.Binding, input.binding));
-      const before = yield* directory.revision(input.binding.companyId);
-      const result = yield* memberHandlers[dependency.op]
-        .run(input.args)
-        .pipe(Effect.provideService(Binding.Binding, input.binding));
-      const after = yield* directory.revision(input.binding.companyId);
-      if (before !== after) return yield* new LifecycleChanged({ resource: dependency.keys[0]! });
-      return { result, vector: { [dependency.keys[0]!]: before } };
-    }
     const patchKeys = dependency.keys.filter((key) => key.startsWith("patch:"));
     const resourceKeys = dependency.keys.filter((key) => !key.startsWith("patch:"));
     // Platform lifecycle is outside the company snapshot. A changed fence refuses this run.

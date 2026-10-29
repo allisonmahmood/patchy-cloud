@@ -258,8 +258,7 @@ const runtime = Layer.effect(
     {},
     {
       origin: "https://patchy.example",
-      identity: Effect.fail(new Runtime.AccessDenied({})),
-      bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({}))
+      identity: Effect.fail(new Runtime.AccessDenied({}))
     }
   )
 ).pipe(
@@ -333,7 +332,7 @@ const colleague: Viewer = {
   admin: false
 };
 
-/** A local dev binding declaring `uses`, as `patchy dev` admits either viewer. */
+/** A local tier 2 dev binding declaring `uses`, as `patchy dev` admits either viewer. */
 const local = (uses: (typeof Manifest.Type)["uses"], now: number, viewer: Viewer = owner) =>
   Binding.Binding.of({
     patchId: "localdev0000",
@@ -344,7 +343,7 @@ const local = (uses: (typeof Manifest.Type)["uses"], now: number, viewer: Viewer
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
-      tier: 1,
+      tier: 2,
       tables: {},
       files: {},
       uses

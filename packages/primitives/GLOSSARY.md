@@ -33,7 +33,7 @@ A column identifying a row in a named table, without requiring that row to exist
 _Avoid_: foreign key, join, embedded row
 
 **Member directory**:
-A declared company primitive exposing candidates to assign and resolving stored user ids, including deactivated users. Companies owns the users and directory revision; Primitives owns how patch code reads them and checks assignments.
+A declared company primitive, read by tier 2 handlers, exposing candidates to assign and resolving stored user ids, including deactivated users. Companies owns the users and directory revision; Primitives owns how patch code reads them and checks assignments.
 _Avoid_: members table, native resource, roster
 
 **Candidate**:
@@ -45,7 +45,7 @@ A table column holding a user id, checked against the candidates on insertion or
 _Avoid_: user ref, owner field
 
 **Shared table**:
-A source patch's table that another patch may declare and read, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
+A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:
@@ -53,7 +53,7 @@ A named, patch-owned collection of files available through the operations its lo
 _Avoid_: bucket, content store (the infrastructure holding bytes)
 
 **Shared file store**:
-A source patch's file store published as read-only access to every file for consumers on either tier, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/GLOSSARY.md), independent of published versions, omissions and rollbacks.
+A source patch's file store, on any tier, published as read-only access to every file for tier 2 consumers' handlers, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/GLOSSARY.md), independent of published versions, omissions and rollbacks.
 _Avoid_: public files, copied store, shared folder
 
 **Authorised file handle**:

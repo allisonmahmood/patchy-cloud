@@ -39,7 +39,7 @@ const reasons = {
 
 const operations = `## Operations
 
-Use the declared alias: \`patchy.connections.<alias>\` on a page, \`ctx.connections.<alias>\` in a tier 2 action. Every call reads; none can change Attio.
+Use the declared alias: \`ctx.connections.<alias>\` in an action; the page calls the action. Every call reads; none can change Attio.
 
 - \`objects.<slug>.list({ eq, contains, range, orderBy, limit, cursor })\`: a page of records, with \`cursor\` for the next; \`get(id)\`: one record or \`null\`; \`getMany(ids)\`: up to 500, in the order asked, \`null\` for a missing one.
 - \`lists.<slug>.list({ eq, contains, range, orderBy, parent, limit, cursor })\`: a page of entries; \`parent\` keeps one record's; \`get(entryId)\`: one entry or \`null\`.

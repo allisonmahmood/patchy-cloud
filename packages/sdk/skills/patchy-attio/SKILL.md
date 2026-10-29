@@ -7,6 +7,8 @@ description: Add a company's Attio workspace to a patch and read its CRM records
 
 Read `../patchy-loop/SKILL.md` first. An Attio connection is one Attio workspace that an admin connected with a read-only access token. Patchy holds the token and writes every request, so nothing a patch does can change Attio, and the token stays out of config, source and transcripts. The token acts for the workspace, not a person: anyone who can open a patch that declares the connection reads what the token reads, and Attio's own member permissions don't carry over.
 
+Connections are tier 2's: actions read the workspace through `ctx.connections` and return only what the page should show, and the page calls those actions. A tier 1 page reaches only its own patch, so declaring Attio on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says.
+
 ## Declare a workspace
 
 1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/company/connections`; ask them there rather than for a token.
@@ -17,10 +19,10 @@ There is no fixture: CRM rows invented for a fixture never resemble a company's.
 
 ## Reading
 
-```ts
-import { patchy } from "../patchy/_generated/client.js";
+In an action:
 
-const crm = patchy.connections.crm;
+```ts
+const crm = ctx.connections.crm;
 const { rows, cursor } = await crm.objects.deals.list({
   eq: { stage: "In Progress", owner: memberId },
   orderBy: { attribute: "value", direction: "desc" },
@@ -82,9 +84,7 @@ The client has no write method, and Patchy sends nothing that changes Attio. Sta
 
 A missing feature, such as notes, tasks, writes or search, is a request to Patchy, not something to work around.
 
-## On tier 2
-
-`ctx.connections.crm` in an action reads the same way. Queries and mutations can't use connections. Attio reads are not live-query dependencies.
+Queries and mutations can't use connections, and Attio reads are not live-query dependencies. An action that doesn't catch Attio's refusal relays it to the page, still Attio's, so `isPatchyError(error, "shape_mismatch", "attio")` works there.
 
 ## In `patchy dev`
 

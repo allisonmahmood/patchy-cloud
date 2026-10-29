@@ -308,6 +308,15 @@ test("unsharing preserves the last value and reshare wakes both existing and ini
       await expect(frame.locator("#shared .data")).toHaveText('["Shared before refusal"]');
       await expect(frame.locator("#shared [role=alert]")).toHaveCount(0);
     }
+
+    // The source's lifecycle wakes the consumer too: retired it refuses, restored it reads again.
+    await instance.lifecycle(source.patchId, "retire", undefined, true);
+    await expect(reader.locator("#shared [role=alert]")).toHaveText("access_denied");
+    await expect(reader.locator("#shared .data")).toHaveText('["Shared before refusal"]');
+    await expect(reader.locator("#owned .status")).toHaveText("ready");
+    await instance.lifecycle(source.patchId, "restore");
+    await expect(reader.locator("#shared .status")).toHaveText("ready");
+    await expect(reader.locator("#shared [role=alert]")).toHaveCount(0);
   } finally {
     await initiallyRefused.close();
     await sourcePage.close();

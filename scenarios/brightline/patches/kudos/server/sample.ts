@@ -1,5 +1,7 @@
-import { patchy } from "../patchy/_generated/client.js";
-import type { Emoji, Member, ValueKey } from "./model.js";
+// "Load sample data" for an empty wall: realistic kudos between whoever is in the member
+// directory, with reactions from people other than the sender.
+import { HandlerError, mutation, t } from "../patchy/_generated/server.js";
+import type { Emoji, ValueKey } from "../helpers/kudos.js";
 
 type SampleKudos = {
   /** Person slots 0-4, mapped onto whoever is in the directory (wrapping when fewer). */
@@ -143,9 +145,6 @@ const SAMPLE: readonly SampleKudos[] = [
   }
 ];
 
-/** A refusal the person can act on, shown verbatim. */
-export class SampleRefused extends Error {}
-
 function sentAt(when: SampleKudos["when"], now: number): string {
   if ("minutesAgo" in when) return new Date(now - when.minutesAgo * 60_000).toISOString();
   const date = new Date(now);
@@ -154,48 +153,43 @@ function sentAt(when: SampleKudos["when"], now: number): string {
   return date.toISOString();
 }
 
-/**
- * Fills an empty wall with realistic kudos between the company's current members, plus reactions
- * from people other than the sender. Refuses when the wall already has kudos. Tier 1 writes are
- * advisory, so this check lives in the page; it guards against accidents, not determined users.
- */
-export async function loadSampleData(): Promise<number> {
-  const existing = await patchy.tables.kudos.list({ limit: 1 });
-  if (existing.rows.length > 0)
-    throw new SampleRefused("The wall already has kudos, so sample data wasn't added.");
+/** Fills an empty wall, refusing one that already has kudos or a company of one. */
+export const load = mutation({
+  args: {},
+  errors: ["not_empty", "too_few_people"],
+  result: t.integer(),
+  handler: async (ctx) => {
+    const existing = await ctx.tables.kudos.list({ limit: 1 });
+    if (existing.rows.length > 0) throw new HandlerError("not_empty", {});
+    const people = (await ctx.members.list()).rows.filter((member) => member.active);
+    if (people.length < 2) throw new HandlerError("too_few_people", {});
 
-  const people: readonly Member[] = (await patchy.members.list()).rows.filter(
-    (member) => member.active
-  );
-  if (people.length < 2)
-    throw new SampleRefused("Sample kudos need at least two people in your company.");
-
-  const slot = (index: number) => index % people.length;
-  const now = Date.now();
-  const kudos = await patchy.tables.kudos.insertMany(
-    SAMPLE.map((sample) => {
-      const to = slot(sample.to);
-      const from = slot(sample.from) === to ? (to + 1) % people.length : slot(sample.from);
-      return {
-        recipient: people[to]!.id,
-        sender: people[from]!.id,
-        value: sample.value,
-        message: sample.message,
-        sentAt: sentAt(sample.when, now)
-      };
-    })
-  );
-
-  const reactions = kudos.flatMap((row, index) => {
-    const others = people.filter((member) => member.id !== row.sender);
-    return Object.entries(SAMPLE[index]!.reactions).flatMap(([emoji, count], offset) =>
-      Array.from({ length: Math.min(count, others.length) }, (_, nth) => ({
-        kudos: row.id,
-        member: others[(nth + offset + index) % others.length]!.id,
-        emoji
-      }))
+    const slot = (index: number) => index % people.length;
+    const now = Date.now();
+    const kudos = await ctx.tables.kudos.insertMany(
+      SAMPLE.map((sample) => {
+        const to = slot(sample.to);
+        const from = slot(sample.from) === to ? (to + 1) % people.length : slot(sample.from);
+        return {
+          recipient: people[to]!.id,
+          sender: people[from]!.id,
+          value: sample.value,
+          message: sample.message,
+          sentAt: sentAt(sample.when, now)
+        };
+      })
     );
-  });
-  if (reactions.length > 0) await patchy.tables.reactions.insertMany(reactions);
-  return kudos.length;
-}
+    const reactions = kudos.flatMap((row, index) => {
+      const others = people.filter((member) => member.id !== row.sender);
+      return Object.entries(SAMPLE[index]!.reactions).flatMap(([emoji, count], offset) =>
+        Array.from({ length: Math.min(count, others.length) }, (_, nth) => ({
+          kudos: row.id,
+          member: others[(nth + offset + index) % others.length]!.id,
+          emoji
+        }))
+      );
+    });
+    if (reactions.length > 0) await ctx.tables.reactions.insertMany(reactions);
+    return kudos.length;
+  }
+});

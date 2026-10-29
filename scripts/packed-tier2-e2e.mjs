@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect } from "@playwright/test";
 
@@ -230,6 +230,21 @@ export default defineConfig({ name: "tier2-acceptance", tier: 2,
     assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
     assert.ok(artifact.bytes > 0);
   }
+  // The consumer is a live dependant: the source refuses to retire under it unless forced.
+  const refusedRetire = await runCli(source.cli, ["retire", "--json"], {
+    ...source.options,
+    allowFailure: true
+  });
+  assert.equal(refusedRetire.code, 2);
+  assert.equal(refusedRetire.stdout, "");
+  const dependantRefusal = JSON.parse(refusedRetire.stderr);
+  assert.equal(dependantRefusal.kind, "rejected");
+  assert.equal(dependantRefusal.code, "has_dependants");
+  assert.deepEqual(
+    dependantRefusal.dependants.map(({ patchId }) => patchId),
+    [published.patchId]
+  );
+  assert.match(dependantRefusal.error, /Ask the person you are working for before forcing\.$/);
   const writer = await open(owner, published.address);
   const reader = await open(colleague, published.address);
   await expect(writer.locator("#titles")).toHaveText("[]");
@@ -315,74 +330,38 @@ export default defineConfig({ name: "tier2-acceptance", tier: 2,
     download(colleague, "notes.csv", 'title\r\nHosted write\r\nLost reply\r\n"CSV, note"')
   ]);
 
-  console.log("[packed-tier2-e2e] change tier 2 to 1 and back through refresh and publish");
+  console.log("[packed-tier2-e2e] a repo that declares uses cannot move to tier 1");
   const config = await readFile(path.join(repo.dir, "patchy.config.ts"), "utf8");
-  await rm(path.join(repo.dir, "server"), { recursive: true });
   await write(repo, "patchy.config.ts", config.replace("tier: 2", "tier: 1"));
-  await write(repo, "src/App.tsx", tier1App);
-  await repo.command("refresh");
-  await run("pnpm", ["typecheck"], repo.options);
-  const lower = await repo.command("publish");
-  assert.equal(lower.tier, 1);
-  const lowerFrame = await open(owner, lower.address);
-  await expect(lowerFrame.locator("#titles")).toHaveText(
-    '["Hosted write","Lost reply","CSV, note"]'
-  );
-  assert.equal(
-    await lowerFrame.evaluate(async () => {
-      try {
-        await window.probe.patchy.tables.notes.insert({
-          title: "Invalid member write",
-          owner: "usr_packed_non_member"
-        });
-        return "unexpected_success";
-      } catch (error) {
-        return error.code;
-      }
-    }),
-    "invalid_row"
-  );
-  await lowerFrame.evaluate(async () => {
-    const me = await window.probe.patchy.me();
-    await window.probe.patchy.tables.notes.insert({ title: "Tier one write", owner: me.user.id });
+  const lower = await runCli(repo.cli, ["refresh", "--json"], {
+    ...repo.options,
+    allowFailure: true
   });
-  await expect(reader.locator("#titles")).toHaveText(
-    '["Hosted write","Lost reply","CSV, note","Tier one write"]'
+  assert.equal(lower.code, 1);
+  assert.equal(lower.stdout, "");
+  const refusal = JSON.parse(lower.stderr);
+  assert.equal(refusal.kind, "local");
+  assert.equal(refusal.code, "tier_mismatch");
+  assert.match(
+    refusal.error,
+    /^uses requires tier 2: tier 1 reaches only its own tables and files/
   );
   await write(repo, "patchy.config.ts", config);
-  await mkdir(path.join(repo.dir, "server"));
-  await write(repo, "server/notes.ts", handlers);
-  await write(repo, "src/App.tsx", app);
-  await repo.command("refresh");
-  await run("pnpm", ["typecheck"], repo.options);
-  const higher = await repo.command("publish");
-  assert.equal(higher.tier, 2);
-  await expect(owner.locator(".shell-bottom")).toContainText("Reload to keep saving");
-  assert.equal(
-    await lowerFrame.evaluate(async () => {
-      try {
-        await window.probe.patchy.tables.notes.list();
-        return "unexpected_success";
-      } catch (error) {
-        return error.code;
-      }
-    }),
-    "server_required"
+  // The refused move changed nothing: the served tier 2 version keeps answering.
+  const unchanged = await open(owner, published.address);
+  await expect(unchanged.locator("#titles")).toHaveText(
+    '["Hosted write","Lost reply","CSV, note"]'
   );
-  const restored = await open(owner, higher.address);
-  await expect(restored.locator("#titles")).toHaveText(
-    '["Hosted write","Lost reply","CSV, note","Tier one write"]'
-  );
-  await restored.evaluate(() =>
-    window.probe.patchy.server.notes.create({ title: "Back on tier two" })
+  await unchanged.evaluate(() =>
+    window.probe.patchy.server.notes.create({ title: "Still on tier two" })
   );
   await expect(reader.locator("#titles")).toHaveText(
-    '["Hosted write","Lost reply","CSV, note","Tier one write","Back on tier two"]'
+    '["Hosted write","Lost reply","CSV, note","Still on tier two"]'
   );
   await ownerContext.close();
   await colleagueContext.close();
   console.log(
-    "[packed-tier2-e2e] PASS: packed init, both dev mounts, publish, two-viewer sync, keyed retry, sharing, files, members, CSV and tier changes"
+    "[packed-tier2-e2e] PASS: packed init, both dev mounts, publish, two-viewer sync, keyed retry, sharing, files, members, CSV and the tier 1 refusal"
   );
 }
 
@@ -419,14 +398,5 @@ Object.assign(window, { probe: { patchy, isPatchyError,
 export function App() {
   const snapshot = useQuery(patchy.server.notes.list, {});
   return <main><h1>Packed tier 2 acceptance</h1><output id="status">{snapshot.status}</output><output id="titles">{JSON.stringify(snapshot.data?.map(row => row.title) ?? [])}</output>{snapshot.error && <p role="alert">{snapshot.error.message}</p>}</main>;
-}
-`;
-
-const tier1App = `import { useQuery } from "patchy/preact";
-import { patchy } from "../patchy/_generated/client.js";
-Object.assign(window, { probe: { patchy } });
-export function App() {
-  const snapshot = useQuery(patchy.tables.notes.list, { order: "asc" });
-  return <main><output id="status">{snapshot.status}</output><output id="titles">{JSON.stringify(snapshot.data?.rows.map(row => row.title) ?? [])}</output></main>;
 }
 `;

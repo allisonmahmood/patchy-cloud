@@ -23,6 +23,7 @@ import * as GlobalFlag from "effect/cli/GlobalFlag";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { generateClient } from "../../sdk/src/generateClient.js";
+import { generateServer } from "../../sdk/src/generateServer.js";
 import { LocalError } from "./CliError.js";
 import * as DevLifecycle from "./devLifecycle.js";
 import * as Instance from "./Instance.js";
@@ -202,6 +203,8 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
     : options.pidgeon
       ? { alias: "support", declaration: support, config: 'pidgeon("support")' }
       : undefined;
+  // A connection is tier 2's: its actions read it, through the instance in dev.
+  const tier = declared === undefined ? 1 : 2;
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-lifecycle-" });
   const requests: string[] = [];
@@ -336,10 +339,15 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
                     : {}
                 },
                 files: [
-                  {
-                    path: "patchy/_generated/client.ts",
-                    contents: generateClient({ connections: {} })
-                  },
+                  { path: "patchy/_generated/client.ts", contents: generateClient({ tier }) },
+                  ...(declared === undefined
+                    ? []
+                    : [
+                        {
+                          path: "patchy/_generated/server.ts",
+                          contents: generateServer({ modules: ["live"] })
+                        }
+                      ]),
                   ...(cloudLook.revision === 0
                     ? []
                     : [{ path: "patchy/_generated/look.css", contents: cloudLook.css }]),
@@ -407,14 +415,47 @@ const makeFixture = Effect.fn("test.lifecycle.fixture")(function* (
   yield* fs.writeFileString(
     path.join(root, "patchy.config.ts"),
     'import { defineConfig, table, t, posthog, pidgeon } from "patchy/config";\n' +
-      `export default defineConfig({ name: "lifecycle-test", tier: 1, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: ${declared === undefined ? "{}" : `{ ${declared.alias}: ${declared.config} }`} });\n`
+      `export default defineConfig({ name: "lifecycle-test", tier: ${tier}, tables: { notes: table("Notes identified by id.", { title: t.text() }) }, files: { attachments: { description: "Attachments keyed by filename." } }, uses: ${declared === undefined ? "{}" : `{ ${declared.alias}: ${declared.config} }`} });\n`
   );
+  if (declared !== undefined) {
+    // Each action relays its connection's answer: the page's only way to it. Refresh would have
+    // written the builders it imports.
+    yield* fs.makeDirectory(path.join(root, "patchy/_generated"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(root, "patchy/_generated/server.ts"),
+      generateServer({ modules: ["live"] })
+    );
+    yield* fs.makeDirectory(path.join(root, "server"));
+    yield* fs.writeFileString(
+      path.join(root, "server/live.ts"),
+      options.posthog
+        ? `import { action, t } from "../patchy/_generated/server.js";
+export const views = action({ readOnly: true, args: {}, result: t.json(), handler: async (ctx) =>
+  ctx.connections.analytics.query({ name: "views", query: "SELECT event FROM events LIMIT 10", shape: { event: t.text() } }) });
+`
+        : `import { action, t } from "../patchy/_generated/server.js";
+export const threads = action({ readOnly: true, args: {}, result: t.json(), handler: async (ctx) =>
+  ctx.connections.support.threads.list({}) });
+export const send = action({ args: {}, result: t.json(), handler: async (ctx) =>
+  ctx.connections.support.messages.send({ to: ["ana@customer.example"], subject: "Your order", text: "It shipped today.", idempotencyKey: "lifecycle-send-0001" }) });
+`
+    );
+  }
   yield* fs.writeFileString(
     path.join(root, "index.html"),
     "<!doctype html><html><head><title>Lifecycle</title></head><body>Local lifecycle</body></html>"
   );
   yield* fs.makeDirectory(path.join(root, "node_modules"));
   yield* nodeFsLink(packageDir, path.join(root, "node_modules/patchy"));
+  if (declared !== undefined)
+    yield* nodeFsLink(
+      path.dirname(
+        createRequire(path.join(packageDir, "../execution/package.json")).resolve(
+          "workerd/package.json"
+        )
+      ),
+      path.join(root, "node_modules/workerd")
+    );
   yield* nodeFsLink(
     path.dirname(require.resolve("vite/package.json")),
     path.join(root, "node_modules/vite")
@@ -680,7 +721,9 @@ it.live(
       const failure = JSON.parse(json.stderr());
       assert.strictEqual(failure.ok, false);
       assert.strictEqual(failure.kind, "local");
-      assert.include(failure.error, "fixtures/postgres-warehouse.sql");
+      // A tier 1 page reaches only its own patch, so dev refuses the declaration before starting.
+      assert.strictEqual(failure.code, "tier_mismatch");
+      assert.include(failure.error, "uses requires tier 2");
       assert.strictEqual(failure.warnings.length, 1);
       assert.include(failure.warnings[0], "Portal purpose");
       assert.include(failure.warnings[0], "Local purpose");
@@ -764,7 +807,7 @@ const holdsNoKey = Effect.fn("test.lifecycle.holdsNoKey")(function* (
 });
 
 it.live(
-  "hands the key to a repo whose only live integration is Pidgeon: reads go to the instance, a send stays in dev's output",
+  "hands the key to a tier 2 repo whose only live integration is Pidgeon: its actions' reads go to the instance, a send stays in dev's output",
   () =>
     Effect.gen(function* () {
       const { root, instance, stateDir, devReads } = yield* makeFixture({ pidgeon: true });
@@ -774,25 +817,11 @@ it.live(
         [started.colleagueUrl, "usr_dev_colleague"]
       ] as const)
         assert.nestedPropertyVal(
-          yield* call(
-            url,
-            "pidgeon.read",
-            { connection: "support", operation: "threads.list", input: {} },
-            viewerId
-          ),
+          yield* call(url, "server.call", { handler: "live.threads", args: {} }, viewerId),
           "value.threads[0].id",
           "thr_1"
         );
-      const sent = yield* call(started.url, "pidgeon.write", {
-        connection: "support",
-        operation: "messages.send",
-        input: {
-          to: ["ana@customer.example"],
-          subject: "Your order",
-          text: "It shipped today.",
-          idempotencyKey: "lifecycle-send-0001"
-        }
-      });
+      const sent = yield* call(started.url, "server.call", { handler: "live.send", args: {} });
       assert.nestedPropertyVal(sent, "value.status", "sent");
       assert.nestedPropertyVal(sent, "value.test", true);
       // Only the reads reached the instance, both as the key's person.
@@ -800,10 +829,9 @@ it.live(
         devReads.map((request) => request.authorization),
         ["Bearer disposable-lifecycle-token", "Bearer disposable-lifecycle-token"]
       );
-      assert.deepStrictEqual(devReads[0]!.body, {
+      assert.deepInclude(devReads[0]!.body, {
         op: "pidgeon.read",
-        connection: { id: support.id, handle: support.handle },
-        args: { operation: "threads.list", input: {} }
+        connection: { id: support.id, handle: support.handle }
       });
       // This session logs JSON, so dev's output says what it didn't send as a JSON line.
       const { text } = yield* command(root, instance, ["logs"]);
@@ -831,23 +859,18 @@ it.live(
 );
 
 it.live(
-  "hands the key to the daemon on stdin only; both viewers read PostHog as its person, detached and in the foreground",
+  "hands the key to the daemon on stdin only; both viewers' actions read PostHog as its person, detached and in the foreground",
   () =>
     Effect.gen(function* () {
       const { root, instance, stateDir, devReads } = yield* makeFixture({ posthog: true });
-      const read = {
-        connection: "analytics",
-        name: "views",
-        query: "SELECT event FROM events LIMIT 10",
-        shape: { event: { kind: "text" } }
-      };
+      const read = { handler: "live.views", args: {} };
       const detached = yield* command(root, instance, []);
       for (const [url, viewerId] of [
         [detached.url, identity.user.id],
         [detached.colleagueUrl, "usr_dev_colleague"]
       ] as const)
         assert.nestedPropertyVal(
-          yield* call(url, "posthog.query", read, viewerId),
+          yield* call(url, "server.call", read, viewerId),
           "value.rows[0].event",
           "$pageview"
         );
@@ -856,10 +879,9 @@ it.live(
         devReads.map((request) => request.authorization),
         ["Bearer disposable-lifecycle-token", "Bearer disposable-lifecycle-token"]
       );
-      assert.deepStrictEqual(devReads[0]!.body, {
+      assert.deepInclude(devReads[0]!.body, {
         op: "posthog.query",
-        connection: { id: product.id, handle: product.handle },
-        args: { name: read.name, query: read.query, shape: read.shape }
+        connection: { id: product.id, handle: product.handle }
       });
       yield* holdsNoKey(stateDir, (yield* Effect.promise(() => readRecord(stateDir)))!.pid);
       yield* command(root, instance, ["stop"]);
@@ -868,7 +890,7 @@ it.live(
       yield* output(foreground, "stdout", "\n");
       const reported = JSON.parse(foreground.stdout());
       assert.nestedPropertyVal(
-        yield* call(reported.url, "posthog.query", read),
+        yield* call(reported.url, "server.call", read),
         "value.rows[0].event",
         "$pageview"
       );

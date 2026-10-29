@@ -1,10 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
+import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
+import { clerkEnv } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import { newInternalId, sha256 } from "../../../../test/crypto.js";
@@ -17,32 +17,22 @@ import {
   Invocation,
   InvocationCapabilities,
   InvocationLog,
-  LoadedVersions,
   Runtime,
-  RuntimeApi,
   RuntimeLog,
-  RuntimeProduction,
-  ServerBundles,
-  StreamAdmission
+  ServerBundles
 } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpServer from "effect/http/HttpServer";
-import * as HttpApi from "effect/http-api/HttpApi";
-import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
-import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import { build } from "esbuild";
 import * as CompanyTesting from "../../../company-database/src/testing.js";
 import * as Local from "../../../execution/src/local.js";
 import * as MutationTransaction from "../../../primitives/src/MutationTransaction.js";
 import * as QuerySnapshot from "../../../primitives/src/QuerySnapshot.js";
 import * as TestWakes from "../../../primitives/src/test/wakes.js";
+import * as RuntimeTest from "../test/runtime.js";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as PostHogDouble from "../test/posthog.js";
@@ -50,9 +40,9 @@ import { generate } from "./Generate.js";
 import * as Operations from "./Operations.js";
 
 /**
- * PostHog journeys against the double: the generated tier 1 client over the runtime wire with a
- * signed-in viewer, and a tier 2 action in real workerd through the callback gateway. Both use
- * the packed `patchy` package, never its source.
+ * PostHog journeys against the double: the generated client calling back through the gateway as
+ * a tier 2 action's viewer, and a tier 2 action in real workerd doing the same. Both use the
+ * packed `patchy` package, never its source.
  */
 
 const patchy = new URL("../../../patchy", import.meta.url).pathname;
@@ -150,40 +140,8 @@ const bundle = (contents: string, sourcefile: string) =>
     })
   ).pipe(Effect.map((result) => result.outputFiles[0]!.text));
 
-const patchId = "posthogtier1";
+const patchId = "posthogcallb";
 const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
-const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
-  find: (patch, version) =>
-    Effect.succeed(
-      patch === patchId && (version === undefined || version === versionId)
-        ? Option.some({
-            patchId,
-            versionId,
-            patchTier: 1,
-            companyId: DEV_SEED.companyId,
-            scope: "company" as const,
-            wireVersion: WIRE_VERSION,
-            manifest: {
-              manifestVersion: 1,
-              release: CURRENT_RELEASE,
-              tier: 1 as const,
-              tables: {},
-              files: {},
-              uses: { analytics: declaration }
-            }
-          })
-        : Option.none()
-    )
-});
-const TestApi = HttpApi.make("patchy").add(
-  RuntimeGroup.add(
-    HttpApiEndpoint.post("call", "/api/runtime/call", {
-      headers: Schema.Record(Schema.String, Schema.String),
-      payload: Schema.Unknown,
-      success: Schema.Unknown
-    })
-  )
-);
 const tier1 = Layer.mergeAll(
   Session.layer,
   WideEvents.layerNoop,
@@ -192,7 +150,7 @@ const tier1 = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  versions
+  RuntimeTest.versions(patchId, versionId, () => ({ analytics: declaration }))
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
@@ -200,57 +158,13 @@ const tier1 = Layer.mergeAll(
   )
   .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
-it.layer(tier1)("PostHog in a tier 1 page", (it) => {
+it.layer(tier1)("PostHog from a tier 2 action's callbacks", (it) => {
   it.effect(
     "the generated client queries as the signed-in viewer, and the call is logged by name",
     () =>
       Effect.gen(function* () {
         const { handlers: built, requests } = yield* handlers;
-        const api = yield* HttpApiTest.groups(TestApi, ["runtime"], {
-          baseUrl: PUBLIC_BASE_URL
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-              Layer.provide(RuntimeProduction.layer(built)),
-              Layer.provide(StreamAdmission.layer)
-            )
-          )
-        );
-        // The shell's transport in miniature: one runtime call per client call, as the viewer.
-        const run = yield* FiberSet.makeRuntimePromise();
-        const call = (op: string, args: unknown) =>
-          run(
-            api
-              .call({
-                payload: {
-                  patchId,
-                  versionId,
-                  principal: { userId: DEV_SEED.userId },
-                  wire: WIRE_VERSION,
-                  op,
-                  args
-                },
-                headers: {
-                  "x-patchy-wire": String(WIRE_VERSION),
-                  "x-patchy-principal": `{"userId":"${DEV_SEED.userId}"}`,
-                  origin: PUBLIC_BASE_URL,
-                  cookie: signedInCookies()
-                },
-                responseMode: "response-only"
-              })
-              .pipe(
-                Effect.flatMap((response) => response.json),
-                Effect.map((body) =>
-                  typeof body === "object" &&
-                  body !== null &&
-                  "ok" in body &&
-                  body.ok === true &&
-                  "value" in body
-                    ? body.value
-                    : body
-                )
-              )
-          );
+        const call = yield* RuntimeTest.page(built, patchId, versionId);
         const code = yield* bundle(
           generate({ ...declaration, description: "Journey analytics" }, snapshot).client,
           "analytics.ts"

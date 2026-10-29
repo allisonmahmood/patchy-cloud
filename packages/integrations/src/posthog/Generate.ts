@@ -17,7 +17,7 @@ const prose = (value: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-const client = `// Generated from an immutable PostHog snapshot. Browser-only; transport is supplied by the host.
+const client = `// Generated from an immutable PostHog snapshot. Tier 2 handlers type ctx.connections with it; the host supplies the transport.
 import { PatchyError, decodeError } from "patchy/client";
 import type { Call, Errors, BoundaryError as ClientBoundaryError } from "patchy/client";
 import type { Column } from "patchy/config";

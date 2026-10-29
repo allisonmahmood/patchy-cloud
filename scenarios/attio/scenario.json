@@ -28,7 +28,7 @@
   "patches": [
     {
       "repo": "deal-desk",
-      "tier": 1,
+      "tier": 2,
       "connections": ["attio/crm"],
       "description": "Northwind's open deals by stage and owner, sorted by value, each with its company and its place in the sales pipeline."
     },

@@ -81,7 +81,7 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 | `stale_generated`       | Generated release metadata, declaration stamps or the server module list no longer match the repo. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                                                   |
 | `invalid_manifest`      | Config, manifest or server descriptor extraction failed. Fix the named source, declaration or handler before publishing.                                                                                                                                                                                                                                                                        |
 | `too_large`             | A bundle exceeds its local cap. HTML allows 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. Reduce the resources named in the diagnostic.                                                                                                                                                                                                                                                        |
-| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/` and `agent/` require tier 2; browser code requires at least tier 1; tiers above 2 are not served.                                                                                                                                                                                                                               |
+| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/`, `agent/` and any `uses` declaration require tier 2; browser code requires at least tier 1; tiers above 2 are not served.                                                                                                                                                                                                       |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -426,8 +426,8 @@ Config validation rejects a `t.member()` column without that declaration.
 `remove members` checks the evaluated config before changing files and refuses
 with local exit 1, `code: "invalid_manifest"`, while a member column exists.
 A failed removal preserves the config, generated client and skills.
-The declaration adds `patchy.members` on tier 1 and `ctx.members` in every
-tier 2 handler kind. Refresh removes `patchy-members` when the declaration is
+The declaration requires tier 2, like every `uses` declaration, and adds
+`ctx.members` in every handler kind. Refresh removes `patchy-members` when the declaration is
 absent; it is not sticky. The directory declaration has no generated
 stamp or metadata snapshot, and it does not provision a company database.
 
@@ -700,9 +700,8 @@ New patches default to `company`; updates preserve scope unless `--share` sets
 it. Only a public patch's current version is public, cached for at most 60 seconds
 at both addresses. Older versions stay behind the company door; company origin
 responses are `private, no-store`. Still-fresh public caches and downloaded copies
-cannot be recalled. Tier 1 public patches expose the declared member directory
-only to signed-in company members. Other company capabilities remain unavailable;
-sharing publicly does not anonymously expose company data.
+cannot be recalled. Tier 1 public patches reach no data, so sharing publicly
+does not expose company data.
 
 Tier 2 is company-only. `share --share public`, positional public sharing and the
 portal scope form read the served version's tier, never local config, and answer

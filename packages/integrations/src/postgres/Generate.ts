@@ -19,7 +19,7 @@ const literal = (value: string): string =>
 const markdown = (value: string): string =>
   `<code>${value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;").replaceAll("`", "&#96;").replaceAll("\r", "&#13;").replaceAll("\n", "&#10;").replaceAll("|", "&#124;")}</code>`;
 
-const prelude = `// Generated from an immutable Postgres snapshot. Browser-only; transport is supplied by the host.
+const prelude = `// Generated from an immutable Postgres snapshot. Tier 2 handlers type ctx.connections with it; the host supplies the transport.
 import { PatchyError, decodeError } from "patchy/client";
 import type { Call, ErrorDetails, Errors, BoundaryError as ClientBoundaryError } from "patchy/client";
 import type { Column } from "patchy/config";

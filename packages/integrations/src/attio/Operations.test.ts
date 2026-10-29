@@ -50,7 +50,7 @@ const viewer: Viewer = {
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
   admin: false
 };
-/** A tier 1 page's binding, declaring `crm` at `revision`, as `viewer`. */
+/** A tier 2 version's binding, declaring `crm` at `revision`, as `viewer`. */
 const binding = (
   crm: { readonly id: string; readonly handle: string; readonly revision?: number },
   overrides: Partial<Binding.Binding["Service"]> = {}
@@ -67,7 +67,7 @@ const binding = (
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
-      tier: 1,
+      tier: 2,
       tables: {},
       files: {},
       uses: {

@@ -805,6 +805,7 @@ it.layer(
         const source = yield* create({ manifest: tableManifest("lifecycle-source") });
         const consumerManifest = {
           ...Fixtures.manifest,
+          tier: 2 as const,
           uses: { notes: declaration(source.patchId) }
         };
         const consumer = yield* create({
@@ -904,12 +905,12 @@ it.layer(
         { ...use, store: "missing", id: sharedStoreId(source.patchId, "missing") }
       ]) {
         const refused = yield* create({
-          manifest: { ...Fixtures.manifest, uses: { photos: invalid } }
+          manifest: { ...Fixtures.manifest, tier: 2, uses: { photos: invalid } }
         }).pipe(Effect.flip);
         assert.instanceOf(refused, Patches.PatchNotOpenable);
       }
       const consumer = yield* create({
-        manifest: { ...Fixtures.manifest, uses: { photos: use } },
+        manifest: { ...Fixtures.manifest, tier: 2, uses: { photos: use } },
         ownerUserId: reader.user.id,
         machineTokenId: reader.machine.id
       });
@@ -971,7 +972,7 @@ it.layer(
           .shared
       );
       const stale = yield* update(consumer.patchId, {
-        manifest: { ...Fixtures.manifest, uses: { photos: use } },
+        manifest: { ...Fixtures.manifest, tier: 2, uses: { photos: use } },
         ownerUserId: reader.user.id,
         machineTokenId: reader.machine.id
       });
@@ -1050,11 +1051,12 @@ it.layer(
         sources.push(yield* create({ manifest: tableManifest(`lifecycle-${state}`) }));
       const [retired, deleted, gone, older] = sources;
       const consumer = yield* create({
-        manifest: { ...Fixtures.manifest, uses: { old: declaration(older!.patchId) } }
+        manifest: { ...Fixtures.manifest, tier: 2, uses: { old: declaration(older!.patchId) } }
       });
       yield* update(consumer.patchId, {
         manifest: {
           ...Fixtures.manifest,
+          tier: 2,
           uses: {
             retired: declaration(retired!.patchId),
             deleted: declaration(deleted!.patchId),
@@ -1264,7 +1266,7 @@ it.layer(
         const sourceManifest = tableManifest(`fence-${admission}-${change}`);
         const source = yield* create({ manifest: sourceManifest });
         const request = input({
-          manifest: { ...Fixtures.manifest, tier: 1, uses: { notes: declaration(source.patchId) } }
+          manifest: { ...Fixtures.manifest, tier: 2, uses: { notes: declaration(source.patchId) } }
         });
         yield* service.preflight(request);
         if (admission === "restore") {
@@ -1605,6 +1607,7 @@ it.layer(
       const source = yield* create({ manifest: tableManifest("read-dependant-source") });
       const manifest = {
         ...Fixtures.manifest,
+        tier: 2 as const,
         uses: { notes: declaration(source.patchId), another: declaration(source.patchId) }
       };
       const consumer = yield* create({

@@ -71,8 +71,7 @@ const runtime = Layer.effect(
     {},
     {
       origin: "https://patchy.example",
-      identity: Effect.fail(new Runtime.AccessDenied({})),
-      bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({}))
+      identity: Effect.fail(new Runtime.AccessDenied({}))
     }
   )
 ).pipe(
@@ -195,10 +194,11 @@ const desk = Effect.fn("live.dev.desk")(function* (connection: Pidgeon) {
             manifest: {
               manifestVersion: 1,
               release: CURRENT_RELEASE,
-              tier: 1,
+              tier: 2,
               tables: {},
               files: {},
-              uses: { support: declaration }
+              uses: { support: declaration },
+              handlers: {}
             },
             identity: owner,
             principal: { userId: owner.user.id },

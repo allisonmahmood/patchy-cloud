@@ -101,10 +101,10 @@ export const memberAssignmentsContract = Effect.fn("test.memberAssignmentsContra
     getMany: () => Effect.die("Assignment checks must not resolve members"),
     revision: () => Effect.die("Assignments must not acquire directory dependencies")
   });
-  // TableOperations has no tier logic, so one scripted tier covers both.
+  // TableOperations has no tier logic; member columns need the directory, which is tier 2's.
   const definition: typeof Manifest.Type = {
     ...manifest,
-    tier: 1,
+    tier: 2,
     uses: { members: { kind: "members" } },
     tables: {
       assignments: {
@@ -605,6 +605,7 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   };
   const consumer = yield* setup(companyId, "sharedreader", {
     ...manifest,
+    tier: 2,
     uses: { contacts: declaration, alternate: declaration }
   });
   const own = yield* consumer
@@ -639,30 +640,6 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   const handlers = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions)
   );
-  const reader = yield* SubscriptionReads.makeDev.pipe(
-    Effect.provideService(LoadedVersions.LoadedVersions, versions)
-  );
-  const subscribed = yield* reader.read({
-    op: "shared.get",
-    args: { alias: "contacts", id: rows[0]!.id },
-    binding
-  });
-  assert.deepStrictEqual(subscribed.result, rows[0]);
-  assert.deepStrictEqual(Object.keys(subscribed.vector).sort(), [
-    `patch:${source.binding.patchId}`,
-    `table:${source.binding.patchId}:notes`
-  ]);
-  const attempted: string[] = [];
-  const refused = yield* reader
-    .read({
-      op: "shared.get",
-      args: { alias: "contacts", id: rows[0]!.id },
-      binding: { ...binding, identity: null },
-      onDependency: (key) => attempted.push(key)
-    })
-    .pipe(Effect.flip);
-  assert.strictEqual(refused.code, "access_denied");
-  assert.deepStrictEqual(attempted.sort(), Object.keys(subscribed.vector).sort());
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   assert.deepStrictEqual(

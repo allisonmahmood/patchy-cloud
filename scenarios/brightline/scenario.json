@@ -43,7 +43,7 @@
     },
     {
       "repo": "kudos",
-      "tier": 1,
+      "tier": 2,
       "description": "Give a colleague a public shout-out for great work; the whole studio sees kudos appear live.",
       "sampleData": true
     },

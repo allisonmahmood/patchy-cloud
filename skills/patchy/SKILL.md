@@ -92,10 +92,10 @@ what it built, not the project. Keep both somewhere lasting:
 
 When the user wants a tool with its own rows, files or company connections,
 start a patch repo rather than putting JavaScript into a static-file publish.
-Choose tier 1 by default. Choose tier 2 for enforced rules, atomic multi-row
-writes, server-side work such as combining connection data before the viewer
-sees it, or when people's agents should use it: agents reach only a tier 2 agent
-area. Tier 1 rules are advisory because a viewer can make the same writes
+Choose tier 1 by default: it reaches only its own tables and files. Choose
+tier 2 for enforced rules, atomic multi-row writes, anything outside the patch
+(company connections, other patches' shared data, the member directory), or
+when people's agents should use it: agents reach only a tier 2 agent area. Tier 1 rules are advisory because a viewer can make the same writes
 from devtools. Live sync and sequential steps work on tier 1 and do not require
 tier 2.
 
@@ -206,8 +206,9 @@ are written. PostHog, Pidgeon and Attio have no fixture: dev reads the real
 project, address or workspace through the instance as the key's person, and the
 instance logs each read as a Dev call. Pidgeon's sends, replies and triage are simulated in dev and never
 sent; `dev.log` names each one.
-Use invented local fixture inserts. On tier 1, every readable row is available
-to whoever can open the patch; it has no outbound access or client storage.
+Use invented local fixture inserts. On tier 1, every row of the patch's own
+tables is available to whoever can open it; it has no outbound access or client
+storage.
 Tier 2 puts access rules in handlers. The project skills carry the complete
 runtime limits and development boundaries.
 
@@ -419,7 +420,8 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   A `release_mismatch` names both releases and the instance's install line:
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
   File mode synthesises a tier 0 manifest with no resources. Repo mode admits
-  tiers 0, 1 and 2 with tables, stores, shared tables, shared stores, members and Postgres, PostHog, Pidgeon and Attio declarations.
+  tiers 0, 1 and 2 with tables and stores; only tier 2 declares shared tables,
+  shared stores, members and Postgres, PostHog, Pidgeon and Attio connections.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
   fleet in production and the local executor in dev and tests. Tier 2 is company-only.
   If the instance returns `has_primitives`, publish from the patch's repo, not a
@@ -545,9 +547,8 @@ writes must be user-triggered and show a visible failure when unavailable.
 Async clipboard permission can still be denied for an opaque frame. A user-triggered
 `copy` event via `document.execCommand("copy")` is a compatibility fallback; if both
 paths fail, show selectable text and a visible error rather than claiming success.
-A public tier 1 patch returns null from `me`. Signed-in company members can read
-its declared member directory; anonymous viewers and outsiders cannot. Tables,
-files and integrations reject with `not_available_on_public` even for members.
+A public tier 1 patch returns null from `me`, and reaches no data: tables and
+files reject with `not_available_on_public`, even for company members.
 Patch code handles that error; it does not replace the page or disable local routing.
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, useQuery } from "patchy/preact";
-import { isPatchyError, patchy } from "../patchy/_generated/client.js";
+import { isHandlerError, patchy } from "../patchy/_generated/client.js";
 import { writeFailure } from "./errors.js";
 import { MESSAGE_MAX, VALUES, firstName } from "./model.js";
 import type { Member, ValueKey } from "./model.js";
@@ -46,12 +46,10 @@ export function Composer({ meId }: { meId: string | undefined }) {
 
     setStatus({ kind: "sending" });
     try {
-      await patchy.tables.kudos.insert({
+      await patchy.server.wall.give({
         recipient: recipient.id,
-        sender: meId,
-        message: text.slice(0, MESSAGE_MAX),
         value,
-        sentAt: new Date().toISOString()
+        message: text.slice(0, MESSAGE_MAX)
       });
       setRecipient(null);
       setValue(null);
@@ -63,7 +61,7 @@ export function Composer({ meId }: { meId: string | undefined }) {
     } catch (cause) {
       setStatus({
         kind: "error",
-        text: isPatchyError(cause, "invalid_row")
+        text: isHandlerError(cause, "not_a_colleague")
           ? `${recipient.name} can't receive kudos right now. They may no longer be at the studio.`
           : writeFailure(cause, "kudos")
       });
@@ -211,10 +209,8 @@ function MemberPicker({
   const [active, setActive] = useState(0);
   const listId = useId();
   const query = useDebounced(text.trim(), 120);
-  const search = useQuery(patchy.members.search, { text: query });
-  const options = (search.data?.rows ?? []).filter(
-    (member) => member.id !== excludeId && member.active
-  );
+  const search = useQuery(patchy.server.people.search, { text: query });
+  const options = (search.data ?? []).filter((member) => member.id !== excludeId);
   const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
 
   function pick(member: Member) {

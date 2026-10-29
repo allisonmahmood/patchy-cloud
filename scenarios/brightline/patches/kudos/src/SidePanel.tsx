@@ -23,13 +23,8 @@ export function SidePanel({
 }) {
   // Stable for a whole day, so the subscription only changes at midnight.
   const since = daysAgoStart(now, WINDOW_DAYS);
-  const recent = useQuery(patchy.tables.kudos.list, {
-    index: "bySentAt",
-    range: { column: "sentAt", gte: since },
-    order: "desc",
-    limit: 1000
-  });
-  const rows = recent.data?.rows;
+  const recent = useQuery(patchy.server.wall.recent, { since });
+  const rows = recent.data;
 
   const { leaders, values, thanked } = useMemo(() => {
     const received = new Map<string, { count: number; latest: string }>();

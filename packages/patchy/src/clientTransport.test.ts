@@ -6,17 +6,14 @@ import {
 } from "./clientTransport.js";
 import {
   createClient,
-  createSharedTable,
   createServerClient,
   PatchyError,
   isHandlerError,
   isPatchyError,
   type MutationUnknownOutcome,
-  type QueryRegistry,
-  type QuerySnapshot,
-  type Call
+  type QuerySnapshot
 } from "./client.js";
-import { defineConfig, files, table, t, sharedTable, type Id } from "./config.js";
+import { defineConfig, files, table, t, type Id } from "./config.js";
 import type { Port } from "./clientTransport.js";
 import type { Handler } from "./server.js";
 
@@ -705,7 +702,7 @@ it("transfers owned upload buffers and isolates subviews without leaking neighbo
     tier: 1,
     files: { images: files("Images keyed by filename.") }
   });
-  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const client = createClient<typeof config>(config, { transport });
   const uploads: Uint8Array[] = [];
   channel.port2.onmessage = ({ data }) => {
     expect(data.args).toEqual({ store: "images", name: "x", contentType: "image/png" });
@@ -745,7 +742,7 @@ it("decodes transferred file replies into client bytes and downloads through the
     tier: 1,
     files: { images: files("Images keyed by filename.") }
   });
-  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const client = createClient<typeof config>(config, { transport });
   const downloads: unknown[] = [];
   channel.port2.onmessage = ({ data }) => {
     if (data.op === "files.get") {
@@ -782,7 +779,7 @@ it("preserves bootstrap routes, acknowledges sets and receives popstate before i
   const channel = new MessageChannel();
   const transport = createPostMessageTransport({ window: frame as unknown as Window });
   const config = defineConfig({ name: "routes", tier: 1 });
-  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const client = createClient<typeof config>(config, { transport });
   const paths: string[] = [];
   const cancelled = vi.fn();
   client.route.subscribe(cancelled)();
@@ -1082,39 +1079,30 @@ it("shares table subscriptions with hook stores and retains data and query error
   const config = defineConfig({
     name: "subscriptions",
     tier: 1,
-    tables: { notes: table("Team notes.", { title: t.text() }) },
-    uses: { team: sharedTable("source", "notes") }
+    tables: { notes: table("Team notes.", { title: t.text() }) }
   });
-  const shared = {
-    team: (alias: string, call: Call, queries: QueryRegistry) =>
-      createSharedTable<{ readonly id: string; readonly title: string }>(alias, call, queries)
-  };
-  const client = createClient<typeof config, typeof shared>(config, {
-    transport,
-    shared,
-    connections: {}
-  });
+  const client = createClient<typeof config>(config, { transport });
   const own: QuerySnapshot<unknown>[] = [];
-  const sharedRows: QuerySnapshot<unknown>[] = [];
+  const pageRows: QuerySnapshot<unknown>[] = [];
   client.tables.notes.get.subscribe("new-row" as Id<"notes">, (snapshot) => own.push(snapshot));
   const hook = client.tables.notes.get.__patchyQueryStore('"new-row"');
   hook.subscribe(() => {});
-  client.shared.team.list.subscribe({ limit: 20 }, (snapshot) => sharedRows.push(snapshot));
+  client.tables.notes.list.subscribe({ limit: 20 }, (snapshot) => pageRows.push(snapshot));
   const requests = port.sent.filter((request) => request.op === "subscriptions.subscribe");
   expect(requests).toHaveLength(2);
   const ownRequest = requests[0]!.args;
-  const sharedRequest = requests[1]!.args;
+  const pageRequest = requests[1]!.args;
   if (
     !ownRequest ||
     typeof ownRequest !== "object" ||
     !("id" in ownRequest) ||
-    !sharedRequest ||
-    typeof sharedRequest !== "object" ||
-    !("id" in sharedRequest)
+    !pageRequest ||
+    typeof pageRequest !== "object" ||
+    !("id" in pageRequest)
   )
     throw new Error("Subscription commands must identify their query.");
   const ownId = ownRequest.id;
-  const sharedId = sharedRequest.id;
+  const pageId = pageRequest.id;
   for (const request of requests) port.reply({ v: 1, kind: "result", id: request.id, value: null });
   const stream = (data: unknown) => port.reply({ v: 1, kind: "event", event: "stream", data });
   stream({
@@ -1133,36 +1121,36 @@ it("shares table subscriptions with hook stores and retains data and query error
     vector: { "table:own:notes": "1" }
   });
   expect(own.at(-1)?.data).toEqual({ id: "new-row", title: "Appeared" });
-  const page = { rows: [{ id: "shared", title: "Whole page" }], cursor: null };
+  const page = { rows: [{ id: "listed", title: "Whole page" }], cursor: null };
   stream({
     type: "snapshot",
-    id: sharedId,
+    id: pageId,
     revision: "1",
     result: page,
-    vector: { "table:source:notes": "1", "patch:source": "2" }
+    vector: { "table:own:notes": "1", "patch:own": "2" }
   });
   stream({
     type: "error",
-    id: sharedId,
+    id: pageId,
     permanent: false,
     error: {
       ok: false,
       source: "patchy",
       code: "access_denied",
-      error: "Source unshared",
-      details: { alias: "team" }
+      error: "Table access lost",
+      details: { table: "notes" }
     }
   });
-  expect(sharedRows.at(-1)).toMatchObject({
+  expect(pageRows.at(-1)).toMatchObject({
     status: "error",
     data: page,
-    error: { code: "access_denied", details: { alias: "team" } }
+    error: { code: "access_denied", details: { table: "notes" } }
   });
-  const refused = sharedRows.at(-1);
+  const refused = pageRows.at(-1);
   const ready = hook.getSnapshot();
   stream({ type: "closed", reason: "reauthenticate" });
   stream({ type: "hello", generation: "refreshed", serverTime: 100 });
-  expect(sharedRows.at(-1)).toBe(refused);
+  expect(pageRows.at(-1)).toBe(refused);
   expect(hook.getSnapshot()).toBe(ready);
   expect(ready).toMatchObject({
     status: "ready",
@@ -1171,11 +1159,11 @@ it("shares table subscriptions with hook stores and retains data and query error
   });
   stream({
     type: "up-to-date",
-    id: sharedId,
+    id: pageId,
     revision: "1",
-    vector: { "table:source:notes": "1", "patch:source": "3" }
+    vector: { "table:own:notes": "1", "patch:own": "3" }
   });
-  expect(sharedRows.at(-1)).toEqual({
+  expect(pageRows.at(-1)).toEqual({
     status: "ready",
     data: page,
     error: undefined,
@@ -1193,7 +1181,7 @@ it("keeps a refused subscription ended across reconnect and additional consumers
     tier: 1,
     tables: { notes: table("Notes.", { title: t.text() }) }
   });
-  const client = createClient<typeof config>(config, { transport, shared: {}, connections: {} });
+  const client = createClient<typeof config>(config, { transport });
   const seen: QuerySnapshot<unknown>[] = [];
   client.tables.notes.list.subscribe({}, (snapshot) => seen.push(snapshot));
   const request = port.sent[0]!;
