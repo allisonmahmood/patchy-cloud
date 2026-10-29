@@ -265,7 +265,10 @@ it.layer(services)("company page and actions", (it) => {
         assert.notInclude(html, "/patches/disabled/");
         assert.include(html, "Disabled brief");
         assert.include(html, 'href="/patches/retired/settings#share"');
-        assert.notMatch(html, /<form[^>]*method="post"/);
+        assert.include(html, 'action="/company/guests/gst_view/deactivate"');
+        assert.include(html, 'action="/company/guests/gst_suspended/reactivate"');
+        assert.include(html, 'action="/company/guests/gst_ended/deactivate"');
+        assert.include(html, "Reactivation restores only still-valid grants");
         const other = yield* send(path, { headers: { cookie: cookie(foreign.user) } }).pipe(
           Effect.provideService(CompanyPage.CompanyGuests, read)
         );
@@ -275,6 +278,120 @@ it.layer(services)("company page and actions", (it) => {
           headers: { cookie: cookie(owner.user) }
         }).pipe(Effect.provideService(CompanyPage.CompanyGuests, read));
         assert.include(yield* Effect.promise(() => searched.text()), "No guests match “Nobody”.");
+      })
+  );
+
+  it.effect("guards direct guest lifecycle posts and scopes the target to the acting admin", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("guest-actions");
+      const foreign = yield* createCompany("guest-actions-foreign");
+      const member = yield* addUser(owner, "member");
+      const inactive = yield* addUser(owner, "inactive", "admin");
+      yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: inactive.id });
+      const identity = {
+        clerkUserId: foreign.user.clerkUserId,
+        email: foreign.user.email,
+        name: foreign.user.name
+      };
+      const guest = yield* Guests.create({ ...identity, companyId: owner.company.id });
+      const elsewhere = yield* createCompany("guest-actions-elsewhere");
+      const otherGuest = yield* Guests.create({ ...identity, companyId: elsewhere.company.id });
+      const membersBefore = yield* (yield* Users.Users).list(owner.company.id);
+      const foreignBefore = yield* (yield* Users.Users).list(foreign.company.id);
+      const forged = {
+        companyId: elsewhere.company.id,
+        clerkUserId: "forged",
+        guestId: otherGuest.id
+      };
+      for (const action of ["deactivate", "reactivate"]) {
+        yield* Guests.setDeactivated({ ...guest, deactivated: action === "reactivate" });
+        const before = yield* Guests.findById(guest.id);
+        const path = `/company/guests/${guest.id}/${action}`;
+        for (const user of [member, inactive])
+          assert.strictEqual((yield* send(path, post(user, forged))).status, 403);
+        // An admin elsewhere is only a guest of this company; their own company scopes the POST.
+        assert.strictEqual((yield* send(path, post(foreign.user, forged))).status, 404);
+        assert.strictEqual(
+          (yield* send(path, { method: "POST", headers: { origin } })).status,
+          401
+        );
+        const refusedHeaders: ReadonlyArray<Record<string, string>> = [
+          { origin: "https://foreign.invalid" },
+          { "sec-fetch-site": "cross-site" }
+        ];
+        for (const headers of refusedHeaders)
+          assert.strictEqual(
+            (yield* send(path, {
+              method: "POST",
+              headers: { cookie: cookie(owner.user), ...headers }
+            })).status,
+            403
+          );
+        for (const id of [otherGuest.id, "gst_missing", member.id])
+          assert.strictEqual(
+            (yield* send(`/company/guests/${id}/${action}`, post(owner.user, forged))).status,
+            404
+          );
+        assert.deepStrictEqual(yield* Guests.findById(guest.id), before);
+        assert.deepStrictEqual(reported(owner.company.id), []);
+      }
+      yield* Guests.setDeactivated({ ...guest, deactivated: false });
+      const response = yield* send(
+        `/company/guests/${guest.id}/deactivate`,
+        post(owner.user, forged)
+      );
+      assert.strictEqual(response.headers.get("location"), "/company?show=guests");
+      assert.strictEqual(yield* landed(owner.user, response), `Deactivated ${guest.name}`);
+      assert.instanceOf((yield* Guests.findById(guest.id))?.deactivatedAt, Date);
+      assert.isNull((yield* Guests.findById(otherGuest.id))?.deactivatedAt);
+      assert.strictEqual(
+        yield* landed(
+          owner.user,
+          yield* send(`/company/guests/${guest.id}/reactivate`, post(owner.user, forged))
+        ),
+        `Reactivated ${guest.name}`
+      );
+      assert.isNull((yield* Guests.findById(guest.id))?.deactivatedAt);
+      assert.deepStrictEqual(reported(owner.company.id), [
+        {
+          name: "guest.deactivated",
+          principalId: owner.user.id,
+          properties: { guestId: guest.id }
+        },
+        { name: "guest.reactivated", principalId: owner.user.id, properties: { guestId: guest.id } }
+      ]);
+      assert.deepStrictEqual(yield* (yield* Users.Users).list(owner.company.id), membersBefore);
+      assert.deepStrictEqual(yield* (yield* Users.Users).list(foreign.company.id), foreignBefore);
+    })
+  );
+
+  it.effect(
+    "clears suspension on ended guests without reopening them, including stale member forms",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("guest-ended-actions");
+        const member = yield* addUser(owner, "returning");
+        const users = yield* Users.Users;
+        yield* users.deactivate({ companyId: owner.company.id, userId: member.id });
+        const guest = yield* Guests.create({
+          companyId: owner.company.id,
+          clerkUserId: member.clerkUserId,
+          name: member.name,
+          email: member.email
+        });
+        const change = (action: string) =>
+          send(`/company/guests/${guest.id}/${action}`, post(owner.user));
+        assert.strictEqual((yield* change("deactivate")).status, 303);
+        yield* Guests.end(guest);
+        const endedAt = (yield* Guests.findById(guest.id))?.endedAt;
+        assert.instanceOf(endedAt, Date);
+        assert.strictEqual((yield* change("reactivate")).status, 303);
+        assert.isNull((yield* Guests.findById(guest.id))?.deactivatedAt);
+        assert.deepStrictEqual((yield* Guests.findById(guest.id))?.endedAt, endedAt);
+        yield* users.reactivate({ companyId: owner.company.id, userId: member.id });
+        assert.strictEqual((yield* change("reactivate")).status, 303);
+        assert.deepStrictEqual((yield* Guests.findById(guest.id))?.endedAt, endedAt);
+        assert.isNull((yield* users.findByClerkId(member.clerkUserId))?.deactivatedAt);
       })
   );
 

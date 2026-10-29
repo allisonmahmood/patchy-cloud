@@ -22,7 +22,7 @@ import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
 import * as Users from "./Users.js";
-import type * as Guests from "./Guests.js";
+import * as Guests from "./Guests.js";
 
 interface Viewer {
   readonly user: { readonly id: string; readonly email: string; readonly name: string };
@@ -36,7 +36,7 @@ export type Action =
   | { readonly kind: "invite" }
   | { readonly kind: "agent-access" }
   | {
-      readonly kind: "revoke" | "resend" | "role";
+      readonly kind: "revoke" | "resend" | "role" | "deactivate-guest" | "reactivate-guest";
       readonly id: string;
     };
 
@@ -223,7 +223,9 @@ const renderGuests = Effect.fn("CompanyPage.renderGuests")(function* (
           return `<li class="list-row">${label} · ${guestAccess[access]}</li>`;
         })
         .join("");
-      return `<tr><td><div class="company-person">${avatar(guest.id, guest.name || guest.email, guest.deactivatedAt || guest.endedAt ? "off" : undefined)}<div><strong>${escapeHtml(guest.name || guest.email)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${state.join(" · ")}</td><td>${grants.some(({ access }) => access === "active") ? "" : '<p class="supporting-text">No current patch access.</p>'}${patches ? `<ul class="list list-compact">${patches}</ul>` : '<p class="supporting-text">No patch grants.</p>'}</td></tr>`;
+      const action = guest.deactivatedAt ? "reactivate" : "deactivate";
+      const control = `<form method="post" action="/company/guests/${encodeURIComponent(guest.id)}/${action}"><button class="btn${guest.deactivatedAt ? "" : " btn-danger"}" type="submit">${guest.deactivatedAt ? "Reactivate" : "Deactivate"}</button></form>`;
+      return `<tr><td><div class="company-person">${avatar(guest.id, guest.name || guest.email, guest.deactivatedAt || guest.endedAt ? "off" : undefined)}<div><strong>${escapeHtml(guest.name || guest.email)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${state.join(" · ")}</td><td>${grants.some(({ access }) => access === "active") ? "" : '<p class="supporting-text">No current patch access.</p>'}${patches ? `<ul class="list list-compact">${patches}</ul>` : '<p class="supporting-text">No patch grants.</p>'}</td><td class="company-row-actions">${control}</td></tr>`;
     })
     .join("");
   const search = searchField({
@@ -237,7 +239,7 @@ const renderGuests = Effect.fn("CompanyPage.renderGuests")(function* (
   });
   return {
     title: "People",
-    body: `<div class="company-tools">${search}<nav class="tabs" aria-label="Show"><a href="/company">All people</a><a href="/company?show=guests" aria-current="page">Guests <span class="count">${guests.length}</span></a></nav></div><p class="supporting-text">Guests have access only to patches shared with them. Open a patch’s Share settings to revoke its grant.</p>${rows ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Guest</th><th scope="col">Relationship</th><th scope="col">Patch access</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>${query ? `No guests match “${escapeHtml(query)}”.` : "No guests yet."}</p>`}`
+    body: `<div class="company-tools">${search}<nav class="tabs" aria-label="Show"><a href="/company">All people</a><a href="/company?show=guests" aria-current="page">Guests <span class="count">${guests.length}</span></a></nav></div><p class="supporting-text">Guests have access only to patches shared with them. Open a patch’s Share settings to revoke its grant. Deactivation blocks this guest’s patch access and new shares in this company. Reactivation restores only still-valid grants; revoked or ended grants and ended relationships stay ended. Other companies are unaffected.</p>${rows ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Guest</th><th scope="col">Relationship</th><th scope="col">Patch access</th><th scope="col">Actions</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>${query ? `No guests match “${escapeHtml(query)}”.` : "No guests yet."}</p>`}`
   } satisfies Page;
 });
 
@@ -519,6 +521,35 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
   if (action.kind === "agent-access") return yield* setAgentAccess(viewer);
   if (viewer.role !== "admin")
     return yield* refuse(viewer, "Only an admin can manage this company.", 403);
+  if (action.kind === "deactivate-guest" || action.kind === "reactivate-guest") {
+    const guest = yield* Guests.findById(action.id);
+    if (guest === null || guest.companyId !== viewer.company.id)
+      return yield* refuse(viewer, "Guest not found in this company.", 404);
+    const deactivated = action.kind === "deactivate-guest";
+    const analytics = yield* Analytics.Analytics;
+    // Only clear the suspension: never reopen a relationship or change its grants.
+    const updated = yield* withReportedCommit(
+      Guests.setDeactivated({
+        companyId: viewer.company.id,
+        clerkUserId: guest.clerkUserId,
+        deactivated
+      }),
+      (result) =>
+        result === null
+          ? Effect.void
+          : analytics.track({
+              name: deactivated ? "guest.deactivated" : "guest.reactivated",
+              principalId: viewer.user.id,
+              companyId: viewer.company.id,
+              properties: { guestId: result.id }
+            })
+    );
+    if (updated === null) return yield* refuse(viewer, "Guest not found in this company.", 404);
+    return {
+      ...done(`${deactivated ? "Deactivated" : "Reactivated"} ${updated.name || updated.email}`),
+      redirect: "/company?show=guests"
+    };
+  }
   // Narrowed here, so the effect below keeps the forms that remain.
   const act = action;
   return yield* Effect.gen(function* () {

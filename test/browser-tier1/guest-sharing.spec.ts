@@ -98,6 +98,172 @@ test("admin People guests link to Share, revoke there and refuse the recipient's
   }
 });
 
+test("admin deactivation suspends two guest shares and reactivation restores only valid grants", async ({
+  page,
+  browser,
+  instance
+}, testInfo) => {
+  await instance.platform.query(
+    "INSERT INTO companies (id, handle, name) VALUES ('cmp_recipient', 'recipient', 'Recipient company'), ('cmp_independent', 'independent', 'Independent company')"
+  );
+  await instance.platform.query(
+    "UPDATE users SET company_id = 'cmp_recipient' WHERE id = 'usr_colleague'"
+  );
+  const publish = (title: string) =>
+    instance.publish(
+      "company",
+      `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
+      undefined,
+      { tier: 0, tables: {}, files: {} }
+    );
+  const first = await publish("First guest brief");
+  const second = await publish("Second guest brief");
+  const independent = await publish("Independent brief");
+  await instance.platform.query(
+    "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_independent', 'user_independent', 'cmp_independent', 'owner@independent.local', 'Independent owner', 'admin')"
+  );
+  // A separate company's real guest grant, unaffected by this company's controls.
+  await instance.platform.query(
+    "UPDATE patches SET company_id = 'cmp_independent', owner_user_id = 'usr_independent' WHERE id = $1",
+    [independent.patchId]
+  );
+  await instance.platform.query(
+    "UPDATE patch_names SET company_id = 'cmp_independent' WHERE patch_id = $1",
+    [independent.patchId]
+  );
+  await instance.platform.query(
+    "INSERT INTO company_guests (id, company_id, clerk_user_id, email, name) VALUES ('gst_independent', 'cmp_independent', 'user_colleague', 'colleague@patchy.local', 'Colleague')"
+  );
+  await instance.platform.query(
+    "INSERT INTO patch_guest_grants (id, company_id, patch_id, guest_id) VALUES ('grt_independent', 'cmp_independent', $1, 'gst_independent')",
+    [independent.patchId]
+  );
+  const independentAddress = `${instance.origin}/independent/${independent.name}`;
+  const settings = (patch: typeof first) => `${instance.origin}/patches/${patch.name}/settings`;
+  const share = async (patch: typeof first) => {
+    await page.goto(settings(patch));
+    await page.getByLabel("Existing Patchy account email").fill("colleague@patchy.local");
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+  };
+  await share(first);
+  await expect(page.getByText("Has access", { exact: true })).toBeVisible();
+  await share(second);
+  await expect(page.getByText("Has access", { exact: true })).toBeVisible();
+  const tokensBefore = (
+    await instance.platform.query("SELECT id, user_id, revoked_at FROM machine_tokens ORDER BY id")
+  ).rows;
+  const patchesBefore = (
+    await instance.platform.query("SELECT id, company_id, owner_user_id FROM patches ORDER BY id")
+  ).rows;
+  const guestContext = await browser.newContext();
+  try {
+    await prepare(guestContext, instance);
+    await instance.session(guestContext, "colleague");
+    const guest = await guestContext.newPage();
+    const admitted = async (address: string, title: string) => {
+      expect((await guest.goto(address))?.status()).toBe(200);
+      await expect(
+        guest.frameLocator("#patch").getByRole("heading", { name: title, exact: true })
+      ).toBeVisible();
+    };
+    const refused = async (address: string) => {
+      expect((await guest.goto(address))?.status()).toBe(404);
+      await expect(guest.locator("iframe#patch")).toHaveCount(0);
+    };
+    await admitted(first.address, "First guest brief");
+    await admitted(second.address, "Second guest brief");
+    await admitted(independentAddress, "Independent brief");
+    await guest.goto(instance.origin);
+    await guest.getByRole("button", { name: "Later", exact: true }).click();
+    const shared = guest.getByRole("region", { name: "Shared with you" });
+    await expect(shared.getByRole("link", { name: /First guest brief/ })).toBeVisible();
+    await expect(shared.getByRole("link", { name: /Second guest brief/ })).toBeVisible();
+
+    const usersBefore = (await instance.platform.query("SELECT * FROM users ORDER BY id")).rows;
+    const people = `${instance.origin}/company?show=guests`;
+    const row = page.getByRole("row").filter({ hasText: "colleague@patchy.local" });
+    await page.goto(people);
+    const guestName = await row.locator("strong").innerText();
+    await row.getByRole("button", { name: "Deactivate", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText(`Deactivated ${guestName}`);
+    await expect(row.getByRole("cell", { name: "Deactivated", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Reactivate", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("guest-deactivated.png"), fullPage: true });
+    await guest.reload();
+    await expect(
+      shared.getByRole("link", { name: /First guest brief|Second guest brief/ })
+    ).toHaveCount(0);
+    await expect(shared.getByRole("link", { name: /Independent brief/ })).toBeVisible();
+    await refused(first.address);
+    await refused(second.address);
+    await admitted(independentAddress, "Independent brief");
+    await share(first);
+    await expect(page.getByRole("alert")).toContainText("This guest relationship is deactivated.");
+    await page.goto(settings(second));
+    await page.getByRole("button", { name: /^Revoke access for / }).click();
+    await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
+    await page.goto(people);
+    await row.getByRole("button", { name: "Reactivate", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText(`Reactivated ${guestName}`);
+    await expect(row.getByRole("cell", { name: "Active", exact: true })).toBeVisible();
+    await expect(row).toContainText("Revoked");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: testInfo.outputPath("guest-reactivated-phone.png"),
+      fullPage: true
+    });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await admitted(first.address, "First guest brief");
+    await refused(second.address);
+    await admitted(independentAddress, "Independent brief");
+    await guest.goto(instance.origin);
+    await expect(shared.getByRole("link", { name: /First guest brief/ })).toBeVisible();
+    await expect(shared.getByRole("link", { name: /Second guest brief/ })).toHaveCount(0);
+
+    // Ending while suspended keeps the row and its reverse action; clearing suspension alone grants nothing.
+    await row.getByRole("button", { name: "Deactivate", exact: true }).click();
+    await page.goto(settings(first));
+    await page.getByRole("radio", { name: "Anyone on the internet" }).check();
+    await page.getByRole("button", { name: "Save who can open it" }).click();
+    await page.getByRole("button", { name: /Make .* public/ }).click();
+    await page.getByRole("radio", { name: "People at the company" }).check();
+    await page.getByRole("button", { name: "Save who can open it" }).click();
+    await instance.platform.query(
+      "UPDATE company_guests SET ended_at = now() WHERE company_id = 'cmp_dev' AND clerk_user_id = 'user_colleague'"
+    );
+    await page.goto(people);
+    await expect(row).toContainText("Ended · Deactivated");
+    await row.getByRole("button", { name: "Reactivate", exact: true }).click();
+    await expect(row.getByRole("cell", { name: "Ended", exact: true })).toBeVisible();
+    await refused(first.address);
+    await refused(second.address);
+    await share(first);
+    await expect(page.getByText("Has access", { exact: true })).toBeVisible();
+    await admitted(first.address, "First guest brief");
+    await refused(second.address);
+    await admitted(independentAddress, "Independent brief");
+    expect((await instance.platform.query("SELECT * FROM users ORDER BY id")).rows).toEqual(
+      usersBefore
+    );
+    expect(
+      (
+        await instance.platform.query(
+          "SELECT id, user_id, revoked_at FROM machine_tokens ORDER BY id"
+        )
+      ).rows
+    ).toEqual(tokensBefore);
+    expect(
+      (
+        await instance.platform.query(
+          "SELECT id, company_id, owner_user_id FROM patches ORDER BY id"
+        )
+      ).rows
+    ).toEqual(patchesBefore);
+  } finally {
+    await guestContext.close();
+  }
+});
+
 test("public confirmation ends guest access until the owner explicitly shares again", async ({
   page,
   browser,

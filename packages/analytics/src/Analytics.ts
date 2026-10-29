@@ -138,6 +138,10 @@ export type AnalyticsCatalogue = Catalogue<{
     readonly grantId: string;
   };
 
+  /** A company guest's suspension was set after commit. Principal: the acting admin. */
+  readonly "guest.deactivated": { readonly guestId: string };
+  readonly "guest.reactivated": { readonly guestId: string };
+
   /** A live patch was taken out of service. Principal: the user who retired it. */
   readonly "patch.retired": PatchChange;
 

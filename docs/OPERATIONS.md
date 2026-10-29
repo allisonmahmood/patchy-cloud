@@ -336,7 +336,9 @@ The events, by area:
   or no-op change reports nothing. `byAdmin` says the actor used a company
   admin's rights.
 - Companies and users: `company.created`, `user.joined`, `user.role_changed`,
-  `user.deactivated`, `user.reactivated`.
+  `user.deactivated`, `user.reactivated`. Guest suspension: `guest.deactivated`,
+  `guest.reactivated`, with the target `guestId`, after commit; principal and company identify
+  the acting admin and the company whose guest access changed.
 - Invitations: `invite.sent`, `invite.resent`, `invite.revoked`.
 - Connections: `connection.connected`, `connection.deleted`.
 - Company look: `look.published`, `look.restored`, each after its change commits. Restoring
