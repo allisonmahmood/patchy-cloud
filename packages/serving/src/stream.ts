@@ -471,8 +471,9 @@ export function openDocumentStream(options: {
       reconciled();
     },
     replay() {
-      // Only lifecycle state is replayed when the bound port becomes ready. The clock includes
-      // bootstrap time spent waiting for the frame, without changing the generation.
+      // A tier 2 stream opens before its frame is ready, so the bound port gets its lifecycle
+      // state, never data, once ready. The clock includes bootstrap time spent waiting for the
+      // frame, without changing the generation.
       if (hello)
         options.send({ ...hello, serverTime: hello.serverTime + performance.now() - helloAt });
       if (served) options.send(served);

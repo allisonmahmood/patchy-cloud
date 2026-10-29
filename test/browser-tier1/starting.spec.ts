@@ -86,6 +86,31 @@ async function add(frame: Frame, wire: number, id: string) {
   );
 }
 
+test("a tier 2 page opens its stream, which starts its tools, before its frame loads", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance);
+  const content = Promise.withResolvers<void>();
+  await page.route("**/~content/**", async (route) => {
+    await content.promise;
+    await route.continue();
+  });
+  await page.goto(patch.address, { waitUntil: "commit" });
+  await expect.poll(() => instance.streamConnections.size).toBe(1);
+  content.resolve();
+  await expect(page.frameLocator("#patch").locator("#identity")).not.toHaveText("waiting");
+  const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"))!;
+  await add(frame, instance.wire, "after-load");
+  await expect
+    .poll(() => reply(frame, "after-load"))
+    .toMatchObject({ kind: "result", value: { label: "after-load" } });
+  // The call ran on the stream that opened at mount; the frame's ready opened no other.
+  expect(
+    instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
+  ).toHaveLength(1);
+});
+
 test("starting holds calls before stream bytes, covers first open and resume, and survives a drop", async ({
   page,
   instance

@@ -905,6 +905,9 @@ test("cross-site simple POST refusal, response CSP and one terminal stale public
   const unbound = await instance.publish("public", wrongNonce);
   const callsBefore = instance.runtimeRequests.length;
   await page.goto(unbound.address);
-  await notice(page, "bootstrap_failed");
+  // Another document's nonce binds nothing: the page stays up and never asks who is viewing.
+  await page.waitForTimeout(300);
+  expect(page.url()).toBe(unbound.address);
+  await expect(page.locator("#patch")).toHaveCount(1);
   expect(instance.runtimeRequests).toHaveLength(callsBefore);
 });

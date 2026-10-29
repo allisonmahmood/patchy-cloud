@@ -20,6 +20,26 @@ const generations = (frame: Frame) =>
     )
   );
 
+test("a page that never handshakes renders without a notice and opens no stream", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish(
+    "company",
+    "<!doctype html><html><head><title>Plain page</title></head><body><h1>Plain page</h1></body></html>"
+  );
+  await page.clock.install();
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const heading = page.frameLocator("#patch").getByRole("heading", { name: "Plain page" });
+  await expect(heading).toBeVisible();
+  // A frame that stays silent is a page without the SDK, not one that failed to start.
+  await page.clock.fastForward(30_000);
+  await expect(heading).toBeVisible();
+  expect(page.url()).toBe(patch.address);
+  expect(instance.runtimeRequests).toEqual([]);
+  expect(instance.streamConnections.size).toBe(0);
+});
+
 test("publish preserves editing, dismissal lasts until the next publish, and rollback clears the bar", async ({
   page,
   instance
@@ -677,6 +697,12 @@ const admittedSequences = (frame: Frame) =>
       reply.event === "stream" && reply.data?.type === "admitted" ? [reply.data.sequence] : []
     )
   );
+// A tier 1 stream opens on the frame's ready. Its first hello installs the empty desired set
+// at sequence 0, whose admission cancels the 1 s repair timer, so the clock can then pause.
+const reconciledEmpty = async (frame: Frame) => {
+  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await expect.poll(() => admittedSequences(frame)).toContain(0);
+};
 
 test("admitted subscriptions wait the reconcile interval for their answers before a replace", async ({
   page,
@@ -689,7 +715,7 @@ test("admitted subscriptions wait the reconcile interval for their answers befor
       commands.push(decodeSubscriptionRequest(request.postDataJSON()));
   });
   const frame = await open(page, await instance.publish());
-  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await reconciledEmpty(frame);
   const pill = page.locator('[data-stream-status="reconnecting"]');
   const replaces = () =>
     commands.flatMap((command) => (command.type === "replace" ? [command.sequence] : []));
@@ -730,7 +756,7 @@ test("a lost subscribe POST or admitted frame is repaired within a second", asyn
     } else await route.continue();
   });
   const frame = await open(page, await instance.publish());
-  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await reconciledEmpty(frame);
   const sent = () => commands.map((command) => `${command.type} ${command.sequence}`);
   // Pause ahead of real time; no reconciliation timer is armed for the reconciled empty set.
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
@@ -794,7 +820,7 @@ test("a current-generation loss reconnects at once, then waits until a stream re
     await route.fulfill(refusal(409, "invalid_request"));
   });
   const frame = await open(page, await instance.publish());
-  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await reconciledEmpty(frame);
   // Pause ahead of real time; no timer is armed for the reconciled empty set. From here a
   // reconnect that lands without runFor skipped the backoff.
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
@@ -850,7 +876,7 @@ test("stale, session, principal and rate-limit refusals of a POST keep their han
     else await route.continue();
   });
   const frame = await open(page, await instance.publish());
-  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await reconciledEmpty(frame);
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
 
   // A refusal that arrives after the shell moved past its sequence leaves the stream alone.
@@ -952,7 +978,7 @@ for (const scenario of [
       refusing ? route.fulfill(scenario.refusal) : route.continue()
     );
     const frame = await open(page, await instance.publish());
-    await expect.poll(() => generations(frame)).toHaveLength(1);
+    await reconciledEmpty(frame);
     // Pause ahead of real time; no timer is armed for the reconciled empty set.
     await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
     // Runs out each lost stream's backoff, up to its step's longest delay.
@@ -1009,7 +1035,7 @@ test("a session refresh during a refused streak reconnects at once and keeps the
     refusing ? route.fulfill(refusal(429, "rate_limited")) : route.continue()
   );
   const frame = await open(page, await instance.publish());
-  await expect.poll(() => generations(frame)).toHaveLength(1);
+  await reconciledEmpty(frame);
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
 
   refusing = true;

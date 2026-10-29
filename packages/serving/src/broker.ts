@@ -192,6 +192,7 @@ function mount(frame: HTMLIFrameElement): void {
   // and subscription update against it, and Runtime checks every other server-bound operation
   // against it before running, so only `me` and `route.set` await `identify()`.
   const pinned = frame.dataset.scope === "company" || frame.dataset.scope === "local";
+  const tier = Number(frame.dataset.tier);
   let port: MessagePort | undefined;
   let issued = false;
   let ready = false;
@@ -204,8 +205,7 @@ function mount(frame: HTMLIFrameElement): void {
   let identity: Promise<RuntimeMe> | undefined;
   let principal: RuntimePrincipal = null;
   let stream: DocumentStream | undefined;
-  let execution: "starting" | "ready" | "failed" =
-    Number(frame.dataset.tier) === 2 ? "starting" : "ready";
+  let execution: "starting" | "ready" | "failed" = tier === 2 ? "starting" : "ready";
   let startFailure: Refusal | undefined;
   const heldCalls = new Set<{ resolve(): void; reject(error: Refusal): void }>();
   const executionState = (state: "starting" | "ready" | "failed", metadata?: LimitMetadata) => {
@@ -249,7 +249,6 @@ function mount(frame: HTMLIFrameElement): void {
   const stop = () => {
     if (closed) return;
     closed = true;
-    clearTimeout(bootstrapTimer);
     stream?.close();
     port?.close();
     port = undefined;
@@ -338,7 +337,6 @@ function mount(frame: HTMLIFrameElement): void {
   const announceRoute = () => {
     if (ready) send({ v: wire, kind: "event", event: "route", data: { path: route() } });
   };
-  const bootstrapTimer = window.setTimeout(() => notice("bootstrap_failed"), 10_000);
   if (!patchId || !versionId || !nonce || !base || !contentSrc) return notice("bootstrap_failed");
   if (wire !== WIRE_VERSION) return stale();
 
@@ -557,8 +555,10 @@ function mount(frame: HTMLIFrameElement): void {
       if (message.kind !== "ready" || message.nonce !== nonce) return;
       if (message.wire !== wire) return stale();
       ready = true;
-      clearTimeout(bootstrapTimer);
-      stream?.replay();
+      // A tier 2 stream opened at mount; replay what it heard while the frame booted. A tier 1
+      // page opens its stream now, so a page that never loads the SDK never opens one.
+      if (stream) stream.replay();
+      else if (pinned) startStream();
       // Pinned streams already check identity independently of the frame's first operation.
       if (!pinned) void identify().catch(identifyFailure);
       return;
@@ -829,7 +829,7 @@ function mount(frame: HTMLIFrameElement): void {
       versionId,
       base,
       documentId: nonce,
-      tier: Number(frame.dataset.tier),
+      tier,
       wire,
       principal,
       send: (data) => {
@@ -846,7 +846,8 @@ function mount(frame: HTMLIFrameElement): void {
     const viewerId = frame.dataset.viewerId;
     if (!viewerId) return notice("bootstrap_failed");
     principal = { userId: viewerId };
-    startStream();
+    // Tier 2's stream carries the cold start, so it binds the company while the frame loads.
+    if (tier === 2) startStream();
   }
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;

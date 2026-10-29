@@ -1088,7 +1088,8 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "`patchId` and `versionId` identify the retained loaded version; `documentId` is the " +
           "shell's 16–128 character base64url nonce. `Sec-Fetch-Site: same-origin` is required. " +
           "Every reconnect checks the session, company and loaded version again. Company " +
-          "shells bootstrap this stream; public shells open none. An authenticated " +
+          "shells open this stream at bootstrap on tier 2 and on the frame's `ready` on tier 1; " +
+          "public shells open none. An authenticated " +
           "company document keeps its stream if the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
           "The first frame is `{type:'hello',generation,serverTime}`, with an opaque generation " +
           "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +

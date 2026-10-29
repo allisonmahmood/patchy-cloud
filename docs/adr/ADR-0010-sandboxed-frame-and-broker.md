@@ -15,7 +15,7 @@ The content response's CSP is `sandbox allow-scripts allow-modals; default-src '
 
 Both static and scripted `/~content` responses allow only same-origin ancestors so the shell can frame them. Shells and first-party pages use `frame-ancestors 'none'`: they cannot themselves be embedded, even by a same-origin page.
 
-The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap is bounded. The broker never replays a lost operation. The tier 2 client retries a lost query reply once and offers explicit same-key `retry()` on a mutation's `unknown_outcome`; it never replays actions or tier 1 writes.
+The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap has no deadline: a document that never sends `ready` is a page without the SDK, so it renders with no notice and its broker serves nothing. The broker never replays a lost operation. The tier 2 client retries a lost query reply once and offers explicit same-key `retry()` on a mutation's `unknown_outcome`; it never replays actions or tier 1 writes.
 
 The envelope is `{ v, id, op, args, bytes? }`; replies are `{ v, id, kind: "result" | "error", value | error, bytes? }`. The bundle declares the wire, not a separate transport version. Own-property dispatch and the API operation schemas validate requests before forwarding; the server independently admits them. The broker binds ids and principal, sends the two `X-Patchy-*` headers and same-origin credentials, and carries files over bytes routes with ArrayBuffer transfers. Per-operation limits, 32 outstanding requests and 64 MiB held bytes bound a frame's work.
 Owned upload buffers transfer through the shipped `patchy/client` transport and
@@ -44,8 +44,10 @@ An old shell with a supported bundle gets one cache-bypassing refresh. A repeate
 
 ## Company document streams
 
-Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection at
-bootstrap, independently of patch code. Public shells and tier 0 do not.
+Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection. A tier 2
+shell opens it at bootstrap, independently of patch code, because the stream carries the
+cold start. A tier 1 shell opens it on its frame's valid `ready`, so a page that never
+loads the SDK has no stream. Public shells and tier 0 do not.
 The shell pins its admitted viewer, patch, loaded version and document nonce.
 `GET /api/runtime/stream` rechecks the cookie session and version eligibility on
 every open. `hello` supplies a new generation and the server clock; replacement
