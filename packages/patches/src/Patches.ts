@@ -2381,13 +2381,15 @@ export const make = Effect.gen(function* () {
     // Serialize with member conversion and concurrent shares before finding/creating the guest.
     yield* sql`SELECT companies_guest_member_lock(${patch.companyId}, ${account.clerkUserId})`;
     const member =
-      yield* sql`SELECT id FROM users WHERE company_id = ${patch.companyId} AND clerk_user_id = ${account.clerkUserId}`;
+      yield* sql`SELECT id FROM users WHERE company_id = ${patch.companyId} AND clerk_user_id = ${account.clerkUserId}
+        AND deactivated_at IS NULL`;
     if (member.length > 0)
       return yield* new Guests.AlreadyMember({
         companyId: patch.companyId,
         clerkUserId: account.clerkUserId
       });
     const input = { ...account, companyId: patch.companyId };
+    yield* Guests.reopenForShare(input).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     const guest = yield* Guests.refreshClaims(input).pipe(
       Effect.flatMap((existing) =>
         existing === null ? Guests.create(input) : Effect.succeed(existing)

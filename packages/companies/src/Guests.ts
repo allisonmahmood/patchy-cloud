@@ -57,7 +57,8 @@ export const create = Effect.fn("Guests.create")(function* (input: CreateInput) 
       // either wins and refuses creation or ends this new guest before it commits.
       yield* sql`SELECT companies_guest_member_lock(${input.companyId}, ${input.clerkUserId})`;
       const members = yield* sql`SELECT id FROM users
-        WHERE company_id = ${input.companyId} AND clerk_user_id = ${input.clerkUserId}`;
+        WHERE company_id = ${input.companyId} AND clerk_user_id = ${input.clerkUserId}
+          AND deactivated_at IS NULL`;
       if (members.length > 0) return yield* new AlreadyMember(input);
       const email = input.email.toLowerCase();
       const inserted = SqlSchema.findOneOption({
@@ -94,6 +95,17 @@ export const find = Effect.fn("Guests.find")(function* (input: GuestRef) {
       )
   });
   return yield* row(input).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.getOrNull));
+});
+
+/** Explicit sharing may reopen an ended identity, never an admin-deactivated relationship.
+ * Ended patch grants stay terminal; the caller creates only the selected patch's new grant.
+ * Caller holds the identity lock and wraps this and grant creation in one transaction.
+ */
+export const reopenForShare = Effect.fn("Guests.reopenForShare")(function* (input: GuestRef) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE company_guests SET ended_at = NULL
+    WHERE company_id = ${input.companyId} AND clerk_user_id = ${input.clerkUserId}
+      AND ended_at IS NOT NULL AND deactivated_at IS NULL`;
 });
 
 /** Refresh only this company's relationship; ended identities retain their historical claims. */
@@ -146,7 +158,7 @@ export const listByClerkId = Effect.fn("Guests.listByClerkId")(function* (clerkU
   return yield* rows(clerkUserId).pipe(Effect.catchTags(dieOnSchemaError));
 });
 
-/** Deactivation is reversible. Ending is permanent and leaves the row for log attribution. */
+/** Deactivation is reversible. Ending closes grants and keeps the identity for later explicit sharing. */
 export const setDeactivated = Effect.fn("Guests.setDeactivated")(function* (
   input: GuestRef & { readonly deactivated: boolean }
 ) {
@@ -161,7 +173,7 @@ export const setDeactivated = Effect.fn("Guests.setDeactivated")(function* (
     execute: ({ companyId, clerkUserId, deactivated }) =>
       sql.unsafe(
         `UPDATE company_guests SET deactivated_at = CASE WHEN $3 THEN COALESCE(deactivated_at, now()) ELSE NULL END
-       WHERE company_id = $1 AND clerk_user_id = $2 AND ended_at IS NULL RETURNING ${columns}`,
+       WHERE company_id = $1 AND clerk_user_id = $2 RETURNING ${columns}`,
         [companyId, clerkUserId, deactivated]
       )
   });

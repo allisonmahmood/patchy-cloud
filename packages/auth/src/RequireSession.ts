@@ -205,7 +205,7 @@ export const resolveCompanyIdentity = Effect.fn("RequireSession.resolveCompanyId
 ) {
   const found = yield* refreshMembership;
   // Deactivation belongs to this relationship, never to the whole Clerk account.
-  if (found?.user.companyId === companyId) {
+  if (found?.user.companyId === companyId && found.user.deactivatedAt === null) {
     const viewer = yield* memberViewer(found);
     if (!viewer || HttpServerResponse.isHttpServerResponse(viewer)) return viewer;
     return { kind: "member", viewer } satisfies CompanyIdentity;
@@ -217,7 +217,8 @@ export const resolveCompanyIdentity = Effect.fn("RequireSession.resolveCompanyId
     email: claims.email,
     name: claims.name
   });
-  if (!guest || guest.deactivatedAt !== null || guest.endedAt !== null) return null;
+  if (!guest || guest.deactivatedAt !== null || guest.endedAt !== null)
+    return found?.user.companyId === companyId ? yield* memberViewer(found) : null;
   return {
     kind: "guest",
     guest: { id: guest.id, email: guest.email, name: guest.name },

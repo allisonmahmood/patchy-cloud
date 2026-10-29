@@ -81,3 +81,28 @@ it.layer(Testing.emptyLayer(before("0029_company_guests")))(
     );
   }
 );
+
+it.layer(Testing.emptyLayer(before("0031_reopen_ended_guest")))(
+  "ended guest reopening upgrade",
+  (it) => {
+    it.effect(
+      "preserves ended and deactivated identities and permits reopening after upgrade",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_reopen_upgrade', 'reopen-upgrade', 'Upgrade')`;
+          yield* sql`INSERT INTO company_guests (id, company_id, clerk_user_id, email, name, ended_at, deactivated_at)
+        VALUES ('gst_reopen_upgrade', 'cmp_reopen_upgrade', 'clerk_reopen_upgrade', 'upgrade@example.com', 'Original', now(), now())`;
+          const history = yield* sql`SELECT * FROM company_guests`;
+          yield* migrate(migrations);
+          assert.deepStrictEqual(yield* sql`SELECT * FROM company_guests`, history);
+          yield* sql`UPDATE company_guests SET deactivated_at = NULL, ended_at = NULL WHERE id = 'gst_reopen_upgrade'`;
+          assert.deepStrictEqual(yield* sql`SELECT id, name, ended_at FROM company_guests`, [
+            { id: "gst_reopen_upgrade", name: "Original", ended_at: null }
+          ]);
+          // The previous server can still start against the upgraded schema and rows.
+          yield* migrate(before("0031_reopen_ended_guest"));
+        })
+    );
+  }
+);

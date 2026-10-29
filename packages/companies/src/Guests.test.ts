@@ -55,13 +55,13 @@ it.layer(Testing.layer())("company guests", (it) => {
       assert.isNull(
         (yield* Guests.find({ companyId: "cmp_c", clerkUserId: "clerk_jordan" }))?.endedAt
       );
-      assert.isNull(
-        yield* Guests.setDeactivated({
-          companyId: "cmp_b",
-          clerkUserId: "clerk_jordan",
-          deactivated: false
-        })
-      );
+      const stillEnded = yield* Guests.setDeactivated({
+        companyId: "cmp_b",
+        clerkUserId: "clerk_jordan",
+        deactivated: false
+      });
+      assert.strictEqual(stillEnded?.id, b.id);
+      assert.instanceOf(stillEnded?.endedAt, Date);
       const duplicate = yield* Effect.flip(
         Guests.create({
           companyId: "cmp_b",
@@ -78,12 +78,12 @@ it.layer(Testing.layer())("company guests", (it) => {
     })
   );
 
-  it.effect("refuses an existing member, including a deactivated member, in the same company", () =>
+  it.effect("refuses an active member in the same company", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_member', 'guest-member', 'B')`;
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, deactivated_at)
-        VALUES ('usr_b', 'clerk_mia', 'cmp_member', 'mia@example.com', 'Mia', 'member', now())`;
+        VALUES ('usr_b', 'clerk_mia', 'cmp_member', 'mia@example.com', 'Mia', 'member', NULL)`;
       const input = {
         companyId: "cmp_member",
         clerkUserId: "clerk_mia",

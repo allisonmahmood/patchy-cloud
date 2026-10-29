@@ -420,6 +420,48 @@ const assertStale = (html: string, action: string) => {
 };
 
 it.layer(layer)("portal pages on a socket", (it) => {
+  for (const role of ["member", "admin"] as const)
+    it.effect(`keeps portal management denied to a deactivated ${role} with a guest grant`, () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const person = role === "admin" ? workspace.admin : workspace.member;
+        const users = yield* Users.Users;
+        const patches = yield* Patches.Patches;
+        // Keep an active admin while the other admin is deactivated.
+        yield* users.setRole({
+          companyId: workspace.id,
+          userId: workspace.owner.id,
+          role: "admin"
+        });
+        const patch = yield* publish(workspace.owner, `former-${role}-portal`);
+        yield* users.deactivate({ companyId: workspace.id, userId: person.id });
+        yield* patches.shareGuest(patch.patchId, person.email, {
+          userId: workspace.owner.id,
+          admin: true
+        });
+        for (const path of [
+          "/",
+          "/patches",
+          cardPath(patch.name),
+          `${cardPath(patch.name)}/settings`
+        ])
+          assert.strictEqual((yield* request(path, person)).status, 403);
+        for (const [action, fields] of [
+          ["description", { description: "Unauthorized change" }],
+          ["guest-share", { email: workspace.owner.email }],
+          ["scope", { scope: "public", expectedScope: "company" }]
+        ] as const)
+          assert.strictEqual(
+            (yield* post(`${cardPath(patch.name)}/${action}`, person, {
+              ...fields,
+              expectedPatchId: patch.patchId
+            })).status,
+            403
+          );
+        assert.instanceOf((yield* readUser(person)).deactivatedAt, Date);
+      })
+    );
+
   it.effect("shares with an existing named guest, retains refusals, and lets an admin revoke", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

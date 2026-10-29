@@ -292,6 +292,106 @@ it.layer(layer)("pages", (it) => {
       })
   );
 
+  for (const role of ["member", "admin"] as const)
+    it.effect(
+      `admits a deactivated same-company ${role} only through an explicit patch grant`,
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const patches = yield* Patches.Patches;
+          const users = yield* Users.Users;
+          const tokens = yield* MachineTokens.MachineTokens;
+          const agents = yield* AgentConnections.AgentConnections;
+          const id = `usr_former_${role}`;
+          const clerkUserId = `clerk_former_${role}`;
+          const email = `former-${role}@example.com`;
+          yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${id}, ${clerkUserId}, ${DEV_SEED.companyId}, ${email}, 'Former colleague', ${role})`;
+          const machine = yield* tokens.mint({ userId: id, name: "Before deactivation" });
+          const agent = yield* agents.create({
+            userId: id,
+            clientId: "https://claude.ai/client.json",
+            clientName: "Claude"
+          });
+          const headers = {
+            cookie: signedInCookies(
+              signSession({ sub: clerkUserId, email, name: "Former colleague" })
+            )
+          };
+          const actor = { userId: DEV_SEED.userId, admin: true };
+          const shared = yield* publish(`Former ${role} shared page`);
+          const other = yield* publish(`Former ${role} unrelated page`);
+          // Active colleagues cannot be added as guests.
+          assert.strictEqual(
+            (yield* patches.shareGuest(shared.patchId, email, actor).pipe(Effect.flip))._tag,
+            "GuestAlreadyMember"
+          );
+          yield* users.deactivate({ companyId: DEV_SEED.companyId, userId: id });
+          const history = yield* sql`SELECT * FROM users WHERE id = ${id}`;
+          assert.strictEqual((yield* get(shared.path, headers)).status, 403);
+          assert.isNull(yield* Guests.find({ companyId: DEV_SEED.companyId, clerkUserId }));
+          const grant = yield* patches.shareGuest(shared.patchId, email, actor);
+          assert.notStrictEqual(grant.guestId, id);
+          const opened = yield* get(shared.path, headers);
+          assert.strictEqual(opened.status, 200);
+          assert.include(yield* opened.text, `Former ${role} shared page`);
+          assert.strictEqual((yield* get(other.path, headers)).status, 404);
+          // Real member directory and admin routes still require the deactivated member Viewer.
+          for (const path of ["/company", "/company/agent-access"])
+            assert.strictEqual((yield* get(path, headers)).status, 403);
+          const manage = yield* send("/company/agent-access", {
+            method: "POST",
+            headers: {
+              ...headers,
+              origin: PUBLIC_BASE_URL,
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            body: "enabled=true"
+          });
+          assert.strictEqual(manage.status, 403);
+          assert.isNull(yield* tokens.authenticate(machine.token));
+          assert.isNull(yield* agents.authenticate(agent.tokens.accessToken));
+          assert.strictEqual(
+            (yield* tokens.mint({ userId: id, name: "Denied builder" }).pipe(Effect.flip))._tag,
+            "UserUnavailable"
+          );
+          assert.strictEqual(
+            (yield* agents
+              .create({
+                userId: id,
+                clientId: "https://claude.ai/client.json",
+                clientName: "Denied agent"
+              })
+              .pipe(Effect.flip))._tag,
+            "UserUnavailable"
+          );
+          assert.deepStrictEqual(yield* sql`SELECT * FROM users WHERE id = ${id}`, history);
+          yield* patches.revokeGuest(shared.patchId, grant.guestId, actor);
+          assert.strictEqual((yield* get(shared.path, headers)).status, 404);
+          const again = yield* patches.shareGuest(shared.patchId, email, actor);
+          assert.strictEqual(again.guestId, grant.guestId);
+          assert.notStrictEqual(again.id, grant.id);
+          assert.strictEqual((yield* get(shared.path, headers)).status, 200);
+          // Reactivation takes the member path and ends guest grants. Deactivating again
+          // cannot resurrect that guest authority without another explicit share.
+          yield* users.reactivate({ companyId: DEV_SEED.companyId, userId: id });
+          assert.instanceOf((yield* Guests.findById(grant.guestId))?.endedAt, Date);
+          assert.strictEqual(
+            (yield* patches.guestGrant(DEV_SEED.companyId, shared.patchId, grant.guestId))?.access,
+            "ended"
+          );
+          yield* users.deactivate({ companyId: DEV_SEED.companyId, userId: id });
+          assert.strictEqual((yield* get(shared.path, headers)).status, 403);
+          const returned = yield* patches.shareGuest(shared.patchId, email, actor);
+          assert.strictEqual(returned.guestId, grant.guestId);
+          assert.strictEqual((yield* get(shared.path, headers)).status, 200);
+          assert.strictEqual((yield* get(other.path, headers)).status, 404);
+          assert.isNull(yield* tokens.authenticate(machine.token));
+          yield* patches.revokeGuest(shared.patchId, grant.guestId, actor);
+          assert.strictEqual((yield* get(shared.path, headers)).status, 404);
+        })
+    );
+
   it.effect("admits a guest-only account without enrolling it or borrowing a member identity", () =>
     Effect.gen(function* () {
       const users = yield* Users.Users;

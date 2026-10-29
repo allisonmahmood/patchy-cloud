@@ -45,7 +45,7 @@ The signed-in user, their company and role on a first-party page or at a company
 _Avoid_: bearer, machine, principal
 
 **Company identity**:
-The signed-in account's relationship in an explicitly named company: either its existing member viewer or that company's active guest identity. A guest has a distinct guest ID, email, name, company ID and `guest` role, with no member viewer or capabilities. An unrelated company's member deactivation does not block this lookup. Member pages, enrollment and runtime callers continue to require the member-only viewer; resolving a guest does not admit a patch page or grant runtime access.
+The signed-in account's relationship in an explicitly named company: either its existing member viewer or that company's active guest identity. A guest has a distinct guest ID, email, name, company ID and `guest` role, with no member viewer or capabilities. An unrelated company's member deactivation does not block this lookup. A deactivated same-company member or admin may resolve as an active guest after explicit sharing; their membership stays deactivated and supplies no member capabilities. Member pages, enrollment and runtime callers continue to require the member-only viewer; resolving a guest does not admit a patch page or grant runtime access.
 _Avoid_: member-shaped guest, builder identity
 
 **Setup link**:

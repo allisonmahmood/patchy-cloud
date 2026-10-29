@@ -3901,8 +3901,105 @@ it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
       })
   );
 
+  it.effect("explicitly re-shares an ended relationship without reviving its other grants", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const sql = yield* SqlClient.SqlClient;
+      const patches = yield* Patches.Patches;
+      const { user: recipient } = yield* (yield* Companies.Companies).create({
+        handle: "ended-recipient",
+        name: "Recipient company",
+        clerkUserId: "clerk_ended_recipient",
+        email: "ended@named.example",
+        userName: "Recipient"
+      });
+      const first = yield* owner.publish({
+        payload: publishRequest({ html: html("Ended first") })
+      });
+      const second = yield* owner.publish({
+        payload: publishRequest({ html: html("Ended second") })
+      });
+      const share = (patchId: string) =>
+        owner.shareGuest({
+          params: { patchId },
+          payload: new GuestShareRequest({ email: recipient.email })
+        });
+      const granted = yield* share(first.patchId);
+      yield* share(second.patchId);
+      const identity = yield* Guests.findById(granted.guestId);
+      yield* Guests.end({ companyId: uploader.company.id, clerkUserId: recipient.clerkUserId });
+      const history =
+        yield* sql`SELECT * FROM patch_guest_grants WHERE guest_id = ${granted.guestId} ORDER BY grant_number`;
+      assert.lengthOf(history, 2);
+      assert.isTrue(history.every((g) => g.ended_at !== null && g.end_reason === "guest_ended"));
+      // Sign-in claim refresh is not an explicit share and must leave the relationship ended.
+      yield* Guests.refreshClaims({ ...recipient, companyId: uploader.company.id });
+      assert.instanceOf((yield* Guests.findById(granted.guestId))?.endedAt, Date);
+      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const refused = yield* nonOwner.shareGuest({
+        params: { patchId: first.patchId },
+        payload: new GuestShareRequest({ email: recipient.email }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(refused.status, 403);
+      assert.instanceOf((yield* Guests.findById(granted.guestId))?.endedAt, Date);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM patch_guest_grants WHERE guest_id = ${granted.guestId} ORDER BY grant_number`,
+        history
+      );
+      const fresh = yield* share(first.patchId);
+      assert.strictEqual(fresh.guestId, granted.guestId);
+      assert.notStrictEqual(fresh.grantId, granted.grantId);
+      const reopened = yield* Guests.findById(granted.guestId);
+      assert.strictEqual(reopened?.createdAt.getTime(), identity?.createdAt.getTime());
+      assert.isNull(reopened?.endedAt);
+      assert.strictEqual(
+        (yield* patches.guestGrant(uploader.company.id, first.patchId, fresh.guestId))?.access,
+        "active"
+      );
+      assert.strictEqual(
+        (yield* patches.guestGrant(uploader.company.id, second.patchId, fresh.guestId))?.access,
+        "ended"
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM patch_guest_grants WHERE guest_id = ${granted.guestId} AND id <> ${fresh.grantId} ORDER BY grant_number`,
+        history
+      );
+      yield* Guests.end({ companyId: uploader.company.id, clerkUserId: recipient.clerkUserId });
+      // Admin suspension survives ending; only explicit admin reactivation removes it.
+      yield* Guests.setDeactivated({
+        companyId: uploader.company.id,
+        clerkUserId: recipient.clerkUserId,
+        deactivated: true
+      });
+      const suspended = yield* owner.shareGuest({
+        params: { patchId: second.patchId },
+        payload: new GuestShareRequest({ email: recipient.email }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(suspended.status, 409);
+      assert.instanceOf((yield* Guests.findById(granted.guestId))?.endedAt, Date);
+      yield* Guests.setDeactivated({
+        companyId: uploader.company.id,
+        clerkUserId: recipient.clerkUserId,
+        deactivated: false
+      });
+      assert.instanceOf((yield* Guests.findById(granted.guestId))?.endedAt, Date);
+      const again = yield* share(second.patchId);
+      assert.strictEqual(again.guestId, granted.guestId);
+      assert.strictEqual(
+        (yield* patches.guestGrant(uploader.company.id, first.patchId, again.guestId))?.access,
+        "ended"
+      );
+      assert.strictEqual(
+        (yield* patches.guestGrant(uploader.company.id, second.patchId, again.guestId))?.access,
+        "active"
+      );
+    })
+  );
+
   it.effect(
-    "refuses unknown/companyless, same-company, unauthorized, duplicate, deactivated/ended guests and ineligible patches without new authority",
+    "refuses unknown/companyless, same-company, unauthorized, duplicate and deactivated guests and ineligible patches without new authority",
     () =>
       Effect.gen(function* () {
         const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -3981,6 +4078,9 @@ it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
         const ended = yield* share(recipient.email);
         assert.strictEqual(ended.status, 409);
         expect(yield* ended.json).toMatchObject({ code: "guest_unavailable" });
+        const blocked = yield* Guests.findById(first.guestId);
+        assert.instanceOf(blocked?.endedAt, Date);
+        assert.instanceOf(blocked?.deactivatedAt, Date);
         for (const state of ["public", "retired", "deleted", "tier1", "tier2"] as const) {
           const ineligible = yield* owner.publish({
             payload: publishRequest({ html: html(`Ineligible ${state}`) })

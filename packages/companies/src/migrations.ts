@@ -201,5 +201,45 @@ export const migrations: Migrations = {
     `CREATE TRIGGER users_end_company_guest
       AFTER INSERT OR UPDATE OF company_id, clerk_user_id ON users
       FOR EACH ROW EXECUTE FUNCTION companies_end_guest_on_member()`
+  ),
+  // Reopening preserves the guest ID and all terminal grants. Keep the identity
+  // and same-company member guards; only explicit sharing reopens in application code.
+  "0031_reopen_ended_guest": ddl(
+    `CREATE OR REPLACE FUNCTION companies_guard_guest() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP = 'UPDATE' AND
+        (OLD.company_id, OLD.clerk_user_id) IS DISTINCT FROM
+        (NEW.company_id, NEW.clerk_user_id)
+      THEN
+        RAISE EXCEPTION 'company guest identity cannot change'
+          USING ERRCODE = '23514', CONSTRAINT = 'company_guests_identity';
+      END IF;
+      PERFORM companies_guest_member_lock(NEW.company_id, NEW.clerk_user_id);
+      IF NEW.ended_at IS NULL AND EXISTS (
+        SELECT 1 FROM users
+        WHERE company_id = NEW.company_id AND clerk_user_id = NEW.clerk_user_id
+          AND deactivated_at IS NULL
+      ) THEN
+        RAISE EXCEPTION 'company member cannot be a guest of the same company'
+          USING ERRCODE = '23514', CONSTRAINT = 'company_guests_no_member';
+      END IF;
+      RETURN NEW;
+    END;
+    $$`,
+    `CREATE OR REPLACE FUNCTION companies_end_guest_on_member() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.deactivated_at IS NULL THEN
+        PERFORM companies_guest_member_lock(NEW.company_id, NEW.clerk_user_id);
+        UPDATE company_guests SET ended_at = now()
+          WHERE company_id = NEW.company_id AND clerk_user_id = NEW.clerk_user_id
+            AND ended_at IS NULL;
+      END IF;
+      RETURN NULL;
+    END;
+    $$`,
+    `DROP TRIGGER users_end_company_guest ON users`,
+    `CREATE TRIGGER users_end_company_guest
+      AFTER INSERT OR UPDATE OF company_id, clerk_user_id, deactivated_at ON users
+      FOR EACH ROW EXECUTE FUNCTION companies_end_guest_on_member()`
   )
 };
