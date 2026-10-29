@@ -44,6 +44,10 @@ _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal
 
+**Company identity**:
+The signed-in account's relationship in an explicitly named company: either its existing member viewer or that company's active guest identity. A guest has a distinct guest ID, email, name, company ID and `guest` role, with no member viewer or capabilities. An unrelated company's member deactivation does not block this lookup. Member pages, enrollment and runtime callers continue to require the member-only viewer; resolving a guest does not admit a patch page or grant runtime access.
+_Avoid_: member-shaped guest, builder identity
+
 **Setup link**:
 The `?s=` on the Final step panel's setup line: 128 random bits as 26 base32 characters, one live per person for 30 minutes, which `/llms.txt` carries into its login command as `--setup`. Its fetch marks the line picked up; the first device login it starts binds to it, and a second contests it. It keeps how its login ended (pending, denied, expired, contested, connected or confirmed by another account), because device logins are deleted when they finish. It is no credential: it only lets a login show on its owner's own panel. Events carry a separate setup id.
 _Avoid_: setup token, setup code (the device login's code is the code), attempt

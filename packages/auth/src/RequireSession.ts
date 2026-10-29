@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Users } from "@patchy/companies";
+import { Guests, Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
@@ -21,6 +21,16 @@ export class Viewer extends Context.Service<
     readonly receipt?: string | undefined;
   }
 >()("@patchy/auth/RequireSession/Viewer") {}
+
+/** A resolved relationship, not admission or a runtime capability. Narrow by kind first. */
+export type CompanyIdentity =
+  | { readonly kind: "member"; readonly viewer: Viewer["Service"] }
+  | {
+      readonly kind: "guest";
+      readonly guest: { readonly id: string; readonly email: string; readonly name: string };
+      readonly companyId: string;
+      readonly role: "guest";
+    };
 
 export class SignedIn extends Context.Service<
   SignedIn,
@@ -147,19 +157,24 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
  * resolve reads current state: one read when the claims are unchanged, more statements when they
  * changed and need writing. A caller re-checks by resolving again.
  */
-export const resolveViewer = Effect.gen(function* () {
+const refreshMembership = Effect.gen(function* () {
   const claims = yield* SignedIn;
   const users = yield* Users.Users;
-  const session = yield* Session.Session;
-  const found = yield* users.refreshClaims({
+  return yield* users.refreshClaims({
     clerkUserId: claims.sub,
     email: claims.email,
     name: claims.name
   });
+});
+
+const memberViewer = Effect.fn("RequireSession.memberViewer")(function* (
+  found: Effect.Success<typeof refreshMembership>
+) {
   if (!found) return null;
   const { user, company } = found;
   if (!company) return yield* Effect.die(new Error("User company is missing"));
   if (user.deactivatedAt) {
+    const session = yield* Session.Session;
     return pageResponse(
       {
         title: "Your account is deactivated",
@@ -175,6 +190,40 @@ export const resolveViewer = Effect.gen(function* () {
     role: user.role,
     whatsNewSeen: user.whatsNewSeen
   });
+});
+
+/** Existing member pages, enrollment and runtime calls never resolve a guest as a Viewer. */
+export const resolveViewer = refreshMembership.pipe(Effect.flatMap(memberViewer));
+
+/**
+ * Resolves only the explicitly named company's relationship. Guest identity alone grants no
+ * capabilities: patch admission and read authority must be checked by their owning boundaries.
+ * This supplies neither Viewer nor a route around the existing member-only doors.
+ */
+export const resolveCompanyIdentity = Effect.fn("RequireSession.resolveCompanyIdentity")(function* (
+  companyId: string
+) {
+  const found = yield* refreshMembership;
+  // Deactivation belongs to this relationship, never to the whole Clerk account.
+  if (found?.user.companyId === companyId) {
+    const viewer = yield* memberViewer(found);
+    if (!viewer || HttpServerResponse.isHttpServerResponse(viewer)) return viewer;
+    return { kind: "member", viewer } satisfies CompanyIdentity;
+  }
+  const claims = yield* SignedIn;
+  const guest = yield* Guests.refreshClaims({
+    companyId,
+    clerkUserId: claims.sub,
+    email: claims.email,
+    name: claims.name
+  });
+  if (!guest || guest.deactivatedAt !== null || guest.endedAt !== null) return null;
+  return {
+    kind: "guest",
+    guest: { id: guest.id, email: guest.email, name: guest.name },
+    companyId: guest.companyId,
+    role: "guest"
+  } satisfies CompanyIdentity;
 });
 
 export const withViewer = <E, R>(

@@ -96,6 +96,30 @@ export const find = Effect.fn("Guests.find")(function* (input: GuestRef) {
   return yield* row(input).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.getOrNull));
 });
 
+/** Refresh only this company's relationship; ended identities retain their historical claims. */
+export const refreshClaims = Effect.fn("Guests.refreshClaims")(function* (input: CreateInput) {
+  const found = yield* find(input);
+  if (!found || found.endedAt !== null || found.deactivatedAt !== null) return found;
+  const email = input.email.toLowerCase();
+  const name = displayName({ email, name: input.name });
+  if (found.email === email && found.name === name) return found;
+  const sql = yield* SqlClient.SqlClient;
+  const refresh = SqlSchema.findOneOption({
+    Request: Schema.Struct({ companyId: Schema.String, clerkUserId: Schema.String }),
+    Result: Guest,
+    execute: ({ companyId, clerkUserId }) =>
+      sql.unsafe(
+        `UPDATE company_guests SET email = $3, name = $4
+         WHERE company_id = $1 AND clerk_user_id = $2 AND ended_at IS NULL
+         RETURNING ${columns}`,
+        [companyId, clerkUserId, email, name]
+      )
+  });
+  // The returned row includes any deactivation that committed while the write waited.
+  const updated = yield* refresh(input).pipe(Effect.catchTags(dieOnSchemaError));
+  return Option.isSome(updated) ? updated.value : yield* find(input);
+});
+
 /** Historical callers resolve by the stable guest row ID, including after access ends. */
 export const findById = Effect.fn("Guests.findById")(function* (id: string) {
   const sql = yield* SqlClient.SqlClient;
