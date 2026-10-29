@@ -844,11 +844,11 @@ it.layer(services)("host fleet controller", (it) => {
           }
           return yield* Fiber.join(refused);
         });
-        assert.deepStrictEqual(yield* phase("refused call", gaveUp), {
-          found: "launch",
-          waitedMs: 40_000,
-          refused: true
-        });
+        const refusal = yield* phase("refused call", gaveUp);
+        assert.include(refusal, { found: "launch", refused: true });
+        // The call arms its wait just after it reads the clock; a step this loop takes between
+        // the two lands the wait one step late.
+        assert.oneOf(refusal.waitedMs, [40_000, 40_500]);
         // A call whose agent goes away while it waits says so too.
         const gone = "cmp_fleet_found_gone";
         yield* sql`INSERT INTO companies(id, handle, name) VALUES (${gone}, ${gone}, 'Fleet gone')`;
