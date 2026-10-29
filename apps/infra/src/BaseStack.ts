@@ -1,6 +1,6 @@
 /**
  * What outlives a release: the image registry, the identity GitHub deploys
- * with, the spend alert and the two host secrets. It deploys before the app
+ * with, the spend alerts and the two host secrets. It deploys before the app
  * stack, because the image has to be in ECR, and the host secret filled in,
  * before a host can start.
  *
@@ -229,13 +229,16 @@ export class BaseStack extends Stack {
       description: "Where the deploy workflow pushes release images"
     });
 
-    if (production)
-      new budgets.CfnBudget(this, "Spend", {
+    // Emails when the month's forecast passes each amount. Each alert is its own
+    // budget: CloudFormation replaces a budget to change its notifications, and
+    // budget names are unique, so adding a threshold to one fails the deploy.
+    const forecastAlert = (id: string, budgetName: string, amount: number) =>
+      new budgets.CfnBudget(this, id, {
         budget: {
-          budgetName: "patchy-monthly",
+          budgetName,
           budgetType: "COST",
           timeUnit: "MONTHLY",
-          budgetLimit: { amount: 300, unit: "USD" }
+          budgetLimit: { amount, unit: "USD" }
         },
         notificationsWithSubscribers: [
           {
@@ -252,5 +255,9 @@ export class BaseStack extends Stack {
           }
         ]
       });
+    if (production) {
+      forecastAlert("Spend", "patchy-monthly", 300);
+      forecastAlert("SpendHigh", "patchy-monthly-600", 600);
+    }
   }
 }
