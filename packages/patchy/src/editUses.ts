@@ -189,9 +189,9 @@ export function editUses(source: string, change: UsesChange): string {
       const edited = replace(from, to, "");
       if (previousComma !== undefined)
         return edited.slice(0, previousComma - 1) + edited.slice(previousComma);
-      // An object left with nothing but whitespace closes up, as `patchy init` writes it.
+      // A one-line object left with nothing but spaces closes up, as `patchy init` writes it.
       const inner = edited.slice(object.start + 1, object.end - 1 - (to - from));
-      return previous || next || inner.trim() !== ""
+      return previous || next || inner.trim() !== "" || lineBreak.test(inner)
         ? edited
         : replace(object.start, object.end, "{}");
     };
@@ -211,16 +211,17 @@ export function editUses(source: string, change: UsesChange): string {
     const last = object.properties.at(-1);
     if (!last) {
       const inner = source.slice(start + 1, end - 1);
-      if (inner.trim() === "") return replace(start, end, `{ ${text} }`);
-      // An empty object's comments stay; the entry follows them, on a line of its own when the
-      // object ends on one.
+      if (inner.trim() === "" && !lineBreak.test(inner)) return replace(start, end, `{ ${text} }`);
+      // An empty object's comments and lines stay; the entry follows them, on a line of its own
+      // when the object ends on one, after any spaces ending the line before.
       const point = start + 1 + inner.trimEnd().length;
       if (!lineBreak.test(source.slice(point, end - 1))) return replace(point, point, ` ${text}`);
+      const lineEnd = point + /^[ \t]*/.exec(source.slice(point))![0].length;
       const lastLine = lineStart(point);
       const lineIndent = /^[ \t]*/.exec(source.slice(lastLine))![0];
       return replace(
-        point,
-        point,
+        lineEnd,
+        lineEnd,
         `${newline}${lastLine > start ? lineIndent : `${lineIndent}  `}${text}`
       );
     }
@@ -237,12 +238,14 @@ export function editUses(source: string, change: UsesChange): string {
     const lineIndent = /^[ \t]*/.exec(source.slice(lastLine))![0];
     const indent =
       source.slice(lastLine, span(last).start).trim() === "" ? lineIndent : `${lineIndent}  `;
+    // After any spaces ending the line, so they stay where they were.
+    const lineEnd = point + /^[ \t]*/.exec(source.slice(point))![0].length;
     return (
       source.slice(0, after) +
       (comma === undefined ? "," : "") +
-      source.slice(after, point) +
+      source.slice(after, lineEnd) +
       `${newline}${indent}${text}${comma === undefined ? "" : ","}` +
-      source.slice(point)
+      source.slice(lineEnd)
     );
   };
   // Literal declarations need no second managed edit to the user's imports.

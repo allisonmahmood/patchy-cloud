@@ -165,7 +165,11 @@ const commented = [
   `uses: {\n    ${entry("a")}\n    /* after a */\n  }`,
   `uses: { ${entry("a")}, // a\n  }`,
   `uses: {\n    ${entry("a")},\n    ${entry("b")} /* b */ /* b */ }`,
-  `uses: {\n    ${entry("a")},\n    ${entry("b")}, /* b\n       b */ }`
+  `uses: {\n    ${entry("a")},\n    ${entry("b")}, /* b\n       b */ }`,
+  `uses: { ${entry("a")}, // a  \t\n\t// a  \t\n  }`,
+  `uses: {\n\t${entry("a")}, /* a */ // a \t\n  }`,
+  "uses: {\n    /* none\n       yet */  \t\n  }",
+  "uses: {\n  }"
 ];
 const comments = (source: string) =>
   (parse(source, { sourceType: "module", plugins: ["typescript"] }).comments ?? []).map(
