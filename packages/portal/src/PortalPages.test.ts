@@ -420,6 +420,162 @@ const assertStale = (html: string, action: string) => {
 };
 
 it.layer(layer)("portal pages on a socket", (it) => {
+  it.effect("shares with an existing named guest, retains refusals, and lets an admin revoke", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const other = yield* company();
+      const patch = yield* publish(workspace.owner, "guest-brief");
+      const fields = { expectedPatchId: patch.patchId, email: other.owner.email };
+      const path = cardPath(patch.name);
+      const patches = yield* Patches.Patches;
+      for (const person of [workspace.owner, workspace.admin]) {
+        for (const entry of [path, "/", "/patches"])
+          assert.include(yield* (yield* request(entry, person)).text, `${path}/settings#share`);
+      }
+      const shared = yield* post(`${path}/guest-share`, workspace.owner, fields);
+      assert.strictEqual(shared.status, 303);
+      assert.strictEqual(shared.headers.location, `${path}/settings#share`);
+      const settings = yield* (yield* request(`${path}/settings`, workspace.admin)).text;
+      assert.include(text(settings), other.owner.name);
+      assert.include(text(settings), other.owner.email);
+      assert.include(text(settings), "Has access");
+      assert.include(settings, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}"`);
+      const guests = yield* patches.namedGrants(patch.patchId, actor(workspace.owner));
+      assert.lengthOf(guests, 1);
+      for (const [email, message] of [
+        [other.owner.email, "This guest already has a grant to the patch."],
+        ["unknown@example.test", "This email has no existing Patchy membership."],
+        [workspace.member.email, "This account is already a member of the company."],
+        ["invalid", "Enter an existing Patchy account email."]
+      ]) {
+        const response = yield* post(`${path}/guest-share`, workspace.owner, {
+          ...fields,
+          email: email!
+        });
+        assert.strictEqual(response.status, email === "invalid" ? 422 : 409);
+        const html = yield* response.text;
+        assert.include(text(html), message!);
+        assert.include(html, `value="${email}"`);
+        assert.include(html, 'aria-invalid="true"');
+      }
+      assert.lengthOf(yield* patches.namedGrants(patch.patchId, actor(workspace.owner)), 1);
+      const revoked = yield* post(`${path}/guest-revoke`, workspace.admin, {
+        expectedPatchId: patch.patchId,
+        guestId: guests[0]!.guestId
+      });
+      assert.strictEqual(revoked.status, 303);
+      const after = yield* (yield* request(`${path}/settings`, workspace.owner)).text;
+      assert.include(text(after), "Revoked");
+      assert.notInclude(after, `aria-label="Revoke access for ${other.owner.name}"`);
+      assert.strictEqual(
+        (yield* patches.namedGrants(patch.patchId, actor(workspace.owner)))[0]!.endReason,
+        "revoked"
+      );
+    })
+  );
+
+  it.effect("refuses unauthorized, cross-site and stale guest forms without changing grants", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const other = yield* company();
+      const patch = yield* publish(workspace.owner, "guarded-brief");
+      const patches = yield* Patches.Patches;
+      const grant = yield* patches.shareGuest(
+        patch.patchId,
+        other.owner.email,
+        actor(workspace.owner)
+      );
+      const path = cardPath(patch.name);
+      for (const person of [workspace.member, other.owner]) {
+        assert.strictEqual(
+          (yield* post(`${path}/guest-share`, person, {
+            expectedPatchId: patch.patchId,
+            email: other.admin.email
+          })).status,
+          person === workspace.member ? 403 : 404
+        );
+        assert.strictEqual(
+          (yield* post(`${path}/guest-revoke`, person, {
+            expectedPatchId: patch.patchId,
+            guestId: grant.guestId
+          })).status,
+          person === workspace.member ? 403 : 404
+        );
+        assert.notInclude(yield* (yield* request(path, person)).text, `${path}/settings#share`);
+      }
+      assert.strictEqual(
+        (yield* request(
+          `${path}/guest-revoke`,
+          workspace.owner,
+          { expectedPatchId: patch.patchId, guestId: grant.guestId },
+          { origin: "https://evil.example" }
+        )).status,
+        403
+      );
+      const stale = yield* post(`${path}/guest-revoke`, workspace.owner, {
+        expectedPatchId: "p00000000000",
+        guestId: grant.guestId
+      });
+      assert.strictEqual(stale.status, 409);
+      assert.include(text(yield* stale.text), "This name now belongs to a different patch.");
+      assert.strictEqual(
+        (yield* patches.namedGrants(patch.patchId, actor(workspace.owner)))[0]!.endedAt,
+        null
+      );
+    })
+  );
+
+  it.effect(
+    "hides ineligible share forms, explains service refusal, and keeps retirement revocation",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const other = yield* company();
+        const patch = yield* publish(workspace.owner, "off-brief");
+        const patches = yield* Patches.Patches;
+        const grant = yield* patches.shareGuest(
+          patch.patchId,
+          other.owner.email,
+          actor(workspace.owner)
+        );
+        yield* patches.retire(patch.patchId, actor(workspace.owner));
+        const path = cardPath(patch.name);
+        const page = yield* (yield* request(`${path}/settings`, workspace.owner)).text;
+        assert.notInclude(page, 'id="guest-email"');
+        assert.include(page, `${path}/guest-revoke`);
+        assert.include(text(page), "Grant kept · patch unavailable to guests");
+        const refused = yield* post(`${path}/guest-share`, workspace.owner, {
+          expectedPatchId: patch.patchId,
+          email: other.admin.email
+        });
+        assert.strictEqual(refused.status, 409);
+        assert.include(
+          text(yield* refused.text),
+          "Named sharing requires a current live company-private tier 0 patch."
+        );
+        assert.strictEqual(
+          (yield* post(`${path}/guest-revoke`, workspace.owner, {
+            expectedPatchId: patch.patchId,
+            guestId: grant.guestId
+          })).status,
+          303
+        );
+        for (const tier of [1, 2] as const) {
+          const tool = yield* publish(workspace.owner, `guest-tool-${tier}`, {
+            manifest: { ...manifest, name: `guest-tool-${tier}`, tier }
+          });
+          assert.notInclude(
+            yield* (yield* request(`${cardPath(tool.name)}/settings`, workspace.owner)).text,
+            'id="guest-email"'
+          );
+          assert.notInclude(
+            yield* (yield* request(cardPath(tool.name), workspace.owner)).text,
+            `${cardPath(tool.name)}/settings#share`
+          );
+        }
+      })
+  );
+
   it.effect("shows member, owner and admin views of one card and its retained versions", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
@@ -458,7 +614,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           []
         );
         const tabs = links(html)
-          .filter((link) => link.href.startsWith(cardPath(patch.name)))
+          .filter((link) => link.href.startsWith(cardPath(patch.name)) && !link.href.includes("#"))
           .map((link) => link.text);
         const settings = yield* request(`${cardPath(patch.name)}/settings`, person);
         if (person === workspace.member) {
@@ -2692,10 +2848,10 @@ it.layer(layer)("all patches on a socket", (it) => {
         );
       const opening = "office-map Open in a new tab Copy link About this patch";
       assert.strictEqual(menus.get(workspace.member), opening);
-      assert.strictEqual(menus.get(workspace.owner), `${opening} Settings Retire… Delete…`);
+      assert.strictEqual(menus.get(workspace.owner), `${opening} Share Settings Retire… Delete…`);
       assert.strictEqual(
         menus.get(workspace.admin),
-        `${opening} Settings Reassign… Retire… Delete…`
+        `${opening} Share Settings Reassign… Retire… Delete…`
       );
       // Each item says whose it is, its visible label first.
       const named = yield* (yield* request("/patches", workspace.admin)).text;

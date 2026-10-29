@@ -10,7 +10,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
+import { agentTools, GuestShareRequest, PatchName, PatchState, SharingScope } from "@patchy/api";
 import {
   MachineTokens,
   pageResponse,
@@ -58,6 +58,7 @@ import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
 const maxNameLength = 32;
+const decodeGuestShare = Schema.decodeUnknownEffect(GuestShareRequest);
 const decodeDescription = Schema.decodeUnknownEffect(
   Schema.Struct({
     description: Schema.String,
@@ -215,6 +216,8 @@ const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: 
 type PageTab = Exclude<CardTab, "log">;
 const tabOf: Record<PatchAction, PageTab> = {
   description: "settings",
+  "guest-share": "settings",
+  "guest-revoke": "settings",
   scope: "settings",
   rollback: "versions",
   retire: "overview",
@@ -233,6 +236,8 @@ const render = Effect.fn("PortalPages.render")(function* (
     notice?: string;
     submittedDescription?: string;
     descriptionError?: string;
+    shareEmail?: string;
+    shareError?: string;
     /** No forms at all, for a refusal of a form that was rendered for another patch. */
     readOnly?: boolean;
   } = {}
@@ -259,7 +264,29 @@ const render = Effect.fn("PortalPages.render")(function* (
           card,
           viewer,
           submittedDescription: options.submittedDescription,
-          descriptionError: options.descriptionError
+          descriptionError: options.descriptionError,
+          guests: yield* patches
+            .namedGrants(card.patch.id, {
+              userId: viewer.user.id,
+              admin: viewer.role === "admin"
+            })
+            .pipe(
+              Effect.catchTags({
+                // The service shares the lifecycle error union; listing cannot mutate lifecycle.
+                HasDependants: Effect.die,
+                InvalidDescription: Effect.die,
+                InvalidOwner: Effect.die,
+                PatchDeleted: Effect.die,
+                PatchRetired: Effect.die,
+                ReservedName: Effect.die,
+                SourcesOff: Effect.die,
+                StaleAction: Effect.die,
+                VersionUnavailable: Effect.die
+              })
+            ),
+          publicBaseUrl: session.publicBaseUrl,
+          shareEmail: options.shareEmail,
+          shareError: options.shareError
         })
       : tab === "versions"
         ? renderVersions({ card, viewer, now })
@@ -746,13 +773,27 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   const landed = (receipt: string) =>
     Receipt.set(
       HttpServerResponse.redirect(
-        `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`,
+        `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}${action === "guest-share" || action === "guest-revoke" ? "#share" : ""}`,
         { status: 303, headers: { "cache-control": "private, no-store" } }
       ),
       { userId: viewer.user.id, text: receipt, publicBaseUrl: session.publicBaseUrl }
     );
   const run = Effect.gen(function* () {
     switch (action) {
+      case "guest-share": {
+        const fields = yield* decodeGuestShare({ email: (form.email ?? "").trim() });
+        yield* patches.shareGuest(selected.patch.id, fields.email, actor);
+        return landed(`Shared ${title} with ${fields.email}. Send them the patch link.`);
+      }
+      case "guest-revoke": {
+        const grant = yield* patches.revokeGuest(selected.patch.id, form.guestId ?? "", actor);
+        if (grant === null)
+          return yield* redisplay(
+            404,
+            "This guest has no active grant to revoke. Nothing was done."
+          );
+        return landed(`Revoked guest access to ${title}`);
+      }
       case "description": {
         const fields = yield* decodeDescription(form);
         yield* patches.setDescription(
@@ -848,6 +889,8 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       notice: `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
     });
   });
+  const shareRefused = (status: number, notice: string) =>
+    render(name, { tab: "settings", status, shareEmail: form.email ?? "", shareError: notice });
   const invalid = (notice: string) =>
     confirmation === undefined
       ? render(name, {
@@ -860,6 +903,17 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       : redisplay(422, notice);
   return yield* run.pipe(
     Effect.catchTags({
+      AccountUnknown: (error) => shareRefused(409, error.message),
+      GuestPatchIneligible: (error) => shareRefused(409, error.message),
+      GuestAlreadyMember: (error) => shareRefused(409, error.message),
+      GuestAlreadyExists: (error) => shareRefused(409, error.message),
+      GrantGuestUnavailable: (error) => shareRefused(409, error.message),
+      GrantGuestDeactivated: (error) => shareRefused(409, error.message),
+      AlreadyGranted: (error) => shareRefused(409, error.message),
+      SqlError: (error) =>
+        action === "guest-share"
+          ? shareRefused(503, "Sharing is unavailable. Try again later.")
+          : Effect.fail(error),
       StaleAction: () => stale(),
       NotOwner: () => render(name, { status: 403, notice: forbidden }),
       AdminRequired: () => render(name, { status: 403, notice: adminRequired }),
@@ -871,7 +925,10 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       SourcesOff: () => redisplay(409, "Some sources are off. Nothing was done."),
       InvalidDescription: (error) => invalid(`${error.message} Nothing was done.`),
       Tier2NotPublic: (error) => invalid(`${error.message} Nothing was done.`),
-      SchemaError: () => invalid("Check the submitted fields and try again. Nothing was done."),
+      SchemaError: () =>
+        action === "guest-share"
+          ? shareRefused(422, "Enter an existing Patchy account email.")
+          : invalid("Check the submitted fields and try again. Nothing was done."),
       VersionUnavailable: (error) => invalid(`${error.message} Nothing was done.`),
       HasDependants: () =>
         redisplay(
@@ -911,6 +968,7 @@ export const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRes
 const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   app.pipe(
     Effect.catchTags({
+      NotOwner: () => errorPage(403, "Sharing refused", forbidden),
       PatchUnavailable: () =>
         errorPage(404, "Patch not found", "The requested patch is unavailable."),
       WrongState: () =>
@@ -1014,13 +1072,23 @@ const patchRoutes = [
     path: `/patches/:name/${action}` as const,
     handle: (name: string) => confirmationPage(name, action)
   })),
-  ...(["description", "scope", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
-    (action) => ({
-      method: "POST" as const,
-      path: `/patches/:name/${action}` as const,
-      handle: (name: string) => post(name, action)
-    })
-  )
+  ...(
+    [
+      "description",
+      "scope",
+      "rollback",
+      "retire",
+      "delete",
+      "restore",
+      "reassign",
+      "guest-share",
+      "guest-revoke"
+    ] as const
+  ).map((action) => ({
+    method: "POST" as const,
+    path: `/patches/:name/${action}` as const,
+    handle: (name: string) => post(name, action)
+  }))
 ];
 
 export const layer: Layer.Layer<

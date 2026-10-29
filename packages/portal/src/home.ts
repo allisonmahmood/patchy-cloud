@@ -1,3 +1,4 @@
+import { guestShareable, sharePath } from "./share.js";
 import type { RequireSession } from "@patchy/auth";
 import {
   copyLine,
@@ -159,7 +160,10 @@ export const renderHome = (input: HomeInput): string => {
     rowMenu(`${shelf}-${row.patch.id}`, patchTitle(row.patch), [
       ...openItems(row.patch, input.publicBaseUrl),
       ...(manages(row, viewer)
-        ? [menuLink(`/patches/${encodeURIComponent(row.patch.name)}/settings`, "Settings")]
+        ? [
+            ...(guestShareable(row) ? [menuLink(sharePath(row.patch), "Share")] : []),
+            menuLink(`/patches/${encodeURIComponent(row.patch.name)}/settings`, "Settings")
+          ]
         : [])
     ]);
   const toolRow = (row: Patches.ReadPatch) =>

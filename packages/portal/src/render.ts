@@ -1,3 +1,4 @@
+import { guestShareable, renderShare, sharePath, type NamedGuest } from "./share.js";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import type { AgentTool } from "@patchy/api";
@@ -27,6 +28,8 @@ export const styles = `
   .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portal-stop-actions > div { display: grid; align-content: start; }
   .portal-address { align-items: center; }
+  .share-guest { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+  .share-guest form { margin: 0; }
   .portal-subpage { max-width: 760px; margin-inline: auto; }
   .portal-table { overflow-x: auto; }
   .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
@@ -69,7 +72,8 @@ export const refusal = (notice: string | undefined) =>
     : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
 
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
-export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAction;
+export type PatchAction =
+  "description" | "scope" | "rollback" | "guest-share" | "guest-revoke" | ConfirmationAction;
 
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
 const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
@@ -228,7 +232,7 @@ export const renderCardFrame = (input: {
     title === patch.name
       ? ""
       : `<p class="supporting-text"><code>${escapeHtml(patch.name)}</code></p>`;
-  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="actions portal-card-act">${act}${!input.readOnly && canManage(card, viewer) && guestShareable(card) ? `<a class="btn" href="${escapeAttribute(sharePath(patch))}">Share</a>` : ""}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
   return input.panel ? `<div class="card-split">${article}${input.panel}</div>` : article;
 };
 
@@ -313,6 +317,10 @@ export const renderSettings = (input: {
   readonly viewer: Viewer;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
+  readonly guests: readonly NamedGuest[];
+  readonly publicBaseUrl: string;
+  readonly shareEmail?: string;
+  readonly shareError?: string;
 }): string => {
   const { card, viewer } = input;
   const { patch } = card;
@@ -339,7 +347,7 @@ export const renderSettings = (input: {
       : input.submittedDescription
         ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
         : "";
-  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
+  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${renderShare({ card, guests: input.guests, publicBaseUrl: input.publicBaseUrl, email: input.shareEmail, error: input.shareError })}${stop}`;
 };
 
 /**
@@ -349,7 +357,7 @@ export const renderSettings = (input: {
 export const renderPublicConfirmation = (patch: Patches.Patch): string => {
   const title = escapeHtml(patchTitle(patch));
   const settings = escapeAttribute(cardPath(patch, "settings"));
-  return `<article class="portal-subpage"><p><a href="${settings}">Back to settings</a></p><h1 class="page-heading">Make ${title} public?</h1>${actionForm(patch, "scope", "confirmation-form")}${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${hidden("confirm", "public")}<p class="confirmation-consequence">Anyone with the link can open it without signing in.</p><div class="confirmation-actions"><button class="btn btn-primary" type="submit" aria-label="Make ${title} public">Make public</button><a class="btn btn-quiet" href="${settings}">Cancel</a></div></form></article>`;
+  return `<article class="portal-subpage"><p><a href="${settings}">Back to settings</a></p><h1 class="page-heading">Make ${title} public?</h1>${actionForm(patch, "scope", "confirmation-form")}${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${hidden("confirm", "public")}<p class="confirmation-consequence">Anyone with the link can open it without signing in. Named guest grants will end. Making it private again requires fresh grants.</p><div class="confirmation-actions"><button class="btn btn-primary" type="submit" aria-label="Make ${title} public">Make public</button><a class="btn btn-quiet" href="${settings}">Cancel</a></div></form></article>`;
 };
 
 /** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */

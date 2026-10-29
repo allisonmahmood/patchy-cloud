@@ -1,3 +1,4 @@
+import { guestShareable, sharePath } from "./share.js";
 import type { RequireSession } from "@patchy/auth";
 import {
   ago,
@@ -171,6 +172,7 @@ const actions = (row: Patches.ReadPatch, viewer: Viewer, publicBaseUrl: string, 
   if (!manages(row, viewer)) return rowMenu(patch.id, patchTitle(patch), items);
   const title = patchTitle(patch);
   const manage = [
+    ...(guestShareable(row) ? [menuLink(sharePath(patch), "Share", false, title)] : []),
     menuLink(cardPath(patch, "settings"), "Settings", false, title),
     ...(viewer.role === "admin"
       ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
