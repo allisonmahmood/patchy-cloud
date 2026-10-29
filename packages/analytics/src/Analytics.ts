@@ -128,6 +128,16 @@ export type AnalyticsCatalogue = Catalogue<{
     readonly previousScope: string;
   };
 
+  /** Named sharing committed. Principal: the owner/admin who granted or revoked. */
+  readonly "patch.guest_granted": PatchChange & {
+    readonly guestId: string;
+    readonly grantId: string;
+  };
+  readonly "patch.guest_revoked": PatchChange & {
+    readonly guestId: string;
+    readonly grantId: string;
+  };
+
   /** A live patch was taken out of service. Principal: the user who retired it. */
   readonly "patch.retired": PatchChange;
 

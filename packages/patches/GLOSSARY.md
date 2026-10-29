@@ -29,7 +29,7 @@ Who may open a patch: `company` means signed-in colleagues in its company; `publ
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:
-A durable, patch-scoped grant to one company guest identity. An active grant and an active relationship in the same company are both required for later guest admission; neither storage row currently opens a page. Deactivation suspends a grant without ending it. Revocation, making the patch public, ending the guest relationship, and permanent reclamation end grants with a retained reason and identity. An explicit later share creates a new grant ID; returning private or reusing a name never restores an old one.
+A durable, patch-scoped grant to one company guest identity. An active grant and an active relationship in the same company admit the current live private tier 0 page. Owners and company admins create grants by resolving an existing member/admin’s email in another company to its stable Clerk ID; no companyless recipient, invitation or signup path is included. The management API lists the latest grant and guest state per recipient, and revokes only the selected patch’s grant. Share and revoke report the real acting owner/admin through the existing audit path. Deactivation suspends a grant without ending it. Revocation, making the patch public, ending the guest relationship, and permanent reclamation end grants with a retained reason and identity. An explicit later share creates a new grant ID; returning private or reusing a name never restores an old one.
 _Avoid_: guest relationship (the company identity), invitation (v1 grants begin immediately), sharing scope (company or public)
 
 **Openable patch**:

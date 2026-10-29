@@ -167,6 +167,55 @@ Responses:
 - `422` { ok: false, error: string, code: "tier2_not_public" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+### `GET /api/patches/:patchId/grants`
+
+List the latest named grant per recipient for a patch, including terminal grants and guest deactivation/end state. Owner or company admin only. Includes stable guest/account identity; private, no-store.
+
+Responses:
+
+- `200` [NamedGrants](#namedgrants)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/patches/:patchId/grants`
+
+Share a current live company-private tier 0 patch with an existing member/admin of another Patchy company by email. The owner or a company admin may share. Resolves the existing membership at share time and binds immediately to its stable Clerk ID. No account, invitation or email is created. Unknown accounts, same-company members, ended/deactivated guests, duplicate active grants and ineligible patches answer 409 with a reason code. Lookup failure answers 503 and creates no guest authority. Non-owners answer 403; another company answers 404. Uses the protected API rate limit and the sharing body cap. The grant follows future eligible current versions; tiers 1 and 2 remain unavailable to guests.
+
+Request body: [GuestShareRequest](#guestsharerequest)
+
+Responses:
+
+- `200` [GuestShared](#guestshared)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "account_unknown" | "already_member" | "guest_unavailable" | "guest_deactivated" | "already_granted" | "patch_ineligible" }
+- `413` { ok: false, error: string }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` { ok: false, error: string, code: "account_lookup_unavailable" }
+
+### `DELETE /api/patches/:patchId/grants/:guestId`
+
+Owner or company admin revokes only this recipient's active patch grant. An absent active grant answers 404. Other grants and company membership remain unchanged. Revocation remains available for retired, deleted or public patches; a later explicit share creates a fresh grant. Grant and revoke record the acting owner/admin through the existing audit path.
+
+Responses:
+
+- `200` [GuestShared](#guestshared)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchId/retire`
 
 Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
@@ -1006,6 +1055,54 @@ RuntimeSuccess | HandlerFailure
   patchId: string,
   state: "retired",
   retiredAt: string
+}
+```
+
+### GuestShared
+
+```
+{
+  ok: true,
+  patchId: string,
+  grantId: string,
+  guestId: string
+}
+```
+
+### NamedGrants
+
+```
+{
+  ok: true,
+  patchId: string,
+  grants: NamedGrant[]
+}
+```
+
+### NamedGrant
+
+```
+{
+  id: string,
+  companyId: string,
+  patchId: string,
+  guestId: string,
+  clerkUserId: string,
+  email: string,
+  name: string,
+  grantedAt: string,
+  endedAt: string | null,
+  endReason: "revoked" | "public" | "reclaimed" | "guest_ended" | null,
+  guestDeactivatedAt: string | null,
+  guestEndedAt: string | null
+}
+```
+
+### GuestShareRequest
+
+```
+{
+  email: string
 }
 ```
 

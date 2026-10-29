@@ -59,6 +59,11 @@ import {
   refuse,
   Shared,
   ShareRequest,
+  GuestShareRequest,
+  GuestShareRefused,
+  AccountLookupUnavailable,
+  NamedGrants,
+  GuestShared,
   Manifest,
   PublishRequest,
   PublishRefused,
@@ -89,6 +94,7 @@ const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
+const decodeGuestShare = decodeBody(GuestShareRequest);
 const encodeLog = Schema.encodeSync(PatchLog);
 const readHeaders = { "cache-control": "private, no-store" };
 const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) =>
@@ -963,6 +969,107 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             patchId: params.patchId,
             scope: shared.scope,
             publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
+          });
+        })
+      )
+      .handleRaw("shareGuest", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeGuestShare),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          const refused = (code: typeof GuestShareRefused.Type.code, error: string) =>
+            Effect.succeed(refuse(GuestShareRefused, { ok: false, code, error }));
+          const grant = yield* patches
+            .shareGuest(params.patchId, payload.email, {
+              userId: identity.user.id,
+              admin: identity.role === "admin"
+            })
+            .pipe(
+              Effect.provideService(Users.Users, users),
+              Effect.catchTags({
+                ...ownerFailures,
+                AccountUnknown: (error) => refused("account_unknown", error.message),
+                GuestPatchIneligible: (error) => refused("patch_ineligible", error.message),
+                GuestAlreadyMember: (error) => refused("already_member", error.message),
+                GuestAlreadyExists: (error) => refused("guest_unavailable", error.message),
+                GrantGuestUnavailable: (error) => refused("guest_unavailable", error.message),
+                GrantGuestDeactivated: (error) => refused("guest_deactivated", error.message),
+                AlreadyGranted: (error) => refused("already_granted", error.message),
+                SqlError: () =>
+                  Effect.succeed(
+                    refuse(AccountLookupUnavailable, {
+                      ok: false,
+                      code: "account_lookup_unavailable",
+                      error: "Sharing is unavailable. Try again later."
+                    })
+                  )
+              })
+            );
+          if (HttpServerResponse.isHttpServerResponse(grant)) return grant;
+          yield* WideEvents.enrich({
+            patchId: params.patchId,
+            guestId: grant.guestId,
+            grantId: grant.id
+          });
+          return new GuestShared({
+            ok: true,
+            patchId: params.patchId,
+            grantId: grant.id,
+            guestId: grant.guestId
+          });
+        })
+      )
+      .handleRaw("namedGrants", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const grants = yield* patches
+            .namedGrants(params.patchId, {
+              userId: identity.user.id,
+              admin: identity.role === "admin"
+            })
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(grants)) return grants;
+          yield* WideEvents.enrich({ patchId: params.patchId });
+          return HttpServerResponse.jsonUnsafe(
+            new NamedGrants({
+              ok: true,
+              patchId: params.patchId,
+              grants: grants.map((grant) => ({
+                ...grant,
+                grantedAt: grant.grantedAt.toISOString(),
+                endedAt: grant.endedAt?.toISOString() ?? null,
+                guestDeactivatedAt: grant.guestDeactivatedAt?.toISOString() ?? null,
+                guestEndedAt: grant.guestEndedAt?.toISOString() ?? null
+              }))
+            }),
+            { headers: readHeaders }
+          );
+        })
+      )
+      .handleRaw("revokeGuest", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const grant = yield* patches
+            .revokeGuest(params.patchId, params.guestId, {
+              userId: identity.user.id,
+              admin: identity.role === "admin"
+            })
+            .pipe(Effect.catchTags(ownerFailures));
+          if (HttpServerResponse.isHttpServerResponse(grant)) return grant;
+          if (grant === null) return notFound();
+          yield* WideEvents.enrich({
+            patchId: params.patchId,
+            guestId: grant.guestId,
+            grantId: grant.id
+          });
+          return new GuestShared({
+            ok: true,
+            patchId: params.patchId,
+            grantId: grant.id,
+            guestId: grant.guestId
           });
         })
       )

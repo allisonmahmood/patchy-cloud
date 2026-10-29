@@ -36,6 +36,8 @@ const attribution = {
   patchId: Schema.optionalKey(Schema.String),
   versionId: Schema.optionalKey(Schema.String),
   viewerId: Schema.optionalKey(Schema.String),
+  guestId: Schema.optionalKey(Schema.String),
+  grantId: Schema.optionalKey(Schema.String),
   handler: Schema.optionalKey(Schema.String),
   kind: Schema.optionalKey(Schema.Literals(["query", "mutation", "action"])),
   tier: Schema.optionalKey(Schema.Literals([0, 1, 2, 3])),

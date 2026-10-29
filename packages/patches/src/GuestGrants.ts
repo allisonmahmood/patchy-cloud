@@ -173,3 +173,28 @@ export const lookup = Effect.fn("GuestGrants.lookup")(function* (input: Ref) {
             : "unavailable";
   return { grant, access } satisfies Lookup;
 });
+
+/** Latest grant per recipient, retaining terminal and suspended states for management. */
+export const NamedGrant = Schema.Struct({
+  ...Grant.fields,
+  clerkUserId: Schema.String,
+  email: Schema.String,
+  name: Schema.String,
+  guestDeactivatedAt: Schema.NullOr(Schema.Date),
+  guestEndedAt: Schema.NullOr(Schema.Date)
+});
+export const list = Effect.fn("GuestGrants.list")(function* (patchId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: NamedGrant,
+    execute: (id) => sql`SELECT DISTINCT ON (g.guest_id)
+      g.id, g.company_id AS "companyId", g.patch_id AS "patchId", g.guest_id AS "guestId",
+      g.granted_at AS "grantedAt", g.ended_at AS "endedAt", g.end_reason AS "endReason",
+      guest.clerk_user_id AS "clerkUserId", guest.email, guest.name,
+      guest.deactivated_at AS "guestDeactivatedAt", guest.ended_at AS "guestEndedAt"
+      FROM patch_guest_grants g JOIN company_guests guest ON guest.id = g.guest_id
+      WHERE g.patch_id = ${id} ORDER BY g.guest_id, g.grant_number DESC`
+  });
+  return yield* rows(patchId).pipe(Effect.catchTags(dieOnSchemaError));
+});

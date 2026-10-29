@@ -29,6 +29,7 @@ import {
   NameTaken,
   NotAdditive,
   PatchInventory,
+  PatchId,
   PatchLog,
   LOG_PAGE_MAX,
   PatchSummary,
@@ -61,6 +62,11 @@ import {
   RequestTargetTooLong,
   Shared,
   ShareRequest,
+  GuestShareRequest,
+  GuestShareRefused,
+  AccountLookupUnavailable,
+  NamedGrants,
+  GuestShared,
   StartDeviceLoginRequest,
   Unauthorized,
   PublishCreated,
@@ -430,6 +436,43 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The JSON body is bounded by three times `PATCHY_MAX_HTML_BYTES`; the larger scripted-bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
+      )
+    ),
+    HttpApiEndpoint.post("shareGuest", "/patches/:patchId/grants", {
+      params: patchParams,
+      payload: GuestShareRequest,
+      success: GuestShared,
+      error: [...ownerRouteErrors, GuestShareRefused, AccountLookupUnavailable, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Share a current live company-private tier 0 patch with an existing member/admin of another Patchy company by email. " +
+          "The owner or a company admin may share. Resolves the existing membership at share time and binds immediately to its stable Clerk ID. " +
+          "No account, invitation or email is created. Unknown accounts, same-company members, ended/deactivated guests, duplicate active grants " +
+          "and ineligible patches answer 409 with a reason code. Lookup failure answers 503 and creates no guest authority. " +
+          "Non-owners answer 403; another company answers 404. Uses the protected API rate limit and the sharing body cap. " +
+          "The grant follows future eligible current versions; tiers 1 and 2 remain unavailable to guests."
+      )
+    ),
+    HttpApiEndpoint.get("namedGrants", "/patches/:patchId/grants", {
+      params: patchParams,
+      success: NamedGrants,
+      error: ownerRouteErrors
+    }).annotateMerge(
+      describe(
+        "List the latest named grant per recipient for a patch, including terminal grants and guest deactivation/end state. " +
+          "Owner or company admin only. Includes stable guest/account identity; private, no-store."
+      )
+    ),
+    HttpApiEndpoint.delete("revokeGuest", "/patches/:patchId/grants/:guestId", {
+      params: Schema.Struct({ patchId: PatchId, guestId: Schema.String }),
+      success: GuestShared,
+      error: ownerRouteErrors
+    }).annotateMerge(
+      describe(
+        "Owner or company admin revokes only this recipient's active patch grant. " +
+          "An absent active grant answers 404. Other grants and company membership remain unchanged. " +
+          "Revocation remains available for retired, deleted or public patches; a later explicit share creates a fresh grant. " +
+          "Grant and revoke record the acting owner/admin through the existing audit path."
       )
     ),
     HttpApiEndpoint.post("retire", "/patches/:patchId/retire", {

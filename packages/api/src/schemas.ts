@@ -998,6 +998,49 @@ export class Shared extends Schema.Class<Shared>("Shared")({
   publicUrl: Schema.String
 }) {}
 
+/** Existing-account named sharing; no invitation or recipient acceptance. */
+export class GuestShareRequest extends Schema.Class<GuestShareRequest>("GuestShareRequest")({
+  email: Schema.String.check(Schema.isMaxLength(320), Schema.isPattern(/^[^@\s]+@[^@\s]+$/))
+}) {}
+export class NamedGrant extends Schema.Class<NamedGrant>("NamedGrant")({
+  id: Schema.String,
+  companyId: Schema.String,
+  patchId: PatchId,
+  guestId: Schema.String,
+  clerkUserId: Schema.String,
+  email: Schema.String,
+  name: Schema.String,
+  grantedAt: Schema.String,
+  endedAt: Schema.NullOr(Schema.String),
+  endReason: Schema.NullOr(Schema.Literals(["revoked", "public", "reclaimed", "guest_ended"])),
+  guestDeactivatedAt: Schema.NullOr(Schema.String),
+  guestEndedAt: Schema.NullOr(Schema.String)
+}) {}
+export class NamedGrants extends Schema.Class<NamedGrants>("NamedGrants")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  grants: Schema.Array(NamedGrant)
+}) {}
+export class GuestShared extends Schema.Class<GuestShared>("GuestShared")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  grantId: Schema.String,
+  guestId: Schema.String
+}) {}
+export const GuestShareRefused = failure(409, {
+  code: Schema.Literals([
+    "account_unknown",
+    "already_member",
+    "guest_unavailable",
+    "guest_deactivated",
+    "already_granted",
+    "patch_ineligible"
+  ])
+});
+export const AccountLookupUnavailable = failure(503, {
+  code: Schema.Literal("account_lookup_unavailable")
+});
+
 export class ForceRequest extends Schema.Class<ForceRequest>("ForceRequest")({
   force: Schema.optionalKey(Schema.Boolean)
 }) {}

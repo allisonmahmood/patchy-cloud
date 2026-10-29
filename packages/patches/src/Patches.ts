@@ -42,6 +42,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
+import { Guests, Users } from "@patchy/companies";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
 import { Wakes } from "@patchy/runtime/core";
@@ -55,6 +56,20 @@ const decodeDescription = Schema.decodeUnknownEffect(DescriptionText);
 const decodeResponseBodies = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ responseBody: Schema.String }))
 );
+
+export class AccountUnknown extends Schema.TaggedError<AccountUnknown>()("AccountUnknown", {}) {
+  override get message() {
+    return "This email has no existing Patchy membership.";
+  }
+}
+export class GuestPatchIneligible extends Schema.TaggedError<GuestPatchIneligible>()(
+  "GuestPatchIneligible",
+  { patchId: Schema.String }
+) {
+  override get message() {
+    return "Named sharing requires a current live company-private tier 0 patch.";
+  }
+}
 
 /** Deleted patches can be restored strictly before this window closes. */
 export const RECOVERY_WINDOW = Duration.days(30);
@@ -851,6 +866,30 @@ export class Patches extends Context.Service<
       | GuestGrants.GuestDeactivated
       | GuestGrants.AlreadyGranted
       | SqlError
+    >;
+    readonly shareGuest: (
+      patchId: string,
+      email: string,
+      actor: Actor
+    ) => Effect.Effect<
+      GuestGrants.Grant,
+      | LifecycleError
+      | AccountUnknown
+      | GuestPatchIneligible
+      | Guests.AlreadyMember
+      | Guests.GuestAlreadyExists
+      | GuestGrants.GuestUnavailable
+      | GuestGrants.GuestDeactivated
+      | GuestGrants.AlreadyGranted
+      | SqlError,
+      Users.Users
+    >;
+    readonly namedGrants: (
+      patchId: string,
+      actor: Actor
+    ) => Effect.Effect<
+      ReadonlyArray<typeof GuestGrants.NamedGrant.Type>,
+      LifecycleError | SqlError
     >;
     /** End the active grant, retaining its ID and the guest identity. */
     readonly revokeGuest: (
@@ -2324,6 +2363,45 @@ export const make = Effect.gen(function* () {
     };
   }, withLifecycleTransaction);
 
+  const shareGuest = Effect.fn("Patches.shareGuest")(function* (
+    patchId: string,
+    email: string,
+    actor: Actor
+  ) {
+    const patch = yield* manageable(patchId, actor);
+    if (stateOf(patch) !== "live" || patch.scope !== "company" || patch.currentVersionId === null)
+      return yield* new GuestPatchIneligible({ patchId });
+    const version = yield* findVersionById({ patchId, versionId: patch.currentVersionId }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    );
+    if (Option.isNone(version) || version.value.tier !== 0)
+      return yield* new GuestPatchIneligible({ patchId });
+    const account = yield* (yield* Users.Users).findByEmail(email.trim());
+    if (account === null) return yield* new AccountUnknown();
+    // Serialize with member conversion and concurrent shares before finding/creating the guest.
+    yield* sql`SELECT companies_guest_member_lock(${patch.companyId}, ${account.clerkUserId})`;
+    const member =
+      yield* sql`SELECT id FROM users WHERE company_id = ${patch.companyId} AND clerk_user_id = ${account.clerkUserId}`;
+    if (member.length > 0)
+      return yield* new Guests.AlreadyMember({
+        companyId: patch.companyId,
+        clerkUserId: account.clerkUserId
+      });
+    const input = { ...account, companyId: patch.companyId };
+    const guest = yield* Guests.refreshClaims(input).pipe(
+      Effect.flatMap((existing) =>
+        existing === null ? Guests.create(input) : Effect.succeed(existing)
+      ),
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+    return yield* grantGuest(patchId, guest.id, actor);
+  }, withLifecycleTransaction);
+
+  const namedGrants = Effect.fn("Patches.namedGrants")(function* (patchId: string, actor: Actor) {
+    yield* manageable(patchId, actor);
+    return yield* GuestGrants.list(patchId).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+  }, withLifecycleTransaction);
+
   const grantGuest = Effect.fn("Patches.grantGuest")(function* (
     patchId: string,
     guestId: string,
@@ -2333,9 +2411,16 @@ export const make = Effect.gen(function* () {
     if (stateOf(patch) !== "live") return yield* new WrongState({ state: stateOf(patch) });
     if (patch.scope !== "company" || patch.currentVersionId === null)
       return yield* new PatchUnavailable({ patchId });
-    return yield* GuestGrants.grant({ companyId: patch.companyId, patchId, guestId }).pipe(
+    const grant = yield* GuestGrants.grant({ companyId: patch.companyId, patchId, guestId }).pipe(
       Effect.provideService(SqlClient.SqlClient, sql)
     );
+    yield* report({
+      name: "patch.guest_granted",
+      principalId: actor.userId,
+      companyId: patch.companyId,
+      properties: { ...changed(patch, actor), grantId: grant.id, guestId }
+    });
+    return grant;
   }, withLifecycleTransaction);
 
   const revokeGuest = Effect.fn("Patches.revokeGuest")(function* (
@@ -2344,9 +2429,17 @@ export const make = Effect.gen(function* () {
     actor: Actor
   ) {
     const patch = yield* manageable(patchId, actor);
-    return yield* GuestGrants.revoke({ companyId: patch.companyId, patchId, guestId }).pipe(
+    const grant = yield* GuestGrants.revoke({ companyId: patch.companyId, patchId, guestId }).pipe(
       Effect.provideService(SqlClient.SqlClient, sql)
     );
+    if (grant !== null)
+      yield* report({
+        name: "patch.guest_revoked",
+        principalId: actor.userId,
+        companyId: patch.companyId,
+        properties: { ...changed(patch, actor), grantId: grant.id, guestId }
+      });
+    return grant;
   }, withLifecycleTransaction);
 
   const guestGrant = Effect.fn("Patches.guestGrant")(
@@ -2733,6 +2826,8 @@ export const make = Effect.gen(function* () {
     completeObject,
     record,
     setScope,
+    shareGuest,
+    namedGrants,
     grantGuest,
     revokeGuest,
     guestGrant,

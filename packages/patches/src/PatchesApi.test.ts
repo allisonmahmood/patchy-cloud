@@ -33,6 +33,7 @@ import {
   PatchyApi,
   PatchesGroup,
   ShareRequest,
+  GuestShareRequest,
   ForceRequest,
   DescriptionRequest,
   RollbackRequest,
@@ -45,7 +46,7 @@ import {
   sharedTableId,
   sharedStoreId
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Guests, Looks, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -3791,6 +3792,259 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
         ids.slice(2)
       );
       assert.strictEqual(rest.next, null);
+    })
+  );
+});
+
+it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
+  it.effect(
+    "grants immediately by stable membership identity, lists and revokes only that patch with actor attribution",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const administrator = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const { user: recipient } = yield* (yield* Companies.Companies).create({
+          handle: "named-recipient",
+          name: "Recipient company",
+          clerkUserId: "clerk_named_recipient",
+          email: "recipient@named.example",
+          userName: "Recipient"
+        });
+        const first = yield* owner.publish({
+          payload: publishRequest({ html: html("Named first") })
+        });
+        const second = yield* owner.publish({
+          payload: publishRequest({ html: html("Named second") })
+        });
+        const params = { patchId: first.patchId };
+        const granted = yield* owner.shareGuest({
+          params,
+          payload: new GuestShareRequest({ email: "RECIPIENT@NAMED.EXAMPLE" })
+        });
+        const other = yield* administrator.shareGuest({
+          params: { patchId: second.patchId },
+          payload: new GuestShareRequest({ email: recipient.email })
+        });
+        const listing = yield* owner.namedGrants({ params });
+        assert.lengthOf(listing.grants, 1);
+        const named = listing.grants[0]!;
+        assert.strictEqual(named.clerkUserId, recipient.clerkUserId);
+        assert.strictEqual(named.email, recipient.email);
+        assert.strictEqual(named.id, granted.grantId);
+        assert.isNull(named.endedAt);
+        assert.strictEqual(
+          (yield* patches.guestGrant(uploader.company.id, first.patchId, granted.guestId))?.access,
+          "active"
+        );
+        // A recipient's home-company deactivation does not end independent guest authority.
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${recipient.id}`;
+        const third = yield* owner.publish({
+          payload: publishRequest({ html: html("Named third") })
+        });
+        yield* owner.shareGuest({
+          params: { patchId: third.patchId },
+          payload: new GuestShareRequest({ email: recipient.email })
+        });
+        yield* administrator.revokeGuest({ params: { ...params, guestId: granted.guestId } });
+        assert.strictEqual(
+          (yield* patches.guestGrant(uploader.company.id, first.patchId, granted.guestId))?.access,
+          "revoked"
+        );
+        assert.strictEqual(
+          (yield* patches.guestGrant(uploader.company.id, second.patchId, other.guestId))?.access,
+          "active"
+        );
+        assert.strictEqual((yield* owner.namedGrants({ params })).grants[0]!.endReason, "revoked");
+        const audit = lifecycleEvents(first.patchId);
+        expect(
+          audit.map((event) => [event.name, event.principalId, event.companyId, event.properties])
+        ).toEqual([
+          [
+            "patch.guest_granted",
+            uploader.user.id,
+            uploader.company.id,
+            {
+              patchId: first.patchId,
+              ownerUserId: uploader.user.id,
+              byAdmin: false,
+              guestId: granted.guestId,
+              grantId: granted.grantId
+            }
+          ],
+          [
+            "patch.guest_revoked",
+            admin.user.id,
+            uploader.company.id,
+            {
+              patchId: first.patchId,
+              ownerUserId: uploader.user.id,
+              byAdmin: true,
+              guestId: granted.guestId,
+              grantId: granted.grantId
+            }
+          ]
+        ]);
+        // Changing the membership email leaves the old address unknown and preserves the Clerk binding.
+        yield* sql`UPDATE users SET email = 'renamed@named.example' WHERE id = ${recipient.id}`;
+        const fresh = yield* owner.shareGuest({
+          params,
+          payload: new GuestShareRequest({ email: "renamed@named.example" })
+        });
+        assert.strictEqual(fresh.guestId, granted.guestId);
+        assert.notStrictEqual(fresh.grantId, granted.grantId);
+        assert.strictEqual(
+          (yield* Guests.findById(fresh.guestId))?.clerkUserId,
+          recipient.clerkUserId
+        );
+      })
+  );
+
+  it.effect(
+    "refuses unknown/companyless, same-company, unauthorized, duplicate, deactivated/ended guests and ineligible patches without new authority",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const sql = yield* SqlClient.SqlClient;
+        const { user: recipient } = yield* (yield* Companies.Companies).create({
+          handle: "named-refusals",
+          name: "Refusal company",
+          clerkUserId: "clerk_named_refusals",
+          email: "refusals@named.example",
+          userName: "Recipient"
+        });
+        const patch = yield* owner.publish({
+          payload: publishRequest({ html: html("Named refusals") })
+        });
+        const params = { patchId: patch.patchId };
+        const share = (email: string) =>
+          owner.shareGuest({
+            params,
+            payload: new GuestShareRequest({ email }),
+            responseMode: "response-only"
+          });
+        for (const [email, code] of [
+          ["unknown@named.example", "account_unknown"],
+          [reader.user.email, "already_member"]
+        ]) {
+          const response = yield* share(email!);
+          assert.strictEqual(response.status, 409);
+          expect(yield* response.json).toMatchObject({ code });
+        }
+        // A guest-only identity is not a Patchy member and must not bootstrap another guest share.
+        yield* Guests.create({
+          companyId: uploader.company.id,
+          clerkUserId: "clerk_companyless",
+          email: "companyless@named.example",
+          name: "No membership"
+        });
+        const companyless = yield* share("companyless@named.example");
+        assert.strictEqual(companyless.status, 409);
+        expect(yield* companyless.json).toMatchObject({ code: "account_unknown" });
+        for (const response of [
+          yield* nonOwner.shareGuest({
+            params,
+            payload: new GuestShareRequest({ email: recipient.email }),
+            responseMode: "response-only"
+          }),
+          yield* nonOwner.namedGrants({ params, responseMode: "response-only" }),
+          yield* nonOwner.revokeGuest({
+            params: { ...params, guestId: "gst_missing" },
+            responseMode: "response-only"
+          })
+        ])
+          assert.strictEqual(response.status, 403);
+        assert.lengthOf((yield* owner.namedGrants({ params })).grants, 0);
+        const unknownGuest = yield* Guests.find({
+          companyId: uploader.company.id,
+          clerkUserId: recipient.clerkUserId
+        });
+        assert.isNull(unknownGuest);
+        const first = yield* owner.shareGuest({
+          params,
+          payload: new GuestShareRequest({ email: recipient.email })
+        });
+        const duplicate = yield* share(recipient.email);
+        assert.strictEqual(duplicate.status, 409);
+        expect(yield* duplicate.json).toMatchObject({ code: "already_granted" });
+        yield* Guests.setDeactivated({
+          companyId: uploader.company.id,
+          clerkUserId: recipient.clerkUserId,
+          deactivated: true
+        });
+        const deactivated = yield* share(recipient.email);
+        assert.strictEqual(deactivated.status, 409);
+        expect(yield* deactivated.json).toMatchObject({ code: "guest_deactivated" });
+        yield* Guests.end({ companyId: uploader.company.id, clerkUserId: recipient.clerkUserId });
+        const ended = yield* share(recipient.email);
+        assert.strictEqual(ended.status, 409);
+        expect(yield* ended.json).toMatchObject({ code: "guest_unavailable" });
+        for (const state of ["public", "retired", "deleted", "tier1", "tier2"] as const) {
+          const ineligible = yield* owner.publish({
+            payload: publishRequest({ html: html(`Ineligible ${state}`) })
+          });
+          const options = { params: { patchId: ineligible.patchId } };
+          if (state === "public")
+            yield* owner.share({ ...options, payload: new ShareRequest({ scope: "public" }) });
+          if (state === "retired")
+            yield* owner.retire({ ...options, payload: new ForceRequest({}) });
+          if (state === "deleted") yield* owner.delete({ ...options, query: {} });
+          if (state === "tier1" || state === "tier2")
+            yield* sql`UPDATE patch_versions SET tier = ${state === "tier1" ? 1 : 2} WHERE id = ${ineligible.versionId}`;
+          const response = yield* owner.shareGuest({
+            ...options,
+            payload: new GuestShareRequest({ email: "unknown@named.example" }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 409);
+          expect(yield* response.json).toMatchObject({ code: "patch_ineligible" });
+          assert.lengthOf((yield* owner.namedGrants(options)).grants, 0);
+        }
+        assert.lengthOf(
+          lifecycleEvents(patch.patchId),
+          1,
+          "refusals emit no successful audit events"
+        );
+        assert.strictEqual((yield* owner.namedGrants({ params })).grants[0]!.id, first.grantId);
+      })
+  );
+
+  it.effect("fails closed when membership lookup fails", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const patch = yield* owner.publish({
+        payload: publishRequest({ html: html("Lookup unavailable") })
+      });
+      const users = yield* Users.Users;
+      const failingUsers = Layer.succeed(
+        Users.Users,
+        Users.Users.of({
+          ...users,
+          findByEmail: () =>
+            Effect.fail(
+              new SqlError({ reason: new ConnectionError({ cause: "lookup unavailable" }) })
+            )
+        })
+      );
+      const failingApi = yield* client.pipe(
+        Effect.provide(Fixtures.as(uploader)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(Layer.provide(failingUsers), Layer.provide(publishConfig()))
+          )
+        )
+      );
+      const response = yield* failingApi.shareGuest({
+        params: { patchId: patch.patchId },
+        payload: new GuestShareRequest({ email: "recipient@named.example" }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 503);
+      expect(yield* response.json).toMatchObject({ code: "account_lookup_unavailable" });
+      assert.lengthOf((yield* owner.namedGrants({ params: { patchId: patch.patchId } })).grants, 0);
+      assert.lengthOf(lifecycleEvents(patch.patchId), 0);
     })
   );
 });
