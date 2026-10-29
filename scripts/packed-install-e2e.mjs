@@ -56,7 +56,7 @@ const published = (/** @type {string | undefined} */ patchId, /** @type {string}
   address: `${base}/example/quarterly-plan`,
   publicUrl: `${base}/example/quarterly-plan`,
   scope: "company",
-  tier: 0,
+  tier: 1,
   artifacts: {
     html: {
       sha256: createHash("sha256").update(html).digest("hex"),

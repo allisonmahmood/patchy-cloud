@@ -776,7 +776,7 @@ export function htmlPage(options: {
     .can-list-yes .list-row::before { content: "✓"; content: "✓" / ""; color: var(--green-ink); }
     .can-list-no .list-row::before { content: "✕"; content: "✕" / ""; color: var(--danger); }
     /* mono: a tool's two-letter mark, tinted from its name and turned like the glyph; mono-blue, mono-green and
-       mono-amber vary the tint. page-mark: a tier 0 page's ruled sheet in the same footprint. */
+       mono-amber vary the tint. page-mark: a page's ruled sheet in the same footprint. */
     .mono { display: inline-grid; place-items: center; flex: none; width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--yellow); color: var(--ink); font-size: .72rem; font-weight: 900; letter-spacing: .02em; line-height: 1; transform: rotate(-3deg); }
     .mono-blue { background: var(--tint-blue); }
     .mono-green { background: var(--tint-green); }

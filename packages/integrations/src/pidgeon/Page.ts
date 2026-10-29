@@ -3,7 +3,7 @@ import {
   choiceCards,
   escapeAttribute,
   escapeHtml,
-  patchMark,
+  monogram,
   tileOptions,
   type TileOption
 } from "@patchy/core";
@@ -198,7 +198,7 @@ const tiles = (addresses: ReadonlyArray<Keys.Address>, domains: ReadonlyArray<st
       value: address.id,
       name: address.email,
       text: `${address.displayName === null ? "" : `${address.displayName} · `}${address.hasInbox ? policyLabel(address.sendPolicy) : "no inbox, can't be connected"}`,
-      mark: patchMark(address.email.slice(0, address.email.indexOf("@")), 1),
+      mark: monogram(address.email.slice(0, address.email.indexOf("@"))),
       disabled: !address.hasInbox,
       data: { email: address.email, policy: address.sendPolicy }
     })),

@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes single HTML files as tier 1 pages, and tier 1 and 2 repos; a repo still configured at tier 0 is refused until it moves to tier 1. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -59,7 +59,7 @@ are synchronous; there is no React scheduler.
 Tiers 1 and 2 start with `src/main.tsx` and `src/App.tsx`, an empty HTML root, and
 matching JSX settings. `pnpm lint` checks hooks, including `useQuery`, and refuses
 React or direct Preact imports. No router, CSS framework, state library or test
-runner is installed. Tier 0 is unchanged. Vanilla repos still use the
+runner is installed. Vanilla repos still use the
 framework-free generated client; refresh never replaces application source.
 The starter shows pending reads and saves, ignores an initial read after unmount,
 and prevents writes while the initial read or a save is pending.
@@ -525,7 +525,7 @@ instance's release tarball as described above.
 
 | command                                                                                                                                                                                                                                                                                                         | behaviour                                                                                                                                                                                                                                                                 | `--json` success                                                                                             |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `patchy init [dir] [--tier 0\|1\|2] [--purpose <text>]`                                                                                                                                                                                                                                                         | Authenticates first, prints instance and identity, refuses a CLI whose release differs from the instance's, then installs the release and generates a new repo. Tier 1 is the default; tier 2 adds handlers and its managed engine pin. An initialized target is refused. | `{ ok, dir, release, tier, generated, skills, installed }`                                                   |
+| `patchy init [dir] [--tier 1\|2] [--purpose <text>]`                                                                                                                                                                                                                                                            | Authenticates first, prints instance and identity, refuses a CLI whose release differs from the instance's, then installs the release and generates a new repo. Tier 1 is the default; tier 2 adds handlers and its managed engine pin. An initialized target is refused. | `{ ok, dir, release, tier, generated, skills, installed }`                                                   |
 | `patchy refresh`                                                                                                                                                                                                                                                                                                | Reconciles managed pins and generated files with the release and tier as one transaction, installing and re-executing a new CLI as needed.                                                                                                                                | `{ ok, release: { from, to }, changed: { pin, generated, skills, fixtures }, addedCapabilities, warnings }`  |
 | `patchy add postgres/<handle> [--as <alias>]`, `patchy add posthog/<handle> [--as <alias>]`, `patchy add pidgeon/<handle> [--as <alias>]`, `patchy add attio/<handle> [--as <alias>]`, `patchy add shared-table <patchId>/<table> [--as <alias>]` or `patchy add shared-store <patchId>/<store> [--as <alias>]` | Inserts one literal declaration into `uses` as one source edit, without changing imports, then generates client, context, missing fixture (none for PostHog, Pidgeon or Attio) and skill. An uneditable block names its source line and the declaration to add manually.  | `{ ok, alias, declaration, generated, skills, addedCapabilities, warnings }`                                 |
 | `patchy add members`                                                                                                                                                                                                                                                                                            | Adds the fixed `members` declaration, typed client and `patchy-members` skill. No id, revision stamp or fixture.                                                                                                                                                          | `{ ok, alias: "members", declaration: { kind: "members" }, generated, skills, addedCapabilities, warnings }` |
@@ -603,7 +603,7 @@ configured tier, so refresh can update that workflow without rewriting `AGENTS.m
 The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
 copy. Commands run `patchy.config.ts` with Node's built-in type stripping, so the
 config uses erasable TypeScript only: no `enum`, `namespace` or constructor
-parameter properties. `pnpm patchy dev` supports tiers 0, 1 and 2. Tiers 1 and 2 provide both
+parameter properties. `pnpm patchy dev` supports tiers 1 and 2, which provide both
 viewer mounts; tier 2 runs handlers against invented local data.
 
 To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
@@ -749,8 +749,7 @@ CSP, sandbox, broker and runtime admission are reused without Clerk or the
 production runtime log store. The primary URL uses the machine token's user;
 the colleague URL has a distinct origin and a fixed non-admin viewer in the
 same company. Both mounts share local tables, files, fixtures and subscriptions.
-Tier 0 adds only the trusted local reload script and its polling endpoint to its
-shell CSP and has no colleague URL. No connection keyring is loaded.
+No connection keyring is loaded.
 
 `patchy dev` runs the same handler engine and callback path as production.
 It does not reproduce production scheduling, operating capacity or containment. A handler
@@ -1079,7 +1078,7 @@ patchy setup --json
 
 ### `patchy validate <file>`
 
-Validate an HTML file locally without publishing. Exits non-zero if validation fails; prints warnings otherwise.
+Check an HTML file locally as publish would, without publishing: it must carry every resource it uses and fit the 10 MiB tier 1 cap. Inline script and style and `data:` URLs pass; a `<script src>`, `<link>`, or image, font, CSS `url()` or `@import` from an address is refused, each named. A page over the cap is `too_large`, with a largest-contributor report. Exits non-zero on a refusal; prints warnings otherwise.
 
 ```sh
 patchy validate ./plan.html
@@ -1087,7 +1086,7 @@ patchy validate ./plan.html
 
 ### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--api-url <url>]`
 
-First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
+First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then check the file as `validate` does, and publish it with a tier 1 manifest, empty `tables`, `files` and `uses`, and no `sdkImports`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 Without a file, run from the patch repo root. The config supplies its name and
 tier; `patchy.json` supplies its instance, description and optional patch id.
@@ -1113,15 +1112,13 @@ look no longer has, for example. Other build and `tsc` output stays out of the
 error.
 Leftover files or external resource dependencies fail loudly. Bundle inspection checks
 resource completeness: embed resources, inline scripts and styles, and remove
-CSS `@import`. It does not duplicate core's tier 0 safe-HTML policy or restrict
-hyperlinks: fragment, relative and external anchors have the same acceptance in
-both tiers, while the runtime sandbox still governs navigation.
-The local HTML cap is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2; either excess
-is `too_large`, with a largest-contributor report. Tier 0's policy also bounds the
-parser's work: nesting past 510 elements, more than 256 attributes on an element and
-heavy repair of misnested markup are refused with a message naming the bound. `server/`, `agent/` or a `uses` declaration below tier 2 remains
-`tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
-back to a static file.
+CSS `@import`. It does not restrict hyperlinks: fragment, relative and external
+anchors are accepted, while the runtime sandbox still governs navigation.
+The local HTML cap is 10 MiB; an excess is `too_large`, with a largest-contributor
+report. `server/`, `agent/` or a `uses` declaration below tier 2 remains
+`tier_mismatch`. So does a config still at tier 0, refused before the build with
+"Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."; `patchy dev`
+refuses it too. A failed repo build never falls back to a single file.
 
 Tier 2 bundles `server/` into one closed module with no dynamic imports.
 The server graph allows `patchy/server`, `patchy/csv`, generated server
@@ -1212,7 +1209,7 @@ If the selected attempt settles before a competing invocation can read it, that
 invocation exits locally asking to run publish again rather than sending its own
 unselected payload.
 
-The executing CLI must match the instance release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance mismatch exits 2 with `kind: "rejected"`. Outside a repo, rerun the instance's installer, whose line the message names; inside a repo, run `pnpm patchy refresh`. Repo publishing admits tier 0, 1 and 2 with declared resources; tier 2 production admission requires fleet execution. New local dev starts check the same release; a running session survives upgrades.
+The executing CLI must match the instance release exactly. A local mismatch exits 1 with `kind: "local"` and `code: "release_mismatch"`; an instance mismatch exits 2 with `kind: "rejected"`. Outside a repo, rerun the instance's installer, whose line the message names; inside a repo, run `pnpm patchy refresh`. Repo publishing admits tier 1 and 2 with declared resources; tier 2 production admission requires fleet execution. New local dev starts check the same release; a running session survives upgrades.
 
 File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
@@ -1335,7 +1332,7 @@ no look is the starting state. Any member's agent reads and previews the look;
 only admins publish or restore it. These commands run anywhere with the saved
 login and accept `--json`.
 
-`patchy look --json` is how an agent settles a static page's style. With a
+`patchy look --json` is how an agent settles a single-file page's style. With a
 company look, `current.files` holds it and `patchyLook` is null. With none,
 `current` is null and `patchyLook` holds the Patchy look's `look.css` and
 `LOOK.md`, the release's own and without a logo, which stands in. `admins`,
@@ -1431,8 +1428,7 @@ as `patchy look` shows it, `{ revision, author: { id, name }, createdAt, note }`
 or `null` for the Patchy look, and `lookRestore` the company's latest restore as
 `patchy look --json`'s `restored` carries it, `null` after a publish. A new repo's
 tier 1 and 2 `src/main.tsx` imports
-`look.css` and its tier 0 `index.html` links it, so the first page is already in
-the look; the single-file build inlines it, embedded fonts included. Its
+`look.css`, so the first page is already in the look; the single-file build inlines it, embedded fonts included. Its
 `src/styles.css`, loaded after the look at every tier, holds only the layout: the
 page's `<main>` centred at 960px and padded from `--look-space`. A page that
 doesn't import it keeps its own style, and refresh never edits page source. A
@@ -1541,7 +1537,7 @@ ADR-0004 records. Check the exit code before parsing stdout as a success documen
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.
-- `--tier 0|1|2` — on `init`, the new repo's declared tier; default 1.
+- `--tier 1|2` — on `init`, the new repo's declared tier; default 1.
 - `--purpose <text>` — on `init`, required for agent, JSON and non-terminal invocations; asked at an interactive human terminal otherwise.
 - `--as <alias>`: on `add`, override the default camelCased connection handle or shared table/store name.
 - `--state live|retired|all` filters top-level patches and governs patch resolution at both detail levels of `list`; the default is `live`.
@@ -1638,7 +1634,7 @@ A token saved for one instance is never sent to another, and a patch ID cached f
 ## Agent skill
 
 The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is,
-sign-in, safe static-file publishing and the `patchy init` door for building a
+sign-in, single-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
 those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance
 on tiers 1 and 2, server guidance on tier 2, and Postgres, PostHog, shared-table,

@@ -20,7 +20,6 @@ import {
   decodeBody,
   DescriptionRequest,
   ForceRequest,
-  InvalidHtml,
   type MalformedBody,
   NotFound,
   NameTaken,
@@ -71,7 +70,7 @@ import {
   type HandlerDescriptors
 } from "@patchy/api";
 import { Companies, Looks, Users } from "@patchy/companies";
-import { Cryptography, documentTitle, validateHtml } from "@patchy/core";
+import { Cryptography, documentTitle } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
@@ -573,6 +572,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          // Tier 0 rows are served until they become tier 1, but none is written any more.
+          if (manifest.tier === 0)
+            return rejected(
+              "tier_mismatch",
+              "Tier 0 is now tier 1. Publish with a tier 1 manifest; a current patchy CLI sends one."
+            );
           if (manifest.tier > 2) return rejected("tier_mismatch", "Tier 3 is not served yet.");
           if (manifest.tier === 2 && !tier2Enabled)
             return rejected("tier_mismatch", "Tier 2 requires the fleet executor in production.");
@@ -590,31 +595,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               error: `Server bundle is ${serverBytes} bytes; maximum is ${maxBundleBytes} bytes.`
             });
           const bytes = Buffer.byteLength(payload.html, "utf8");
-          let title = manifest.name || "Untitled Patch";
-          let warnings: string[] = [];
-          if (manifest.tier === 0) {
-            if (payload.html.trim() === "" || bytes > maxHtmlBytes)
-              return refuse(InvalidHtml, {
-                ok: false,
-                errors: [
-                  payload.html.trim() === ""
-                    ? "HTML document is empty."
-                    : `HTML document is ${bytes} bytes; maximum is ${maxHtmlBytes} bytes.`
-                ],
-                warnings: []
-              });
-            const validation = validateHtml(payload.html, { maxBytes: maxHtmlBytes });
-            if (!validation.ok) return rejected("tier_mismatch", validation.errors.join(" "));
-            title = validation.title || title;
-            warnings = validation.warnings;
-          } else {
-            if (bytes > maxBundleBytes)
-              return refuse(PayloadTooLarge, {
-                ok: false,
-                error: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes.`
-              });
-            title = documentTitle(payload.html) ?? title;
-          }
+          if (bytes > maxBundleBytes)
+            return refuse(PayloadTooLarge, {
+              ok: false,
+              error: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes.`
+            });
+          const title = documentTitle(payload.html) ?? (manifest.name || "Untitled Patch");
+          const warnings: string[] = [];
           if (manifest.tier === 2 && Object.keys(manifest.handlers ?? {}).length === 0)
             warnings.push("Tier 2 has no handlers.");
           const patchId = payload.patchId ?? null;

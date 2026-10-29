@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { Manifest } from "@patchy/api";
-import { DEFAULT_MAX_HTML_BYTES } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -37,18 +36,26 @@ const refusal = (html: string, tier: 0 | 1 = 1) => Effect.flip(validate(html, ti
 
 it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
   it.effect(
-    "accepts shared navigation and embedded-font fixtures but refuses unbundled resources at tiers 0 and 1",
+    "accepts shared navigation and embedded-font fixtures but refuses unbundled resources",
     () =>
       Effect.gen(function* () {
-        const portfolio = yield* fixture("portfolio.html");
-        const embeddedFont = yield* fixture("embedded-font.html");
-        const remote = yield* fixture("remote-image.html");
-        for (const tier of [0, 1] as const) {
-          yield* validate(portfolio, tier);
-          yield* validate(embeddedFont, tier);
-          assert.include((yield* refusal(remote, tier)).message, "is not self-contained");
-        }
+        yield* validate(yield* fixture("portfolio.html"));
+        yield* validate(yield* fixture("embedded-font.html"));
+        assert.include(
+          (yield* refusal(yield* fixture("remote-image.html"))).message,
+          "is not self-contained"
+        );
       })
+  );
+
+  it.effect("refuses a tier 0 repo, naming tier 1, before inspecting its page", () =>
+    Effect.gen(function* () {
+      const error = yield* refusal(page('<img src="https://example.test/pixel.png">'), 0);
+      assert.deepInclude(error, {
+        code: "tier_mismatch",
+        message: "Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."
+      });
+    })
   );
 
   it.effect("publishes harmless CSS strings and embedded image candidates", () =>
@@ -112,28 +119,14 @@ it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
     })
   );
 
-  it.effect("inspects active noscript resources in a tier 0 bundle", () =>
+  it.effect("reports too_large with the cap and the offending resource", () =>
     Effect.gen(function* () {
-      const error = yield* refusal(
-        page('<noscript><img src="https://example.test/pixel.png"></noscript>'),
-        0
-      );
-      assert.include(error.message, "<img> src is not embedded");
-    })
-  );
-
-  it.effect("reports too_large with each tier's cap and the offending resource", () =>
-    Effect.gen(function* () {
-      for (const [tier, cap] of [
-        [0, DEFAULT_MAX_HTML_BYTES],
-        [1, 10 * 1024 * 1024]
-      ] as const) {
-        const image = `data:image/png;base64,${"A".repeat(cap)}`;
-        const error = yield* refusal(page(`<img src="${image}">`), tier);
-        assert.strictEqual(error.code, "too_large");
-        assert.include(error.message, `maximum for tier ${tier} is ${cap} bytes`);
-        assert.include(error.message, `<img> src: ${Buffer.byteLength(image)} bytes`);
-      }
+      const cap = 10 * 1024 * 1024;
+      const image = `data:image/png;base64,${"A".repeat(cap)}`;
+      const error = yield* refusal(page(`<img src="${image}">`));
+      assert.strictEqual(error.code, "too_large");
+      assert.include(error.message, `maximum for tier 1 is ${cap} bytes`);
+      assert.include(error.message, `<img> src: ${Buffer.byteLength(image)} bytes`);
     })
   );
 

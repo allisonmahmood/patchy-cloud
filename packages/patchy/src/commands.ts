@@ -51,9 +51,10 @@ import {
   agentToolKind,
   type LookRevision
 } from "@patchy/api";
-import { Cryptography, validateHtml } from "@patchy/core";
+import { Cryptography, documentTitle } from "@patchy/core";
 import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
+import { checkBundle } from "./bundleCheck.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
 import * as Discovery from "./Discovery.js";
 import { previewPage } from "./lookPreview.js";
@@ -189,14 +190,16 @@ const readHtml = Effect.fn("readHtml")(function* (file: string) {
   return { resolved, html };
 });
 
-const validated = Effect.fn("validated")(function* (html: string) {
-  const validation = validateHtml(html);
-  if (!validation.ok) {
-    return yield* new LocalError({
-      message: `HTML failed Patchy Cloud validation:\n- ${validation.errors.join("\n- ")}`
-    });
-  }
-  return validation.warnings;
+/**
+ * A single file publishes as a tier 1 page, script and all, so it passes the check a repo's built
+ * page does. Its warnings are what publish would say about it.
+ */
+const checkedPage = Effect.fn("checkedPage")(function* (html: string) {
+  if (html.trim() === "") return yield* new LocalError({ message: "HTML document is empty." });
+  yield* checkBundle(html, 1);
+  return documentTitle(html) === null
+    ? ["No <title> found; Patchy Cloud will use a generic title."]
+    : [];
 });
 
 // --- auth set ---------------------------------------------------------------
@@ -422,12 +425,14 @@ const validate = Command.make("validate", { file: fileArgument }, ({ file }) =>
   run(
     Effect.gen(function* () {
       const { html } = yield* readHtml(file);
-      const warnings = yield* validated(html);
+      const warnings = yield* checkedPage(html);
       yield* Output.report({ ok: true, warnings }, ["HTML passed Patchy Cloud validation."]);
       for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
     })
   )
-).pipe(Command.withDescription("Validate a static HTML patch without publishing it."));
+).pipe(
+  Command.withDescription("Check that an HTML file publishes as a page, without publishing it.")
+);
 
 // --- publish ----------------------------------------------------------------
 
@@ -656,7 +661,7 @@ const publish = Command.make(
         yield* requireCurrentCli(client);
         const path = yield* Path.Path;
         const { resolved, html } = yield* readHtml(Option.getOrThrow(options.file));
-        yield* validated(html);
+        const warnings = yield* checkedPage(html);
         yield* Output.notice(
           `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
         );
@@ -675,12 +680,13 @@ const publish = Command.make(
             file: resolved,
             explicitPatch: Option.isSome(options.patch)
           },
+          warnings,
           request: new PublishRequest({
             manifest: {
               manifestVersion: MANIFEST_VERSION,
               release: RELEASE,
               ...(name === undefined ? {} : { name }),
-              tier: 0,
+              tier: 1,
               tables: {},
               files: {},
               uses: {}
@@ -708,7 +714,9 @@ const publish = Command.make(
         );
       })
     )
-).pipe(Command.withDescription("Publish the current patch repo, or an explicit static HTML file."));
+).pipe(
+  Command.withDescription("Publish the current patch repo, or a single self-contained HTML file.")
+);
 
 // --- patch targets ----------------------------------------------------------
 
@@ -1436,7 +1444,7 @@ const init = Command.make(
       Argument.withDescription("Directory for the new repo; defaults to the current directory"),
       Argument.optional
     ),
-    tier: Flag.Literals("tier", ["0", "1", "2"]).pipe(
+    tier: Flag.Literals("tier", ["1", "2"]).pipe(
       Flag.withDescription("Runtime tier for the new repo; defaults to 1"),
       Flag.withDefault("1")
     ),
@@ -1455,14 +1463,14 @@ const init = Command.make(
           yield* Cwd,
           token,
           options.dir,
-          options.tier === "0" ? 0 : options.tier === "1" ? 1 : 2,
+          options.tier === "1" ? 1 : 2,
           options.purpose
         );
       })
     )
 ).pipe(
   Command.withDescription(
-    "Create a patch repo at tier 1 by default, tier 2 with server handlers, or tier 0 without scripts."
+    "Create a patch repo at tier 1 by default, or tier 2 with server handlers."
   )
 );
 

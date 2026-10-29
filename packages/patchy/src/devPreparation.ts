@@ -13,6 +13,7 @@ import * as Output from "./Output.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
 import { primitiveReminders } from "./primitiveReminders.js";
+import { refuseTierZero } from "./repoBuild.js";
 import { discoverServerModules } from "./serverModules.js";
 
 export const Prepared = Schema.Struct({
@@ -82,6 +83,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           try: () => executeConfig(configPath, { resolve: false, source }),
           catch: configFailure
         });
+        yield* refuseTierZero(executed.tier);
         const unresolved = {
           ...executed,
           ...(repo.description === undefined ? {} : { description: repo.description })

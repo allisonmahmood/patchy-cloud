@@ -282,10 +282,9 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "File mode (empty definitions and no repo name, or file metadata) onto cumulative inventory " +
           "answers `has_primitives`; an empty named repo manifest may omit all tables. " +
           "Reports and schema revision are persisted for replay. " +
-          "Tier 0 HTML passes the safe-HTML policy; executable or otherwise unsafe content answers " +
-          "`tier_mismatch`. Empty or oversized tier 0 documents retain the HTML validation refusal. " +
+          "A tier 0 manifest answers `tier_mismatch`: tier 0 is now tier 1, and stored tier 0 versions are only served. " +
           "Tier 1 and 2 HTML bundles are stored raw, without safe-HTML validation or transformation. " +
-          "Tier 0 keeps `PATCHY_MAX_HTML_BYTES` (512 KiB); each scripted artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
+          "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
           "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +

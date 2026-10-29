@@ -33,7 +33,7 @@ A company's default appearance for its patches: the fifteen named tokens and ele
 _Avoid_: brand, theme, design system, style (a patch's own CSS, which may override the look)
 
 **Patchy look**:
-Patchy's own look, shipped with the release in this package, which stands in while a company has none: generation writes it into patch repos, and the look read hands it out for static pages. It is no company's revision: it carries no logo and no revision stamp.
+Patchy's own look, shipped with the release in this package, which stands in while a company has none: generation writes it into patch repos, and the look read hands it out for single-file pages. It is no company's revision: it carries no logo and no revision stamp.
 _Avoid_: default theme, fallback style
 
 **Look revision**:

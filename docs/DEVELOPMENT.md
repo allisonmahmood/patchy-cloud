@@ -225,7 +225,7 @@ redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
 address once signed in.
 
 The seed holds identity rows only; a fresh portal shows the guide to a first patch.
-`pnpm seed:dev` publishes the accepted HTML fixtures as live tier 0 patches.
+`pnpm seed:dev` publishes the accepted HTML fixtures as live tier 1 pages.
 
 ### Seeing what a person sees
 
@@ -325,8 +325,8 @@ An environment is this instance plus what a multi-person check or demo needs:
   `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`.
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
-is three people and no patches; `brightline` is a five-person agency with tier 0
-and 2 patches, agent areas on two of its tier 2 ones and agent access on, and takes
+is three people and no patches; `brightline` is a five-person agency with tier 2
+patches and a single-file tier 1 page, agent areas on two of its tier 2 ones and agent access on, and takes
 about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through

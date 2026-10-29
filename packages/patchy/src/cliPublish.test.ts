@@ -734,13 +734,14 @@ describe("patchy publish", async () => {
         manifestVersion: 1,
         release: CURRENT_RELEASE,
         name: "quarterly-plan",
-        tier: 0,
+        tier: 1,
         tables: {},
         files: {},
         uses: {}
       },
       metadata: { cliVersion: CURRENT_RELEASE, filename: "page.html" }
     });
+    expect(instance.requests[2]?.body).not.toHaveProperty("manifest.sdkImports");
     expect(instance.requests[2]?.body).not.toHaveProperty("scope");
     expect(instance.requests[2]?.body).not.toHaveProperty("metadata.look");
 
@@ -879,14 +880,18 @@ describe("patchy publish", async () => {
         : respond(401, { ok: false, error: "Missing or invalid API token." })
     );
     const dir = tempDir();
-    const bad = htmlFile(dir, "bad.html", "<!doctype html><script>1</script>");
+    const bad = htmlFile(
+      dir,
+      "bad.html",
+      '<!doctype html><img src="https://images.example.com/chart.png">'
+    );
     const env = { PATCHY_API_TOKEN: "pp_bad", PATCHY_API_URL: instance.url };
     const local = await runCli(["publish", bad], {
       stateDir: dir,
       env: { ...env, PATCHY_API_TOKEN: "pp_good" }
     });
     expect(local.status).toBe(1);
-    expect(local.stderr).toContain("HTML failed Patchy Cloud validation");
+    expect(local.stderr).toContain("<img> src is not embedded");
     expect(instance.requests.map((r) => r.url)).toEqual(["/api/me", "/api/release"]);
 
     const good = htmlFile(dir, "good.html", validHtml);

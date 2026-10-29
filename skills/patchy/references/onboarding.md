@@ -221,7 +221,7 @@ take the person's role, email and company name from `whoami --json`:
 Write `~/Patchy/welcome.html` from `welcome-patch.html` in this directory, by the main
 skill's [Where patch files live](../SKILL.md#where-patch-files-live). The structure and
 copy are the deliverable. Settle its style by the main skill's
-[order](../SKILL.md#styling-a-static-page): what the person asked for in this
+[order](../SKILL.md#styling-a-page): what the person asked for in this
 conversation, then on a redo the published welcome page's own style, then the company
 look, then the Patchy look. The template's own CSS uses only the look's tokens, so in a
 look it needs that look's `look.css` verbatim in its first `<style>` block, and in the
