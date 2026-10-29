@@ -18,7 +18,7 @@ import {
 } from "@patchy/api";
 import { attioTypes } from "@patchy/api/attio-types";
 import { canonicalArgs } from "@patchy/api/canonical-args";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -365,6 +365,7 @@ export const plan = Effect.fnUntraced(function* (
   args: Filters & { readonly parent?: Parent },
   call: Binding
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const { where } = container;
   const filters: Json[] = [];
   const empties: AttioAttribute[] = [];
@@ -467,7 +468,7 @@ export const plan = Effect.fnUntraced(function* (
   }
   // Ties break by id, so paging repeats and skips nothing.
   sorts.push({ attribute: unique, direction: "asc" });
-  const binding = sha256(
+  const binding = yield* cryptography.sha256(
     canonicalArgs([
       call.connectionId,
       call.operation,

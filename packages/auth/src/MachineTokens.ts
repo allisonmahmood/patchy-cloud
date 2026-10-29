@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Identity } from "@patchy/api";
-import { newInternalId, randomToken, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -101,6 +101,7 @@ export const validateMachineName = Effect.fn("MachineTokens.validateMachineName"
 });
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const sql = yield* SqlClient.SqlClient;
 
   // One join decides every bearer refusal; no credential state is cached.
@@ -157,7 +158,7 @@ export const make = Effect.gen(function* () {
 
   const authenticate = Effect.fn("MachineTokens.authenticate")(function* (token: string) {
     const now = yield* Clock.currentTimeMillis;
-    const found = yield* findIdentity({ tokenHash: sha256(token), now }).pipe(
+    const found = yield* findIdentity({ tokenHash: yield* cryptography.sha256(token), now }).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     if (Option.isNone(found)) return null;
@@ -180,8 +181,8 @@ export const make = Effect.gen(function* () {
     yield* validateMachineName(input.name);
     const now = yield* Clock.currentTimeMillis;
     const expires = now + 90 * DAY_MS;
-    const id = newInternalId("tok");
-    const token = `pp_${randomToken(32)}`;
+    const id = yield* cryptography.internalId("tok");
+    const token = `pp_${yield* cryptography.token(32)}`;
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         // Serialize against deactivation so it cannot leave a newly minted live key.
@@ -190,7 +191,7 @@ export const make = Effect.gen(function* () {
         if (users.length === 0) return yield* new UserUnavailable({ userId: input.userId });
         yield* sql`
         INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
-        VALUES (${id}, ${input.userId}, ${input.name}, ${sha256(token)},
+        VALUES (${id}, ${input.userId}, ${input.name}, ${yield* cryptography.sha256(token)},
           to_timestamp(${now / 1_000}), to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))`;
         return {
           token,

@@ -13,7 +13,7 @@ import type * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { canonicalArgs, type HandlerDescriptors, type ServerCallReply } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { Invocation, Runtime } from "@patchy/runtime";
 import * as ChangeKeys from "./ChangeKeys.js";
 import {

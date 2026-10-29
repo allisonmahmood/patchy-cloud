@@ -11,6 +11,7 @@ import * as Command from "effect/cli/Command";
 import type { HelpDoc } from "effect/cli/HelpDoc";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Cwd, root } from "./commands.js";
+import { NodeCryptography } from "@patchy/core";
 
 /** Blank, or only the `(choices: …)` Effect appends to a choice flag. */
 const undescribed = (description: Option.Option<string>) =>
@@ -58,6 +59,7 @@ it.effect("describes every argument and flag, and requires only look publish's -
           }
         }),
         NodeServices.layer,
+        NodeCryptography.layer,
         NodeHttpClient.layerUndici,
         TestConsole.layer,
         DateTime.layerCurrentZoneOffset(0),

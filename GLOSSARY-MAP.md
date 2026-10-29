@@ -19,7 +19,7 @@ Patchy Cloud is one deployment: the hosting server on one side, the `patchy` CLI
 
 ## Shared kernel
 
-- `packages/core`: the safe-HTML policy, the company look's publish checks, first-party card shell and sidebar app shell, shared component set and escape helpers, and shared ID/crypto primitives. No `GLOSSARY.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
+- `packages/core`: the safe-HTML policy, the company look's publish checks, first-party card shell and sidebar app shell, shared component set and escape helpers, and the `Cryptography` service (Patchy's ids, tokens and digests, and keyed crypto) with its Node implementation. No `GLOSSARY.md`: a term it defines belongs to the context that introduced it, and a decision touching it goes in the root `docs/adr/`.
 
 ## Infrastructure
 

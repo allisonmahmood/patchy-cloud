@@ -8,7 +8,7 @@ import {
   ResourceChanges
 } from "@patchy/company-database/dev";
 import { FilesystemContentStore } from "@patchy/content-store";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import {
   ConnectionStore,
   ConnectionStoreDev,
@@ -323,6 +323,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const cryptography = yield* Cryptography.Cryptography;
   const local = yield* checkedPath(root, path.relative(root, stateDir));
   yield* fs.makeDirectory(local, { recursive: true });
   const companyDir = yield* checkedPath(local, "company");
@@ -408,7 +409,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
   const shared: Record<string, string> = Object.create(null);
   for (const { declaration } of Object.values(prepared.metadata.shared)) {
     if (Object.hasOwn(shared, declaration.patchId)) continue;
-    shared[declaration.patchId] = sha256(
+    shared[declaration.patchId] = yield* cryptography.sha256(
       encodeJson({
         declarations: Object.values(prepared.metadata.shared).filter(
           (item) => item.declaration.patchId === declaration.patchId
@@ -417,7 +418,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
       })
     );
   }
-  const owned = sha256(
+  const owned = yield* cryptography.sha256(
     encodeJson({
       tables: prepared.manifest.tables,
       files: prepared.manifest.files,

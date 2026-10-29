@@ -5,7 +5,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as SqlClient from "effect/sql/SqlClient";
-import { sha256, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
 import * as Authorization from "./Authorization.js";
@@ -104,7 +105,7 @@ const bearer = <P extends Authorization.Purpose>(purpose: P, token: string) =>
 
 const layer = Layer.mergeAll(AgentConnections.layer, MachineTokens.layer).pipe(
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(layer)("AgentConnections", (it) => {

@@ -10,13 +10,15 @@ import { registry } from "@patchy/limits/registry";
 import { FrontDoor } from "@patchy/sdk";
 import * as Testing from "@patchy/sql/testing";
 import * as SetupPickup from "./SetupPickup.js";
+import { NodeCryptography } from "@patchy/core";
 
 const layer = SetupPickup.layer.pipe(
   Layer.provideMerge(Testing.layer()),
   Layer.provide(Limits.layer),
   Layer.provide(
     Layer.succeed(Analytics.Analytics, Analytics.Analytics.of({ track: () => Effect.void }))
-  )
+  ),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(layer)("SetupPickup", (it) => {

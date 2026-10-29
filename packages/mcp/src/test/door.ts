@@ -28,7 +28,7 @@ import {
 import { AgentConnections, MachineTokens } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import * as CompanyTesting from "@patchy/company-database/testing";
-import { contentHash } from "@patchy/core";
+import { contentHash } from "../../../../test/crypto.js";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { Patches } from "@patchy/patches";

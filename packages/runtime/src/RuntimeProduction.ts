@@ -13,9 +13,11 @@ import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as RuntimeStream from "./RuntimeStream.js";
 import * as StreamAdmission from "./StreamAdmission.js";
+import { Cryptography } from "@patchy/core";
 
 type Dependencies =
   | CompanyAdmission.CompanyAdmission
+  | Cryptography.Cryptography
   | LoadedVersions.LoadedVersions
   | Limits.Limits
   | OperatingLimits.OperatingLimits

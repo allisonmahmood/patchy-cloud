@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as State from "./State.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
+import { NodeCryptography } from "@patchy/core";
 
 const pending = (publishKey: string) =>
   new State.PendingPublish({
@@ -30,7 +31,9 @@ const pending = (publishKey: string) =>
     })
   });
 const apiUrl = "https://instance.test";
-const services = Layer.merge(NodeFileSystem.layer, NodePath.layer);
+const services = Layer.merge(NodeFileSystem.layer, NodePath.layer).pipe(
+  Layer.provideMerge(NodeCryptography.layer)
+);
 
 it.layer(services)("pending publish state", (it) => {
   it.effect("a stale clear cannot delete a replacement installed between check and unlink", () =>

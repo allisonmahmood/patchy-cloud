@@ -70,7 +70,7 @@ import {
   type HandlerDescriptors
 } from "@patchy/api";
 import { Companies, Looks, Users } from "@patchy/companies";
-import { contentHash, documentTitle, validateHtml } from "@patchy/core";
+import { Cryptography, documentTitle, validateHtml } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
@@ -354,6 +354,7 @@ const requestOrigin = Effect.map(HttpServerRequest.HttpServerRequest, (request) 
 
 export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const content = yield* Content.Content;
     const patches = yield* Patches.Patches;
     const openability = yield* Patches.Openability;
@@ -488,7 +489,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(key)) return key;
-          const digest = contentHash(canonicalJson(json));
+          const digest = yield* cryptography.contentHash(canonicalJson(json));
           const replay = Effect.fn("PatchesApi.replay")(function* () {
             const stored = yield* patches
               .replay(identity.user.id, key.publishKey)

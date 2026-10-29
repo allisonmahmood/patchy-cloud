@@ -22,6 +22,7 @@ import * as Authorization from "./Authorization.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import { DEV_SEED } from "./seed.js";
+import { NodeCryptography } from "@patchy/core";
 
 const bearer = (token: string) =>
   HttpApiMiddleware.layerClient(AuthorizationTag, ({ next, request }) =>
@@ -48,7 +49,8 @@ const layer = Layer.mergeAll(AuthApi.layer, HttpServer.layerServices).pipe(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example/" })
     )
-  )
+  ),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(layer)("auth group: machine identity and logout", (it) => {

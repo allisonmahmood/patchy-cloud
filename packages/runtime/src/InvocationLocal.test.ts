@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
 import { CURRENT_RELEASE, TablePage, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { newInternalId, sha256 } from "@patchy/core";
+import { newInternalId, sha256 } from "../../../test/crypto.js";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";

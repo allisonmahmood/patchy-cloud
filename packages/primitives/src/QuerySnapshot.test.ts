@@ -27,6 +27,7 @@ import * as TestWakes from "./test/wakes.js";
 import * as TestMemberDirectory from "./test/memberDirectory.js";
 import * as FileFixtures from "./test/files.js";
 import { manifest, setup } from "./test/operationsContract.js";
+import { NodeCryptography } from "@patchy/core";
 
 const page = Schema.decodeUnknownEffect(TablePage);
 const filePage = Schema.decodeUnknownEffect(runtimeOperations["files.list"].response);
@@ -503,7 +504,7 @@ const local = Layer.unwrap(
       Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
     )
   )
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(local)("Invocation query snapshots / PGlite", (it) => {
   it.effect("reads own and shared fixtures through the single retained connection", () =>

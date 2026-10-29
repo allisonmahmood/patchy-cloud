@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- A digest keeps a document's desired set small across generations.
-import { createHash } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -25,6 +23,7 @@ import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 import * as Invocation from "./Invocation.js";
 import * as QuerySubscriptions from "./QuerySubscriptions.js";
+import { Cryptography } from "@patchy/core";
 
 export class StaleSequence extends Schema.TaggedError<StaleSequence>()("StaleSequence", {}) {
   readonly code = "invalid_request" as const;
@@ -191,14 +190,6 @@ const equalVector = (left: RevisionVector | undefined, right: RevisionVector) =>
   left !== undefined &&
   Object.keys(left).length === Object.keys(right).length &&
   Object.entries(right).every(([key, value]) => left[key] === value);
-/** The digest of a logical desired set: its ids with their signatures' digests, in id order. */
-const digestOf = (subscriptions: ReadonlyMap<string, Subscription>) => {
-  const hash = createHash("sha256");
-  for (const id of [...subscriptions.keys()].sort())
-    hash.update(`${id.length}:${id}${subscriptions.get(id)!.digest}`);
-  return hash.digest("base64");
-};
-const nothingDesired = digestOf(new Map());
 const reachesFence = (vector: RevisionVector, fence: RevisionVector) =>
   Object.entries(fence).every(
     ([key, value]) => vector[key] === undefined || BigInt(vector[key]!) >= BigInt(value)
@@ -256,6 +247,21 @@ const recoverable: Readonly<Record<string, true>> = {
 /** One registry per host, shared by all its document streams. */
 export const make = Effect.gen(function* () {
   const scope = yield* Scope.Scope;
+  const cryptography = yield* Cryptography.Cryptography;
+  /**
+   * The digest of a logical desired set: its ids with their signatures' digests, in id order.
+   * A digest keeps a document's desired set small across generations. Updates apply in one
+   * step and closing is synchronous, so it hashes without yielding.
+   */
+  const digestOf = (subscriptions: ReadonlyMap<string, Subscription>) =>
+    cryptography.sha256Unsafe(
+      [...subscriptions.keys()]
+        .sort()
+        .map((id) => `${id.length}:${id}${subscriptions.get(id)!.digest}`)
+        .join(""),
+      "base64"
+    );
+  const nothingDesired = digestOf(new Map());
   // Wakes may run inside another owner's transaction. A re-run owns its own context.
   const context = yield* Effect.context<never>();
   const reads = yield* QuerySubscriptions.make;
@@ -762,7 +768,7 @@ export const make = Effect.gen(function* () {
             doc.subscriptions.set(input.id, {
               input,
               signature,
-              digest: createHash("sha256").update(signature).digest("base64"),
+              digest: cryptography.sha256Unsafe(signature, "base64"),
               dependencies: new Set(),
               duringRun: new Map(),
               vector: input.vector,

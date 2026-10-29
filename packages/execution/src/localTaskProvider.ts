@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off preferSchemaOverJson:off -- the offline provider uses private files and detached OS owners; deadlines and exits use wall time independently of TestClock.
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -19,6 +18,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Store from "./localTaskStore.js";
 import * as TaskProvider from "./TaskProvider.js";
+import { Cryptography } from "@patchy/core";
 
 const decodeBind = Schema.decodeUnknownEffect(Management.BindReply);
 const decodeInvoke = Schema.decodeUnknownEffect(GuestProtocol.InvokeReply);
@@ -67,6 +67,7 @@ const filesystem = <A>(
 
 /** Independently constructed clients share files and detached owners, never host-owned processes. */
 export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Options) {
+  const cryptography = yield* Cryptography.Cryptography;
   const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
   if (environment === "production")
     return yield* new TaskProvider.TaskProviderError({
@@ -243,45 +244,47 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
     );
   return TaskProvider.TaskProvider.of({
     start: (input) =>
-      filesystem(
-        "start",
-        input.taskId,
-        async (signal) => {
-          const taskDirectory = Store.taskDirectory(directory, input.taskId);
-          const request = await Store.createRequest(taskDirectory, {
-            ...input,
-            callbackUrls: options.callbackUrls,
-            secret: randomUUID(),
-            path,
-            startupTimeout,
-            cleanupTimeout,
-            startedAt: Date.now()
-          });
-          if (request.deploymentRevision !== input.deploymentRevision)
-            throw new TaskProvider.TaskProviderError({
-              operation: "start",
-              taskId: input.taskId,
-              reason: "binding_conflict"
+      Effect.flatMap(cryptography.randomUUID, (secret) =>
+        filesystem(
+          "start",
+          input.taskId,
+          async (signal) => {
+            const taskDirectory = Store.taskDirectory(directory, input.taskId);
+            const request = await Store.createRequest(taskDirectory, {
+              ...input,
+              callbackUrls: options.callbackUrls,
+              secret,
+              path,
+              startupTimeout,
+              cleanupTimeout,
+              startedAt: Date.now()
             });
-          const existing = await Store.readRecord(taskDirectory);
-          if (existing?.task.state === "stopped") return existing.task;
-          await launch(taskDirectory, existing);
-          const record = await waitFor(
-            taskDirectory,
-            signal,
-            Date.now() + startupTimeout + managementTimeout,
-            (value) => value.task.state === "stopped" || value.url !== null
-          );
-          if (record.task.readyAt === 0)
-            throw new TaskProvider.TaskProviderError({
-              operation: "start",
-              taskId: input.taskId,
-              reason: "provider",
-              cause: new Error("Local task exited before readiness")
-            });
-          return record.task;
-        },
-        startupTimeout + managementTimeout
+            if (request.deploymentRevision !== input.deploymentRevision)
+              throw new TaskProvider.TaskProviderError({
+                operation: "start",
+                taskId: input.taskId,
+                reason: "binding_conflict"
+              });
+            const existing = await Store.readRecord(taskDirectory);
+            if (existing?.task.state === "stopped") return existing.task;
+            await launch(taskDirectory, existing);
+            const record = await waitFor(
+              taskDirectory,
+              signal,
+              Date.now() + startupTimeout + managementTimeout,
+              (value) => value.task.state === "stopped" || value.url !== null
+            );
+            if (record.task.readyAt === 0)
+              throw new TaskProvider.TaskProviderError({
+                operation: "start",
+                taskId: input.taskId,
+                reason: "provider",
+                cause: new Error("Local task exited before readiness")
+              });
+            return record.task;
+          },
+          startupTimeout + managementTimeout
+        )
       ),
     list: filesystem("list", undefined, async () => {
       const tasks: TaskProvider.Task[] = [];

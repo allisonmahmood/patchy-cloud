@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Instance from "./Instance.js";
 import * as State from "./State.js";
+import { NodeCryptography } from "@patchy/core";
 
 const services = Layer.merge(NodeFileSystem.layer, NodePath.layer);
 
@@ -29,7 +30,7 @@ const resolve = (
 ) =>
   Instance.make(cwd, options.project).pipe(
     Effect.provideService(Instance.ApiUrlFlag, Option.fromUndefinedOr(options.flag)),
-    Effect.provide(State.layer),
+    Effect.provide(State.layer.pipe(Layer.provide(NodeCryptography.layer))),
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: options.stateDir, ...options.env })
@@ -94,7 +95,7 @@ it.layer(services)("Instance", (it) => {
         const state = yield* State.State;
         yield* state.saveConfigUrl("http://saved");
       }).pipe(
-        Effect.provide(State.layer),
+        Effect.provide(State.layer.pipe(Layer.provide(NodeCryptography.layer))),
         Effect.provide(
           ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: stateDir }))
         )
@@ -167,7 +168,7 @@ it.layer(services)("Instance", (it) => {
         const state = yield* State.State;
         yield* state.saveConfigUrl("https://saved.test");
       }).pipe(
-        Effect.provide(State.layer),
+        Effect.provide(State.layer.pipe(Layer.provide(NodeCryptography.layer))),
         Effect.provide(
           ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: stateDir }))
         )

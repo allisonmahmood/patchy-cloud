@@ -101,6 +101,7 @@ Before writing Effect code, read `node_modules/effect/AGENTS.md` — how Effect 
 - Namespace imports at service boundaries: `import * as Effect from "effect/Effect"`, `PatchStore.PatchStore` / `PatchStore.layer`. Named imports stay for whole packages such as `@patchy/api` and for pure helpers, errors, schemas and types.
 - Failures are `Schema.TaggedError` with structured fields; `message` derives from those fields, the underlying error rides as `cause`. Catch known tags with `Effect.catchTags`. Wire bodies keep their current shape (a 401 is `{ ok: false, error }`, no `_tag` on the wire).
 - Dependencies come from the environment (`yield* Foo.Foo`), never as constructor arguments. `runPromise` and `ManagedRuntime` belong only at the server and CLI entrypoints.
+- Crypto is one of those dependencies: `Cryptography` from `@patchy/core` (ids, tokens, digests, HMAC, sealing) or Effect's own `Crypto`, with `NodeCryptography.layer` provided at entrypoints and in test layers. Oxlint refuses `node:crypto` anywhere else; the few Promise-code exceptions say why beside the import.
 - A capability with one consumer stays a module; a second consumer earns the package.
 
 ### Packages by capability

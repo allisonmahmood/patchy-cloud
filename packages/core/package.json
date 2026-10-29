@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./Cryptography": {
+      "development": "./src/Cryptography.ts",
+      "types": "./dist/Cryptography.d.ts",
+      "import": "./dist/Cryptography.js"
+    },
     "./html": {
       "development": "./src/html.ts",
       "types": "./dist/html.d.ts",

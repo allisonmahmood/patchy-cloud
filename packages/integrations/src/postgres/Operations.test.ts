@@ -24,6 +24,7 @@ import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
 import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
 import type { Column, Snapshot } from "@patchy/api/postgres-snapshot";
+import { NodeCryptography } from "@patchy/core";
 
 const column = (name: string, baseName: string, nullable = false): typeof Column.Type => ({
   name,
@@ -301,7 +302,7 @@ class SharedDatabase extends Context.Service<SharedDatabase, Execution.Statement
 const shared = Layer.effect(
   SharedDatabase,
   database().pipe(Effect.map(({ transport }) => transport))
-);
+).pipe(Layer.provideMerge(NodeCryptography.layer));
 const sharedOperations = Effect.gen(function* () {
   return yield* operations(yield* SharedDatabase);
 });

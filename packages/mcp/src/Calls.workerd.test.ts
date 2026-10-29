@@ -18,7 +18,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { type GuestProtocol, sharedTableId, type RuntimeMe } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Local from "@patchy/execution/local";
 import { ConnectionStore, PostgresExecution, PostgresOperations } from "@patchy/integrations";

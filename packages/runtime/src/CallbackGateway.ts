@@ -8,7 +8,7 @@ import {
   type RuntimeFailure
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -150,6 +150,7 @@ export class CallbackGateway extends Context.Service<
 export const make = Effect.fn("CallbackGateway.make")(function* (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const capabilities = yield* InvocationCapabilities.InvocationCapabilities;
   const log = yield* RuntimeLog.RuntimeLog;
   const limits = yield* Effect.all({
@@ -315,7 +316,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ...capability.binding,
         effectivePrincipal,
         invocationId: attempt.invocationId,
-        correlationId: newInternalId("call"),
+        correlationId: yield* cryptography.internalId("call"),
         ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs })
       });
       const execute = Effect.gen(function* (): Effect.fn.Return<

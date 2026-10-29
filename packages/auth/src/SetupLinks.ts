@@ -1,10 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-// @effect-diagnostics nodeBuiltinImport:off -- a setup link needs cryptographic randomness; Effect Random is not a CSPRNG.
-import { randomBytes } from "node:crypto";
 import * as SqlClient from "effect/sql/SqlClient";
-import { randomToken } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 
 /**
  * Setup links: the `?s=<value>` in the Final step panel's setup line, which lets the person's own
@@ -18,11 +16,11 @@ const valueShape = /^[a-z2-7]{26}$/u;
 const base32 = "abcdefghijklmnopqrstuvwxyz234567";
 
 /** 128 random bits as 26 lowercase base32 characters: easy to read aloud, safe in any URL. */
-const newValue = () => {
+const encodeValue = (random: Uint8Array) => {
   let bits = 0;
   let value = 0;
   let out = "";
-  for (const byte of randomBytes(16)) {
+  for (const byte of random) {
     value = ((value << 8) | byte) & 0xffff;
     bits += 8;
     while (bits >= 5) {
@@ -58,6 +56,7 @@ const decodeLinks = Schema.decodeUnknownEffect(Schema.Array(Link));
 /** The person's live line, made when they have none. `created` says this call made it. */
 export const current = Effect.fn("SetupLinks.current")(function* (userId: string) {
   const sql = yield* SqlClient.SqlClient;
+  const cryptography = yield* Cryptography.Cryptography;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       // The person's row lock keeps two loads of the panel from making two lines.
@@ -76,7 +75,7 @@ export const current = Effect.fn("SetupLinks.current")(function* (userId: string
           ? live
           : yield* sql`
               INSERT INTO setup_links (id, analytics_id, user_id, expires_at)
-              VALUES (${newValue()}, ${randomToken(12)}, ${userId},
+              VALUES (${encodeValue(yield* cryptography.randomBytes(16))}, ${yield* cryptography.token(12)}, ${userId},
                 clock_timestamp() + ${lifetime}::interval)
               RETURNING id AS value, analytics_id AS "setupId", true AS created`;
       const [link] = yield* decodeLinks(made).pipe(Effect.catchTags({ SchemaError: Effect.die }));

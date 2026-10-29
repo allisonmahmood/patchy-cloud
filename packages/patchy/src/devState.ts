@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Daemon state needs atomic renames and no-follow filesystem checks.
-import { createHash, randomUUID } from "node:crypto";
+// oxlint-disable-next-line no-restricted-imports -- its Promise helpers name temporary files outside Effect.
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Identity } from "@patchy/api";
@@ -8,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { LocalError } from "./CliError.js";
 import { safePath } from "./ManagedProject.js";
 import { birth, claim, release } from "./ownerLock.js";
+import { Cryptography } from "@patchy/core";
 
 export { birth, sameProcess } from "./ownerLock.js";
 
@@ -64,13 +66,17 @@ export const io = <A>(message: string, run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new LocalError({ message, cause }) });
 
 export const directory = (root: string, instance: string) =>
-  io("Could not open this repo's local dev state.", async () => {
-    const canonical = await fs.realpath(root);
-    const relative = `.patchy/dev/${createHash("sha256").update(instance).digest("hex").slice(0, 16)}`;
-    const stateDir = await safePath(canonical, relative);
-    await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
-    return { root: canonical, stateDir };
-  });
+  Effect.flatMap(
+    Cryptography.Cryptography.use((cryptography) => cryptography.sha256(instance)),
+    (hash) =>
+      io("Could not open this repo's local dev state.", async () => {
+        const canonical = await fs.realpath(root);
+        const relative = `.patchy/dev/${hash.slice(0, 16)}`;
+        const stateDir = await safePath(canonical, relative);
+        await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
+        return { root: canonical, stateDir };
+      })
+  );
 
 export async function readRecord(stateDir: string): Promise<Daemon | undefined> {
   const file = await safePath(stateDir, "daemon.json");

@@ -9,7 +9,7 @@ import {
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
@@ -168,6 +168,7 @@ export const make = Effect.suspend(() => knowing(integrations));
  */
 export const knowing = (known: ReadonlyArray<Integration>) =>
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const sql = yield* SqlClient.SqlClient;
     const keys = yield* CredentialKeys.CredentialKeys;
     const postgres = yield* PostgresSource.Source;
@@ -398,7 +399,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       effect: Effect.Effect<A, E, R>
     ) =>
       Effect.gen(function* () {
-        const correlationId = newInternalId("cor");
+        const correlationId = yield* cryptography.internalId("cor");
         const start = yield* Clock.currentTimeMillis;
         yield* audit.begin({
           companyId: input.companyId,
@@ -577,7 +578,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         ): Effect.Effect<
           never,
           E | PidgeonKeys.SaveUnknown | PidgeonKeys.StrayKey,
-          PidgeonSource.Source
+          PidgeonSource.Source | Cryptography.Cryptography
         > =>
           made === undefined
             ? Effect.fail(error)
@@ -592,7 +593,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       report?: (connection: Connection) => Effect.Effect<void>
     ) {
       const request = yield* PidgeonKeys.parseConnect(input.credentials);
-      const identity = { ...input, integration: "pidgeon" as const, id: newInternalId("conn") };
+      const identity = {
+        ...input,
+        integration: "pidgeon" as const,
+        id: yield* cryptography.internalId("conn")
+      };
       const minted = minting(`pidgeon/${input.handle}`);
       return yield* detached(
         audited(
@@ -632,7 +637,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             );
           }).pipe(
             Effect.catch(minted.settle),
-            Effect.provideService(PidgeonSource.Source, pidgeonSource)
+            Effect.provideService(PidgeonSource.Source, pidgeonSource),
+            Effect.provideService(Cryptography.Cryptography, cryptography)
           )
         )
       );
@@ -740,7 +746,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         }),
         () =>
           Effect.gen(function* () {
-            const identity = { ...input, integration: "attio" as const, id: newInternalId("conn") };
+            const identity = {
+              ...input,
+              integration: "attio" as const,
+              id: yield* cryptography.internalId("conn")
+            };
             const { self, snapshot } = yield* audited(
               identity,
               "attio.discover",
@@ -894,7 +904,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
         if (input.integration === "attio") return yield* attioConnect(input, report);
-        const identity = { ...input, integration: input.integration, id: newInternalId("conn") };
+        const identity = {
+          ...input,
+          integration: input.integration,
+          id: yield* cryptography.internalId("conn")
+        };
         const inspected = yield* inspect(identity, input.credentials);
         const encrypted = yield* keys.encrypt(identity, input.credentials);
         const now = yield* Clock.currentTimeMillis;
@@ -925,7 +939,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         }
         return { revoked, left };
       },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource)
+      Effect.provideService(PidgeonSource.Source, pidgeonSource),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
     /**
      * Forgets old keys Pidgeon has revoked, under the connection's lock and as it stands now, so a
@@ -1041,7 +1056,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           );
           yield* dropRetired(input, (yield* retire(replaced)).revoked);
           return yield* get(input.companyId, input.id);
-        }).pipe(Effect.provideService(PidgeonSource.Source, pidgeonSource))
+        }).pipe(
+          Effect.provideService(PidgeonSource.Source, pidgeonSource),
+          Effect.provideService(Cryptography.Cryptography, cryptography)
+        )
       );
     });
 
@@ -1082,7 +1100,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           })
         );
       },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource)
+      Effect.provideService(PidgeonSource.Source, pidgeonSource),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
 
     const test = Effect.fn("ConnectionStore.test")(
@@ -1136,7 +1155,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           })
         );
       },
-      Effect.provideService(PidgeonSource.Source, pidgeonSource)
+      Effect.provideService(PidgeonSource.Source, pidgeonSource),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
     const discover = Effect.fn("ConnectionStore.discover")(function* (
       input: Identity,
@@ -1200,7 +1220,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         // The key was kept, so reconnecting needs no admin key: only a check that it still works.
         if (current.integration === "pidgeon")
           yield* PidgeonKeys.test(yield* secretOf(current), current.display.email).pipe(
-            Effect.provideService(PidgeonSource.Source, pidgeonSource)
+            Effect.provideService(PidgeonSource.Source, pidgeonSource),
+            Effect.provideService(Cryptography.Cryptography, cryptography)
           );
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));

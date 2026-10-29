@@ -35,7 +35,7 @@ const services = Layer.mergeAll(
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 const send = Effect.fn(function* (path: string, options: RequestInit = {}) {
   const app = yield* HttpRouter.toHttpEffect(AuthPages.layer);

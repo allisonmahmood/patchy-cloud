@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Local from "./local.js";
 import * as Supervisor from "./supervisor.js";
+import { NodeCryptography } from "@patchy/core";
 
 const callbackUrl = "http://127.0.0.1:32124/callback";
 const source = `let calls = 0;
@@ -109,7 +110,11 @@ it.live(
         outcome: "returned",
         reply: { ok: true, value: 1 }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(NodeCryptography.layer)
+    ),
   20_000
 );
 
@@ -154,7 +159,11 @@ it.live(
         _tag: "Failure",
         failure: { reason: "binding_conflict" }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(NodeCryptography.layer)
+    ),
   30_000
 );
 
@@ -194,7 +203,11 @@ it.live(
         firstOnTask: false,
         startMs: expect.any(Number)
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(NodeCryptography.layer)
+    ),
   20_000
 );
 
@@ -223,6 +236,10 @@ it.live(
           Effect.result
         )
       ).toMatchObject({ _tag: "Failure", failure: { reason: "production_refused" } });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(NodeCryptography.layer)
+    ),
   10_000
 );

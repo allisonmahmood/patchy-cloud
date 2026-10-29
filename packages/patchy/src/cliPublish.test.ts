@@ -14,7 +14,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { CURRENT_RELEASE, PublishRequest } from "@patchy/api";
 import {
   type CliResult,

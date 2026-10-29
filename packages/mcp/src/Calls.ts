@@ -46,7 +46,7 @@ import {
 } from "@patchy/api";
 import { AgentConnections } from "@patchy/auth";
 import { Companies } from "@patchy/companies";
-import { dateLabel } from "@patchy/core";
+import { Cryptography, dateLabel } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { LoadedVersions, Patches } from "@patchy/patches";
 import {
@@ -255,7 +255,7 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
 ): Effect.fn.Return<
   ServerCallReply,
   Runtime.RuntimeError,
-  AgentConnections.AgentConnections | Companies.Companies
+  AgentConnections.AgentConnections | Companies.Companies | Cryptography.Cryptography
 > {
   if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
   const services = yield* Effect.context<AgentConnections.AgentConnections | Companies.Companies>();

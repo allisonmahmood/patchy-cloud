@@ -24,7 +24,7 @@ import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
-import { contentHash, isWelcomePage, newInternalId } from "@patchy/core";
+import { Cryptography, isWelcomePage } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
 import { Content, Patches, PatchesConfig } from "@patchy/patches";
@@ -106,6 +106,7 @@ export const DocumentCompression = Context.Reference<
  * threadpool to file, crypto and DNS work, while the others' storage reads overlap.
  */
 const makeDocuments = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const content = yield* Content.Content;
   const deployment = yield* DeploymentConfig.load;
   const compressDocument = yield* DocumentCompression;
@@ -113,7 +114,7 @@ const makeDocuments = Effect.gen(function* () {
   const compressing = yield* Semaphore.make(1);
   const prepare = Effect.fnUntraced(function* (stored: StoredDocument, keep: boolean) {
     const html = yield* content.read(stored);
-    if (contentHash(html) !== stored.contentHash)
+    if ((yield* cryptography.contentHash(html)) !== stored.contentHash)
       return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
     const identity = encoder.encode(html);
     // One that won't be kept goes out as stored, rather than compressed on every load. The
@@ -147,6 +148,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   kind: "address" | "content",
   documents: Documents
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
   const analytics = yield* Analytics.Analytics;
@@ -367,7 +369,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
             : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {
-                nonce: newInternalId("boot"),
+                nonce: yield* cryptography.internalId("boot"),
                 base: `/${served.value.patch.companyHandle}/${served.value.patch.name}${selection.versionNumber === undefined ? "" : `/~v/${selection.versionNumber}`}`,
                 route: selection.route
               }
@@ -492,8 +494,10 @@ export const layer: Layer.Layer<
   | Users.Users
   | SqlClient.SqlClient
   | Content.Content
+  | Cryptography.Cryptography
   | HttpRouter.Request.From<
       "Requires",
+      | Cryptography.Cryptography
       | Content.Content
       | Patches.Patches
       | Session.Session

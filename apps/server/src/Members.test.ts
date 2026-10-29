@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { answer, publish, send, server } from "./test/server.js";
+import { NodeCryptography } from "@patchy/core";
 
 const decodePublished = Schema.decodeUnknownSync(PublishCreated);
 const decodeFrame = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
@@ -35,7 +36,8 @@ const manifest = {
   uses: { members: { kind: "members" } }
 };
 const layer = Layer.mergeAll(Companies.layer, Users.layer).pipe(
-  Layer.provideMerge(server({ NODE_ENV: "test" }))
+  Layer.provideMerge(server({ NODE_ENV: "test" })),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 const connect = Effect.fnUntraced(function* (

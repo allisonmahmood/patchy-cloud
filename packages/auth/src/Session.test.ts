@@ -22,7 +22,7 @@ import { NodeCryptography } from "@patchy/core";
 const configured = (env: Record<string, string> = clerkEnv()) =>
   Session.layer.pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-    Layer.provide(NodeCryptography.layer)
+    Layer.provideMerge(NodeCryptography.layer)
   );
 const request = (cookie?: string, url = `${PUBLIC_BASE_URL}/join`, headers: HeadersInit = {}) => {
   const merged = new Headers(headers);

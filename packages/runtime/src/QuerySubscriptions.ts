@@ -1,5 +1,5 @@
 import { ServerCall, canonicalArgs, handlerArgsSchema, type Manifest } from "@patchy/api";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,6 +25,7 @@ const encoder = new TextEncoder();
 
 /** Adds hosted queries to the same storage reader and revision reconciliation path. */
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const reads = yield* SubscriptionReads.SubscriptionReads;
   const invocation = yield* Effect.serviceOption(Invocation.Invocation);
   const argsBytes = yield* ContractLimits.get("tier2.args.bytes");
@@ -103,7 +104,7 @@ export const make = Effect.gen(function* () {
     let watermark: Readonly<Record<string, string>> = {};
     const reply = yield* invocation.value.call(
       input.args,
-      { ...binding, correlationId: newInternalId("call") },
+      { ...binding, correlationId: yield* cryptography.internalId("call") },
       input.reauthorize,
       {
         onDependency: (key) => {

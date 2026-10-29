@@ -3,16 +3,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/sql/testing";
 import * as MachineTokens from "./MachineTokens.js";
 import { DEV_SEED } from "./seed.js";
+import { NodeCryptography } from "@patchy/core";
 
 const HOUR = 60 * 60 * 1_000;
 const DAY = 24 * HOUR;
 const NOW = Date.UTC(2026, 0, 1);
 
-it.layer(MachineTokens.layer.pipe(Layer.provideMerge(Testing.layer())))("MachineTokens", (it) => {
+it.layer(
+  MachineTokens.layer.pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.provideMerge(NodeCryptography.layer)
+  )
+)("MachineTokens", (it) => {
   it.effect("authenticates the seeded user, company and machine", () =>
     Effect.gen(function* () {
       const tokens = yield* MachineTokens.MachineTokens;

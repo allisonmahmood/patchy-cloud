@@ -51,7 +51,7 @@ import {
   agentToolKind,
   type LookRevision
 } from "@patchy/api";
-import { newInternalId, sha256, validateHtml } from "@patchy/core";
+import { Cryptography, validateHtml } from "@patchy/core";
 import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
 import { type CliError, LocalError, RejectedError } from "./CliError.js";
@@ -574,6 +574,7 @@ const publish = Command.make(
       Effect.gen(function* () {
         const instance = yield* Instance.Instance;
         const state = yield* State.State;
+        const cryptography = yield* Cryptography.Cryptography;
         const cwd = yield* Cwd;
         const repo = Option.isNone(options.file) ? cwd : undefined;
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
@@ -615,11 +616,11 @@ const publish = Command.make(
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               ...(options.force ? { force: true } : {}),
-              publishKey: newInternalId("pub"),
+              publishKey: yield* cryptography.internalId("pub"),
               metadata: new PublishMetadata({
                 ...(yield* Git.metadata(repo)),
                 cliVersion: RELEASE,
-                fileSha256: sha256(html),
+                fileSha256: yield* cryptography.sha256(html),
                 ...(yield* publishLookStamp(repo))
               })
             })
@@ -688,13 +689,13 @@ const publish = Command.make(
             ...(patchId !== null ? { patchId } : {}),
             ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
             ...(options.force ? { force: true } : {}),
-            publishKey: newInternalId("pub"),
+            publishKey: yield* cryptography.internalId("pub"),
             metadata: new PublishMetadata({
               ...(yield* Git.metadata(path.dirname(resolved))),
               ...(description === undefined ? {} : { description }),
               filename: path.basename(resolved),
               cliVersion: RELEASE,
-              fileSha256: sha256(html)
+              fileSha256: yield* cryptography.sha256(html)
             })
           })
         });

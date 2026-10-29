@@ -5,7 +5,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, DevReadsGroup, type PidgeonSnapshot, WIRE_VERSION } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { sha256, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
+import { sha256, newPatchId } from "../../../test/crypto.js";
 import { Limits } from "@patchy/limits";
 import { Binding, LoadedVersions, Runtime, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -110,7 +111,7 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
   ),
   Layer.provideMerge(Testing.layer()),
   Layer.merge(swept),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 type Pidgeon = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
@@ -252,7 +253,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon in patchy dev, live in te
             description: "Live dev test address, deleted when the run ends",
             credentials: Keys.connectSecret({
               adminKey: Redacted.value(Live.admin()),
-              attempt: Keys.newAttempt(),
+              attempt: newPatchId(),
               access: "send",
               address: {
                 create: {

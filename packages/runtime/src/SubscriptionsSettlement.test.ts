@@ -23,6 +23,7 @@ import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 import * as Subscriptions from "./Subscriptions.js";
 import * as Fixtures from "./test/callbacks.js";
+import { NodeCryptography } from "@patchy/core";
 
 interface Attempt {
   readonly patchId: string;
@@ -41,7 +42,7 @@ const viewer = {
 
 const services = Layer.mergeAll(InvocationLog.layer, OperatingLimits.layer, Limits.layer)
   .pipe(Layer.provideMerge(Testing.layer()))
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeCryptography.layer));
 
 const fixture = Effect.gen(function* () {
   const scope = yield* Scope.fork(yield* Scope.Scope);

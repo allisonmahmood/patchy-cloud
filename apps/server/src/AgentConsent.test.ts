@@ -14,7 +14,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { AgentConnections } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clientDocumentFixtures, layerClientDocumentNetwork } from "@patchy/auth/testing";
-import { randomToken, sha256, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
+import { randomToken, sha256 } from "../../../test/crypto.js";
 import { send, server } from "./test/server.js";
 
 const BASE = "http://patchy-flow.localhost:29276";
@@ -24,7 +25,9 @@ const env = { PATCHY_PUBLIC_BASE_URL: BASE, PATCHY_DEV_PERSONAS_SECRET: "flow", 
 const documents = layerClientDocumentNetwork([CLAUDE_CODE]);
 
 /** Agent connections on the server's database, to see who a token acts as. */
-const services = Effect.provide(AgentConnections.layer.pipe(Layer.provide(NodeCryptography.layer)));
+const services = Effect.provide(
+  AgentConnections.layer.pipe(Layer.provideMerge(NodeCryptography.layer))
+);
 
 it.layer(
   server(env, documents).pipe(

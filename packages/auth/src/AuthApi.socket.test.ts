@@ -16,6 +16,7 @@ import * as AuthApi from "./AuthApi.js";
 import * as Authorization from "./Authorization.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
+import { NodeCryptography } from "@patchy/core";
 
 const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(AuthGroup)).pipe(
   Layer.provide(AuthApi.layer),
@@ -32,7 +33,8 @@ const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: 
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: "https://patchy.example" })
     )
-  )
+  ),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 const post = (url: string, body: string, framing: "declared" | "chunked") =>

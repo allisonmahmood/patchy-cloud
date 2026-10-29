@@ -17,7 +17,7 @@ import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { OperatingLimits } from "@patchy/limits";
 import * as Sql from "@patchy/sql";
@@ -156,6 +156,7 @@ export const placementLayer = Layer.fresh(OperatingLimits.layer).pipe(
 );
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const crypto = yield* Crypto.Crypto;
   const changes = yield* ResourceChanges.ResourceChanges;
   const platform = yield* PlacementClient;
@@ -198,7 +199,7 @@ export const make = Effect.gen(function* () {
       const existing = yield* placements(companyId).pipe(Effect.catchTags(dieOnSchemaError));
       if (existing[0]) return existing[0];
       yield* platform`INSERT INTO company_databases (company_id, database_name)
-        VALUES (${companyId}, ${newInternalId("patchy_company")}) ON CONFLICT (company_id) DO NOTHING`;
+        VALUES (${companyId}, ${yield* cryptography.internalId("patchy_company")}) ON CONFLICT (company_id) DO NOTHING`;
       const rows = yield* placements(companyId).pipe(Effect.catchTags(dieOnSchemaError));
       return rows[0]!;
     },

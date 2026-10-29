@@ -6,6 +6,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
 import * as InviteMail from "./InviteMail.js";
+import { NodeCryptography } from "@patchy/core";
 
 const companyInput = (handle: string): Companies.CreateInput => ({
   handle,
@@ -15,7 +16,12 @@ const companyInput = (handle: string): Companies.CreateInput => ({
   userName: "Founder"
 });
 
-it.layer(Companies.layer.pipe(Layer.provideMerge(Testing.layer())))("Invitations", (it) => {
+it.layer(
+  Companies.layer.pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.provideMerge(NodeCryptography.layer)
+  )
+)("Invitations", (it) => {
   it.effect("keeps a joinable invitation when Clerk cannot deliver its email", () =>
     Effect.gen(function* () {
       const companies = yield* Companies.Companies;

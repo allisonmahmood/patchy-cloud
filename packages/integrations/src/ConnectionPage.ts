@@ -294,13 +294,23 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
  * An integration's connect form. Cancel returns to where it was chosen: Integrations itself while
  * the company has no connections, since that empty page lists the integrations; else the catalogue.
  */
+/**
+ * A refused submit's attempt, or a fresh one: a form keeps its attempt across a refused submit,
+ * so a retry repeats it.
+ */
+const withAttempt = (submitted: Submitted) =>
+  PidgeonKeys.isAttempt(submitted.attempt ?? "")
+    ? Effect.succeed(submitted)
+    : Effect.map(PidgeonKeys.newAttempt, (attempt): Submitted => ({ ...submitted, attempt }));
+
 const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration,
-  submitted: Submitted = {},
+  given: Submitted = {},
   notice?: View.Notice
 ) {
   const page = pages[integration];
+  const submitted = yield* withAttempt(given);
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   return {
     title: `Connect ${page.integration.label}`,
@@ -476,7 +486,7 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
           typeof credentials.consequence === "string"
             ? credentials.consequence
             : credentials.consequence(connection),
-        fields: credentials.fields(form.submitted ?? {}, form.notice),
+        fields: credentials.fields(yield* withAttempt(form.submitted ?? {}), form.notice),
         ...(credentials.submit === undefined ? {} : { submit: credentials.submit })
       },
       ...(page.consequences === undefined ? {} : { consequences: page.consequences }),

@@ -22,7 +22,7 @@ import {
   type PidgeonWriteOperation
 } from "@patchy/api";
 import { Directory } from "@patchy/companies";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { Binding, Runtime } from "@patchy/runtime/core";
@@ -327,11 +327,14 @@ type Failure =
 type Step<In, C extends Context = Context> = (
   context: C,
   input: In
-) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>;
+) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>;
 /** One operation and its result, encoded through its own wire schema: nothing else leaves. */
 const step = <In, A, I extends Json, C extends Context = Context>(
   output: Schema.Codec<A, I>,
-  run: (context: C, input: In) => Effect.Effect<A, Failure, ConnectionStore.ConnectionStore>
+  run: (
+    context: C,
+    input: In
+  ) => Effect.Effect<A, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
 ): Step<In, C> => {
   const encode = Schema.encodeEffect(output);
   return (context, input) => run(context, input).pipe(Effect.flatMap(encode));
@@ -499,7 +502,9 @@ const reads: { readonly [K in PidgeonReadOperation]: Step<ReadInputs[K]> } = {
  * counts the calling key, so after Replace key the same draft is a mismatch, never a second email.
  */
 export const idempotencyKey = (connectionId: string, patchId: string, draft: string) =>
-  sha256(JSON.stringify(["pidgeon.send", connectionId, patchId, draft]));
+  Cryptography.Cryptography.use((cryptography) =>
+    cryptography.sha256(JSON.stringify(["pidgeon.send", connectionId, patchId, draft]))
+  );
 
 const DAY_MS = 86_400_000;
 
@@ -525,7 +530,7 @@ const sendDraft = Effect.fn("PidgeonOperations.sendDraft")(function* (
     });
   const answer = yield* context.address.call({
     ...request,
-    idempotencyKey: idempotencyKey(connection.id, context.patchId, draft),
+    idempotencyKey: yield* idempotencyKey(connection.id, context.patchId, draft),
     // The first send is still running: say so, and let the patch send the same draft again.
     inProgress: "fail"
   });
@@ -643,7 +648,9 @@ class CallerRefused extends Schema.TaggedError<CallerRefused>()("PidgeonCallerRe
 const atAddress = Effect.fnUntraced(function* <E>(
   target: Calls.Target<E>,
   kind: "read" | "write",
-  run: (address: Calls.Address) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>
+  run: (
+    address: Calls.Address
+  ) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
 ) {
   // The caller's refusal after the wait is its door's to say, so it waits here, apart from
   // everything the call itself can fail with.
@@ -702,7 +709,9 @@ const atAddress = Effect.fnUntraced(function* <E>(
 const perform = Effect.fn("PidgeonOperations.perform")(function* (
   connection: string,
   kind: "read" | "write",
-  run: (context: Drafting) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore>
+  run: (
+    context: Drafting
+  ) => Effect.Effect<Json, Failure, ConnectionStore.ConnectionStore | Cryptography.Cryptography>
 ) {
   const binding = yield* Binding.Binding;
   const declaration = binding.manifest.uses[connection];
@@ -849,7 +858,9 @@ const decodeDevRead = Schema.decodeUnknownEffect(PidgeonDevRead, { onExcessPrope
  * repo. It reads as a published read does, with the address's checks and slots, and held mail
  * stays empty. Writes never come here: dev simulates them without reaching the instance.
  */
-export const devReads: { readonly "pidgeon.read": DevRead<Source.Source> } = {
+export const devReads: {
+  readonly "pidgeon.read": DevRead<Source.Source | Cryptography.Cryptography>;
+} = {
   "pidgeon.read": {
     ...recorded,
     run: (target, args) =>
@@ -870,11 +881,13 @@ export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
   const directory = yield* Directory.Directory;
+  const cryptography = yield* Cryptography.Cryptography;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Directory.Directory, directory)
+      Effect.provideService(Directory.Directory, directory),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
   return {
     "pidgeon.read": Runtime.handler(

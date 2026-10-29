@@ -12,6 +12,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
 import * as Directory from "./Directory.js";
 import * as Users from "./Users.js";
+import { NodeCryptography } from "@patchy/core";
 
 const createCompany = Effect.fn("createDirectoryCompany")(function* (handle: string) {
   const companies = yield* Companies.Companies;
@@ -50,7 +51,8 @@ const decodeWake = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.String) }))
 );
 const services = Layer.mergeAll(Companies.layer, Users.layer, Directory.layer).pipe(
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(services)("company directory", (it) => {

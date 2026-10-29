@@ -24,6 +24,7 @@ import * as Operations from "./Operations.js";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
 import { nativeExecution } from "../test/nativeExecution.js";
+import { NodeCryptography } from "@patchy/core";
 
 const declaration = {
   kind: "postgres" as const,
@@ -142,7 +143,9 @@ const discover = Effect.gen(function* () {
   );
 });
 
-it.layer(Layer.mergeAll(Testing.emptyLayer({}), NodeFileSystem.layer, NodePath.layer))(
+const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeCryptography.layer);
+
+it.layer(Layer.mergeAll(Testing.emptyLayer({}), platform))(
   "discovered Postgres native/dev parity",
   (it) => {
     it.effect(

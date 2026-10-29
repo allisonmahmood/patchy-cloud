@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Fixtures from "./test/callbacks.js";
+import { NodeCryptography } from "@patchy/core";
 
 it.effect("capabilities keep their original attempt and explain every ended reason", () =>
   Effect.gen(function* () {
@@ -44,7 +45,7 @@ it.effect("capabilities keep their original attempt and explain every ended reas
       assert.strictEqual(refusal.reason, reason);
       assert.include(refusal.failure.error, reason);
     }
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("the deadline fences callbacks without a caller asking to settle", () =>
@@ -78,7 +79,7 @@ it.effect("the deadline fences callbacks without a caller asking to settle", () 
       "deadline"
     );
     assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("interrupting a started effect is not confirmation that it did not commit", () =>
@@ -98,7 +99,7 @@ it.effect("interrupting a started effect is not confirmation that it did not com
     yield* Deferred.await(started);
     assert.isFalse(yield* capabilities.settle(capability.token, "returned"));
     yield* Fiber.join(callback);
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect(
@@ -129,7 +130,7 @@ it.effect(
           .reason,
         "deadline"
       );
-    }).pipe(Effect.scoped)
+    }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("unfinished cancellation is destroyed even after the outcome signal resolves", () =>
@@ -157,7 +158,7 @@ it.effect("unfinished cancellation is destroyed even after the outcome signal re
     assert.isFalse(yield* Fiber.join(settling));
     assert.isTrue(destroyed);
     yield* Deferred.await(cancellationStopped);
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("resolved cancellation releases the invocation without destroying the resource", () =>
@@ -175,7 +176,7 @@ it.effect("resolved cancellation releases the invocation without destroying the 
     });
     assert.isTrue(yield* capabilities.settle(capability.token, "returned"));
     assert.isFalse(destroyed);
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("the scope sweeps replay tombstones after their configured retention", () =>
@@ -198,6 +199,7 @@ it.effect("the scope sweeps replay tombstones after their configured retention",
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({ PATCHY_LIMITS_JSON: '{"tier2.capability.tombstone":5}' })
       )
-    )
+    ),
+    Effect.provide(NodeCryptography.layer)
   )
 );

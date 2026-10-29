@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off — Node supplies content hashes and file-URL conversion; Effect has no digest service.
-import { createHash } from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off — Node supplies file-URL conversion.
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -16,6 +15,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
+import { Cryptography } from "@patchy/core";
 
 export class ArtifactUnavailable extends Schema.TaggedError<ArtifactUnavailable>()(
   "ArtifactUnavailable",
@@ -60,7 +60,7 @@ const ArchiveFilename = Schema.String.check(
 const isArchiveFilename = Schema.is(ArchiveFilename);
 const verifyDigest = Effect.fnUntraced(function* (filename: string, bytes: Uint8Array) {
   const expected = filename.slice(-68, -4);
-  const actual = createHash("sha256").update(bytes).digest("hex");
+  const actual = yield* (yield* Cryptography.Cryptography).sha256(bytes);
   if (actual !== expected) {
     return yield* new ArtifactMismatch({ field: "digest", expected, actual });
   }
@@ -84,6 +84,7 @@ export class Artifact extends Context.Service<
 >()("@patchy/sdk/Artifact") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const store = yield* ContentStore.ContentStore;
@@ -126,7 +127,8 @@ export const make = Effect.gen(function* () {
       )
     );
   yield* verifyDigest(filename, bytes);
-  const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+  const digest = yield* (yield* Cryptography.Cryptography).digest("SHA-512", bytes);
+  const integrity = `sha512-${Buffer.from(digest).toString("base64")}`;
   if (integrity !== metadata.integrity) {
     return yield* new ArtifactMismatch({
       field: "integrity",
@@ -147,9 +149,10 @@ export const make = Effect.gen(function* () {
     if (!isArchiveFilename(filename)) {
       return yield* new ContentStore.ObjectNotFound({ key });
     }
-    return yield* store
-      .getBytes(key)
-      .pipe(Effect.flatMap((bytes) => verifyDigest(filename, bytes)));
+    return yield* store.getBytes(key).pipe(
+      Effect.flatMap((bytes) => verifyDigest(filename, bytes)),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
+    );
   });
   return Artifact.of({
     get,

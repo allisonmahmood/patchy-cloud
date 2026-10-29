@@ -65,6 +65,19 @@ export const additions = Effect.fn("ProvisioningContract.additions")(function* (
       const next = yield* databases.withPatchLock(patchId)(tables.provision(patchId, nextManifest));
       assert.strictEqual(next.schemaRevision, 2);
       assert.deepStrictEqual(next.provisioned.indexes, ["notes.byActive"]);
+      // Index names are a hash of what each indexes, and name indexes in every company
+      // database: these are the names earlier releases gave them.
+      const indexNames = yield* sql.unsafe<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes WHERE schemaname = '${Inventory.namespace(patchId)}' AND tablename = 'notes'`
+      );
+      for (const name of [
+        "_patchy_91423a6bbb64df9581f11badd175ef9afceec55e27db99a2",
+        "_patchy_1cf1e59320a6ac0137387886d298bc0766b0f21c39d7e9e1"
+      ])
+        assert.include(
+          indexNames.map(({ indexname }) => indexname),
+          name
+        );
       const [filled] = yield* sql.unsafe<{
         optionalNumber: number | null;
         score: number;

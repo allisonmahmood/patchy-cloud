@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 
 export class InviteMailError extends Schema.TaggedError<InviteMailError>()("InviteMailError", {
   operation: Schema.Literals(["create", "revoke"]),
@@ -91,9 +91,10 @@ export class Recording extends Context.Service<
 
 export const layerRecording = Layer.effectContext(
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const events = yield* Ref.make<ReadonlyArray<Event>>([]);
     const create = Effect.fn("InviteMail.recordCreate")(function* (email: string) {
-      const id = newInternalId("clerk_inv");
+      const id = yield* cryptography.internalId("clerk_inv");
       yield* Ref.update(events, (current): ReadonlyArray<Event> => [
         ...current,
         { operation: "create", email, id }

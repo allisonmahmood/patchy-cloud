@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { newInternalId, WhatsNew } from "@patchy/core";
+import { Cryptography, WhatsNew } from "@patchy/core";
 import { AlreadyInCompany, displayName, Role, User, type Claims } from "./Users.js";
 
 /** Fixed once created: handles are not normalized into a different address. */
@@ -195,6 +195,7 @@ export class Companies extends Context.Service<
 >()("@patchy/companies/Companies") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const sql = yield* SqlClient.SqlClient;
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
@@ -356,14 +357,14 @@ export const make = Effect.gen(function* () {
         if (!isHandle(input.handle)) return yield* new InvalidHandle({ length: handleLength });
         const now = yield* Clock.currentTimeMillis;
         const company = yield* insertCompany({
-          id: newInternalId("cmp"),
+          id: yield* cryptography.internalId("cmp"),
           handle: input.handle,
           name: input.name,
           now
         });
         if (Option.isNone(company)) return yield* new HandleTaken({ handle: input.handle });
         const user = yield* insertUser({
-          id: newInternalId("usr"),
+          id: yield* cryptography.internalId("usr"),
           companyId: company.value.id,
           clerkUserId: input.clerkUserId,
           email: input.email.toLowerCase(),
@@ -388,7 +389,7 @@ export const make = Effect.gen(function* () {
           return yield* new AlreadyInCompany({ clerkUserId: user.value.clerkUserId });
         const now = yield* Clock.currentTimeMillis;
         const invite = yield* insertInvite({
-          id: newInternalId("inv"),
+          id: yield* cryptography.internalId("inv"),
           companyId: input.companyId,
           email,
           role: input.role ?? "member",
@@ -431,7 +432,7 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(invite) || invite.value.expiresAt.getTime() <= now)
             return yield* new InviteUnavailable({ inviteId: input.inviteId });
           const user = yield* insertUser({
-            id: newInternalId("usr"),
+            id: yield* cryptography.internalId("usr"),
             companyId: invite.value.companyId,
             clerkUserId: input.clerkUserId,
             email,

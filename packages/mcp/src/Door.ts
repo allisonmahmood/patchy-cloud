@@ -46,6 +46,7 @@ import type * as ChangeKeys from "./ChangeKeys.js";
 import * as RequestTrust from "./RequestTrust.js";
 import * as Revisions from "./Revisions.js";
 import * as Tools from "./Tools.js";
+import { Cryptography } from "@patchy/core";
 
 /** Who answers, on every revision. */
 const serverInfo = { name: "patchy", title: "Patchy", version: CURRENT_RELEASE };
@@ -94,6 +95,7 @@ export const layer: Layer.Layer<
   | HttpRouter.Request.From<
       "Requires",
       | AgentConnections.AgentConnections
+      | Cryptography.Cryptography
       | ChangeKeys.ChangeKeys
       | Limits.Limits
       | OperatingLimits.OperatingLimits

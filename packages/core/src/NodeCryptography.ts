@@ -3,6 +3,7 @@
  * `Cryptography` over `node:crypto`. Bun implements the same module; a Web Crypto implementation
  * would replace this file and nothing else.
  */
+// oxlint-disable-next-line no-restricted-imports -- Cryptography's Node implementation.
 import {
   createCipheriv,
   createDecipheriv,
@@ -57,6 +58,8 @@ export const make = Cryptography.Cryptography.of({
   digest: (algorithm, data) =>
     Effect.sync(() => Uint8Array.from(createHash(hashName[algorithm]).update(data).digest())),
   sha256: (data) => Effect.sync(() => createHash("sha256").update(data).digest("hex")),
+  contentHash: (data) =>
+    Effect.sync(() => `sha256:${createHash("sha256").update(data).digest("hex")}`),
   sha256Unsafe: (data, encoding) => createHash("sha256").update(data).digest(encoding),
   hmacSha256: (key, data) =>
     Effect.sync(() => Uint8Array.from(createHmac("sha256", key).update(data).digest())),

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
-import { newInternalId } from "@patchy/core";
+import { newInternalId } from "../../../test/crypto.js";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";

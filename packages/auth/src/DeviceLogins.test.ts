@@ -5,13 +5,14 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { Users } from "@patchy/companies";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { Limits } from "@patchy/limits";
 import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import { DEV_SEED } from "./seed.js";
+import { NodeCryptography } from "@patchy/core";
 
 const NOW = Date.UTC(2026, 0, 1);
 const MINUTE = 60 * 1_000;
@@ -22,7 +23,8 @@ const recording = Layer.succeed(
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
 const layer = Layer.mergeAll(MachineTokens.layer, Users.layer, recording).pipe(
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 // Each scenario gets fresh limiter windows; the database is shared as in the
 // other service suites, but its test clock can rewind between scenarios.

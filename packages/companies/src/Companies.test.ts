@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
 import * as Users from "./Users.js";
+import { NodeCryptography } from "@patchy/core";
 
 const companyInput = (handle: string): Companies.CreateInput => ({
   handle,
@@ -46,7 +47,9 @@ const held = Effect.fn("held")(function* <A, E>(effect: Effect.Effect<A, E>) {
   };
 });
 
-it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Testing.layer())))(
+const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));
+
+it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(database)))(
   "Companies",
   (it) => {
     it.effect(

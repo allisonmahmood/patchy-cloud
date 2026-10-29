@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- index names derive synchronously from table definitions; Effect Crypto returns Effects.
+// @effect-diagnostics nodeBuiltinImport:off -- node:util compares stored definitions with declared ones.
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
   ColumnDefinition,
@@ -17,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
+import { Cryptography } from "@patchy/core";
 
 export class NotAdditive extends Schema.TaggedError<NotAdditive>()("NotAdditive", {
   changes: Schema.Array(
@@ -108,12 +108,9 @@ const columnSql = (name: string, column: typeof ColumnDefinition.Type): string =
   return `${quote(name)} ${sqlTypes[column.kind]}${column.optional === true ? "" : " NOT NULL"}${defaultSql}`;
 };
 
-// PostgreSQL index names share a schema namespace and are limited to 63 bytes.
-const indexName = (table: string, kind: string, name: string): string =>
-  `_patchy_${createHash("sha256")
-    .update(JSON.stringify([table, kind, name]))
-    .digest("hex")
-    .slice(0, 48)}`;
+const encodeIndexKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String]))
+);
 
 interface IndexBudget {
   readonly table: string;
@@ -507,6 +504,13 @@ const diff = Effect.fn("Tables.diff")(function* (
 });
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
+  // PostgreSQL index names share a schema namespace and are limited to 63 bytes.
+  const indexName = (table: string, kind: string, name: string) =>
+    Effect.map(
+      cryptography.sha256(encodeIndexKey([table, kind, name])),
+      (hash) => `_patchy_${hash.slice(0, 48)}`
+    );
   const inventory = yield* Inventory.Inventory;
   const rowBytes = yield* ContractLimits.get("runtime.row.bytes");
   const validate = Effect.fn("Tables.validate")(function* (
@@ -569,7 +573,7 @@ export const make = Effect.gen(function* () {
           `CREATE TRIGGER "_patchy_updated_at" BEFORE UPDATE ON ${qualified(table)} FOR EACH ROW EXECUTE FUNCTION ${namespace}."_patchy_updated_at"()`
         );
         yield* sql.unsafe(
-          `CREATE INDEX ${quote(indexName(table, "system", "createdAt"))} ON ${qualified(table)} ("createdAt", "id")`
+          `CREATE INDEX ${quote(yield* indexName(table, "system", "createdAt"))} ON ${qualified(table)} ("createdAt", "id")`
         );
         yield* inventory.putTable({
           patchId,
@@ -601,7 +605,7 @@ export const make = Effect.gen(function* () {
         const index = kind === "declared" ? manifest.tables[table]!.indexes[name]! : undefined;
         const columns = index?.columns ?? [name, "id"];
         yield* sql.unsafe(
-          `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
+          `CREATE ${index?.unique === true ? "UNIQUE " : ""}INDEX ${quote(yield* indexName(table, kind, name))} ON ${qualified(table)} (${columns.map(quote).join(", ")})`
         );
         if (index)
           yield* inventory.putIndex({

@@ -45,7 +45,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   Live.layer
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 afterAll(Live.summary);
 

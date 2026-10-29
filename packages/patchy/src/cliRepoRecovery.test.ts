@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import {
   generateProjectResponse,

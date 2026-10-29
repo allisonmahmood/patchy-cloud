@@ -27,6 +27,7 @@ import * as Companies from "./Companies.js";
 import * as LookApi from "./LookApi.js";
 import * as Looks from "./Looks.js";
 import * as Users from "./Users.js";
+import { NodeCryptography } from "@patchy/core";
 
 const events: Analytics.AnalyticsEvent[] = [];
 const recording = Layer.succeed(
@@ -68,7 +69,8 @@ const bearer = Layer.effect(
 const layer = Layer.mergeAll(LookApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(bearer),
   Layer.provideMerge(Layer.mergeAll(Looks.layer, Users.layer, Companies.layer, recording)),
-  Layer.provideMerge(Layer.mergeAll(Testing.layer(), NodeFileSystem.layer, NodePath.layer))
+  Layer.provideMerge(Layer.mergeAll(Testing.layer(), NodeFileSystem.layer, NodePath.layer)),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 /** A company with admins Ada and Cleo, a member Ben and a deactivated admin Dot. */

@@ -20,7 +20,14 @@ import {
   SetupLinks,
   SetupPrompts
 } from "@patchy/auth";
-import { ago, copyScript, copyScriptPath, escapeAttribute, escapeHtml } from "@patchy/core";
+import {
+  Cryptography,
+  ago,
+  copyScript,
+  copyScriptPath,
+  escapeAttribute,
+  escapeHtml
+} from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
@@ -1029,6 +1036,7 @@ export const layer: Layer.Layer<
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
+      | Cryptography.Cryptography
       | Session.Session
       | Companies.Companies
       | Users.Users

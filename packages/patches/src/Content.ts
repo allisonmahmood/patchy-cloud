@@ -19,7 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { SqlError } from "effect/sql/SqlError";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { contentHash, newInternalId, newPatchId, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContentStore } from "@patchy/content-store";
 import {
   AgentAreaProblem,
@@ -135,6 +135,7 @@ export const objectKey = (patchId: string, versionId: string) =>
 export const serverObjectKey = (patchId: string, versionId: string) =>
   `patches/${patchId}/versions/${versionId}.server.js`;
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const patches = yield* Patches.Patches;
   const store = yield* ContentStore.ContentStore;
 
@@ -150,8 +151,8 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* new InvalidManifest({ reason: "server_unexpected" });
     }
-    const patchId = input.patchId ?? newPatchId();
-    const versionId = newInternalId("ver");
+    const patchId = input.patchId ?? (yield* cryptography.patchId);
+    const versionId = yield* cryptography.internalId("ver");
     const key = objectKey(patchId, versionId);
     const target = {
       intent: input.patchId === null ? "create" : "update",
@@ -196,7 +197,7 @@ export const make = Effect.gen(function* () {
       warnings = [...warnings, ...area.warnings];
       server = {
         objectKey,
-        sha256: sha256(stored),
+        sha256: yield* cryptography.sha256(stored),
         bytes: Buffer.byteLength(stored, "utf8")
       };
     }
@@ -207,7 +208,7 @@ export const make = Effect.gen(function* () {
       ...target,
       versionId,
       objectKey: key,
-      contentHash: contentHash(input.html),
+      contentHash: yield* cryptography.contentHash(input.html),
       fileSize: Buffer.byteLength(input.html, "utf8")
     });
   });
@@ -330,6 +331,7 @@ type StoredServer = NonNullable<Patches.PatchVersion["server"]> & {
  * `tier2.bundleCache.*` bounds. A hash mismatch is a failure, so it is never kept.
  */
 const makeBundleCache = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const store = yield* ContentStore.ContentStore;
   const deployment = yield* DeploymentConfig.load;
   return yield* makeArtifactCache({
@@ -339,7 +341,7 @@ const makeBundleCache = Effect.gen(function* () {
     size: (stored) => stored.bytes,
     read: Effect.fnUntraced(function* (stored) {
       const bundle = yield* store.get(stored.objectKey);
-      if (sha256(bundle) !== stored.sha256)
+      if ((yield* cryptography.sha256(bundle)) !== stored.sha256)
         return yield* new StoredServerUnavailable({
           patchId: stored.patchId,
           versionId: stored.versionId

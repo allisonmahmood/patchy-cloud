@@ -20,7 +20,7 @@ import {
   type FileBody
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { registry, type LimitScope } from "@patchy/limits/registry";
 import * as Binding from "./Binding.js";
@@ -481,13 +481,14 @@ export interface Options {
   ) => Effect.Effect<Exit.Exit<A, RuntimeError>, RuntimeError, HttpServerRequest.HttpServerRequest>;
 }
 
-type Dependencies = LoadedVersions.LoadedVersions | Limits.Limits;
+type Dependencies = LoadedVersions.LoadedVersions | Limits.Limits | Cryptography.Cryptography;
 
 export const make = (
   handlers: Readonly<Record<string, Handler>>,
   options: Options
 ): Effect.Effect<Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const versions = yield* LoadedVersions.LoadedVersions;
     const invocations = yield* Effect.serviceOption(Invocation.Invocation);
     const limits = yield* Limits.Limits;
@@ -656,7 +657,7 @@ export const make = (
           ...version,
           identity,
           principal: identity === null ? null : { userId: identity.user.id },
-          correlationId: newInternalId("call")
+          correlationId: yield* cryptography.internalId("call")
         });
         const admit = Effect.gen(function* () {
           if (integration && byteLength !== undefined && byteLength > maxBytes)

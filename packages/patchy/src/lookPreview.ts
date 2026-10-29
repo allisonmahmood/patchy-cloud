@@ -7,8 +7,6 @@
  * page has no script and passes tier 0 validation, so an agent can publish it to show someone;
  * the two-look page's one script sizes its frames.
  */
-// @effect-diagnostics nodeBuiltinImport:off -- the frames script's CSP hash is a module constant, computed once at load.
-import { createHash } from "node:crypto";
 import * as CssTree from "css-tree";
 import { escapeAttribute, escapeHtml, framedDocument } from "@patchy/core";
 import type { LookFiles, LookToken } from "@patchy/core/look";
@@ -138,8 +136,10 @@ const FIT_FRAMES = `addEventListener("load", () => {
   }
 });`;
 
-// Each frame enforces this policy as well as its specimen's own, which allows no script.
-const COMPARE_CSP = `${CSP}; script-src 'sha256-${createHash("sha256").update(FIT_FRAMES).digest("base64")}'`;
+// Each frame enforces this policy as well as its specimen's own, which allows no script. The
+// hash is the frames script's SHA-256; a test recomputes it from the page, so editing the script
+// means updating it.
+const COMPARE_CSP = `${CSP}; script-src 'sha256-6plY3Jpq7wbi1Oq2k91JTs/EAXKzPj8wdOy3dzmJ6L0='`;
 
 /**
  * The preview file: one specimen, or two side by side. Each of two sits in its own frame, so

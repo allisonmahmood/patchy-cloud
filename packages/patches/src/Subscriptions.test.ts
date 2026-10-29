@@ -25,7 +25,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { MachineTokens, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { CompanyDatabases } from "@patchy/company-database";
-import { newInternalId, newPatchId } from "@patchy/core";
+import { newInternalId, newPatchId } from "../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { SubscriptionReads, TableOperations } from "@patchy/primitives";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";

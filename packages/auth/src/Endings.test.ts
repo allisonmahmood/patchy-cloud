@@ -14,7 +14,8 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { Users } from "@patchy/companies";
-import { sha256, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
@@ -28,7 +29,7 @@ const layer = DeviceLogins.layer.pipe(
   Layer.provide(Limits.layer),
   Layer.provideMerge(Layer.mergeAll(AgentConnections.layer, MachineTokens.layer, Users.layer)),
   Layer.provideMerge(Layer.merge(Testing.layer(), Analytics.layerNoop)),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 /** A fresh person in the dev company, so one row's endings never reach another's. */

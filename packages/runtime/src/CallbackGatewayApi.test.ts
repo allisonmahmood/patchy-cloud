@@ -11,6 +11,7 @@ import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
+import { NodeCryptography } from "@patchy/core";
 
 const headers = (capability: InvocationCapabilities.Capability) => ({
   authorization: `Bearer ${capability.token}`,
@@ -23,7 +24,9 @@ const fetchJson = Effect.fnUntraced(function* (url: string, init: RequestInit) {
   return yield* Effect.tryPromise(() => response.json());
 });
 
-it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGatewayApi", (it) => {
+it.layer(
+  RuntimeLog.layer.pipe(Layer.provide(Testing.layer()), Layer.provideMerge(NodeCryptography.layer))
+)("CallbackGatewayApi", (it) => {
   it.effect(
     "the private listener accepts loader JSON and raw-file framing but not management authority or replays",
     () =>

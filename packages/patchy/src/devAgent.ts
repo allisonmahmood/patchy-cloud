@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type { AgentReply, AgentRequest } from "./devState.js";
+import { Cryptography } from "@patchy/core";
 
 /** The worker agent every dev call runs for, as handler code and `dev.log` see it. */
 export const agent = { name: "patchy dev" } as const;
@@ -57,7 +58,7 @@ export const answer = Effect.fn("DevAgent.answer")(function* (
   dev: Dev,
   mount: Mount,
   request: AgentRequest
-): Effect.fn.Return<AgentReply, never, WideEvents.WideEvents> {
+): Effect.fn.Return<AgentReply, never, WideEvents.WideEvents | Cryptography.Cryptography> {
   const { version, build, rebuildFailed } = dev.binding();
   const invocation = yield* Effect.serviceOption(Invocation.Invocation);
   // Only tier 2 runs server code, so only tier 2 has an invocation to call through.

@@ -8,7 +8,7 @@ import {
   sharedTableId,
   type GuestProtocol
 } from "@patchy/api";
-import { newInternalId, sha256 } from "@patchy/core";
+import { newInternalId, sha256 } from "../../../test/crypto.js";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as Deferred from "effect/Deferred";

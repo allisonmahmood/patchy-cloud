@@ -23,7 +23,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Companies } from "@patchy/companies";
-import { randomToken, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as AgentConnections from "./AgentConnections.js";
 import * as ClientDocuments from "./ClientDocuments.js";
 import { UserUnavailable } from "./MachineTokens.js";
@@ -166,12 +166,16 @@ export class Consents extends Context.Service<
   }
 >()("@patchy/auth/Consents") {}
 
-/** Whether `verifier` answers an S256 `challenge`. */
-const answers = (verifier: string, challenge: string) =>
-  VERIFIER.test(verifier) &&
-  Buffer.from(sha256(verifier), "hex").toString("base64url") === challenge;
-
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
+  /** Whether `verifier` answers an S256 `challenge`. */
+  const answers = (verifier: string, challenge: string) =>
+    VERIFIER.test(verifier)
+      ? Effect.map(
+          cryptography.digest("SHA-256", verifier),
+          (digest) => Buffer.from(digest).toString("base64url") === challenge
+        )
+      : Effect.succeed(false);
   const sql = yield* SqlClient.SqlClient;
   const companies = yield* Companies.Companies;
   const documents = yield* ClientDocuments.ClientDocuments;
@@ -229,7 +233,7 @@ export const make = Effect.gen(function* () {
     readonly userId: string;
     readonly companyId: string;
   }) {
-    const code = `pwc_${randomToken(32)}`;
+    const code = `pwc_${yield* cryptography.token(32)}`;
     // On its own, before any lock is held: an expired code is dead whether or not this runs.
     // An exchanged one stays with its connection, so a replay at any time ends it.
     yield* sql`
@@ -250,7 +254,7 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO agent_consents (code_hash, user_id, client_id, client_name, redirect_uri,
             code_challenge, created_at, expires_at)
-          VALUES (${sha256(code)}, ${input.userId}, ${request.client.clientId},
+          VALUES (${yield* cryptography.sha256(code)}, ${input.userId}, ${request.client.clientId},
             ${request.client.name}, ${request.redirectUri}, ${request.codeChallenge},
             clock_timestamp(), clock_timestamp() + make_interval(secs => ${CODE_SECONDS}))`;
       })
@@ -310,7 +314,7 @@ export const make = Effect.gen(function* () {
     readonly redirectUri?: string | undefined;
     readonly resource?: string | undefined;
   }) {
-    const codeHash = sha256(input.code);
+    const codeHash = yield* cryptography.sha256(input.code);
     // A refusal is a value until the transaction commits, so a replay's ending lands first.
     const outcome = yield* sql.withTransaction(
       Effect.gen(function* (): Effect.fn.Return<
@@ -346,7 +350,7 @@ export const make = Effect.gen(function* () {
           return "redirect_uri";
         if (input.resource !== undefined && !resourceAllowed(input.resource))
           return new ResourceRefused();
-        if (!answers(input.codeVerifier, code.codeChallenge)) return "verifier";
+        if (!(yield* answers(input.codeVerifier, code.codeChallenge))) return "verifier";
         if (!on) return "agent_access_off";
         const person = yield* personLive(codeHash).pipe(
           Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })

@@ -9,6 +9,7 @@ import * as Companies from "@patchy/companies/Companies";
 import * as Testing from "@patchy/sql/testing";
 import { decodeMail } from "./pidgeon.js";
 import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
+import { NodeCryptography } from "@patchy/core";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const repo = new URL("../../..", import.meta.url).pathname;
@@ -86,7 +87,9 @@ it.layer(Platform)("scenarios", (it) => {
   );
 });
 
-it.layer(Layer.mergeAll(Platform, Companies.layer.pipe(Layer.provideMerge(Testing.layer()))))(
+const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));
+
+it.layer(Layer.mergeAll(Platform, Companies.layer.pipe(Layer.provideMerge(database))))(
   "seeding a scenario",
   (it) => {
     it.effect("turns brightline's agent access on as its publisher, once", () =>

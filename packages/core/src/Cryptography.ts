@@ -52,6 +52,8 @@ export class Cryptography extends Context.Service<
     ) => Effect.Effect<Uint8Array>;
     /** SHA-256 as lowercase hex. Strings hash as UTF-8. */
     readonly sha256: (data: string | Uint8Array) => Effect.Effect<string>;
+    /** A stored document's hash: `sha256:` and its SHA-256 hex. */
+    readonly contentHash: (data: string | Uint8Array) => Effect.Effect<string>;
     /**
      * SHA-256 for a synchronous section that must not yield, such as a commit applied in one
      * step. Everywhere else, `sha256`.

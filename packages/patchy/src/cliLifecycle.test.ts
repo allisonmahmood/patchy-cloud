@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import { CURRENT_RELEASE, MANIFEST_VERSION, PublishRequest } from "@patchy/api";
 import {
   decodeDescriptionRequest,

@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Detached children, birth-checked signals and append-only log descriptors are process-boundary operations.
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import * as fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -34,6 +33,7 @@ import {
   sameProcess,
   type Daemon
 } from "./devState.js";
+import { Cryptography } from "@patchy/core";
 
 const Health = Schema.Struct({
   nonce: Schema.String,
@@ -214,7 +214,7 @@ export const start = Effect.fn("Dev.start")(function* <R>(
         await fs.rm(await safePath(stateDir, "failure.json"), { force: true });
       });
       const live = Preparation.readsLive(prepared.metadata);
-      const nonce = randomUUID();
+      const nonce = yield* (yield* Cryptography.Cryptography).randomUUID;
       // Write the nonce before spawning; the child may reach its entrypoint before spawn returns.
       const initial: Daemon = {
         root,

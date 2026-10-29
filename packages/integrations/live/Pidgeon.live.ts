@@ -23,6 +23,7 @@ import {
   services as pageServices
 } from "../src/test/pages.js";
 import { NodeCryptography } from "@patchy/core";
+import { newPatchId } from "../../../test/crypto.js";
 
 /**
  * Pidgeon connections against Pidgeon itself, in test mode: what Patchy asks of Pidgeon and what
@@ -37,7 +38,8 @@ import { NodeCryptography } from "@patchy/core";
 
 const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
 const handle = (name: string) => `${Live.RUN}-${name}`;
-const attempt = () => Keys.newAttempt();
+// An attempt has a patch id's shape: 12 of [a-z0-9].
+const attempt = () => newPatchId();
 
 /**
  * The connections pages and store over Pidgeon. Before the tests, stale leftovers of any run or
@@ -57,7 +59,7 @@ const services = pageServices(Live.layer).pipe(
       })
     ).pipe(Layer.provide(Live.sweepLayer))
   ),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 /** What `/me` says about a key, as far as these tests look. */
 const decodeMe = Schema.decodeUnknownSync(

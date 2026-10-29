@@ -14,7 +14,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { contentHash, newInternalId, newPatchId } from "../../../packages/core/src/index.js";
+import { contentHash, newInternalId, newPatchId } from "../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
 import {

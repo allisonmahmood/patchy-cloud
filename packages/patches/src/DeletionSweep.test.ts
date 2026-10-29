@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { CompanyDatabases, OrphanSweep } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
-import { newInternalId, newPatchId, sha256 } from "@patchy/core";
+import { newInternalId, newPatchId, sha256 } from "../../../test/crypto.js";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as Content from "./Content.js";

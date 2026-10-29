@@ -15,6 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Supervisor from "./supervisor.js";
+import { NodeCryptography } from "@patchy/core";
 
 const source = `
 const memory = [];
@@ -180,7 +181,7 @@ it.live("keeps a loaded process callable across issuing-host replacement", () =>
       outcome: "returned",
       reply: { ok: true, value: "first host" }
     });
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
+  }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
 );
 
 it.live("rejects a probe interval that cannot enforce the six-second stall bound", () =>
@@ -195,7 +196,7 @@ it.live("rejects a probe interval that cannot enforce the six-second stall bound
       })
     ),
     Effect.scoped,
-    Effect.provide(FetchHttpClient.layer)
+    Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])
   )
 );
 
@@ -253,7 +254,7 @@ it.live(
         report.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")?.peak
       ).toBeGreaterThanOrEqual(ceiling);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).aggregateRssBytes).toBe(0);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -279,7 +280,7 @@ it.live(
       expect(loaded[0].processGeneration).toBe(loaded[1].processGeneration);
       expect(loaded[2].processGeneration).not.toBe(loaded[0].processGeneration);
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toHaveLength(2);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -332,7 +333,7 @@ it.live(
           _tag: "Failure",
           failure: { reason: "stale_epoch" }
         });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -374,7 +375,7 @@ it.live(
         outcome: "returned",
         reply: { ok: false, source: "patchy", code: "timeout" }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -420,7 +421,7 @@ it.live(
         callsServed: 2,
         invocations: []
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -491,7 +492,7 @@ it.live(
         (yield* supervisor.stats({ bindingEpoch: 1, acknowledgeReports: [report.reportId] }))
           .reports
       ).not.toContainEqual(report);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   30_000
 );
 
@@ -514,7 +515,7 @@ it.live(
       expect(report.invocations).toEqual([
         expect.objectContaining({ invocationId: request.request.invocationId })
       ]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -545,7 +546,7 @@ it.live(
           peak: report.peakRssBytes
         })
       );
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   45_000
 );
 
@@ -572,7 +573,7 @@ it.live(
       expect(firstEvent.startMs).toBeLessThanOrEqual(firstEvent.durationMs);
       expect(secondEvent.firstOnTask).toBe(false);
       expect(secondEvent.startMs).toBeGreaterThan(0);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -600,7 +601,7 @@ it.live(
       expect(
         yield* supervisor.invoke(invocation(first, host.url)).pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "stale_generation" } });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -642,7 +643,7 @@ it.live(
       });
       expect(yield* touch(supervisor, "ver_kept")).toEqual({ outcome: "absent", idleMs: 2_000 });
       expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -683,7 +684,7 @@ it.live(
       });
       expect(outcomes).toContain("loading");
       expect(outcomes).not.toContain("touched");
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -743,7 +744,7 @@ it.live(
       expect(after.reports).toEqual([
         expect.objectContaining({ processGeneration: first.processGeneration, cause: "evicted" })
       ]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   30_000
 );
 
@@ -822,7 +823,7 @@ it.live(
         freshReport.event.limits?.find((entry) => entry.limitId === "execution.residency.bytes")
           ?.peak
       ).toBeLessThan(ceiling);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   30_000
 );
 
@@ -880,7 +881,7 @@ it.live(
         expect.objectContaining({ processGeneration: target.processGeneration })
       ]);
       pressure.length = 0;
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -930,7 +931,7 @@ it.live(
       });
       const report = yield* reportFor(supervisor, loaded.processGeneration!);
       expect(report).toMatchObject({ cause: "idle", callsServed: 1, invocations: [] });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -967,7 +968,7 @@ it.live(
           }
         ]
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   15_000
 );
 
@@ -1010,7 +1011,7 @@ it.live(
         outcome: "returned",
         reply: { ok: true, value: "alive" }
       });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -1047,7 +1048,7 @@ it.live(
       const report = yield* reportFor(supervisor, generation);
       expect(report.cause).toBe("stall");
       expect(report.endedAt - started).toBeGreaterThanOrEqual(6_000);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -1128,7 +1129,7 @@ it.live(
       expect(
         yield* supervisor.bind({ companyId: "com_other", bindingEpoch: 3 }).pipe(Effect.result)
       ).toMatchObject({ _tag: "Failure", failure: { reason: "stopped" } });
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );
 
@@ -1183,6 +1184,6 @@ it.live(
         });
       }).pipe(Effect.scoped);
       expect(() => process.kill(survivingPid, 0)).toThrow();
-    }).pipe(Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   20_000
 );

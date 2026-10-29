@@ -9,6 +9,7 @@ import * as Dev from "./Dev.js";
 import * as Execution from "./Execution.js";
 import { nativeType, quoteIdentifier } from "./Mapping.js";
 import type { ColumnType, Snapshot } from "@patchy/api/postgres-snapshot";
+import { NodeCryptography } from "@patchy/core";
 
 const native = (baseName: string): typeof ColumnType.Type => ({
   schema: "pg_catalog",
@@ -71,7 +72,9 @@ const fixtureSql = `INSERT INTO public.invoices VALUES
 ('9007199254740994', 10, '2024-03-01 00:00:00.000001Z', 'it''s done', NULL);
 CREATE FUNCTION public.write_fixture() RETURNS integer LANGUAGE plpgsql AS $$ BEGIN UPDATE public.invoices SET amount = 99; RETURN 1; END $$;`;
 
-it.layer(Layer.merge(NodeFileSystem.layer, NodePath.layer))("Postgres dev fixture", (it) => {
+it.layer(
+  Layer.merge(NodeFileSystem.layer, NodePath.layer).pipe(Layer.provideMerge(NodeCryptography.layer))
+)("Postgres dev fixture", (it) => {
   it.effect("names the mandatory fixture and refuses path traversal before filesystem access", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
