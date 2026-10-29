@@ -158,6 +158,20 @@ export const listByClerkId = Effect.fn("Guests.listByClerkId")(function* (clerkU
   return yield* rows(clerkUserId).pipe(Effect.catchTags(dieOnSchemaError));
 });
 
+/** Internal roster, including ended/deactivated identities. Caller authorizes company access. */
+export const listByCompany = Effect.fn("Guests.listByCompany")(function* (companyId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Guest,
+    execute: (id) =>
+      sql.unsafe(`SELECT ${columns} FROM company_guests WHERE company_id = $1 ORDER BY name, id`, [
+        id
+      ])
+  });
+  return yield* rows(companyId).pipe(Effect.catchTags(dieOnSchemaError));
+});
+
 /** Deactivation is reversible. Ending closes grants and keeps the identity for later explicit sharing. */
 export const setDeactivated = Effect.fn("Guests.setDeactivated")(function* (
   input: GuestRef & { readonly deactivated: boolean }

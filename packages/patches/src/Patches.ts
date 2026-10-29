@@ -353,6 +353,16 @@ const GuestSharedPatch = Schema.Struct({
 });
 export type GuestSharedPatch = typeof GuestSharedPatch.Type & { readonly address: string };
 
+/** Internal company administration read, never serving authority. */
+export interface CompanyGuest {
+  readonly guest: Guests.Guest;
+  readonly grants: readonly (GuestGrants.Lookup & {
+    /** Reclamation removes the patch metadata but retains the ended grant. */
+    readonly name: string | null;
+    readonly title: string | null;
+  })[];
+}
+
 /** One member's record of opening one patch, read only to build that member's own Home. */
 export interface Open {
   readonly patchId: string;
@@ -919,6 +929,14 @@ export class Patches extends Context.Service<
       clerkUserId: string,
       publicBaseUrl: string
     ) => Effect.Effect<ReadonlyArray<GuestSharedPatch>, SqlError>;
+    /**
+     * Trusted internal input: companyId must come from the active company-admin viewer,
+     * after the existing session/admin checks, never a request-selected company.
+     * A future Companies page receives this read through server wiring, not a Patches import.
+     */
+    readonly companyGuests: (
+      companyId: string
+    ) => Effect.Effect<ReadonlyArray<CompanyGuest>, SqlError>;
     /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
       companyHandle: string,
@@ -2467,6 +2485,36 @@ export const make = Effect.gen(function* () {
       )
   );
 
+  const companyGuestPatches = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      guestId: Schema.String,
+      patchId: Schema.String,
+      name: Schema.NullOr(Schema.String),
+      title: Schema.NullOr(Schema.String)
+    }),
+    execute: (companyId) => sql`SELECT DISTINCT g.guest_id AS "guestId", g.patch_id AS "patchId",
+      patches.name, patches.title FROM patch_guest_grants g
+      LEFT JOIN patches ON patches.id = g.patch_id AND patches.company_id = g.company_id
+      WHERE g.company_id = ${companyId} ORDER BY g.guest_id, g.patch_id`
+  });
+  const companyGuests = Effect.fn("Patches.companyGuests")(function* (companyId: string) {
+    const guests = yield* Guests.listByCompany(companyId).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+    const grants = new Map<string, CompanyGuest["grants"][number][]>();
+    const rows = yield* companyGuestPatches(companyId).pipe(Effect.catchTags(dieOnSchemaError));
+    for (const { guestId, patchId, name, title } of rows) {
+      // The existing decision selects the latest grant, including terminal states.
+      const found = yield* guestGrant(companyId, patchId, guestId);
+      if (found === null) continue;
+      const entries = grants.get(guestId) ?? [];
+      entries.push({ ...found, name, title });
+      grants.set(guestId, entries);
+    }
+    return guests.map((guest): CompanyGuest => ({ guest, grants: grants.get(guest.id) ?? [] }));
+  });
+
   const guestSharedRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: Schema.Struct({ ...GuestSharedPatch.fields, guestId: Schema.String }),
@@ -2881,6 +2929,7 @@ export const make = Effect.gen(function* () {
     revokeGuest,
     guestGrant,
     sharedWithGuest,
+    companyGuests,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,
