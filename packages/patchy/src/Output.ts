@@ -27,6 +27,7 @@ export const JsonFlag = GlobalFlag.Setting("json")({
 });
 
 const falseLiterals = new Set(["false", "no", "off", "0", "n"]);
+const booleanLiterals = new Set([...falseLiterals, "true", "yes", "on", "1", "y"]);
 
 /**
  * Whether argv asks for `--json`, read as Effect reads the flag: the first `--json`,
@@ -36,7 +37,9 @@ const falseLiterals = new Set(["false", "no", "off", "0", "n"]);
  */
 export const jsonRequested = (args: ReadonlyArray<string>) => {
   for (const [index, arg] of args.entries()) {
-    if (arg === "--" || arg === "--no-json") return false;
+    if (arg === "--") return false;
+    // Effect refuses `--no-json <b>` without recording a value, so the next one decides.
+    if (arg === "--no-json" && !booleanLiterals.has(args[index + 1] ?? "")) return false;
     if (arg === "--json") return !falseLiterals.has(args[index + 1] ?? "");
     if (/^--?json=/.test(arg)) return !falseLiterals.has(arg.slice(arg.indexOf("=") + 1));
   }
