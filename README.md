@@ -16,7 +16,9 @@ Tier 2 repos publish a second artifact, a closed server module. The instance
 re-derives its handlers from stored bytes before recording the version.
 Tier 2 is company-only. Its page calls generated server handlers rather than
 name-based resources; a served tier 2 version closes older tier 1 tabs' direct
-operations until reload or rollback.
+operations until reload or rollback. A tier 2 patch's `agent/` folder holds tools
+for people's own agents, which use them as their person through Patchy MCP at
+`/mcp` while the company's agent access is on.
 
 Production runs every release through the Deploy workflow, with tier 2 on the
 ECS fleet; each release gets a What's new entry in the portal
@@ -75,11 +77,11 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/core`: shared HTML validation, the company look's publish checks (`@patchy/core/look`), hashing, ID helpers, and the first-party card shell, app shell and component set (`@patchy/core`).
 - `packages/api` — the wire contract: schemas, the `HttpApi`, the derived client (`@patchy/api`).
 - `packages/companies` — companies, users, roles, invites and membership lifecycle, and the company look with the Patchy look that stands in for none (`@patchy/companies`).
-- `packages/auth` — browser sessions, the shared login door, device login, machine tokens, Your agents, receipts, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
+- `packages/auth` — browser sessions, the shared login door, device login, machine tokens, agent connections, client documents, consent and the authorization server for MCP clients, Your agents, receipts, bearer identity, revocation, the shared development seed and the `auth` API group (`@patchy/auth`).
 - `packages/patches`: user-owned patches and versions, names and addresses, replay-safe file/repo publishing, provisioning coordination, sharing, lifecycle moves and actor stamps, visits and quotas, the deletion sweep, and the `patches` API group (`@patchy/patches`).
 - `packages/portal`: the signed-in index and patch cards, versions, inline management, lifecycle and reassignment confirmations, user deactivation/reactivation pick pages, and owner/admin invocation logs with recent activity (`@patchy/portal`).
 - `packages/serving`: tier-scoped page/content routes, address notices and login doors, the sandboxed frame, document-bound broker, route bridge, stream client, lifecycle notices, starting cover and trusted download action (`@patchy/serving`).
-- `packages/mcp`: Patchy MCP, the door at `/mcp` through which people's agents use their company's patches: its revisions, request trust, the `work` bearer and its limits, and the four fixed tools (`@patchy/mcp`).
+- `packages/mcp`: Patchy MCP, the door at `/mcp` through which people's agents use their company's patches: its revisions, request trust, the `work` bearer and its limits, the four fixed tools and change keys (`@patchy/mcp`).
 - `packages/runtime`: browser and invocation admission, capabilities and private callbacks, host-owned transactions, mutation keys, revisions and subscriptions, document streams, attribution and metering, and the admitted-work Executor port (`@patchy/runtime`).
 - `packages/execution`: the credential-free workerd engine, isolated bundle inspection, process supervisor, private management listener, local executor and host fleet controller with local and ECS Fargate task providers (`@patchy/execution`). Shares Runtime's glossary.
 - `packages/primitives`: additive table/store provisioning, resource revisions, bounded owned-table operations, read-only shared tables and stores, file handles, staged uploads and the declared member directory over Postgres and PGlite (`@patchy/primitives`).
