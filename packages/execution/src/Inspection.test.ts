@@ -74,6 +74,12 @@ it.live(
         `export default { fetch() { return Response.json({ ok: true, handlers: ${JSON.stringify(handlers)} }); } };`;
       const inspection = yield* Inspection.make();
       expect(yield* inspection.inspect(answering(described))).toEqual(described);
+      const { kind, description, args, result } = described["agent.lookup"];
+      const future = {
+        "agent.lookup": { kind, description, args, result, audience: ["agent"] },
+        "demo.peek": { ...described["demo.peek"], audience: ["browser", "guest-browser"] }
+      };
+      expect(yield* inspection.inspect(answering(future))).toEqual(future);
       expect(
         yield* inspection
           .inspect(answering({ "demo.read": { ...descriptors["demo.read"], readOnly: true } }))

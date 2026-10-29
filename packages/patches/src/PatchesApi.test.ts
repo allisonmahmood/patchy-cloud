@@ -2045,6 +2045,44 @@ it.layer(publishLayer)("publish attempts", (it) => {
     })
   );
 
+  it.effect("refuses a hand-written audience publish without recording a version", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const patches = yield* Patches.Patches;
+      const before = yield* patches.countQuotaPatches(admin.user.id);
+      for (const audience of [["agent"], ["browser", "guest-browser"]] as const) {
+        const refused = yield* api.publish({
+          payload: publishRequest({
+            html: html("Future audience"),
+            server:
+              "export default { fetch() { return Response.json({ ok: true, handlers: {} }); } };",
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              handlers: {
+                "agent.read": {
+                  kind: "query",
+                  description: "Reads a value.",
+                  audience,
+                  args: {},
+                  result: { kind: "text" }
+                }
+              }
+            }
+          }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(refused.status, 422);
+        assert.deepInclude(yield* refused.json, {
+          code: "invalid_manifest",
+          error:
+            "This release does not publish handler audiences. Keep the existing server/ and agent/ declarations."
+        });
+      }
+      assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
+    })
+  );
+
   it.effect("refuses unsupported tiers and missing connections before writing content", () =>
     Effect.gen(function* () {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));

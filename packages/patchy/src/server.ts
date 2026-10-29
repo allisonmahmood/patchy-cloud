@@ -155,6 +155,8 @@ export interface HandlerDescriptor {
   readonly description?: string;
   readonly readOnly?: true;
   readonly agentTool?: true;
+  /** Read compatibility only; this release does not build audience declarations. */
+  readonly audience?: readonly ("browser" | "guest-browser" | "agent")[];
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];

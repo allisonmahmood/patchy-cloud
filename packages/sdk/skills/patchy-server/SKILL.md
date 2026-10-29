@@ -50,6 +50,12 @@ message is the clue. Pages hold up to 25 entries; continue with
 Reproduce the failure in `patchy dev` with fixtures, fix it, publish, and check
 the log for new entries.
 
+Keep the existing `server/` and `agent/` declarations. Reader support for a future
+single handler audience is installed before its writer: this release does not
+accept `audience` in builds or publications. Do not hand-write it into a manifest
+or descriptor. Tier 2 guest execution and sharing remain disabled; current guest
+sharing is tier 0/1 only.
+
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
 from the stored bytes in a throwaway process. Mismatch, top-level throw,

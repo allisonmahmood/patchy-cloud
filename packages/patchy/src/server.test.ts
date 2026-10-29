@@ -361,3 +361,18 @@ it("distinguishes handler errors from platform errors and preserves JSON details
   assert.strictEqual(isHandlerError(new Error("duplicate"), "duplicate"), false);
   assert.deepStrictEqual(error.details, { name: "Lead", candidates: ["one", "two"] });
 });
+
+it("keeps audience declarations out of this release's built descriptors", () => {
+  const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  for (const audience of [["browser"], ["browser", "guest-browser"], ["agent"]] as const) {
+    const future = { ...list, descriptor: { ...list.descriptor, audience } };
+    assert.throws(
+      () => extractHandlerDescriptors({ leads: { list: future } }),
+      /This release reads handler audiences but does not publish them yet/
+    );
+    assert.throws(
+      () => extractHandlerDescriptors({}, { list: future }),
+      /This release reads handler audiences but does not publish them yet/
+    );
+  }
+});

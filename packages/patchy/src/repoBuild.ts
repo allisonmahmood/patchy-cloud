@@ -1,4 +1,4 @@
-import { Manifest } from "@patchy/api";
+import { Manifest, handlerAudiencePublishProblem } from "@patchy/api";
 import { workerdVersion } from "@patchy/api/guest";
 import { DEFAULT_MAX_HTML_BYTES, validateHtml } from "@patchy/core";
 import * as Inspection from "@patchy/execution/inspection";
@@ -357,7 +357,8 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const refusal =
     handlers === undefined
       ? undefined
-      : (descriptionFailure(handlers, built.agentTools) ??
+      : (handlerAudiencePublishProblem(handlers) ??
+        descriptionFailure(handlers, built.agentTools) ??
         agentAreaFailure({ tables: configured.tables, handlers }, built.agentTools));
   if (refusal !== undefined)
     return yield* new LocalError({ message: refusal, code: "invalid_manifest" });

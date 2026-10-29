@@ -195,6 +195,13 @@ handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries
 cannot write, mutations cannot reach shared data, connections, file bytes or
 `ctx.run`, and actions can call only sibling queries and mutations.
+The instance can read the upcoming single handler `audience` field, but this
+release still builds and publishes the existing format. Keep page handlers in
+`server/` and agent tools in `agent/`; do not add audience declarations yet.
+Builds and publication refuse them with `invalid_manifest`. This prepares safe
+rollback for a later format switch; it does not enable tier 2 guest calls or
+sharing.
+
 `action({ readOnly: true, … })` declares a read-only action: its context keeps
 an action's reads and runs only queries, and Patchy refuses a write forced past
 the types. Only actions take the flag. Every handler takes an optional

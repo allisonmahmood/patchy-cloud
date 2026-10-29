@@ -3,6 +3,51 @@ import * as Schema from "effect/Schema";
 export const HandlerKind = Schema.Literals(["query", "mutation", "action"]);
 export type HandlerKind = typeof HandlerKind.Type;
 
+/** Audiences understood by readers. New publications still use the legacy format. */
+export const HandlerAudience = Schema.Array(
+  Schema.Literals(["browser", "guest-browser", "agent"])
+).check(
+  Schema.isMinLength(1),
+  Schema.makeFilter(
+    (audience) =>
+      new Set(audience).size === audience.length || "Handler audiences must be distinct."
+  ),
+  Schema.makeFilter(
+    (audience) =>
+      !audience.includes("agent") || audience.length === 1 || "Agent handlers are agent-only."
+  ),
+  Schema.makeFilter(
+    (audience) =>
+      !audience.includes("guest-browser") ||
+      audience.includes("browser") ||
+      "Guest-browser reads must also allow member browsers."
+  )
+);
+export type HandlerAudience = typeof HandlerAudience.Type;
+
+/** Legacy marks are read compatibility, never a second authority beside an explicit audience. */
+type AudienceDescriptor = {
+  readonly audience?: HandlerAudience;
+  readonly agentTool?: true;
+};
+export const handlerAudience = (handler: AudienceDescriptor): HandlerAudience =>
+  handler.audience ?? (handler.agentTool === true ? ["agent"] : ["browser"]);
+
+export const isAgentHandler = (handler: AudienceDescriptor): boolean =>
+  handlerAudience(handler).includes("agent");
+
+/** Writer gate for the reader-first release, shared by local builds and publication. */
+export const handlerAudiencePublishProblem = (
+  handlers: HandlerDescriptors | undefined
+): string | undefined => {
+  const entry = Object.entries(handlers ?? {}).find(
+    ([, handler]) => handler.audience !== undefined
+  );
+  return entry === undefined
+    ? undefined
+    : `${entry[0]} declares an audience. This release reads handler audiences but does not publish them yet. Keep the existing server/ and agent/ declarations.`;
+};
+
 const moduleNamePattern = "[a-zA-Z_$][a-zA-Z0-9_$-]*";
 const moduleName = new RegExp(`^${moduleNamePattern}$`);
 const handlerName = new RegExp(`^${moduleNamePattern}\\.[a-zA-Z_$][a-zA-Z0-9_$]*$`);
@@ -95,18 +140,18 @@ export const HandlerSchema: Schema.Codec<HandlerSchema> = Schema.suspend(() =>
  */
 const schemaProblem = (
   schema: HandlerSchema,
-  handler: Pick<HandlerDescriptor, "kind" | "agentTool">,
+  handler: Pick<HandlerDescriptor, "kind" | "agentTool" | "audience">,
   position: "args" | "result",
   field: boolean
 ): string | undefined => {
   if (schema.optional === true && !field) return "Only object and argument fields may be optional.";
   switch (schema.kind) {
     case "fileHandle":
-      return position === "result" || handler.agentTool === true
+      return position === "result" || isAgentHandler(handler)
         ? undefined
         : "File handles are allowed only in handler results.";
     case "upload":
-      return (position === "args" && handler.kind === "action") || handler.agentTool === true
+      return (position === "args" && handler.kind === "action") || isAgentHandler(handler)
         ? undefined
         : "Uploads are allowed only in action arguments.";
     case "object":
@@ -126,19 +171,29 @@ const schemaProblem = (
 
 /**
  * One handler's contract. An action marked `readOnly` is held to reads by the runtime. A handler
- * built from a patch's `agent/` folder is marked `agentTool`, and only agents may call it. Absent
- * marks are omitted, never written as false.
+ * built from a patch's `agent/` folder is agent-only. Readers accept audience or the legacy
+ * agentTool mark, never both; writers still emit only the legacy format. Unmarked handlers
+ * are member-browser handlers and confer no guest authority.
  */
 export const HandlerDescriptor = Schema.Struct({
   kind: HandlerKind,
   description,
   readOnly: Schema.optionalKey(Schema.Literal(true)),
   agentTool: Schema.optionalKey(Schema.Literal(true)),
+  audience: Schema.optionalKey(HandlerAudience),
   args: fields(HandlerSchema),
   result: HandlerSchema,
   errors: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMinLength(1))))
 }).check(
   Schema.makeFilter((handler) => {
+    if (handler.audience !== undefined && handler.agentTool !== undefined)
+      return "Use audience or the legacy agentTool mark, never both.";
+    if (handler.audience?.includes("guest-browser")) {
+      if (handler.kind !== "query" && !(handler.kind === "action" && handler.readOnly === true))
+        return "Guest browsers may call only queries and read-only actions.";
+      for (const { schema } of handlerValues(handler))
+        if (schema.kind === "upload") return "Guest-browser handlers may not accept uploads.";
+    }
     if (handler.readOnly === true && handler.kind !== "action")
       return "Only actions may be read-only.";
     for (const field of Object.values(handler.args)) {
@@ -161,7 +216,7 @@ export const HandlerDescriptors = Schema.Record(Schema.String, HandlerDescriptor
   Schema.makeFilter(
     (handlers) =>
       Object.entries(handlers).every(
-        ([name, handler]) => handler.agentTool !== true || name.startsWith("agent.")
+        ([name, handler]) => !isAgentHandler(handler) || name.startsWith("agent.")
       ) || "Only agent.* handlers may be agent tools."
   )
 );
@@ -225,7 +280,7 @@ export const descriptionProblem = (
     const own =
       descriptor.description === undefined ? undefined : violation(descriptor.description);
     if (own !== undefined)
-      return { handler, ...own, ...(descriptor.agentTool === true ? { agentTool: true } : {}) };
+      return { handler, ...own, ...(isAgentHandler(descriptor) ? { agentTool: true } : {}) };
     for (const [field, schema] of Object.entries(descriptor.args)) {
       const problem = valueProblem(schema, handler, `args.${field}`);
       if (problem !== undefined) return problem;
@@ -309,7 +364,7 @@ export const handlerTablesValid = (manifest: {
     for (const { path, schema } of handlerValues(handler))
       if (schema.kind === "row" && !Object.hasOwn(manifest.tables, schema.table))
         return unknownRowRefusal(
-          handler.agentTool === true ? agentToolName(name) : name,
+          isAgentHandler(handler) ? agentToolName(name) : name,
           path,
           schema.table
         );

@@ -92,6 +92,27 @@ it.layer(
     Layer.provideMerge(Fixtures.database)
   )
 )("Content", (it) => {
+  it.effect("refuses audience-format publication before storing any bytes", () =>
+    Effect.gen(function* () {
+      for (const audience of [["browser"], ["browser", "guest-browser"], ["agent"]] as const) {
+        const error = yield* publish("<p>future</p>", null, {
+          manifest: {
+            ...Fixtures.manifest,
+            tier: 2,
+            handlers: {
+              "agent.read": { kind: "query", audience, args: {}, result: { kind: "text" } }
+            }
+          },
+          server: "must not be stored or inspected"
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, Content.InvalidManifest);
+        assert.strictEqual(error.reason, "audience");
+      }
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(yield* sql`SELECT id FROM patches`, []);
+    })
+  );
+
   it.effect("bootstraps a company database for a store-only publish", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

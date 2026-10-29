@@ -36,6 +36,14 @@ _Avoid_: callback authorisation, presence lease
 The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
 _Avoid_: invocation admission, guest permission
 
+**Handler audience**:
+The callers a handler allows. Readers accept a single `audience` list: `browser`,
+`browser` with `guest-browser` for a query or read-only action without uploads,
+or `agent` alone. Historical `agentTool: true` means agent-only; no mark means
+member-browser-only. The two fields cannot coexist on one descriptor. Guest
+execution remains disabled and this reader-first release still publishes only
+the historical format.
+
 **Query**:
 A read-only handler whose result can be subscribed to as its viewer.
 _Avoid_: SQL query, polling function

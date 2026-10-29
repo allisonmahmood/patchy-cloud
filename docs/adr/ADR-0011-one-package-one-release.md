@@ -100,3 +100,31 @@ this check; upgrading cannot erase its key or change its owner. Running dev
 sessions and already deployed bundles are not invalidated by a release: deployed
 bundles use the stable, versioned runtime wire rather than an exact-current SDK
 check.
+
+## Handler audience compatibility
+
+Handler readers understand both the historical `agentTool: true` descriptor and
+its replacement, a single `audience` list. They never accept both on one handler.
+Unmarked historical handlers stay member-browser-only, including old
+`server/agent.ts` exports; they never gain guest authority. Agent-only handlers
+stay refused from browsers at every call depth. Guest execution and tier 2
+sharing are still disabled.
+
+The reader-first release continues to build and publish the historical format.
+The CLI and server reject publication of an explicit audience; reader support
+alone must not allow a hand-written publish to move persisted data ahead of the
+rollback reader. Existing published manifests and bundled SDKs need no rewrite.
+
+Audience-only writers must ship in a later release, after compatible readers
+are deployed throughout the server and execution fleet. A rollback from that
+later release must target a compatible reader release. Rolling back its code
+does not remove new-format descriptors from current or historical versions, so
+it does not make an earlier, incompatible release safe again. Before the writer
+switch, rollback to the pre-reader release remains safe.
+
+Release and manifest version checks at publication do not protect stored data
+on rollback. Older readers discard the unknown audience field and treat a
+handler without `agentTool` as browser-callable. Keeping the runtime wire at 1
+preserves existing bundles; this change does not retire that wire. The rollback
+rehearsal must cover both deployment steps independently, including the page's
+direct and nested refusal of agent-only handlers.

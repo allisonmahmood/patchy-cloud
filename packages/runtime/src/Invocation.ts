@@ -1,6 +1,7 @@
 import {
   canonicalArgs,
   handlerArgsSchema,
+  isAgentHandler,
   handlerValueSchema,
   limitRefusal,
   limitRefusalFields,
@@ -290,10 +291,10 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     if (parent === undefined)
       yield* WideEvents.enrich({ handler: input.handler, kind: descriptor.kind });
     // Agent tools are for agents only, at any depth; only the binding says who called.
-    if (descriptor.agentTool === true && binding.agent === undefined)
+    if (isAgentHandler(descriptor) && binding.agent === undefined)
       return yield* new Runtime.AccessDenied({});
     // An agent's call starts only an agent tool. Inside it, `ctx.run` reaches siblings as usual.
-    if (binding.agent !== undefined && parent === undefined && descriptor.agentTool !== true)
+    if (binding.agent !== undefined && parent === undefined && !isAgentHandler(descriptor))
       return yield* new Runtime.AccessDenied({});
     if (parent !== undefined) {
       yield* capabilities
