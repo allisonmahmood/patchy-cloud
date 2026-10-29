@@ -126,6 +126,8 @@ the release's bundled instance. TypeScript and Vite use the same JSX import
 source; module preloading is off. The repo includes hooks/import lint and
 `helpers/` for company code, not a router, CSS framework, state library or test
 runner. Vanilla repos keep working through the framework-free generated client.
+Repos type-check with TypeScript 7 and lint with Oxlint; publish refuses a repo still
+on an older TypeScript and names the move.
 Tier 2 adds starter handlers in `server/`, config-bound
 `patchy/_generated/server.ts`, the exact `workerd` managed pin and
 `patchy-server` alongside `patchy-preact` and `patchy-loop`. The page uses
@@ -220,8 +222,8 @@ and never reads `patchy.json`; discovery grants no authority. See
 [Sharing and finding](#sharing-and-finding) for the discovery chain.
 `patchy add postgres/<handle>`, `patchy add posthog/<handle>`,
 `patchy add shared-table <patchId>/<table>`
-or `patchy add shared-store <patchId>/<store> --as <alias>` adds one declaration by
-TypeScript AST and generates the client, context, missing fixture stub and skill.
+or `patchy add shared-store <patchId>/<store> --as <alias>` adds one declaration as
+one source edit and generates the client, context, missing fixture stub and skill.
 The insertion is a literal declaration, requiring no import changes. An uneditable
 expression fails with its exact source line and the exact declaration line to
 add manually before refresh, rather than guessing at a rewrite.

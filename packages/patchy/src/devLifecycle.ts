@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ToolRefusal } from "@patchy/api";
+import { typescriptRefusal } from "./toolchainProcess.js";
 import type { CliError } from "./CliError.js";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
@@ -313,7 +314,13 @@ export const start = Effect.fn("Dev.start")(function* <R>(
       const ready = yield* waiting.pipe(
         Effect.onError(() => stopRecorded(child).pipe(Effect.orDie))
       );
-      return { record: ready, started: true, warnings: prepared.warnings };
+      // Dev runs a TypeScript 6 repo; only publish refuses it.
+      const typescript = yield* typescriptRefusal(root, toolchain);
+      return {
+        record: ready,
+        started: true,
+        warnings: typescript === undefined ? prepared.warnings : [...prepared.warnings, typescript]
+      };
     })
   );
   yield* report(result.record, stateDir, { joined: !result.started, warnings: result.warnings });

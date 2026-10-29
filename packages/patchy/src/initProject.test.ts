@@ -220,3 +220,21 @@ it("refuses generated output through a symbolic link", async () => {
   ).rejects.toThrow();
   expect(await readdir(outside)).toEqual([]);
 });
+
+it("documents the scaffold's lint config in the skill a TypeScript 7 refusal points at", async () => {
+  const skill = await readFile(
+    new URL("../../sdk/skills/patchy-preact/SKILL.md", import.meta.url),
+    "utf8"
+  );
+  const documented = /```json\n([\s\S]*?)\n```/.exec(
+    skill.slice(skill.indexOf("The scaffold lints with Oxlint"))
+  )?.[1];
+  const files = starterFiles({
+    instance: "http://127.0.0.1:1",
+    name: "notes",
+    tier: 1,
+    purpose: "Synthetic notes",
+    tarball: "http://127.0.0.1:1/patchy.tgz"
+  });
+  expect(JSON.parse(documented ?? "null")).toEqual(JSON.parse(files[".oxlintrc.json"]!));
+});

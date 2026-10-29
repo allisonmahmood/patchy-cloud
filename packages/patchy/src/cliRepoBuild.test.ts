@@ -297,4 +297,32 @@ document.body.textContent = JSON.stringify({
       expect(readFileSync(file, "utf8")).toBe(source);
     }
   );
+
+  it("publish refuses a TypeScript the release doesn't accept before any fresh work; refresh only warns", async () => {
+    const required = { ...toolchain, typescript: { testedAgainst: "99.0.0", accepted: "^99.0.0" } };
+    const instance = await stubInstance(projectHandler, () => CURRENT_RELEASE, undefined, required);
+    const dir = publishTree(instance.url);
+    const message = `This repo has TypeScript ${toolchain.typescript.testedAgainst}; this release publishes only TypeScript ^99.0.0`;
+    const refreshed = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(refreshed.status, refreshed.stderr).toBe(0);
+    expect(JSON.parse(refreshed.stdout).warnings.join("\n")).toContain(message);
+    const config = readFileSync(path.join(dir, "patchy.config.ts"), "utf8");
+    const before = instance.requests.length;
+    const published = await runCli(["publish", "--json"], { cwd: dir, env });
+    expect(published).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(published.stderr);
+    expect(failure).toMatchObject({ ok: false, kind: "local", code: "toolchain_unsupported" });
+    expect(failure.error).toContain(message);
+    expect(failure.error).toContain("pnpm add --save-dev 'typescript@^99.0.0'");
+    expect(failure.error).toContain(".agents/skills/patchy-preact/SKILL.md");
+    // Only identity and release were asked: no description sync, no build, no publish.
+    expect(
+      instance.requests
+        .slice(before)
+        .map((request) => request.url)
+        .filter((url) => url.startsWith("/api/"))
+        .sort()
+    ).toEqual(["/api/me", "/api/release"]);
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(config);
+  });
 });

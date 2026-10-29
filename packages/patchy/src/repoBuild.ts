@@ -19,7 +19,7 @@ import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
 import { primitiveReminders } from "./primitiveReminders.js";
-import { runToolchain } from "./toolchainProcess.js";
+import { runToolchain, typescriptRefusal } from "./toolchainProcess.js";
 import { guestAliases } from "./serverBuild.js";
 import { releaseFromPin } from "./packagePin.js";
 import {
@@ -231,6 +231,10 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   token: Redacted.Redacted
 ) {
   const toolchain = yield* checkRepoRelease(cwd, token);
+  // Before any fresh work, so a refused repo's description and config stay untouched.
+  const typescript = yield* typescriptRefusal(cwd, toolchain);
+  if (typescript !== undefined)
+    return yield* new LocalError({ message: typescript, code: "toolchain_unsupported" });
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
