@@ -1490,6 +1490,82 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
+  it.effect(
+    "ends named grants only after an authorized public confirmation and requires a fresh share",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const other = yield* company();
+        const patch = yield* publish(workspace.owner, "guest-public-roundtrip");
+        const patches = yield* Patches.Patches;
+        const path = cardPath(patch.name);
+        const share = () =>
+          post(`${path}/guest-share`, workspace.owner, {
+            expectedPatchId: patch.patchId,
+            email: other.owner.email
+          });
+        assert.strictEqual((yield* share()).status, 303);
+        const grants = () => patches.namedGrants(patch.patchId, actor(workspace.owner));
+        const original = yield* grants();
+        const before = yield* readPatch(workspace.owner, patch.patchId);
+        const fields = {
+          expectedPatchId: patch.patchId,
+          expectedScope: "company",
+          scope: "public"
+        };
+        const asked = yield* post(`${path}/scope`, workspace.owner, fields);
+        assert.strictEqual(asked.status, 200);
+        const confirmation = yield* asked.text;
+        assert.include(text(confirmation), "Anyone with the link can open it without signing in.");
+        assert.include(text(confirmation), "Named guest grants will end.");
+        assert.include(text(confirmation), "Making it private again requires fresh grants.");
+        const answer = formFields(confirmation, `${path}/scope`);
+        const cancel = links(confirmation).find((link) => link.text === "Cancel")!;
+        assert.strictEqual((yield* request(cancel.href, workspace.owner)).status, 200);
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+        assert.deepStrictEqual(yield* grants(), original);
+
+        for (const [person, submitted, status] of [
+          [workspace.member, answer, 403],
+          [workspace.owner, { ...answer, expectedScope: "public" }, 409],
+          [workspace.owner, { ...answer, expectedPatchId: "old-patch-id" }, 409]
+        ] as const) {
+          assert.strictEqual((yield* post(`${path}/scope`, person, submitted)).status, status);
+          assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+          assert.deepStrictEqual(yield* grants(), original);
+        }
+
+        assert.strictEqual((yield* post(`${path}/scope`, workspace.admin, answer)).status, 303);
+        const ended = yield* grants();
+        assert.lengthOf(ended, 1);
+        assert.strictEqual(ended[0]!.id, original[0]!.id);
+        assert.strictEqual(ended[0]!.endReason, "public");
+        assert.instanceOf(ended[0]!.endedAt, Date);
+        assert.strictEqual((yield* post(`${path}/scope`, workspace.owner, answer)).status, 409);
+        assert.deepStrictEqual(yield* grants(), ended);
+        assert.strictEqual(
+          (yield* post(`${path}/scope`, workspace.owner, {
+            expectedPatchId: patch.patchId,
+            expectedScope: "public",
+            scope: "company"
+          })).status,
+          303
+        );
+        assert.deepStrictEqual(yield* grants(), ended);
+        assert.strictEqual((yield* share()).status, 303);
+        const fresh = yield* grants();
+        assert.lengthOf(fresh, 1);
+        const active = fresh[0]!;
+        assert.isNull(active.endedAt);
+        const sql = yield* SqlClient.SqlClient;
+        const old =
+          yield* sql`SELECT end_reason FROM patch_guest_grants WHERE id = ${original[0]!.id}`;
+        assert.strictEqual(old[0]!.end_reason, "public");
+        assert.notStrictEqual(active.id, original[0]!.id);
+        assert.strictEqual(active.guestId, original[0]!.guestId);
+      })
+  );
+
   it.effect("refuses public sharing while tier 2 is served and allows it after rollback", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
