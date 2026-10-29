@@ -52,6 +52,24 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 22,
+    date: "2026-10-29",
+    through: "a2d133130d6dbd86df6d36c8e21254306d8c649a",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Your agent checks patches several times faster",
+        detail:
+          "New patch repos now use TypeScript 7 and Oxlint, which check a patch several times faster, and the patchy download is about a third smaller. The next time you publish an existing repo, patchy asks you to move it over first and names the one command to run. Your published patches keep working the whole time.",
+        prs: [989, 994, 1009, 1010]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy itself now builds with TypeScript 7 and Oxlint, so its own checks run several times faster.",
+      "Encryption, signing and ids all go through one place in Patchy now, with tests proving everything already stored still opens."
+    ]
+  },
+  {
     id: 21,
     date: "2026-10-28",
     through: "f30d8fef1a615b41218f8e388359a483ab86a5e4",
