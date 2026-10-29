@@ -66,7 +66,13 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
           {
             guest: here,
             grants: [
-              { grant: localGrant, access: "active", name: local.name, title: "Fixture patch" }
+              {
+                grant: localGrant,
+                access: "active",
+                name: local.name,
+                title: "Fixture patch",
+                manageable: true
+              }
             ]
           }
         ]);
@@ -78,7 +84,8 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
                 grant: foreignGrant,
                 access: "active",
                 name: foreign.name,
-                title: "Other company's title"
+                title: "Other company's title",
+                manageable: true
               }
             ]
           }
@@ -155,10 +162,12 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
           );
           yield* patches.retire(patch.patchId, owner);
           assert.strictEqual((yield* selected()).access, "unavailable");
+          assert.isTrue((yield* selected()).manageable);
           yield* patches.restore(patch.patchId, owner);
           assert.strictEqual((yield* selected()).access, "active");
           yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${patch.patchId}`;
           assert.strictEqual((yield* selected()).access, "unavailable");
+          assert.isFalse((yield* selected()).manageable);
           yield* sql`UPDATE patches SET disabled_at = NULL WHERE id = ${patch.patchId}`;
           yield* patches.setScope(patch.patchId, owner, "public");
           assert.strictEqual((yield* selected()).access, "ended");
@@ -174,6 +183,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
           assert.strictEqual(reclaimed.grant.endReason, "reclaimed");
           assert.isNull(reclaimed.name);
           assert.isNull(reclaimed.title);
+          assert.isFalse(reclaimed.manageable);
           yield* publish(patch.name);
           assert.lengthOf((yield* read()).grants, 2);
           assert.isNull((yield* selected()).name);

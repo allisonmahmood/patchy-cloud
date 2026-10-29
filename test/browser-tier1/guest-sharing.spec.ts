@@ -1,5 +1,103 @@
 import { test, expect, prepare } from "./fixtures.js";
 
+test("admin People guests link to Share, revoke there and refuse the recipient's next load", async ({
+  page,
+  browser,
+  instance
+}, testInfo) => {
+  await instance.platform.query(
+    "INSERT INTO companies (id, handle, name) VALUES ('cmp_roster_other', 'roster-other', 'Other company')"
+  );
+  await instance.platform.query(
+    "UPDATE users SET company_id = 'cmp_roster_other', role = 'admin' WHERE id = 'usr_colleague'"
+  );
+  const patch = await instance.publish(
+    "company",
+    "<!doctype html><html><head><title>Roster brief</title></head><body><h1>Roster brief</h1></body></html>",
+    undefined,
+    { tier: 0, tables: {}, files: {} }
+  );
+  const settings = `${instance.origin}/patches/${patch.name}/settings`;
+  const people = `${instance.origin}/company`;
+  await page.goto(settings);
+  await page.getByLabel("Existing Patchy account email").fill("colleague@patchy.local");
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(page.getByText("Has access", { exact: true })).toBeVisible();
+  const guestContext = await browser.newContext();
+  try {
+    await prepare(guestContext, instance);
+    await instance.session(guestContext, "colleague");
+    const guest = await guestContext.newPage();
+    expect((await guest.goto(patch.address))?.status()).toBe(200);
+    await expect(
+      guest.frameLocator("#patch").getByRole("heading", { name: "Roster brief" })
+    ).toBeVisible();
+
+    // This account is an admin elsewhere and a guest here. Forged parameters cannot select here.
+    expect(
+      (await guest.goto(`${people}?show=guests&companyId=cmp_dev&guestId=anything`))?.status()
+    ).toBe(200);
+    await expect(guest.getByText("No guests yet.", { exact: true })).toBeVisible();
+    await expect(guest.getByRole("link", { name: "Roster brief", exact: true })).toHaveCount(0);
+    expect((await guest.goto(settings))?.status()).toBe(404);
+
+    await page.goto(people);
+    const members = await page.locator("main").innerText();
+    expect(members).not.toContain("colleague@patchy.local");
+    await page.getByRole("link", { name: "Guests", exact: true }).click();
+    await expect(page.getByText("colleague@patchy.local", { exact: true })).toBeVisible();
+    const row = page.getByRole("row").filter({ hasText: "colleague@patchy.local" });
+    await expect(row.getByRole("cell", { name: "Active", exact: true })).toBeVisible();
+    await expect(row).toContainText("Has access");
+    await page.screenshot({ path: testInfo.outputPath("guests-desktop.png"), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: testInfo.outputPath("guests-phone.png"), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await row.getByRole("link", { name: "Roster brief", exact: true }).click();
+    await expect(page).toHaveURL(`${settings}#share`);
+    await page
+      .getByRole("list", { name: "Named guests" })
+      .getByRole("listitem")
+      .filter({ hasText: "colleague@patchy.local" })
+      .getByRole("button", { name: /^Revoke access for / })
+      .click();
+    await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
+    await page.goto(`${people}?show=guests`);
+    await expect(page.getByRole("row").filter({ hasText: "colleague@patchy.local" })).toContainText(
+      "Revoked"
+    );
+    await expect(page.getByText("No current patch access.", { exact: true })).toBeVisible();
+    expect((await guest.goto(patch.address))?.status()).toBe(404);
+    await expect(guest.locator("iframe#patch")).toHaveCount(0);
+
+    await instance.platform.query("UPDATE patches SET disabled_at = now() WHERE id = $1", [
+      patch.patchId
+    ]);
+    await page.reload();
+    await expect(page.getByRole("row").filter({ hasText: "colleague@patchy.local" })).toContainText(
+      "Roster brief"
+    );
+    await expect(page.getByRole("link", { name: "Roster brief", exact: true })).toHaveCount(0);
+    await instance.platform.query("UPDATE patches SET disabled_at = NULL WHERE id = $1", [
+      patch.patchId
+    ]);
+
+    // Existing active-member and deactivated-member gates still apply to a forged filter.
+    await instance.platform.query("UPDATE users SET role = 'member' WHERE id = 'usr_dev'");
+    expect((await page.goto(`${people}?show=guests`))?.status()).toBe(403);
+    await expect(page.getByText("colleague@patchy.local", { exact: true })).toHaveCount(0);
+    await page.goto(people);
+    await expect(page.getByRole("link", { name: "Guests", exact: true })).toHaveCount(0);
+    await instance.platform.query(
+      "UPDATE users SET role = 'admin', deactivated_at = now() WHERE id = 'usr_dev'"
+    );
+    expect((await page.goto(`${people}?show=guests`))?.status()).toBe(403);
+    await expect(page.getByText("colleague@patchy.local", { exact: true })).toHaveCount(0);
+  } finally {
+    await guestContext.close();
+  }
+});
+
 test("public confirmation ends guest access until the owner explicitly shares again", async ({
   page,
   browser,

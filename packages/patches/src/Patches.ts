@@ -360,6 +360,8 @@ export interface CompanyGuest {
     /** Reclamation removes the patch metadata but retains the ended grant. */
     readonly name: string | null;
     readonly title: string | null;
+    /** Disabled and reclaimed patches have no working portal management surface. */
+    readonly manageable: boolean;
   })[];
 }
 
@@ -2492,10 +2494,12 @@ export const make = Effect.gen(function* () {
       patchId: Schema.String,
       name: Schema.NullOr(Schema.String),
       title: Schema.NullOr(Schema.String),
-      tier0: Schema.Boolean
+      tier0: Schema.Boolean,
+      manageable: Schema.Boolean
     }),
     execute: (companyId) => sql`SELECT DISTINCT g.guest_id AS "guestId", g.patch_id AS "patchId",
-      patches.name, patches.title, COALESCE(v.tier = 0, false) AS "tier0"
+      patches.name, patches.title, COALESCE(v.tier = 0, false) AS "tier0",
+      (patches.id IS NOT NULL AND patches.disabled_at IS NULL) AS manageable
       FROM patch_guest_grants g
       LEFT JOIN patches ON patches.id = g.patch_id AND patches.company_id = g.company_id
       LEFT JOIN patch_versions v ON v.id = patches.current_version_id AND v.patch_id = patches.id
@@ -2507,14 +2511,14 @@ export const make = Effect.gen(function* () {
     );
     const grants = new Map<string, CompanyGuest["grants"][number][]>();
     const rows = yield* companyGuestPatches(companyId).pipe(Effect.catchTags(dieOnSchemaError));
-    for (const { guestId, patchId, name, title, tier0 } of rows) {
+    for (const { guestId, patchId, name, title, tier0, manageable } of rows) {
       // The existing decision selects the latest grant, including terminal states.
       const found = yield* guestGrant(companyId, patchId, guestId);
       if (found === null) continue;
       const entries = grants.get(guestId) ?? [];
       // As on Home and at the serving door, only current tier 0 versions support guests.
       const access = found.access === "active" && !tier0 ? "unavailable" : found.access;
-      entries.push({ ...found, access, name, title });
+      entries.push({ ...found, access, name, title, manageable });
       grants.set(guestId, entries);
     }
     return guests.map((guest): CompanyGuest => ({ guest, grants: grants.get(guest.id) ?? [] }));

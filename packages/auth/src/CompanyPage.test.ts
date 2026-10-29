@@ -16,7 +16,7 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Authorization as AuthorizationTag, PatchyApi } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
-import { Companies, CompanyPage, InviteMail, Users } from "@patchy/companies";
+import { Companies, CompanyPage, Guests, InviteMail, Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
 import * as AuthApi from "./AuthApi.js";
@@ -153,6 +153,131 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("company page and actions", (it) => {
+  it.effect(
+    "guards the guest filter before reading and takes its company only from the viewer",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("guest-view");
+        const foreign = yield* createCompany("guest-foreign");
+        const member = yield* addUser(owner, "member");
+        const inactive = yield* addUser(owner, "inactive", "admin");
+        yield* (yield* Users.Users).deactivate({
+          companyId: owner.company.id,
+          userId: inactive.id
+        });
+        const guest = new Guests.Guest({
+          id: "gst_view",
+          companyId: owner.company.id,
+          clerkUserId: foreign.user.clerkUserId,
+          name: '<img src=x onerror="bad">',
+          email: "guest&name@example.com",
+          createdAt: new Date(0),
+          deactivatedAt: null,
+          endedAt: null
+        });
+        const asked: string[] = [];
+        const read = (companyId: string) => {
+          asked.push(companyId);
+          return Effect.succeed(
+            companyId === owner.company.id
+              ? [
+                  {
+                    guest,
+                    grants: [
+                      {
+                        name: "brief",
+                        title: "<script>bad</script>",
+                        manageable: true,
+                        access: "revoked" as const
+                      },
+                      { name: null, title: null, manageable: false, access: "ended" as const },
+                      {
+                        name: "disabled",
+                        title: "Disabled brief",
+                        manageable: false,
+                        access: "unavailable" as const
+                      },
+                      {
+                        name: "retired",
+                        title: "Retired brief",
+                        manageable: true,
+                        access: "unavailable" as const
+                      }
+                    ]
+                  },
+                  {
+                    guest: new Guests.Guest({
+                      ...guest,
+                      id: "gst_suspended",
+                      name: "Suspended",
+                      deactivatedAt: new Date(1)
+                    }),
+                    grants: [
+                      {
+                        name: "paused",
+                        title: "Paused brief",
+                        manageable: true,
+                        access: "deactivated" as const
+                      }
+                    ]
+                  },
+                  {
+                    guest: new Guests.Guest({
+                      ...guest,
+                      id: "gst_ended",
+                      name: "Former guest",
+                      endedAt: new Date(1)
+                    }),
+                    grants: []
+                  }
+                ]
+              : []
+          );
+        };
+        const path = `/company?show=guests&companyId=${owner.company.id}&guestId=${guest.id}`;
+        for (const user of [member, inactive]) {
+          const response = yield* send(path, { headers: { cookie: cookie(user) } }).pipe(
+            Effect.provideService(CompanyPage.CompanyGuests, read)
+          );
+          assert.strictEqual(response.status, 403);
+          assert.notInclude(yield* Effect.promise(() => response.text()), "guest&amp;name");
+        }
+        assert.deepStrictEqual(asked, []);
+        const response = yield* send(path, { headers: { cookie: cookie(owner.user) } }).pipe(
+          Effect.provideService(CompanyPage.CompanyGuests, read)
+        );
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+        const html = main(yield* Effect.promise(() => response.text()));
+        assert.include(html, "&lt;img src=x");
+        assert.include(html, "guest&amp;name@example.com");
+        assert.include(html, "&lt;script&gt;bad&lt;/script&gt;");
+        assert.include(html, 'href="/patches/brief/settings#share"');
+        assert.include(html, "Revoked");
+        assert.include(html, "No current patch access.");
+        assert.include(html, "Reclaimed patch");
+        assert.include(html, "Patch unavailable to guests");
+        assert.include(html, "Suspended · guest deactivated");
+        assert.include(html, "<td>Deactivated</td>");
+        assert.include(html, "<td>Ended</td>");
+        assert.include(html, "No patch grants.");
+        assert.notInclude(html, "/patches/null");
+        assert.notInclude(html, "/patches/disabled/");
+        assert.include(html, "Disabled brief");
+        assert.include(html, 'href="/patches/retired/settings#share"');
+        assert.notMatch(html, /<form[^>]*method="post"/);
+        const other = yield* send(path, { headers: { cookie: cookie(foreign.user) } }).pipe(
+          Effect.provideService(CompanyPage.CompanyGuests, read)
+        );
+        assert.include(yield* Effect.promise(() => other.text()), "No guests yet.");
+        assert.deepStrictEqual(asked, [owner.company.id, foreign.company.id]);
+        const searched = yield* send("/company?show=guests&q=Nobody", {
+          headers: { cookie: cookie(owner.user) }
+        }).pipe(Effect.provideService(CompanyPage.CompanyGuests, read));
+        assert.include(yield* Effect.promise(() => searched.text()), "No guests match “Nobody”.");
+      })
+  );
+
   it.effect(
     "lists only this company's users and pending invites, with escaped data and admin-only controls",
     () =>

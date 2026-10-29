@@ -22,6 +22,7 @@ import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
 import * as Users from "./Users.js";
+import type * as Guests from "./Guests.js";
 
 interface Viewer {
   readonly user: { readonly id: string; readonly email: string; readonly name: string };
@@ -59,6 +60,22 @@ export const OwnedPatches = Context.Reference<
     }) => Effect.Effect<ReadonlyMap<string, number>, SqlError>)
   | undefined
 >("@patchy/companies/CompanyPage/OwnedPatches", { defaultValue: () => undefined });
+
+/** Patches supplies this read; only an active company admin may reach its consumer below. */
+export interface CompanyGuest {
+  readonly guest: Guests.Guest;
+  readonly grants: readonly {
+    readonly name: string | null;
+    readonly title: string | null;
+    readonly manageable: boolean;
+    readonly access: "active" | "deactivated" | "revoked" | "ended" | "unavailable";
+  }[];
+}
+export const CompanyGuests = Context.Reference<
+  (companyId: string) => Effect.Effect<readonly CompanyGuest[], SqlError>
+>("@patchy/companies/CompanyPage/CompanyGuests", {
+  defaultValue: () => () => Effect.succeed([])
+});
 
 /** The pages' layout; components come from the shell. */
 export const styles = `
@@ -169,6 +186,60 @@ const filterHref = (show: Show, query: string) => {
   const search = params.toString();
   return search ? `/company?${search}` : "/company";
 };
+
+const guestAccess: Record<CompanyGuest["grants"][number]["access"], string> = {
+  active: "Has access",
+  deactivated: "Suspended · guest deactivated",
+  revoked: "Revoked",
+  ended: "Ended",
+  unavailable: "Patch unavailable to guests"
+};
+
+const renderGuests = Effect.fn("CompanyPage.renderGuests")(function* (
+  viewer: Viewer,
+  query: string
+) {
+  // Auth already requires active membership. Match the existing company management guard
+  // before acquiring the read; URL parameters never choose a company or a principal.
+  if (viewer.role !== "admin")
+    return yield* refuse(viewer, "Only an admin can manage this company.", 403);
+  const guests = yield* (yield* CompanyGuests)(viewer.company.id);
+  const needle = query.toLowerCase();
+  const entries = guests.filter(({ guest }) =>
+    `${guest.name}\n${guest.email}`.toLowerCase().includes(needle)
+  );
+  const rows = entries
+    .map(({ guest, grants }) => {
+      const state = [
+        guest.endedAt ? "Ended" : guest.deactivatedAt ? "Deactivated" : "Active",
+        ...(guest.endedAt && guest.deactivatedAt ? ["Deactivated"] : [])
+      ];
+      const patches = grants
+        .map(({ name, title, access, manageable }) => {
+          const label =
+            name === null
+              ? "Reclaimed patch"
+              : `${manageable ? `<a href="/patches/${encodeURIComponent(name)}/settings#share">${escapeHtml(title || name)}</a>` : escapeHtml(title || name)} <span class="supporting-text">${escapeHtml(name)}</span>`;
+          return `<li class="list-row">${label} · ${guestAccess[access]}</li>`;
+        })
+        .join("");
+      return `<tr><td><div class="company-person">${avatar(guest.id, guest.name || guest.email, guest.deactivatedAt || guest.endedAt ? "off" : undefined)}<div><strong>${escapeHtml(guest.name || guest.email)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${state.join(" · ")}</td><td>${grants.some(({ access }) => access === "active") ? "" : '<p class="supporting-text">No current patch access.</p>'}${patches ? `<ul class="list list-compact">${patches}</ul>` : '<p class="supporting-text">No patch grants.</p>'}</td></tr>`;
+    })
+    .join("");
+  const search = searchField({
+    action: "/company",
+    id: "company-search",
+    query,
+    placeholder: "Search guests",
+    label: "Search guests",
+    keep: { show: "guests" },
+    className: "company-search"
+  });
+  return {
+    title: "People",
+    body: `<div class="company-tools">${search}<nav class="tabs" aria-label="Show"><a href="/company">All people</a><a href="/company?show=guests" aria-current="page">Guests <span class="count">${guests.length}</span></a></nav></div><p class="supporting-text">Guests have access only to patches shared with them. Open a patch’s Share settings to revoke its grant.</p>${rows ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Guest</th><th scope="col">Relationship</th><th scope="col">Patch access</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>${query ? `No guests match “${escapeHtml(query)}”.` : "No guests yet."}</p>`}`
+  } satisfies Page;
+});
 
 /**
  * `/company/agent-access`: whether the company's agents can use patches, its latest change, and
@@ -337,13 +408,14 @@ const render = Effect.fn("CompanyPage.render")(function* (
     deactivated: deactivated.length
   };
   // Invited and Deactivated appear once there is something in them.
-  const tabs = shows
-    .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
-    .map(
-      (tab) =>
-        `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
-    )
-    .join("");
+  const tabs =
+    shows
+      .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
+      .map(
+        (tab) =>
+          `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
+      )
+      .join("") + (admin ? '<a href="/company?show=guests">Guests</a>' : "");
   const search = searchField({
     action: "/company",
     id: "company-search",
@@ -435,6 +507,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
   if (action.kind === "view") {
     // Only the query matters here; the base never reaches a link.
     const params = new URL(request.url, "http://company.invalid").searchParams;
+    if (params.get("show") === "guests")
+      return yield* renderGuests(viewer, (params.get("q") ?? "").trim().slice(0, 200));
     const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
     return yield* render(viewer, {
       filter: { show, query: (params.get("q") ?? "").trim().slice(0, 200) },

@@ -175,6 +175,11 @@ const ownedPatches = Layer.effect(
   )
 );
 
+const companyGuests = Layer.effect(
+  CompanyPage.CompanyGuests,
+  Effect.map(Patches.Patches, (patches) => patches.companyGuests)
+);
+
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
   Artifact.layer,
@@ -379,7 +384,8 @@ const app = Layer.mergeAll(
 /** The server: serving the app, sweeping, and closing both with the scope. */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide(ownedPatches)
+    Layer.provide(ownedPatches),
+    Layer.provide(companyGuests)
   ),
   sweeper,
   Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
