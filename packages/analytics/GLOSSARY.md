@@ -65,7 +65,7 @@ The wide event for one host keeping an open tier 2 version warm, from its first 
 _Avoid_: heartbeat log, presence record
 
 **Process start**:
-`startMs` on a process event: how long a tier 2 version's process took from spawn until it was ready for its first call. A call that has to load the version waits this long, inside its handler's deadline. A process that never got there, such as a `load_failed` one, has none. `firstOnTask` says it was the first process its company task started since being bound: the start a call on a released company waits for after its bind. Later ones, after a reap, an eviction or for another version, are not. The process event carries both and is emitted when the process ends.
+`startMs` on a process event: how long a tier 2 version's process took from its bind until it was ready for its first call, whether it spawned then or was the task's standby. A call that has to load the version waits this long, inside its handler's deadline. A process that never got there, such as a `load_failed` one, has none. `firstOnTask` says it was the first process its company task started since being bound: the start a call on a released company waits for after its bind. Later ones, after a reap, an eviction or for another version, are not. The process event carries both and is emitted when the process ends.
 _Avoid_: cold start (the task launch the spare pool measures), bind wait (`spareWaitMs`, outside the deadline)
 
 **Bind wait**:

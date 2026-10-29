@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off globalFetch:off globalFetchInEffect:off preferSchemaOverJson:off -- real child processes, callback sockets and wall-clock watchdog deadlines are the acceptance boundary.
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -10,6 +11,7 @@ import { registry } from "@patchy/limits/registry";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -182,6 +184,267 @@ it.live("keeps a loaded process callable across issuing-host replacement", () =>
       reply: { ok: true, value: "first host" }
     });
   }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer]))
+);
+
+/** This test process's live workerd children, by pid. */
+const workerdChildren = () =>
+  Effect.promise(async () => {
+    const output = await new Promise<string>((resolve) =>
+      execFile("ps", ["-o", "pid=,comm=", "--ppid", String(process.pid)], (_error, stdout) =>
+        resolve(stdout)
+      )
+    );
+    return new Set(
+      output
+        .split("\n")
+        .map((line) => line.trim().split(/\s+/))
+        .filter(([, command]) => command === "workerd")
+        .map(([pid]) => Number(pid))
+    );
+  });
+const childrenWhen = Effect.fnUntraced(function* (ready: (pids: Set<number>) => boolean) {
+  for (let i = 0; i < 400; i++) {
+    const pids = yield* workerdChildren();
+    if (ready(pids)) return pids;
+    yield* Effect.sleep(25);
+  }
+  throw new Error("Workerd children never reached the expected state");
+});
+
+it.live.skipIf(process.platform !== "linux")(
+  "binds into the standby process, replaces it once the box is quiet and stops it with the task",
+  () =>
+    Effect.gen(function* () {
+      const host = yield* listener((_request, response) => {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ ok: true, value: "through the standby's route" }));
+      });
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 },
+        standby: true
+      });
+      // Started before any company or version asks for it.
+      const [standby] = yield* childrenWhen((pids) => pids.size === 1);
+      const loaded = yield* bind(supervisor, "ver_standby");
+      const stats = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(stats.processes).toEqual([expect.objectContaining({ pid: standby })]);
+      expect(yield* supervisor.invoke(invocation(loaded, host.url, "callback"))).toMatchObject({
+        outcome: "returned",
+        reply: { ok: true, value: "through the standby's route" }
+      });
+      // Its replacement waits for a quiet second, then is nobody's until the next bind.
+      const replaced = yield* childrenWhen((pids) => pids.size === 2);
+      const [replacement] = [...replaced].filter((pid) => pid !== standby);
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
+        expect.objectContaining({ pid: standby })
+      ]);
+      const second = yield* bind(supervisor, "ver_standby_second");
+      expect(
+        (yield* supervisor.stats({ bindingEpoch: 1 })).processes.find(
+          (entry) => entry.processGeneration === second.processGeneration
+        )
+      ).toMatchObject({ pid: replacement });
+      yield* supervisor.stop({ bindingEpoch: 1 });
+      expect(yield* workerdChildren()).toEqual(new Set());
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+/** A supervisor counting only workerd RSS, so its aggregate is the standby's until a bind. */
+const withStandby = (limits: Partial<Record<"execution.residency.bytes", number>> = {}) =>
+  Effect.gen(function* () {
+    const supervisor = yield* Supervisor.make({
+      callbackUrls: [],
+      operatingLimits: { ...largeAggregate, "execution.probe.interval": 25, ...limits },
+      residencyAccounting: "workerd-only",
+      standby: true
+    });
+    // Sampled once it answers its readiness probe.
+    while ((yield* supervisor.stats({ bindingEpoch: 0 })).aggregateRssBytes === 0)
+      yield* Effect.sleep(25);
+    const [pid] = yield* workerdChildren();
+    return { supervisor, pid: pid! };
+  });
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const reaped = (pid: number) =>
+  Effect.gen(function* () {
+    while (alive(pid)) yield* Effect.sleep(10);
+  });
+
+it.live.skipIf(process.platform !== "linux")(
+  "leaves nothing running when a task-wide stop races a bind that finds its standby dead",
+  () =>
+    Effect.gen(function* () {
+      const { supervisor, pid } = yield* withStandby();
+      process.kill(pid, "SIGKILL");
+      yield* reaped(pid);
+      // The bind discards the dead standby asynchronously; the stop arrives meanwhile.
+      const binding = yield* bind(supervisor, "ver_raced").pipe(Effect.result, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* supervisor.stop({ bindingEpoch: 1 });
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
+      const result = yield* Fiber.join(binding);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure")
+        expect(["stopped", "process_killed"]).toContain(result.failure.reason);
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([]);
+      yield* childrenWhen((pids) => pids.size === 0);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live.skipIf(process.platform !== "linux")(
+  "binds into a fresh process rather than a standby that stopped answering",
+  () =>
+    Effect.gen(function* () {
+      const { supervisor, pid } = yield* withStandby();
+      process.kill(pid, "SIGSTOP");
+      // Past two missed probes, well before the six-second stall kill.
+      yield* Effect.sleep(2_500);
+      const started = Date.now();
+      const loaded = yield* bind(supervisor, "ver_after_stall");
+      expect(Date.now() - started).toBeLessThan(3_000);
+      const [resident] = (yield* supervisor.stats({ bindingEpoch: 1 })).processes;
+      expect(resident).toMatchObject({ processGeneration: loaded.processGeneration });
+      expect(resident!.pid).not.toBe(pid);
+      yield* reaped(pid);
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).reports).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live.skipIf(process.platform !== "linux")(
+  "discards a standby that exits, without a report, and a bind then starts its own process",
+  () =>
+    Effect.gen(function* () {
+      const { supervisor, pid } = yield* withStandby();
+      process.kill(pid, "SIGKILL");
+      // The watchdog lets it go: its memory leaves the aggregate, and no version reports.
+      let stats = yield* supervisor.stats({ bindingEpoch: 0 });
+      while (stats.aggregateRssBytes !== 0) {
+        yield* Effect.sleep(25);
+        stats = yield* supervisor.stats({ bindingEpoch: 0 });
+      }
+      expect(stats.reports).toEqual([]);
+      const loaded = yield* bind(supervisor, "ver_after_exit");
+      expect((yield* supervisor.stats({ bindingEpoch: 1 })).processes).toEqual([
+        expect.objectContaining({ processGeneration: loaded.processGeneration })
+      ]);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live.skipIf(process.platform !== "linux")(
+  "gives back the standby first under memory pressure, and replaces it ten seconds later once there is room",
+  () =>
+    Effect.gen(function* () {
+      const { supervisor } = yield* withStandby();
+      const loaded = yield* bind(supervisor, "ver_kept_under_pressure");
+      const both = yield* childrenWhen((pids) => pids.size === 2);
+      const { aggregateRssBytes } = yield* statsWhen(
+        supervisor,
+        (stats) =>
+          stats.processes[0]!.rssBytes > 0 && stats.aggregateRssBytes > stats.processes[0]!.rssBytes
+      );
+      const ceiling = (value: number, overrideRevision: string) =>
+        supervisor.bind({
+          companyId: "com_supervisor",
+          bindingEpoch: 1,
+          operatingLimits: { "execution.residency.bytes": value },
+          configRevision: { deploymentRevision: "pressure", overrideRevision }
+        });
+      // Just below the version and its standby together.
+      yield* ceiling(aggregateRssBytes - 1, "1");
+      const [resident] = (yield* supervisor.stats({ bindingEpoch: 1 })).processes;
+      const remaining = yield* childrenWhen((pids) => pids.size === 1);
+      const discarded = Date.now();
+      expect([...remaining]).toEqual([resident!.pid]);
+      expect([...both]).toContain(resident!.pid);
+      const after = yield* supervisor.stats({ bindingEpoch: 1 });
+      expect(after.processes).toEqual([
+        expect.objectContaining({ processGeneration: loaded.processGeneration })
+      ]);
+      expect(after.reports).toEqual([]);
+      // Room again at once, yet a discarded standby's replacement waits out its ten seconds.
+      yield* ceiling(largeAggregate["execution.residency.bytes"], "2");
+      while (Date.now() - discarded < 9_000) {
+        expect((yield* workerdChildren()).size).toBe(1);
+        yield* Effect.sleep(250);
+      }
+      yield* childrenWhen((pids) => pids.size === 2);
+      expect(Date.now() - discarded).toBeGreaterThanOrEqual(9_000);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  30_000
+);
+
+it.live.skipIf(process.platform !== "linux")(
+  "refuses an older host's task-wide stop that waited while a newer host bound the task",
+  () =>
+    Effect.gen(function* () {
+      const { supervisor, pid } = yield* withStandby();
+      yield* supervisor.bind({ companyId: "com_supervisor", bindingEpoch: 1 });
+      process.kill(pid, "SIGKILL");
+      yield* reaped(pid);
+      // This bind holds admission while it discards the dead standby; the newer host's bind
+      // and the older host's stop queue behind it, in that order.
+      const slow = yield* bind(supervisor, "ver_slow").pipe(Effect.result, Effect.forkChild);
+      yield* Effect.yieldNow;
+      const newer = yield* supervisor
+        .bind({ companyId: "com_supervisor", bindingEpoch: 2 })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const older = yield* supervisor
+        .stop({ bindingEpoch: 1 })
+        .pipe(Effect.result, Effect.forkChild);
+      expect(yield* Fiber.join(newer)).toEqual({ bindingEpoch: 2 });
+      expect(yield* Fiber.join(older)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "stale_epoch" }
+      });
+      yield* Fiber.join(slow);
+      expect((yield* supervisor.stats({ bindingEpoch: 2 })).stopped).toBe(false);
+      // Admission still serves the newer host.
+      const loaded = yield* supervisor.bind({
+        companyId: "com_supervisor",
+        bindingEpoch: 2,
+        bundle: bundle("ver_after_refused_stop")
+      });
+      expect(loaded).toMatchObject({ bindingEpoch: 2 });
+      yield* supervisor.stop({ bindingEpoch: 2 });
+      yield* childrenWhen((pids) => pids.size === 0);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live.skipIf(process.platform !== "linux")(
+  "starts no standby once a task-wide stop has won admission",
+  () =>
+    Effect.gen(function* () {
+      // A small operation budget preempts the watchdog between deciding to start a standby and
+      // taking admission, which is where a stop can slip in.
+      for (let trial = 0; trial < 3; trial++)
+        yield* Effect.gen(function* () {
+          const supervisor = yield* Supervisor.make({
+            callbackUrls: [],
+            operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 },
+            residencyAccounting: "workerd-only",
+            standby: true
+          }).pipe(Effect.provideService(References.MaxOpsBeforeYield, 8));
+          yield* supervisor.stop({ bindingEpoch: 0 });
+          yield* Effect.sleep(1_000);
+          expect(yield* workerdChildren()).toEqual(new Set());
+          expect((yield* supervisor.stats({ bindingEpoch: 0 })).aggregateRssBytes).toBe(0);
+        }).pipe(Effect.scoped);
+    }).pipe(Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
 );
 
 it.live("rejects a probe interval that cannot enforce the six-second stall bound", () =>
@@ -1175,7 +1438,7 @@ it.live(
           args.find((arg) => arg.endsWith("config.capnp"))!,
           "utf8"
         );
-        const url = /http:\/\/127\.0\.0\.1:\d+\/callback\/\d+\/[\da-f-]+/.exec(config)?.[0];
+        const url = /http:\/\/127\.0\.0\.1:\d+\/callback\/[\da-f-]+/.exec(config)?.[0];
         if (url === undefined) throw new Error("Missing private callback route");
         return url;
       });

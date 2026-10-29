@@ -168,7 +168,7 @@ version loaded and its code warm. Residency, not the idle window, bounds what th
 costs: eviction below takes idle processes first. A touch names a version and its
 hash at the current epoch and restarts only a ready process's idle clock; it never
 loads, reserves, evicts or changes the epoch, and a loading process keeps its
-initialization deadline from spawn. Residency allows 12 processes
+initialization deadline from its bind. Residency allows 12 loaded-version processes
 and 1.5 GiB aggregate RSS, including the supervisor's retained bundles and reports.
 Under memory pressure the largest idle process goes first; otherwise eviction
 selects the process idle longest since its last call or touch. Both bind and
@@ -190,10 +190,33 @@ When the supervisor has permission, it launches each child under a distinct
 unprivileged uid and gid. An unprivileged local runner cannot grant that
 separation. The company task remains the security boundary.
 
+An execution task keeps one standby process: a workerd started before any version
+needs it, under its own uid, with an empty environment and a callback route no
+resident serves. A bind adopts it and only loads its version; from then on it is
+that version's process with a fresh generation, exactly as if spawned for it, and
+never another version's. A spare
+task starts its standby while it waits. A replacement starts once the task has
+been quiet for a second, with no load or call in flight, so its start never
+competes with one, and only while aggregate RSS leaves room for it. The count
+limit is of loaded versions, so a full task holds 12 of them and its standby.
+
+The watchdog samples and probes the standby as it does an idle resident, and
+discards it without a report, since no version ran in it, when it exits, fails to
+sample, crosses the per-process RSS kill line or goes six seconds without
+answering. A bind passes over a standby that has missed two probes and starts its
+own process, and an adopted standby keeps its health clock, so a stall that began
+before the bind counts toward the stall kill. Memory pressure discards the standby
+before evicting any version. After a failed or discarded standby, the next starts
+ten seconds later at the earliest, memory pressure included. A task-wide stop
+takes the same admission as a bind's registration, so a bind racing it is refused
+or has its process reaped: nothing it loads outlives the stop. Once admitted it
+checks its epoch again, so an older host's stop that waited while a newer host
+bound the task is refused `stale_epoch`. The local executor starts processes on demand.
+
 On reap or kill the supervisor retains one report keyed by company, patch,
 version and generation, with sampled CPU seconds, peak RSS, calls served,
 the end cause and all interrupted attempts. The report includes the process
-wide event from spawn through end, with residency peaks over that lifetime
+wide event from its bind through end, with residency peaks over that lifetime
 rather than earlier residents. `/stats` delivers reports repeatedly until
 the host acknowledges their ids after durable storage. The supervisor owns no
 database. A killed invocation returns `process_killed`, not a claimed rollback
