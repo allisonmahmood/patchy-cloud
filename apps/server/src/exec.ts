@@ -27,6 +27,7 @@ NodeRuntime.runMain(
       callbackUrls,
       deploymentRevision,
       taskId,
+      standby: true,
       configRevision: { deploymentRevision: yield* limits.revision, overrideRevision: "0" },
       operatingLimits: {
         "execution.probe.interval": limits.get("execution.probe.interval"),

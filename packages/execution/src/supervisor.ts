@@ -21,7 +21,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Engine from "./engine.js";
-import { sampleProcess, startWorkerd, type WorkerdProcess } from "./process.js";
+import { sampleProcess, startWorkerd, type WorkerdError, type WorkerdProcess } from "./process.js";
 import { Cryptography } from "@patchy/core";
 
 export class SupervisorError extends Schema.TaggedError<SupervisorError>()("SupervisorError", {
@@ -44,6 +44,8 @@ const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
 const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
 const killGrace = 1_000;
 const idleWatch = 1_000;
+const standbyQuiet = 1_000;
+const standbyRetry = 10_000;
 
 class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
   "CallbackBodyTooLarge",
@@ -93,6 +95,28 @@ export interface Options {
   };
   /** Where the pinned workerd is installed, when not beside this package; see `startWorkerd`. */
   readonly workerdFrom?: string;
+  /**
+   * Keep one workerd started ahead of the next bind, so a bind only loads its version. Execution
+   * tasks set it; the local executor shares its host and starts each process on demand.
+   */
+  readonly standby?: boolean;
+}
+
+/**
+ * A workerd started before any version needs it: its own uid, no version, and a callback route
+ * nothing serves until a bind adopts it, after which it is that version's process alone.
+ */
+interface Standby {
+  readonly scope: Scope.Closeable;
+  /** The callback route its configuration names; the adopting resident registers it. */
+  readonly path: string;
+  readonly started: Deferred.Deferred<WorkerdProcess, WorkerdError>;
+  process?: WorkerdProcess;
+  /** False once discarded or adopted; a probe answering after that changes nothing. */
+  alive: boolean;
+  probing: boolean;
+  lastHealthy: number;
+  rssBytes: number;
 }
 
 interface Invocation {
@@ -114,7 +138,7 @@ interface Resident {
   readonly startedAt: number;
   readonly eventId: string;
   readonly epoch: number;
-  /** From spawn to ready for its first call, once it got there. */
+  /** From its bind to ready for its first call, once it got there. */
   startMs?: number;
   process?: WorkerdProcess;
   engine?: Executor.Executor["Service"];
@@ -199,11 +223,16 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   let bindingEpoch = 0;
   let generation = 0;
   let stopped = false;
+  let standby: Standby | undefined;
+  /** The last standby's RSS, the headroom a replacement needs; 0 until one has started. */
+  let standbyBytes = 0;
+  /** When the last standby failed or was discarded: its replacement waits `standbyRetry`. */
+  let standbyLostAt = Number.NEGATIVE_INFINITY;
 
   const aggregateRss = () => {
     let bytes = options.residencyAccounting === "workerd-only" ? 0 : process.memoryUsage.rss();
     for (const resident of residents.values()) bytes += resident.rssBytes;
-    return bytes;
+    return bytes + (standby?.rssBytes ?? 0);
   };
   const stampPeaks = () => {
     const bytes = aggregateRss();
@@ -234,6 +263,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       );
       resident.cpuSeconds = Math.max(resident.cpuSeconds, sampled.cpuSeconds);
     }
+  });
+  const discardStandby = Effect.gen(function* () {
+    const previous = standby;
+    standby = undefined;
+    if (previous === undefined) return;
+    previous.alive = false;
+    standbyLostAt = Date.now();
+    yield* Scope.close(previous.scope, Exit.void);
   });
   const terminate = Effect.fnUntraced(function* (
     resident: Resident,
@@ -339,6 +376,11 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const evict = Effect.fnUntraced(function* (reserve: number, protectedResident?: Resident) {
     while (exceeded(reserve) !== undefined) {
       const memoryPressure = aggregateRss() >= limit("execution.residency.bytes");
+      // A standby is the cheapest memory to give back: no version is loaded in it.
+      if (memoryPressure && standby !== undefined) {
+        yield* discardStandby;
+        continue;
+      }
       let victim: Resident | undefined;
       for (const resident of residents.values()) {
         if (
@@ -474,7 +516,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     })
   );
 
-  const probe = Effect.fnUntraced(function* (resident: Resident) {
+  const probe = Effect.fnUntraced(function* (
+    resident: Pick<Resident, "process" | "probing" | "alive" | "lastHealthy">
+  ) {
     if (resident.process === undefined || resident.probing || !resident.alive) return;
     resident.probing = true;
     yield* http.get(`${resident.process.url}/healthz`).pipe(
@@ -497,6 +541,104 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       Effect.forkIn(scope)
     );
   });
+  const startStandby = Effect.gen(function* () {
+    const entry: Standby = {
+      scope: yield* Scope.make(),
+      path: `/callback/${yield* cryptography.randomUUID}`,
+      started: yield* Deferred.make<WorkerdProcess, WorkerdError>(),
+      alive: true,
+      probing: false,
+      lastHealthy: Date.now(),
+      rssBytes: 0
+    };
+    standby = entry;
+    // Forked into its own scope: discarding the standby, or reaping the resident that adopted it,
+    // stops a start still in progress along with the process.
+    yield* startWorkerd({
+      callbackUrls: [`${proxyBase}${entry.path}`],
+      separateUid: true,
+      ...(options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom })
+    }).pipe(
+      Effect.provideService(Scope.Scope, entry.scope),
+      Effect.tap((child) =>
+        Effect.gen(function* () {
+          entry.process = child;
+          entry.lastHealthy = Date.now();
+          if (child.child.pid === undefined) return;
+          entry.rssBytes = (yield* sampleProcess(child.child.pid))?.rssBytes ?? 0;
+          standbyBytes = entry.rssBytes;
+        })
+      ),
+      Effect.exit,
+      Effect.flatMap((exit) =>
+        Effect.gen(function* () {
+          yield* Deferred.done(entry.started, exit);
+          if (Exit.isSuccess(exit)) return;
+          standbyLostAt = Date.now();
+          if (standby === entry) yield* discardStandby;
+        })
+      ),
+      Effect.forkIn(entry.scope)
+    );
+  });
+  // A healthy standby answers a probe about once a second. One that has missed two, exited or
+  // crossed the kill line is not worth a bind's wait to find out.
+  const standbyFailing = (entry: Standby, now: number) => {
+    const child = entry.process?.child;
+    return (
+      child !== undefined &&
+      (child.exitCode !== null ||
+        child.signalCode !== null ||
+        entry.rssBytes >= limit("execution.process.rss") ||
+        now - entry.lastHealthy >= 2 * idleWatch + 2 * limit("execution.probe.interval"))
+    );
+  };
+  /** The standby for a bind to adopt, unless it has exited or stopped answering. Admission only. */
+  const takeStandby = Effect.gen(function* () {
+    const taken = standby;
+    if (taken === undefined) return undefined;
+    if (standbyFailing(taken, Date.now())) {
+      yield* discardStandby;
+      return undefined;
+    }
+    standby = undefined;
+    taken.alive = false;
+    return taken;
+  });
+  // Watched like an idle resident. Failing, it goes without a report: no version ran in it.
+  const watchStandby = Effect.fnUntraced(function* (entry: Standby, now: number) {
+    if (entry.process?.child.pid === undefined || now - entry.lastHealthy < idleWatch) return;
+    const sampled = yield* sampleProcess(entry.process.child.pid).pipe(
+      Effect.catchTags({ WorkerdError: () => Effect.succeed(undefined) })
+    );
+    if (sampled !== undefined) entry.rssBytes = sampled.rssBytes;
+    const { child } = entry.process;
+    if (
+      sampled === undefined ||
+      child.exitCode !== null ||
+      child.signalCode !== null ||
+      entry.rssBytes >= limit("execution.process.rss") ||
+      now - entry.lastHealthy >= registry["execution.stall"].default
+    ) {
+      yield* admission.withPermit(
+        Effect.suspend(() => (standby === entry ? discardStandby : Effect.void))
+      );
+    } else yield* probe(entry);
+  });
+  // Admission only, judged at the moment it starts: a stop or bind that won the permit first has
+  // already changed the answer. A replacement starts only on a quiet box, a second after the last
+  // call or load, so its start never competes with either, and only with room for it.
+  const standbyWanted = (at: number) =>
+    standby === undefined &&
+    !stopped &&
+    at - standbyLostAt >= standbyRetry &&
+    aggregateRss() + standbyBytes < limit("execution.residency.bytes") &&
+    [...residents.values()].every(
+      (resident) =>
+        !resident.loading &&
+        resident.invocations.size === 0 &&
+        at - resident.idleSince >= standbyQuiet
+    );
   const tick = Effect.gen(function* () {
     const now = Date.now();
     for (const resident of residents.values()) {
@@ -546,8 +688,14 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* terminate(resident, "idle");
       else if (watched) yield* probe(resident);
     }
+    if (standby !== undefined) yield* watchStandby(standby, now);
     stampPeaks();
-    yield* admission.withPermit(evict(0));
+    yield* admission.withPermit(
+      Effect.gen(function* () {
+        yield* evict(0);
+        if (options.standby === true && standbyWanted(Date.now())) yield* startStandby;
+      })
+    );
   });
   yield* tick.pipe(
     Effect.andThen(Effect.suspend(() => Effect.sleep(limit("execution.probe.interval")))),
@@ -557,6 +705,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       stopped = true;
+      yield* discardStandby;
       for (const resident of residents.values()) yield* terminate(resident, "stopped");
     })
   );
@@ -649,7 +798,8 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
         const now = Date.now();
-        const path = `/callback/${generation + 1}/${yield* cryptography.randomUUID}`;
+        const prestarted = yield* takeStandby;
+        const path = prestarted?.path ?? `/callback/${yield* cryptography.randomUUID}`;
         const resident: Resident = {
           binding: {
             companyId: bundle.companyId,
@@ -658,7 +808,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
             sha256: bundle.sha256
           },
           generation: ++generation,
-          scope: yield* Scope.make(),
+          scope: prestarted?.scope ?? (yield* Scope.make()),
           ready: yield* Deferred.make<Management.BindReply, SupervisorError>(),
           dead: yield* Deferred.make<never, SupervisorError>(),
           reaped: yield* Deferred.make<void>(),
@@ -684,13 +834,18 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         residents.set(key, resident);
         stampPeaks();
         yield* Effect.gen(function* () {
-          const child = yield* startWorkerd({
-            callbackUrls: [resident.proxyUrl],
-            separateUid: true,
-            ...(options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom })
-          }).pipe(Effect.provideService(Scope.Scope, resident.scope));
+          const child = yield* prestarted === undefined
+            ? startWorkerd({
+                callbackUrls: [resident.proxyUrl],
+                separateUid: true,
+                ...(options.workerdFrom === undefined ? {} : { workerdFrom: options.workerdFrom })
+              }).pipe(Effect.provideService(Scope.Scope, resident.scope))
+            : Deferred.await(prestarted.started).pipe(
+                Effect.raceFirst(Deferred.await(resident.dead))
+              );
           resident.process = child;
-          resident.lastHealthy = Date.now();
+          // An adopted standby keeps its health clock: a stall that began before the bind counts.
+          resident.lastHealthy = prestarted === undefined ? Date.now() : prestarted.lastHealthy;
           resident.engine = yield* Engine.make({ url: child.url });
           yield* resident.engine.bind(bundle).pipe(Effect.raceFirst(Deferred.await(resident.dead)));
           yield* sample(resident);
@@ -865,8 +1020,17 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
       yield* checkTask(request.taskId, "stop");
       yield* checkEpoch(request.bindingEpoch, "stop");
       if (request.processGeneration === undefined) {
-        stopped = true;
-        for (const resident of residents.values()) yield* terminate(resident, "stopped");
+        // Under admission: a bind either finds the task stopped or has registered its resident,
+        // standby or not, for this to reap. Nothing it loads outlives the stop.
+        yield* admission.withPermit(
+          Effect.gen(function* () {
+            // Its authority again: a newer host may have bound the task while this waited.
+            yield* checkEpoch(request.bindingEpoch, "stop");
+            stopped = true;
+            yield* discardStandby;
+            for (const resident of residents.values()) yield* terminate(resident, "stopped");
+          })
+        );
       } else {
         const resident = [...residents.values()].find(
           (entry) => entry.generation === request.processGeneration

@@ -312,8 +312,8 @@ version a prewarm loaded is a first call that found its process ready.
 
 A call that loads its version waits for the process to start inside its handler's
 deadline, three seconds for a query. Each `type: "process"` event, emitted when the
-process ends, records `startMs`, from spawn until the process was ready for its
-first call, and `firstOnTask`, true for the first process its company task started
+process ends, records `startMs`, from its bind until the process was ready for its
+first call (a standby's earlier start is not counted), and `firstOnTask`, true for the first process its company task started
 since being bound: the start a call on a released company waits for after its bind.
 A process that never became ready has no `startMs`; its `cause` says why. The fleet
 emits process events on ECS and the local fleet, and the default no-pool dev executor
@@ -562,7 +562,13 @@ Its bind refusal and process-report end cause are `load_failed`. The six-second 
 post-deadline termination grace are release contracts. Linux uses `/proc` and
 macOS uses `ps` for metering; other platforms refuse supervised execution.
 Unexpected sampling failures kill only the affected resident with report end
-cause `metering_failed`; other residents remain supervised. Distinct child uids
+cause `metering_failed`; other residents remain supervised. Execution tasks
+(`dist/exec.js` and the local fleet's) keep one standby workerd started ahead of
+the next bind. It counts toward aggregate RSS, not the process count, so a full
+task runs 12 loaded versions and the standby; it is the first thing memory
+pressure gives back. The watchdog checks it like an idle process and discards it,
+without a report, when it exits or stops answering; a replacement follows at
+least ten seconds later. Distinct child uids
 require a privileged supervisor. Each resident scope kills and reaps its child
 before removing the temporary configuration directory. Clean stops, watchdog
 kills, child crashes and supervisor shutdown all close that scope.

@@ -37,6 +37,7 @@ NodeRuntime.runMain(
       callbackUrls,
       deploymentRevision,
       taskId,
+      standby: true,
       operatingLimits: { "execution.process.load": limits.get("execution.process.load") }
     });
     // Even a failed bundle load may have installed the requested epoch before it failed.

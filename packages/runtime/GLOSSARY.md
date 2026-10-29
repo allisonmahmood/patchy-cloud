@@ -88,6 +88,10 @@ _Avoid_: retired, revoked, disabled
 The execution service's process owner. It loads patch versions, watches their processes and terminates or reaps them without deciding invocation commit outcomes.
 _Avoid_: fleet controller, handler, security boundary
 
+**Standby process**:
+A workerd an execution task starts before any version needs it, so a bind only loads its version. A bind adopts it as that version's process, with a fresh process generation; it never serves another version. The task starts a replacement once it is quiet.
+_Avoid_: spare (a task, not a process), warm pool, prewarmed version
+
 **Bind by hash**:
 A version bind that names the version and its SHA-256 without the bundle. A supervisor holding a live process for it answers as a bundle bind would; one that doesn't asks for the bundle before doing anything.
 _Avoid_: warm bind, touch, cached bind
