@@ -16,15 +16,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as CliError from "effect/cli/CliError";
 import * as CliOutput from "effect/cli/CliOutput";
 import * as Command from "effect/cli/Command";
 import { Cwd, root } from "./commands.js";
 import { RELEASE } from "./release.js";
-import { toJson } from "./Output.js";
+import { Failed, jsonRequested, toJson } from "./Output.js";
 import { NodeCryptography } from "@patchy/core";
 
-/** Read from argv here because a parse error is rendered before any handler runs. */
-const json = process.argv.includes("--json");
+const json = jsonRequested(process.argv.slice(2));
 
 /**
  * Effect logs usage to stdout before a parse error's errors, but under `--json`
@@ -33,6 +33,12 @@ const json = process.argv.includes("--json");
  * command without a handler shows. Effect 4.0.7's `CliOutput.Presenter` replaces this.
  */
 let heldHelp = "";
+
+/** A parse error as stderr shows it: its one line, or its document under `--json`. */
+const renderErrors = (errors: ReadonlyArray<CliError.CliError>) => {
+  const message = errors.map((error) => error.message).join("\n");
+  return json ? toJson({ ok: false, error: message, kind: "local" }) : message;
+};
 
 const formatter = CliOutput.defaultFormatter({ colors: false });
 const output = CliOutput.layer({
@@ -55,10 +61,8 @@ const output = CliOutput.layer({
   },
   formatVersion: (_name, version) => version,
   formatErrors: (errors) => {
-    const message = errors.map((error) => error.message).join("\n");
-    if (!json) return message;
     heldHelp = "";
-    return toJson({ ok: false, error: message, kind: "local" });
+    return renderErrors(errors);
   }
 });
 
@@ -76,6 +80,10 @@ const jsonConsole = Layer.effect(
 );
 
 Command.run(root, { version: RELEASE }).pipe(
+  // A global flag's own bad value, such as `--log-level loud`, fails without Effect rendering it.
+  Effect.catchTag("InvalidValue", (error) =>
+    Console.error(renderErrors([error])).pipe(Effect.andThen(new Failed({ code: 1 })))
+  ),
   Effect.ensuring(Effect.suspend(() => (heldHelp === "" ? Effect.void : Console.log(heldHelp)))),
   Effect.provide(
     Layer.mergeAll(

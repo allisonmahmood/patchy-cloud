@@ -639,13 +639,19 @@ describe("help", () => {
   });
 
   it("under --json, a parse error is one document on stderr, and help still prints", async () => {
+    const tier = 'Invalid value for flag --tier: "7". Expected: "1" | "2"';
+    const logLevel =
+      'Invalid value for flag --log-level: "loud". Expected: "all" | "trace" | "debug" | "info" | "warn" | "warning" | "error" | "fatal" | "none"';
     const failures = [
-      [["init", "notes", "--tier", "7"], 'Invalid value for flag --tier: "7". Expected: "1" | "2"'],
-      [["publish", "--bogus"], "Unrecognized flag: --bogus in command patchy publish"],
-      [["look", "publish", "./x"], "Missing required flag: --note"],
-      [["look", "publish", "--note", "darker"], "Missing required argument: dir"]
+      [["init", "notes", "--tier", "7", "--json"], tier],
+      [["init", "notes", "--tier", "7", "--json=true"], tier],
+      [["publish", "--bogus", "--json"], "Unrecognized flag: --bogus in command patchy publish"],
+      [["look", "publish", "./x", "--json"], "Missing required flag: --note"],
+      [["look", "publish", "--note", "darker", "--json"], "Missing required argument: dir"],
+      // A global flag's value fails outside Effect's usage path.
+      [["whoami", "--log-level", "loud", "--json"], logLevel]
     ] as const;
-    const failed = await Promise.all(failures.map(([args]) => runCli([...args, "--json"])));
+    const failed = await Promise.all(failures.map(([args]) => runCli(args)));
     failures.forEach(([, error], index) =>
       expect(failed[index]).toMatchObject({
         status: 1,
@@ -653,6 +659,13 @@ describe("help", () => {
         stderr: `${JSON.stringify({ ok: false, error, kind: "local" })}\n`
       })
     );
+    const [text, logLevelText] = await Promise.all([
+      runCli(["init", "notes", "--tier", "7", "--no-json"]),
+      runCli(["whoami", "--log-level", "loud"])
+    ]);
+    expect(text).toMatchObject({ status: 1, stderr: `${tier}\n` });
+    expect(text.stdout).toContain("USAGE\n  patchy init");
+    expect(logLevelText).toMatchObject({ status: 1, stdout: "", stderr: `${logLevel}\n` });
 
     // Asked for with --help, or shown by a command without a handler.
     const [help, helpJson, group, groupJson] = await Promise.all([

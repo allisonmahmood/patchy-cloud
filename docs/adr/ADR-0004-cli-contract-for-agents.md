@@ -59,8 +59,9 @@ lists of validation failures; their line count is not the branching contract.
   Terminal device-login refusals currently use `kind` and `error` without a code.
 - **Parse errors:** a bad flag value, an unknown flag or command, or a missing
   required flag or argument is a `local` failure document with empty stdout.
-  Without `--json`, usage prints on stdout before the error. Built-ins such as
-  help and the bare `--version` retain their own output, not success envelopes.
+  Without `--json`, the error is its one line on stderr, and usage may precede
+  it on stdout. Built-ins such as help and the bare `--version` retain their own
+  output, not success envelopes.
 
 `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an

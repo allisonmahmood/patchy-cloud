@@ -26,6 +26,22 @@ export const JsonFlag = GlobalFlag.Setting("json")({
   )
 });
 
+const falseLiterals = new Set(["false", "no", "off", "0", "n"]);
+
+/**
+ * Whether argv asks for `--json`, read as Effect reads the flag: the first `--json`,
+ * `--json=<b>`, `--json <b>` or `--no-json` before `--` decides. The entrypoint needs
+ * it before any handler runs, because that is where a parse error is rendered.
+ */
+export const jsonRequested = (args: ReadonlyArray<string>) => {
+  for (const [index, arg] of args.entries()) {
+    if (arg === "--" || arg === "--no-json") return false;
+    if (arg === "--json") return !falseLiterals.has(args[index + 1] ?? "");
+    if (arg.startsWith("--json=")) return !falseLiterals.has(arg.slice("--json=".length));
+  }
+  return false;
+};
+
 /** One JSON document; the wire shapes are encoded through their schemas before they get here. */
 export const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -61,7 +77,7 @@ export const rememberWarnings = Effect.fn("Output.rememberWarnings")(function* (
 });
 
 /** Already rendered; carries only the exit code, so the runtime prints nothing more. */
-class Failed extends Data.Error<{ readonly code: number }> {
+export class Failed extends Data.Error<{ readonly code: number }> {
   readonly [Runtime.errorExitCode]: number;
   readonly [Runtime.errorReported] = false;
   constructor(props: { readonly code: number }) {

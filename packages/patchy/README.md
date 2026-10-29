@@ -1520,7 +1520,7 @@ Other local failures may have no code; terminal login refusals currently use
 `kind` and `error` without a code.
 
 An argument parse failure under `--json` is a `local` failure with empty stdout;
-without `--json`, usage prints on stdout before the error.
+without `--json`, it is one line on stderr, and usage may precede it on stdout.
 
 ## Command flags
 
