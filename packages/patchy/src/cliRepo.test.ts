@@ -535,6 +535,28 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
   });
 
+  it("leads a tier 1 repo that already declares several uses out by editing its config", async () => {
+    const instance = await stubInstance(projectHandler);
+    const declared = projectConfig.replace(
+      "uses: {}",
+      'uses: { members: { kind: "members" }, analytics: { kind: "posthog", handle: "product" } }'
+    );
+    const dir = projectTree(instance.url, declared);
+    // Removing one leaves the other, which tier 1 still can't declare.
+    const removed = await runCli(["remove", "analytics", "--json"], { cwd: dir, env });
+    expect(removed).toMatchObject({ status: 1, stdout: "" });
+    const refusal = JSON.parse(removed.stderr);
+    expect(refusal).toMatchObject({ kind: "local", code: "tier_mismatch" });
+    expect(refusal.error).toContain('cannot declare "members"');
+    expect(refusal.error).toContain("delete them all from uses in patchy.config.ts");
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(declared);
+    // As the refusal says: delete them all from uses, then refresh.
+    writeFileSync(path.join(dir, "patchy.config.ts"), projectConfig);
+    const refreshed = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(refreshed, refreshed.stderr).toMatchObject({ status: 0 });
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toHaveProperty("uses", {});
+  });
+
   it("refuses a renamed member directory before generation", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);

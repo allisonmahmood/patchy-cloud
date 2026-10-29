@@ -66,7 +66,7 @@ Ownership: a patch belongs to a **user** in a company. The user holds a machine 
 
 ### Versions and publishing
 
-**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with tables, stores, shared tables, shared stores and resolved Postgres, PostHog, Pidgeon and Attio connections, and tier 2 on dev/test instances or production hosts configured with the ECS fleet. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
+**Publish** creates an immutable **version** and moves the patch's served-version pointer. The working copy stays local; the cloud has no unpublished patch. File publishing sends a tier 0 manifest and one HTML bundle. Each version records its tier, release, manifest version, server-stamped wire version and schema revision. The API accepts tiers 0 and 1 with their own tables and stores, and tier 2, which may also declare shared tables, shared stores, the member directory and resolved Postgres, PostHog, Pidgeon and Attio connections, on dev/test instances or production hosts configured with the ECS fleet. A tier 0 or 1 manifest that declares `uses` is `tier_mismatch`. Tier 0 obeys the safe-HTML policy; scripted pages run in the sandbox. Tier 2 also stores an inspected server module. Higher tiers are refused. File-mode updates to a patch with cumulative inventory are `has_primitives` and must use its repo. Rollback changes the served pointer without creating a version or changing data, as described under [Updating, retiring, deleting](#updating-retiring-deleting).
 
 A **publish key** identifies one attempt for its owning user. Before sending, the CLI stages the complete request and owner in a key-named file, then atomically installs the nonempty `attempt/` directory as the active recovery slot. The next publish recovers that attempt first, using a current token for the same user. Concurrent CLI processes recover the existing attempt rather than overwriting it; an account switch cannot resend another user's saved content. A killed process leaves either no active attempt or a complete recoverable one. Clearing only the matching key prevents a stale response from removing a newer attempt. Repeating the same request returns the stored response without a new version, even after the instance's release changes; reusing the key with a different payload is a conflict. New publishes require an exact-current CLI release.
 
@@ -413,11 +413,12 @@ Tier 2 queries retry a lost reply once; mutations offer only explicit keyed
 cache; a persistent mismatch stops visibly, while a retired wire shows the
 needs-rebuild door. See [ADR-0010](./adr/ADR-0010-sandboxed-frame-and-broker.md).
 
-The runtime operation path admits `me`, owned-table operations, shared-table
-and shared-store reads, owned-file operations and Postgres operations. A company
-version returns its active viewer and company; a current public version returns
-null for `me` and refuses company data and integration access, even to a signed-in
-viewer. Browser sessions, never machine tokens, enter this path; wire and
+The browser's runtime operation path admits `me`, owned-table operations and
+owned-file operations. Shared-table and shared-store reads, member-directory reads
+and integration operations are tier 2 handlers' callbacks: from a browser they are
+`server_required` at every tier. A company version returns its active viewer and
+company; a current public version returns null for `me` and refuses every data
+operation, even to a signed-in viewer. Browser sessions, never machine tokens, enter this path; wire and
 principal headers bind each request. Mutations and Postgres calls additionally
 require the exact shell Origin, and file reads require same-origin fetch metadata.
 The runtime records table and file mutations and integration calls before execution.
