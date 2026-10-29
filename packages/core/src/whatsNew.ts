@@ -52,6 +52,28 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 25,
+    date: "2026-10-29",
+    through: "18b39ae57bd98a8091bfdea23b6a76f84404e145",
+    changes: [
+      {
+        kind: "New",
+        title: "Pages published from one HTML file can run script",
+        detail:
+          "A page your agent publishes from a single HTML file can now run its own script, so it can sort a table, switch tabs or draw a chart, and it can be up to 10 MiB. It still has to carry everything it shows: an image, font or stylesheet loaded from another address is refused at publish and named, so put it in the file instead, for example as a data: URL.",
+        prs: [1045]
+      },
+      {
+        kind: "Improved",
+        title: "Pages and Tools sort by what a patch runs",
+        detail:
+          "On Home and All patches, a patch that runs only in your browser is now listed under Pages, and a patch with its own server code is listed under Tools.",
+        prs: [1045]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 24,
     date: "2026-10-29",
     through: "9ee90e3a5d5aaa286fda468c550d1e6f154e1875",
