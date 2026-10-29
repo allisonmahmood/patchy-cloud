@@ -52,6 +52,23 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 23,
+    date: "2026-10-29",
+    through: "ed80fc7df41fb4f8c93120caa59d41ee0dd6d48a",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Patches with server code open faster",
+        detail:
+          "When you land on Home or All patches, Patchy now gets your company's server and the three patches you open most ready in the background, so opening one is quick. A patch you just used stays ready for ten minutes instead of one, loading a patch onto its server takes about a third of the time it did, and each company's server has twice the processing power.",
+        prs: [991, 992, 997, 999, 984]
+      }
+    ],
+    behindTheScenes: [
+      "Patchy can now run patches for more companies at the same time, so a busy day is less likely to leave anyone waiting for a free server."
+    ]
+  },
+  {
     id: 22,
     date: "2026-10-29",
     through: "a2d133130d6dbd86df6d36c8e21254306d8c649a",
