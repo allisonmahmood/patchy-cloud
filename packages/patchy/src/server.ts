@@ -409,6 +409,10 @@ const makeBuilder =
     readonly errors?: readonly string[];
     readonly handler: (context: never, args: never) => unknown;
   }) => {
+    if ("audience" in definition)
+      throw new InvalidManifestError(
+        "This release does not build handler audience declarations. Keep the existing server/ and agent/ declarations."
+      );
     if (typeof definition.handler !== "function")
       throw new InvalidManifestError("A handler needs a callback.");
     const args: Record<string, Descriptor> = {};

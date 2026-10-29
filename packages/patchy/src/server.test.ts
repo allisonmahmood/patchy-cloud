@@ -365,6 +365,14 @@ it("distinguishes handler errors from platform errors and preserves JSON details
 it("keeps audience declarations out of this release's built descriptors", () => {
   const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
   for (const audience of [["browser"], ["browser", "guest-browser"], ["agent"]] as const) {
+    // Extra properties can reach builders through JavaScript or a spread without a type error.
+    const definition = { args: {}, result: t.boolean(), handler: () => true, audience };
+    for (const build of [
+      () => server.query(definition),
+      () => server.mutation(definition),
+      () => server.action(definition)
+    ])
+      assert.throws(build, /This release does not build handler audience declarations/);
     const future = { ...list, descriptor: { ...list.descriptor, audience } };
     assert.throws(
       () => extractHandlerDescriptors({ leads: { list: future } }),
