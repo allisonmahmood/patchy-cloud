@@ -13,6 +13,8 @@ import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import {
   RuntimePrincipal,
+  runtimePrincipal,
+  sameRuntimePrincipal,
   RuntimeStreamFrame,
   RuntimeStreamRequest,
   RuntimeSubscriptionRequest,
@@ -370,16 +372,21 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
-      if (principal === null || !("userId" in principal) || principal.userId !== identity.viewerId)
-        return yield* new Runtime.PrincipalChanged({});
       const find = (versionId?: string) =>
         versions
           .find(input.patchId, versionId)
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const found = yield* find(input.versionId);
-      if (Option.isNone(found) || found.value.companyId !== identity.companyId)
-        return yield* new Runtime.AccessDenied({});
+      if (Option.isNone(found)) return yield* new Runtime.AccessDenied({});
+      const identity = yield* principal !== null && "guestId" in principal
+        ? (admission.forVersion?.(found.value) ?? admission.admit)
+        : admission.admit;
+      if (
+        principal === null ||
+        !sameRuntimePrincipal(principal, runtimePrincipal(identity.identity))
+      )
+        return yield* new Runtime.PrincipalChanged({});
+      if (found.value.companyId !== identity.companyId) return yield* new Runtime.AccessDenied({});
       const loaded = found.value;
       const { buffer, idle } = yield* operatingLimits.getMany({
         companyId: identity.companyId,
@@ -410,7 +417,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const recheck = Effect.gen(function* () {
         const current = yield* identity.recheck;
         if (current.companyId !== identity.companyId) return yield* new Runtime.AccessDenied({});
-        if (current.viewerId !== identity.viewerId) return yield* new Runtime.PrincipalChanged({});
+        if (!sameRuntimePrincipal(runtimePrincipal(current.identity), principal))
+          return yield* new Runtime.PrincipalChanged({});
         binding = { ...binding, identity: current.identity };
       });
       const hello = encoder.encode(
@@ -491,6 +499,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ),
         checkOperation: (op) =>
           Effect.gen(function* () {
+            if (!Binding.allowsOperation(binding, op)) return yield* new Runtime.AccessDenied({});
             if (binding.scope === "public" && !isMemberOperation(op))
               return yield* new Runtime.PublicUnavailable({});
             if (op === "server.call" && loaded.manifest.tier === 2) return;
@@ -674,6 +683,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
             patchId: input.patchId,
             versionId: input.versionId,
             viewerId: identity.viewerId,
+            ...("guest" in identity.identity
+              ? { guestId: identity.identity.guest.id, grantId: identity.identity.grantId }
+              : {}),
             tier: loaded.manifest.tier,
             documentId: input.documentId
           },
@@ -856,8 +868,22 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
-      if (principal === null || !("userId" in principal) || principal.userId !== identity.viewerId)
+      const forVersion = admission.forVersion;
+      const identity = yield* principal !== null &&
+      "guestId" in principal &&
+      forVersion !== undefined
+        ? Effect.gen(function* () {
+            const found = yield* versions
+              .find(input.patchId, input.versionId)
+              .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+            if (Option.isNone(found)) return yield* new Runtime.AccessDenied({});
+            return yield* forVersion(found.value);
+          })
+        : admission.admit;
+      if (
+        principal === null ||
+        !sameRuntimePrincipal(principal, runtimePrincipal(identity.identity))
+      )
         return yield* new Runtime.PrincipalChanged({});
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
       const entry = entries.get(key);
@@ -868,6 +894,9 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       yield* WideEvents.enrich({
         companyId: identity.companyId,
         viewerId: identity.viewerId,
+        ...("guest" in identity.identity
+          ? { guestId: identity.identity.guest.id, grantId: identity.identity.grantId }
+          : {}),
         documentId: input.documentId,
         ...(/^stream_[a-z0-9]{24}$/.test(input.generation) ? { streamId: input.generation } : {}),
         subscriptionRequest: input.type,
@@ -890,6 +919,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         yield* WideEvents.enrich({ refusal: "stream_replaced" });
         return yield* new StreamReplaced();
       }
+      yield* entry.recheck;
       // Share the call budget across documents and generations for this viewer and patch.
       const attempt = yield* limits.consume({
         key: `runtime:${identity.viewerId}:${input.patchId}`,

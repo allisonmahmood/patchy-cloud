@@ -5,7 +5,7 @@ Runtime binds a loaded patch's operations and handler invocations to its version
 ## Language
 
 **Guest authority**:
-A verified browser session's explicit guest relationship in the target company, bound to one patch's current live private version and active grant. It is separate from a member identity and carries no admin or builder powers. The runtime currently permits only the `me` handshake; unlisted operations, resource reads, streams and server calls are refused. Rechecks retain the same guest, company, patch, version and grant. The call log keeps the guest and grant separately from member user IDs, including after access ends.
+A verified browser session's explicit guest relationship in the target company, bound to one patch's current live private version and active grant. It is separate from a member identity and carries no admin or builder powers. The runtime permits the `me` handshake and, for tier 1, positively allowed reads of all declared patch-owned tables and files, including data hidden by the page. Table read subscriptions retain this authority through the existing stream. Writes, uploads, shared resources from other patches, directory reads, company connections, unlisted operations and server calls are refused. Customer-facing tier 1 sharing remains disabled. Rechecks retain the same guest, company, patch, version and grant. The call log keeps the guest and grant separately from member user IDs, including after access ends.
 _Avoid_: guest member, owner impersonation
 
 **Operation**:

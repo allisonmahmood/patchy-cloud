@@ -755,8 +755,14 @@ const runtimeAdmission =
   "company: { id }, patchId, versionId, grantId } }`. Admission resolves the verified session in the " +
   "loaded patch's company, checks the current live private version and existing grant decision, and " +
   "pins that full authority. Rechecks refuse a revoked/replaced grant, suspended/ended guest or stale " +
-  "version. Only `me` is allowed for guests: resources, streams, subscriptions and tier 2 calls remain " +
-  "denied, and scripted guest sharing is not enabled. Request events and call logs retain the real " +
+  "version. Tier 1 guest authority positively allows `tables.get`, `tables.getMany`, `tables.list`, " +
+  "`files.list`, `files.stat` and the existing `files.get` byte download, restricted to the patch's " +
+  "declared owned resources, including data hidden by its page. Table get/list subscriptions use " +
+  "the same stream and snapshot paths, rechecking authority before new work and reconnect. Writes, " +
+  "uploads/staging, undeclared resources, other patches' shared resources, directory reads, company " +
+  "connections and tier 2 calls are refused even if labelled read. Download URLs confer no authority " +
+  "without the live session, grant and current version. Customer-facing tier 1 sharing stays disabled. " +
+  "Request events, subscription events and call logs retain the real " +
   "guest and grant; member log IDs and the member wire shape stay unchanged. " +
   "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +
   "and integrations with `server_required`, even after rollback to a lower served tier. A loaded " +

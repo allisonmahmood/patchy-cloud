@@ -101,6 +101,8 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   const dependencies = Effect.fn("SubscriptionReads.dependencies")(function* (
     input: SubscriptionReads.Input
   ) {
+    if (!Binding.allowsOperation(input.binding, input.op))
+      return yield* new Runtime.AccessDenied({});
     if (!isOperation(input.op)) return yield* new Runtime.InvalidRequest({});
     const decoded: Effect.Effect<unknown, Schema.SchemaError> = decoders[input.op](input.args);
     yield* decoded.pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));

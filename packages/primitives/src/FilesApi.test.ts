@@ -18,7 +18,7 @@ import { FileMetadata, RuntimeGroup, RuntimeFileParams, WIRE_VERSION } from "@pa
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Guests, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
@@ -34,6 +34,7 @@ import * as Files from "./Files.js";
 import { companyId, manifest, services, setup, versionId } from "./test/files.js";
 
 const patchId = "filehttptest";
+const guestVersionId = "ver_111111111111111111111111";
 const publicVersionId = "ver_bbbbbbbbbbbbbbbbbbbbbbbb";
 const omittedVersionId = "ver_cccccccccccccccccccccccc";
 const tier2VersionId = "ver_dddddddddddddddddddddddd";
@@ -41,11 +42,20 @@ const gatedVersionId = "ver_eeeeeeeeeeeeeeeeeeeeeeee";
 const rollbackVersionId = "ver_ffffffffffffffffffffffff";
 const decodeMetadata = Schema.decodeUnknownEffect(Schema.NullOr(FileMetadata));
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  guestGrant: (input) =>
+    Effect.succeed(
+      input.patchId === patchId &&
+        input.companyId === companyId &&
+        input.versionId === guestVersionId
+        ? "grt_http_file"
+        : null
+    ),
   find: (patch, version = versionId) =>
     Effect.succeed(
       patch !== patchId ||
         ![
           versionId,
+          guestVersionId,
           publicVersionId,
           omittedVersionId,
           tier2VersionId,
@@ -61,11 +71,13 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
             wireVersion: WIRE_VERSION,
             scope: version === publicVersionId ? ("public" as const) : ("company" as const),
             manifest:
-              version === omittedVersionId
-                ? { ...manifest, files: {} }
-                : version === tier2VersionId || version === rollbackVersionId
-                  ? { ...manifest, tier: 2 }
-                  : manifest
+              version === guestVersionId
+                ? { ...manifest, tier: 1 }
+                : version === omittedVersionId
+                  ? { ...manifest, files: {} }
+                  : version === tier2VersionId || version === rollbackVersionId
+                    ? { ...manifest, tier: 2 }
+                    : manifest
           })
     )
 });
@@ -109,6 +121,82 @@ const headers = () => ({
   "x-patchy-principal": JSON.stringify({ userId: "usr_dev" }),
   cookie: signedInCookies()
 });
+
+it.effect(
+  "downloads guest owned files through the existing HTTP endpoint and rechecks fresh requests",
+  () =>
+    Effect.gen(function* () {
+      const { put } = yield* setup(patchId);
+      const bytes = new Uint8Array([0, 128, 255]);
+      yield* put("hidden/data.bin", bytes);
+      const guest = yield* Guests.create({
+        companyId,
+        clerkUserId: "user_http_guest",
+        email: "guest@http.test",
+        name: "HTTP Guest"
+      });
+      const principal = {
+        kind: "guest",
+        guestId: guest.id,
+        companyId,
+        patchId,
+        versionId: guestVersionId,
+        grantId: "grt_http_file"
+      };
+      const guestHeaders = {
+        ...headers(),
+        "sec-fetch-site": "same-origin",
+        cookie: signedInCookies(
+          signSession({ sub: guest.clerkUserId, email: guest.email, name: guest.name })
+        ),
+        "x-patchy-principal": JSON.stringify(principal)
+      };
+      const client = yield* HttpClient.HttpClient;
+      const params = {
+        patchId,
+        versionId: guestVersionId,
+        store: "docs",
+        name: "hidden/data.bin"
+      };
+      const url = fileUrl(params);
+      const downloaded = yield* client.get(url, { headers: guestHeaders });
+      assert.strictEqual(downloaded.status, 200);
+      assert.deepStrictEqual(new Uint8Array(yield* downloaded.arrayBuffer), bytes);
+      assert.strictEqual(downloaded.headers["cache-control"], "no-store");
+      assert.strictEqual(downloaded.headers["content-disposition"], "attachment");
+      for (const target of [
+        { ...params, patchId: "anotherpatch" },
+        { ...params, store: "undeclared" },
+        { ...params, versionId }
+      ]) {
+        const refused = yield* client.get(fileUrl(target), { headers: guestHeaders });
+        assert.notStrictEqual(refused.status, 200);
+      }
+      const upload = yield* client.put(url, {
+        headers: { ...guestHeaders, origin: PUBLIC_BASE_URL },
+        body: HttpBody.uint8Array(new Uint8Array([1]))
+      });
+      assert.strictEqual(upload.status, 403);
+      yield* Guests.setDeactivated({
+        companyId,
+        clerkUserId: guest.clerkUserId,
+        deactivated: true
+      });
+      assert.strictEqual((yield* client.get(url, { headers: guestHeaders })).status, 403);
+      yield* Guests.setDeactivated({
+        companyId,
+        clerkUserId: guest.clerkUserId,
+        deactivated: false
+      });
+      const restored = yield* client.get(url, { headers: guestHeaders });
+      assert.deepStrictEqual(new Uint8Array(yield* restored.arrayBuffer), bytes);
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(
+        yield* sql`SELECT DISTINCT user_id, guest_id, grant_id FROM runtime_calls WHERE op = 'files.get' AND outcome = 'success'`,
+        [{ user_id: null, guest_id: guest.id, grant_id: "grt_http_file" }]
+      );
+    }).pipe(Effect.provide(socket))
+);
 
 it.layer(socket)("Files HTTP / real operations", (it) => {
   it.effect(

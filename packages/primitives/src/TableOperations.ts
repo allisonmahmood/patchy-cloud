@@ -325,6 +325,7 @@ export const makeAccess = Effect.gen(function* () {
     if (
       declaration.id !== sharedTableId(declaration.patchId, declaration.table) ||
       binding.identity === null ||
+      "guest" in binding.identity ||
       binding.identity.company.id !== binding.companyId
     )
       return yield* new Runtime.AccessDenied({});

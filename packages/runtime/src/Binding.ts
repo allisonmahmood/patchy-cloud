@@ -37,6 +37,25 @@ export class Binding extends Context.Service<
   }
 >()("@patchy/runtime/Binding") {}
 
-/** Guests have only the explicit identity handshake until resource reads are implemented. */
-export const allowsOperation = (binding: Binding["Service"], op: string): boolean =>
-  binding.identity === null || !("guest" in binding.identity) || op === "me";
+/** Guest authority is patch/version-bound and positively permits only tier 1 owned reads. */
+export const allowsOperation = (binding: Binding["Service"], op: string): boolean => {
+  const identity = binding.identity;
+  if (identity === null || !("guest" in identity)) return true;
+  if (
+    identity.company.id !== binding.companyId ||
+    identity.patchId !== binding.patchId ||
+    identity.versionId !== binding.versionId ||
+    binding.scope !== "company"
+  )
+    return false;
+  if (op === "me") return true;
+  return (
+    binding.manifest.tier === 1 &&
+    (op === "tables.get" ||
+      op === "tables.getMany" ||
+      op === "tables.list" ||
+      op === "files.list" ||
+      op === "files.stat" ||
+      op === "files.get")
+  );
+};

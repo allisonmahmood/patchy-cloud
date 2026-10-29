@@ -10,6 +10,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import {
   canonicalArgs,
+  runtimeActorId,
   type HandlerKind,
   type RuntimeStreamFrame,
   type RuntimeSubscription,
@@ -338,9 +339,14 @@ export const make = Effect.gen(function* () {
       companyId: binding.companyId,
       patchId: binding.patchId,
       versionId: binding.versionId,
-      ...(binding.principal === null || !("userId" in binding.principal)
+      ...(binding.identity === null
         ? {}
-        : { viewerId: binding.principal.userId }),
+        : {
+            viewerId: runtimeActorId(binding.identity),
+            ...("guest" in binding.identity
+              ? { guestId: binding.identity.guest.id, grantId: binding.identity.grantId }
+              : {})
+          }),
       tier: binding.manifest.tier,
       handler: sub.input.op === "server.call" ? String(sub.input.args.handler) : sub.input.op,
       kind: "query",

@@ -56,7 +56,8 @@ const layer = RuntimeStream.layer.pipe(
   Layer.provide(SubscriptionReads.layer),
   Layer.provide(TestMemberDirectory.layer),
   Layer.provideMerge(
-    Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(
+    Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer).pipe(
+      Layer.provideMerge(LoadedVersions.layer),
       Layer.provideMerge(dependencies)
     )
   ),
@@ -100,7 +101,7 @@ const holdNextWake = Effect.gen(function* () {
 });
 
 it.layer(layer)("committed patch lifecycle streams", (it) => {
-  it.effect("refuses guest streams and subscription updates even with a current patch grant", () =>
+  it.effect("refuses tier 0 guest streams and updates despite a current grant", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_stream_guest', 'stream-guest', 'Elsewhere')`;
@@ -169,7 +170,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
               Effect.flip,
               Effect.provideService(HttpServerRequest.HttpServerRequest, guestRequest)
             );
-          assert.instanceOf(updated, Runtime.PrincipalChanged);
+          assert.instanceOf(updated, Runtime.AccessDenied);
         }
       }
     }).pipe(Effect.scoped)

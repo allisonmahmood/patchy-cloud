@@ -124,7 +124,11 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
               })
           }),
           Effect.provide(WideEvents.layerNoop),
-          Effect.provide(Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer)),
+          Effect.provide(
+            Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer).pipe(
+              Layer.provide(Layer.succeed(LoadedVersions.LoadedVersions, source))
+            )
+          ),
           Effect.provideService(Scope.Scope, lifecycleScope)
         );
         const firstPull = yield* streams
