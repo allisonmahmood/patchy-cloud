@@ -124,6 +124,43 @@ through `pnpm patchy dev`. Read `patchy-server` for tier 2 execution limits.
 Lint checks hook usage and supported imports; fix failures in source rather
 than disabling the rules.
 
+The scaffold lints with Oxlint: `oxlint` in `devDependencies`, a `lint` script
+of `oxlint`, and this `.oxlintrc.json`. Patches publish on TypeScript 7, and a
+repo still on ESLint with typescript-eslint, which can't run beside TypeScript
+7, moves to it: remove `eslint`, `typescript-eslint` and
+`eslint-plugin-react-hooks`, delete `eslint.config.js`, and keep any rules of
+the repo's own in `.oxlintrc.json`.
+
+```json
+{
+  "plugins": ["eslint", "react"],
+  "categories": {
+    "correctness": "off"
+  },
+  "ignorePatterns": ["patchy/_generated/**", "dist/**"],
+  "overrides": [
+    {
+      "files": ["src/**", "helpers/**", "server/**", "agent/**"],
+      "rules": {
+        "react/rules-of-hooks": "error",
+        "react/exhaustive-deps": "error",
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(?:react|react-dom|preact)(?:/|$)",
+                "message": "Import Preact with compat semantics from patchy/preact."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
 Put reusable company code in `helpers/`, outside `server/` handler discovery.
 Page-only helpers may live under `src/`. A helper imported at runtime by a page
 joins the page's dependency graph: importing server code from that helper leaks

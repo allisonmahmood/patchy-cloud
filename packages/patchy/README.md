@@ -717,6 +717,12 @@ version, accepted range and upgrade command. For this release:
 pnpm add --save-dev 'vite@^8.3.0' 'vite-plugin-singlefile@^2.3.3'
 ```
 
+Publish also refuses a TypeScript outside its accepted range, before it syncs the
+description or runs anything: patches publish on TypeScript 7. The refusal names
+the upgrade, `pnpm add --save-dev 'typescript@^7.0.2'`, and points at the
+`patchy-preact` skill for moving lint from ESLint, which can't run beside
+TypeScript 7, to Oxlint. Dev and refresh only warn about it.
+
 Refresh reports required upgrades in text and JSON `warnings`, but leaves
 the upgrade to the builder. `release_mismatch` still checks the Patchy pin,
 CLI and runtime; toolchain support is a separate check.
