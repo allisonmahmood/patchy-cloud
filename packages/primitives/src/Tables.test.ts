@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeFileSystem } from "@effect/platform-node";
 import { it, type Vitest } from "@effect/vitest";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
@@ -98,4 +99,7 @@ it.layer(postgres.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (Postgres)"
   backends(it);
   refusalsAndLimits(it);
 });
-it.layer(local.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (PGlite)", backends);
+it.layer(local.pipe(Layer.provideMerge(Layer.merge(TestWakes.layer, NodeCrypto.layer))))(
+  "Tables (PGlite)",
+  backends
+);

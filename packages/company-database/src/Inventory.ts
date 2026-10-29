@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -382,8 +383,13 @@ export const initialize = Effect.gen(function* () {
       singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
       secret text NOT NULL
     )`);
+  const secret = yield* Crypto.Crypto.pipe(
+    Effect.flatMap((crypto) => crypto.randomBytes(32)),
+    Effect.map(Hex.encode),
+    Effect.orDie
+  );
   yield* sql`INSERT INTO patchy.file_handle_key (secret)
-    VALUES (${randomBytes(32).toString("hex")}) ON CONFLICT (singleton) DO NOTHING`;
+    VALUES (${secret}) ON CONFLICT (singleton) DO NOTHING`;
   yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS "patchy"."mutation_keys" (
     "key" text CONSTRAINT mutation_keys_key PRIMARY KEY,
     "issued_at" timestamptz NOT NULL,
