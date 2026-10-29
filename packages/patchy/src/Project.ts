@@ -536,7 +536,14 @@ export const generate = Effect.fn("Project.generate")(function* (
     ...(repo.description === undefined ? {} : { description: repo.description })
   };
   const refused = lowerTierUses(manifest);
-  if (refused !== undefined) return yield* refused;
+  // A refused add was never written, so there is nothing in uses to delete.
+  if (refused !== undefined)
+    return yield* change?.kind === "add"
+      ? new LocalError({
+          code: "tier_mismatch",
+          message: `uses requires tier 2, so patchy.config.ts is unchanged. Set tier 2, then add "${change.alias}" again and reach it from server handlers.`
+        })
+      : refused;
   if (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)

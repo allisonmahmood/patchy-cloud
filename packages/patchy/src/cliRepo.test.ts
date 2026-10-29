@@ -530,6 +530,8 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       expect(refusal).toMatchObject({ kind: "local", code: "tier_mismatch" });
       expect(refusal.error).toContain("uses requires tier 2");
       expect(refusal.error).toContain("server handlers");
+      expect(refusal.error).toContain("patchy.config.ts is unchanged");
+      expect(refusal.error).not.toContain("delete them all");
     }
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
     expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
