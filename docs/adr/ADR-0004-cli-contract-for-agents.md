@@ -57,9 +57,10 @@ lists of validation failures; their line count is not the branching contract.
   Notices discovered before a later failure remain in `warnings`; text mode
   prints them before the error.
   Terminal device-login refusals currently use `kind` and `error` without a code.
-- **Parse errors:** Effect may print usage to stdout before the failure document.
-  Check the exit code before parsing stdout as success. Built-ins such as help
-  and the bare `--version` retain their own output, not success envelopes.
+- **Parse errors:** a bad flag value, an unknown flag or command, or a missing
+  required flag or argument is a `local` failure document with empty stdout.
+  Without `--json`, usage prints on stdout before the error. Built-ins such as
+  help and the bare `--version` retain their own output, not success envelopes.
 
 `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an

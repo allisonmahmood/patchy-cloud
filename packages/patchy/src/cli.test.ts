@@ -623,10 +623,9 @@ describe("patchy status", async () => {
 
 describe("help", () => {
   it("marks a required flag, and leaving it out is a one-line error", async () => {
-    const [help, missing, missingJson] = await Promise.all([
+    const [help, missing] = await Promise.all([
       runCli(["look", "publish", "--help"]),
-      runCli(["look", "publish", "./x"]),
-      runCli(["look", "publish", "./x", "--json"])
+      runCli(["look", "publish", "./x"])
     ]);
     expect(help).toMatchObject({ status: 0, stderr: "" });
     expect(help.stdout).toContain("\n  dir string    The look folder to publish\n");
@@ -634,14 +633,37 @@ describe("help", () => {
       "\n  --note string    Why this revision, such as darker green (required)\n"
     );
 
-    // Usage still prints on stdout, as ADR-0004 records; the error is stderr's one line.
+    // Without --json, usage prints on stdout; the error is stderr's one line.
     expect(missing).toMatchObject({ status: 1, stderr: "Missing required flag: --note\n" });
     expect(missing.stdout).toContain("USAGE\n  patchy look publish [flags] <dir>\n");
-    expect(missingJson.status).toBe(1);
-    expect(JSON.parse(missingJson.stderr)).toEqual({
-      ok: false,
-      error: "Missing required flag: --note",
-      kind: "local"
-    });
+  });
+
+  it("under --json, a parse error is one document on stderr, and help still prints", async () => {
+    const failures = [
+      [["init", "notes", "--tier", "7"], 'Invalid value for flag --tier: "7". Expected: "1" | "2"'],
+      [["publish", "--bogus"], "Unrecognized flag: --bogus in command patchy publish"],
+      [["look", "publish", "./x"], "Missing required flag: --note"],
+      [["look", "publish", "--note", "darker"], "Missing required argument: dir"]
+    ] as const;
+    const failed = await Promise.all(failures.map(([args]) => runCli([...args, "--json"])));
+    failures.forEach(([, error], index) =>
+      expect(failed[index]).toMatchObject({
+        status: 1,
+        stdout: "",
+        stderr: `${JSON.stringify({ ok: false, error, kind: "local" })}\n`
+      })
+    );
+
+    // Asked for with --help, or shown by a command without a handler.
+    const [help, helpJson, group, groupJson] = await Promise.all([
+      runCli(["init", "--help"]),
+      runCli(["init", "--help", "--json"]),
+      runCli(["auth"]),
+      runCli(["auth", "--json"])
+    ]);
+    expect(help.stdout).toContain("USAGE\n  patchy init");
+    expect(helpJson).toMatchObject({ status: 0, stdout: help.stdout, stderr: "" });
+    expect(group.stdout).toContain("USAGE\n  patchy auth");
+    expect(groupJson).toMatchObject({ status: 0, stdout: group.stdout, stderr: "" });
   });
 });
