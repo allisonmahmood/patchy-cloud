@@ -6,7 +6,6 @@ import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
 import type { QueryDriver, QueryFrame } from "./queryRegistry.js";
 import { serverReplyTimeoutMs as serverReplyTimeout } from "@patchy/api/query-config";
-import type { RuntimeGuest } from "@patchy/api";
 import type { HandlerKindName } from "./server.js";
 
 export type Operation =
@@ -52,7 +51,14 @@ export interface Transport {
   close(): void;
 }
 /** Tier 1 guest identity; it conveys no member or admin authority. */
-export type GuestMe = RuntimeGuest;
+export interface GuestMe {
+  readonly kind: "guest";
+  readonly guest: Me["user"];
+  readonly company: { readonly id: string };
+  readonly patchId: string;
+  readonly versionId: string;
+  readonly grantId: string;
+}
 
 export interface Me {
   readonly user: { readonly id: string; readonly name: string; readonly email: string };

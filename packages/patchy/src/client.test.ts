@@ -1,5 +1,6 @@
 import { resolveObjectURL } from "node:buffer";
-import { expect, it } from "vitest";
+import { expect, expectTypeOf, it } from "vitest";
+import type { RuntimeGuest } from "@patchy/api";
 import { build } from "esbuild";
 import * as ts from "typescript";
 import {
@@ -8,6 +9,7 @@ import {
   createSharedStore,
   decodeError,
   isPatchyError,
+  type GuestMe,
   type QueryRegistry,
   type Transport
 } from "./client.js";
@@ -341,6 +343,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
 });
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
+  expectTypeOf<GuestMe>().toEqualTypeOf<RuntimeGuest>();
   const root = new URL("../dist/", import.meta.url).pathname;
   const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Me, type GuestMe, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, sharedStore, type Id } from "patchy/config";

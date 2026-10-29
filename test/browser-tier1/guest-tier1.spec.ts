@@ -387,7 +387,12 @@ test("tier 1 guests follow published and rolled-back contracts; off, historical,
     await expect(page.getByRole("list", { name: "Declared guest data" })).not.toContainText(
       "Table: added"
     );
+    // Let the guest's retirement navigation commit before restoring. Otherwise its
+    // pending automatic reload can interrupt the explicit open below.
+    const retired = guest.waitForEvent("framenavigated", (frame) => frame === guest.mainFrame());
     await instance.lifecycle(patch.patchId, "retire");
+    await retired;
+    await expect(guest.locator("#patch")).toHaveCount(0);
     expect((await context.request.get(patch.address)).status()).toBe(404);
     expect((await oldRead()).status()).toBe(403);
     await instance.lifecycle(patch.patchId, "restore");
