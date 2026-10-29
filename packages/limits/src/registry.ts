@@ -664,7 +664,8 @@ export const registry = {
     default: 200,
     unit: "connections",
     scope: "host",
-    measure: "Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS",
+    measure:
+      "Company database connections open per host replica, working or idle; PATCHY_COMPANY_DB_MAX_BACKENDS",
     refusal: "busy",
     overridable: false
   },

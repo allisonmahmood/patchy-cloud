@@ -77,7 +77,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `serving.contentCache.bytes` | operating | 67108864 | bytes | host | Content URL documents kept in memory per host replica, raw, brotli and gzip bytes together, least recently used evicted first; a document over a quarter of this is read and sent uncompressed on every load | None | No | deployment |
 | `serving.contentCache.entries` | operating | 256 | documents | host | Content URL documents kept in memory per host replica, within `serving.contentCache.bytes` | None | No | deployment |
 | `company.connections` | operating | 4 | connections | company | Company connections per host replica | `busy` | Yes | deployment |
-| `company.connections.hostBackends` | operating | 200 | connections | host | Company database backend budget per host replica; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
+| `company.connections.hostBackends` | operating | 200 | connections | host | Company database connections open per host replica, working or idle; PATCHY_COMPANY_DB_MAX_BACKENDS | `busy` | No | legacy |
 | `company.connections.pools` | operating | 100 | pools | host | Retained company pools per host replica | `busy` | No | legacy |
 | `company.connections.waiters` | operating | 32 | waiters | company | Queued company connection acquisitions per host replica | `busy` | Yes | deployment |
 | `company.connections.wait` | operating | 1000 | milliseconds | company | Maximum connection queue wait within caller deadline | `busy` | Yes | deployment |

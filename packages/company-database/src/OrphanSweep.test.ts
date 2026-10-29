@@ -437,7 +437,7 @@ it.layer(services)("OrphanSweep", (it) => {
 });
 
 it.layer(
-  Layer.merge(Testing.layer({ maxBackends: 4 }), filesystem).pipe(
+  Layer.merge(Testing.layer({ capacity: 1 }), filesystem).pipe(
     Layer.provideMerge(Testing.resourceChangesLayer)
   )
 )("OrphanSweep retained pool pressure", (it) => {
@@ -477,8 +477,8 @@ it.layer(
       });
       const sweeper = yield* OrphanSweep.make.pipe(Effect.provide(observed));
       const running = yield* sweeper.sweep.pipe(Effect.forkScoped);
-      // Two pools against one retained slot is the same pressure as 51 against
-      // the default 50 slots. Namespace and file-index scans each turn pools over.
+      // Two pools against a one-pool registry is the same pressure as 101 against
+      // the default 100. Namespace and file-index scans each turn pools over.
       for (let pause = 0; pause < 3; pause += 1) {
         yield* Queue.take(busy);
         const before = admitted;

@@ -37,7 +37,7 @@ The operator credential allowed to create company databases and establish their 
 _Avoid_: data role, company credential
 
 **Connection wait**:
-The bounded queue for a company's occupied connection slots, shared by both tiers on one host replica. It waits within the caller's deadline and returns `busy` on queue overflow or expiry. It is separate from Runtime's company call-rate admission, which also counts operations needing no connection.
+The bounded queue for a company's occupied connection slots, or for the host's company connections when every one is working, shared by both tiers on one host replica. It waits within the caller's deadline and returns `busy` on queue overflow or expiry. It is separate from Runtime's company call-rate admission, which also counts operations needing no connection.
 _Avoid_: retry, invocation queue
 
 **Inventory upgrade**:
