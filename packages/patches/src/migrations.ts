@@ -109,5 +109,59 @@ export const migrations: Migrations = {
     PRIMARY KEY (user_id, patch_id)
     )`,
     `CREATE INDEX patch_opens_patch_id_idx ON patch_opens(patch_id)`
+  ),
+  // Keep terminal grants after patch reclamation so old grant and guest IDs remain
+  // attributable. The patch ID is intentionally not a foreign key: reclamation
+  // removes the patch row and name, but never reuses its identity.
+  "0030_patch_guest_grants": ddl(
+    `CREATE UNIQUE INDEX company_guests_company_id_id_idx ON company_guests(company_id, id)`,
+    `CREATE TABLE patch_guest_grants (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      patch_id TEXT NOT NULL,
+      guest_id TEXT NOT NULL,
+      grant_number BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+      granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ended_at TIMESTAMPTZ,
+      end_reason TEXT CHECK (end_reason IN ('revoked', 'public', 'reclaimed', 'guest_ended')),
+      CONSTRAINT patch_guest_grants_end_check CHECK ((ended_at IS NULL) = (end_reason IS NULL)),
+      CONSTRAINT patch_guest_grants_guest_fk FOREIGN KEY (company_id, guest_id)
+        REFERENCES company_guests(company_id, id)
+    )`,
+    `CREATE UNIQUE INDEX patch_guest_grants_active_idx
+      ON patch_guest_grants(patch_id, guest_id) WHERE ended_at IS NULL`,
+    `CREATE INDEX patch_guest_grants_guest_idx
+      ON patch_guest_grants(guest_id, patch_id, grant_number DESC)`,
+    `CREATE FUNCTION patches_guard_guest_grant() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF (OLD.company_id, OLD.patch_id, OLD.guest_id, OLD.granted_at) IS DISTINCT FROM
+         (NEW.company_id, NEW.patch_id, NEW.guest_id, NEW.granted_at)
+      THEN
+        RAISE EXCEPTION 'patch guest grant identity cannot change'
+          USING ERRCODE = '23514', CONSTRAINT = 'patch_guest_grants_identity';
+      END IF;
+      IF OLD.ended_at IS NOT NULL AND
+         (OLD.ended_at, OLD.end_reason) IS DISTINCT FROM (NEW.ended_at, NEW.end_reason)
+      THEN
+        RAISE EXCEPTION 'ended patch guest grant cannot be reopened'
+          USING ERRCODE = '23514', CONSTRAINT = 'patch_guest_grants_ended';
+      END IF;
+      RETURN NEW;
+    END;
+    $$`,
+    `CREATE TRIGGER patch_guest_grants_immutable
+      BEFORE UPDATE ON patch_guest_grants
+      FOR EACH ROW EXECUTE FUNCTION patches_guard_guest_grant()`,
+    `CREATE FUNCTION patches_end_grants_on_guest_end() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      UPDATE patch_guest_grants SET ended_at = now(), end_reason = 'guest_ended'
+        WHERE guest_id = NEW.id AND ended_at IS NULL;
+      RETURN NULL;
+    END;
+    $$`,
+    `CREATE TRIGGER company_guest_end_patch_grants
+      AFTER UPDATE OF ended_at ON company_guests
+      FOR EACH ROW WHEN (OLD.ended_at IS NULL AND NEW.ended_at IS NOT NULL)
+      EXECUTE FUNCTION patches_end_grants_on_guest_end()`
   )
 };

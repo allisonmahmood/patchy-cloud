@@ -46,6 +46,7 @@ import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { Tables } from "@patchy/primitives";
 import { Wakes } from "@patchy/runtime/core";
 import { ConnectionStore } from "@patchy/integrations";
+import * as GuestGrants from "./GuestGrants.js";
 
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const encodePublishCreated = Schema.encodeSync(Schema.fromJsonString(PublishCreated));
@@ -838,6 +839,31 @@ export class Patches extends Context.Service<
       Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId">,
       LifecycleError | Tier2NotPublic | SqlError
     >;
+    /** An owner or company admin grants one active guest relationship this private patch. */
+    readonly grantGuest: (
+      patchId: string,
+      guestId: string,
+      actor: Actor
+    ) => Effect.Effect<
+      GuestGrants.Grant,
+      | LifecycleError
+      | GuestGrants.GuestUnavailable
+      | GuestGrants.GuestDeactivated
+      | GuestGrants.AlreadyGranted
+      | SqlError
+    >;
+    /** End the active grant, retaining its ID and the guest identity. */
+    readonly revokeGuest: (
+      patchId: string,
+      guestId: string,
+      actor: Actor
+    ) => Effect.Effect<GuestGrants.Grant | null, LifecycleError | SqlError>;
+    /** A patch, company and guest-specific grant decision; no serving admission here. */
+    readonly guestGrant: (
+      companyId: string,
+      patchId: string,
+      guestId: string
+    ) => Effect.Effect<GuestGrants.Lookup | null, SqlError>;
     /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
       companyHandle: string,
@@ -2202,6 +2228,11 @@ export const make = Effect.gen(function* () {
               last_changed_action = ${`published v${versionNumber}`}
           WHERE id = ${input.patchId}`;
 
+        if (existing !== null && scope === "public")
+          yield* GuestGrants.endForPatch(input.patchId, "public").pipe(
+            Effect.provideService(SqlClient.SqlClient, sql)
+          );
+
         yield* announce(input.patchId);
         // The version row is new: a reused publish key failed above and reports nothing.
         yield* report({
@@ -2272,6 +2303,10 @@ export const make = Effect.gen(function* () {
         lifecycle_revision = lifecycle_revision + 1,
         last_changed_at = ${at}, last_changed_by = ${actor.userId},
         last_changed_action = 'sharing changed' WHERE id = ${patchId}`;
+    if (scope === "public")
+      yield* GuestGrants.endForPatch(patchId, "public").pipe(
+        Effect.provideService(SqlClient.SqlClient, sql)
+      );
     yield* announce(patchId);
     if (scope !== row.scope)
       yield* report({
@@ -2288,6 +2323,38 @@ export const make = Effect.gen(function* () {
       currentVersionId: row.currentVersionId
     };
   }, withLifecycleTransaction);
+
+  const grantGuest = Effect.fn("Patches.grantGuest")(function* (
+    patchId: string,
+    guestId: string,
+    actor: Actor
+  ) {
+    const patch = yield* manageable(patchId, actor);
+    if (stateOf(patch) !== "live") return yield* new WrongState({ state: stateOf(patch) });
+    if (patch.scope !== "company" || patch.currentVersionId === null)
+      return yield* new PatchUnavailable({ patchId });
+    return yield* GuestGrants.grant({ companyId: patch.companyId, patchId, guestId }).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+  }, withLifecycleTransaction);
+
+  const revokeGuest = Effect.fn("Patches.revokeGuest")(function* (
+    patchId: string,
+    guestId: string,
+    actor: Actor
+  ) {
+    const patch = yield* manageable(patchId, actor);
+    return yield* GuestGrants.revoke({ companyId: patch.companyId, patchId, guestId }).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+  }, withLifecycleTransaction);
+
+  const guestGrant = Effect.fn("Patches.guestGrant")(
+    (companyId: string, patchId: string, guestId: string) =>
+      GuestGrants.lookup({ companyId, patchId, guestId }).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql)
+      )
+  );
 
   const retire = Effect.fn("Patches.retire")(function* (
     patchId: string,
@@ -2614,6 +2681,9 @@ export const make = Effect.gen(function* () {
         const removed =
           yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId} RETURNING id`;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;
+        yield* GuestGrants.endForPatch(patchId, "reclaimed").pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
         yield* sql`DELETE FROM patches WHERE id = ${patchId}`;
         yield* announce(patchId);
         return Option.some({ companyId, ownerUserId, versionCount: removed.length });
@@ -2663,6 +2733,9 @@ export const make = Effect.gen(function* () {
     completeObject,
     record,
     setScope,
+    grantGuest,
+    revokeGuest,
+    guestGrant,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,

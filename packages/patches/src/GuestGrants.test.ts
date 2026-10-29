@@ -1,0 +1,244 @@
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Analytics } from "@patchy/analytics";
+import { Guests } from "@patchy/companies";
+import { newPatchId } from "@patchy/core";
+import * as Patches from "./Patches.js";
+import * as Fixtures from "./test/fixtures.js";
+
+const { uploader, admin, reader } = Fixtures.identities;
+const owner = { userId: uploader.user.id, admin: false };
+const administrator = { userId: admin.user.id, admin: true };
+let ordinal = 0;
+const publish = (overrides: Partial<Patches.RecordInput> = {}) => {
+  const id = ++ordinal;
+  return Fixtures.record(
+    Fixtures.recordInput(uploader, {
+      patchId: newPatchId(),
+      versionId: `v_guest_${id}`,
+      manifest: { ...Fixtures.manifest, name: `guest-${id}` },
+      ...overrides
+    })
+  );
+};
+
+const analytics = Layer.succeed(
+  Analytics.Analytics,
+  Analytics.Analytics.of({ track: () => Effect.void })
+);
+
+it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fixtures.database)))(
+  "patch guest grants",
+  (it) => {
+    it.effect(
+      "keeps B and C independent for one Clerk account and suspends without reviving revocations",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const patches = yield* Patches.Patches;
+          const b = yield* publish();
+          yield* sql`INSERT INTO companies (id, handle, name) VALUES
+        ('cmp_guest_a', 'guest-a', 'A'), ('cmp_guest_c', 'guest-c', 'C')`;
+          yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_guest_a', 'clerk_guest', 'cmp_guest_a', 'guest@example.com', 'Guest', 'member'),
+               ('usr_guest_c', 'clerk_owner_c', 'cmp_guest_c', 'owner-c@example.com', 'Owner C', 'member')`;
+          yield* sql`INSERT INTO machine_tokens
+        (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+        VALUES ('tok_guest_c', 'usr_guest_c', 'C machine', 'hash:c', now(),
+          now() + interval '90 days', now())`;
+          const c = yield* publish({
+            companyId: "cmp_guest_c",
+            ownerUserId: "usr_guest_c",
+            machineTokenId: "tok_guest_c"
+          });
+          const bGuest = yield* Guests.create({
+            companyId: uploader.company.id,
+            clerkUserId: "clerk_guest",
+            email: "guest@example.com",
+            name: "Guest"
+          });
+          const cGuest = yield* Guests.create({
+            companyId: "cmp_guest_c",
+            clerkUserId: "clerk_guest",
+            email: "guest@example.com",
+            name: "Guest"
+          });
+          const bAccess = () => patches.guestGrant(uploader.company.id, b.patchId, bGuest.id);
+          const cAccess = () => patches.guestGrant("cmp_guest_c", c.patchId, cGuest.id);
+          assert.isNull(yield* bAccess());
+          assert.isNull(yield* cAccess());
+          const first = yield* patches.grantGuest(b.patchId, bGuest.id, owner);
+          yield* patches.grantGuest(c.patchId, cGuest.id, { userId: "usr_guest_c", admin: false });
+          assert.strictEqual((yield* bAccess())?.access, "active");
+          assert.strictEqual((yield* cAccess())?.access, "active");
+          assert.isNull(yield* patches.guestGrant("cmp_guest_c", b.patchId, bGuest.id));
+          assert.isNull(yield* patches.guestGrant(uploader.company.id, b.patchId, cGuest.id));
+          assert.strictEqual(
+            (yield* patches.grantGuest(b.patchId, bGuest.id, owner).pipe(Effect.flip))._tag,
+            "AlreadyGranted"
+          );
+          yield* Guests.setDeactivated({
+            companyId: uploader.company.id,
+            clerkUserId: "clerk_guest",
+            deactivated: true
+          });
+          assert.strictEqual((yield* bAccess())?.access, "deactivated");
+          assert.strictEqual((yield* cAccess())?.access, "active");
+          assert.strictEqual(
+            (yield* patches.grantGuest(b.patchId, bGuest.id, owner).pipe(Effect.flip))._tag,
+            "GrantGuestDeactivated"
+          );
+          yield* patches.revokeGuest(b.patchId, bGuest.id, administrator);
+          yield* Guests.setDeactivated({
+            companyId: uploader.company.id,
+            clerkUserId: "clerk_guest",
+            deactivated: false
+          });
+          assert.strictEqual((yield* bAccess())?.access, "revoked");
+          assert.strictEqual((yield* cAccess())?.access, "active");
+          const reopened = yield* Effect.exit(sql`UPDATE patch_guest_grants
+            SET ended_at = NULL, end_reason = NULL WHERE id = ${first.id}`);
+          assert.isTrue(Exit.isFailure(reopened));
+          const second = yield* patches.grantGuest(b.patchId, bGuest.id, owner);
+          assert.notStrictEqual(second.id, first.id);
+          assert.strictEqual((yield* bAccess())?.grant.id, second.id);
+          assert.strictEqual((yield* bAccess())?.access, "active");
+          yield* Guests.end({ companyId: uploader.company.id, clerkUserId: "clerk_guest" });
+          assert.strictEqual((yield* bAccess())?.grant.endReason, "guest_ended");
+          assert.strictEqual((yield* bAccess())?.access, "ended");
+          assert.strictEqual((yield* cAccess())?.access, "active");
+          assert.strictEqual((yield* Guests.findById(bGuest.id))?.clerkUserId, "clerk_guest");
+        })
+    );
+
+    it.effect(
+      "ends grants atomically on both sharing paths and never restores them on private return",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const patches = yield* Patches.Patches;
+          const patch = yield* publish();
+          const guest = yield* Guests.create({
+            companyId: uploader.company.id,
+            clerkUserId: `clerk_public_${patch.patchId}`,
+            email: "public@example.com",
+            name: "Public Test"
+          });
+          const access = () => patches.guestGrant(uploader.company.id, patch.patchId, guest.id);
+          yield* patches.grantGuest(patch.patchId, guest.id, owner);
+          yield* Effect.flip(
+            sql.withTransaction(
+              Effect.gen(function* () {
+                yield* patches.setScope(patch.patchId, owner, "public");
+                return yield* Effect.fail("roll back scope" as const);
+              })
+            )
+          );
+          assert.strictEqual((yield* access())?.access, "active");
+          yield* patches.setScope(patch.patchId, owner, "public");
+          assert.strictEqual((yield* access())?.grant.endReason, "public");
+          yield* patches.setScope(patch.patchId, owner, "company");
+          assert.strictEqual((yield* access())?.access, "ended");
+          const fresh = yield* patches.grantGuest(patch.patchId, guest.id, owner);
+          assert.strictEqual((yield* access())?.grant.id, fresh.id);
+          yield* publish({ intent: "update", patchId: patch.patchId, scope: "public" });
+          assert.strictEqual((yield* access())?.grant.endReason, "public");
+          yield* publish({ intent: "update", patchId: patch.patchId, scope: "company" });
+          assert.strictEqual((yield* access())?.access, "ended");
+        })
+    );
+
+    it.effect("retains grants across temporary retirement but ends them on reclamation", () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const patch = yield* publish();
+        const guest = yield* Guests.create({
+          companyId: uploader.company.id,
+          clerkUserId: `clerk_reclaim_${patch.patchId}`,
+          email: "reclaim@example.com",
+          name: "Reclaim Test"
+        });
+        const access = () => patches.guestGrant(uploader.company.id, patch.patchId, guest.id);
+        yield* patches.grantGuest(patch.patchId, guest.id, owner);
+        yield* patches.retire(patch.patchId, owner);
+        assert.strictEqual((yield* access())?.access, "unavailable");
+        yield* patches.restore(patch.patchId, owner);
+        assert.strictEqual((yield* access())?.access, "active");
+        yield* patches.delete(patch.patchId, owner);
+        yield* TestClock.adjust(30 * 24 * 60 * 60 * 1000);
+        yield* patches.purgeDeleted(patch.patchId);
+        assert.strictEqual((yield* access())?.grant.endReason, "reclaimed");
+        assert.strictEqual((yield* access())?.access, "ended");
+        const replacement = yield* publish({
+          manifest: { ...Fixtures.manifest, name: `guest-${ordinal}` }
+        });
+        assert.notStrictEqual(replacement.patchId, patch.patchId);
+        assert.isNull(
+          yield* patches.guestGrant(uploader.company.id, replacement.patchId, guest.id)
+        );
+        assert.strictEqual(
+          (yield* Guests.findById(guest.id))?.clerkUserId,
+          `clerk_reclaim_${patch.patchId}`
+        );
+      })
+    );
+
+    it.effect("requires patch ownership and a live private current patch to grant", () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const patch = yield* publish();
+        const guest = yield* Guests.create({
+          companyId: uploader.company.id,
+          clerkUserId: `clerk_authority_${patch.patchId}`,
+          email: "authority@example.com",
+          name: "Authority Test"
+        });
+        assert.strictEqual(
+          (yield* patches
+            .grantGuest(patch.patchId, guest.id, { userId: reader.user.id, admin: false })
+            .pipe(Effect.flip))._tag,
+          "NotOwner"
+        );
+        yield* patches.setScope(patch.patchId, owner, "public");
+        assert.strictEqual(
+          (yield* patches.grantGuest(patch.patchId, guest.id, owner).pipe(Effect.flip))._tag,
+          "PatchUnavailable"
+        );
+        yield* patches.setScope(patch.patchId, owner, "company");
+        yield* patches.grantGuest(patch.patchId, guest.id, owner);
+        yield* patches.retire(patch.patchId, owner);
+        assert.strictEqual(
+          (yield* patches.grantGuest(patch.patchId, guest.id, owner).pipe(Effect.flip))._tag,
+          "WrongState"
+        );
+      })
+    );
+
+    it.effect("ends grants when a guest joins the sharing company as a member", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const patch = yield* publish();
+        const clerkUserId = `clerk_join_${patch.patchId}`;
+        const guest = yield* Guests.create({
+          companyId: uploader.company.id,
+          clerkUserId,
+          email: "join@example.com",
+          name: "Join Test"
+        });
+        yield* patches.grantGuest(patch.patchId, guest.id, owner);
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${`usr_join_${patch.patchId}`}, ${clerkUserId}, ${uploader.company.id},
+          'join@example.com', 'Join Test', 'member')`;
+        const result = yield* patches.guestGrant(uploader.company.id, patch.patchId, guest.id);
+        assert.strictEqual(result?.access, "ended");
+        assert.strictEqual(result?.grant.endReason, "guest_ended");
+        assert.instanceOf((yield* Guests.findById(guest.id))?.endedAt, Date);
+      })
+    );
+  }
+);

@@ -17,7 +17,7 @@ One individual's full membership in exactly one company, carrying the member or 
 _Avoid_: account (the Clerk identity may also have guest relationships), person (the human), builder (every active user is one)
 
 **Company guest**:
-A company-scoped relationship for an existing Clerk account, held in `company_guests` rather than `users`. The same account may be a member of A and a guest of B and C, with one guest identity per company. Deactivation is reversible; ending keeps the row and its identity for historical attribution. A member join in the same company ends its guest relationship. This storage alone confers no patch access; grants and admission are separate work.
+A company-scoped relationship for an existing Clerk account, held in `company_guests` rather than `users`. The same account may be a member of A and a guest of B and C, with one guest identity per company. Deactivation is reversible; ending keeps the row and its identity for historical attribution and ends its patch grants. A member join in the same company ends its guest relationship. This relationship alone confers no patch access; patch grants are in Patches, and guest admission is future work.
 _Avoid_: member, employee, user row
 
 **Member**:
