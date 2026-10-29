@@ -89,12 +89,6 @@ description request is sent. `look publish` likewise emits `invalid_look` locall
 before sending a look the instance would refuse. Repair the text using the reported constraint.
 An instance's HTTP 422 `invalid_description` is still `rejected` (exit 2).
 
-During the reader-first handler-audience rollout, explicit `audience` descriptors
-are refused by builds (`invalid_manifest`, local exit 1) and publication
-(`invalid_manifest`, rejected exit 2). The SDK still builds the historical
-`server/` and `agent/` formats; no command or flag changes. The release order and
-rollback boundary are in ADR-0011's handler audience compatibility section.
-
 The tier 2 contract's descriptor extraction refuses a non-handler export from a
 one-level server module with `invalid_manifest`, local exit 1. A handler must
 declare a query, mutation or action with valid argument and result descriptors.

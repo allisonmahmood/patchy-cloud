@@ -155,8 +155,7 @@ export interface HandlerDescriptor {
   readonly description?: string;
   readonly readOnly?: true;
   readonly agentTool?: true;
-  /** Read compatibility only; this release does not build audience declarations. */
-  readonly audience?: readonly ("browser" | "guest-browser" | "agent")[];
+  readonly guest?: true;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -349,6 +348,7 @@ export interface HandlerBuilder<K extends "query" | "mutation", C extends Config
     definition: HandlerDefinition<K, C, Context, A, R, E, D> & {
       /** Only actions may be read-only. */
       readonly readOnly?: never;
+      readonly guest?: K extends "query" ? true : never;
     }
   ): Handler<K, ArgsOf<A, C>, InferDescriptor<DescriptorOf<R>, C>, E[number]>;
 }
@@ -385,6 +385,7 @@ export interface ActionBuilder<
     > & {
       /** Holds the action to reads: no writes in its context, and Patchy refuses forced ones. */
       readonly readOnly?: ReadOnly;
+      readonly guest?: ReadOnly extends true ? true : never;
     }
   ): Handler<"action", ArgsOf<A, C>, InferDescriptor<DescriptorOf<R>, C>, E[number]>;
 }
@@ -404,15 +405,12 @@ const makeBuilder =
   (definition: {
     readonly description?: string;
     readonly readOnly?: true;
+    readonly guest?: true;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
     readonly handler: (context: never, args: never) => unknown;
   }) => {
-    if ("audience" in definition)
-      throw new InvalidManifestError(
-        "This release does not build handler audience declarations. Keep the existing server/ and agent/ declarations."
-      );
     if (typeof definition.handler !== "function")
       throw new InvalidManifestError("A handler needs a callback.");
     const args: Record<string, Descriptor> = {};
@@ -427,6 +425,7 @@ const makeBuilder =
       kind,
       ...(definition.description === undefined ? {} : { description: definition.description }),
       ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly }),
+      ...(definition.guest === undefined ? {} : { guest: definition.guest }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

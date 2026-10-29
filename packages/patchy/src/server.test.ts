@@ -362,25 +362,42 @@ it("distinguishes handler errors from platform errors and preserves JSON details
   assert.deepStrictEqual(error.details, { name: "Lead", candidates: ["one", "two"] });
 });
 
-it("keeps audience declarations out of this release's built descriptors", () => {
-  const list = server.query({ args: {}, result: t.boolean(), handler: () => true });
-  for (const audience of [["browser"], ["browser", "guest-browser"], ["agent"]] as const) {
-    // Extra properties can reach builders through JavaScript or a spread without a type error.
-    const definition = { args: {}, result: t.boolean(), handler: () => true, audience };
-    for (const build of [
-      () => server.query(definition),
-      () => server.mutation(definition),
-      () => server.action(definition)
-    ])
-      assert.throws(build, /This release does not build handler audience declarations/);
-    const future = { ...list, descriptor: { ...list.descriptor, audience } };
+it("extracts guest reads without widening agent tools or re-exports", () => {
+  const list = server.query({ guest: true, args: {}, result: t.boolean(), handler: () => true });
+  const peek = server.action({
+    guest: true,
+    readOnly: true,
+    args: {},
+    result: t.boolean(),
+    handler: () => true
+  });
+  const plain = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  const extracted = extractHandlerDescriptors({ leads: { list, peek, plain } }, { plain });
+  assert.strictEqual(extracted["leads.list"]!.guest, true);
+  assert.strictEqual(extracted["leads.peek"]!.guest, true);
+  assert.notProperty(extracted["leads.plain"]!, "guest");
+  assert.deepStrictEqual(extracted["agent.plain"], { ...plain.descriptor, agentTool: true });
+  assert.throws(
+    () => extractHandlerDescriptors({ leads: { list } }, { list }),
+    /Agent tools cannot allow guest entry/
+  );
+  for (const [build, extra] of [
+    [server.mutation, {}],
+    [server.action, {}],
+    [
+      server.action,
+      { readOnly: true, args: { file: t.nullable(t.array(t.object({ upload: t.upload() }))) } }
+    ]
+  ] as const)
     assert.throws(
-      () => extractHandlerDescriptors({ leads: { list: future } }),
-      /This release reads handler audiences but does not publish them yet/
+      () =>
+        (build as unknown as (definition: object) => unknown)({
+          guest: true,
+          args: {},
+          result: t.boolean(),
+          handler: () => true,
+          ...extra
+        }),
+      InvalidManifestError
     );
-    assert.throws(
-      () => extractHandlerDescriptors({}, { list: future }),
-      /This release reads handler audiences but does not publish them yet/
-    );
-  }
 });

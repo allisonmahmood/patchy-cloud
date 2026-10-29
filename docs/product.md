@@ -107,6 +107,13 @@ dev and tests use the supervised local executor. Both execute through Runtime's
 private capability gateway. `patchy dev` uses the same engine and gateway over
 PGlite and fixtures. See [Tier 2](#tier-2--hosted) for the execution contract.
 
+Tier 2 descriptors accept optional `guest: true` only on non-agent queries and
+explicitly read-only actions accepting no uploads. Omission gives no direct guest
+entry. Existing member and `agentTool` behavior is unchanged. This is declaration
+support only: tier 2 guest execution and sharing remain disabled until #1036 and
+#1037 are implemented together. Internal queries need not expose direct guest
+entry when called under a future admitted guest read’s bounded authority.
+
 ### Building a patch
 
 `patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1.
@@ -1629,8 +1636,6 @@ To give agents a handler the page already uses, re-export it: `export { listDeal
 **Reads and changes.** An agent tool is a **read** when it is a query or a **read-only action**, and a **change** otherwise. `action({ readOnly: true, description, args, result, handler })` declares a read-only action. The literal flag gives its handler a `ReadOnlyActionContext`: `viewer`, `log`, `agent`, declared member reads, table `get`, `getMany` and `list`, shared reads, file `list`, `stat` and `get`, connections, and `ctx.run` for queries only, so a write is a type error. Patchy enforces it too: the descriptor carries `readOnly: true` (its wire `kind` stays `action`), the host-issued invocation capability carries the flag, the callback gate refuses table inserts, updates and deletes and file puts and deletes, nested-call admission refuses mutations and actions, and Postgres runs inside `BEGIN READ ONLY`. A read therefore never runs a Patchy write, because Patchy enforces it rather than taking the builder's word; its Postgres reads keep the connection's own promise, constrained reads through the role the admin supplied. The flag means the same on page calls, and is refused on queries and mutations. Postgres, PostHog, Pidgeon and Attio reads count as reads only from a read-only action, which can't reply, send or triage.
 
 **Descriptions.** A tool's `description` is required. Any handler value takes `.describe(text)`. Every description is nonblank and at most 2,000 characters. Undescribed top-level arguments warn at publish; nested and result descriptions are optional. When a nullable wrapper and its value are both described, the outer description wins. Table columns take no `.describe()`: the types and the config check refuse it, and a row's schema carries its table's description instead.
-
-**Handler audience compatibility.** Readers understand one `audience` list: `browser` for member browsers, `guest-browser` as an addition for supported reads, or `agent` alone for agent tools. Guest-browser reads must be queries or read-only actions without uploads. Historical descriptors keep their meaning: `agentTool: true` is agent-only and an unmarked handler is member-browser-only. A descriptor cannot carry both fields. This reader-first release keeps builds and publications in the historical format and refuses explicit audience declarations. Tier 1 guest sharing stays as built; tier 2 guest execution and sharing remain disabled. A later writer release may use the new format only after compatible readers are deployed and become the oldest safe rollback target; see [ADR-0011](adr/ADR-0011-one-package-one-release.md#handler-audience-compatibility).
 
 **Schemas for clients.** One shared mapping turns handler descriptors into JSON Schema 2020-12, used by the door, `patchy dev agent` and the publish size check alike. Objects are closed and optional fields aren't required; nullable is `anyOf` the value or `null`; integers carry 32-bit bounds; timestamps are strings in `date-time` format; `t.json()` is any value; enums are string enums. `t.row(table)` is the full stored row (`id`, `createdAt`, `updatedAt` and the columns), all required with optional columns nullable, closed and described "A row of <table>: <table description>" unless the value has its own description, which wins as an outer one does; a row naming an unknown table is refused. Agent tools may not use `t.upload()` or `t.fileHandle()` anywhere in their arguments or result. In `open_patch` each tool is `{ name, kind, description, args, returns, refusals? }`, where `kind` is `read` or `change` and `refusals` lists the tool's declared error codes.
 

@@ -15,9 +15,7 @@ import {
   descriptionRefusal,
   handlerArgsSchema,
   handlerValueSchema,
-  HandlerSchema,
-  handlerAudience,
-  handlerAudiencePublishProblem
+  HandlerSchema
 } from "./index.js";
 import { canonicalArgs } from "./canonicalArgs.js";
 
@@ -162,72 +160,33 @@ describe("handler descriptors", () => {
       expect(decodeHandlers({ [name]: { ...query, agentTool: true } })._tag).toBe("Failure");
   });
 
-  it("reads both audience formats without rewriting old published descriptors", () => {
-    const handlers = {
-      "old.page": query,
-      "agent.legacyPage": query,
-      "agent.oldTool": { ...query, agentTool: true as const },
-      "new.page": { ...query, audience: ["browser"] as const },
-      "new.guestRead": { ...query, audience: ["browser", "guest-browser"] as const },
-      "agent.newTool": { ...query, audience: ["agent"] as const }
-    };
-    const decoded = decodeManifest({ ...manifest, handlers });
-    expect(encodeManifest(decoded)).toEqual({ ...manifest, handlers });
-    expect(
-      Object.fromEntries(
-        Object.entries(decoded.handlers!).map(([name, value]) => [name, handlerAudience(value)])
-      )
-    ).toEqual({
-      "old.page": ["browser"],
-      "agent.legacyPage": ["browser"],
-      "agent.oldTool": ["agent"],
-      "new.page": ["browser"],
-      "new.guestRead": ["browser", "guest-browser"],
-      "agent.newTool": ["agent"]
-    });
-    expect(
-      handlerAudiencePublishProblem({ "agent.old": handlers["agent.oldTool"] })
-    ).toBeUndefined();
-    expect(handlerAudiencePublishProblem(handlers)).toContain("new.page declares an audience");
-  });
-
-  it("refuses ambiguous audiences, guest writes and nested uploads", () => {
-    for (const audience of [
-      [],
-      ["unknown"],
-      ["browser", "browser"],
-      ["guest-browser"],
-      ["agent", "browser"],
-      ["agent", "guest-browser"]
-    ])
-      expect(decodeDescriptor({ ...query, audience })._tag).toBe("Failure");
-    expect(decodeDescriptor({ ...query, audience: ["agent"], agentTool: true })._tag).toBe(
-      "Failure"
-    );
-    for (const kind of ["mutation", "action"])
-      expect(
-        decodeDescriptor({ ...query, kind, audience: ["browser", "guest-browser"] })._tag
-      ).toBe("Failure");
-    const guestRead = {
-      ...query,
-      kind: "action",
-      readOnly: true,
-      audience: ["browser", "guest-browser"]
-    };
-    expect(decodeDescriptor(guestRead)._tag).toBe("Success");
-    expect(
-      decodeDescriptor({
-        ...guestRead,
-        args: {
-          files: { kind: "array", element: { kind: "nullable", value: { kind: "upload" } } }
+  it("preserves explicit guest reads and rejects invalid combinations", () => {
+    for (const handler of [
+      { ...query, guest: true },
+      { ...query, kind: "action", readOnly: true, guest: true }
+    ]) {
+      const wire = { ...manifest, handlers: { "leads.read": handler } };
+      expect(encodeManifest(decodeManifest(wire))).toEqual(wire);
+    }
+    const upload = {
+      kind: "nullable",
+      value: {
+        kind: "array",
+        element: {
+          kind: "object",
+          fields: { file: { kind: "upload" } }
         }
-      })._tag
-    ).toBe("Failure");
-    expect(
-      Schema.decodeUnknownExit(HandlerDescriptors)({
-        "page.hidden": { ...query, audience: ["agent"] }
-      })._tag
-    ).toBe("Failure");
+      }
+    };
+    for (const invalid of [
+      { guest: false },
+      { guest: null },
+      { guest: true, kind: "mutation" },
+      { guest: true, kind: "action" },
+      { guest: true, agentTool: true },
+      { guest: true, kind: "action", readOnly: true, args: { nested: upload } }
+    ])
+      expect(decodeDescriptor({ ...query, ...invalid })._tag).toBe("Failure");
   });
 
   it("finds a blank or over-long description anywhere, and says where and how to fix it", () => {

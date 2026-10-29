@@ -458,3 +458,32 @@ query({
     throw new Error("compile-only");
   }
 });
+
+// Guest permission changes entry metadata, never existing member context/client types.
+export const guestQuery = query({
+  guest: true,
+  args: {},
+  result: t.text(),
+  handler: (ctx) => ctx.viewer.user.id
+});
+export const guestAction = action({
+  guest: true,
+  readOnly: true,
+  args: {},
+  result: t.text(),
+  handler: (ctx) => ctx.viewer.user.id
+});
+mutation({
+  // @ts-expect-error guest entry cannot allow mutations
+  guest: true,
+  args: {},
+  result: t.boolean(),
+  handler: () => true
+});
+action({
+  // @ts-expect-error guest entry requires an explicitly read-only action
+  guest: true,
+  args: {},
+  result: t.boolean(),
+  handler: () => true
+});

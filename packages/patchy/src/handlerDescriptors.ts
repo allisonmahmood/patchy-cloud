@@ -2,7 +2,6 @@ import {
   HandlerDescriptor,
   HandlerModuleName,
   HandlerName,
-  handlerAudiencePublishProblem,
   serverAgentModuleFix
 } from "@patchy/api/handlers";
 import * as Schema from "effect/Schema";
@@ -97,14 +96,12 @@ export function extractHandlerDescriptors(
             : `Server export "${module}.${name}" is not a query, mutation or action.`
         );
       const descriptor = decodeHandlerDescriptor(handler.descriptor);
-      const audienceProblem = handlerAudiencePublishProblem({ [`${module}.${name}`]: descriptor });
-      if (audienceProblem !== undefined) throw new InvalidManifestError(audienceProblem);
       if (handler.kind !== descriptor.kind)
         throw new InvalidManifestError(
           `Server export "${module}.${name}" does not match its descriptor kind.`
         );
       descriptors[`${module}.${name}`] = agentTool
-        ? { ...descriptor, agentTool: true }
+        ? decodeHandlerDescriptor({ ...descriptor, agentTool: true })
         : descriptor;
     }
   };

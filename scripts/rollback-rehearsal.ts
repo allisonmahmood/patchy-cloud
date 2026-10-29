@@ -37,7 +37,8 @@
  * them, an agent tool. Every later step must serve it, refuse the write and
  * refuse the page's call to the agent tool. Before HEAD's CLI writes them, the
  * patch isn't published, so a release that can't read the fields is never
- * asked to.
+ * asked to. When the SDK writes guest permissions, the published patch also has a guest-marked
+ * query: members keep reading it across rollback and a guest principal is refused.
  *
  * Once HEAD's door changes patches, step 2 also turns agent access on as the
  * publisher and logs a note through the agent area's `addNote` under a change
@@ -655,6 +656,7 @@ interface AgentArea {
   readonly address: string;
   /** Whether HEAD's build marked the agent tool, which it does once it builds `agent/`. */
   readonly agentTool: boolean;
+  readonly guestRead: boolean;
 }
 
 /** The read-only action that forces a write, and the agent tool, as the patch's handlers. */
@@ -677,6 +679,24 @@ process.stdout.write(String(built.descriptor.readOnly === true));`;
   return answer.trim() === "true";
 };
 
+/** Detect the additive guest permission without requiring it from historical SDKs. */
+const writesGuest = async (dir: string) => {
+  const sdk = pathToFileURL(path.join(dir, "node_modules", "patchy", "dist", "server.js")).href;
+  const answer = await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import { query, t } from ${JSON.stringify(sdk)};
+process.stdout.write(String(query({ guest: true, args: {}, result: t.boolean(), handler: () => true }).descriptor.guest === true));
+`
+    ],
+    { cwd: dir }
+  );
+  return answer.trim() === "true";
+};
+
 /**
  * HEAD's CLI starts a tier 2 repo beside its own install and adds a described read-only action
  * that forces a write past its types, and a described agent tool in `agent/`, then publishes it.
@@ -684,6 +704,7 @@ process.stdout.write(String(built.descriptor.readOnly === true));`;
  */
 const publishAgentArea = async (dir: string, env: NodeJS.ProcessEnv): Promise<AgentArea> => {
   const repo = path.join(dir, "agent-area");
+  const guestRead = await writesGuest(dir);
   // Init installs the release into the new repo.
   await run(
     path.join(dir, "node_modules", ".bin", "patchy"),
@@ -700,7 +721,8 @@ const publishAgentArea = async (dir: string, env: NodeJS.ProcessEnv): Promise<Ag
   );
   await writeFile(
     path.join(repo, "server", "rehearsal.ts"),
-    `import { action, t } from "../patchy/_generated/server.js";
+    `import { action, query, t } from "../patchy/_generated/server.js";
+${guestRead ? "export const guestRead = query({ guest: true, args: {}, result: t.boolean(), handler: () => true });" : ""}
 
 /** Its context has no writes; this one is forced past the types, so Patchy must refuse it. */
 export const forcedWrite = action({
@@ -755,6 +777,7 @@ export const addNote = mutation({
     patchId: published.patchId,
     versionId: published.versionId,
     address: published.address,
+    guestRead,
     agentTool: published.handlers.some((handler) => handler.name === AGENT_TOOL)
   };
 };
@@ -771,18 +794,18 @@ const exerciseAgentArea = async (
   userId: string
 ) => {
   const principal = { userId };
-  const call = async (handler: string) => {
+  const call = async (handler: string, caller: object = principal) => {
     const response = await context.request.post(`${apiUrl}/api/runtime/call`, {
       headers: {
         origin: apiUrl,
         "x-patchy-wire": String(WIRE_VERSION),
-        "x-patchy-principal": JSON.stringify(principal)
+        "x-patchy-principal": JSON.stringify(caller)
       },
       data: {
         patchId: agentArea.patchId,
         versionId: agentArea.versionId,
         wire: WIRE_VERSION,
-        principal,
+        principal: caller,
         op: "server.call",
         args: { handler, args: {} }
       }
@@ -797,6 +820,21 @@ const exerciseAgentArea = async (
   };
   await expectRefused(FORCED_WRITE, "the read-only action's forced write");
   if (agentArea.agentTool) await expectRefused(AGENT_TOOL, "the page's call to the agent tool");
+  if (agentArea.guestRead) {
+    const memberRead = await call("rehearsal.guestRead");
+    if (!memberRead.ok || memberRead.value !== true)
+      problems.push("the published guest-marked read stopped working for its member");
+    // Even when an old reader drops `guest`, its runtime door must refuse guest tier 2 entry.
+    const guestRead = await call("rehearsal.guestRead", {
+      kind: "guest",
+      guestId: "gst_rollback",
+      companyId: "cmp_rollback",
+      patchId: agentArea.patchId,
+      versionId: agentArea.versionId,
+      grantId: "grt_rollback"
+    });
+    if (guestRead.ok) problems.push("a guest principal reached the tier 2 handler");
+  }
   const notes = await call("notes.list");
   if (!notes.ok) problems.push(`the patch's own query answered ${notes.code}`);
   else if (

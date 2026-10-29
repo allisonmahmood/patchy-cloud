@@ -400,7 +400,8 @@ test("tier 1 guests follow published and rolled-back contracts; off, historical,
     // Unsupported tier 2 suspends the existing grant rather than ending or admitting it.
     const server = await build({
       stdin: {
-        contents: 'import { createGuest } from "patchy/server"; export default createGuest({});',
+        contents:
+          'import { createGuest, query, t } from "patchy/server"; const read = query({ guest: true, args: {}, result: t.text(), handler: () => "must not reach guest" }); export default createGuest({ hidden: { read } });',
         resolveDir: fileURLToPath(new URL("../../packages/patchy", import.meta.url))
       },
       bundle: true,
@@ -412,7 +413,12 @@ test("tier 1 guests follow published and rolled-back contracts; off, historical,
       "company",
       undefined,
       patch.patchId,
-      { tier: 2, handlers: {} },
+      {
+        tier: 2,
+        handlers: {
+          "hidden.read": { kind: "query", guest: true, args: {}, result: { kind: "text" } }
+        }
+      },
       { server: server.outputFiles[0]!.text }
     );
     expect((await context.request.get(patch.address)).status()).toBe(404);

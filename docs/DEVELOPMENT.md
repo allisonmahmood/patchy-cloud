@@ -48,7 +48,11 @@ deploys the PR onto data the live release seeded, rolls back to the live
 release and forward again, and fails naming the step that broke; otherwise it
 passes at once.
 Once the PR's CLI writes read-only actions, the PR publishes a tier 2 patch with
-one and an agent tool, and the live release must serve it and enforce both. The
+one and an agent tool, and the live release must serve it and enforce both.
+When the SDK writes `guest: true`, it also publishes a guest-marked query; the
+old and new servers must keep member reads working and refuse a guest principal
+at the tier 2 call boundary. The browser guest suite separately checks a real
+active grant cannot open or call a published tier 2 guest-marked read. The
 live release also ends credentials, by deactivation and Disconnect everything,
 and back at the PR the agent connections it ended must stay ended.
 [Rolling back](OPERATIONS.md#rolling-back) says what it covers. `pnpm verify`

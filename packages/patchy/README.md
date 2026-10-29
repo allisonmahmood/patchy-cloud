@@ -195,13 +195,6 @@ handles and action-argument uploads. Optional argument keys may be absent;
 optional columns remain nullable. Defaults and refs are table-only. Queries
 cannot write, mutations cannot reach shared data, connections, file bytes or
 `ctx.run`, and actions can call only sibling queries and mutations.
-The instance can read the upcoming single handler `audience` field, but this
-release still builds and publishes the existing format. Keep page handlers in
-`server/` and agent tools in `agent/`; do not add audience declarations yet.
-Builds and publication refuse them with `invalid_manifest`. This prepares safe
-rollback for a later format switch; it does not enable tier 2 guest calls or
-sharing.
-
 `action({ readOnly: true, … })` declares a read-only action: its context keeps
 an action's reads and runs only queries, and Patchy refuses a write forced past
 the types. Only actions take the flag. Every handler takes an optional
@@ -1658,3 +1651,15 @@ Report vulnerabilities privately by following the [security policy](https://gith
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
+
+Optional `guest: true` declares direct guest entry on a query or an explicitly
+`readOnly: true` action. It is refused on mutations, ordinary actions, agent
+exports (including a guest-marked server handler re-exported from `agent/`) and
+handlers accepting uploads, including nested uploads. Omission grants no direct
+guest entry. Existing `agentTool`, member calls and ordinary server/agent
+re-exports keep their meanings. The permission is preserved in built and
+published descriptors; tier 2 guest execution and sharing remain disabled.
+The follow-up implementation of #1036 and #1037 will enable them together.
+An admitted guest read will be able to call internal queries without marking
+those queries for direct guest entry, under the same guest, grant, patch,
+read-only and source limits.

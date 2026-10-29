@@ -50,12 +50,6 @@ message is the clue. Pages hold up to 25 entries; continue with
 Reproduce the failure in `patchy dev` with fixtures, fix it, publish, and check
 the log for new entries.
 
-Keep the existing `server/` and `agent/` declarations. Reader support for a future
-single handler audience is installed before its writer: this release does not
-accept `audience` in builds or publications. Do not hand-write it into a manifest
-or descriptor. Tier 2 guest execution and sharing remain disabled; current guest
-sharing is tier 0/1 only.
-
 Publish builds HTML and a closed server module, records handler descriptors
 and SDK imports, and sends both artifacts. The instance re-derives descriptors
 from the stored bytes in a throwaway process. Mismatch, top-level throw,
@@ -575,3 +569,15 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |
 
 <!-- generated-limits:end -->
+
+Optional `guest: true` declares direct guest entry on a query or an explicitly
+`readOnly: true` action. It is refused on mutations, ordinary actions, agent
+exports (including a guest-marked server handler re-exported from `agent/`) and
+handlers accepting uploads, including nested uploads. Omission grants no direct
+guest entry. Existing `agentTool`, member calls and ordinary server/agent
+re-exports keep their meanings. The permission is preserved in built and
+published descriptors; tier 2 guest execution and sharing remain disabled.
+The follow-up implementation of #1036 and #1037 will enable them together.
+An admitted guest read will be able to call internal queries without marking
+those queries for direct guest entry, under the same guest, grant, patch,
+read-only and source limits.

@@ -70,33 +70,6 @@ it.layer(harness)("the catalogue", (it) => {
   };
   const names = (answer: Found) => answer.patches.map((entry) => entry.name);
 
-  it.effect("discovers stored audience-only tools alongside legacy tools", () =>
-    Effect.gen(function* () {
-      const acme = yield* company("audiences", [["Priya Shah", "admin"]]);
-      const priya = acme.people[0]!;
-      const read = {
-        kind: "query" as const,
-        description: "Read a deal.",
-        args: {},
-        result: { kind: "json" as const }
-      };
-      const handlers: HandlerDescriptors = {
-        "agent.old": tool("query", "Old tool."),
-        "agent.new": { ...read, audience: ["agent"] },
-        "agent.legacyPage": { kind: "query", args: {}, result: { kind: "json" } },
-        "page.read": { ...read, audience: ["browser", "guest-browser"] }
-      };
-      // Seed stored data as a later writer would; the current publish door refuses this format.
-      yield* publish(acme.id, priya, "audiences", { handlers });
-      const send = yield* door("https://cloud.example", "203.0.113.33");
-      const answer = found(yield* send(call(priya.token, "find_patches", { detail: "tools" })));
-      assert.deepStrictEqual(answer.patches[0]!.tools, [
-        { name: "new", kind: "read", description: "Read a deal." },
-        { name: "old", kind: "read", description: "Old tool." }
-      ]);
-    })
-  );
-
   it.effect(
     "lists the live patches the person can open, those with tools first, then by name",
     () =>

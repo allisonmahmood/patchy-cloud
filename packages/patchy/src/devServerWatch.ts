@@ -1,9 +1,4 @@
-import {
-  handlerAudiencePublishProblem,
-  type HandlerDescriptors,
-  type Manifest,
-  type ReleaseToolchain
-} from "@patchy/api";
+import type { HandlerDescriptors, Manifest, ReleaseToolchain } from "@patchy/api";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -225,7 +220,6 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
           ),
           Effect.flatMap((handlers) => {
             const problem =
-              handlerAudiencePublishProblem(handlers) ??
               descriptionFailure(handlers, built.agentTools) ??
               agentAreaFailure({ tables, handlers }, built.agentTools);
             return problem === undefined

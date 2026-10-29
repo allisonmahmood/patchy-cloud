@@ -36,14 +36,6 @@ _Avoid_: callback authorisation, presence lease
 The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
 _Avoid_: invocation admission, guest permission
 
-**Handler audience**:
-The callers a handler allows. Readers accept a single `audience` list: `browser`,
-`browser` with `guest-browser` for a query or read-only action without uploads,
-or `agent` alone. Historical `agentTool: true` means agent-only; no mark means
-member-browser-only. The two fields cannot coexist on one descriptor. Guest
-execution remains disabled and this reader-first release still publishes only
-the historical format.
-
 **Query**:
 A read-only handler whose result can be subscribed to as its viewer.
 _Avoid_: SQL query, polling function
@@ -255,3 +247,9 @@ _Avoid_: stream generation (connection identity), publish version
 **Resync**:
 Replacement of a document's desired subscriptions, with its latest vectors, after reconnect, an unrecoverable sequence gap or stalled reconciliation. It fences prior work: a read it overlaps answers it only if the revisions that read saw still match a fence taken after the replace; otherwise the subscription runs again. Equal vectors answer up-to-date without rerunning the read.
 _Avoid_: reload, mutation retry
+
+**Guest-read permission**:
+Optional `guest: true` on a non-agent query or explicitly read-only action that
+accepts no uploads. Allows direct guest entry once tier 2 guest execution is
+implemented; omission grants none. It does not change `agentTool` or member
+permissions. Tier 2 guest execution and sharing remain disabled.

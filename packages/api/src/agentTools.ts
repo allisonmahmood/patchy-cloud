@@ -9,7 +9,6 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import {
   agentToolName,
-  isAgentHandler,
   handlerValues,
   serverAgentModuleFix,
   unknownRowRefusal,
@@ -179,21 +178,21 @@ export const agentToolKind = (
 
 /**
  * A manifest's agent tools by tool name, in the order every surface shows them: by name, by
- * code unit, so it holds however the manifest's keys were stored. It reads only the audience or
- * legacy mark, so a catalogue can pass descriptors without their schemas.
+ * code unit, so it holds however the manifest's keys were stored. It reads only the mark, so a
+ * catalogue can pass descriptors without their schemas.
  */
-export const agentToolEntries = <D extends Pick<HandlerDescriptor, "agentTool" | "audience">>(
+export const agentToolEntries = <D extends Pick<HandlerDescriptor, "agentTool">>(
   handlers: Readonly<Record<string, D>> | undefined
 ): ReadonlyArray<readonly [tool: string, descriptor: D]> =>
   Object.entries(handlers ?? {})
-    .filter(([, descriptor]) => isAgentHandler(descriptor))
+    .filter(([, descriptor]) => descriptor.agentTool === true)
     .map(([handler, descriptor]) => [agentToolName(handler), descriptor] as const)
     .sort(([left], [right]) => byCodeUnit(left, right));
 
 /** What a descriptor says of a tool without its schemas: its mark, kind and words. */
 export type AgentToolMarks = Pick<
   HandlerDescriptor,
-  "agentTool" | "audience" | "kind" | "readOnly" | "description"
+  "agentTool" | "kind" | "readOnly" | "description"
 >;
 
 /** A tool as `find_patches` lists it with `detail: "tools"`: `open_patch`'s, without schemas. */
@@ -372,7 +371,7 @@ export const checkAgentArea = (manifest: {
   // Only server/agent.ts builds an agent.* handler without the mark. Read from an older version
   // it stays a page handler; a new version is refused.
   const [unmarked] = Object.entries(manifest.handlers ?? {})
-    .filter(([name, descriptor]) => name.startsWith("agent.") && !isAgentHandler(descriptor))
+    .filter(([name, descriptor]) => name.startsWith("agent.") && descriptor.agentTool !== true)
     .map(([name]) => name)
     .sort(byCodeUnit);
   if (unmarked !== undefined)

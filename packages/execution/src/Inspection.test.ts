@@ -9,7 +9,9 @@ import * as Inspection from "./inspection.js";
 import { startWorkerd } from "./process.js";
 import { networkListener, networkProbeBundle } from "./test/network.js";
 
-const descriptors = { "demo.read": { kind: "query", args: {}, result: { kind: "text" } } };
+const descriptors = {
+  "demo.read": { kind: "query", guest: true, args: {}, result: { kind: "text" } }
+};
 const source = `export default { fetch(request, env, ctx) {
   if (Object.keys(env).length !== 0 || Object.keys(ctx.props).length !== 0) throw new Error("Inspection received authority.");
   return Response.json({ok: true, handlers: ${JSON.stringify(descriptors)}});
@@ -74,12 +76,6 @@ it.live(
         `export default { fetch() { return Response.json({ ok: true, handlers: ${JSON.stringify(handlers)} }); } };`;
       const inspection = yield* Inspection.make();
       expect(yield* inspection.inspect(answering(described))).toEqual(described);
-      const { kind, description, args, result } = described["agent.lookup"];
-      const future = {
-        "agent.lookup": { kind, description, args, result, audience: ["agent"] },
-        "demo.peek": { ...described["demo.peek"], audience: ["browser", "guest-browser"] }
-      };
-      expect(yield* inspection.inspect(answering(future))).toEqual(future);
       expect(
         yield* inspection
           .inspect(answering({ "demo.read": { ...descriptors["demo.read"], readOnly: true } }))

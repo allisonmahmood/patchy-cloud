@@ -28,7 +28,6 @@ import {
   DescriptionText,
   FileStoreDefinition,
   HandlerKind,
-  HandlerAudience,
   Manifest,
   PatchInventory,
   PatchName,
@@ -730,8 +729,7 @@ class AgentToolMarksRow extends Schema.Class<AgentToolMarksRow>("AgentToolMarksR
     Schema.String,
     Schema.Struct({
       kind: HandlerKind,
-      agentTool: Schema.optionalKey(Schema.Literal(true)),
-      audience: Schema.optionalKey(HandlerAudience),
+      agentTool: Schema.Literal(true),
       readOnly: Schema.optionalKey(Schema.Literal(true)),
       description: Schema.optionalKey(Schema.String)
     })
@@ -1324,14 +1322,12 @@ export const make = Effect.gen(function* () {
       SELECT patch_versions.id AS "versionId",
         jsonb_object_agg(handler.key, jsonb_strip_nulls(jsonb_build_object(
           'kind', handler.value->'kind', 'agentTool', handler.value->'agentTool',
-          'audience', handler.value->'audience',
           'readOnly', handler.value->'readOnly', 'description', handler.value->'description'
         ))) AS handlers
       FROM patch_versions
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'handlers') AS handler
       WHERE patch_versions.id IN ${sql.in(versionIds)}
-        AND ((handler.value->'agentTool' = 'true'::jsonb AND NOT handler.value ? 'audience')
-          OR (handler.value->'audience' = '["agent"]'::jsonb AND NOT handler.value ? 'agentTool'))
+        AND handler.value->'agentTool' = 'true'::jsonb
       GROUP BY patch_versions.id`
   });
 

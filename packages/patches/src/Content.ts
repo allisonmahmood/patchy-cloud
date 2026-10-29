@@ -29,7 +29,6 @@ import {
   agentAreaRefusal,
   checkAgentArea,
   descriptionProblem,
-  handlerAudiencePublishProblem,
   descriptionRefusal
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
@@ -46,15 +45,12 @@ export class InvalidManifest extends Schema.TaggedError<InvalidManifest>()("Inva
     "server_unexpected",
     "descriptors",
     "inspection",
-    "wire",
-    "audience"
+    "wire"
   ]),
   cause: Schema.optionalKey(Schema.Defect())
 }) {
   override get message() {
-    return this.reason === "audience"
-      ? "This release does not publish handler audiences. Keep the existing server/ and agent/ declarations."
-      : `Invalid server manifest: ${this.reason}.`;
+    return `Invalid server manifest: ${this.reason}.`;
   }
 }
 
@@ -143,8 +139,6 @@ export const make = Effect.gen(function* () {
   const store = yield* ContentStore.ContentStore;
 
   const publish = Effect.fn("Content.publish")(function* (input: PublishInput) {
-    if (handlerAudiencePublishProblem(input.manifest.handlers) !== undefined)
-      return yield* new InvalidManifest({ reason: "audience" });
     if (input.manifest.tier === 2) {
       if (input.server === undefined)
         return yield* new InvalidManifest({ reason: "server_missing" });
