@@ -14,6 +14,7 @@ export {
   ago,
   dateLabel,
   daysLeft,
+  isPage,
   isWelcomePage,
   patchTitle,
   renderOffPatch
@@ -28,6 +29,7 @@ export {
   menuCopy,
   menuLink,
   menuPost,
+  monogram,
   patchMark,
   rowMenu,
   searchField,

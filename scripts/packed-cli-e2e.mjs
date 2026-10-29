@@ -421,7 +421,10 @@ try {
   ];
   console.log("[packed-cli-e2e] validating the public current version at both URL shapes");
   for (const version of publicVersions) {
-    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
+    await assertPublicViewer(await fetchViewer(version.url), {
+      ...version,
+      patchId: first.patchId
+    });
   }
   assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
@@ -443,7 +446,7 @@ try {
   assert.equal(foreignFailure.ok, false);
   assert.equal(foreignFailure.kind, "rejected");
   assert.equal(foreignFailure.code, "not_owner");
-  assertPublicViewer(await fetchViewer(first.address), {
+  await assertPublicViewer(await fetchViewer(first.address), {
     ...publicVersions[0],
     patchId: first.patchId
   });
@@ -473,7 +476,10 @@ try {
     publicUrl: first.address
   });
   for (const version of publicVersions) {
-    assertPublicViewer(await fetchViewer(version.url), { ...version, patchId: first.patchId });
+    await assertPublicViewer(await fetchViewer(version.url), {
+      ...version,
+      patchId: first.patchId
+    });
   }
   assertViewerDoor(await fetchViewer(`${first.address}/~v/1`));
 
@@ -1924,21 +1930,24 @@ async function fetchViewer(url) {
 
 // Exact headers and CSPs are pinned by packages/serving's Pages tests; these prove
 // the real server serves the right version, sandboxed, and keeps doors shut.
-function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
+async function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
   assert.equal(viewer.response.status, 200);
-  assert.ok(viewer.body.includes('sandbox=""'), "the patch must remain sandboxed");
-  const escapedHtml = html
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
   assert.ok(
-    viewer.body.includes(`srcdoc="&lt;base href=&quot;about:srcdoc&quot;&gt;${escapedHtml}"`),
-    "the frame must contain the complete uploaded version, attribute-escaped"
+    viewer.body.includes('sandbox="allow-scripts allow-modals"'),
+    "the patch must remain sandboxed"
   );
   assert.ok(!viewer.body.includes(html), "uploaded HTML must never enter the outer shell");
-  assert.doesNotMatch(viewer.body, /<(?:script|footer|a|form)\b/i);
   assert.ok(viewer.body.includes(`<!-- patch:${patchId} version:${versionNumber} -->`));
+  // A single file is a tier 1 page: the shell frames its version's content URL.
+  const src = viewer.body.match(/data-content-src="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+  assert.ok(src, "the shell must name the frame's content URL");
+  const content = await fetchViewer(new URL(src, viewer.response.url));
+  assert.equal(content.response.status, 200);
+  assert.equal(content.body, html, "the frame must load the complete uploaded version");
+  assert.match(
+    content.response.headers.get("content-security-policy") ?? "",
+    /^sandbox allow-scripts allow-modals;/
+  );
 }
 
 function assertViewerDoor(viewer) {
@@ -2087,7 +2096,7 @@ async function assertStoredDraft(
     const version = versions[index];
     assert.equal(version.versionNumber, index + 1);
     assert.equal(version.createdByMachineTokenId, machineTokenId);
-    assert.equal(version.tier, 0);
+    assert.equal(version.tier, 1);
     assert.equal(version.release, cliPackage.version);
     assert.equal(version.wireVersion, 1);
     assert.equal(

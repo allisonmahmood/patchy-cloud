@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes static HTML files and tier 0, 1 and 2 repos. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes single HTML files as tier 1 pages, and tier 0, 1 and 2 repos. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -1079,7 +1079,7 @@ patchy setup --json
 
 ### `patchy validate <file>`
 
-Validate an HTML file locally without publishing. Exits non-zero if validation fails; prints warnings otherwise.
+Check an HTML file locally as publish would, without publishing: it must carry every resource it uses and fit the 10 MiB tier 1 cap. Inline script and style and `data:` URLs pass; a `<script src>`, `<link>`, or image, font, CSS `url()` or `@import` from an address is refused, each named. A page over the cap is `too_large`, with a largest-contributor report. Exits non-zero on a refusal; prints warnings otherwise.
 
 ```sh
 patchy validate ./plan.html
@@ -1087,7 +1087,7 @@ patchy validate ./plan.html
 
 ### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--api-url <url>]`
 
-First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then validate the file, and publish it with a tier 0 manifest and empty `tables`, `files` and `uses`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
+First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then check the file as `validate` does, and publish it with a tier 1 manifest, empty `tables`, `files` and `uses`, and no `sdkImports`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
 Without a file, run from the patch repo root. The config supplies its name and
 tier; `patchy.json` supplies its instance, description and optional patch id.
@@ -1121,7 +1121,7 @@ is `too_large`, with a largest-contributor report. Tier 0's policy also bounds t
 parser's work: nesting past 510 elements, more than 256 attributes on an element and
 heavy repair of misnested markup are refused with a message naming the bound. `server/`, `agent/` or a `uses` declaration below tier 2 remains
 `tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
-back to a static file.
+back to a single file.
 
 Tier 2 bundles `server/` into one closed module with no dynamic imports.
 The server graph allows `patchy/server`, `patchy/csv`, generated server
@@ -1335,7 +1335,7 @@ no look is the starting state. Any member's agent reads and previews the look;
 only admins publish or restore it. These commands run anywhere with the saved
 login and accept `--json`.
 
-`patchy look --json` is how an agent settles a static page's style. With a
+`patchy look --json` is how an agent settles a single-file page's style. With a
 company look, `current.files` holds it and `patchyLook` is null. With none,
 `current` is null and `patchyLook` holds the Patchy look's `look.css` and
 `LOOK.md`, the release's own and without a logo, which stands in. `admins`,
@@ -1638,7 +1638,7 @@ A token saved for one instance is never sent to another, and a patch ID cached f
 ## Agent skill
 
 The package bundles the global skill at `skills/patchy/SKILL.md`: what Patchy is,
-sign-in, safe static-file publishing and the `patchy init` door for building a
+sign-in, single-file publishing and the `patchy init` door for building a
 tool. Inside a patch repo, its project skills govern. The instance generates
 those from `packages/sdk`: core loop/tables/files skills at init, Preact guidance
 on tiers 1 and 2, server guidance on tier 2, and Postgres, PostHog, shared-table,

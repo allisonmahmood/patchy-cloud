@@ -915,23 +915,33 @@ it.layer(layer)("portal pages on a socket", (it) => {
       Effect.gen(function* () {
         const workspace = yield* company();
         const patches = yield* Patches.Patches;
-        const theirs = yield* publishSource(workspace.admin, "busy-tool");
+        const theirs = yield* publishTier2(workspace.admin, "busy-tool");
         for (let visit = 0; visit < 5; visit++) yield* patches.recordVisit(theirs.patchId);
-        const mine = yield* publishSource(workspace.owner, "quiet-tool");
-        const page = yield* publish(workspace.owner, "grows-up");
+        const mine = yield* publishTier2(workspace.owner, "quiet-tool");
+        // A page is tier 1, and a tier 0 one is a page until it becomes tier 1.
+        const page = yield* publish(workspace.owner, "grows-up", {
+          manifest: { ...manifest, name: "grows-up", tier: 1 }
+        });
+        yield* TestClock.adjust(60_000);
+        const legacy = yield* publish(workspace.owner, "static-notes");
         const before = yield* (yield* request("/", workspace.owner)).text;
         assert.deepStrictEqual(shelf(before, "home-tool"), [mine.name, theirs.name]);
-        assert.deepStrictEqual(shelf(before, "home-page"), [page.name]);
-        // A republish at tier 1 makes the page a tool.
+        assert.deepStrictEqual(shelf(before, "home-page"), [legacy.name, page.name]);
+        // A republish at tier 2 makes the page a tool.
         yield* publish(workspace.owner, page.name, {
           intent: "update",
           patchId: page.patchId,
           filename: null,
-          manifest: { ...manifest, name: page.name, tier: 1 }
+          manifest: { ...manifest, name: page.name, tier: 2, handlers: {} },
+          server: {
+            objectKey: `patches/${page.patchId}/grows-up.server.js`,
+            sha256: sha256(""),
+            bytes: 0
+          }
         });
         const after = yield* (yield* request("/", workspace.owner)).text;
         assert.deepStrictEqual(shelf(after, "home-tool"), [page.name, mine.name, theirs.name]);
-        assert.deepStrictEqual(shelf(after, "home-page"), []);
+        assert.deepStrictEqual(shelf(after, "home-page"), [legacy.name]);
       })
   );
 
@@ -969,7 +979,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company();
       for (let index = 0; index < 14; index++)
-        yield* publishSource(workspace.admin, `report-tool-${index}`);
+        yield* publishTier2(workspace.admin, `report-tool-${index}`);
       yield* publish(workspace.owner, "rota", { description: "Who covers the December reports." });
       yield* publish(workspace.owner, "lunch", { title: "Team lunch REPORT" });
       const found = yield* (yield* request("/?q=report", workspace.member)).text;
@@ -1060,7 +1070,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company();
       const page = yield* publish(workspace.owner, "office-map");
-      const tool = yield* publishSource(workspace.owner, "desk-booker");
+      const tool = yield* publishTier2(workspace.owner, "desk-booker");
       for (const [person, shown] of [
         [workspace.member, false],
         [workspace.owner, true],
@@ -2641,9 +2651,10 @@ it.layer(layer)("all patches on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company();
       const patches = yield* Patches.Patches;
-      const tool = yield* publishSource(workspace.owner, "lead-tracker");
+      const tool = yield* publishTier2(workspace.owner, "lead-tracker");
       const page = yield* publish(workspace.owner, "q3-review", {
-        description: "Quarterly review of revenue and wins."
+        description: "Quarterly review of revenue and wins.",
+        manifest: { ...manifest, name: "q3-review", tier: 1 }
       });
       const busy = yield* publish(workspace.member, "kudos", {
         description: "<script>alert(1)</script> Shout-outs."

@@ -102,13 +102,17 @@ describe("the exit-code ladder", async () => {
 
   it("exits 1 when the caller can fix it: a file that fails validation", async () => {
     const dir = tempDir();
-    const file = htmlFile(dir, "bad.html", "<!doctype html><title>x</title><script>1</script>");
+    const file = htmlFile(
+      dir,
+      "bad.html",
+      '<!doctype html><title>x</title><script src="https://cdn.example.com/app.js"></script>'
+    );
 
     const text = await runCli(["validate", file], { stateDir: dir });
     expect(text.status).toBe(1);
     expect(text.stdout).toBe("");
     expect(text.stderr).toMatch(
-      /^HTML failed Patchy Cloud validation:\n- Blocked <script> tag found\./
+      /^The HTML bundle is not self-contained or uses unsupported external dependencies:\n- <script> src is not embedded/
     );
 
     const json = await runCli(["validate", file, "--json"], { stateDir: dir });
@@ -532,9 +536,13 @@ describe("patchy whoami", async () => {
 });
 
 describe("patchy validate", async () => {
-  it("passes a safe document, with warnings on stderr in text mode and in the document under --json", async () => {
+  it("passes a self-contained page that runs script, with warnings on stderr in text mode and in the document under --json", async () => {
     const dir = tempDir();
-    const file = htmlFile(dir, "untitled.html", "<!doctype html><p>hi</p>");
+    const file = htmlFile(
+      dir,
+      "untitled.html",
+      '<!doctype html><p>hi</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><script>document.body.append("ran")</script>'
+    );
     const text = await runCli(["validate", file], { stateDir: dir });
     expect(text).toMatchObject({ status: 0, stdout: "HTML passed Patchy Cloud validation.\n" });
     expect(text.stderr).toMatch(/^Warning: /);
@@ -545,6 +553,26 @@ describe("patchy validate", async () => {
     const document = JSON.parse(json.stdout) as { ok: boolean; warnings: string[] };
     expect(document.ok).toBe(true);
     expect(document.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("allows a page up to the 10 MiB bundle cap and refuses one past it as too_large", async () => {
+    const dir = tempDir();
+    const page = (bytes: number) => {
+      const shell = "<!doctype html><title>Big</title><script></script>";
+      return shell.replace("</script>", `${"x".repeat(bytes - shell.length)}</script>`);
+    };
+    const cap = 10 * 1024 * 1024;
+    const fits = await runCli(["validate", htmlFile(dir, "fits.html", page(cap)), "--json"], {
+      stateDir: dir
+    });
+    expect(fits.status).toBe(0);
+    expect(JSON.parse(fits.stdout)).toEqual({ ok: true, warnings: [] });
+
+    const over = await runCli(["validate", htmlFile(dir, "over.html", page(cap + 1)), "--json"], {
+      stateDir: dir
+    });
+    expect(over.status).toBe(1);
+    expect(JSON.parse(over.stderr)).toMatchObject({ ok: false, code: "too_large" });
   });
 });
 

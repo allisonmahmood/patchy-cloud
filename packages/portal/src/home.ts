@@ -4,6 +4,7 @@ import {
   copyScriptPath,
   escapeAttribute,
   escapeHtml,
+  isPage,
   isWelcomePage,
   menuLink,
   patchMark,
@@ -165,7 +166,7 @@ export const renderHome = (input: HomeInput): string => {
   const toolRow = (row: Patches.ReadPatch) =>
     `<li class="home-row"><a class="tile-row tile-row-plain home-tool" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(patchTitle(row.patch), query)}${fresh(row)}</span><span class="tile-text">${line(row)}</span>${meta(row)}</span></a>${menu(row, "tools")}</li>`;
   const pageRow = (row: Patches.ReadPatch, unread: boolean) =>
-    `<li class="home-row"><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, 0)}<span class="tile-body"><span class="tile-name">${highlight(patchTitle(row.patch), query)}</span><span class="tile-text">${line(row)}</span>${meta(row)}</span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a>${menu(row, "pages")}</li>`;
+    `<li class="home-row"><a class="tile-row tile-row-plain home-page" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-body"><span class="tile-name">${highlight(patchTitle(row.patch), query)}</span><span class="tile-text">${line(row)}</span>${meta(row)}</span>${unread ? '<span class="whats-new-dot" role="img" aria-label="New to you"></span>' : ""}</a>${menu(row, "pages")}</li>`;
   // A usual tile is something the viewer already knows, so it has only its mark and title.
   const tile = (row: Patches.ReadPatch) =>
     `<div class="tile"><a class="tile-link" href="${escapeAttribute(patchAddress(row.patch))}">${patchMark(row.patch.name, row.tier)}<span class="tile-name">${escapeHtml(patchTitle(row.patch))}${fresh(row)}</span></a>${menu(row, "usual")}</div>`;
@@ -218,8 +219,8 @@ export const renderHome = (input: HomeInput): string => {
       ""
     );
 
-  const tools = live.filter((row) => row.tier >= 1);
-  const pages = live.filter((row) => row.tier === 0);
+  const tools = live.filter((row) => !isPage(row));
+  const pages = live.filter(isPage);
 
   if (query !== "") {
     const foundTools = tools.filter((row) => matches(row, query)).sort(toolOrder);

@@ -5,7 +5,7 @@ The path agents use to build, publish and manage patches for a user through the 
 ## Language
 
 **Publishing**:
-The flow from a static file or patch repo to a live patch and a link announced with its [sharing scope](../patches/GLOSSARY.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
+The flow from a single HTML file or patch repo to a live patch and a link announced with its [sharing scope](../patches/GLOSSARY.md). It includes choosing the instance and establishing which user's publishing key the machine holds.
 _Avoid_: deployment, posting
 
 **Instance**:
@@ -158,7 +158,7 @@ as hooks and signals. Transitions are synchronous; this is not React's scheduler
 _Avoid_: React runtime, direct Preact dependency
 
 **Global skill**:
-The agent instructions for entering Patchy: choosing an instance, signing the machine in, discovering company tools and data sources, publishing a static file or starting a patch repo. Inside a patch repo, its project skills govern building.
+The agent instructions for entering Patchy: choosing an instance, signing the machine in, discovering company tools and data sources, publishing a single-file page or starting a patch repo. Inside a patch repo, its project skills govern building.
 _Avoid_: project skill, template
 
 **Project skill**:
@@ -166,7 +166,7 @@ A release-bound set of agent instructions for building within one patch repo, su
 _Avoid_: global skill, copied tutorial
 
 **Patchy look**:
-See **Patchy look** in [Companies](../companies/GLOSSARY.md): what a patch repo or a static page starts from while its company has no look.
+See **Patchy look** in [Companies](../companies/GLOSSARY.md): what a patch repo or a single-file page starts from while its company has no look.
 _Avoid_: default theme, fallback style
 
 **Discovery**:

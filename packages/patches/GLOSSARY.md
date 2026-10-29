@@ -101,7 +101,7 @@ The owner-scoped identity of one publish attempt. Resending its unchanged payloa
 _Avoid_: patch id, machine token, version id
 
 **Bundle**:
-A self-contained artifact of one version: the HTML content or the closed server module. A tier 0 HTML bundle obeys the safe-HTML policy; scripted HTML runs only inside the sandbox.
+A self-contained artifact of one version: the HTML content or the closed server module. A single HTML file publishes as a tier 1 bundle, checked for embedded resources as a repo's built page is. A tier 0 HTML bundle obeys the safe-HTML policy; scripted HTML runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
 **Deletion sweep**:

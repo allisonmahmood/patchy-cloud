@@ -1,11 +1,11 @@
 ---
 name: patchy
-description: Publish a static HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, or run onboarding.
+description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, or run onboarding.
 ---
 
 # Patchy
 
-Use this global skill to publish a static page, start a tool's patch repo, discover
+Use this global skill to publish a page, start a tool's patch repo, discover
 company tools and data sources, manage a patch, read one, change the company look, or
 sign the machine in.
 Inside a patch repo, its project skills govern building.
@@ -91,7 +91,7 @@ what it built, not the project. Keep both somewhere lasting:
 ## Building a tool
 
 When the user wants a tool with its own rows, files or company connections,
-start a patch repo rather than putting JavaScript into a static-file publish.
+start a patch repo: a single-file page can run script, but it has no data of its own.
 Choose tier 1 by default: it reaches only its own tables and files. Choose
 tier 2 for enforced rules, atomic multi-row writes, anything outside the patch
 (company connections, other patches' shared data, the member directory), or
@@ -166,7 +166,7 @@ On local `import_refused`, use the SDK entrypoints in the generated loop skill
 or write or copy the dependency into the patch as your company's own code.
 On `stale_generated`, run `pnpm patchy refresh`; on `invalid_manifest`, fix the
 config and its imports, or the named `patchy.json.description` field. On a build failure, fix the repo rather than publishing
-`dist/index.html` as a static file.
+`dist/index.html` as a single file.
 `too_large` means reduce the largest contributors reported: the local HTML cap
 is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2. `tier_mismatch` means the
 code does not fit the tier: browser code needs at least tier 1 and `server/`
@@ -272,14 +272,15 @@ recovery retains the saved attempt's notices.
 - polished reports
 - quick visual previews of agent-generated work
 
-For the static-page flow, keep secrets, private URLs, local filesystem paths,
-production documentation of record, interactive apps, forms and JavaScript off
-the published page. Publish only material the intended audience may read: the
+For the single-file flow, keep secrets, private URLs, local filesystem paths and
+production documentation of record off the published page; a tool that keeps data
+is a patch repo. Publish only material the intended audience may read: the
 user's company by default, anyone with the link only by explicit choice.
 
 ## Publishing
 
-The `patchy` CLI publishes one safe static HTML document and returns its view URL.
+The `patchy` CLI publishes one self-contained HTML document as a page and returns its
+view URL.
 New patches default to company scope; use `--share public` only when the user wants
 anyone with the link to read the page.
 
@@ -360,7 +361,7 @@ has one: that lets the person's Final step panel follow along.
    override `PATCHY_API_TOKEN`; completion reports that override in `warnings`.
    Relay any warning and resolve an unintended identity before publishing.
    Then resume the requested operation with the file and flags it chose: `init` for
-   a tool, or validate and publish a static page, adding `--new` on its first publish:
+   a tool, or validate and publish a page, adding `--new` on its first publish:
 
 ```bash
 patchy validate ~/Patchy/plan.html && patchy publish ~/Patchy/plan.html --new --json
@@ -419,7 +420,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patchy init` and `patchy look publish` check it too.
   A `release_mismatch` names both releases and the instance's install line:
   rerun it to upgrade the CLI, then retry. Inside a patch repo, use `pnpm patchy refresh`.
-  File mode synthesises a tier 0 manifest with no resources. Repo mode admits
+  File mode synthesises a tier 1 manifest with no resources. Repo mode admits
   tiers 0, 1 and 2 with tables and stores; only tier 2 declares shared tables,
   shared stores, members and Postgres, PostHog, Pidgeon and Attio connections.
   Tier 2 publishes both HTML and server artifacts. Hosted execution uses the
@@ -528,10 +529,9 @@ browser sign-out is a separate control, **Sign out** in the account menu.
 ## Reading a patch
 
 Open the returned `address`: `/<company>/<name>`, or append `/~v/<n>` for a version.
-Read company pages and older versions of public patches through the user's signed-in browser.
-Only the current public tier 0 page can be read by fetching its address directly;
-read tier 1 in the browser as described below. A publishing key never opens a
-patch page. Old names may redirect with 308; follow the destination using the
+Read company pages and older versions of public patches through the user's signed-in browser,
+and a current public page in any browser, as described below. A publishing key never
+opens a patch page. Old names may redirect with 308; follow the destination using the
 same browser access. `/~content/<patchId>/<versionId>` is internal, not a sharing
 link; the former `/d/*` URLs are gone. If required browser access is unavailable,
 say so and ask the user to open the link or supply the content.
@@ -588,7 +588,7 @@ through your context. When the read fails, follow its error: log
 in again, or retry a rate-limited or busy answer. With the instance unreachable, say
 so and write the page in a plain style of its own rather than an invented look.
 
-### Styling a static page
+### Styling a page
 
 Before writing a page, settle its style; the first of these that applies wins:
 
@@ -604,8 +604,7 @@ and the brief's read, type, layout, voice and recipes. The logo goes in as
 `<img src="data:image/svg+xml;base64,…" alt="<company>">`; the Patchy look has none,
 so use the company's name. A page that deliberately looks like something else, such as
 a Halloween page or one in a client's brand, says so once and asks no permission. The
-page's 512 KiB cap includes `look.css`: when its embedded fonts push a page over, drop
-its `@font-face` rules and the stacks fall back to system fonts.
+page's 10 MiB cap includes `look.css` and its embedded fonts.
 
 ### Changing the look
 
@@ -629,44 +628,38 @@ alone. Read the person's role from `patchy whoami --json`.
   `--note "<why>"`, so the notices name it.
 
 A patch repo picks up a new revision at its next `refresh` or new `dev` start; a running
-dev session takes it with `refresh`. A static page keeps the look it was published with
-until someone updates it.
+dev session takes it with `refresh`. A single-file page keeps the look it was published
+with until someone updates it.
 
-## HTML safety rules
+## What a page holds
 
-Produce one complete static HTML file.
+Produce one complete HTML file that carries everything it uses. It publishes as a
+tier 1 page and runs in Patchy's sandboxed frame, so its script runs. The file is
+capped at 10 MiB.
 
 Allowed:
 
 - semantic HTML
-- inline CSS in `<style>` blocks: a look's `look.css` first, the page's own after
+- inline `<script>` and `<style>` blocks: a look's `look.css` first, the page's own after
 - normal metadata: charset, viewport, title
-- same-page links (`href="#totals"`) for a contents list or back-to-top; links to
-  other pages or sites are not supported on a static page, so cite sources in text
-- `data:` URLs for a look's embedded fonts and logo, and for tiny CSS textures
+- same-page links (`href="#totals"`) for a contents list or back-to-top; the frame
+  opens no other page or site, so cite sources in text
+- `data:` URLs for images, fonts, media and CSS textures
 
-Blocked or unsafe:
+Refused at `validate` and publish, naming each one:
 
-- `<script>`
-- `<form>` and `<input>`
-- `<iframe>`, `<embed>`, `<object>`, and `<applet>`
-- `<link>` and `<base>`
-- `javascript:`, `vbscript:`, and `file:` URLs
-- inline event handlers such as `onclick`
-- meta refresh redirects
-- unsafe inline CSS patterns
-- fonts from anything but a `data:` URL, and CSS `@import`: neither ever loads
-- secrets, private URLs, and local paths
+- anything loaded from outside the file: `<script src>`, `<link>`, and images, fonts,
+  CSS `url()` or `@import` from an address
+- CSS the check can't parse
 
-Past what any page needs, the checker also refuses markup that nests more than 510
-elements deep, gives an element more than 256 attributes, or needs heavy repair, such
-as many formatting tags like `<b>` left open across thousands of blocks. Close tags in
-the order you opened them and keep table content inside cells; the refusal names the
-limit.
+Never published: secrets, private URLs and local paths.
+
+In the frame a page has no network, storage, popups or downloads; [Reading a
+patch](#reading-a-patch) lists the rest.
 
 ## Output pattern
 
-1. Settle the style by [the order above](#styling-a-static-page), reading
+1. Settle the style by [the order above](#styling-a-page), reading
    `patchy look --json` when a look applies, so you know which one you are writing to
    before you write.
 2. Write the artifact as one `.html` file where
@@ -686,5 +679,5 @@ limit.
   output. Login saves the key itself; relay only the handoff's URL and user code.
 - A publishing key acts as its user. Losing or revoking a key does not change
   ownership; another machine token for that user can still update, share or delete their pages.
-- Patchy Cloud is not a social scheduler. This flow hosts static HTML pages.
+- Patchy Cloud is not a social scheduler. This flow hosts single-file HTML pages.
 - Hand over a link or a local file rather than pasting giant HTML into chat.

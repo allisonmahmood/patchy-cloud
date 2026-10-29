@@ -29,11 +29,17 @@ export const ago = (iso: string, now: number): string => {
 };
 
 /**
- * A person's welcome page, as onboarding publishes it: a tier 0 patch named `welcome`, or
- * `welcome-<n>` when the name was taken. Home's live note and the activation event read it.
+ * A page runs only in the viewer's browser: a tier 1 patch, or a tier 0 one until those rows
+ * become tier 1. A tool is tier 2, with code on the server. Shelves and marks tell them apart.
+ */
+export const isPage = (patch: { readonly tier: number }): boolean => patch.tier <= 1;
+
+/**
+ * A person's welcome page, as onboarding publishes it: a page named `welcome`, or `welcome-<n>`
+ * when the name was taken. Home's live note, the guide and the activation event read it.
  */
 export const isWelcomePage = (patch: { readonly name: string; readonly tier: number }): boolean =>
-  patch.tier === 0 && /^welcome(-\d+)?$/u.test(patch.name);
+  isPage(patch) && /^welcome(-\d+)?$/u.test(patch.name);
 
 export const daysLeft = (deadline: number, now: number): number =>
   Math.max(0, Math.ceil((deadline - now) / 86_400_000));

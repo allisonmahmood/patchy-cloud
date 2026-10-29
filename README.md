@@ -10,7 +10,7 @@ A patch runs at one of three built tiers: tier 0 is a static page with no patch 
 
 Patchy Cloud is live at [cloud.patchyhq.com](https://cloud.patchyhq.com). Companies join from the [waitlist](https://accounts.patchyhq.com/waitlist), and we let them in as fast as we can help them.
 
-Tier 0 static pages, tier 1 sandboxed browser tools and tier 2 hosted handlers are built. `patchy publish <file>` publishes one safe HTML file; `patchy init` starts a tier 1 repo with config builders, a typed client, Preact and project skills. Use `init --tier 2` for enforced rules, atomic multi-row writes or server-side work, not merely for live sync. `patchy dev` runs the hosted engine locally over PGlite and invented fixtures, with a second viewer URL on both scripted tiers. New starts and publishes require the current package release; deployed bundles keep their stable wire contract.
+Tier 0 static pages, tier 1 sandboxed browser tools and tier 2 hosted handlers are built. `patchy publish <file>` publishes one self-contained HTML file as a tier 1 page; `patchy init` starts a tier 1 repo with config builders, a typed client, Preact and project skills. Use `init --tier 2` for enforced rules, atomic multi-row writes or server-side work, not merely for live sync. `patchy dev` runs the hosted engine locally over PGlite and invented fixtures, with a second viewer URL on both scripted tiers. New starts and publishes require the current package release; deployed bundles keep their stable wire contract.
 
 Tier 2 repos publish a second artifact, a closed server module. The instance
 re-derives its handlers from stored bytes before recording the version.
@@ -89,7 +89,7 @@ A Turborepo monorepo managed with pnpm. [AGENTS.md](AGENTS.md) is the guide to w
 - `packages/content-store`: the object store for a patch's bytes, with filesystem and Neon Object Storage S3 layers (`@patchy/content-store`).
 - `packages/sql`, `packages/analytics`, `packages/limits` — the Postgres client and Migrator, the event service, and the limits registry, company overrides and rate limiter.
 - `packages/company-database` — company placements, lazy Postgres databases, bounded pools, transactional patch locks, cumulative inventory and the PGlite development layer.
-- `skills/patchy` — the global agent skill for sign-in, onboarding, safe static publishing, the company look, reading patches and starting a patch repo; project skills come from `packages/sdk`.
+- `skills/patchy` — the global agent skill for sign-in, onboarding, single-file publishing, the company look, reading patches and starting a patch repo; project skills come from `packages/sdk`.
 - `examples/plan.html` — a Patchy-styled starter patch.
 - `scenarios/` — companies, people and patches that `pnpm dev up` builds local environments from (`scripts/dev`).
 

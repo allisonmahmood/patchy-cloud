@@ -7,6 +7,7 @@ import {
   daysLeft,
   escapeAttribute,
   escapeHtml,
+  isPage,
   menuCopy,
   menuLink,
   menuPost,
@@ -228,8 +229,8 @@ export const renderAllPatches = (input: {
   );
   const lists: Record<Show, readonly Patches.ReadPatch[]> = {
     all: [...live].sort(byVisits),
-    tools: live.filter((row) => row.tier >= 1).sort(byVisits),
-    pages: live.filter((row) => row.tier === 0).sort(newest((row) => row.publishedAt)),
+    tools: live.filter((row) => !isPage(row)).sort(byVisits),
+    pages: live.filter(isPage).sort(newest((row) => row.publishedAt)),
     yours: live.filter((row) => row.owner.id === viewer.user.id).sort(byVisits),
     attention: input.rows.filter((row) => attention.has(row.patch.id)).sort(byVisits),
     off: input.rows
@@ -312,8 +313,8 @@ export const renderAllPatches = (input: {
   };
   const empty: Record<Show, string> = {
     all: "No live patches.",
-    tools: "No tools yet. A tool is a patch with code: tier 1 or 2.",
-    pages: "No pages yet. A page is a static patch: tier 0.",
+    tools: "No tools yet. A tool is a patch with server code: tier 2.",
+    pages: "No pages yet. A page is a patch that runs in the browser: tier 1.",
     yours: "You own no live patches.",
     attention: "Nothing needs your attention.",
     off: "Nothing is retired or deleted."
