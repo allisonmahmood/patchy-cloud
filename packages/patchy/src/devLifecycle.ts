@@ -466,8 +466,7 @@ export const agent = Effect.fn("Dev.agent")(function* (
   const { root, stateDir } = yield* directory(cwd, instance.apiUrl);
   const record = yield* recorded(root, stateDir, instance.apiUrl);
   if (record?.url === undefined || !(yield* healthy(record))) return yield* notRunning();
-  // Each mount answers as its own person. Tier 0 has no colleague, and no agent area for its
-  // one mount to answer for.
+  // Each mount answers as its own person.
   const origin = new URL((input.colleague ? record.colleagueUrl : undefined) ?? record.url).origin;
   const unusable = (cause: unknown) =>
     new UnreachableError({

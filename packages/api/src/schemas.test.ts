@@ -21,7 +21,7 @@ const roundTrip = <S extends Schema.Codec<unknown, unknown>>(schema: S, wire: S[
 const manifest = {
   manifestVersion: MANIFEST_VERSION,
   release: CURRENT_RELEASE,
-  tier: 0 as const,
+  tier: 1 as const,
   tables: {},
   files: {},
   uses: {}

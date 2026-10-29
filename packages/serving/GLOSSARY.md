@@ -13,11 +13,11 @@ The internal, non-redirecting location of one version's bytes, protected by the 
 _Avoid_: address (the reader-facing location), download link, public URL
 
 **Serving guarantee**:
-The promise made about a patch at each tier: the patch cannot watch you at tier 0; on tiers 1 and 2, its browser code acts through Patchy without holding a login or credential, and at tier 1 reaches only its own patch. Tier 2 adds credential-free server handlers that reach owned resources as the patch and company data as the initiating viewer, with no direct internet access and every write logged for company admins. Pages stay out of search results, public shells load no analytics, and the shell maintains a session for company documents only.
+The promise made about a patch at each tier: its browser code acts through Patchy without holding a login or credential, and at tier 1 reaches only its own patch. Tier 2 adds credential-free server handlers that reach owned resources as the patch and company data as the initiating viewer, with no direct internet access and every write logged for company admins. Pages stay out of search results, public shells load no analytics, and the shell maintains a session for company documents only.
 _Avoid_: bot protection (authorized agents may open pages), unlisted as a synonym for private (sharing controls access), anonymous as a promise about company pages (the host admits the viewer)
 
 **Page**:
-A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Tier 0 content is script-free, and a font reaches it only embedded in its own bytes; tier 1 and tier 2 content runs browser code without direct network or credential access.
+A patch as a reader receives it: its document in a sandboxed frame and the surrounding shell, with first-party doors and notices belonging to Patchy rather than the patch. Its content runs browser code without direct network or credential access, and loads only what its own bytes carry.
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, not the page), wrapper (the frame and its surrounding shell together make the page)
 
 **Shell**:

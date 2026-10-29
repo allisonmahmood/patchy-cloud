@@ -41,7 +41,7 @@ export const staleTier1VersionId = "ver_ffffffffffffffffffffffff";
 const manifest = {
   manifestVersion: 1,
   release: CURRENT_RELEASE,
-  tier: 0 as const,
+  tier: 1 as const,
   tables: {},
   files: {},
   uses: {

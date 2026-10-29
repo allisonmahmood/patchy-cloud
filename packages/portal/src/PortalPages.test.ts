@@ -159,7 +159,7 @@ const actor = (person: Person): Patches.Actor => ({
 const manifest = {
   manifestVersion: MANIFEST_VERSION,
   release: CURRENT_RELEASE,
-  tier: 0 as const,
+  tier: 1 as const,
   tables: {},
   files: {},
   uses: {}
@@ -918,15 +918,15 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const theirs = yield* publishTier2(workspace.admin, "busy-tool");
         for (let visit = 0; visit < 5; visit++) yield* patches.recordVisit(theirs.patchId);
         const mine = yield* publishTier2(workspace.owner, "quiet-tool");
-        // A page is tier 1, and a tier 0 one is a page until it becomes tier 1.
+        // A page is tier 1, from a repo or a single file.
         const page = yield* publish(workspace.owner, "grows-up", {
           manifest: { ...manifest, name: "grows-up", tier: 1 }
         });
         yield* TestClock.adjust(60_000);
-        const legacy = yield* publish(workspace.owner, "static-notes");
+        const single = yield* publish(workspace.owner, "file-notes");
         const before = yield* (yield* request("/", workspace.owner)).text;
         assert.deepStrictEqual(shelf(before, "home-tool"), [mine.name, theirs.name]);
-        assert.deepStrictEqual(shelf(before, "home-page"), [legacy.name, page.name]);
+        assert.deepStrictEqual(shelf(before, "home-page"), [single.name, page.name]);
         // A republish at tier 2 makes the page a tool.
         yield* publish(workspace.owner, page.name, {
           intent: "update",
@@ -941,7 +941,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         });
         const after = yield* (yield* request("/", workspace.owner)).text;
         assert.deepStrictEqual(shelf(after, "home-tool"), [page.name, mine.name, theirs.name]);
-        assert.deepStrictEqual(shelf(after, "home-page"), [legacy.name]);
+        assert.deepStrictEqual(shelf(after, "home-page"), [single.name]);
       })
   );
 
@@ -3019,7 +3019,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       const pageOnly = yield* publishAgentArea(workspace.owner, "page-only", {
         "deals.update": agentHandlers["deals.update"]!
       });
-      const tier0 = yield* publish(workspace.owner, "kickoff-brief");
+      const page = yield* publish(workspace.owner, "kickoff-brief");
       // The current version decides: rolled back to one without tools, the panel goes.
       const rolled = yield* publishAgentArea(workspace.owner, "rolled-back", {});
       yield* publishAgentArea(workspace.owner, rolled.name, agentHandlers, {
@@ -3030,7 +3030,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       const retired = yield* publishAgentArea(workspace.owner, "retired-tools");
       yield* (yield* Patches.Patches).retire(retired.patchId, actor(workspace.owner));
 
-      for (const name of [pageOnly.name, tier0.name, rolled.name, retired.name]) {
+      for (const name of [pageOnly.name, page.name, rolled.name, retired.name]) {
         const html = yield* (yield* request(cardPath(name), workspace.admin)).text;
         assert.isUndefined(agentPanel(html), name);
         assert.notInclude(html, `<div class="card-split">`, name);

@@ -515,6 +515,7 @@ it.layer(layer)("SDK company generation", (it) => {
           ".agents/skills/patchy-look/SKILL.md",
           ".agents/skills/patchy-loop/SKILL.md",
           ".agents/skills/patchy-postgres/SKILL.md",
+          ".agents/skills/patchy-preact/SKILL.md",
           ".agents/skills/patchy-shared-tables/SKILL.md",
           ".agents/skills/patchy-tables/SKILL.md"
         ]);
@@ -545,13 +546,12 @@ it.layer(layer)("SDK company generation", (it) => {
     () =>
       Effect.gen(function* () {
         const api = yield* sdkOver(Layer.empty);
-        for (const tier of [0, 1, 2] as const) {
+        for (const tier of [1, 2] as const) {
           const output = yield* api.generate({
             payload: { ...generateRequest(), manifest: { ...Fixtures.manifest, tier } }
           });
-          assert.strictEqual(
-            output.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md"),
-            tier !== 0
+          assert.isTrue(
+            output.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
           );
           assert.strictEqual(
             output.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md"),
@@ -574,27 +574,24 @@ it.layer(layer)("SDK company generation", (it) => {
   it.effect("refuses uses below tier 2 instead of resolving them", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
-      for (const tier of [0, 1] as const) {
-        const response = yield* client.execute(
-          HttpClientRequest.post("/api/sdk/generate").pipe(
-            HttpClientRequest.bearerToken(identity.machine.id),
-            HttpClientRequest.bodyJsonUnsafe(
-              generateRequest({
-                ...Fixtures.manifest,
-                tier,
-                uses: {
-                  members: { kind: "members" },
-                  analytics: { kind: "posthog", handle: "product" }
-                }
-              })
-            )
+      const response = yield* client.execute(
+        HttpClientRequest.post("/api/sdk/generate").pipe(
+          HttpClientRequest.bearerToken(identity.machine.id),
+          HttpClientRequest.bodyJsonUnsafe(
+            generateRequest({
+              ...Fixtures.manifest,
+              uses: {
+                members: { kind: "members" },
+                analytics: { kind: "posthog", handle: "product" }
+              }
+            })
           )
-        );
-        assert.strictEqual(response.status, 422);
-        const body = yield* response.json;
-        assert.include(body, { code: "tier_mismatch" });
-        assert.include(JSON.stringify(body), "uses requires tier 2");
-      }
+        )
+      );
+      assert.strictEqual(response.status, 422);
+      const body = yield* response.json;
+      assert.include(body, { code: "tier_mismatch" });
+      assert.include(JSON.stringify(body), "uses requires tier 2");
     })
   );
 
@@ -604,7 +601,7 @@ it.layer(layer)("SDK company generation", (it) => {
       Effect.gen(function* () {
         const api = yield* sdkOver(Layer.empty);
         const looks = yield* Looks.Looks;
-        const generate = (tier: 0 | 1 | 2 = 1) =>
+        const generate = (tier: 1 | 2 = 1) =>
           api.generate({ payload: generateRequest({ ...Fixtures.manifest, tier }) }).pipe(
             Effect.map(({ files }) => {
               const read = (path: string) => files.find((file) => file.path === path)?.contents;
@@ -617,7 +614,7 @@ it.layer(layer)("SDK company generation", (it) => {
             })
           );
         const patchy = readLookFixture("patchy");
-        for (const tier of [0, 1, 2] as const) {
+        for (const tier of [1, 2] as const) {
           const none = yield* generate(tier);
           assert.strictEqual(none.css, patchy["look.css"]);
           // The Patchy look is Patchy's default, not a company revision: no logo, no stamp.
@@ -678,7 +675,7 @@ it.layer(layer)("SDK company generation", (it) => {
           restoredBy: authorId,
           note: "the new green failed dark mode"
         });
-        const restored = yield* generate(0);
+        const restored = yield* generate(2);
         assert.strictEqual(restored.css, linear["look.css"]);
         assert.strictEqual(restored.logo, logo);
         assert.strictEqual(restored.index.look.revision, first.current.revision);

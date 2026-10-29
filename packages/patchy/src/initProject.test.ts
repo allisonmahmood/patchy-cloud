@@ -21,7 +21,7 @@ afterEach(async () => {
   );
 });
 
-// Tier 0's built page is checked by its publish test; the Preact tiers share this wiring.
+// The starter's built page is checked by its publish test; both tiers share this wiring.
 it.each([1, 2] as const)(
   "starts the tier %i page in a main column styled after the look",
   (tier) => {

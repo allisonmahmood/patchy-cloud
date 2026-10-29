@@ -401,7 +401,8 @@ export const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:ima
 
 /**
  * A document as a `srcdoc` frame receives it, led by the frame's own base URL so its same-page
- * links (`href="#totals"`) scroll instead of loading the embedding page into the frame.
+ * links (`href="#totals"`) scroll instead of loading the embedding page into the frame. Patch
+ * pages are framed by URL; `patchy look preview --compare` frames each look this way.
  *
  * A srcdoc document's URL is `about:srcdoc`, but without a base of its own its relative URLs
  * resolve against the embedder's: `#totals` names the embedding page. Against this base it names

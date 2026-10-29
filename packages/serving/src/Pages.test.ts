@@ -46,14 +46,16 @@ import * as Testing from "@patchy/company-database/testing";
 import { Tables } from "@patchy/primitives";
 import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
-import { servingHeaders } from "./serving-headers.js";
+import {
+  CONTENT_SECURITY_POLICY,
+  SHELL_SECURITY_POLICY,
+  servingHeaders,
+  shellContentSecurityPolicy
+} from "./serving-headers.js";
 import { brokerScript, brokerSrc } from "./shell.js";
 import { compress } from "./compression.js";
 
 const DAY = 24 * 60 * 60 * 1000;
-const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; font-src data:; " +
-  "frame-src 'self' about:; base-uri about:; form-action 'none'";
 
 const memoryStore = Layer.sync(ContentStore.ContentStore, () => {
   const objects = new Map<string, { bytes: Uint8Array; lastModified: number }>();
@@ -156,7 +158,7 @@ const publish = (
         manifest: {
           manifestVersion: MANIFEST_VERSION,
           release: CURRENT_RELEASE,
-          tier: 0,
+          tier: 1,
           ...(name === undefined ? {} : { name }),
           tables: {},
           files: {},
@@ -388,7 +390,7 @@ it.layer(layer)("pages", (it) => {
           assert.strictEqual(response.headers["referrer-policy"], "no-referrer");
           assert.strictEqual(
             response.headers["content-security-policy"],
-            content ? `sandbox; ${CSP}; frame-ancestors 'self'` : `${CSP}; frame-ancestors 'none'`
+            content ? CONTENT_SECURITY_POLICY : SHELL_SECURITY_POLICY
           );
           assert.strictEqual(response.headers["cache-control"], "public, max-age=60");
           assert.strictEqual(response.headers["x-content-type-options"], "nosniff");
@@ -406,11 +408,16 @@ it.layer(layer)("pages", (it) => {
               response.headers["permissions-policy"],
               "camera=(), microphone=(), geolocation=()"
             );
+            assert.notInclude(body, "<script");
           } else {
             assert.include(body, 'class="patch-frame"');
-            assert.include(body, "&lt;h1&gt;Serving Guarantees&lt;/h1&gt;");
+            assert.include(body, `data-version-id="${current.versionId}"`);
+            // The broker is the public shell's only script.
+            assert.deepStrictEqual(
+              [...body.matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag),
+              [`<script defer src="${brokerSrc}">`]
+            );
           }
-          assert.notInclude(body, "<script");
           assert.notInclude(body, "<form");
         }
 
@@ -426,24 +433,17 @@ it.layer(layer)("pages", (it) => {
           assert.strictEqual(colleague.status, 200);
           assert.strictEqual(colleague.headers["cache-control"], "private, no-store");
           const history = yield* colleague.text;
-          assert.include(history, "Company-only history");
+          if (url.startsWith("/~content/")) {
+            assert.strictEqual(
+              colleague.headers["content-security-policy"],
+              "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-ancestors 'self'"
+            );
+            assert.strictEqual(
+              history,
+              "<!doctype html><html><head><title>Company-only history</title></head><body><h1>Company-only history</h1></body></html>"
+            );
+          } else assert.include(history, `data-version-id="${olderVersionId}"`);
         }
-        // Content must use its stored version's tier, not the current tier-zero version.
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${olderVersionId}`;
-        const scriptedHistory = yield* get(`/~content/${patchId}/${olderVersionId}`);
-        assert.strictEqual(
-          scriptedHistory.headers["content-security-policy"],
-          "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-ancestors 'self'"
-        );
-        assert.strictEqual(
-          scriptedHistory.headers["permissions-policy"],
-          "camera=(), microphone=(), geolocation=()"
-        );
-        assert.strictEqual(
-          yield* scriptedHistory.text,
-          "<!doctype html><html><head><title>Company-only history</title></head><body><h1>Company-only history</h1></body></html>"
-        );
       })
   );
 
@@ -517,7 +517,7 @@ it.layer(layer)("pages", (it) => {
           assert.strictEqual(response.status, 200);
           assert.isUndefined(response.headers.location);
           const body = yield* response.text;
-          assert.include(body, `&lt;h1&gt;${replacementTitle}&lt;/h1&gt;`);
+          assert.include(body, `<title>${replacementTitle}</title>`);
           assert.notInclude(body, originalTitle);
           assert.notInclude(body, renamedTitle);
         }
@@ -531,7 +531,7 @@ it.layer(layer)("pages", (it) => {
         }
         const original = yield* get(newPath);
         assert.strictEqual(original.status, 200);
-        assert.include(yield* original.text, `&lt;h1&gt;${renamedTitle}&lt;/h1&gt;`);
+        assert.include(yield* original.text, `<title>${renamedTitle}</title>`);
       }
     })
   );
@@ -675,7 +675,7 @@ it.layer(layer)("pages", (it) => {
           properties: {
             patchId: patch.patchId,
             ownerUserId: DEV_SEED.userId,
-            tier: 0,
+            tier: 1,
             welcomePage: false
           }
         }
@@ -683,7 +683,7 @@ it.layer(layer)("pages", (it) => {
       assert.strictEqual((yield* get(welcome.path, colleague)).status, 200);
       assert.deepStrictEqual(
         firstOpens(welcome.patchId).map((event) => event.properties),
-        [{ patchId: welcome.patchId, ownerUserId: DEV_SEED.userId, tier: 0, welcomePage: true }]
+        [{ patchId: welcome.patchId, ownerUserId: DEV_SEED.userId, tier: 1, welcomePage: true }]
       );
     })
   );
@@ -962,7 +962,7 @@ it.layer(services)("pages in memory", (it) => {
       assert.strictEqual(response.status, 200);
       assert.include(
         yield* Effect.promise(() => response.text()),
-        "&lt;h1&gt;Email-only colleague&lt;/h1&gt;"
+        "<title>Email-only colleague</title>"
       );
     })
   );
@@ -1125,28 +1125,28 @@ it.layer(services)("pages in memory", (it) => {
             const response = yield* send(path, { headers: { cookie: signedInCookies() } });
             assert.strictEqual(response.status, 200);
             const body = yield* Effect.promise(() => response.text());
-            assert.include(body, 'sandbox=""');
-            assert.include(body, "&lt;h1&gt;Sharing boundary&lt;/h1&gt;");
+            assert.include(body, 'sandbox="allow-scripts allow-modals"');
+            assert.include(body, "<title>Sharing boundary</title>");
             if (scope === "public") {
               assert.strictEqual(response.headers.get("cache-control"), "public, max-age=60");
               assert.strictEqual(
                 response.headers.get("content-security-policy"),
-                `${CSP}; frame-ancestors 'none'`
+                SHELL_SECURITY_POLICY
               );
-              assert.notInclude(body, "<script");
+              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 1);
               assert.deepStrictEqual(response.headers.getSetCookie(), []);
             } else {
               assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
               assert.strictEqual(
                 response.headers.get("content-security-policy"),
-                `${CSP}; frame-ancestors 'none'; script-src 'self' https://${FRONTEND_API_HOST}; connect-src https://${FRONTEND_API_HOST}; worker-src blob:`
+                shellContentSecurityPolicy(FRONTEND_API_HOST)
               );
               assert.include(
                 body,
                 `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
               );
               assert.include(body, 'src="/auth/session.js"');
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 2);
+              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 3);
               assert.notMatch(body, /<script\b[^>]*>[^<]+<\/script>/);
               assert.strictEqual((yield* send(path)).status, 401);
             }

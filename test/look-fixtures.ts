@@ -30,6 +30,13 @@ export const readLookFixture = (name: LookFixture): LookFiles => {
   };
 };
 
+/** Inter's Latin subset as an embedded `@font-face`, the way a captured look carries its font. */
+export const embeddedFontFace = (): string =>
+  readFileSync(
+    fileURLToPath(new URL("../packages/core/fixtures/looks/inter.css", import.meta.url)),
+    "utf8"
+  );
+
 /** A look revision's stamp as `index.json` and `GET /api/look` carry it, by Sam. */
 export const lookRevision = (revision: number, note: string) => ({
   revision,

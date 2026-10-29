@@ -2,7 +2,6 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import { CURRENT_RELEASE } from "@patchy/api";
-import { DEFAULT_MAX_HTML_BYTES } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 
 /** The build binds production to its package version; tests can model an upgraded instance. */
@@ -22,12 +21,7 @@ export const tier2Enabled = Config.map(
 /** The required origin a patch's public URL is built on. */
 export const publicBaseUrl = Config.String("PATCHY_PUBLIC_BASE_URL");
 
-/** The largest tier 0 HTML document a publish may carry, in bytes. */
-export const maxHtmlBytes = Config.Int("PATCHY_MAX_HTML_BYTES").pipe(
-  Config.withDefault(DEFAULT_MAX_HTML_BYTES)
-);
-
-/** Scripted bundles have their own cap; tier 0 retains its safe-HTML limit. */
+/** The largest page or server bundle a publish may carry, in bytes. */
 export const maxBundleBytes = Config.Int("PATCHY_MAX_BUNDLE_BYTES").pipe(
   Config.withDefault(10 * 1024 * 1024)
 );
@@ -49,6 +43,6 @@ export const publishRateLimitPerMinute = Config.Int(
 
 /** Room for both artifacts escaped into JSON and their manifest. */
 export const maxPublishBodyBytes = Config.map(
-  Config.all([maxHtmlBytes, maxBundleBytes]),
-  ([htmlBytes, bundleBytes]) => (Math.max(htmlBytes, bundleBytes) + bundleBytes) * 3
+  maxBundleBytes,
+  (bundleBytes) => (bundleBytes + bundleBytes) * 3
 );

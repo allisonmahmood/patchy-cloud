@@ -4,8 +4,8 @@
  * only its own classes, laying the page out from tokens, so every plain element shows the
  * look's styles. The page carries everything it needs, fonts and logo included, and its CSP
  * refuses any other request, so it renders offline exactly as a patch would. The single-look
- * page has no script and passes tier 0 validation, so an agent can publish it to show someone;
- * the two-look page's one script sizes its frames.
+ * page has no script and is self-contained, so an agent can publish it to show someone; the
+ * two-look page's one script sizes its frames.
  */
 import * as CssTree from "css-tree";
 import { escapeAttribute, escapeHtml, framedDocument } from "@patchy/core";

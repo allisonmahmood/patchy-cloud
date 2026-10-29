@@ -38,7 +38,7 @@ const attribution = {
   viewerId: Schema.optionalKey(Schema.String),
   handler: Schema.optionalKey(Schema.String),
   kind: Schema.optionalKey(Schema.Literals(["query", "mutation", "action"])),
-  tier: Schema.optionalKey(Schema.Literals([0, 1, 2, 3])),
+  tier: Schema.optionalKey(Schema.Literals([1, 2, 3])),
   taskId: Schema.optionalKey(Schema.String),
   processGeneration: Schema.optionalKey(Schema.Number)
 };

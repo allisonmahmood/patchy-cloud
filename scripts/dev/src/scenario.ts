@@ -25,7 +25,7 @@ export type Person = typeof Person.Type;
 /** A patch repo, initialized at `tier` and overlaid with `patches/<repo>/`. */
 export const RepoPatch = Schema.Struct({
   repo: Slug,
-  tier: Schema.Literals([0, 1, 2]),
+  tier: Schema.Literals([1, 2]),
   description: Schema.NonEmptyString,
   /** The patch's empty state offers "Load sample data"; `up` presses it as the publisher. */
   sampleData: Schema.optionalKey(Schema.Boolean),
@@ -61,7 +61,7 @@ export const ScenarioConnection = Schema.Union([
 ]);
 export type ScenarioConnection = typeof ScenarioConnection.Type;
 
-/** A static page published from `files/<file>`. */
+/** A single-file page published from `files/<file>`. */
 export const FilePatch = Schema.Struct({
   file: Schema.NonEmptyString,
   name: Slug,

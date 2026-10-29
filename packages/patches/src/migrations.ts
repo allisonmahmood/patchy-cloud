@@ -109,5 +109,16 @@ export const migrations: Migrations = {
     PRIMARY KEY (user_id, patch_id)
     )`,
     `CREATE INDEX patch_opens_patch_id_idx ON patch_opens(patch_id)`
+  ),
+  // Tier 0 folded into tier 1: every stored static page, deleted patches' included, is a tier 1
+  // page, in its column, its manifest and the response a same-key retry replays. The payload
+  // digest still names the request as sent, so a retry of it replays rather than conflicts.
+  "0029_tier_zero_is_tier_one": ddl(
+    `UPDATE patch_versions SET tier = 1,
+      manifest = jsonb_set(manifest, '{tier}', '1'),
+      publish_response = jsonb_set(publish_response, '{tier}', '1')
+    WHERE tier = 0`,
+    `ALTER TABLE patch_versions DROP CONSTRAINT patch_versions_tier_check`,
+    `ALTER TABLE patch_versions ADD CONSTRAINT patch_versions_tier_check CHECK (tier BETWEEN 1 AND 3)`
   )
 };

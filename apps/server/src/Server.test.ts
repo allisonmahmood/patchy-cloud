@@ -23,7 +23,6 @@ import {
   signHandshake,
   signSession
 } from "@patchy/auth/testing";
-import { brokerSrc } from "@patchy/serving/shell";
 import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const publicBaseUrl = "https://patchy.example";
@@ -43,9 +42,6 @@ const attributes = (tag: string): Record<string, string> =>
         .replaceAll("&amp;", "&")
     ])
   );
-/** Every script a shell loads; a public page's shell loads only Patchy's broker. */
-const scriptSources = (page: string) =>
-  [...page.matchAll(/<script\b[^>]*>/g)].map(([tag]) => attributes(tag).src);
 
 it.effect("refuses startup without an explicit public base URL", () =>
   Effect.gen(function* () {
@@ -126,8 +122,9 @@ it.layer(
         assert.strictEqual(page.status, 200);
         const frame = (yield* page.text).match(/<iframe\b[^>]*>/)?.[0];
         assert.isDefined(frame, "the restored patch opens its document");
-        const content = yield* send(signedRequest(attributes(frame!)["data-content-src"]!, cookie));
-        assert.strictEqual(yield* content.text, document);
+        const src = attributes(frame!)["data-content-src"];
+        assert.isString(src);
+        assert.strictEqual(yield* (yield* send(signedRequest(src!, cookie))).text, document);
       }
     })
   );
@@ -285,7 +282,13 @@ it.layer(
         assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
         const content = yield* page.text;
         assert.include(content, "Booted");
-        assert.deepStrictEqual(scriptSources(content), [brokerSrc]);
+        // A public shell loads the broker and nothing else.
+        assert.deepStrictEqual(
+          [...content.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(
+            ([, src]) => src!.split("?")[0]
+          ),
+          ["/~shell/broker.js"]
+        );
         assert.notInclude(page.headers["content-security-policy"]!, FRONTEND_API_HOST);
 
         const head = yield* send(HttpClientRequest.head(path));
@@ -531,7 +534,13 @@ it.layer(
         assert.strictEqual(page.status, 200);
         assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
         assert.deepStrictEqual(Cookies.toSetCookieHeaders(page.cookies), []);
-        assert.deepStrictEqual(scriptSources(yield* page.text), [brokerSrc]);
+        // The cacheable page is everyone's: it loads the broker, never the session.
+        assert.deepStrictEqual(
+          [...(yield* page.text).matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(
+            ([, src]) => src!.split("?")[0]
+          ),
+          ["/~shell/broker.js"]
+        );
         const companyPage = yield* send(
           signedRequest(new URL(privatePatch.address).pathname, cookie)
         );

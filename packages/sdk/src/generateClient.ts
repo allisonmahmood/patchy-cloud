@@ -1,5 +1,5 @@
 export interface ClientTemplateOptions {
-  readonly tier?: 0 | 1 | 2 | 3;
+  readonly tier?: 1 | 2 | 3;
 }
 
 /**

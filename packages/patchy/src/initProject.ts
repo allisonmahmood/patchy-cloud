@@ -12,7 +12,7 @@ import toolchain from "./toolchain.json" with { type: "json" };
 export function starterFiles(options: {
   instance: string;
   name: string;
-  tier: 0 | 1 | 2;
+  tier: 1 | 2;
   purpose: string;
   tarball: string;
   toolchain?: typeof ReleaseToolchain.Type;
@@ -32,7 +32,7 @@ export function starterFiles(options: {
       scripts: {
         typecheck: "tsc --noEmit",
         build: "vite build",
-        ...(tier >= 1 ? { lint: "oxlint" } : {})
+        lint: "oxlint"
       },
       devDependencies: {
         patchy: tarball,
@@ -40,14 +40,11 @@ export function starterFiles(options: {
         vite: versions.vite.accepted,
         "vite-plugin-singlefile": versions["vite-plugin-singlefile"].accepted,
         "@types/node": versions["@types/node"].accepted,
-        ...(tier >= 1 ? { oxlint: "^1.90.0" } : {})
+        oxlint: "^1.90.0"
       }
     }),
     "patchy.config.ts": `import { defineConfig, table, t } from "patchy/config";\n\nexport default defineConfig({\n  name: ${JSON.stringify(name)},\n  tier: ${tier},\n  tables: { notes: table("One note per id, with a title.", { title: t.text() }) },\n  files: {},\n  uses: {}\n});\n`,
-    "index.html":
-      tier >= 1
-        ? `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n`
-        : `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/patchy/_generated/look.css"><link rel="stylesheet" href="/src/styles.css"></head><body><main><h1>My patch</h1><p>A static page. Change the config to tier 1 before adding browser code.</p></main></body></html>\n`,
+    "index.html": `<!doctype html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>\n`,
     // Looks zero the body's margin and the patch frame has no border, so the page brings its own
     // layout, loaded after the look. Its column and padding match the look specimen's.
     "src/styles.css": `/* Layout only: colours, fonts and element styles come from the look. */
@@ -58,16 +55,14 @@ main {
   padding: calc(var(--look-space, 8px) * 6) calc(var(--look-space, 8px) * 4);
 }
 `,
-    ...(tier >= 1
-      ? {
-          "src/main.tsx": `import "../patchy/_generated/look.css";
+    "src/main.tsx": `import "../patchy/_generated/look.css";
 import "./styles.css";
 import { render } from "patchy/preact";
 import { App } from "./App.js";
 
 render(<App />, document.getElementById("root")!);
 `,
-          "src/App.tsx": `import { useEffect, useState } from "patchy/preact";
+    "src/App.tsx": `import { useEffect, useState } from "patchy/preact";
 import { patchy } from "../patchy/_generated/client.js";
 
 export function App() {
@@ -127,36 +122,32 @@ ${
   );
 }
 `,
-          ".oxlintrc.json": json({
-            plugins: ["eslint", "react"],
-            categories: { correctness: "off" },
-            ignorePatterns: ["patchy/_generated/**", "dist/**"],
-            overrides: [
+    ".oxlintrc.json": json({
+      plugins: ["eslint", "react"],
+      categories: { correctness: "off" },
+      ignorePatterns: ["patchy/_generated/**", "dist/**"],
+      overrides: [
+        {
+          files: ["src/**", "helpers/**", "server/**", "agent/**"],
+          rules: {
+            // useQuery is recognized by its use-prefix; it has no effect dependency array.
+            "react/rules-of-hooks": "error",
+            "react/exhaustive-deps": "error",
+            "no-restricted-imports": [
+              "error",
               {
-                files: ["src/**", "helpers/**", "server/**", "agent/**"],
-                rules: {
-                  // useQuery is recognized by its use-prefix; it has no effect dependency array.
-                  "react/rules-of-hooks": "error",
-                  "react/exhaustive-deps": "error",
-                  "no-restricted-imports": [
-                    "error",
-                    {
-                      patterns: [
-                        {
-                          regex: "^(?:react|react-dom|preact)(?:/|$)",
-                          message: "Import Preact with compat semantics from patchy/preact."
-                        }
-                      ]
-                    }
-                  ]
-                }
+                patterns: [
+                  {
+                    regex: "^(?:react|react-dom|preact)(?:/|$)",
+                    message: "Import Preact with compat semantics from patchy/preact."
+                  }
+                ]
               }
             ]
-          })
+          }
         }
-      : {
-          "src/main.ts": `import { patchy } from "../patchy/_generated/client.js";\n\nconst form = document.querySelector<HTMLFormElement>("#notes")!;\nconst list = document.querySelector<HTMLUListElement>("#list")!;\nconst error = document.querySelector<HTMLParagraphElement>("#error")!;\nasync function render() {\n  const page = await patchy.tables.notes.list({ limit: 100 });\n  list.replaceChildren(...page.rows.map((note) => {\n    const item = document.createElement("li");\n    item.textContent = note.title;\n    return item;\n  }));\n}\nfunction save() {\n  if (!form.reportValidity()) return;\n  const title = String(new FormData(form).get("title") ?? "").trim();\n  if (!title) return;\n  void (async () => {\n    await patchy.tables.notes.insert({ title });\n    form.reset();\n    await render();\n  })().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n}\n// The sandbox blocks native form submission; save through the broker instead.\nform.querySelector("button")!.addEventListener("click", save);\nform.addEventListener("keydown", (event) => {\n  if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {\n    event.preventDefault();\n    save();\n  }\n});\nvoid render().catch((cause: unknown) => { error.textContent = cause instanceof Error ? cause.message : String(cause); });\n`
-        }),
+      ]
+    }),
     ...(tier === 2
       ? {
           "server/notes.ts": `import { query, mutation, t } from "../patchy/_generated/server.js";
@@ -176,9 +167,7 @@ export const create = mutation({
         }
       : {}),
     "vite.config.ts":
-      tier >= 1
-        ? 'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({\n  plugins: [viteSingleFile()],\n  oxc: { jsx: { importSource: "patchy/preact" } },\n  build: { modulePreload: false },\n  server: { host: "127.0.0.1" }\n});\n'
-        : 'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({ plugins: [viteSingleFile()], server: { host: "127.0.0.1" } });\n',
+      'import { defineConfig } from "vite";\nimport { viteSingleFile } from "vite-plugin-singlefile";\n\nexport default defineConfig({\n  plugins: [viteSingleFile()],\n  oxc: { jsx: { importSource: "patchy/preact" } },\n  build: { modulePreload: false },\n  server: { host: "127.0.0.1" }\n});\n',
     "tsconfig.json": json({
       compilerOptions: {
         target: "ES2022",
@@ -191,22 +180,12 @@ export const create = mutation({
         esModuleInterop: true,
         skipLibCheck: true,
         types: ["node", "vite/client"],
-        ...(tier >= 1
-          ? {
-              jsx: "react-jsx",
-              jsxImportSource: "patchy/preact",
-              isolatedModules: true,
-              verbatimModuleSyntax: true
-            }
-          : {})
+        jsx: "react-jsx",
+        jsxImportSource: "patchy/preact",
+        isolatedModules: true,
+        verbatimModuleSyntax: true
       },
-      include: [
-        "src",
-        ...(tier >= 1 ? ["helpers", "server", "agent"] : []),
-        "patchy",
-        "patchy.config.ts",
-        "vite.config.ts"
-      ]
+      include: ["src", "helpers", "server", "agent", "patchy", "patchy.config.ts", "vite.config.ts"]
     }),
     "AGENTS.md": `# Purpose\n\n${purpose}\n\nThe purpose above is independent of the published description in \`patchy.json\`.\n\n# Working here\n\nInstallation already ran. Do not reinstall to start building. Run \`pnpm patchy --help\` for commands. Read the release-bound \`.agents/skills/patchy-loop/SKILL.md\` for how to exercise the tier configured in \`patchy.config.ts\`.\n\n- \`patchy.json\`: instance, optional patch id, published description and its sync stamp. Edit the description here; cloud edits pull down at refresh, dev start and publish.\n- \`patchy.config.ts\`: the tier, owned tables and file stores with their descriptions, and on tier 2 the declared connections, shared tables, shared stores and member directory.\n- \`src/\`, \`index.html\`: the page UI. Browser code runs at tier 1 or above; \`vite.config.ts\` builds one HTML file. Tier 1 calls its own tables and files directly; tier 2 calls generated \`patchy.server.*\` handlers, which also reach declarations.\n- \`server/\`: hosted handlers when tier 2 is declared. Import bound builders from \`patchy/_generated/server.ts\`. Keep server implementation out of the page; page imports from here must be type-only.\n- \`agent/\`: tools for people's agents, used through Patchy MCP (tier 2).\n- \`helpers/\`: company-owned code shared by the page or server. Keep each helper's imports compatible with where it runs.\n- \`fixtures/\`: invented local rows and files, never production data.\n- \`patchy/_generated/index.json\`: generated index linking every declaration, revision, context and skill. Never edit generated files.\n- \`.agents/skills/patchy-loop/SKILL.md\`: the local build loop and moving tiers.\n- On tiers 1 and 2, read \`.agents/skills/patchy-preact/SKILL.md\` before building a Preact page.\n- Read \`.agents/skills/patchy-look/SKILL.md\` before styling a page: the company look the page starts in, and the order to style by.\n- On tier 2, read \`.agents/skills/patchy-server/SKILL.md\` before writing handlers.\n- \`.agents/skills/patchy-tables/SKILL.md\`: owned tables.\n- \`.agents/skills/patchy-files/SKILL.md\`: owned files.\n- Read declaration skills when using their resources: \`.agents/skills/patchy-postgres/SKILL.md\`, \`.agents/skills/patchy-posthog/SKILL.md\`, \`.agents/skills/patchy-shared-tables/SKILL.md\`, or \`.agents/skills/patchy-shared-stores/SKILL.md\`.\n\nRun \`pnpm typecheck\` and, when \`package.json\` declares it, \`pnpm lint\` before publishing. Run \`pnpm patchy refresh\` after editing declarations, changing tier or adding, removing or renaming server modules. Refresh never edits \`src/\`, \`server/\`, \`agent/\` or \`helpers/\`. Deleting \`.patchy/\` destroys local rows and files.\n`,
     "CLAUDE.md": "@AGENTS.md\n",

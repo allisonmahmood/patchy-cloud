@@ -134,7 +134,7 @@ from `@patchy/auth/seed` after migration, optionally passing your Clerk user id
 as its second argument; use the development token through `PATCHY_API_TOKEN`.
 The seed is for development only.
 
-`pnpm seed:dev` publishes the accepted HTML fixture corpus. Both `PATCHY_API_URL`
+`pnpm seed:dev` publishes two single-file pages. Both `PATCHY_API_URL`
 and `PATCHY_API_TOKEN` are required; neither has a default.
 
 ### Wide events

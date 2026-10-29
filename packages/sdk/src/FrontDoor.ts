@@ -50,7 +50,7 @@ const llms = (base: string, setup?: string) => {
   const login = `login --api-url '${base}'${setup === undefined ? "" : ` --setup '${setup}'`} --json`;
   return `# Patchy Cloud
 
-> A private cloud for a company's internal tools. People at a company, and their agents, build patches, anything from a static page to a full CRM, and publish them to their company's cloud. Patchy Cloud is in private beta: signing in at ${base} needs an invitation from the person's company or an approved spot on the waitlist.
+> A private cloud for a company's internal tools. People at a company, and their agents, build patches, anything from a single page to a full CRM, and publish them to their company's cloud. Patchy Cloud is in private beta: signing in at ${base} needs an invitation from the person's company or an approved spot on the waitlist.
 
 This page sets up Patchy on this machine for ${base}. After login, the installed \`patchy\` skill covers publishing pages, starting tools and finding what the company already has.
 

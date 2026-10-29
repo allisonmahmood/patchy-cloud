@@ -965,7 +965,6 @@ async function startServerAttempt({ publicBaseUrl, objectDir }) {
       ...authTesting.clerkEnv(),
       PORT: new URL(publicBaseUrl).port,
       PATCHY_PUBLIC_BASE_URL: publicBaseUrl,
-      PATCHY_MAX_HTML_BYTES: String(512 * 1024),
       DATABASE_URL: databaseUrl,
       PATCHY_COMPANY_DB_ADMIN_URL: databaseUrl,
       PATCHY_COMPANY_DB_URL: databaseUrl,

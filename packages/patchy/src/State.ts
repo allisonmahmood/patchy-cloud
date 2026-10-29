@@ -82,6 +82,12 @@ export class PendingPublish extends Schema.Class<PendingPublish>("PendingPublish
 }) {}
 const decodePendingPublish = Schema.decodeUnknownEffect(PendingPublish);
 const encodePendingPublish = Schema.encodeUnknownEffect(PendingPublish);
+/** An attempt an older patchy saved for a tier 0 page, which no manifest can carry now. */
+const isTierZeroAttempt = Schema.is(
+  Schema.Struct({
+    request: Schema.Struct({ manifest: Schema.Struct({ tier: Schema.Literal(0) }) })
+  })
+);
 // Effect exposes ENOTEMPTY through its Node cause today. An unfamiliar wrapper fails closed
 // instead of treating an unknown filesystem failure as a harmless occupied-slot race.
 const isOccupiedDirectory = Schema.is(
@@ -358,6 +364,20 @@ export const make = Effect.gen(function* () {
     yield* writeJson(file, { hosts: remaining });
   });
 
+  // Never recursively remove the slot: a newer attempt may already occupy it.
+  const removeEmptySlot = (directory: string) =>
+    Effect.tryPromise({
+      try: async () => {
+        try {
+          await rmdir(directory);
+        } catch (cause) {
+          if (!isEmptySlotRace(cause)) throw cause;
+        }
+      },
+      catch: (cause) =>
+        new LocalError({ message: "Could not clear the empty publish slot.", cause })
+    });
+
   const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (
     apiUrl: string,
     repo?: string
@@ -382,25 +402,27 @@ export const make = Effect.gen(function* () {
       invalid
     });
     if (Option.isNone(document)) return Option.none<PendingPublish>();
+    // It can't be sent again, so it would hold the slot for good: clear it, and say what to check.
+    if (isTierZeroAttempt(document.value)) {
+      yield* fs
+        .remove(file, { force: true })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalError({ message: `Could not clear ${file}. Check permissions.`, cause })
+          )
+        );
+      yield* removeEmptySlot(directory);
+      return yield* new LocalError({
+        message:
+          "An older patchy started a tier 0 publish that was never confirmed. Tier 0 is now tier 1, so it can't be sent again and was cleared. Run `patchy list` to see whether the page was published, and publish it again if it's missing."
+      });
+    }
     const attempt = yield* entry(decodePendingPublish(document.value), invalid);
     if (files[0] !== `${yield* cryptography.sha256(attempt.request.publishKey)}.json`)
       return yield* new LocalError({ message: invalid });
     return Option.some(attempt);
   });
-
-  // Never recursively remove the slot: a newer attempt may already occupy it.
-  const removeEmptySlot = (directory: string) =>
-    Effect.tryPromise({
-      try: async () => {
-        try {
-          await rmdir(directory);
-        } catch (cause) {
-          if (!isEmptySlotRace(cause)) throw cause;
-        }
-      },
-      catch: (cause) =>
-        new LocalError({ message: "Could not clear the empty publish slot.", cause })
-    });
 
   const lockPublish = Effect.fn("State.lockPublish")(function* (
     apiUrl: string,

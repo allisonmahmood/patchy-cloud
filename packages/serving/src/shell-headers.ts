@@ -7,25 +7,21 @@ export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
 export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
 
 /**
- * Tier 0 fonts load only from the page's own bytes; a remote font stays blocked. `base-uri about:`
- * admits the `<base href="about:srcdoc">` leading the framed page (core's `framedDocument`), so
- * its same-page links scroll, and admits no base that reaches the network.
+ * Patchy's own notices in place of a patch: no script, no frames, no forms, fonts only from their
+ * own bytes.
  */
-const STATIC_DOCUMENT_SECURITY_POLICY = [
+export const PATCH_CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src https: data:",
   "font-src data:",
-  "frame-src 'self' about:",
-  "base-uri about:",
-  "form-action 'none'"
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'"
 ].join("; ");
 
-export const PATCH_CONTENT_SECURITY_POLICY = `${STATIC_DOCUMENT_SECURITY_POLICY}; frame-ancestors 'none'`;
-
-/** Both the HTTP policy and iframe sandbox must grant a capability. */
-export const STATIC_CONTENT_SECURITY_POLICY = `sandbox; ${STATIC_DOCUMENT_SECURITY_POLICY}; frame-ancestors 'self'`;
-export const SCRIPTED_CONTENT_SECURITY_POLICY = [
+/** A patch's document in its frame. Both the HTTP policy and iframe sandbox must grant a capability. */
+export const CONTENT_SECURITY_POLICY = [
   "sandbox allow-scripts allow-modals",
   "default-src 'none'",
   "script-src 'unsafe-inline'",
@@ -37,8 +33,8 @@ export const SCRIPTED_CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'self'"
 ].join("; ");
 
-/** frame-src is egress containment even for script-initiated child navigation. */
-export const SCRIPTED_SHELL_SECURITY_POLICY = [
+/** The shell around the frame. frame-src is egress containment even for script-initiated child navigation. */
+export const SHELL_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   // The tab's icon is an inline data: URL.
@@ -51,18 +47,12 @@ export const SCRIPTED_SHELL_SECURITY_POLICY = [
   "frame-ancestors 'none'"
 ].join("; ");
 
-export function contentSecurityPolicy(tier: number): string {
-  return tier >= 1 ? SCRIPTED_CONTENT_SECURITY_POLICY : STATIC_CONTENT_SECURITY_POLICY;
-}
-
 /** Clerk keeps the session cookie fresh from a blob worker wherever the shell loads it. */
-export function shellContentSecurityPolicy(tier: number, frontendApiHost?: string): string {
-  const policy = tier >= 1 ? SCRIPTED_SHELL_SECURITY_POLICY : PATCH_CONTENT_SECURITY_POLICY;
-  if (frontendApiHost === undefined) return policy;
+export function shellContentSecurityPolicy(frontendApiHost?: string): string {
+  if (frontendApiHost === undefined) return SHELL_SECURITY_POLICY;
   const sources = `https://${frontendApiHost}`;
-  return tier >= 1
-    ? `${policy
-        .replace("script-src 'self'", `script-src 'self' ${sources}`)
-        .replace("connect-src 'self'", `connect-src 'self' ${sources}`)}; worker-src blob:`
-    : `${policy}; script-src 'self' ${sources}; connect-src ${sources}; worker-src blob:`;
+  return `${SHELL_SECURITY_POLICY.replace(
+    "script-src 'self'",
+    `script-src 'self' ${sources}`
+  ).replace("connect-src 'self'", `connect-src 'self' ${sources}`)}; worker-src blob:`;
 }

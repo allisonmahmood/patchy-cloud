@@ -1,6 +1,4 @@
-export { DEFAULT_MAX_HTML_BYTES, documentTitle, validateHtml } from "./html-policy.js";
-export type { ValidateHtmlOptions } from "./html-policy.js";
-export * from "./types.js";
+export { documentTitle } from "./html-policy.js";
 export {
   escapeAttribute,
   escapeHtml,

@@ -1,16 +1,15 @@
-import { DEFAULT_MAX_HTML_BYTES } from "@patchy/core";
 import * as CssTree from "css-tree";
 import * as Effect from "effect/Effect";
 import * as parse5 from "parse5";
 import { LocalError } from "./CliError.js";
 
-/** The scripted page cap, which an instance enforces by default as `PATCHY_MAX_BUNDLE_BYTES`. */
+/** The page cap, which an instance enforces by default as `PATCHY_MAX_BUNDLE_BYTES`. */
 const maxBundleBytes = 10 * 1024 * 1024;
 
 const embedded = (value: string) => /^(?:data:|#)/i.test(value.trim());
 
-/** Inventory built resources, including templates; core owns static HTML safety, not this check. */
-const inspectBundle = (html: string, tier: number) => {
+/** Inventory built resources, including templates and srcdoc documents. */
+const inspectBundle = (html: string) => {
   const dependencies = new Set<string>();
   const contributors: Array<{ name: string; bytes: number }> = [];
   const css = (source: string, location: string, context: "stylesheet" | "declarationList") => {
@@ -73,8 +72,7 @@ const inspectBundle = (html: string, tier: number) => {
       for (const attr of node.attrs) {
         const name = attr.name;
         const location = `<${tag}> ${attr.prefix ? `${attr.prefix}:` : ""}${name}`;
-        if (name === "srcdoc")
-          walk(parse5.parseFragment(attr.value, { scriptingEnabled: tier > 0 }));
+        if (name === "srcdoc") walk(parse5.parseFragment(attr.value));
         const value = attr.value.trim();
         if (name === "style") css(value, location, "declarationList");
         if (name === "srcset" || name === "imagesrcset") {
@@ -105,7 +103,7 @@ const inspectBundle = (html: string, tier: number) => {
     }
     if ("childNodes" in node) for (const child of node.childNodes) walk(child);
   };
-  walk(parse5.parse(html, { scriptingEnabled: tier > 0 }));
+  walk(parse5.parse(html));
   contributors.push({
     name: "HTML markup and text",
     bytes: Math.max(
@@ -120,12 +118,12 @@ const inspectBundle = (html: string, tier: number) => {
 };
 
 /**
- * A page's HTML carries every resource it uses and fits its tier's cap. Repo builds, watched dev
+ * A page's HTML carries every resource it uses and fits the page cap. Repo builds, watched dev
  * builds and single-file publishes all check it here, before anything is sent.
  */
-export const checkBundle = Effect.fn("checkBundle")(function* (html: string, tier: number) {
+export const checkBundle = Effect.fn("checkBundle")(function* (html: string) {
   const inspection = yield* Effect.try({
-    try: () => inspectBundle(html, tier),
+    try: () => inspectBundle(html),
     catch: (cause) =>
       new LocalError({
         message:
@@ -138,10 +136,9 @@ export const checkBundle = Effect.fn("checkBundle")(function* (html: string, tie
       message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline every resource in the HTML, for example as a data: URL.`
     });
   const bytes = Buffer.byteLength(html, "utf8");
-  const maxBytes = tier === 0 ? DEFAULT_MAX_HTML_BYTES : maxBundleBytes;
-  if (bytes > maxBytes)
+  if (bytes > maxBundleBytes)
     return yield* new LocalError({
-      message: `HTML bundle is ${bytes} bytes; maximum for tier ${tier} is ${maxBytes} bytes. Largest contributors:\n${inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n")}\nReduce these resources before publishing.`,
+      message: `HTML bundle is ${bytes} bytes; maximum is ${maxBundleBytes} bytes. Largest contributors:\n${inspection.contributors.map((entry) => `- ${entry.name}: ${entry.bytes} bytes`).join("\n")}\nReduce these resources before publishing.`,
       code: "too_large"
     });
 });

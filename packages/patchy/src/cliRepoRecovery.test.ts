@@ -469,7 +469,7 @@ describe("repo publish recovery", () => {
           manifest: {
             release: CURRENT_RELEASE,
             manifestVersion: MANIFEST_VERSION,
-            tier: 0,
+            tier: 1,
             name: "cli-project",
             tables: {},
             files: {},

@@ -293,7 +293,7 @@ export const company = Effect.fn("DoorTest.company")(function* (
 let published = 0;
 
 /**
- * A tier 0 page, or with `handlers` a tier 2 patch, published by `owner` as Patches records it,
+ * A tier 1 page, or with `handlers` a tier 2 patch, published by `owner` as Patches records it,
  * provisioning any `tables` it defines.
  */
 export const publish = Effect.fn("DoorTest.publish")(function* (
@@ -340,7 +340,7 @@ export const publish = Effect.fn("DoorTest.publish")(function* (
     manifest: {
       manifestVersion: MANIFEST_VERSION,
       release: CURRENT_RELEASE,
-      tier: tier2 ? 2 : 0,
+      tier: tier2 ? 2 : 1,
       tables: options.tables ?? {},
       files: {},
       uses: options.uses ?? {},

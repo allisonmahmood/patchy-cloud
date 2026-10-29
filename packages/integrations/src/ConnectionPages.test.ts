@@ -276,7 +276,7 @@ const storeVersion = Effect.fn(function* (
     manifest_version, wire_version, schema_revision, manifest, publish_key, payload_digest,
     publish_response, publish_status)
     VALUES (${versionId}, ${patchId}, ${number}, ${`connections/${versionId}.html`},
-      'test', 1, ${DEV_SEED.tokenId}, ${owner.user.id}, 0, 'test', 1, 1, 0,
+      'test', 1, ${DEV_SEED.tokenId}, ${owner.user.id}, 1, 'test', 1, 1, 0,
       ${manifest}::jsonb, ${versionId}, 'test', '{}'::jsonb, 201)`;
   if (options.current)
     yield* sql`UPDATE patches SET current_version_id = ${versionId} WHERE id = ${patchId}`;

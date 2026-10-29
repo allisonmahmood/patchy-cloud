@@ -362,8 +362,8 @@ most 8 MiB; an oversized result ends only that subscription.
 A tier 2 patch can have an agent area: its root `agent/` folder, one level deep
 like `server/`. Every export of `agent/*.ts` is a tool, named after its export,
 that people's own agents, such as Claude or Codex, call through Patchy MCP at
-`<instance>/mcp`. Nothing else in the patch is reachable by agents, and tiers 0
-and 1 have no agent area. Agent tools are for agents only; the page can't call
+`<instance>/mcp`. Nothing else in the patch is reachable by agents, and tier 1
+has no agent area. Agent tools are for agents only; the page can't call
 them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent

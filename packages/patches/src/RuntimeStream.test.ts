@@ -115,19 +115,19 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       assert.deepStrictEqual(decode(yield* pull), {
         type: "served",
         versionId: original.versionId,
-        tier: 0
+        tier: 1
       });
       const next = yield* publish(patchId, "update");
       assert.deepStrictEqual(decode(yield* pull), {
         type: "served",
         versionId: next.versionId,
-        tier: 0
+        tier: 1
       });
       yield* patches.rollback(patchId, actor, 1);
       assert.deepStrictEqual(decode(yield* pull), {
         type: "served",
         versionId: original.versionId,
-        tier: 0
+        tier: 1
       });
       yield* patches.retire(patchId, actor);
       assert.deepStrictEqual(decode(yield* pull), { type: "access_denied" });
@@ -166,7 +166,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       assert.deepStrictEqual(decode(yield* restored), {
         type: "served",
         versionId: original.versionId,
-        tier: 0
+        tier: 1
       });
       yield* patches.delete(patchId, actor);
       assert.deepStrictEqual(decode(yield* restored), { type: "access_denied" });
@@ -195,7 +195,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       );
       yield* Deferred.await(held.committed);
       const latest = yield* publish(patchId, "update");
-      const current = { type: "served", versionId: latest.versionId, tier: 0 } as const;
+      const current = { type: "served", versionId: latest.versionId, tier: 1 } as const;
       assert.deepStrictEqual(decode(yield* pull), current);
       yield* Deferred.succeed(held.resume, undefined);
       yield* Fiber.join(older);
@@ -234,7 +234,7 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
       assert.deepStrictEqual(decode(yield* pull), {
         type: "served",
         versionId: following.versionId,
-        tier: 0
+        tier: 1
       });
       assert.strictEqual(yield* streams.connected(identity.company.id, patchId), 1);
       yield* patches.retire(patchId, actor);

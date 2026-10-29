@@ -34,9 +34,8 @@ and that changing it is its own request, which only an admin can carry out.
   `reportValidity()` sets no `aria-invalid`, so give a field that fails, by its own constraints
   or an error about its value, `aria-invalid="true"`, and clear it when the value changes. Bare
   `:invalid` already matches an empty required field before anyone types, so it isn't the hook.
-- A page uses the look by importing that file. A new repo's tier 1 and 2 `src/main.tsx`
-  imports it and its tier 0 `index.html` links it; the build inlines it, fonts included, so the
-  published page carries it in its own bytes. A page that doesn't import it keeps its own style
+- A page uses the look by importing that file. A new repo's `src/main.tsx` imports it; the
+  build inlines it, fonts included, so the published page carries it in its own bytes. A page that doesn't import it keeps its own style
   (rule 2); add the import when the person asks for the company look.
 - A new repo's `src/styles.css`, loaded after the look, starts with one `main` rule: the
   starter's layout. It is scaffolding, not this patch's style, so adapt it to the brief's layout
@@ -48,16 +47,11 @@ and that changing it is its own request, which only an admin can carry out.
   `color-mix(in srgb, var(--look-accent) 12%, var(--look-bg))`, instead of new hex values.
 - Lift the brief's component recipes rather than inventing new ones.
 - `patchy/_generated/logo.svg`, when it exists, is the company's mark. Refer to it by path and
-  the build embeds it: on tiers 1 and 2 `import logo from "../patchy/_generated/logo.svg";`,
-  on tier 0 `<img src="/patchy/_generated/logo.svg" alt="…">` in `index.html`. Remove the
+  the build embeds it: `import logo from "../patchy/_generated/logo.svg";`. Remove the
   reference if a later look has no logo.
 - `patchy refresh` and a new `patchy dev` start rewrite `patchy/_generated/` to the company's
   current look; a `patchy dev` that joins a running session doesn't, so refresh to bring a new
   look into it. Put every change in your own CSS.
-- A tier 0 page, `look.css` included, must fit 512 KiB. When publish refuses it as `too_large`
-  and the largest contributor is an inline `<style>`, that is the look's embedded fonts: tell
-  the person. An admin can publish a revision with subset fonts or fewer weights, and tier 1
-  pages may be 10 MiB.
 
 ## The tokens
 

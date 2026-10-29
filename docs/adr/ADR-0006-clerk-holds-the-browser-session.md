@@ -28,8 +28,8 @@ revocation owned outright, at the price of a second session concept and a
 **Clerk holds the browser session. Patchy issues one credential, the machine
 token.** There is no Patchy session cookie and no session table.
 
-The tier 0 no-script guarantee is the **patch's**, inside its sandboxed frame; the
-shell around it is Patchy's own document. A doored patch's shell loads
+Whatever a patch runs, it runs inside its sandboxed frame; the shell around it
+is Patchy's own document. A doored patch's shell loads
 Clerk's headless frontend script from the instance's Frontend API host and
 Patchy's same-origin external initializer. The same pair keeps first-party
 pages fresh. The server calls `authenticateRequest` and verifies the session
@@ -40,14 +40,14 @@ shows a sign-in failure rather than starting a loop.
 
 ## Consequences
 
-**Tier-scoped content-security policies.** A tier 0 public page keeps the fully
-locked CSP and loads no script. A doored page's shell allows the external
-initializer from its own origin and Clerk script/connect sources from the
-Frontend API host, never inline shell script. Tier 1 adds Patchy's broker to
-company and public shells; its content runs script only inside the opaque-origin
-sandbox. [ADR-0010](./ADR-0010-sandboxed-frame-and-broker.md) owns that boundary.
-The tier 0 patch runs no script; a public shell runs only Patchy's own shell
-script, never analytics; company shells also maintain the session.
+**Content-security policies.** Every shell loads Patchy's broker. A doored page's
+shell also allows the external initializer from its own origin and Clerk
+script/connect sources from the Frontend API host, never inline shell script.
+Patch content runs script only inside the opaque-origin sandbox.
+[ADR-0010](./ADR-0010-sandboxed-frame-and-broker.md) owns that boundary. A public
+shell runs only Patchy's own shell script, never analytics; company shells also
+maintain the session. Tier 0, whose pages ran no script in an empty sandbox and
+whose public shell loaded none, became tier 1 in #986.
 
 **Revocation reach is asymmetric, and honest.** Anything Patchy decides — a user
 deactivated, sharing changed, a patch gone — is checked on the next origin load

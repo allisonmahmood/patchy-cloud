@@ -165,7 +165,7 @@ export const ProcessEvent = Schema.Struct({
   companyId: Schema.optionalKey(Schema.String),
   patchId: Schema.optionalKey(Schema.String),
   versionId: Schema.optionalKey(Schema.String),
-  tier: Schema.optionalKey(Schema.Literals([0, 1, 2, 3])),
+  tier: Schema.optionalKey(Schema.Literals([1, 2, 3])),
   taskId: Schema.optionalKey(Schema.String),
   processGeneration: Schema.optionalKey(Schema.Number),
   cause: Schema.optionalKey(Schema.String),

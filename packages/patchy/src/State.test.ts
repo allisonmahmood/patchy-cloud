@@ -21,7 +21,7 @@ const pending = (publishKey: string) =>
       manifest: {
         release: RELEASE,
         manifestVersion: MANIFEST_VERSION,
-        tier: 0,
+        tier: 1,
         tables: {},
         files: {},
         uses: {}
@@ -70,6 +70,45 @@ it.layer(services)("pending publish state", (it) => {
       yield* state.forgetPendingPublish(apiUrl, "K2", root);
       assert.isTrue(Option.isNone(yield* state.readPendingPublish(apiUrl, root)));
     }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "clears an older patchy's tier 0 attempt, which can't be sent again, saying what to check",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-tier-zero-" });
+        const state = yield* State.make.pipe(
+          Effect.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_STATE_DIR: root }))
+          )
+        );
+        yield* state.lockPublish(apiUrl, pending("legacy"), root);
+        // As an older patchy saved it: the same attempt, for a tier 0 page.
+        const publishDir = path.join(root, ".patchy", "publish");
+        const saved = path.join(
+          publishDir,
+          (yield* fs.readDirectory(publishDir, { recursive: true })).find((entry) =>
+            entry.endsWith(".json")
+          )!
+        );
+        yield* fs.writeFileString(
+          saved,
+          (yield* fs.readFileString(saved)).replace('"tier":1', '"tier":0')
+        );
+
+        const refused = yield* Effect.flip(state.readPendingPublish(apiUrl, root));
+        assert.include(refused.message, "Tier 0 is now tier 1");
+        assert.include(refused.message, "`patchy list`");
+        assert.isFalse(yield* fs.exists(saved));
+        // Publishing goes on as usual.
+        assert.isTrue(Option.isNone(yield* state.readPendingPublish(apiUrl, root)));
+        assert.strictEqual(
+          (yield* state.lockPublish(apiUrl, pending("next"), root)).request.publishKey,
+          "next"
+        );
+      }).pipe(Effect.scoped)
   );
 
   it.effect("repo attempts do not need a writable global state directory", () =>

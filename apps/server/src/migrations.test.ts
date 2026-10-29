@@ -342,3 +342,109 @@ it.layer(Testing.emptyLayer(beforeMachineCalls))("the machine-calls upgrade", (i
       }).pipe(Effect.provide(services))
   );
 });
+
+it.layer(Testing.emptyLayer(before("0029_tier_zero_is_tier_one")))("the tier 0 fold", (it) => {
+  it.effect(
+    "makes every stored static page tier 1, deleted ones too, in its row, manifest and receipt, and refuses tier 0 after",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const who = { companyId: "cmp_fold", userId: "usr_fold" };
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES (${who.companyId}, 'fold', 'Northwind')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+          VALUES (${who.userId}, 'clerk_fold', ${who.companyId}, 'sam@example.com', 'Sam', 'member')`;
+        yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, expires_at, last_used_at)
+          VALUES ('mt_fold', ${who.userId}, 'Laptop', 'hash_fold', now() + interval '1 day', now())`;
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name, deleted_at) VALUES
+          ('pat_live', ${who.companyId}, ${who.userId}, 'Launch notes', 'launch-notes', NULL),
+          ('pat_gone', ${who.companyId}, ${who.userId}, 'Old notes', 'old-notes', now())`;
+        // As publish stored them: the manifest the CLI sent and the response a retry replays.
+        const version = (id: string, patchId: string, number: number, tier: number) => {
+          const manifest = {
+            manifestVersion: 1,
+            release: "0.21.0",
+            tier,
+            tables: {},
+            files: {},
+            uses: {}
+          };
+          const response = {
+            ok: true,
+            patchId,
+            versionId: id,
+            versionNumber: number,
+            tier,
+            scope: "company"
+          };
+          return sql`INSERT INTO patch_versions (id, patch_id, version_number, object_key,
+            content_hash, file_size, created_by_machine_token_id, original_filename, owner_user_id,
+            tier, release, manifest_version, wire_version, schema_revision, manifest, publish_key,
+            payload_digest, publish_response, publish_status)
+            VALUES (${id}, ${patchId}, ${number}, ${`fold/${id}.html`}, 'hash', 1, 'mt_fold',
+              'notes.html', ${who.userId}, ${tier}, '0.21.0', 1, 1, 0, ${JSON.stringify(manifest)}::jsonb,
+              ${`pub_${id}`}, ${`digest_${id}`}, ${JSON.stringify(response)}::jsonb, 201)`;
+        };
+        yield* version("ver_static", "pat_live", 1, 0);
+        yield* version("ver_scripted", "pat_live", 2, 1);
+        yield* version("ver_deleted", "pat_gone", 1, 0);
+        yield* version("ver_tool", "pat_gone", 2, 2);
+
+        yield* migrate(migrations);
+
+        const rows = yield* sql<{
+          id: string;
+          tier: number;
+          manifest: { tier: number; release: string };
+          response: { tier: number; versionId: string };
+          digest: string;
+        }>`SELECT id, tier, manifest, publish_response AS response, payload_digest AS digest
+          FROM patch_versions ORDER BY id`;
+        assert.deepStrictEqual(
+          rows.map(({ id, tier, manifest, response, digest }) => ({
+            id,
+            tier,
+            manifest: [manifest.tier, manifest.release],
+            response: [response.tier, response.versionId],
+            digest
+          })),
+          [
+            {
+              id: "ver_deleted",
+              tier: 1,
+              manifest: [1, "0.21.0"],
+              response: [1, "ver_deleted"],
+              digest: "digest_ver_deleted"
+            },
+            {
+              id: "ver_scripted",
+              tier: 1,
+              manifest: [1, "0.21.0"],
+              response: [1, "ver_scripted"],
+              digest: "digest_ver_scripted"
+            },
+            {
+              id: "ver_static",
+              tier: 1,
+              manifest: [1, "0.21.0"],
+              response: [1, "ver_static"],
+              digest: "digest_ver_static"
+            },
+            {
+              id: "ver_tool",
+              tier: 2,
+              manifest: [2, "0.21.0"],
+              response: [2, "ver_tool"],
+              digest: "digest_ver_tool"
+            }
+          ]
+        );
+        // The previous release, during a rollout or after a rollback, publishes tier 1 as before;
+        // a tier 0 version can no longer be stored.
+        yield* version("ver_previous", "pat_live", 3, 1);
+        assert.include(
+          String((yield* version("ver_refused", "pat_live", 4, 0).pipe(Effect.flip)).cause),
+          "ConstraintError"
+        );
+      })
+  );
+});

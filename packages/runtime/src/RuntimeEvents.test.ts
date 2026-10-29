@@ -542,7 +542,7 @@ it.effect("keeps concurrently active company and public request attribution sepa
         companyId: DEV_SEED.companyId,
         patchId: Fixtures.patchId,
         versionId: Fixtures.publicVersionId,
-        tier: 0,
+        tier: 1,
         outcome: "success"
       });
       assert.notProperty(publicEvent, "viewerId");

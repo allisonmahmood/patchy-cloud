@@ -49,7 +49,7 @@ describe("refusal", () => {
       "pnpm install",
       "npm test -- --grep x",
       "patchy logs --json | grep setup",
-      "patchy init setup-demo --tier 0",
+      "patchy init setup-demo --tier 2",
       "patchy publish setup.html",
       "npm install global-agent"
     ];

@@ -53,7 +53,7 @@ import { generate as generatePidgeon } from "../../../integrations/src/pidgeon/G
 import { generate as generateAttio } from "../../../integrations/src/attio/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
-import { lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
+import { embeddedFontFace, lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
 import { sdkCapabilities } from "../../../sdk/src/sdkCapabilities.js";
 
 // Every case launches the bundled CLI; pure in-process tests belong in their module suites.
@@ -185,7 +185,7 @@ export const publish = (
   address: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
   publicUrl: `http://instance.test/${DEV_SEED.companyHandle}/${name}`,
   scope,
-  tier: 0,
+  tier: 1,
   artifacts: { html: { sha256: sha256(validHtml), bytes: Buffer.byteLength(validHtml) } },
   schemaRevision: 0,
   provisioned: { tables: [], columns: [], indexes: [], stores: [] },
@@ -413,11 +413,7 @@ export const companyLook = (current: unknown, revisions: ReadonlyArray<unknown> 
 
 /** A company look carrying its font as a captured look does: #564's Inter subset, embedded. */
 export const embeddedFontLook = (() => {
-  const fixture = readFileSync(
-    path.join(packageDir, "../core/fixtures/accept/embedded-font.html"),
-    "utf8"
-  );
-  const fontFace = /@font-face\s*{[^}]*}/.exec(fixture)![0];
+  const fontFace = /@font-face\s*{[^}]*}/.exec(embeddedFontFace())![0];
   const font = /url\("(data:font\/woff2;base64,[^"]+)"\)/.exec(fontFace)![1]!;
   return { "look.css": `${fontFace}\n${readLookFixture("linear")["look.css"]}`, font };
 })();

@@ -7,13 +7,13 @@ platform access. A separate subdomain would add host routing and login coordinat
 without removing the need for a trusted broker. The opaque-origin sandbox supplies
 the isolation while keeping one host and the existing address/login model.
 
-The decision implements [SDK spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/193) and [issue #205](https://github.com/allisonmahmood/patchy-cloud/issues/205), following the [frame prototype](https://github.com/allisonmahmood/patchy-cloud/pull/185). Tier 0 retains its escaped `srcdoc` and empty sandbox; its policy admits `data:` fonts and no remote ones, so a font reaches it embedded in the page's own bytes. Tier 1 uses `/~content/<patchId>/<versionId>?n=<nonce>` and `sandbox="allow-scripts allow-modals"`. Historical pages use their selected version's tier. Content has the same door and sharing-based cache policy as its address.
+The decision implements [SDK spec §10](https://github.com/allisonmahmood/patchy-cloud/issues/193) and [issue #205](https://github.com/allisonmahmood/patchy-cloud/issues/205), following the [frame prototype](https://github.com/allisonmahmood/patchy-cloud/pull/185). Every page uses `/~content/<patchId>/<versionId>?n=<nonce>` and `sandbox="allow-scripts allow-modals"`. Tier 0's escaped `srcdoc` and empty sandbox went when its pages became tier 1 (#986). Historical pages use their selected version's tier. Content has the same door and sharing-based cache policy as its address.
 
 ## Containment and authority
 
 The content response's CSP is `sandbox allow-scripts allow-modals; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-ancestors 'self'`. Permissions-Policy denies camera, microphone and geolocation. The shell's `frame-src 'self'` contains script-initiated navigation and redirect egress; the iframe and HTTP sandbox must both grant a capability. Runtime file retrieval remains an attachment with a script-free sandbox CSP, never an executable uploaded document on the host.
 
-Both static and scripted `/~content` responses allow only same-origin ancestors so the shell can frame them. Shells and first-party pages use `frame-ancestors 'none'`: they cannot themselves be embedded, even by a same-origin page.
+`/~content` responses allow only same-origin ancestors so the shell can frame them. Shells and first-party pages use `frame-ancestors 'none'`: they cannot themselves be embedded, even by a same-origin page.
 
 The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap has no deadline: a document that never sends `ready` is a page without the SDK, so it renders with no notice and its broker serves nothing. The broker never replays a lost operation. The tier 2 client retries a lost query reply once and offers explicit same-key `retry()` on a mutation's `unknown_outcome`; it never replays actions or tier 1 writes.
 
@@ -47,7 +47,7 @@ An old shell with a supported bundle gets one cache-bypassing refresh. A repeate
 Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection. A tier 2
 shell opens it at bootstrap, independently of patch code, because the stream carries the
 cold start. A tier 1 shell opens it on its frame's valid `ready`, so a page that never
-loads the SDK has no stream. Public shells and tier 0 do not.
+loads the SDK has no stream. Public shells do not.
 The shell pins its admitted viewer, patch, loaded version and document nonce.
 `GET /api/runtime/stream` rechecks the cookie session and version eligibility on
 every open. `hello` supplies a new generation and the server clock; replacement
@@ -248,7 +248,7 @@ locks, one-hour expiry and bounds are recorded in ADR-0009 and the limits regist
 
 ## Tier-scoped promise
 
-Tier 0 keeps **the patch cannot watch you**. A public shell runs only Patchy's own shell script, never analytics (tier 0 needs no script). At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches nothing outside its own patch.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
+A public shell runs only Patchy's own shell script, never analytics. At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches nothing outside its own patch.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
 
 The tier 2 promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the

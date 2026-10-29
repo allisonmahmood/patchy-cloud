@@ -57,7 +57,7 @@ export interface ExecutedManifest {
   readonly release: string;
   readonly name?: string;
   readonly description?: string;
-  readonly tier: 0 | 1 | 2 | 3;
+  readonly tier: 1 | 2 | 3;
   readonly handlers?: Readonly<Record<string, HandlerDescriptor>>;
   readonly sdkImports?: readonly string[];
   readonly tables: Readonly<
@@ -165,6 +165,14 @@ export class StaleGenerated extends Error {
   }
 }
 
+/** Tier 0's static pages became tier 1 pages; a config written before then still names tier 0. */
+class TierZero extends Error {
+  readonly code = "tier_mismatch";
+  constructor() {
+    super("Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`.");
+  }
+}
+
 class PrimitiveNameCollision extends Schema.TaggedError<PrimitiveNameCollision>()(
   "PrimitiveNameCollision",
   { definitionName: DefinitionName, cause: Schema.Defect() }
@@ -215,11 +223,12 @@ export const configFailure = (cause: unknown) =>
       isPrimitiveNameCollision(cause) ||
       isDescribedColumn(cause) ||
       cause instanceof StaleGenerated ||
-      cause instanceof LowerTierUses
+      cause instanceof LowerTierUses ||
+      cause instanceof TierZero
         ? cause.message
         : "Could not execute patchy.config.ts. Check the config, its imports and primitive descriptions.",
     code:
-      cause instanceof StaleGenerated || cause instanceof LowerTierUses
+      cause instanceof StaleGenerated || cause instanceof LowerTierUses || cause instanceof TierZero
         ? cause.code
         : "invalid_manifest",
     cause
@@ -306,6 +315,7 @@ export async function executeConfig(
       : await runEditedConfig(absolutePath, options.source);
   const described = describedColumn(executed);
   if (described !== undefined) throw described;
+  if (field(executed, "tier") === 0) throw new TierZero();
   const input = decodeConfig(executed);
   let config: typeof GenerationManifest.Type;
   try {

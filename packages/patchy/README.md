@@ -1,6 +1,6 @@
 # patchy
 
-One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes single HTML files as tier 1 pages, and tier 1 and 2 repos; a repo still configured at tier 0 is refused until it moves to tier 1. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tiers 0 and 1 can be shared publicly, but tier 2 cannot.
+One package for [Patchy Cloud](https://github.com/allisonmahmood/patchy-cloud): the `patchy` CLI, config builders, browser client and local dev runtime. It publishes single HTML files as tier 1 pages, and tier 1 and 2 repos. Tier 2 runs handlers on hosted execution and on the local executor under `patchy dev`. Every publish carries a machine token. New patches default to company scope; tier 1 can be shared publicly, but tier 2 cannot.
 
 An agent is the primary driver, so the CLI promises a contract an agent can branch on without reading prose: an [exit code that says who has to act](#exit-codes), `--json` on every command, and one resolution of which instance is being targeted. The contract is [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md).
 
@@ -603,7 +603,7 @@ configured tier, so refresh can update that workflow without rewriting `AGENTS.m
 The repo typechecks without added setup, and `pnpm patchy --help` runs its pinned
 copy. Commands run `patchy.config.ts` with Node's built-in type stripping, so the
 config uses erasable TypeScript only: no `enum`, `namespace` or constructor
-parameter properties. `pnpm patchy dev` supports tiers 1 and 2, which provide both
+parameter properties. `pnpm patchy dev` supports tiers 1 and 2, each with both
 viewer mounts; tier 2 runs handlers against invented local data.
 
 To move between tiers, edit `tier` in `patchy.config.ts`, then run `pnpm patchy refresh`.
@@ -1112,13 +1112,13 @@ look no longer has, for example. Other build and `tsc` output stays out of the
 error.
 Leftover files or external resource dependencies fail loudly. Bundle inspection checks
 resource completeness: embed resources, inline scripts and styles, and remove
-CSS `@import`. It does not restrict hyperlinks: fragment, relative and external
-anchors are accepted, while the runtime sandbox still governs navigation.
-The local HTML cap is 10 MiB; an excess is `too_large`, with a largest-contributor
-report. `server/`, `agent/` or a `uses` declaration below tier 2 remains
-`tier_mismatch`. So does a config still at tier 0, refused before the build with
-"Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."; `patchy dev`
-refuses it too. A failed repo build never falls back to a single file.
+CSS `@import`. It is not a security policy and does not restrict hyperlinks:
+fragment, relative and external anchors are navigation, which the runtime sandbox
+governs. The local HTML cap is 10 MiB; an excess is `too_large`, with a
+largest-contributor report. `server/`, `agent/` or a `uses` declaration below
+tier 2 remains `tier_mismatch`, and so does a config still at tier 0: "Tier 0 is
+now tier 1. Set `tier: 1` and run `patchy refresh`." A failed repo build never
+falls back to a single file.
 
 Tier 2 bundles `server/` into one closed module with no dynamic imports.
 The server graph allows `patchy/server`, `patchy/csv`, generated server
@@ -1176,7 +1176,7 @@ patchy publish ./plan.html
 # URL: https://pages.example.com/acme/plan
 # Scope: company (signed-in colleagues in your company)
 # Patch ID: k7f2m9x1a3b8
-# Tier: 0
+# Tier: 1
 # Version: 1
 # Provisioned tables: none.
 # Provisioned columns: none.
@@ -1202,7 +1202,7 @@ attempt. Under `--json`, the retained fields are preserved without inventing
 `description`, `descriptionUpdatedAt` or `artifacts`. Fresh publishes require
 all three fields from the instance.
 
-Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. A definitive refusal clears it so you can correct the input or target state and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) includes ownership and lifecycle refusals. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown.
+Authentication failures, throttling, quota refusals, lost replies, server failures and failed cache writes keep the attempt recoverable. A definitive refusal clears it so you can correct the input or target state and start a fresh attempt. The complete [definitive-refusal clearing list in ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals) includes ownership and lifecycle refusals. Keep the state directory and sign in as the original owner when recovering; never discard an attempt merely because its result is unknown. An attempt an older patchy saved for a tier 0 page can't be sent again: the next publish clears it and exits 1, saying to run `patchy list` and publish the page again if it's missing.
 
 Concurrent invocations through the same instance and state directory resend the same persisted attempt rather than replacing it or refusing contention. Each authenticates the attempt's original owner before sending, including an invocation that loses the race to create it. Killing a process leaves the attempt available for recovery. A response clears only its matching publish key, so a stale response cannot remove a newer attempt.
 If the selected attempt settles before a competing invocation can read it, that
@@ -1427,9 +1427,9 @@ no company look it writes the Patchy look instead, with no logo. In
 as `patchy look` shows it, `{ revision, author: { id, name }, createdAt, note }`,
 or `null` for the Patchy look, and `lookRestore` the company's latest restore as
 `patchy look --json`'s `restored` carries it, `null` after a publish. A new repo's
-tier 1 and 2 `src/main.tsx` imports
-`look.css`, so the first page is already in the look; the single-file build inlines it, embedded fonts included. Its
-`src/styles.css`, loaded after the look at every tier, holds only the layout: the
+`src/main.tsx` imports `look.css`, so the first page is already in
+the look; the single-file build inlines it, embedded fonts included. Its
+`src/styles.css`, loaded after the look, holds only the layout: the
 page's `<main>` centred at 960px and padded from `--look-space`. A page that
 doesn't import it keeps its own style, and refresh never edits page source. A
 `dev` that joins a running session generates nothing; `refresh` brings a new

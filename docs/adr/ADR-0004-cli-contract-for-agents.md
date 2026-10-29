@@ -80,8 +80,8 @@ instance is `rejected` (exit 2). Not every local failure has a structured code
 | `import_refused`        | The page or server graph imports outside its SDK entry points. The message names the package, importer and allowed entries, then the company-code rule. Page imports of server implementations are refused; type-only imports are allowed. This is a build contract, not a security boundary or dependency-list check.                                                                          |
 | `stale_generated`       | Generated release metadata, declaration stamps or the server module list no longer match the repo. Run `pnpm patchy refresh`.                                                                                                                                                                                                                                                                   |
 | `invalid_manifest`      | Config, manifest or server descriptor extraction failed. Fix the named source, declaration or handler before publishing.                                                                                                                                                                                                                                                                        |
-| `too_large`             | A bundle exceeds its local cap. HTML allows 10 MiB, single files included. Reduce the resources named in the diagnostic.                                                                                                                                                                                                                                                                        |
-| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/`, `agent/` and any `uses` declaration require tier 2; tiers above 2 are not served. A config still at tier 0 is refused before the build, by publish and `dev`: "Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."                                                                                                  |
+| `too_large`             | A bundle exceeds its local cap of 10 MiB, single files included. Reduce the resources named in the diagnostic.                                                                                                                                                                                                                                                                                  |
+| `tier_mismatch`         | The code does not fit its declared or supported tier. `server/`, `agent/` and any `uses` declaration require tier 2; tiers above 2 are not served. A config still at tier 0 is refused with "Tier 0 is now tier 1. Set `tier: 1` and run `patchy refresh`."                                                                                                                                     |
 
 Description preflight in `init --purpose`, `describe` and file publishing with
 `--description` can also emit `invalid_description` locally (exit 1), before any
@@ -454,7 +454,7 @@ For tier 2, refresh enumerates one-level `server/*.ts` filename stems into
 `serverModules`, independently of manifest handler descriptors. Generation uses
 that list for type-only imports in the bound server helpers and client. It does
 not load or bundle server code. Nested modules, invalid names and symbolic links
-are local refusals; tiers 0 and 1 use an empty list and have no generated
+are local refusals; tier 1 uses an empty list and has no generated
 `server.ts`. Refresh alone changes the generated module list after init; dev
 and publish never repair it. Publish checks the list before bundling and
 returns `stale_generated` for additions, removals or renames.
@@ -528,7 +528,7 @@ Each call logs viewer, handler, outcome and milliseconds, plus
 A daemon started with `--json` writes full wide events, invocation JSON and
 `{ type: "simulated", viewerId, connection, operation, summary }` lines to
 `dev.log`; `dev logs --json` still returns `{ ok, log, text }`.
-Tiers 1 and 2 return a second `colleagueUrl` at a distinct loopback origin,
+Every session returns a second `colleagueUrl` at a distinct loopback origin,
 authenticated as a fixed non-admin colleague in the same company. Both mounts
 share data, fixtures and subscriptions; the primary remains the machine user.
 Tier 2 uses the supervised workerd engine and private callback gateway.
@@ -664,17 +664,16 @@ aliases/identities and resolved stamps in `patchy/_generated/index.json`.
 regeneration; publish writes the current manifest before the Vite single-file
 build and import check, `tsc --noEmit`, and evident-tier check. Residual files/external resource
 dependencies, an oversized HTML bundle (10 MiB, `too_large` with largest
-contributors), `server/` below tier 2, or a config still at tier 0 fail locally before
-attempt persistence; the tier 0 refusal comes before the build. Compiler/build failures name the stage and
+contributors) or `server/` below tier 2 fail locally before attempt persistence. Compiler/build failures name the stage and
 diagnostic command. A build that cannot resolve imports also names the first
 three, each with the file that imports it, and counts the rest; other raw tool
 output stays outside the failure envelope and successful JSON stdout.
 
-Bundle inspection is a resource-completeness gate, not a second safe-HTML
-security policy. Resource dependencies must be embedded, scripts and styles
+Bundle inspection is a resource-completeness gate, not a security policy: the
+runtime sandbox is. Resource dependencies must be embedded, scripts and styles
 inline, and CSS `@import` is unsupported. Hyperlinks (fragment, relative and
-external) are accepted: they are navigation, not missing bundle resources. The
-runtime sandbox still governs navigation.
+external) are navigation, not missing bundle resources. The runtime sandbox
+still governs navigation.
 
 A file publish onto cumulative table/store inventory is `has_primitives`
 (422, exit 2, `rejected`), even if the current version omits every resource:
@@ -772,7 +771,9 @@ A private staging directory holds an owner-only key-named payload written with
 Concurrent invocations replay that selection rather than overwrite it and check
 its owner even when losing the race. If it settles before the loser can read it,
 the loser exits locally asking to run publish again. No separate stale-lock
-recovery is needed. Killing a process leaves the selected attempt recoverable;
+recovery is needed. An attempt an older CLI saved for a tier 0 page can't be sent
+again: recovery clears it and exits 1, saying to check `patchy list` and publish
+the page again if it's missing. Killing a process leaves the selected attempt recoverable;
 unselected staging data is never sent.
 
 The server stores the response under a publish key unique to the user. Identical

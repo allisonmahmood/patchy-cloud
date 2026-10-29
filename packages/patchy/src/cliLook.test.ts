@@ -2,7 +2,6 @@
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { validateHtml } from "@patchy/core";
 import { lookFixtureDir, readLookFixture } from "../../../test/look-fixtures.js";
 import { companyLook, runCli, stubInstance, tempDir } from "./test/cli.js";
 
@@ -280,8 +279,13 @@ describe("patchy look preview", () => {
     const logo = readLookFixture("patchy")["logo.svg"] ?? "";
     expect(page).toContain(`data:image/svg+xml;base64,${Buffer.from(logo).toString("base64")}`);
     expect(page).not.toContain("<iframe");
-    // A member's agent can publish it as a tier 0 page to show an admin.
-    expect(validateHtml(page)).toMatchObject({ ok: true });
+    // A member's agent can publish it as a page to show an admin.
+    const publishable = await runCli(
+      ["validate", path.join(json.stateDir, "look-preview.html"), "--json"],
+      { env: env(instance.url) }
+    );
+    expect(publishable, publishable.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(publishable.stdout)).toEqual({ ok: true, warnings: [] });
 
     const text = await runCli(["look", "preview", dir], { env: env(instance.url) });
     expect(text, text.stderr).toMatchObject({ status: 0, stderr: "" });
@@ -338,7 +342,6 @@ describe("patchy look preview", () => {
     expect(page).toContain("The company has no look yet. New tools start from this one.");
     // Patchy's own mark never stands in for a company's; the wordmark is the brief's heading.
     expect(page).not.toContain("data:image/svg+xml");
-    expect(validateHtml(page)).toMatchObject({ ok: true });
 
     // The server always sends the Patchy look with no company look; without it there is nothing to show.
     body = { ...companyLook(null, [second]), patchyLook: null };

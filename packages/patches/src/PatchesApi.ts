@@ -282,6 +282,8 @@ const decodeRelease = decodeBody(
   Schema.Struct({ manifest: Schema.Struct({ release: Schema.String }) })
 );
 const decodeManifest = Schema.decodeUnknownEffect(Manifest, { onExcessProperty: "error" });
+/** A manifest from before tier 0's pages became tier 1, which names the fix rather than failing to decode. */
+const isTierZero = Schema.is(Schema.Struct({ tier: Schema.Literal(0) }));
 /** A replayed publish names the patch and version it created, like the first answer. */
 const decodeReplayIds = Schema.decodeUnknownOption(
   Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
@@ -365,13 +367,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const users = yield* Users.Users;
     const connectionStore = yield* ConnectionStore.ConnectionStore;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
-    const maxHtmlBytes = yield* PatchesConfig.maxHtmlBytes;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
     const publishRateLimitPerMinute = yield* PatchesConfig.publishRateLimitPerMinute;
     const maxPublishBodyBytes = yield* PatchesConfig.maxPublishBodyBytes;
-    // Larger scripted bundles widen only publish; owner actions keep the sharing request cap.
-    const maxShareBodyBytes = maxHtmlBytes * 3;
+    // Bundles widen only publish; owner actions carry a few fields and keep a small cap of their own.
+    const maxShareBodyBytes = 1536 * 1024;
     const currentRelease = yield* PatchesConfig.release;
     const livePatchesPerUser = yield* PatchesConfig.livePatchesPerUser;
     const tier2Enabled = yield* PatchesConfig.tier2Enabled;
@@ -557,6 +558,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               )
             );
           }
+          if (isTierZero(key.manifest))
+            return rejected(
+              "tier_mismatch",
+              "Tier 0 is now tier 1. Publish with a tier 1 manifest; a current patchy CLI sends one."
+            );
           const manifest = yield* decodeManifest(key.manifest).pipe(
             Effect.catch((error) =>
               Effect.succeed(rejected("invalid_manifest", manifestRefusal(error)))
@@ -572,12 +578,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          // Tier 0 rows are served until they become tier 1, but none is written any more.
-          if (manifest.tier === 0)
-            return rejected(
-              "tier_mismatch",
-              "Tier 0 is now tier 1. Publish with a tier 1 manifest; a current patchy CLI sends one."
-            );
           if (manifest.tier > 2) return rejected("tier_mismatch", "Tier 3 is not served yet.");
           if (manifest.tier === 2 && !tier2Enabled)
             return rejected("tier_mismatch", "Tier 2 requires the fleet executor in production.");
