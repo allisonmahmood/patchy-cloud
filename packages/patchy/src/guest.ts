@@ -383,7 +383,8 @@ export function createGuest(
               if (input.includeGuestPermissions === true) return [name, entry.descriptor];
               // Older execution loaders strictly decode this reply. Preserve their contract;
               // omission conveys no guest permission, never permission inferred from the kind.
-              const { guest: _guest, ...legacy } = entry.descriptor;
+              const legacy = { ...entry.descriptor };
+              delete legacy.guest;
               return [name, legacy];
             })
           )
