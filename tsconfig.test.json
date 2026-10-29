@@ -26,8 +26,10 @@
         // A tsconfig's plugins replace the base's, so its correctness rules are
         // restated here. Style rules that steer production code toward Effect
         // services are off: tests drive Node, clocks and browsers directly.
+        "includeSuggestionsInTsc": false,
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
+          "unstableApiUsage": "off",
+          "schemaClassObjectLiteral": "off",
           "unsafeEffectTypeAssertion": "error",
           "leakingRequirements": "error",
           "globalErrorInEffectCatch": "error",

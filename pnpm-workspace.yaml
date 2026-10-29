@@ -5,14 +5,15 @@ packages:
 catalog:
   parse5: ^8.0.1
   # Effect packages share one version; Dependabot bumps these together
-  # (see .github/dependabot.yml). Only the language service has its own
-  # release line.
+  # (see .github/dependabot.yml). Only the Effect checker has its own release
+  # line: it ships Effect-patched builds of exact TypeScript versions, so it
+  # moves with `typescript` instead.
   effect: 4.0.5
   "@effect/platform-node": 4.0.5
   "@effect/sql-pg": 4.0.5
   "@effect/sql-pglite": 4.0.5
   "@effect/vitest": 4.0.5
-  "@effect/language-service": 0.87.5
+  "@effect/tsgo": 0.62.0
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
 # When pnpm manages its own version it records itself as a first lockfile
@@ -33,7 +34,7 @@ overrides:
   "@effect/sql-pg": "catalog:"
   "@effect/sql-pglite": "catalog:"
   "@effect/vitest": "catalog:"
-  "@effect/language-service": "catalog:"
+  "@effect/tsgo": "catalog:"
 # embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
 patchedDependencies:
   async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch

@@ -19,7 +19,7 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/copy-sdk-artifact.mjs",
+    "build": "effect-tsgo tsc -p tsconfig.json && node ../../scripts/copy-sdk-artifact.mjs",
     "test": "vitest run"
   },
   "dependencies": {

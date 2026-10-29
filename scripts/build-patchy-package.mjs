@@ -1,6 +1,6 @@
 // Bundle all dependencies: the release installs offline, without registry access or scripts.
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   access,
   chmod,
@@ -16,12 +16,13 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse } from "@babel/parser";
 import * as esbuild from "esbuild";
-import { rollup } from "rollup";
-import { dts } from "rollup-plugin-dts";
-import ts from "typescript";
+import { rolldown } from "rolldown";
+import { dts } from "rolldown-plugin-dts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageDir = path.join(repoRoot, "packages/patchy");
@@ -32,26 +33,24 @@ const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
 const publicEntries = ["config", "client", "server", "csv", "dev", ...uiEntries];
 
+/** A source file's top-level string and number constants, by name. */
 const literals = async (file) => {
-  const source = ts.createSourceFile(
-    file,
-    await readFile(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true
-  );
+  const { program } = parse(await readFile(file, "utf8"), {
+    sourceType: "module",
+    plugins: ["typescript"]
+  });
   const values = {};
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      const value = declaration.initializer;
+  for (const statement of program.body) {
+    const variable =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (variable?.type !== "VariableDeclaration") continue;
+    for (const declaration of variable.declarations) {
+      const value = declaration.init;
       if (
-        ts.isIdentifier(declaration.name) &&
-        value &&
-        (ts.isStringLiteral(value) || ts.isNumericLiteral(value))
+        declaration.id.type === "Identifier" &&
+        (value?.type === "StringLiteral" || value?.type === "NumericLiteral")
       ) {
-        values[declaration.name.text] = ts.isNumericLiteral(value)
-          ? Number(value.text)
-          : value.text;
+        values[declaration.id.name] = value.value;
       }
     }
   }
@@ -236,27 +235,75 @@ await bundle({
   minify: true,
   legalComments: "none"
 });
-const declarations = await rollup({
-  input: Object.fromEntries(
-    publicEntries.map((name) => [name, path.join(packageDir, `src/${name}.ts`)])
-  ),
-  plugins: [
-    dts({
-      tsconfig: path.join(packageDir, "tsconfig.build.json"),
-      compilerOptions: { customConditions: ["development"] }
-    })
-  ]
-});
-record(declarations.watchFiles);
+// TypeScript 7 emits the public entries' declarations, reading workspace packages from source;
+// Rolldown bundles them, so private workspace types stay out of the release. The emit also
+// lists the files it read, which is how a later build knows they changed. Only the files the
+// bundle publishes must emit cleanly: the dev runtime's internals infer types TypeScript can't
+// name in a declaration, and no published type reaches them.
+const declarationDir = await mkdtemp(path.join(tmpdir(), "patchy-declarations-"));
 try {
-  await declarations.write({
-    dir: distDir,
-    format: "es",
-    entryFileNames: "[name].d.ts",
-    chunkFileNames: "_types/[name]-[hash].d.ts"
+  const emit = spawnSync(
+    process.execPath,
+    [
+      path.join(repoRoot, "node_modules/typescript/bin/tsc"),
+      "-p",
+      path.join(packageDir, "tsconfig.build.json"),
+      "--rootDir",
+      repoRoot,
+      "--outDir",
+      declarationDir,
+      "--pretty",
+      "false",
+      "--listFiles"
+    ],
+    { cwd: repoRoot, encoding: "utf8" }
+  );
+  const lines = emit.stdout.split("\n").filter((line) => line.trim() !== "");
+  const diagnostics = lines.filter((line) => /: error TS\d+:/.test(line));
+  if (emit.status !== 0 && diagnostics.length === 0)
+    throw new Error(`Declaration emit failed: ${emit.stderr || emit.stdout}`);
+  record(lines.filter((line) => path.isAbsolute(line)));
+  const declarations = await rolldown({
+    // Temporary emitter paths must not leak into published declarations or chunk hashes.
+    experimental: { attachDebugInfo: "none" },
+    input: Object.fromEntries(
+      publicEntries.map((name) => [
+        name,
+        path.join(declarationDir, `packages/patchy/src/${name}.d.ts`)
+      ])
+    ),
+    // The release's own dependencies ship beside it, so consumers read their types; every other
+    // type is inlined, whatever the shell's NODE_PATH resolves.
+    external: (id) =>
+      Object.keys(packageJson.dependencies).some(
+        (name) => id === name || id.startsWith(`${name}/`)
+      ),
+    // This bundles existing declarations; it loads no compiler API.
+    plugins: [dts({ dtsInput: true, tsconfig: false, generator: "oxc" })]
   });
+  try {
+    const { output } = await declarations.write({
+      dir: distDir,
+      format: "es",
+      entryFileNames: "[name].d.ts",
+      chunkFileNames: "_types/[name]-[hash].d.ts"
+    });
+    const published = new Set(
+      output
+        .flatMap((chunk) => (chunk.type === "chunk" ? chunk.moduleIds : []))
+        .map((id) => path.relative(declarationDir, id).replace(/\.d\.ts$/, ""))
+    );
+    const blocking = diagnostics.filter((line) => {
+      const file = /^(.+?)\(\d+,\d+\)/.exec(line)?.[1];
+      return file === undefined || published.has(file.replace(/\.tsx?$/, ""));
+    });
+    if (blocking.length > 0)
+      throw new Error(`Published declarations failed to emit:\n${blocking.join("\n")}`);
+  } finally {
+    await declarations.close();
+  }
 } finally {
-  await declarations.close();
+  await rm(declarationDir, { recursive: true, force: true });
 }
 for (const executable of ["bin.js", "index.js"]) await chmod(path.join(distDir, executable), 0o755);
 await mkdir(path.join(distDir, "licenses"), { recursive: true });

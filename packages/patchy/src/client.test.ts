@@ -1,7 +1,7 @@
 import { resolveObjectURL } from "node:buffer";
 import { expect, it } from "vitest";
 import { build } from "esbuild";
-import * as ts from "typescript";
+import { typecheck } from "../../../test/typescript.js";
 import {
   createClient,
   createSharedTable,
@@ -341,7 +341,6 @@ it("shares the supplied transport with generated aliases and exposes shared read
 });
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
-  const root = new URL("../dist/", import.meta.url).pathname;
   const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Me, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, sharedStore, type Id } from "patchy/config";
 const config = defineConfig({ name: "notes", tier: 1, tables: {
@@ -426,34 +425,7 @@ async function use() {
   createClient<typeof config>(config, { shared: {}, connections: {} });
 }
 `;
-  const filename = `${root}consumer.virtual.ts`;
-  const options: ts.CompilerOptions = {
-    noEmit: true,
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    types: [],
-    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-    paths: {
-      "patchy/client": [`${root}client.d.ts`],
-      "patchy/config": [`${root}config.d.ts`]
-    },
-    resolveJsonModule: true,
-    skipLibCheck: true
-  };
-  const host = ts.createCompilerHost(options);
-  const getSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (file, language, onError, fresh) =>
-    file === filename
-      ? ts.createSourceFile(file, source, language, true)
-      : getSourceFile(file, language, onError, fresh);
-  const program = ts.createProgram([filename], options, host);
-  expect(
-    ts
-      .getPreEmitDiagnostics(program)
-      .map((error) => ts.flattenDiagnosticMessageText(error.messageText, "\n"))
-  ).toEqual([]);
+  expect(typecheck({ "consumer.ts": source })).toEqual([]);
 });
 
 it("bundles the actual browser entry and generated template without Node, Effect, PGlite or executing config", async () => {

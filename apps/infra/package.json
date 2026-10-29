@@ -6,7 +6,7 @@
   "type": "module",
   "description": "Production infrastructure as AWS CDK: per environment, a base stack (image registry, deploy identity, budget, secrets) and an app stack (network, load balancer, hosts, execution tasks, alerts).",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "effect-tsgo tsc -p tsconfig.json",
     "synth": "cdk synth --quiet --lookups=false",
     "synth:example": "cdk synth --quiet --lookups=false -c environment=production -c alertEmails=alerts@example.com -c revision=0123456789abcdef0123456789abcdef01234567 -c secretSlot=a -c imageDigest=sha256:0000000000000000000000000000000000000000000000000000000000000000 -c domain=cloud.example.com -c certificateArn=arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000",
     "test": "vitest run"

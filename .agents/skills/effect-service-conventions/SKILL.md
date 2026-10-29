@@ -10,7 +10,7 @@ metadata:
 
 Review changed TypeScript and directly affected call sites for the conventions below. Apply them when a change creates, moves, refactors, or consumes an Effect service in `apps/server` or the capability packages (`packages/api`, `auth`, `companies`, `patches`, `serving`, `content-store`, `sql`, `cli`, `core`). Do not demand unrelated repository-wide cleanup. Treat these conventions as authoritative when older code differs.
 
-The server, packages and CLI run on Effect 4. These rules bind their services and consumers. Skip anything the linter or `@effect/language-service` already enforces.
+The server, packages and CLI run on Effect 4. These rules bind their services and consumers. Skip anything the linter or the Effect checker (`@effect/tsgo`, rules in `tsconfig.base.json`) already enforces.
 
 ## Imports and module namespaces
 

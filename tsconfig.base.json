@@ -17,11 +17,17 @@
     "skipLibCheck": true,
     "plugins": [
       {
-        // Effect diagnostics. `effect-language-service patch` (run by `prepare`
-        // and `typecheck`) bakes the plugin into tsc so these fail the build.
+        // Effect diagnostics. Scripts compile with `effect-tsgo tsc`, TypeScript 7
+        // with the Effect checker (@effect/tsgo) built in, so these fail the build.
+        // Suggestions stay in the editor; ESLint-era namespace imports are lint's
+        // patchy/namespace-service-imports.
         "name": "@effect/language-service",
+        "includeSuggestionsInTsc": false,
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
+          // The server and CLI use effect/http and effect/sql, @stability unstable, on purpose.
+          "unstableApiUsage": "off",
+          // A warning new in @effect/tsgo, off until #1002 works through its findings.
+          "schemaClassObjectLiteral": "off",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
@@ -46,9 +52,6 @@
           "globalTimers": "error",
           "globalFetch": "error",
           "cryptoRandomUUID": "error"
-          // Omitted as v3-only in @effect/language-service 0.87.2, so inert on
-          // Effect 4: missingEffectServiceDependency, schemaSyncInEffect,
-          // nonObjectEffectServiceType, scopeInLayerEffect, schemaUnionOfLiterals.
         }
       }
     ]

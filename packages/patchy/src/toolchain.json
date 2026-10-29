@@ -1,6 +1,6 @@
 {
   "vite": { "testedAgainst": "8.3.4", "accepted": "^8.3.0" },
   "vite-plugin-singlefile": { "testedAgainst": "2.3.4", "accepted": "^2.3.3" },
-  "typescript": { "testedAgainst": "6.0.3", "accepted": "^6.0.3" },
+  "typescript": { "testedAgainst": "7.0.2", "accepted": "^7.0.2" },
   "@types/node": { "testedAgainst": "22.20.5", "accepted": "^22.19.0" }
 }

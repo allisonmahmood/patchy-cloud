@@ -21,8 +21,7 @@ updates:
       # refuses anything but a patch release and lets the package fall through
       # to a pull request of its own (#273, #344). An exact name beats any
       # other group. Add an @effect package here when it joins the catalog;
-      # @effect/language-service is left out on purpose because it has its own
-      # release line.
+      # @effect/tsgo is left out on purpose: it moves with TypeScript.
       effect:
         patterns:
           - effect
@@ -30,6 +29,13 @@ updates:
           - "@effect/sql-pg"
           - "@effect/sql-pglite"
           - "@effect/vitest"
+      # The Effect checker ships Effect-patched builds of exact TypeScript
+      # versions, so a TypeScript release lands with the checker that supports
+      # it; check @effect/tsgo's supported versions before merging.
+      typescript:
+        patterns:
+          - typescript
+          - "@effect/tsgo"
       # Oxlint, its rule types and its type-aware companion release together; the
       # plugin types must match the linter that loads lint/plugin.js.
       oxlint:
