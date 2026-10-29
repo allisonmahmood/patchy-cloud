@@ -439,6 +439,16 @@ test("hostile navigation, pending real reads/writes, malformed, oversized and du
   }
 
   const frame = await open(page, patch);
+  // The stream opens on ready; wait for its first admission so its own POST precedes the snapshot.
+  await expect
+    .poll(() =>
+      frame.evaluate(() =>
+        (window as unknown as FixtureWindow).harness.replies.some(
+          (reply) => reply.event === "stream" && reply.data?.type === "admitted"
+        )
+      )
+    )
+    .toBe(true);
   const beforeMalformed = instance.runtimeRequests.length;
   await frame.evaluate((wire) => {
     const h = (window as unknown as FixtureWindow).harness;

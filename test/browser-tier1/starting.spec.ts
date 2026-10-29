@@ -96,8 +96,24 @@ test("a tier 2 page opens its stream, which starts its tools, before its frame l
     await content.promise;
     await route.continue();
   });
+  const generations: Array<string | undefined> = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/runtime/stream")
+      generations.push(request.headers()["x-patchy-generation"]);
+  });
+  instance.holdStreamFrames(true);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
   await page.goto(patch.address, { waitUntil: "commit" });
   await expect.poll(() => instance.streamConnections.size).toBe(1);
+  // A first stream names no earlier generation, so its host warms the version once it is ready.
+  expect(generations).toEqual([undefined]);
+  const cover = page.getByRole("dialog", { name: "Starting your tools" });
+  await page.clock.fastForward(2_000);
+  await expect(cover).toBeVisible();
+  instance.holdStreamFrames(false);
+  await expect(cover).toBeHidden();
+  await page.clock.resume();
   content.resolve();
   await expect(page.frameLocator("#patch").locator("#identity")).not.toHaveText("waiting");
   const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"))!;
