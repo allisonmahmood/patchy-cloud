@@ -14,6 +14,8 @@ export class Admission extends Context.Service<
     readonly result: RequireSession.Viewer["Service"] | HttpServerResponse.HttpServerResponse;
     readonly cookies: ReadonlyArray<string>;
     readonly completedHandshake: boolean;
+    /** Verified account claims, retained for target-company guest resolution. */
+    readonly signedIn?: RequireSession.SignedIn["Service"];
   }
 >()("@patchy/serving/Door/Admission") {}
 
@@ -22,7 +24,7 @@ const admission = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const decision = yield* RequireSession.admission;
   const { result } = decision;
-  if (HttpServerResponse.isHttpServerResponse(result)) return decision;
+  if (HttpServerResponse.isHttpServerResponse(result)) return { ...decision, result };
   const viewer = yield* RequireSession.resolveViewer.pipe(
     Effect.provideService(RequireSession.SignedIn, result)
   );
@@ -30,6 +32,7 @@ const admission = Effect.gen(function* () {
     yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
   return {
     ...decision,
+    signedIn: result,
     result:
       viewer ??
       HttpServerResponse.redirect(

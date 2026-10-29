@@ -22,7 +22,14 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
+import {
+  RequireSession,
+  Session,
+  withCookies,
+  sessionScripts,
+  returnPath,
+  pageResponse
+} from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { contentHash, isWelcomePage, newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
@@ -150,7 +157,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   const content = yield* Content.Content;
   const patches = yield* Patches.Patches;
   const analytics = yield* Analytics.Analytics;
-  const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
+  const { result: admission, cookies, completedHandshake, signedIn } = yield* Door.Admission;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = yield* HttpRouter.params;
@@ -193,9 +200,46 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
   const isAlias = Option.isSome(resolved) && !resolved.value.current;
+  // Resolve against the patch's company, independently of a membership elsewhere.
+  // Keep the distinct guest identity: it is never a member Viewer or the patch's owner.
+  let guest: Extract<RequireSession.CompanyIdentity, { kind: "guest" }> | undefined;
+  if (
+    !isPublic &&
+    signedIn &&
+    (HttpServerResponse.isHttpServerResponse(admission) ||
+      admission.company.id !== served.value.patch.companyId)
+  ) {
+    const identity = yield* RequireSession.resolveCompanyIdentity(
+      served.value.patch.companyId
+    ).pipe(
+      Effect.provideService(RequireSession.SignedIn, signedIn),
+      Effect.catchTags({ SqlError: Effect.die })
+    );
+    if (
+      identity &&
+      !HttpServerResponse.isHttpServerResponse(identity) &&
+      identity.kind === "guest"
+    ) {
+      const { patch, version } = served.value;
+      const grant = yield* patches
+        .guestGrant(patch.companyId, patch.id, identity.guest.id)
+        .pipe(Effect.catchTags({ SqlError: Effect.die }));
+      if (
+        patch.state !== "live" ||
+        patch.scope !== "company" ||
+        version.tier !== 0 ||
+        version.id !== patch.currentVersionId ||
+        grant?.access !== "active"
+      ) {
+        return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+      }
+      guest = identity;
+      yield* WideEvents.enrich({ viewerId: guest.guest.id, companyId: guest.companyId });
+    }
+  }
   // Finish a verified sign-in before serving a public document, but never require
   // a public reader to start a handshake or pass company admission.
-  if (!isPublic || completedHandshake) {
+  if ((!isPublic || completedHandshake) && guest === undefined) {
     if (HttpServerResponse.isHttpServerResponse(admission)) {
       return withCookies(
         HttpServerResponse.setHeaders(admission, {
@@ -294,7 +338,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // frame's content request, is an open for their own Home: it is what clears "new to you".
   // Public pages are served without a session, so they record none.
   const viewerId =
-    !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
+    !isPublic && guest === undefined && !HttpServerResponse.isHttpServerResponse(admission)
       ? admission.user.id
       : undefined;
   // A colleague's first open is the one business event serving reports: activation is counted
@@ -359,7 +403,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           html,
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
-          viewerId,
+          viewerId: guest?.guest.id ?? viewerId,
           head: isPublic
             ? publicDirectory
               ? `<template id="patchy-session">${sessionScripts(session)}</template>`
@@ -496,6 +540,7 @@ export const layer: Layer.Layer<
       "Requires",
       | Content.Content
       | Patches.Patches
+      | Users.Users
       | Session.Session
       | Analytics.Analytics
       | SqlClient.SqlClient

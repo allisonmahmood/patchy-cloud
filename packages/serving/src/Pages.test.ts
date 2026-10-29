@@ -35,7 +35,7 @@ import {
   FRONTEND_API_HOST,
   PUBLIC_BASE_URL
 } from "@patchy/auth/testing";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, Guests, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "@patchy/core";
@@ -148,7 +148,12 @@ const publish = (
   scope?: Patches.Patch["scope"],
   patchId: string | null = null,
   name?: string,
-  definitions?: Pick<typeof Manifest.Type, "tables" | "uses">
+  definitions?: Pick<typeof Manifest.Type, "tables" | "uses">,
+  publisher: { companyId: string; ownerUserId: string; machineTokenId: string } = {
+    companyId: DEV_SEED.companyId,
+    ownerUserId: DEV_SEED.userId,
+    machineTokenId: DEV_SEED.tokenId
+  }
 ) =>
   Effect.flatMap(Content.Content, (content) =>
     content
@@ -169,9 +174,7 @@ const publish = (
         publicBaseUrl: PUBLIC_BASE_URL,
         warnings: [],
         patchId,
-        companyId: DEV_SEED.companyId,
-        ownerUserId: DEV_SEED.userId,
-        machineTokenId: DEV_SEED.tokenId,
+        ...publisher,
         title,
         ...(scope === undefined ? {} : { scope }),
         html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
@@ -188,6 +191,133 @@ const publish = (
   );
 
 it.layer(layer)("pages", (it) => {
+  it.effect(
+    "admits only a granted current live private tier 0 page with the real guest actor",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        const a = yield* (yield* Companies.Companies).create({
+          name: "Guest home",
+          handle: "guest-home",
+          clerkUserId: "user_guest_member",
+          email: "guest-member@example.com",
+          userName: "Customer"
+        });
+        const guest = yield* Guests.create({ ...a.user, companyId: DEV_SEED.companyId });
+        const headers = {
+          cookie: signedInCookies(
+            signSession({
+              sub: a.user.clerkUserId,
+              email: a.user.email,
+              name: a.user.name
+            })
+          )
+        };
+        const actor = { userId: DEV_SEED.userId, admin: true };
+        const patch = yield* publish("Guest first edition");
+        const other = yield* publish("Never shared with guest");
+        assert.strictEqual((yield* get(patch.path, headers)).status, 404);
+        yield* patches.grantGuest(patch.patchId, guest.id, actor);
+        const opened = yield* get(patch.path, headers);
+        assert.strictEqual(opened.status, 200);
+        assert.strictEqual(opened.headers["cache-control"], "private, no-store");
+        assert.include(yield* opened.text, "Guest first edition");
+        assert.strictEqual((yield* get(other.path, headers)).status, 404);
+        assert.strictEqual(
+          (yield* get(`/~content/${patch.patchId}/${patch.versionId}`, headers)).status,
+          200
+        );
+
+        // Attribution carries the guest row, never A's member ID or B's patch owner.
+        const records = yield* Queue.unbounded<WideEvents.WideEvent>();
+        const events = yield* WideEvents.make.pipe(
+          Effect.provideService(WideEvents.Sink, {
+            write: (event) => Queue.offer(records, event).pipe(Effect.asVoid)
+          })
+        );
+        const response = yield* events.withEvent(
+          { type: "request" },
+          send(patch.path, { headers })
+        );
+        assert.strictEqual(response.status, 200);
+        assert.deepInclude(yield* Queue.take(records), {
+          viewerId: guest.id,
+          companyId: DEV_SEED.companyId,
+          patchId: patch.patchId,
+          versionId: patch.versionId
+        });
+        assert.deepStrictEqual(
+          yield* sql`SELECT 1 FROM patch_opens WHERE patch_id = ${patch.patchId}`,
+          []
+        );
+        assert.deepStrictEqual(firstOpens(patch.patchId), []);
+        const own = yield* publish("A member page", undefined, null, undefined, undefined, {
+          companyId: a.company.id,
+          ownerUserId: a.user.id,
+          machineTokenId: DEV_SEED.tokenId
+        });
+        assert.strictEqual((yield* get(own.path, headers)).status, 200);
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${a.user.id}`;
+        assert.strictEqual((yield* get(own.path, headers)).status, 403);
+        assert.strictEqual((yield* get(patch.path, headers)).status, 200);
+        yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${a.user.id}`;
+
+        const ref = { companyId: DEV_SEED.companyId, clerkUserId: a.user.clerkUserId };
+        yield* Guests.setDeactivated({ ...ref, deactivated: true });
+        assert.strictEqual((yield* get(patch.path, headers)).status, 404);
+        yield* Guests.setDeactivated({ ...ref, deactivated: false });
+        assert.strictEqual((yield* get(patch.path, headers)).status, 200);
+        const newer = yield* publish("Guest refreshed edition", undefined, patch.patchId);
+        const refreshed = yield* get(patch.path, headers);
+        assert.strictEqual(refreshed.status, 200);
+        assert.include(yield* refreshed.text, "Guest refreshed edition");
+        for (const path of [`${patch.path}/~v/1`, `/~content/${patch.patchId}/${patch.versionId}`])
+          assert.strictEqual((yield* get(path, headers)).status, 404);
+        assert.strictEqual(
+          (yield* get(`/~content/${patch.patchId}/${newer.versionId}`, headers)).status,
+          200
+        );
+        yield* patches.retire(patch.patchId, actor);
+        assert.strictEqual((yield* get(patch.path, headers)).status, 404);
+        yield* patches.restore(patch.patchId, actor);
+        assert.strictEqual((yield* get(patch.path, headers)).status, 200);
+        // Scripted tiers remain outside this first guest path, even with a live grant.
+        for (const tier of [1, 2, 0]) {
+          yield* sql`UPDATE patch_versions SET tier = ${tier} WHERE id = ${newer.versionId}`;
+          assert.strictEqual((yield* get(patch.path, headers)).status, tier === 0 ? 200 : 404);
+        }
+        yield* patches.revokeGuest(patch.patchId, guest.id, actor);
+        assert.strictEqual((yield* get(patch.path, headers)).status, 404);
+      })
+  );
+
+  it.effect("admits a guest-only account without enrolling it or borrowing a member identity", () =>
+    Effect.gen(function* () {
+      const users = yield* Users.Users;
+      const patches = yield* Patches.Patches;
+      const claims = {
+        clerkUserId: "user_guest_only_page",
+        email: "only@example.com",
+        name: "Guest"
+      };
+      const guest = yield* Guests.create({ ...claims, companyId: DEV_SEED.companyId });
+      const headers = {
+        cookie: signedInCookies(signSession({ sub: claims.clerkUserId, ...claims }))
+      };
+      const patch = yield* publish("Guest-only page");
+      yield* patches.grantGuest(patch.patchId, guest.id, { userId: DEV_SEED.userId, admin: true });
+      const opened = yield* get(patch.path, headers);
+      assert.strictEqual(opened.status, 200);
+      assert.include(yield* opened.text, "Guest-only page");
+      assert.isNull(yield* users.findByClerkId(claims.clerkUserId));
+      yield* Guests.end({ companyId: DEV_SEED.companyId, clerkUserId: claims.clerkUserId });
+      const refused = yield* get(patch.path, headers);
+      assert.notStrictEqual(refused.status, 200);
+      assert.notInclude(yield* refused.text, "Guest-only page");
+    })
+  );
+
   it.effect(
     "shows off notices only to active colleagues and limits Restore to owner or admin",
     () =>
