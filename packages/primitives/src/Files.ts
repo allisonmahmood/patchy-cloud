@@ -1,6 +1,4 @@
 import { Buffer } from "node:buffer";
-// @effect-diagnostics nodeBuiltinImport:off -- file handles need HMAC-SHA256 and a constant-time compare, which Effect Crypto lacks.
-import { createHmac, timingSafeEqual } from "node:crypto";
 import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +23,7 @@ import {
 import { WideEvents } from "@patchy/analytics";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
-import { newInternalId } from "@patchy/core";
+import { Cryptography, newInternalId } from "@patchy/core";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
@@ -172,22 +170,7 @@ const findObject = SqlSchema.findOneOption({
 const encodeHandleBinding = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String)))
 );
-// The company-wide unique object locator commits its immutable source patch/store too.
-const handleMac = (secret: Uint8Array, binding: Binding.Binding["Service"], locator: string) =>
-  createHmac("sha256", secret)
-    .update(
-      encodeHandleBinding([
-        "patchy-file-handle-1",
-        binding.companyId,
-        binding.identity?.user.id ?? null,
-        binding.patchId,
-        binding.versionId,
-        locator
-      ])
-    )
-    .digest()
-    .subarray(0, 24)
-    .toString("base64url");
+
 const findFile = SqlSchema.findOneOption({
   Request: Schema.Struct({ patchId: Schema.String, store: DefinitionName, name: FileName }),
   Result: Schema.Struct({ objectId: Schema.String, contentType: FileContentType }),
@@ -225,6 +208,22 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
   >
 ) {
   const crypto = yield* Crypto.Crypto;
+  const cryptography = yield* Cryptography.Cryptography;
+  // The company-wide unique object locator commits its immutable source patch/store too.
+  const handleMac = (secret: Uint8Array, binding: Binding.Binding["Service"], locator: string) =>
+    cryptography
+      .hmacSha256(
+        secret,
+        encodeHandleBinding([
+          "patchy-file-handle-1",
+          binding.companyId,
+          binding.identity?.user.id ?? null,
+          binding.patchId,
+          binding.versionId,
+          locator
+        ])
+      )
+      .pipe(Effect.map((mac) => Buffer.from(mac.subarray(0, 24)).toString("base64url")));
   const sha256 = (bytes: Uint8Array) =>
     crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode), Effect.orDie);
   const databases = yield* CompanyDatabases.CompanyDatabases;
@@ -746,12 +745,8 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
           binding.companyId,
           Effect.gen(function* () {
             const secret = yield* handleKey;
-            if (
-              !timingSafeEqual(
-                Buffer.from(handle.slice(25)),
-                Buffer.from(handleMac(secret, binding, locator))
-              )
-            )
+            const expected = yield* handleMac(secret, binding, locator);
+            if (!(yield* cryptography.equal(Buffer.from(handle.slice(25)), Buffer.from(expected))))
               return yield* new Runtime.AccessDenied({});
             const pointer = yield* findObject(`obj_${locator}`);
             if (Option.isNone(pointer)) return yield* new NotFound();
@@ -825,9 +820,12 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       const files =
         key === undefined
           ? metadata
-          : metadata.map((file) => {
+          : yield* Effect.forEach(metadata, (file) => {
               const locator = file.handle!.slice(0, 24);
-              return { ...file, handle: `${locator}.${handleMac(key, consumer, locator)}` };
+              return Effect.map(handleMac(key, consumer, locator), (mac) => ({
+                ...file,
+                handle: `${locator}.${mac}`
+              }));
             });
       const last = files[files.length - 1];
       const result = {
@@ -891,7 +889,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       if (consumer.manifest.tier !== 2) return file;
       const secret = yield* handleKey;
       const locator = objectId.slice(4);
-      return { ...file, handle: `${locator}.${handleMac(secret, consumer, locator)}` };
+      return { ...file, handle: `${locator}.${yield* handleMac(secret, consumer, locator)}` };
     },
     (effect, binding) => withCompany(binding.companyId, effect)
   );

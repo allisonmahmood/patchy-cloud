@@ -48,6 +48,7 @@ import * as AttioReads from "./test/attioReads.js";
 import * as PidgeonTest from "./test/pidgeon.js";
 import * as PostHogDouble from "./test/posthog.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * `patchy dev`'s live bindings against a real instance door: the endpoint on a socket over a
@@ -295,7 +296,8 @@ const serve = (
         Redacted.make(`dev-reads:${Buffer.alloc(32, 3).toString("base64")}`)
       )
     ),
-    Layer.provideMerge(Testing.layer())
+    Layer.provideMerge(Testing.layer()),
+    Layer.provide(NodeCryptography.layer)
   );
 const layer = serve();
 
@@ -1238,7 +1240,8 @@ it.layer(layer, { excludeTestServices: true, timeout: "60 seconds" })(
 );
 
 const limited = layer.pipe(
-  Layer.provide(Layer.succeed(ContractLimits.overrides, { "runtime.calls.perMinute": 2 }))
+  Layer.provide(Layer.succeed(ContractLimits.overrides, { "runtime.calls.perMinute": 2 })),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(limited, { excludeTestServices: true, timeout: "60 seconds" })(

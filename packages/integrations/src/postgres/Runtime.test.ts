@@ -31,6 +31,7 @@ import * as Execution from "./Execution.js";
 import * as Operations from "./Operations.js";
 import { nativeExecution } from "../test/nativeExecution.js";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
+import { NodeCryptography } from "@patchy/core";
 
 const declaration = {
   kind: "postgres" as const,
@@ -130,7 +131,7 @@ const services = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
 
 it.layer(services)("declared Postgres over the runtime wire", (it) => {
   it.effect(

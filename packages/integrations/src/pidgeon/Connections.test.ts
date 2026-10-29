@@ -22,6 +22,7 @@ import * as PidgeonTest from "../test/pidgeon.js";
 import * as Calls from "./Calls.js";
 import * as Keys from "./Keys.js";
 import * as Source from "./Source.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Patchy's side of Pidgeon connections, offline: what needs no answer from Pidgeon beyond a revoke
@@ -43,7 +44,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   AttioSource.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
 
 /** A store over the canned transport, and a seeded connection. */
 const setup = (handle: string, options: { readonly test?: boolean } = {}) =>

@@ -12,6 +12,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
 import { clerkEnv } from "./testing.js";
+import { NodeCryptography } from "@patchy/core";
 
 // Resolves `claims` as their viewer, and answers the statements the resolve sent.
 const resolve = Effect.fn("RequireSessionTest.resolve")(function* (claims: {
@@ -46,7 +47,8 @@ const createCompany = Effect.fn("RequireSessionTest.createCompany")(function* (h
 it.layer(
   Layer.mergeAll(Session.layer, Companies.layer, Users.layer).pipe(
     Layer.provideMerge(Testing.layer()),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
+    Layer.provide(NodeCryptography.layer)
   )
 )("resolveViewer", (it) => {
   it.effect("resolves a viewer in one statement, and refreshes changed claims in three", () =>

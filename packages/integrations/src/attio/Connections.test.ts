@@ -16,6 +16,7 @@ import * as PostHogSource from "../posthog/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as AttioDouble from "../test/attio.js";
 import * as Source from "./Source.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Attio connections in the store, offline over a scripted Attio: connect, the key check at Test,
@@ -41,7 +42,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
 
 const { readKey } = AttioDouble;
 const write = [...readKey.scopes, "note:read-write"];

@@ -16,6 +16,7 @@ import * as DevPersonas from "./DevPersonas.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import { DEV_SEED } from "./seed.js";
+import { NodeCryptography } from "@patchy/core";
 
 const base = "http://brightline.localhost:20480";
 const env = {
@@ -39,7 +40,9 @@ const send = Effect.fn(function* (
   cookie?: string,
   headers: Readonly<Record<string, string>> = {}
 ) {
-  const app = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provide(settings));
+  const app = yield* HttpRouter.toHttpEffect(routes).pipe(
+    Effect.provide([settings, NodeCryptography.layer])
+  );
   const response = yield* app.pipe(
     Effect.provideService(
       HttpServerRequest.HttpServerRequest,
@@ -77,7 +80,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(settings)
+  Layer.provide(settings),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(services)("dev personas", (it) => {
@@ -164,7 +168,10 @@ it.effect("refuses outside development, without NODE_ENV, and on a public origin
     ] as const) {
       const error = yield* DevPersonas.make.pipe(
         Effect.flip,
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings)))
+        Effect.provide([
+          ConfigProvider.layer(ConfigProvider.fromUnknown(settings)),
+          NodeCryptography.layer
+        ])
       );
       assert.strictEqual(error._tag, tag);
     }

@@ -17,6 +17,7 @@ import { colleague } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
 import * as DevResources from "./devResources.js";
 import type { AgentRequest } from "./devState.js";
+import { NodeCryptography } from "@patchy/core";
 
 const identity = new Identity({
   user: { id: "usr_dev", name: "Builder", email: "dev@patchy.local" },
@@ -226,7 +227,7 @@ it.live(
       assert.include(tierOne, { ok: false, code: "no_agent_tools" });
       if (!tierOne.ok) assert.match(tierOne.error, /tier 1/);
     }).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer]),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(WideEvents.layerNoop)
     ),

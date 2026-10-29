@@ -1,9 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Node supplies the listener and constant-time secret comparison.
-import { createHash, timingSafeEqual } from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off -- Node supplies the listener.
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { limitRefusal, readBody, type BodyTooLarge, type MalformedBody } from "@patchy/api";
+import { Cryptography } from "@patchy/core";
 import * as Protocol from "@patchy/api/management";
 import { registry } from "@patchy/limits/registry";
 import * as Config from "effect/Config";
@@ -77,7 +77,6 @@ const decodeTouch = Schema.decodeUnknownEffect(Protocol.TouchRequest, strict);
 const portSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
 const validPort = Schema.is(portSchema);
 const validBodyLimit = Schema.is(Schema.Int.check(Schema.isGreaterThan(0)));
-const digest = (value: string) => createHash("sha256").update(value).digest();
 const privateHost = (host: string, explicit: boolean) => {
   const family = isIP(host);
   if (family === 4) {
@@ -159,6 +158,9 @@ const respond = <R>(
 /** Owns only a private listener; the enclosing scope owns this listener and its supervisor. */
 export const serve = Effect.fn("ExecutionManagement.serve")(function* (options: Options) {
   const supervisor = yield* Supervisor.Supervisor;
+  const cryptography = yield* Cryptography.Cryptography;
+  // Equal-length digests, so comparing them takes the same time whatever was supplied.
+  const digest = (value: string) => cryptography.digest("SHA-256", value);
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 8788;
   const bodyLimit = options.maxRequestBytes ?? maxRequestBytes;
@@ -172,8 +174,8 @@ export const serve = Effect.fn("ExecutionManagement.serve")(function* (options: 
     options.previousSecret === undefined ? current : Redacted.value(options.previousSecret);
   if (current.length === 0 || previous.length === 0)
     return yield* new ManagementError({ reason: "invalid_secret" });
-  const currentDigest = digest(current);
-  const previousDigest = digest(previous);
+  const currentDigest = yield* digest(current);
+  const previousDigest = yield* digest(previous);
   const handler = yield* HttpRouter.toHttpEffect(
     HttpRouter.addAll([
       HttpRouter.route(
@@ -239,11 +241,13 @@ export const serve = Effect.fn("ExecutionManagement.serve")(function* (options: 
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const authorization = request.headers.authorization ?? "";
-      const supplied = digest(authorization.startsWith("Bearer ") ? authorization.slice(7) : "");
-      const accepted =
-        Number(timingSafeEqual(supplied, currentDigest)) |
-        Number(timingSafeEqual(supplied, previousDigest));
-      if (accepted === 0) return refusal("unauthorized", 401);
+      const supplied = yield* digest(
+        authorization.startsWith("Bearer ") ? authorization.slice(7) : ""
+      );
+      // Both comparisons always run, so the time taken doesn't say which secret matched.
+      const current = yield* cryptography.equal(supplied, currentDigest);
+      const previous = yield* cryptography.equal(supplied, previousDigest);
+      if (!current && !previous) return refusal("unauthorized", 401);
       return yield* handler;
     })
   );

@@ -20,6 +20,7 @@ import * as PostHogSource from "../posthog/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as Reads from "../test/attioReads.js";
 import * as Operations from "./Operations.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Patchy's side of Attio's reads, offline: the requests each operation sends, what it refuses
@@ -41,7 +42,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 const viewer: Viewer = {

@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Clerk's PEM verifier requires Node key normalization; SHA-1 matches its cookie suffix algorithm.
-import { createHash, createPublicKey } from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off -- loopback checks read IP literals with node:net.
 import { isIP } from "node:net";
 import { createClerkClient } from "@clerk/backend";
 import { isClerkAPIResponseError } from "@clerk/backend/errors";
@@ -13,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
+import { Cryptography } from "@patchy/core";
 
 export class SessionError extends Schema.TaggedError<SessionError>()("SessionError", {
   operation: Schema.Literals(["configuration", "authenticate", "recheck", "revoke"]),
@@ -166,6 +166,7 @@ export class Session extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const settings = yield* config;
+  const cryptography = yield* Cryptography.Cryptography;
   const { publishableKey, publicUrl } = settings;
   // Clerk keys encode exactly `<frontend-api-host>$`, with optional base64 padding.
   const decoded = yield* Effect.try({
@@ -195,20 +196,19 @@ export const make = Effect.gen(function* () {
     const pem = settings.jwtKey.value;
     if (!/^-----BEGIN (RSA )?PUBLIC KEY-----/.test(pem.trim()))
       return yield* new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY" });
-    const key = yield* Effect.try({
-      try: () => createPublicKey(pem),
-      catch: (cause) =>
-        new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY", cause })
-    });
+    const key = yield* cryptography.rsaPublicKey(pem).pipe(
+      Effect.catchTags({
+        InvalidPublicKey: (cause) =>
+          Effect.fail(
+            new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY", cause })
+          )
+      })
+    );
     // backend@3.17.0 strips a fixed RSA-2048/SPKI prefix and assumes e=65537.
     // Normalize PKCS#1 too, and reject other valid-but-unsupported keys at boot.
-    if (
-      key.asymmetricKeyType !== "rsa" ||
-      key.asymmetricKeyDetails?.modulusLength !== 2048 ||
-      key.asymmetricKeyDetails.publicExponent !== 65537n
-    )
+    if (key.modulusLength !== 2048 || key.publicExponent !== 65537n)
       return yield* new SessionError({ operation: "configuration", setting: "CLERK_JWT_KEY" });
-    jwtKey = key.export({ type: "spki", format: "pem" }).toString();
+    jwtKey = key.spki;
   }
   const authorizedParties = Option.match(settings.authorizedParty, {
     onNone: () => undefined,
@@ -221,7 +221,9 @@ export const make = Effect.gen(function* () {
     jwtKey,
     telemetry: { disabled: true }
   });
-  const suffix = createHash("sha1").update(publishableKey).digest("base64url").slice(0, 8);
+  const suffix = Buffer.from(yield* cryptography.digest("SHA-1", publishableKey))
+    .toString("base64url")
+    .slice(0, 8);
   const clearedCookies: Array<string> = [];
   const expire = (name: string, domain?: string, path = "/") => {
     clearedCookies.push(

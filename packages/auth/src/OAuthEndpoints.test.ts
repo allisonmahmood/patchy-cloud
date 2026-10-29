@@ -14,7 +14,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Companies, Users } from "@patchy/companies";
-import { randomToken, sha256 } from "@patchy/core";
+import { randomToken, sha256, NodeCryptography } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
@@ -98,7 +98,8 @@ const services = Consents.layer.pipe(
   Layer.provideMerge(Companies.layer),
   Layer.provideMerge(Limits.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 // The server's own fallback answers whatever these routes don't.

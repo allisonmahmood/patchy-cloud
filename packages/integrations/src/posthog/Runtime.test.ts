@@ -6,7 +6,7 @@ import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { newInternalId, sha256 } from "@patchy/core";
+import { newInternalId, sha256, NodeCryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   Binding,
@@ -197,7 +197,7 @@ const tier1 = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
 
 it.layer(tier1)("PostHog in a tier 1 page", (it) => {
   it.effect(

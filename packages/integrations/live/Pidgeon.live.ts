@@ -22,6 +22,7 @@ import {
   send,
   services as pageServices
 } from "../src/test/pages.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Pidgeon connections against Pidgeon itself, in test mode: what Patchy asks of Pidgeon and what
@@ -55,7 +56,8 @@ const services = pageServices(Live.layer).pipe(
         );
       })
     ).pipe(Layer.provide(Live.sweepLayer))
-  )
+  ),
+  Layer.provide(NodeCryptography.layer)
 );
 /** What `/me` says about a key, as far as these tests look. */
 const decodeMe = Schema.decodeUnknownSync(

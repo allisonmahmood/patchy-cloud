@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { Directory } from "@patchy/companies";
-import { sha256 } from "@patchy/core";
+import { sha256, NodeCryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import { RuntimeLog } from "@patchy/runtime";
@@ -44,7 +44,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   AttioSource.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 const viewer: Viewer = {

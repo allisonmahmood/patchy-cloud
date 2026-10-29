@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Companies, Users } from "@patchy/companies";
-import { randomToken, sha256 } from "@patchy/core";
+import { randomToken, sha256, NodeCryptography } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
@@ -66,7 +66,8 @@ const layer = Consents.layer.pipe(
   ),
   Layer.provide(loads),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: BASE })))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATCHY_PUBLIC_BASE_URL: BASE }))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 /** A PKCE pair: the verifier a client keeps and the S256 challenge it sends. */

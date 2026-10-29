@@ -18,6 +18,7 @@ import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import { clerkEnv, signedInCookies, signSession } from "./testing.js";
+import { NodeCryptography } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -34,7 +35,8 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 const send = Effect.fn(function* (path: string, options: RequestInit = {}) {

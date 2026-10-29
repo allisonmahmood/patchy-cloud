@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The one recoverable secret needs AES-GCM and HKDF; Effect has neither.
 /**
  * Agent connections, the `work` credential: one person's consent for one install of an MCP
  * client, and the tokens that carry it. Access tokens are opaque, last an hour and are checked
@@ -16,7 +15,6 @@
  * stamps it, so nothing is created or rotated against an ending that has committed. Ending one
  * connection, by disconnecting it or reusing its refresh token, takes that connection's row.
  */
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,7 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Identity } from "@patchy/api";
-import { newInternalId, randomToken, sha256 } from "@patchy/core";
+import { Cryptography, newInternalId, randomToken, sha256 } from "@patchy/core";
 import { UserUnavailable } from "./MachineTokens.js";
 
 const ACCESS_SECONDS = 60 * 60;
@@ -173,28 +171,6 @@ const Retried = Schema.fromJsonString(
 const encodeRetried = Schema.encodeSync(Retried);
 const decodeRetried = Schema.decodeUnknownSync(Retried);
 
-/** The key only the rotated refresh token yields; its stored hash yields nothing. */
-const retryKey = (refreshToken: string) =>
-  Buffer.from(hkdfSync("sha256", refreshToken, "", "patchy agent connection retry", 32));
-
-const sealRetry = (refreshToken: string, connectionId: string, tokens: typeof Retried.Type) => {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", retryKey(refreshToken), nonce);
-  cipher.setAAD(Buffer.from(connectionId));
-  const sealed = Buffer.concat([cipher.update(encodeRetried(tokens), "utf8"), cipher.final()]);
-  return Buffer.concat([nonce, cipher.getAuthTag(), sealed]).toString("base64");
-};
-
-const openRetry = (refreshToken: string, connectionId: string, retry: string) => {
-  const bytes = Buffer.from(retry, "base64");
-  const decipher = createDecipheriv("aes-256-gcm", retryKey(refreshToken), bytes.subarray(0, 12));
-  decipher.setAAD(Buffer.from(connectionId));
-  decipher.setAuthTag(bytes.subarray(12, 28));
-  return decodeRetried(
-    Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString("utf8")
-  );
-};
-
 const newTokens = () => ({
   accessToken: `pwa_${randomToken(32)}`,
   refreshToken: `pwr_${randomToken(32)}`
@@ -202,6 +178,24 @@ const newTokens = () => ({
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const cryptography = yield* Cryptography.Cryptography;
+
+  /** The key only the rotated refresh token yields; its stored hash yields nothing. */
+  const retryKey = (refreshToken: string) =>
+    cryptography.hkdfSha256(refreshToken, "", "patchy agent connection retry", 32);
+  // Only this module seals a retry, under the token's own key; failing to seal or open one is a
+  // defect, not a refusal.
+  const sealRetry = (refreshToken: string, connectionId: string, tokens: typeof Retried.Type) =>
+    retryKey(refreshToken).pipe(
+      Effect.flatMap((key) => cryptography.seal(key, encodeRetried(tokens), connectionId)),
+      Effect.orDie
+    );
+  const openRetry = (refreshToken: string, connectionId: string, retry: string) =>
+    retryKey(refreshToken).pipe(
+      Effect.flatMap((key) => cryptography.open(key, retry, connectionId)),
+      Effect.map(decodeRetried),
+      Effect.orDie
+    );
 
   // Whether connection `c` of person `u` still works: not disconnected, its person active,
   // called (or connected) within 30 days, and made after the person's credentials last ended.
@@ -390,9 +384,10 @@ export const make = Effect.gen(function* () {
         if (!state.live) return "ended";
         if (state.current) {
           const next = newTokens();
+          const retry = yield* sealRetry(refreshToken, connectionId, next);
           yield* sql`
             UPDATE agent_connection_refresh_tokens
-            SET rotated_at = clock_timestamp(), retry = ${sealRetry(refreshToken, connectionId, next)}
+            SET rotated_at = clock_timestamp(), retry = ${retry}
             WHERE token_hash = ${tokenHash}`;
           const issued = yield* issue(connectionId, next);
           yield* sql`
@@ -401,7 +396,7 @@ export const make = Effect.gen(function* () {
           return issued;
         }
         if (state.retry !== null) {
-          const retried = openRetry(refreshToken, connectionId, state.retry);
+          const retried = yield* openRetry(refreshToken, connectionId, state.retry);
           const { seconds } = yield* secondsLeft(sha256(retried.accessToken)).pipe(
             Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
           );

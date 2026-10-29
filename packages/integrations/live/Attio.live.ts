@@ -13,6 +13,7 @@ import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import * as Source from "../src/attio/Source.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Attio connections against Attio itself: Patchy's probe workspace, read with its read-only key.
@@ -44,7 +45,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   Live.layer
-).pipe(Layer.provideMerge(Testing.layer()));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
 
 afterAll(Live.summary);
 

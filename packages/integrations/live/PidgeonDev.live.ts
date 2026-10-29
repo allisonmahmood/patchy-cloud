@@ -5,7 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, DevReadsGroup, type PidgeonSnapshot, WIRE_VERSION } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { sha256 } from "@patchy/core";
+import { sha256, NodeCryptography } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import { Binding, LoadedVersions, Runtime, RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
@@ -109,7 +109,8 @@ const door = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: t
     CredentialKeys.layerFromKeys(Redacted.make(`test:${Buffer.alloc(32, 7).toString("base64")}`))
   ),
   Layer.provideMerge(Testing.layer()),
-  Layer.merge(swept)
+  Layer.merge(swept),
+  Layer.provide(NodeCryptography.layer)
 );
 
 type Pidgeon = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;

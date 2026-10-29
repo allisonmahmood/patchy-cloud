@@ -27,6 +27,7 @@ import {
   signHandshake,
   signSession
 } from "./testing.js";
+import { NodeCryptography } from "@patchy/core";
 
 const localRevocation = Layer.effect(
   Session.Session,
@@ -79,7 +80,8 @@ const layer = HttpRouter.serve(Layer.mergeAll(AuthPages.layer, receiptProbes), {
   Layer.provide(Analytics.layerNoop),
   Layer.provide(Limits.layer),
   Layer.provide(Testing.layer()),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
+  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
+  Layer.provide(NodeCryptography.layer)
 );
 
 it.layer(layer)("auth pages on a socket", (it) => {

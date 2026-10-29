@@ -28,6 +28,7 @@ import { AgentConnections, MachineTokens } from "@patchy/auth";
 import * as Inspection from "@patchy/execution/inspection";
 import { DEV_SEED, mintDevAgentConnection } from "@patchy/auth/seed";
 import { html, publish, publishBody, send, server } from "./test/server.js";
+import { NodeCryptography } from "@patchy/core";
 
 const BASE = "http://patchy-door.localhost:29276";
 const HOST = "patchy-door.localhost:29276";
@@ -134,7 +135,7 @@ const mint = mintDevAgentConnection({
   email: DEV_SEED.email,
   clientName: "Codex",
   clientId: "http://127.0.0.1:4100/dev/mcp-token"
-}).pipe(Effect.provide(AgentConnections.layer));
+}).pipe(Effect.provide(AgentConnections.layer.pipe(Layer.provide(NodeCryptography.layer))));
 
 const initialize = {
   jsonrpc: "2.0",
@@ -464,7 +465,7 @@ it.layer(
           email: person.email,
           clientName: "Claude Code",
           clientId: "http://127.0.0.1:4100/dev/mcp-token"
-        }).pipe(Effect.provide(AgentConnections.layer));
+        }).pipe(Effect.provide(AgentConnections.layer.pipe(Layer.provide(NodeCryptography.layer))));
         const found = (yield* toolCall(token, "find_patches", {})).structuredContent as {
           total: number;
           patches: ReadonlyArray<{ name: string; address: string }>;

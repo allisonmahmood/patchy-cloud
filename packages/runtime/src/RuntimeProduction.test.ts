@@ -30,6 +30,7 @@ import * as RuntimeLog from "./RuntimeLog.js";
 import * as CompanyAdmission from "./CompanyAdmission.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as StreamAdmission from "./StreamAdmission.js";
+import { NodeCryptography } from "@patchy/core";
 
 const NOW = 1_800_000_000_000;
 const liveSession = {
@@ -125,7 +126,7 @@ const dependencies = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(Layer.merge(NodeCrypto.layer, NodeCryptography.layer)));
 
 const admit = Effect.fn("RuntimeProductionTest.admit")(function* (token = signSession()) {
   yield* TestClock.setTime(NOW);
