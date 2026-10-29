@@ -135,7 +135,7 @@ export const checkBundle = Effect.fn("checkBundle")(function* (html: string, tie
   });
   if (inspection.dependencies.length)
     return yield* new LocalError({
-      message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline resources in the HTML; use Patchy integrations instead of external dependencies.`
+      message: `The HTML bundle is not self-contained or uses unsupported external dependencies:\n- ${inspection.dependencies.join("\n- ")}\nInline every resource in the HTML, for example as a data: URL.`
     });
   const bytes = Buffer.byteLength(html, "utf8");
   const maxBytes = tier === 0 ? DEFAULT_MAX_HTML_BYTES : maxBundleBytes;

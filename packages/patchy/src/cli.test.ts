@@ -111,8 +111,8 @@ describe("the exit-code ladder", async () => {
     const text = await runCli(["validate", file], { stateDir: dir });
     expect(text.status).toBe(1);
     expect(text.stdout).toBe("");
-    expect(text.stderr).toMatch(
-      /^The HTML bundle is not self-contained or uses unsupported external dependencies:\n- <script> src is not embedded/
+    expect(text.stderr).toBe(
+      "The HTML bundle is not self-contained or uses unsupported external dependencies:\n- <script> src is not embedded\nInline every resource in the HTML, for example as a data: URL.\n"
     );
 
     const json = await runCli(["validate", file, "--json"], { stateDir: dir });
