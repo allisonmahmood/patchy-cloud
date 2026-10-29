@@ -1,6 +1,7 @@
+import { parseExpression } from "@babel/parser";
+import type { Node, ObjectExpression, ObjectProperty } from "@babel/types";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import ts from "typescript";
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -70,6 +71,18 @@ export function installFailureReason(output: string) {
   return defined.length === 0 ? undefined : defined.map(redact).join(": ").slice(0, 300);
 }
 
+/** A parsed node's source offsets; Babel records them on every node it parses. */
+const span = (node: Node) => ({ start: node.start!, end: node.end! });
+
+/** The object's properties whose JSON key is `key`. */
+const keyed = (object: ObjectExpression, key: string) =>
+  object.properties.filter(
+    (property): property is ObjectProperty =>
+      property.type === "ObjectProperty" &&
+      property.key.type === "StringLiteral" &&
+      property.key.value === key
+  );
+
 /** Edit one managed dependency without rewriting author-owned fields or formatting. */
 export function patchPackagePin(
   source: string,
@@ -79,34 +92,21 @@ export function patchPackagePin(
 ) {
   const decoded = decode(source);
   if (Option.isNone(decoded) || decoded.value.devDependencies[name] !== expected) return undefined;
-  const file = ts.parseJsonText("package.json", source);
-  const statement = file.statements[0];
-  if (!statement || !ts.isExpressionStatement(statement)) return undefined;
-  const root = statement.expression;
-  if (!ts.isObjectLiteralExpression(root)) return undefined;
-  const dependencies = root.properties
-    .filter(
-      (property): property is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(property) &&
-        ts.isStringLiteral(property.name) &&
-        property.name.text === "devDependencies"
-    )
-    .at(-1)?.initializer;
-  if (!dependencies || !ts.isObjectLiteralExpression(dependencies)) return undefined;
-  const matches = dependencies.properties.filter(
-    (property): property is ts.PropertyAssignment =>
-      ts.isPropertyAssignment(property) &&
-      ts.isStringLiteral(property.name) &&
-      property.name.text === name
-  );
+  // Valid JSON is a JavaScript expression. Recovery tolerates what JSON allows and JavaScript
+  // refuses, such as a repeated "__proto__" key.
+  const root = parseExpression(source, { errorRecovery: true });
+  if (root.type !== "ObjectExpression") return undefined;
+  const dependencies = keyed(root, "devDependencies").at(-1)?.value;
+  if (dependencies?.type !== "ObjectExpression") return undefined;
+  const matches = keyed(dependencies, name);
   // Removing an effective duplicate would expose an older unmanaged value.
   if (matches.length > 1) return undefined;
   const property = matches[0];
   if (!property) {
     if (replacementLiteral === undefined) return { contents: source, previousLiteral: undefined };
-    const opening = dependencies.getStart(file) + 1;
+    const opening = span(dependencies).start + 1;
     const first = dependencies.properties[0];
-    const start = first?.getStart(file) ?? opening;
+    const start = first ? span(first).start : opening;
     const separator = first ? `,${source.slice(opening, start)}` : "";
     return {
       contents:
@@ -116,19 +116,20 @@ export function patchPackagePin(
       previousLiteral: undefined
     };
   }
-  const node = property.initializer;
-  if (!ts.isStringLiteral(node)) return undefined;
-  const previousLiteral = source.slice(node.getStart(file), node.end);
+  const node = property.value;
+  if (node.type !== "StringLiteral") return undefined;
+  const literal = span(node);
+  const previousLiteral = source.slice(literal.start, literal.end);
   if (replacementLiteral !== undefined) {
     return {
-      contents: source.slice(0, node.getStart(file)) + replacementLiteral + source.slice(node.end),
+      contents: source.slice(0, literal.start) + replacementLiteral + source.slice(literal.end),
       previousLiteral
     };
   }
   const index = dependencies.properties.indexOf(property);
   const previous = dependencies.properties[index - 1];
   const next = dependencies.properties[index + 1];
-  const start = previous ? previous.end : property.getStart(file);
-  const end = !previous && next ? next.getStart(file) : property.end;
+  const start = previous ? span(previous).end : span(property).start;
+  const end = !previous && next ? span(next).start : span(property).end;
   return { contents: source.slice(0, start) + source.slice(end), previousLiteral };
 }

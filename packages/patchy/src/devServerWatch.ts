@@ -4,6 +4,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -168,7 +169,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
       }
     }
     if (!same(sources?.agentFiles ?? [], agentFiles)) {
-      const skipped = agentTypecheckWarning(root, agentFiles);
+      const skipped = yield* agentTypecheckWarning(root, agentFiles);
       if (skipped !== undefined) yield* Console.log(skipped);
     }
     const previous = builder;
@@ -189,7 +190,11 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
     return true;
   });
   changed();
-  return Effect.gen(function* (): Effect.fn.Return<ServerBuild, LocalError, FileSystem.FileSystem> {
+  return Effect.gen(function* (): Effect.fn.Return<
+    ServerBuild,
+    LocalError,
+    FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+  > {
     while (true) {
       const change = yield* Queue.take(changes);
       if (isLocalError(change)) return yield* change;

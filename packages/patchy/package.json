@@ -76,6 +76,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@babel/parser": "8.0.8",
+    "@babel/types": "8.0.8",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pglite": "catalog:",
     "@effect/vitest": "catalog:",

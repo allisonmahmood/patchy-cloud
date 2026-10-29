@@ -507,7 +507,7 @@ export const generate = Effect.fn("Project.generate")(function* (
         });
       removedKind = declaration.kind;
     }
-    // Static loading makes every lightweight command initialize TypeScript, including delete.
+    // Static loading makes every lightweight command load the parser, including delete.
     const { editUses, isUsesEditRefused } = yield* localIO(
       "Load config editor",
       () => import("./editUses.js")

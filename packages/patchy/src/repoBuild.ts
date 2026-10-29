@@ -255,7 +255,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
   const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
-  const skipped = agentTypecheckWarning(cwd, agentFiles);
+  const skipped = yield* agentTypecheckWarning(cwd, agentFiles);
   if (skipped !== undefined) warnings.push(skipped);
   if (serverModules !== undefined)
     yield* fs.readFileString(path.join(cwd, "package.json")).pipe(

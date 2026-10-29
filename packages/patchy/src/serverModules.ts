@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- TypeScript reports tsconfig files as resolved paths.
+// @effect-diagnostics nodeBuiltinImport:off -- TypeScript reports tsconfig files as paths for the repo's own Node.
 import * as path from "node:path";
+import { parse } from "@babel/parser";
 import {
   HandlerModuleName,
   agentAreaRefusal,
@@ -11,11 +12,12 @@ import {
 } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import ts from "typescript";
 import { LocalError } from "./CliError.js";
 import { serverAgentModule } from "./handlerDescriptors.js";
 import { safePath } from "./ManagedProject.js";
+import { processResult } from "./processResult.js";
 
 const isModuleName = Schema.is(HandlerModuleName);
 const sourcePath = (root: string, relative: string) =>
@@ -93,26 +95,40 @@ export const discoverAgentFiles = Effect.fn("discoverAgentFiles")(
   })
 );
 
+const decodeShownConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ files: Schema.optionalKey(Schema.Array(Schema.String)) }))
+);
+
 /**
  * The warning for a `tsconfig.json` whose files leave out an agent file. Nothing imports `agent/`,
- * so `tsc` checks it only through `include`; an older repo's list predates the folder.
+ * so `tsc` checks it only through `include`; an older repo's list predates the folder. The repo's
+ * own compiler lists the files (`tsc --showConfig`), so `include`, `exclude` and `extends` mean
+ * what they mean to `pnpm typecheck`.
  */
-export const agentTypecheckWarning = (root: string, files: readonly string[]) => {
+export const agentTypecheckWarning = Effect.fn("agentTypecheckWarning")(function* (
+  root: string,
+  files: readonly string[]
+) {
   if (files.length === 0) return undefined;
-  const configPath = path.resolve(root, "tsconfig.json");
-  // Without a readable tsconfig.json, publish's own typecheck reports the problem.
-  if (!ts.sys.fileExists(configPath)) return undefined;
-  const { config, error } = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (error !== undefined) return undefined;
-  const checked = new Set(
-    ts
-      .parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath), undefined, configPath)
-      .fileNames.map((file) => path.resolve(file))
+  const shown = yield* processResult(root, process.execPath, [
+    path.join(root, "node_modules/typescript/bin/tsc"),
+    "--showConfig",
+    "-p",
+    "tsconfig.json"
+  ]).pipe(Effect.option);
+  // TypeScript 6 refuses a config that matches no files (TS18003); 7 prints it without `files`.
+  const config = Option.flatMap(shown, (result) =>
+    result.stdout.includes("error TS18003")
+      ? Option.some({ files: [] })
+      : decodeShownConfig(result.stdout)
   );
+  // Without a compiler or a readable tsconfig.json, publish's own typecheck reports the problem.
+  if (Option.isNone(config)) return undefined;
+  const checked = new Set((config.value.files ?? []).map((file) => path.resolve(root, file)));
   return files.every((file) => checked.has(path.resolve(root, "agent", `${file}.ts`)))
     ? undefined
     : 'tsconfig.json doesn\'t include agent/, so pnpm typecheck skips your agent tools. Add "agent" to its include list.';
-};
+});
 
 /** Refresh owns the generated module list; publish must not silently repair it. */
 export const validateGeneratedServerModules = Effect.fn("validateGeneratedServerModules")(
@@ -129,15 +145,19 @@ export const validateGeneratedServerModules = Effect.fn("validateGeneratedServer
           })
       )
     );
-    const source = ts.createSourceFile(file, contents, ts.ScriptTarget.Latest, true);
+    const { program } = yield* Effect.try({
+      try: () => parse(contents, { sourceType: "module", plugins: ["typescript"] }),
+      catch: (cause) =>
+        new LocalError({
+          code: "stale_generated",
+          message: "The generated server module list is unreadable; run `patchy refresh`.",
+          cause
+        })
+    });
     const generated: string[] = [];
-    for (const statement of source.statements) {
-      if (
-        ts.isImportDeclaration(statement) &&
-        statement.importClause?.isTypeOnly &&
-        ts.isStringLiteral(statement.moduleSpecifier)
-      ) {
-        const match = /^\.\.\/\.\.\/server\/([^/]+)\.js$/.exec(statement.moduleSpecifier.text);
+    for (const statement of program.body) {
+      if (statement.type === "ImportDeclaration" && statement.importKind === "type") {
+        const match = /^\.\.\/\.\.\/server\/([^/]+)\.js$/.exec(statement.source.value);
         if (match !== null) generated.push(match[1]!);
       }
     }
