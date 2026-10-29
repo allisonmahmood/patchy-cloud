@@ -325,8 +325,8 @@ An environment is this instance plus what a multi-person check or demo needs:
   `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`.
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
-is three people and no patches; `brightline` is a five-person agency with tier 0
-and 2 patches, agent areas on two of its tier 2 ones and agent access on, and takes
+is three people and no patches; `brightline` is a five-person agency with tier 2
+patches and a single-file tier 1 page, agent areas on two of its tier 2 ones and agent access on, and takes
 about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through

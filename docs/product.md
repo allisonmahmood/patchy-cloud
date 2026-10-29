@@ -110,7 +110,7 @@ PGlite and fixtures. See [Tier 2](#tier-2--hosted) for the execution contract.
 ### Building a patch
 
 `patchy init [dir] --purpose <text>` starts a patch repo, defaulting to tier 1.
-`--tier 0` and `--tier 2` are available. Choose tier 2 for enforced rules, atomic
+`--tier 2` is available. Choose tier 2 for enforced rules, atomic
 multi-row writes or server-side work such as combining connection data before
 the viewer sees it. Live sync and sequential operations already work on tier 1.
 Init authenticates first, names the instance and identity, and lays down config,
@@ -146,7 +146,7 @@ skill paths, runtime-check guidance and the generated-index pointer.
 never a production-data shortcut, except for an integration that reads the real
 connection in dev, today PostHog, Pidgeon and Attio ([Development](#development)).
 
-For tiers 0, 1 and 2, a new `patchy dev` session checks the pin, CLI and runtime
+For tiers 1 and 2, a new `patchy dev` session checks the pin, CLI and runtime
 against the instance release, then authenticates as the machine token's user. It
 refreshes declarations and pulls the published inventory when the repo has an id;
 a second `patchy dev` joins the running session and fetches nothing. It provisions the same
