@@ -284,3 +284,28 @@ it.live(
     }),
   30_000
 );
+
+it.live(
+  "inspects historical strict SDK requests without inferring guest permission",
+  () =>
+    Effect.gen(function* () {
+      const legacy = `export default { async fetch(request) {
+      const input = await request.json();
+      if (Object.keys(input).some(key => key !== "wire" && key !== "type"))
+        return Response.json({ ok: false, source: "patchy", code: "invalid_request", error: "Invalid guest request." });
+      return Response.json({ ok: true, handlers: {
+        "demo.read": { kind: "query", args: {}, result: { kind: "text" } },
+        "agent.read": { kind: "query", agentTool: true, args: {}, result: { kind: "text" } }
+      } });
+    } };`;
+      const handlers = yield* Inspection.inspect(legacy);
+      expect(handlers["demo.read"]).not.toHaveProperty("guest");
+      expect(handlers["agent.read"]).toEqual({
+        kind: "query",
+        agentTool: true,
+        args: {},
+        result: { kind: "text" }
+      });
+    }),
+  30_000
+);

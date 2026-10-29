@@ -581,3 +581,9 @@ The follow-up implementation of #1036 and #1037 will enable them together.
 An admitted guest read will be able to call internal queries without marking
 those queries for direct guest entry, under the same guest, grant, patch,
 read-only and source limits.
+
+Inspection requests guest metadata through the existing `describe` request's
+optional `includeGuestPermissions: true` field. Omission returns the historical
+descriptors, preserving `agentTool` and stripping only `guest`. Inspection retries
+a historical SDK's explicitly rejected extension with the legacy request; missing
+guest metadata grants no guest entry. New bundles keep loading on older servers.

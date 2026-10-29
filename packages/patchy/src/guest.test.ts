@@ -446,3 +446,30 @@ it.each(["owned", "shared"] as const)(
     });
   }
 );
+
+it("opts into guest metadata only for inspection and preserves legacy agent permissions", async () => {
+  const read = server.query({ guest: true, args: {}, result: t.boolean(), handler: () => true });
+  const plain = server.query({ args: {}, result: t.boolean(), handler: () => true });
+  const guest = createGuest({ demo: { read, plain } }, [], { tools: { plain } });
+  for (const includeGuestPermissions of [false, true]) {
+    const response = await guest.fetch(
+      new Request("https://guest/", {
+        method: "POST",
+        body: JSON.stringify({
+          wire: 1,
+          type: "describe",
+          ...(includeGuestPermissions ? { includeGuestPermissions: true } : {})
+        })
+      }),
+      undefined,
+      { props: {} }
+    );
+    const { handlers } = (await response.json()) as { handlers: Record<string, object> };
+    assert.deepStrictEqual(
+      handlers["demo.read"],
+      includeGuestPermissions ? read.descriptor : plain.descriptor
+    );
+    assert.deepStrictEqual(handlers["demo.plain"], plain.descriptor);
+    assert.deepStrictEqual(handlers["agent.plain"], { ...plain.descriptor, agentTool: true });
+  }
+});

@@ -379,7 +379,13 @@ export function createGuest(
         return json({
           ok: true,
           handlers: Object.fromEntries(
-            [...handlers].map(([name, entry]) => [name, entry.descriptor])
+            [...handlers].map(([name, entry]) => {
+              if (input.includeGuestPermissions === true) return [name, entry.descriptor];
+              // Older execution loaders strictly decode this reply. Preserve their contract;
+              // omission conveys no guest permission, never permission inferred from the kind.
+              const { guest: _guest, ...legacy } = entry.descriptor;
+              return [name, legacy];
+            })
           )
         });
       const entry = handlers.get(input.handler);

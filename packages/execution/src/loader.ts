@@ -72,15 +72,27 @@ const endedCallback = (reference: AttemptReference) =>
 const identity = (binding: GuestProtocol.BundleBinding) =>
   JSON.stringify([binding.companyId, binding.patchId, binding.versionId]);
 
-async function describe(worker: Worker): Promise<GuestProtocol.InspectionReply> {
-  const response = await worker.getEntrypoint(undefined, { props: {} }).fetch("http://guest/", {
-    method: "POST",
-    body: JSON.stringify({
-      wire: GuestProtocol.wireVersion,
-      type: "describe"
-    } satisfies GuestProtocol.GuestRequest)
-  });
-  return decodeInspectionReply(await response.json());
+async function describe(
+  worker: Worker,
+  includeGuestPermissions = false
+): Promise<GuestProtocol.InspectionReply> {
+  const request = async (include: boolean) => {
+    const response = await worker.getEntrypoint(undefined, { props: {} }).fetch("http://guest/", {
+      method: "POST",
+      body: JSON.stringify({
+        wire: GuestProtocol.wireVersion,
+        type: "describe",
+        ...(include ? { includeGuestPermissions: true } : {})
+      } satisfies GuestProtocol.GuestRequest)
+    });
+    return decodeInspectionReply(await response.json());
+  };
+  const reply = await request(includeGuestPermissions);
+  // Historical SDKs strictly reject the extended inspection request. Retry their existing
+  // request only on that explicit refusal. Their reply has no guest permission to grant.
+  return includeGuestPermissions && !reply.ok && reply.code === "invalid_request"
+    ? request(false)
+    : reply;
 }
 
 function load(env: Environment, name: string | null, bundle: string): Worker {
@@ -238,7 +250,7 @@ export default {
       }
       try {
         // Unnamed Workers are request-owned; named entries remain cached by workerd.
-        return json(await describe(load(env, null, input.bundle)));
+        return json(await describe(load(env, null, input.bundle), true));
       } catch {
         return json(refusal("handler_failed", "The bundle could not be loaded."));
       }

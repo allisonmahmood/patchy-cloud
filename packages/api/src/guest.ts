@@ -78,7 +78,12 @@ export const Invoke = Schema.Struct({
 });
 export type Invoke = typeof Invoke.Type;
 export const GuestRequest = Schema.Union([
-  Schema.Struct({ wire: Schema.Literal(wireVersion), type: Schema.Literal("describe") }),
+  Schema.Struct({
+    wire: Schema.Literal(wireVersion),
+    type: Schema.Literal("describe"),
+    /** Inspection opts into guest metadata; omission preserves the historical reply. */
+    includeGuestPermissions: Schema.optionalKey(Schema.Literal(true))
+  }),
   Schema.Struct({
     wire: Schema.Literal(wireVersion),
     type: Schema.Literal("invoke"),

@@ -704,3 +704,11 @@ with a closed environment: the plan, `NODE_ENV=development`, a keyring generated
 once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
+
+Handler inspection extends the existing `describe` request with optional
+`includeGuestPermissions: true`; ordinary execution uses the legacy description.
+The SDK includes guest metadata only when requested. New inspection retries a
+historical SDK's `invalid_request` with the legacy request, retaining `agentTool`
+and treating absent guest metadata as no guest permission. The actual rollback
+rehearsal checks published artifacts across old → new → old → new; schema-only
+round trips do not establish compatibility.
