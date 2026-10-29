@@ -437,8 +437,13 @@ describe("guest runtime authority", () => {
         );
         assert.instanceOf(yield* call(runtime, published).pipe(Effect.flip), Runtime.AccessDenied);
         yield* call(runtime, next);
-        // The handshake does not expose scripted patches in customer-facing sharing.
-        assert.deepStrictEqual(yield* patches.sharedWithGuest(claims.sub, PUBLIC_BASE_URL), []);
+        // Discovery follows the current eligible tier 1 contract and existing grant.
+        assert.deepStrictEqual(
+          (yield* patches.sharedWithGuest(claims.sub, PUBLIC_BASE_URL)).map(
+            (share) => share.patchId
+          ),
+          [published.patchId]
+        );
         yield* patches.rollback(published.patchId, actor, 1);
         assert.instanceOf(yield* call(runtime, next).pipe(Effect.flip), Runtime.AccessDenied);
         yield* call(runtime, published, "me", freshPrincipal);

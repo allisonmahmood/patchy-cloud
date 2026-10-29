@@ -445,12 +445,12 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [...ownerRouteErrors, GuestShareRefused, AccountLookupUnavailable, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Share a current live company-private tier 0 patch with an existing member/admin of another Patchy company by email. " +
+        "Share a current live company-private tier 0 or tier 1 patch with an existing member/admin of another Patchy company by email. " +
           "The owner or a company admin may share. Resolves the existing membership at share time and binds immediately to its stable Clerk ID. " +
-          "No account, invitation or email is created. Unknown accounts, same-company members, ended/deactivated guests, duplicate active grants " +
+          "No account, invitation or email is created. Unknown accounts, active same-company members, deactivated guests, duplicate active grants " +
           "and ineligible patches answer 409 with a reason code. Lookup failure answers 503 and creates no guest authority. " +
           "Non-owners answer 403; another company answers 404. Uses the protected API rate limit and the sharing body cap. " +
-          "The grant follows future eligible current versions; tiers 1 and 2 remain unavailable to guests."
+          "The grant follows future eligible current versions and their newly declared owned resources. Tier 1 guests may read all declared patch-owned tables/files, including data hidden by the page; other resources and writes are refused. Tier 2 remains unavailable to guests."
       )
     ),
     HttpApiEndpoint.get("namedGrants", "/patches/:patchId/grants", {
@@ -761,7 +761,7 @@ const runtimeAdmission =
   "the same stream and snapshot paths, rechecking authority before new work and reconnect. Writes, " +
   "uploads/staging, undeclared resources, other patches' shared resources, directory reads, company " +
   "connections and tier 2 calls are refused even if labelled read. Download URLs confer no authority " +
-  "without the live session, grant and current version. Customer-facing tier 1 sharing stays disabled. " +
+  "without the live session, grant and current version. Private tier 1 patches support named guest sharing; tier 2 guest sharing remains refused. " +
   "Request events, subscription events and call logs retain the real " +
   "guest and grant; member log IDs and the member wire shape stay unchanged. " +
   "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +

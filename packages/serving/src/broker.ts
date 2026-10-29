@@ -276,6 +276,19 @@ function mount(frame: HTMLIFrameElement): void {
     if (closed) return;
     stop();
     frame.remove();
+    // A guest document loses authority on publish/rollback as well as revocation.
+    // Re-enter the normal serving door: it selects the current version or refuses access.
+    if (
+      code === "access_denied" &&
+      principal !== null &&
+      "guestId" in principal &&
+      base !== undefined
+    ) {
+      const url = new URL(location.href);
+      url.pathname = base.split("/~v/", 1)[0]! + url.pathname.slice(base.length);
+      location.replace(url.href);
+      return;
+    }
     location.replace(
       `/~shell/notice/${code}?return=${encodeURIComponent(location.pathname + location.search + location.hash)}`
     );
@@ -917,9 +930,12 @@ function mount(frame: HTMLIFrameElement): void {
     });
   };
   if (pinned) {
-    const viewerId = frame.dataset.viewerId;
-    if (!viewerId) return notice("bootstrap_failed");
-    principal = { userId: viewerId };
+    try {
+      principal = decodePrincipal(JSON.parse(frame.dataset.principal ?? "null"));
+      if (principal === null) return notice("bootstrap_failed");
+    } catch {
+      return notice("bootstrap_failed");
+    }
     startStream();
   }
   // Install the one-shot load handoff before permitting the initial document to load.

@@ -192,7 +192,7 @@ const publish = (
 
 it.layer(layer)("pages", (it) => {
   it.effect(
-    "admits only a granted current live private tier 0 page with the real guest actor",
+    "admits only granted current live private tier 0 and 1 versions with the real guest actor",
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -282,10 +282,13 @@ it.layer(layer)("pages", (it) => {
         assert.strictEqual((yield* get(patch.path, headers)).status, 404);
         yield* patches.restore(patch.patchId, actor);
         assert.strictEqual((yield* get(patch.path, headers)).status, 200);
-        // Scripted tiers remain outside this first guest path, even with a live grant.
+        // Tier 1 uses the same door; tier 2 stays closed even with a live grant.
         for (const tier of [1, 2, 0]) {
           yield* sql`UPDATE patch_versions SET tier = ${tier} WHERE id = ${newer.versionId}`;
-          assert.strictEqual((yield* get(patch.path, headers)).status, tier === 0 ? 200 : 404);
+          assert.strictEqual(
+            (yield* get(patch.path, headers)).status,
+            tier === 0 || tier === 1 ? 200 : 404
+          );
         }
         yield* patches.revokeGuest(patch.patchId, guest.id, actor);
         assert.strictEqual((yield* get(patch.path, headers)).status, 404);

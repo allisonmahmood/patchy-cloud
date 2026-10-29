@@ -6,6 +6,7 @@ import { HandlerError, decodeHandlerError } from "./handlerError.js";
 import { WIRE_VERSION } from "./release.js";
 import type { QueryDriver, QueryFrame } from "./queryRegistry.js";
 import { serverReplyTimeoutMs as serverReplyTimeout } from "@patchy/api/query-config";
+import type { RuntimeGuest } from "@patchy/api";
 import type { HandlerKindName } from "./server.js";
 
 export type Operation =
@@ -50,6 +51,9 @@ export interface Transport {
   handlerKind(name: string): HandlerKindName | undefined;
   close(): void;
 }
+/** Tier 1 guest identity; it conveys no member or admin authority. */
+export type GuestMe = RuntimeGuest;
+
 export interface Me {
   readonly user: { readonly id: string; readonly name: string; readonly email: string };
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };

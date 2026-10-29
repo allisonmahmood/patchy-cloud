@@ -6,7 +6,7 @@ import {
   htmlPage,
   shellStyles
 } from "@patchy/core/html";
-import type { HandlerKind } from "@patchy/api";
+import type { HandlerKind, RuntimePrincipal } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
 export { brokerScript, brokerDigest } from "./generated/broker-script.js";
@@ -28,7 +28,7 @@ interface PatchPage {
   };
   readonly html: string;
   readonly scope: "company" | "public" | "local";
-  readonly viewerId?: string;
+  readonly principal?: RuntimePrincipal;
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
@@ -44,7 +44,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   const scripted = options.version.tier >= 1;
   if (scripted && (!options.nonce || !options.base))
     throw new Error("A scripted shell needs its document nonce and address base.");
-  if (scripted && options.scope !== "public" && !options.viewerId)
+  if (scripted && options.scope !== "public" && !options.principal)
     throw new Error("A company or local shell needs its admitted viewer.");
   const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce ?? "")}`;
   return `<!doctype html>
@@ -69,7 +69,7 @@ export function renderPatchWrapper(options: PatchPage): string {
     ${scripted ? 'allow="clipboard-write *"' : ""}
     ${
       scripted
-        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
+        ? `data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-principal="${escapeAttribute(JSON.stringify(options.principal))}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"`
         : `srcdoc="${escapeAttribute(framedDocument(options.html))}"`
     }
     ${scripted && options.version.tier === 2 ? `data-handler-kinds="${escapeAttribute(JSON.stringify(options.handlerKinds ?? {}))}"` : ""}></iframe>

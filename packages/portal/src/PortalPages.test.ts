@@ -487,7 +487,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`UPDATE companies SET name = 'B & <Co>' WHERE id = ${b.id}`;
         const own = yield* publish(a.owner, "own-company-page");
-        const first = yield* publish(b.owner, "b-shared", { title: "Brief & <review>" });
+        const first = yield* publish(b.owner, "b-shared", {
+          title: "Brief & <review>",
+          manifest: { ...manifest, name: "b-shared", tier: 1 }
+        });
         const second = yield* publish(c.owner, "c-shared");
         const unrelated = yield* publish(b.owner, "unrelated-page");
         yield* patches.shareGuest(first.patchId, a.member.email, actor(b.owner));
@@ -542,7 +545,20 @@ it.layer(layer)("portal pages on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company();
       const other = yield* company();
-      const patch = yield* publish(workspace.owner, "guest-brief");
+      const patch = yield* publish(workspace.owner, "guest-brief", {
+        manifest: {
+          ...manifest,
+          tier: 1,
+          tables: {
+            notes: {
+              description: "Raw notes & <details>",
+              columns: { body: { kind: "text" } },
+              indexes: {}
+            }
+          },
+          files: { docs: { description: "Every document" } }
+        }
+      });
       const fields = { expectedPatchId: patch.patchId, email: other.owner.email };
       const path = cardPath(patch.name);
       const patches = yield* Patches.Patches;
@@ -557,6 +573,16 @@ it.layer(layer)("portal pages on a socket", (it) => {
       assert.include(text(settings), other.owner.name);
       assert.include(text(settings), other.owner.email);
       assert.include(text(settings), "Has access");
+      assert.include(text(settings), "Table: notes");
+      assert.include(text(settings), "File store: docs");
+      assert.include(settings, "Raw notes &amp; &lt;details&gt;");
+      assert.include(text(settings), "including raw rows and files this page does not display");
+      const roster = yield* patches.companyGuests(workspace.id);
+      assert.strictEqual(
+        roster.find(({ guest }) => guest.clerkUserId === other.owner.clerkUserId)?.grants[0]
+          ?.access,
+        "active"
+      );
       assert.include(settings, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}"`);
       const guests = yield* patches.namedGrants(patch.patchId, actor(workspace.owner));
       assert.lengthOf(guests, 1);
@@ -669,7 +695,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         assert.strictEqual(refused.status, 409);
         assert.include(
           text(yield* refused.text),
-          "Named sharing requires a current live company-private tier 0 patch."
+          "Named sharing requires a current live company-private tier 0 or tier 1 patch."
         );
         assert.strictEqual(
           (yield* post(`${path}/guest-revoke`, workspace.owner, {
@@ -678,7 +704,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           })).status,
           303
         );
-        for (const tier of [1, 2] as const) {
+        for (const tier of [2] as const) {
           const tool = yield* publish(workspace.owner, `guest-tool-${tier}`, {
             manifest: { ...manifest, name: `guest-tool-${tier}`, tier }
           });

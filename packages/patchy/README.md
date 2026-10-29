@@ -367,7 +367,7 @@ Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.
 On a company patch, every viewer who can open it can read and write all its own
 tables and files; there are no row rules or separate write scopes. Shared tables
 and stores are read-only, Postgres integrations perform constrained reads as the role
-the admin supplied, and PostHog connections run read-only HogQL with the admin's key. On a public tier 1 patch, `me()` returns null, but signed-in
+the admin supplied, and PostHog connections run read-only HogQL with the admin's key. On a private tier 1 patch, `me()` returns the existing member `Me` or an explicit `GuestMe` with `kind: "guest"`, a separate `guest` identity, company id, patch/version and grant id; it has no member `user` or admin powers. Named guests can read every declared patch-owned table/file, including raw data the page hides, and cannot write or use shared resources, the member directory or connections. On a public tier 1 patch, `me()` returns null, but signed-in
 company members can read the declared member directory. Anonymous viewers and
 viewers outside the company cannot read it. Tables, files and integrations still
 fail with `not_available_on_public`, even for company members.

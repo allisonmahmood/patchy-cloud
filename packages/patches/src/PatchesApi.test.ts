@@ -3813,7 +3813,10 @@ it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
           userName: "Recipient"
         });
         const first = yield* owner.publish({
-          payload: publishRequest({ html: html("Named first") })
+          payload: publishRequest({
+            html: html("Named first"),
+            manifest: { ...Fixtures.manifest, tier: 1 }
+          })
         });
         const second = yield* owner.publish({
           payload: publishRequest({ html: html("Named second") })
@@ -4081,7 +4084,7 @@ it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
         const blocked = yield* Guests.findById(first.guestId);
         assert.instanceOf(blocked?.endedAt, Date);
         assert.instanceOf(blocked?.deactivatedAt, Date);
-        for (const state of ["public", "retired", "deleted", "tier1", "tier2"] as const) {
+        for (const state of ["public", "retired", "deleted", "tier2"] as const) {
           const ineligible = yield* owner.publish({
             payload: publishRequest({ html: html(`Ineligible ${state}`) })
           });
@@ -4091,8 +4094,8 @@ it.layer(Layer.fresh(publishLayer))("existing-member named sharing", (it) => {
           if (state === "retired")
             yield* owner.retire({ ...options, payload: new ForceRequest({}) });
           if (state === "deleted") yield* owner.delete({ ...options, query: {} });
-          if (state === "tier1" || state === "tier2")
-            yield* sql`UPDATE patch_versions SET tier = ${state === "tier1" ? 1 : 2} WHERE id = ${ineligible.versionId}`;
+          if (state === "tier2")
+            yield* sql`UPDATE patch_versions SET tier = 2 WHERE id = ${ineligible.versionId}`;
           const response = yield* owner.shareGuest({
             ...options,
             payload: new GuestShareRequest({ email: "unknown@named.example" }),

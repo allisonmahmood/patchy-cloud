@@ -342,7 +342,7 @@ it("shares the supplied transport with generated aliases and exposes shared read
 
 it("infers the owned facade and generated aliases without widening index, id, or write boundaries", () => {
   const root = new URL("../dist/", import.meta.url).pathname;
-  const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Me, type FileMetadata } from "patchy/client";
+  const source = `import { createClient, createSharedTable, createSharedStore, type Call, type QueryRegistry, type ErrorCode, type Me, type GuestMe, type FileMetadata } from "patchy/client";
 import { defineConfig, table, t, files, postgres, sharedTable, sharedStore, type Id } from "patchy/config";
 const config = defineConfig({ name: "notes", tier: 1, tables: {
   notes: table("Notes identified by id; parent links another note.", { title: t.text(), body: t.text().optional(), count: t.integer().default(0), parent: t.ref("notes").optional() }, { indexes: { byTitle: ["title"] } }),
@@ -353,6 +353,19 @@ const shared = { team: (alias: string, call: Call, queries: QueryRegistry) => cr
 const connections = { sales: (alias: string, call: Call) => ({ count: async () => 42 }) };
 const client = createClient<typeof config, typeof shared, typeof connections>(config, { shared, connections });
 async function use() {
+  const me = await client.me();
+  if (me !== null && "guest" in me) {
+    const guest: GuestMe = me;
+    const guestId: string = guest.guest.id;
+    const grantId: string = guest.grantId;
+    // @ts-expect-error guest identity is never a member-shaped viewer
+    guest.user.id;
+    // @ts-expect-error guest identity confers no admin flag
+    guest.admin;
+  } else if (me !== null) {
+    const member: Me = me;
+    const userId: string = member.user.id;
+  }
   const row = await client.tables.notes.insert({ title: "ok" });
   const id: Id<"notes"> = row.id;
   const title: string = row.title;

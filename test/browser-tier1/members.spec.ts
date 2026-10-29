@@ -22,7 +22,7 @@ test("public directory broker pins one private principal for calls, subscription
   const patch = await instance.publish("public", undefined, undefined, { uses });
   const shell = await context.request.get(patch.address);
   const html = await shell.text();
-  expect(html).not.toContain("data-viewer-id");
+  expect(html).not.toContain("data-principal");
   expect(html).not.toContain("usr_dev");
   const frame = await open(page, patch);
   await expect(frame.locator("#identity")).toHaveText("anonymous");

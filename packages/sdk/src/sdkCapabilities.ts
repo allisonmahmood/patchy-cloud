@@ -27,7 +27,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/_generated/client.ts"],
     runs: "Tier 1 and 2 pages through the hosted shell and patchy dev",
     limits:
-      "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
+      "Import by relative path. The generated implementation uses patchy/client; app code does not import it directly. Tier 2 uses server handlers, not direct named resources. Tier 1 me() returns a member or explicit guest identity; narrow before using member fields. Guests may read all declared owned tables/files, including hidden raw data, and have no writes or other-source access. me() is null on public tier 1 patches. Routing is shell-mediated; there is no outbound fetch or client storage."
   },
   {
     id: "core.generated-downloads",

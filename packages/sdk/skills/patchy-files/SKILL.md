@@ -135,6 +135,6 @@ Exercise this path in `patchy dev`, including cancelling and selecting again.
 
 Files are at most 20 MiB. Names are 1–512 UTF-8 bytes in slash-separated segments, with neither `.` nor `..` segments. Choose a content type matching the bytes. Uploaded HTML and SVG stay bytes; they are never served as active documents at a file URL. The sandbox allows blob/data images, fonts and media, not outbound URLs or in-frame downloads.
 
-Tier 1 file writes act as the viewer; tier 2 file writes act as the patch. Both are logged for company admins. Public patches cannot use stores (`not_available_on_public`). For `unknown_outcome` reconcile by reading the name before offering a deliberate retry, never automatically replaying a write.
+Tier 1 file writes act as the member viewer; named tier 1 guests have read-only access to every declared owned file, including files hidden by the page; tier 2 file writes act as the patch. Both are logged for company admins. Public patches cannot use stores (`not_available_on_public`). For `unknown_outcome` reconcile by reading the name before offering a deliberate retry, never automatically replaying a write.
 
 Omitting a store from config makes it unreachable to that version but keeps its data. Rollback and version cleanup never delete a patch's files. Local files live under `.patchy/`; deleting that directory destroys local files and rows. Keep reproducible local examples in source or fixtures, not production copies.

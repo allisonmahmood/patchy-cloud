@@ -67,7 +67,7 @@ export class GuestPatchIneligible extends Schema.TaggedError<GuestPatchIneligibl
   { patchId: Schema.String }
 ) {
   override get message() {
-    return "Named sharing requires a current live company-private tier 0 patch.";
+    return "Named sharing requires a current live company-private tier 0 or tier 1 patch.";
   }
 }
 
@@ -374,6 +374,8 @@ export interface Open {
 }
 
 export interface PortalCard extends ReadPatch {
+  /** The current served contract, including all owned data exposed to tier 1 guests. */
+  readonly manifest: typeof Manifest.Type;
   readonly versions: readonly {
     readonly id: string;
     readonly versionNumber: number;
@@ -706,6 +708,7 @@ class OpenRow extends Schema.Class<OpenRow>("OpenRow")({
   score: Schema.Number
 }) {}
 class PortalMetadataRow extends Schema.Class<PortalMetadataRow>("PortalMetadataRow")({
+  manifest: Manifest,
   description: Schema.NullOr(Schema.String),
   retired: Schema.NullOr(Schema.String),
   deleted: Schema.NullOr(Schema.String),
@@ -1344,8 +1347,10 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, patchId }) => sql`
       SELECT description_actor.name AS description, retired_actor.name AS retired,
         deleted_actor.name AS deleted, last_actor.name AS "lastChanged",
-        patches.last_changed_action AS "lastChangedAction"
+        patches.last_changed_action AS "lastChangedAction", current_version.manifest
       FROM patches
+      JOIN patch_versions current_version ON current_version.id = patches.current_version_id
+        AND current_version.patch_id = patches.id
       LEFT JOIN users description_actor ON description_actor.id = patches.description_updated_by
       LEFT JOIN users retired_actor ON retired_actor.id = patches.retired_by
       LEFT JOIN users deleted_actor ON deleted_actor.id = patches.deleted_by
@@ -1943,9 +1948,10 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(metadata)) return yield* new PatchUnavailable({ patchId });
       const versions = yield* portalVersionRows(patchId);
       const sources = yield* offSources({ patchId, companyId: access.companyId });
-      const { lastChangedAction, ...actorNames } = metadata.value;
+      const { manifest, lastChangedAction, ...actorNames } = metadata.value;
       return {
         ...card,
+        manifest,
         versions: versions.map((version) => ({ ...version, createdAt: iso(version.createdAt) })),
         offSources: sources.map(({ patchId: sourceId, table, store, state }) => {
           const name = card.reads.find((read) => read.patchId === sourceId)?.name;
@@ -2410,7 +2416,7 @@ export const make = Effect.gen(function* () {
     const version = yield* findVersionById({ patchId, versionId: patch.currentVersionId }).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
-    if (Option.isNone(version) || version.value.tier !== 0)
+    if (Option.isNone(version) || (version.value.tier !== 0 && version.value.tier !== 1))
       return yield* new GuestPatchIneligible({ patchId });
     const account = yield* (yield* Users.Users).findByEmail(email.trim());
     if (account === null) return yield* new AccountUnknown();
@@ -2494,11 +2500,11 @@ export const make = Effect.gen(function* () {
       patchId: Schema.String,
       name: Schema.NullOr(Schema.String),
       title: Schema.NullOr(Schema.String),
-      tier0: Schema.Boolean,
+      guestTier: Schema.Boolean,
       manageable: Schema.Boolean
     }),
     execute: (companyId) => sql`SELECT DISTINCT g.guest_id AS "guestId", g.patch_id AS "patchId",
-      patches.name, patches.title, COALESCE(v.tier = 0, false) AS "tier0",
+      patches.name, patches.title, COALESCE(v.tier IN (0, 1), false) AS "guestTier",
       (patches.id IS NOT NULL AND patches.disabled_at IS NULL) AS manageable
       FROM patch_guest_grants g
       LEFT JOIN patches ON patches.id = g.patch_id AND patches.company_id = g.company_id
@@ -2511,13 +2517,13 @@ export const make = Effect.gen(function* () {
     );
     const grants = new Map<string, CompanyGuest["grants"][number][]>();
     const rows = yield* companyGuestPatches(companyId).pipe(Effect.catchTags(dieOnSchemaError));
-    for (const { guestId, patchId, name, title, tier0, manageable } of rows) {
+    for (const { guestId, patchId, name, title, guestTier, manageable } of rows) {
       // The existing decision selects the latest grant, including terminal states.
       const found = yield* guestGrant(companyId, patchId, guestId);
       if (found === null) continue;
       const entries = grants.get(guestId) ?? [];
-      // As on Home and at the serving door, only current tier 0 versions support guests.
-      const access = found.access === "active" && !tier0 ? "unavailable" : found.access;
+      // As on Home and at the serving door, only current tier 0 and tier 1 versions support guests.
+      const access = found.access === "active" && !guestTier ? "unavailable" : found.access;
       entries.push({ ...found, access, name, title, manageable });
       grants.set(guestId, entries);
     }
@@ -2537,7 +2543,7 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions v ON v.id = patches.current_version_id AND v.patch_id = patches.id
       WHERE guest.clerk_user_id = ${clerkUserId}
         AND guest.ended_at IS NULL AND guest.deactivated_at IS NULL
-        AND g.ended_at IS NULL AND v.tier = 0
+        AND g.ended_at IS NULL AND v.tier IN (0, 1)
       ORDER BY companies.handle, patches.name, patches.id`
   });
   const sharedWithGuest = Effect.fn("Patches.sharedWithGuest")(function* (

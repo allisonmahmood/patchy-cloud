@@ -253,7 +253,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
           return HttpServerResponse.text(
             renderPatchWrapper({
               scope: "local",
-              viewerId: identity.user.id,
+              principal: { userId: identity.user.id },
               handlerKinds: handlerKinds(resources.version.manifest.handlers),
               patch: {
                 id: version.patchId,

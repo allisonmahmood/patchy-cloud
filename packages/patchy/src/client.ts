@@ -13,6 +13,7 @@ import {
   createPostMessageTransport,
   type Call,
   type Me,
+  type GuestMe,
   type Transport
 } from "./clientTransport.js";
 import { PatchyError } from "./clientError.js";
@@ -22,7 +23,7 @@ import { createDownload, type Download } from "./download.js";
 export * from "./clientError.js";
 export * from "./pidgeon.js";
 export * from "./attio.js";
-export type { Call, Me, Operation, Route, Transport } from "./clientTransport.js";
+export type { Call, Me, GuestMe, Operation, Route, Transport } from "./clientTransport.js";
 export { createServerClient, type ServerOnlyClient } from "./serverClient.js";
 export { isHandlerError } from "./handlerError.js";
 export type { HandlerErrorGuard, MutationUnknownOutcome } from "./server.js";
@@ -169,7 +170,7 @@ export type Client<
   readonly connections: FactoryResults<P>;
   readonly route: Transport["route"];
   readonly download: Download;
-  me(): Promise<Me | null>;
+  me(): Promise<Me | GuestMe | null>;
   close(): void;
 };
 export interface ClientManifest {
@@ -286,7 +287,7 @@ export function createClient<
   const transport = options.transport ?? createPostMessageTransport();
   const call = transport.call;
   const queries = createQueryRegistry(transport.queries);
-  let identity: Promise<Me | null> | undefined;
+  let identity: Promise<Me | GuestMe | null> | undefined;
   const urls = new Map<string, Map<string, Promise<string>>>();
   let closed = false;
   const sharedStoreClosers: Array<() => void> = [];
@@ -404,7 +405,7 @@ export function createClient<
     ...(manifest.uses.members?.kind === "members" ? { members: createMembers(call, queries) } : {}),
     route: transport.route,
     download: createDownload(call),
-    me: () => (identity ??= call("me", {}) as Promise<Me | null>),
+    me: () => (identity ??= call("me", {}) as Promise<Me | GuestMe | null>),
     close: () => {
       if (closed) return;
       closed = true;

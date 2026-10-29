@@ -28,7 +28,8 @@ export function App() {
     };
   }, []);
 
-  const meId = me?.user.id;
+  const member = me != null && "user" in me ? me : null;
+  const meId = member?.user.id;
 
   return (
     <div className="app">
@@ -38,15 +39,15 @@ export function App() {
           <h1 className="page-title">Kudos</h1>
           <p className="page-sub">Say thanks where everyone can see it.</p>
         </div>
-        {me && (
+        {member && (
           <div className="whoami">
             <Avatar
-              id={me.user.id}
-              person={{ ...me.user, admin: me.admin, active: true }}
+              id={member.user.id}
+              person={{ ...member.user, admin: member.admin, active: true }}
               size="sm"
             />
             <span>
-              Signed in as <strong>{me.user.name}</strong>
+              Signed in as <strong>{member.user.name}</strong>
             </span>
           </div>
         )}
@@ -54,7 +55,7 @@ export function App() {
 
       <div className="layout">
         <main className="main">
-          {me === null ? (
+          {me !== undefined && member === null ? (
             <p className="notice">Sign in to Patchy to give kudos and react.</p>
           ) : (
             <Composer meId={meId} />

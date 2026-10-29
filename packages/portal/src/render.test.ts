@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
 import { renderSharedWithYou } from "./home.js";
+import { renderGuestDataScope } from "./share.js";
 import { firstClause, renderAgentPanel } from "./render.js";
 
 describe("firstClause", () => {
@@ -89,5 +90,36 @@ describe("Shared with you", () => {
     expect(html).not.toContain("/patches/");
     expect(html).not.toContain("menu");
     expect(renderSharedWithYou([])).toBe("");
+  });
+});
+
+describe("guest data scope", () => {
+  it("lists every current owned declaration and escapes names and descriptions", () => {
+    const html = renderGuestDataScope({
+      manifestVersion: 1,
+      release: "",
+      tier: 1,
+      tables: { "notes<raw>": { description: "All & <hidden> notes", columns: {}, indexes: {} } },
+      files: { "documents<raw>": { description: "All & <hidden> files" } },
+      uses: {}
+    });
+    expect(html).toContain("Table: <code>notes&lt;raw&gt;</code>");
+    expect(html).toContain("File store: <code>documents&lt;raw&gt;</code>");
+    expect(html).toContain("All &amp; &lt;hidden&gt; notes");
+    expect(html).toContain("All &amp; &lt;hidden&gt; files");
+    expect(html).toContain("including raw rows and files this page does not display");
+    expect(html).toContain("without another share");
+  });
+  it("explains an empty declared scope", () => {
+    expect(
+      renderGuestDataScope({
+        manifestVersion: 1,
+        release: "",
+        tier: 1,
+        tables: {},
+        files: {},
+        uses: {}
+      })
+    ).toContain("This version declares no owned tables or file stores.");
   });
 });

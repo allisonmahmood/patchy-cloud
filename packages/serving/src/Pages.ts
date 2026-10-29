@@ -30,7 +30,7 @@ import {
   returnPath,
   pageResponse
 } from "@patchy/auth";
-import { WIRE_VERSION, handlerKinds } from "@patchy/api";
+import { WIRE_VERSION, handlerKinds, type RuntimePrincipal } from "@patchy/api";
 import { contentHash, isWelcomePage, newInternalId } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
@@ -203,6 +203,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // Resolve against the patch's company, independently of a membership elsewhere.
   // Keep the distinct guest identity: it is never a member Viewer or the patch's owner.
   let guest: Extract<RequireSession.CompanyIdentity, { kind: "guest" }> | undefined;
+  let guestPrincipal: RuntimePrincipal = null;
   if (
     !isPublic &&
     signedIn &&
@@ -227,13 +228,21 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       if (
         patch.state !== "live" ||
         patch.scope !== "company" ||
-        version.tier !== 0 ||
+        (version.tier !== 0 && version.tier !== 1) ||
         version.id !== patch.currentVersionId ||
         grant?.access !== "active"
       ) {
         return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
       }
       guest = identity;
+      guestPrincipal = {
+        kind: "guest",
+        guestId: guest.guest.id,
+        companyId: patch.companyId,
+        patchId: patch.id,
+        versionId: version.id,
+        grantId: grant.grant.id
+      };
       yield* WideEvents.enrich({ viewerId: guest.guest.id, companyId: guest.companyId });
     }
   }
@@ -403,7 +412,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           html,
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
-          viewerId: guest?.guest.id ?? viewerId,
+          principal: guestPrincipal ?? (viewerId === undefined ? null : { userId: viewerId }),
           head: isPublic
             ? publicDirectory
               ? `<template id="patchy-session">${sessionScripts(session)}</template>`

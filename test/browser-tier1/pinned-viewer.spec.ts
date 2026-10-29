@@ -146,9 +146,10 @@ for (const scope of ["company", "local"] as const) {
     await expect(reader.locator("#subscription-rows")).toHaveText('["First write"]');
     expect(asked).toHaveLength(0);
     expect(
-      await reader.evaluate(
-        async () => (await (window as unknown as FixtureWindow).harness.client.me())?.user.id
-      )
+      await reader.evaluate(async () => {
+        const me = await (window as unknown as FixtureWindow).harness.client.me();
+        return me !== null && "user" in me ? me.user.id : undefined;
+      })
     ).toBe("usr_dev");
     expect(asked).toHaveLength(1);
   });

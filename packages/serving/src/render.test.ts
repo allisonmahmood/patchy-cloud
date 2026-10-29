@@ -236,7 +236,7 @@ describe("patch pages", () => {
       patch,
       version: { ...version, tier: 1 },
       scope: "company",
-      viewerId: "viewer-1",
+      principal: { userId: "viewer-1" },
       html: "<script>window.secret = 1</script>",
       nonce: "document-nonce",
       base: "/acme/report/~v/2",
@@ -259,7 +259,7 @@ describe("patch pages", () => {
       patch,
       version: { ...version, tier: 2 },
       scope: "company" as const,
-      viewerId: "viewer-1",
+      principal: { userId: "viewer-1" },
       html: "<p>Tool</p>",
       nonce: "document-nonce",
       base: "/acme/report",
@@ -287,8 +287,10 @@ describe("patch pages", () => {
         base: "/acme/report"
       };
       expect(() => renderPatchWrapper(options)).toThrow();
-      const html = renderPatchWrapper({ ...options, viewerId: 'viewer"><img src=x>' });
-      expect(html).toContain('data-viewer-id="viewer&quot;&gt;&lt;img src=x&gt;"');
+      const html = renderPatchWrapper({ ...options, principal: { userId: 'viewer"><img src=x>' } });
+      expect(html).toContain(
+        'data-principal="{&quot;userId&quot;:&quot;viewer\\&quot;&gt;&lt;img src=x&gt;&quot;}"'
+      );
       expect(html).not.toContain("<img");
     }
   );
@@ -298,12 +300,12 @@ describe("patch pages", () => {
       patch,
       version: { ...version, tier: 1 },
       scope: "public",
-      viewerId: "private-viewer",
+      principal: { userId: "private-viewer" },
       html: "<p>Public data</p>",
       nonce: "document-nonce",
       base: "/acme/report"
     });
-    expect(html).not.toContain("data-viewer-id");
+    expect(html).not.toContain("data-principal");
     expect(html).not.toContain("private-viewer");
   });
 });

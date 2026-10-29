@@ -192,7 +192,7 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
           // Exercise current-version metadata for both scripted tiers.
           yield* sql`UPDATE patch_versions SET tier = ${tier}
             WHERE id = (SELECT current_version_id FROM patches WHERE id = ${first.patchId})`;
-          assert.strictEqual((yield* shared()).length, tier === 0 ? 1 : 0);
+          assert.strictEqual((yield* shared()).length, tier === 0 || tier === 1 ? 1 : 0);
         }
         yield* patches.retire(first.patchId, owner);
         assert.deepStrictEqual(yield* shared(), []);

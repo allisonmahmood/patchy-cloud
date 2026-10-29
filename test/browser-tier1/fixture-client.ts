@@ -124,7 +124,8 @@ if (document.body.dataset.me !== "lazy")
   void client.me().then(
     (me) => {
       harness.ready = true;
-      document.querySelector("#identity")!.textContent = me?.user.id ?? "anonymous";
+      document.querySelector("#identity")!.textContent =
+        me === null ? "anonymous" : "guest" in me ? me.guest.id : me.user.id;
     },
     (error: unknown) => {
       document.querySelector("#identity")!.textContent = String(error);
