@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import * as ts from "typescript";
+import { typecheck } from "../../../../test/typescript.js";
 import { generate } from "./Generate.js";
 
 const declaration = { kind: "posthog" as const, handle: "product", id: "connection", revision: 2 };
@@ -12,10 +12,9 @@ const snapshot = {
 
 it("compiles a named, shaped query with values and its known refusals", () => {
   const generated = generate(declaration, snapshot);
-  const patchy = new URL("../../../patchy/dist/", import.meta.url).pathname;
   const files: Readonly<Record<string, string>> = {
-    "/generated.ts": generated.client,
-    "/consumer.ts": `import { createClient, type QueryError } from "./generated.js";
+    "generated.ts": generated.client,
+    "consumer.ts": `import { createClient, type QueryError } from "./generated.js";
 import { isPatchyError } from "patchy/client";
 import { t } from "patchy/config";
 const analytics = createClient("analytics", async () => ({ ok: true, rows: [] }));
@@ -57,42 +56,7 @@ function inspect(error: QueryError) {
 }
 `
   };
-  const options: ts.CompilerOptions = {
-    noEmit: true,
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    paths: {
-      "patchy/client": [`${patchy}client.d.ts`],
-      "patchy/config": [`${patchy}config.d.ts`]
-    },
-    resolveJsonModule: true,
-    lib: ["lib.es2022.d.ts", "lib.dom.d.ts"],
-    types: [],
-    skipLibCheck: true
-  };
-  const host = ts.createCompilerHost(options);
-  const getSourceFile = host.getSourceFile.bind(host);
-  const fileExists = host.fileExists.bind(host);
-  const readFile = host.readFile.bind(host);
-  host.fileExists = (file) => Object.hasOwn(files, file) || fileExists(file);
-  host.readFile = (file) => files[file] ?? readFile(file);
-  host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
-    Object.hasOwn(files, file)
-      ? ts.createSourceFile(file, files[file]!, languageVersion, true)
-      : getSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram(
-    Object.keys(files).filter((file) => file.endsWith(".ts")),
-    options,
-    host
-  );
-  assert.deepStrictEqual(
-    ts
-      .getPreEmitDiagnostics(program)
-      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
-    []
-  );
+  assert.deepStrictEqual(typecheck(files), []);
 });
 
 it("lists events and properties as escaped text, never markup", () => {

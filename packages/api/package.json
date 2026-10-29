@@ -61,7 +61,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "effect-tsgo tsc -p tsconfig.json",
     "render-docs": "node --import tsx --conditions=development scripts/render-api-md.ts",
     "test": "vitest run"
   },

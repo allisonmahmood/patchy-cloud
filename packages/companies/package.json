@@ -23,7 +23,7 @@
     "looks/patchy/LOOK.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "effect-tsgo tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {

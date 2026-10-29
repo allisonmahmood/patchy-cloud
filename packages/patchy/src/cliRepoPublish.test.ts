@@ -95,8 +95,7 @@ describe("repo publish checks", () => {
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
     const initialized = await runCli(
       ["init", "static-page", "--tier", "0", "--purpose", "A static page", "--json"],
-      // Publishing runs Vite, whose native binding is an optional dependency of this platform.
-      { cwd: parent, env: { ...env, ...registry, pnpm_config_optional: "true" } }
+      { cwd: parent, env: { ...env, ...registry } }
     );
     expect(initialized, initialized.stderr).toMatchObject({ status: 0, stderr: "" });
     const dir = path.join(parent, "static-page");

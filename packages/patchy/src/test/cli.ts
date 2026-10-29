@@ -755,8 +755,10 @@ export const localPackageRegistry = async () => {
       tarball,
       integrity: `sha512-${createHash("sha512").update(readFileSync(tarball)).digest("base64")}`
     });
+    // npm lists optional dependencies among the dependencies too; other platforms' are absent.
     for (const name of Object.keys(manifest.dependencies ?? {}))
-      await pack(resolvePackage(name, file));
+      if (!Object.hasOwn(manifest.optionalDependencies ?? {}, name))
+        await pack(resolvePackage(name, file));
     for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
       let optional: string;
       try {
@@ -816,7 +818,6 @@ export const localPackageRegistry = async () => {
     pnpm_config_registry: url,
     pnpm_config_store_dir: path.join(dir, "store"),
     pnpm_config_cache_dir: path.join(dir, "cache"),
-    pnpm_config_optional: "false",
     pnpm_config_auto_install_peers: "false",
     pnpm_config_update_notifier: "false"
   };

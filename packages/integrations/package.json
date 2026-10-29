@@ -21,7 +21,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "effect-tsgo tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
@@ -41,7 +41,6 @@
     "@patchy/analytics": "workspace:*",
     "@patchy/sql": "workspace:*",
     "@types/pg": "^8.23.1",
-    "typescript": "^6.0.3",
     "vitest": "^5.0.5"
   }
 }

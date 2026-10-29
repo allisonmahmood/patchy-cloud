@@ -1057,8 +1057,9 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       (name) => name !== "patchy.config.ts" && name !== "package.json"
     ))
       expect(readFileSync(path.join(dir, name))).toEqual(before[name]);
+    // TypeScript 7 exits 1 when it reports errors.
     await expect(exec("pnpm", ["typecheck"], compilerOptions)).rejects.toMatchObject({
-      code: 2,
+      code: 1,
       stdout: expect.stringMatching(/src\/App\.tsx\(\d+,\d+\): error TS2339: Property 'tables'/)
     });
 

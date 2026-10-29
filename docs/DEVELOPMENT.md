@@ -65,6 +65,14 @@ Format caches its results, so a repeat run rechecks only the files that changed.
 Lint is Oxlint, with its type-aware rules run by `oxlint-tsgolint`; it keeps no
 cache and checks the whole repo in seconds.
 
+TypeScript is 7, the native compiler. Builds and `pnpm typecheck` run
+`effect-tsgo tsc` (`@effect/tsgo`), the same compiler with the Effect rules in
+`tsconfig.base.json` built in; a plain `pnpm exec tsc` compiles without them.
+`@effect/tsgo` ships Effect-patched builds of exact TypeScript versions, so a
+TypeScript bump waits for a checker release that supports it. For Effect
+diagnostics in an editor, point its TypeScript 7 language server at the
+patched build: `pnpm exec effect-tsgo get-exe-path` prints it.
+
 For a focused loop:
 
 - `pnpm exec vitest run <files or folders>`; `*.postgres.test.ts` files need
