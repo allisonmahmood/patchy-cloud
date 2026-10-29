@@ -47,6 +47,16 @@ const layouts: ReadonlyArray<readonly [string, string, string]> = [
     `uses: {\n    people: members(), /* Kept,\n       twice. */\n    ${declaration}\n  }`
   ],
   [
+    "a multi-line object whose last entry trails several comments",
+    "uses: {\n    people: members(), /* First. */ // Second.\n  }",
+    `uses: {\n    people: members(), /* First. */ // Second.\n    ${declaration},\n  }`
+  ],
+  [
+    "a multi-line object whose last entry trails several block comments, without a comma",
+    "uses: {\n    people: members() /* First. */ /* Second. */\n  }",
+    `uses: {\n    people: members(), /* First. */ /* Second. */\n    ${declaration}\n  }`
+  ],
+  [
     "an empty object with an inline comment",
     "uses: { /* Nothing yet. */ }",
     `uses: { /* Nothing yet. */ ${declaration} }`
@@ -149,16 +159,26 @@ const commented = [
   `uses: {\n    ${entry("a")}, // a\n    ${entry("b")}, // b\n    ${entry("c")} // c\n  }`,
   `uses: {\n    // a\n    ${entry("a")},\n    // b\n    ${entry("b")},\n  }`,
   `uses: {\n    ${entry("a")} /* a\n       a */,\n    ${entry("b")} /* b\n       b */\n  }`,
-  `uses: {\n    ${entry("a")}, ${entry("b")}, // b\n    ${entry("c")}\n  }`
+  `uses: {\n    ${entry("a")}, ${entry("b")}, // b\n    ${entry("c")}\n  }`,
+  `uses: {\n    ${entry("a")}, /* a */ // a\n    ${entry("b")} /* b */ /* b\n       b */\n  }`,
+  `uses: { ${entry("a")} /* a */ /* a */ }`,
+  `uses: {\n    ${entry("a")}\n    /* after a */\n  }`
 ];
 const comments = (source: string) =>
   (parse(source, { sourceType: "module", plugins: ["typescript"] }).comments ?? []).map(
     (comment) => comment.value
   );
+/** Each comment with the entry it follows, so an edit that moves one shows. */
+const followed = (source: string) =>
+  (parse(source, { sourceType: "module", plugins: ["typescript"] }).comments ?? []).map(
+    (comment) =>
+      `${comment.value} after ${[...source.slice(0, comment.start!).matchAll(/"?(\w+)"?: \{/g)].at(-1)?.[1]}`
+  );
 
 it.each(commented.flatMap((layout) => [config(layout), config(layout).replaceAll("\n", "\r\n")]))(
-  "removing any entry keeps every other entry's comments and undoes an add: %j",
+  "adding leaves comments with their entries, and removing any entry keeps the others' comments and undoes an add: %j",
   (source) => {
+    expect(followed(editUses(source, add("sales")))).toEqual(followed(source));
     for (const alias of ["a", "b", "c"].filter((name) => source.includes(`${name}: {`))) {
       const removed = editUses(source, remove(alias));
       const lost = comments(source).filter((comment) => !comments(removed).includes(comment));

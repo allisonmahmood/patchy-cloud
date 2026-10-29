@@ -159,11 +159,12 @@ export function editUses(source: string, change: UsesChange): string {
     return comma ? offset + comma[0].length : undefined;
   };
   /**
-   * Where the line from `offset` ends when it holds at most one comment, which may run onto more
-   * lines: a comment there trails what precedes it. `undefined` when anything else follows.
+   * Where the line from `offset` ends when it holds nothing but comments, block comments running
+   * onto more lines and a line comment last: they trail what precedes them. `undefined` when
+   * anything else follows.
    */
   const commentLineEnd = (offset: number) => {
-    const trailing = /^[ \t]*(?:\/\/[^\n\r\u2028\u2029]*|\/\*[^]*?\*\/)?[ \t]*/.exec(
+    const trailing = /^(?:[ \t]*\/\*[^]*?\*\/)*[ \t]*(?:\/\/[^\n\r\u2028\u2029]*)?[ \t]*/.exec(
       source.slice(offset)
     )![0];
     const lineEnd = offset + trailing.length;
@@ -223,11 +224,26 @@ export function editUses(source: string, change: UsesChange): string {
     const comma = commaAfter(after, end - 1);
     const at = comma ?? after;
     const [separator, closing] = comma ? ["", ","] : [",", ""];
-    if (!lineBreak.test(source.slice(start, span(first).start)))
-      return replace(at, at, `${separator} ${text}${closing}`);
+    if (!lineBreak.test(source.slice(start, span(first).start))) {
+      // Comments trailing the last property stay with it; the new entry follows them.
+      const point = at + /^(?:[ \t]*\/\*[^]*?\*\/)*/.exec(source.slice(at))![0].length;
+      return comma
+        ? replace(point, point, ` ${text}${closing}`)
+        : replace(point, point, `${separator} ${text}`);
+    }
     // Indent like the line the last property starts on.
     const indent = /^[ \t]*/.exec(source.slice(lineStart(span(last).start)))![0];
-    // A comment trailing the last property stays with it.
+    // Comments after the last property stay with it, its trailing ones and those on lines of
+    // their own before the closing brace: the new entry goes after them, last in the object.
+    const closingLine = lineStart(end - 1);
+    if (closingLine > at && source.slice(closingLine, end - 1).trim() === "")
+      return (
+        source.slice(0, after) +
+        separator +
+        source.slice(after, closingLine) +
+        `${indent}${text}${closing}${newline}` +
+        source.slice(closingLine)
+      );
     const line = commentLineEnd(at) ?? at;
     return (
       source.slice(0, after) +
