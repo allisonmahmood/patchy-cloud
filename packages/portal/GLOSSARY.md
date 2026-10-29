@@ -5,8 +5,11 @@ Where a signed-in person finds and manages their company's patches. The patch, i
 ## Language
 
 **Portal**:
-Where a signed-in person finds and manages their company's patches: Home at `/`, All patches at `/patches`, each patch's card and the guide. It lists only the viewer's own company, public patches included, and never another company's.
+Where a signed-in person finds and manages their company's patches: Home at `/`, All patches at `/patches`, each patch's card and the guide. Company lists and management stay within the viewer's own company, public patches included. Home also lists the account's valid named guest shares from sharing companies.
 _Avoid_: dashboard, directory
+
+**Shared with you**:
+Home’s named guest shares, each showing the patch title and sharing company and opening its normal address. Deactivated members see only these shares and Sign out; with no eligible shares they keep the deactivated door. This restores no member or admin powers.
 
 **Home**:
 The signed-in landing at `/`, for opening patches rather than managing them: **Your usual**, **Tools** and **Pages**, each patch called by its title and opened by it, with About this patch in its menu, and a way to what is off. The sidebar's search lands here with `?q=` over every live patch; below 900px, where the sidebar folds into Menu, Home shows the same search itself. For a day after someone's first publication a one-line note names it, with Open and Copy link. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries.

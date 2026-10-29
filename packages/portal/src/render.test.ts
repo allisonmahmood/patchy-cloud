@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
+import { renderSharedWithYou } from "./home.js";
 import { firstClause, renderAgentPanel } from "./render.js";
 
 describe("firstClause", () => {
@@ -66,5 +67,27 @@ describe("renderAgentPanel", () => {
     expect(html).toContain("that’s Allison &lt;A&gt; and Priya Shah.");
     expect(html).not.toContain("Turn it on at Company");
     expect(html).not.toContain("Connect your agent");
+  });
+});
+
+describe("Shared with you", () => {
+  it("escapes patch/company names and the normal address without management actions", () => {
+    const html = renderSharedWithYou([
+      {
+        patchId: "p12345678901",
+        name: "brief",
+        title: "Brief <review>",
+        companyId: "cmp_b",
+        companyName: "B & Co",
+        companyHandle: "b",
+        address: 'https://patchy.example/b/brief?q="&'
+      }
+    ]);
+    expect(html).toContain("Brief &lt;review&gt;");
+    expect(html).toContain("B &amp; Co");
+    expect(html).toContain('href="https://patchy.example/b/brief?q=&quot;&amp;"');
+    expect(html).not.toContain("/patches/");
+    expect(html).not.toContain("menu");
+    expect(renderSharedWithYou([])).toBe("");
   });
 });

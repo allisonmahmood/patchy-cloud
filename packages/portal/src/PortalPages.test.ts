@@ -26,9 +26,9 @@ import {
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
-import { DeviceLogins, MachineTokens, RequireSession, Session, SetupLinks } from "@patchy/auth";
+import { DeviceLogins, MachineTokens, Session, SetupLinks } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Guests, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "@patchy/core";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
@@ -55,7 +55,7 @@ const reported = (patchId: string) =>
   );
 const routes = Layer.merge(
   PortalPages.layer,
-  HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
+  HttpRouter.use((router) => router.add("GET", "/", PortalPages.index))
 );
 /** A company's user lifecycle events, as `[name, principal, user]`. */
 const lifecycleEvents = (companyId: string) =>
@@ -439,12 +439,21 @@ it.layer(layer)("portal pages on a socket", (it) => {
           userId: workspace.owner.id,
           admin: true
         });
-        for (const path of [
-          "/",
+        const home = yield* request("/", person);
+        assert.strictEqual(home.status, 200);
+        const html = yield* home.text;
+        assert.include(text(html), "Shared with you");
+        assert.include(html, `${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}`);
+        for (const control of [
+          "/guide",
+          "/company",
+          "/people",
           "/patches",
-          cardPath(patch.name),
-          `${cardPath(patch.name)}/settings`
+          "Connect your agent",
+          "Popular at"
         ])
+          assert.notInclude(html, control);
+        for (const path of ["/patches", cardPath(patch.name), `${cardPath(patch.name)}/settings`])
           assert.strictEqual((yield* request(path, person)).status, 403);
         for (const [action, fields] of [
           ["description", { description: "Unauthorized change" }],
@@ -459,8 +468,75 @@ it.layer(layer)("portal pages on a socket", (it) => {
             403
           );
         assert.instanceOf((yield* readUser(person)).deactivatedAt, Date);
+        const grants = yield* patches.namedGrants(patch.patchId, actor(workspace.owner));
+        yield* patches.revokeGuest(patch.patchId, grants[0]!.guestId, actor(workspace.owner));
+        const refused = yield* request("/", person);
+        assert.strictEqual(refused.status, 403);
+        assert.include(text(yield* refused.text), "Your account is deactivated");
       })
     );
+
+  it.effect(
+    "discovers only the session account's valid named shares across companies on Home",
+    () =>
+      Effect.gen(function* () {
+        const a = yield* company();
+        const b = yield* company();
+        const c = yield* company();
+        const patches = yield* Patches.Patches;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE companies SET name = 'B & <Co>' WHERE id = ${b.id}`;
+        const own = yield* publish(a.owner, "own-company-page");
+        const first = yield* publish(b.owner, "b-shared", { title: "Brief & <review>" });
+        const second = yield* publish(c.owner, "c-shared");
+        const unrelated = yield* publish(b.owner, "unrelated-page");
+        yield* patches.shareGuest(first.patchId, a.member.email, actor(b.owner));
+        yield* patches.shareGuest(second.patchId, a.member.email, actor(c.owner));
+        yield* patches.shareGuest(unrelated.patchId, a.owner.email, actor(b.owner));
+        const home = () => request("/", a.member).pipe(Effect.flatMap((r) => r.text));
+        const html = yield* home();
+        assert.include(html, "Shared with you");
+        assert.include(html, "Brief &amp; &lt;review&gt;");
+        assert.include(html, "B &amp; &lt;Co&gt;");
+        assert.include(html, `${PUBLIC_BASE_URL}/${b.handle}/${first.name}`);
+        assert.include(html, `${PUBLIC_BASE_URL}/${c.handle}/${second.name}`);
+        assert.include(html, `/${a.handle}/${own.name}`);
+        assert.notInclude(html, unrelated.name);
+        assert.notInclude(yield* (yield* request("/", a.admin)).text, "Shared with you");
+        // Query parameters cannot select another account's shares.
+        const spoof = yield* (yield* request(
+          `/?sub=${a.owner.clerkUserId}&email=${a.owner.email}`,
+          a.member
+        )).text;
+        assert.notInclude(spoof, unrelated.name);
+        const guests = yield* patches.namedGrants(first.patchId, actor(b.owner));
+        yield* patches.revokeGuest(first.patchId, guests[0]!.guestId, actor(b.owner));
+        assert.notInclude(yield* home(), first.name);
+        assert.include(yield* home(), second.name);
+        yield* Guests.setDeactivated({
+          companyId: c.id,
+          clerkUserId: a.member.clerkUserId,
+          deactivated: true
+        });
+        assert.notInclude(yield* home(), "Shared with you");
+        yield* Guests.setDeactivated({
+          companyId: c.id,
+          clerkUserId: a.member.clerkUserId,
+          deactivated: false
+        });
+        assert.include(yield* home(), second.name);
+        yield* patches.retire(second.patchId, actor(c.owner));
+        assert.notInclude(yield* home(), second.name);
+        yield* patches.restore(second.patchId, actor(c.owner));
+        // A deactivated A membership must not hide independent C shares or reveal A's tools.
+        yield* (yield* Users.Users).deactivate({ companyId: a.id, userId: a.member.id });
+        const inactive = yield* home();
+        assert.include(inactive, second.name);
+        assert.notInclude(inactive, own.name);
+        assert.notInclude(inactive, "/guide");
+        assert.strictEqual((yield* request("/patches", a.member)).status, 403);
+      })
+  );
 
   it.effect("shares with an existing named guest, retains refusals, and lets an admin revoke", () =>
     Effect.gen(function* () {

@@ -35,7 +35,6 @@ import {
   MachineTokens,
   OAuthEndpoints,
   OAuthMetadata,
-  RequireSession,
   Session
 } from "@patchy/auth";
 import {
@@ -347,7 +346,7 @@ const middleware = HttpRouter.middleware(
 /** Root and fallback have one owner; no capability's registration order chooses /. */
 const landing = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add("GET", "/", PortalPages.errors(RequireSession.withViewer(PortalPages.index)));
+    yield* router.add("GET", "/", PortalPages.errors(PortalPages.index));
     yield* router.add("*", "/*", Pages.notFound);
   })
 );

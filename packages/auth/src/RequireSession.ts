@@ -229,14 +229,19 @@ export const resolveCompanyIdentity = Effect.fn("RequireSession.resolveCompanyId
   } satisfies CompanyIdentity;
 });
 
-export const withViewer = <E, R>(
+export const withViewer = <E, R, E2 = never, R2 = never>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-  returnTo?: string
+  returnTo?: string,
+  /** Home alone may show valid guest shares without supplying a member Viewer. */
+  whenDeactivated?: (
+    response: HttpServerResponse.HttpServerResponse
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E2, R2>
 ) =>
   withSession(
     Effect.gen(function* () {
       const viewer = yield* resolveViewer;
-      if (HttpServerResponse.isHttpServerResponse(viewer)) return viewer;
+      if (HttpServerResponse.isHttpServerResponse(viewer))
+        return whenDeactivated === undefined ? viewer : yield* whenDeactivated(viewer);
       if (!viewer) {
         const session = yield* Session.Session;
         const request = yield* HttpServerRequest.HttpServerRequest;

@@ -18,7 +18,8 @@ import {
   RequireSession,
   Session,
   SetupLinks,
-  SetupPrompts
+  SetupPrompts,
+  signOutForm
 } from "@patchy/auth";
 import { ago, copyScript, copyScriptPath, escapeAttribute, escapeHtml } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
@@ -38,7 +39,7 @@ import {
   renderWatch,
   type SetupState
 } from "./guide.js";
-import { homeStyles, renderHome, renderPublishedNote } from "./home.js";
+import { homeStyles, renderHome, renderPublishedNote, renderSharedWithYou } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   type CardTab,
@@ -425,6 +426,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
       heading: "",
       body: `${renderHome({
         rows,
+        shared: yield* patches.sharedWithGuest(signedIn.sub, session.publicBaseUrl),
         viewer,
         opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
         now,
@@ -1043,8 +1045,29 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   );
 });
 
+/** No member Viewer or member reads enter the deactivated Home. */
+const deactivatedHome = Effect.fn("PortalPages.deactivatedHome")(function* (
+  refusal: HttpServerResponse.HttpServerResponse
+) {
+  const signedIn = yield* RequireSession.SignedIn;
+  const session = yield* Session.Session;
+  const shares = yield* (yield* Patches.Patches).sharedWithGuest(
+    signedIn.sub,
+    session.publicBaseUrl
+  );
+  if (shares.length === 0) return refusal;
+  return pageResponse(
+    {
+      title: "Home",
+      body: `${renderSharedWithYou(shares)}${signOutForm()}`,
+      styles: homeStyles
+    },
+    session
+  );
+});
+
 /** The server owns GET / and its signed-out door alongside the catch-all. */
-export const index = home().pipe(pageErrors);
+export const index = RequireSession.withViewer(home().pipe(pageErrors), undefined, deactivatedHome);
 
 const patchRoutes = [
   {

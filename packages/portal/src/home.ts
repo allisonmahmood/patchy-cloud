@@ -26,7 +26,7 @@ export const homeStyles = `
   .home-solo { grid-template-columns: minmax(0, 1fr); }
   /* The shelves fit the column they get, which the Pages panel narrows, rather than the window. */
   .home-main { container-type: inline-size; }
-  .home-shelf + .home-shelf { margin-top: 32px; }
+  .home + .home-shelf, .home-shelf + .home-shelf { margin-top: 32px; }
   .home-usual { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
   /* Rows sit flush with their heading; a plain row's padding is its hover frame. */
   .home-rows { display: grid; gap: 2px; margin: 0 -8px 8px; }
@@ -86,8 +86,20 @@ export const renderPublishedNote = (row: Patches.ReadPatch, publicBaseUrl: strin
   return `<section class="note note-ok note-inline" role="status"><span class="note-title">${isWelcomePage({ name: patch.name, tier: row.tier }) ? "Your welcome page is live" : `${escapeHtml(title)} is live`}</span><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(patchAddress(patch))}" aria-label="Open ${named}">Open</a><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-label="Copy link to ${named}" aria-live="polite" hidden>Copy link</button></div></section>`;
 };
 
+/** Named shares use normal addresses; opening still goes through the serving door. */
+export const renderSharedWithYou = (shares: readonly Patches.GuestSharedPatch[]): string =>
+  shares.length === 0
+    ? ""
+    : `<section class="home-shelf" aria-labelledby="shared-with-you"><h2 class="section-heading" id="shared-with-you">Shared with you</h2><ul class="list home-rows">${shares
+        .map(
+          (share) =>
+            `<li><a class="tile-row tile-row-plain" href="${escapeAttribute(share.address)}">${patchMark(share.name, 0)}<span class="tile-body"><span class="tile-name">${escapeHtml(patchTitle(share))}</span><span class="tile-meta">${escapeHtml(share.companyName)}</span></span></a></li>`
+        )
+        .join("")}</ul></section>`;
+
 export interface HomeInput {
   readonly rows: readonly Patches.ReadPatch[];
+  readonly shared?: readonly Patches.GuestSharedPatch[];
   readonly viewer: Viewer;
   readonly opens: ReadonlyMap<string, Patches.Open>;
   readonly now: number;
@@ -210,7 +222,7 @@ export const renderHome = (input: HomeInput): string => {
         .join("")}</ul></section>`
     : "";
   const page = (body: string, heading = '<h1 class="page-heading">Home</h1>') =>
-    `${heading}${input.note ?? ""}${warning}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
+    `${heading}${input.note ?? ""}${warning}${search}${body}${renderSharedWithYou(input.shared ?? [])}${foot}<script defer src="${copyScriptPath}"></script>`;
 
   if (live.length === 0 && query === "")
     return page(

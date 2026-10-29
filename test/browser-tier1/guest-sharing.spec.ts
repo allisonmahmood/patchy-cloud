@@ -86,3 +86,85 @@ test("public confirmation ends guest access until the owner explicitly shares ag
     await guestContext.close();
   }
 });
+
+for (const recipient of ["other company", "deactivated member", "deactivated admin"] as const) {
+  test(`Home discovers and removes a named share for ${recipient} recipient`, async ({
+    page,
+    browser,
+    instance
+  }) => {
+    if (recipient === "other company") {
+      await instance.platform.query(
+        "INSERT INTO companies (id, handle, name) VALUES ('cmp_home_recipient', 'home-recipient', 'Recipient company')"
+      );
+      await instance.platform.query(
+        "UPDATE users SET company_id = 'cmp_home_recipient' WHERE id = 'usr_colleague'"
+      );
+    } else {
+      await instance.platform.query(
+        "UPDATE users SET role = $1, deactivated_at = now() WHERE id = 'usr_colleague'",
+        [recipient === "deactivated admin" ? "admin" : "member"]
+      );
+    }
+    const content =
+      "<!doctype html><html><head><title>Home guest brief</title></head><body><h1>Home guest brief</h1></body></html>";
+    const patch = await instance.publish("company", content, undefined, {
+      tier: 0,
+      tables: {},
+      files: {}
+    });
+    const unrelated = await instance.publish("company", content, undefined, {
+      tier: 0,
+      tables: {},
+      files: {}
+    });
+    const guestContext = await browser.newContext();
+    try {
+      await prepare(guestContext, instance);
+      await instance.session(guestContext, "colleague");
+      const guest = await guestContext.newPage();
+      const home = `${instance.origin}/`;
+      await guest.goto(home);
+      if (recipient === "other company")
+        await guest.getByRole("button", { name: "Later", exact: true }).click();
+      await expect(guest.getByRole("heading", { name: "Shared with you" })).toHaveCount(0);
+      await page.goto(`${instance.origin}/patches/${patch.name}/settings`);
+      await page.getByLabel("Existing Patchy account email").fill("colleague@patchy.local");
+      await page.getByRole("button", { name: "Share", exact: true }).click();
+      await expect(page.getByText("Has access", { exact: true })).toBeVisible();
+      expect((await guest.goto(home))?.status()).toBe(200);
+      const shares = guest.getByRole("region", { name: "Shared with you" });
+      await expect(shares.getByText("Patchy Dev", { exact: true })).toBeVisible();
+      await shares.getByRole("link", { name: /Home guest brief/ }).click();
+      await expect(guest).toHaveURL(patch.address);
+      await expect(
+        guest.frameLocator("#patch").getByRole("heading", { name: "Home guest brief" })
+      ).toBeVisible();
+      expect((await guest.goto(unrelated.address))?.status()).toBe(404);
+      for (const path of ["/patches", `/patches/${patch.name}/settings`, "/company", "/guide"]) {
+        if (recipient !== "other company")
+          expect((await guest.goto(`${instance.origin}${path}`))?.status()).toBe(403);
+      }
+      await guest.goto(home);
+      if (recipient !== "other company") {
+        await expect(
+          guest.locator('a[href="/guide"], a[href="/company"], a[href="/patches"]')
+        ).toHaveCount(0);
+        const user = await instance.platform.query(
+          "SELECT deactivated_at, role FROM users WHERE id = 'usr_colleague'"
+        );
+        expect(user.rows[0].deactivated_at).toBeInstanceOf(Date);
+        expect(user.rows[0].role).toBe(recipient === "deactivated admin" ? "admin" : "member");
+      }
+      await page.getByRole("button", { name: /^Revoke access for / }).click();
+      await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
+      const refreshed = await guest.reload();
+      expect(refreshed?.status()).toBe(recipient === "other company" ? 200 : 403);
+      await expect(guest.getByRole("heading", { name: "Shared with you" })).toHaveCount(0);
+      await expect(guest.getByRole("link", { name: /Home guest brief/ })).toHaveCount(0);
+      expect((await guest.goto(patch.address))?.status()).toBe(404);
+    } finally {
+      await guestContext.close();
+    }
+  });
+}
