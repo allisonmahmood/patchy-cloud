@@ -4,6 +4,7 @@ export * as Executor from "./Executor.js";
 export * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 export * as CompanyAdmission from "./CompanyAdmission.js";
 export * as ConnectedVersions from "./ConnectedVersions.js";
+export * as Prewarm from "./Prewarm.js";
 export * as ServerBundles from "./ServerBundles.js";
 export * as Invocation from "./Invocation.js";
 export * as InvocationLog from "./InvocationLog.js";

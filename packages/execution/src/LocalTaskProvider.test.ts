@@ -207,6 +207,56 @@ it.live(
 );
 
 it.live(
+  "never sends a speculative bind without its flag to a supervisor that refuses it",
+  () =>
+    Effect.gen(function* () {
+      const fetch = yield* HttpClient.HttpClient;
+      const binds: Array<boolean | undefined> = [];
+      // A supervisor from before speculative binds refuses the unknown key before it acts.
+      const previousWire = HttpClient.make((request) => {
+        if (new URL(request.url).pathname !== "/bind") return fetch.execute(request);
+        const body: { readonly speculative?: boolean } =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : {};
+        binds.push(body.speculative);
+        return body.speculative === undefined
+          ? fetch.execute(request)
+          : Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ ok: false, code: "invalid_request" }, { status: 400 })
+              )
+            );
+      });
+      const options = yield* LocalTaskProvider.resource({ callbackUrls: [] });
+      const provider = yield* LocalTaskProvider.make(options).pipe(
+        Effect.provideService(HttpClient.HttpClient, previousWire)
+      );
+      yield* provider.start({ taskId: "previous-supervisor", deploymentRevision: "deployment" });
+      const source = `export default { async fetch() { return Response.json({ ok: true, handlers: {} }); } };`;
+      const refused = yield* provider
+        .bind("previous-supervisor", {
+          companyId: "company",
+          bindingEpoch: 1,
+          speculative: true,
+          bundle: {
+            companyId: "company",
+            patchId: "patch",
+            versionId: "version",
+            bundle: source,
+            sha256: createHash("sha256").update(source).digest("hex")
+          }
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(refused.reason, "invalid_request");
+      // By hash, then with its bundle, and both times speculative: never an ordinary bind.
+      assert.deepStrictEqual(binds, [true, true]);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  { timeout: 20_000 }
+);
+
+it.live(
   "keeps exact identity after interrupted start and lost stop acknowledgement on another client",
   () =>
     Effect.gen(function* () {

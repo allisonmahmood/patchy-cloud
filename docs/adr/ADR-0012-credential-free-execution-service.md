@@ -175,7 +175,12 @@ selects the process idle longest since its last call or touch. Both bind and
 invoke can evict idle residents;
 invocation admission does not evict its target. Without an idle process to evict,
 further work receives `busy` with the company scope, limiting residency id and
-configured value.
+configured value. A speculative bind, a load nobody has asked for yet, takes only
+a free slot and is refused `busy` rather than evicting anything. Eviction takes
+speculative processes before any other, even one still initializing, so demand
+displaces them instead of being refused; a demanded bind or a call makes one an
+ordinary process. A supervisor from before speculative binds refuses the field
+before any effect, and a speculative bind is never sent again without it.
 
 Linux metering reads process CPU and RSS from `/proc`; macOS uses `ps`.
 Unsupported platforms refuse supervisor construction rather than return fake
@@ -259,6 +264,22 @@ resume does, only touches, so a version evicted under pressure reloads on demand
 rather than on renewal. With more open versions than residency allows, touches
 never evict or reload anything; only calls and first-stream warmups load, as calls
 alone did before.
+A signed-in member's Home or All patches view also prewarms: in the background,
+never in the page's way, the host holds the company's task and keeps up to three
+of the live tier 2 versions they can open loaded, theirs by how often they open
+them and then everyone's by visits, for `execution.prewarm.window` (three minutes
+by default, per company), never more versions than residency allows. A prewarm
+holds a lock of its own: it defers release but runs neither idle clock, so a
+task some document used keeps the documents' window it had, and one claimed for
+the prewarm that nobody used is released at the first pass after it lets go, as
+`unused`. A document or agent that comes meanwhile runs its clock as before. A
+prewarm claims a spare only when it can lock one beyond the last ready spare and
+the fleet's live tasks are under budget, so replenishment can replace it; otherwise
+it takes nothing. It never waits for a launch. Its versions join the same
+keepalives as documents, as prewarm holders that count as no document; a warmup
+for one is admitted only on the company's live binding, runs no clock and is
+speculative, so it never displaces a document's process and an open displaces it.
+A host prewarms each company at most once per 30 seconds.
 The execution baseline, `0008_execution`, owns task identity and deployment revision, company
 bindings and their epochs, binding history, process reports, breaker state and the
 housekeeping lease. A partial unique index permits one admission-serving binding
@@ -291,8 +312,8 @@ replacement spares; their old admissions are fenced atomically with replacement
 claim, and previously admitted work drains on the predecessor. Staging and promoting
 an earlier revision performs rollback. A restarting old host cannot reverse promotion.
 
-Active document and admitted invocation lifetimes hold shared database advisory
-locks. They are not presence rows, heartbeats or a document lease. The controller
+Active document, prewarm and admitted invocation lifetimes hold shared database
+advisory locks. They are not presence rows, heartbeats or a document lease. The controller
 checks idle eligibility against those locks and atomically enters stopping under
 the binding owner check before stopping the provider task. A document that
 disconnects or goes idle releases its lock; an admitted call, including an idle
@@ -329,8 +350,8 @@ Process reports commit before their acknowledgement. Newly recorded process even
 are forwarded unchanged through the best-effort analytics sink. Binding history
 meters through the provider's stop time, including a stop discovered after its
 owner died. Binding wide events retain the original bind time, spare wait, peak
-processes and release cause, attributed to the emitting controller build; logging
-is not the source of metering.
+processes and release cause (`unused` for a prewarm's task nobody used), attributed
+to the emitting controller build; logging is not the source of metering.
 
 Three watchdog kills of a patch across versions and hosts within ten minutes pause
 its admission for ten minutes. The database is authoritative on each admission.

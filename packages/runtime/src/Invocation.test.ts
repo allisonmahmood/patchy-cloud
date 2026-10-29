@@ -143,6 +143,7 @@ it.layer(services)("Invocation", (it) => {
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
@@ -200,6 +201,7 @@ it.layer(services)("Invocation", (it) => {
           })
       ).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
@@ -248,6 +250,7 @@ it.layer(services)("Invocation", (it) => {
         })
       ).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
@@ -628,6 +631,7 @@ it.layer(services)("Invocation", (it) => {
             () => Effect.sleep(startMs).pipe(Effect.as(bound))
           ).pipe(
             Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+              prewarm: () => Effect.die("Nothing here prewarms."),
               touch: () => Effect.succeed({ outcome: "absent" as const }),
               connect: () => Effect.void,
               acquire: () =>
@@ -675,6 +679,7 @@ it.layer(services)("Invocation", (it) => {
         )
       ).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: (_company, _patch, caller) =>
@@ -964,6 +969,7 @@ it.layer(services)("Invocation", (it) => {
           Queue.offer(seen, request).pipe(Effect.andThen(Effect.never))
         ).pipe(
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            prewarm: () => Effect.die("Nothing here prewarms."),
             touch: () => Effect.succeed({ outcome: "absent" as const }),
             connect: () => Effect.void,
             acquire: () =>
@@ -1076,6 +1082,7 @@ it.layer(services)("Invocation", (it) => {
           })
         ).pipe(
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            prewarm: () => Effect.die("Nothing here prewarms."),
             touch: () => Effect.succeed({ outcome: "absent" as const }),
             connect: () => Effect.void,
             acquire: () =>
@@ -1130,6 +1137,7 @@ it.layer(services)("Invocation", (it) => {
         return Queue.offer(seen, request).pipe(Effect.andThen(Effect.never));
       }).pipe(
         Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+          prewarm: () => Effect.die("Nothing here prewarms."),
           touch: () => Effect.succeed({ outcome: "absent" as const }),
           connect: () => Effect.void,
           acquire: () =>
@@ -1449,6 +1457,7 @@ it.layer(services)("Invocation", (it) => {
         const waiting = yield* Deferred.make<void>();
         const cold = yield* makeInvocation(() => Effect.die("Nothing is dispatched.")).pipe(
           Effect.provideService(ExecutionLifecycle.ExecutionLifecycle, {
+            prewarm: () => Effect.die("Nothing here prewarms."),
             touch: () => Effect.succeed({ outcome: "absent" as const }),
             connect: () => Effect.void,
             acquire: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))

@@ -33,7 +33,7 @@ import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
-import { InvocationLog } from "@patchy/runtime";
+import { InvocationLog, Prewarm } from "@patchy/runtime";
 import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
 import {
   finalStepStyles,
@@ -387,6 +387,8 @@ const home = Effect.fn("PortalPages.home")(function* () {
   const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
+  const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
+  yield* prewarm(rows, opens);
   const now = yield* Clock.currentTimeMillis;
   const machine = yield* newestMachine(viewer.user.id);
   // Everyone's sign-ins count, so someone who connects and later revokes every key stays out.
@@ -406,7 +408,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
       body: `${renderHome({
         rows,
         viewer,
-        opens: new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])),
+        opens,
         now,
         publicBaseUrl: session.publicBaseUrl,
         query,
@@ -959,6 +961,35 @@ const recentFailures = Effect.fn("PortalPages.recentFailures")(function* (
   return new Map(managed.map((row) => [row.patch.id, counts.get(row.patch.id) ?? 0]));
 });
 
+/**
+ * Starts readying the viewer's company task and the live tier 2 tools they are likeliest to open,
+ * theirs by how much they open them and then everyone's by visits, without waiting. Hosts without
+ * the execution fleet have nothing to ready.
+ */
+const prewarm = Effect.fn("PortalPages.prewarm")(function* (
+  rows: readonly Patches.ReadPatch[],
+  opens: ReadonlyMap<string, Patches.Open>
+) {
+  const service = yield* Effect.serviceOption(Prewarm.Prewarm);
+  if (Option.isNone(service)) return;
+  const { viewer } = yield* context;
+  const score = (row: Patches.ReadPatch) => opens.get(row.patch.id)?.score ?? 0;
+  const candidates = rows
+    .filter((row) => row.patch.state === "live" && row.tier === 2)
+    .sort((a, b) => score(b) - score(a) || b.visits - a.visits)
+    .flatMap(({ patch }) =>
+      patch.currentVersionId === null
+        ? []
+        : [{ patchId: patch.id, versionId: patch.currentVersionId }]
+    );
+  if (candidates.length === 0) return;
+  yield* service.value.prewarm({
+    companyId: viewer.company.id,
+    viewerId: viewer.user.id,
+    candidates
+  });
+});
+
 /** All patches at `/patches`: every patch the viewer can open, in `?show=` tabs, searched by `?q=`. */
 const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const { viewer, session, access } = yield* context;
@@ -968,7 +999,8 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
-  const opens = yield* patches.opens(viewer.user.id);
+  const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
+  yield* prewarm(rows, opens);
   const members = yield* (yield* Users.Users).list(viewer.company.id);
   return pageResponse(
     {
@@ -981,7 +1013,7 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
         query,
         now: yield* Clock.currentTimeMillis,
         publicBaseUrl: session.publicBaseUrl,
-        opens: new Map(opens.map((open) => [open.patchId, open])),
+        opens,
         names: new Map(members.map((member) => [member.id, member.name])),
         failures: yield* recentFailures(rows)
       }),

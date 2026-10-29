@@ -36,7 +36,7 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
-import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
+import { InvocationLog, Prewarm, RuntimeLog, Wakes } from "@patchy/runtime";
 import { NodeCryptography } from "@patchy/core";
 
 const DAY = 24 * 60 * 60 * 1_000;
@@ -4155,5 +4155,57 @@ it.layer(services)("user lifecycle transaction failure on a socket", (it) => {
       assert.deepStrictEqual(lifecycleEvents(workspace.id), []);
       assert.deepStrictEqual([first.patchId, second.patchId].flatMap(reported), []);
     }).pipe(Effect.scoped)
+  );
+});
+
+/** Each prewarm a page asked for, in order; a host beside the fleet would start each. */
+const prewarms: Array<Parameters<Prewarm.Prewarm["Service"]["prewarm"]>[0]> = [];
+const prewarmLayer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(services),
+  Layer.provideMerge(
+    Layer.succeed(Prewarm.Prewarm)({
+      prewarm: (request) =>
+        Effect.sync(() => {
+          prewarms.push(request);
+        })
+    })
+  ),
+  Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+);
+
+it.layer(prewarmLayer)("prewarms on a socket", (it) => {
+  it.effect("readies the viewer's likeliest live tier 2 tools from Home and All patches", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patches = yield* Patches.Patches;
+      const quiet = yield* publishTier2(workspace.owner, "quiet-tool");
+      const popular = yield* publishTier2(workspace.owner, "popular-tool");
+      const theirs = yield* publishTier2(workspace.owner, "their-tool");
+      const retired = yield* publishTier2(workspace.owner, "old-tool");
+      yield* patches.retire(retired.patchId, actor(workspace.owner));
+      yield* publish(workspace.owner, "weekly-recap");
+      for (let visit = 0; visit < 3; visit++) yield* patches.recordVisit(popular.patchId);
+      // Their own opens come first, then everyone's visits; pages and retired tools never.
+      yield* patches.recordOpen(workspace.member.id, theirs.patchId, theirs.versionId);
+      const expected = {
+        companyId: workspace.id,
+        viewerId: workspace.member.id,
+        candidates: [theirs, popular, quiet].map(({ patchId, versionId }) => ({
+          patchId,
+          versionId
+        }))
+      };
+      prewarms.length = 0;
+      yield* (yield* request("/", workspace.member)).text;
+      yield* (yield* request("/patches", workspace.member)).text;
+      assert.deepStrictEqual(prewarms, [expected, expected]);
+
+      // A company without a live tier 2 tool has nothing to ready.
+      const other = yield* company();
+      yield* publish(other.owner, "just-a-page");
+      yield* (yield* request("/", other.member)).text;
+      assert.strictEqual(prewarms.length, 2);
+    })
   );
 });
