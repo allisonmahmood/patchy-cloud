@@ -43,7 +43,7 @@ describe("executeConfig", () => {
     const path = await fixture(
       `
       import { title } from "./values.ts";
-      const tier: 1 = 1;
+      const tier: 2 = 2;
       console.log("config output is not the result channel");
       export default defineConfig({ name: "config-test", tier, tables: {
         notes: table("Notes identified by id; count is a whole-number tally.", {
@@ -107,7 +107,7 @@ describe("executeConfig", () => {
       manifestVersion: MANIFEST_VERSION,
       release: RELEASE,
       name: "config-test",
-      tier: 1,
+      tier: 2,
       tables: {
         notes: {
           description: "Notes identified by id; count is a whole-number tally.",
@@ -151,7 +151,7 @@ describe("executeConfig", () => {
 
   it("resolves member columns with an unstamped directory declaration", async () => {
     const path = await fixture(`export default defineConfig({
-      name: "assignments", tier: 1,
+      name: "assignments", tier: 2,
       uses: { members: members() },
       tables: { tasks: table("Tasks assigned to a company user.", {
         owner: t.member(), previous: t.member().optional()
@@ -172,7 +172,7 @@ describe("executeConfig", () => {
     '{ kind: "member", default: undefined }'
   ])("refuses member defaults through config execution: %s", async (owner) => {
     const path = await fixture(`export default defineConfig({
-      name: "invalid-member-default", tier: 1,
+      name: "invalid-member-default", tier: 2,
       uses: { members: members() },
       tables: { tasks: table("Tasks assigned to company users.", { owner: ${owner} }) }
     });`);
@@ -273,9 +273,26 @@ describe("executeConfig", () => {
     });
   });
 
+  it("refuses uses below tier 2 before reading generated stamps, but evaluates it for removal", async () => {
+    const path = await fixture(
+      'export default defineConfig({ name: "own-patch", tier: 1, uses: { members: members(), sales: postgres("warehouse") } });',
+      null
+    );
+    const refusal = await executeConfig(path).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(ConfigExecution.LowerTierUses);
+    expect(ConfigExecution.configFailure(refusal)).toMatchObject({
+      code: "tier_mismatch",
+      message: expect.stringContaining('cannot declare "members", "sales"')
+    });
+    expect((await ConfigExecution.executeConfig(path, { resolve: false })).uses).toEqual({
+      members: { kind: "members" },
+      sales: { kind: "postgres", handle: "warehouse" }
+    });
+  });
+
   it("refuses declarations without generated stamps instead of inventing ids or revisions", async () => {
     const path = await fixture(
-      'export default defineConfig({ name: "missing-stamps", tier: 1, uses: { sales: postgres("warehouse") } });'
+      'export default defineConfig({ name: "missing-stamps", tier: 2, uses: { sales: postgres("warehouse") } });'
     );
     await expect(executeConfig(path)).rejects.toThrow();
   });
@@ -295,7 +312,7 @@ describe("executeConfig", () => {
     { label: "a missing manifest version", release: RELEASE, manifestVersion: undefined }
   ])("refuses generated declarations with $label", async ({ release, manifestVersion }) => {
     const path = await fixture(
-      'export default defineConfig({ name: "stale-generation", tier: 1, uses: { sales: postgres("warehouse") } });',
+      'export default defineConfig({ name: "stale-generation", tier: 2, uses: { sales: postgres("warehouse") } });',
       {
         release,
         manifestVersion,
@@ -320,12 +337,12 @@ describe("executeConfig", () => {
     }
   ])("evaluates unresolved declarations for generation with a $label index", async ({ index }) => {
     const path = await fixture(
-      'export default defineConfig({ name: "first-generation", tier: 1, uses: { sales: postgres("warehouse") } });',
+      'export default defineConfig({ name: "first-generation", tier: 2, uses: { sales: postgres("warehouse") } });',
       index
     );
     expect(await ConfigExecution.executeConfig(path, { resolve: false })).toEqual({
       name: "first-generation",
-      tier: 1,
+      tier: 2,
       tables: {},
       files: {},
       uses: { sales: { kind: "postgres", handle: "warehouse" } },
@@ -360,7 +377,7 @@ describe("executeConfig", () => {
     }
   ])("refuses $label without borrowing stale generated authority", async ({ config, stamps }) => {
     const path = await fixture(
-      `export default defineConfig({ name: "changed-uses", tier: 1, uses: ${config} });`,
+      `export default defineConfig({ name: "changed-uses", tier: 2, uses: ${config} });`,
       {
         release: RELEASE,
         manifestVersion: MANIFEST_VERSION,
@@ -380,7 +397,7 @@ describe("executeConfig", () => {
     "does not rebind a changed $kind declaration to its old generated identity",
     async ({ builder, kind, field }) => {
       const path = await fixture(
-        `export default defineConfig({ name: "changed-shared", tier: 1, uses: { contacts: ${builder}("abcdefghijkl", "contacts") } });`,
+        `export default defineConfig({ name: "changed-shared", tier: 2, uses: { contacts: ${builder}("abcdefghijkl", "contacts") } });`,
         {
           release: RELEASE,
           manifestVersion: MANIFEST_VERSION,

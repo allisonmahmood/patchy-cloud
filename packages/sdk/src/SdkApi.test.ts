@@ -442,6 +442,7 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
   );
   return generateRequest({
     ...Fixtures.manifest,
+    tier: 2,
     uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
   });
 });
@@ -570,6 +571,33 @@ it.layer(layer)("SDK company generation", (it) => {
       })
   );
 
+  it.effect("refuses uses below tier 2 instead of resolving them", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      for (const tier of [0, 1] as const) {
+        const response = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe(
+              generateRequest({
+                ...Fixtures.manifest,
+                tier,
+                uses: {
+                  members: { kind: "members" },
+                  analytics: { kind: "posthog", handle: "product" }
+                }
+              })
+            )
+          )
+        );
+        assert.strictEqual(response.status, 422);
+        const body = yield* response.json;
+        assert.include(body, { code: "tier_mismatch" });
+        assert.include(JSON.stringify(body), "uses requires tier 2");
+      }
+    })
+  );
+
   it.effect(
     "writes the Patchy look until the company has one, then its current revision with the logo",
     () =>
@@ -681,7 +709,7 @@ it.layer(layer)("SDK company generation", (it) => {
       const output = yield* api.generate({
         payload: generateRequest({
           ...Fixtures.manifest,
-          tier: 1,
+          tier: 2,
           uses: { members: { kind: "members" } }
         })
       });
@@ -765,6 +793,7 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
+                tier: 2,
                 uses: { sales: { kind: "postgres", handle: "warehouse", id: "old", revision: 0 } }
               }
             })
@@ -811,6 +840,7 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
+                tier: 2,
                 uses: { sales: { kind: "postgres", handle: "archive" } }
               }
             })
@@ -849,6 +879,7 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
+                tier: 2,
                 uses: { analytics: { kind: "posthog", handle: "warehouse" } }
               }
             })
@@ -909,6 +940,7 @@ it.layer(layer)("SDK company generation", (it) => {
             ...generateRequest(),
             manifest: {
               ...Fixtures.manifest,
+              tier: 2,
               uses: { mail: { kind: "pidgeon", handle: "support" } }
             }
           })
@@ -936,7 +968,7 @@ it.layer(layer)("SDK company generation", (it) => {
       const generated = file("patchy/_generated/uses/mail.ts")!;
       assert.include(generated, 'export const address = "support@acme.example";');
       assert.include(generated, "export type Client = PidgeonSender;");
-      assert.include(file("patchy/_generated/client.ts")!, "uses/mail");
+      assert.include(file("patchy/_generated/server.ts")!, "uses/mail");
       assert.isDefined(file(".agents/skills/patchy-pidgeon/SKILL.md"));
       assert.isFalse(output.files.some(({ path }) => path.startsWith("fixtures/")));
       const index = JSON.parse(file("patchy/_generated/index.json")!);
@@ -975,6 +1007,7 @@ it.layer(layer)("SDK company generation", (it) => {
             ...generateRequest(),
             manifest: {
               ...Fixtures.manifest,
+              tier: 2,
               uses: { invoices: { kind: "pidgeon", handle: "invoices" } }
             }
           })
@@ -1086,6 +1119,7 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
+                tier: 2,
                 uses: {
                   contacts: { kind: "sharedTable", patchId, table: "contacts" },
                   assets: { kind: "sharedStore", patchId, store: "logos" }
@@ -1152,6 +1186,7 @@ it.layer(layer)("SDK company generation", (it) => {
               ...generateRequest(),
               manifest: {
                 ...Fixtures.manifest,
+                tier: 2,
                 uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
               }
             })
@@ -1163,6 +1198,7 @@ it.layer(layer)("SDK company generation", (it) => {
           ...generateRequest(),
           manifest: {
             ...Fixtures.manifest,
+            tier: 2,
             uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
           }
         }).pipe(Effect.flip);
@@ -1216,10 +1252,12 @@ it.layer(layer)("SDK company generation", (it) => {
       const requests = [
         generateRequest({
           ...Fixtures.manifest,
+          tier: 2,
           uses: { contacts: { kind: "sharedTable", patchId, table: "contacts" } }
         }),
         generateRequest({
           ...Fixtures.manifest,
+          tier: 2,
           uses: { logos: { kind: "sharedStore", patchId, store: "logos" } }
         }),
         { ...generateRequest(), patchId }
@@ -1284,6 +1322,7 @@ it.layer(layer)("SDK company generation", (it) => {
       const sharedSource = yield* failureSource("sdkfailure01");
       const postgresSource = generateRequest({
         ...Fixtures.manifest,
+        tier: 2,
         uses: { sales: { kind: "postgres", handle: "warehouse" } }
       });
       const cases: ReadonlyArray<{
@@ -1439,6 +1478,7 @@ it.layer(layer)("SDK company generation", (it) => {
             identity.company.id,
             generateRequest({
               ...Fixtures.manifest,
+              tier: 2,
               uses: {
                 contacts: { kind: "sharedTable", patchId: "sdksqlfail01", table: "contacts" }
               }

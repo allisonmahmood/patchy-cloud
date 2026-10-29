@@ -1,7 +1,7 @@
 import type { Frame, Page, Request } from "@playwright/test";
 import type { FixtureWindow } from "./fixture-client.js";
 import { test, expect, notice, installSessionRefreshBoundary } from "./fixtures.js";
-import { manifest, type Instance, type Published } from "./instance.js";
+import type { Instance, Published } from "./instance.js";
 import { RuntimeSubscriptionRequest } from "../../packages/api/src/index.js";
 import * as Schema from "effect/Schema";
 
@@ -252,43 +252,37 @@ for (const scope of ["company", "local"] as const) {
     expect(asked).toHaveLength(0);
   });
 
-  test(`a refused source leaves a ${scope} document working; losing the document ends it`, async ({
+  test(`a refused operation leaves a ${scope} document working; losing the document ends it`, async ({
     page,
     instance
   }) => {
-    const source = await instance.publish("company", instance.html, undefined, {
-      tables: { rows: { ...manifest.tables.rows, shared: true } }
-    });
-    const consumer = await instance.publish("company", lazy(instance), undefined, {
-      uses: {
-        source: {
-          kind: "sharedTable",
-          patchId: source.patchId,
-          table: "rows",
-          id: `${source.patchId}/rows`,
-          revision: 1
-        }
-      }
-    });
-    await instance.lifecycle(source.patchId, "retire", undefined, true);
+    const consumer = await instance.publish("company", lazy(instance));
     await serve(page, consumer, scope);
     const asked = meRequests(page);
     const reader = await loadLazy(page, consumer);
-    // The refusal's fresh `me` finds the document still authorized.
-    const probed = page.waitForResponse((response) => isMe(response.request()));
-    expect(
-      await reader.evaluate(async () => {
-        try {
-          await (window as unknown as FixtureWindow).harness.client.shared.source!.list();
-          return "unexpected_success";
-        } catch (error) {
-          return typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : "unexpected_error";
-        }
-      })
-    ).toBe("access_denied");
-    expect((await probed).status()).toBe(200);
+    // Tier 1 reaches only its own patch: another patch's shared table is a tier 2 handler's.
+    const refused = answered(page, "shared.list");
+    await reader.evaluate(
+      (wire) =>
+        (window as unknown as FixtureWindow).harness.raw({
+          v: wire,
+          id: "shared-read",
+          op: "shared.list",
+          args: { alias: "source" }
+        }),
+      instance.wire
+    );
+    expect((await refused).status()).toBe(403);
+    await expect
+      .poll(() =>
+        reader.evaluate(
+          () =>
+            (window as unknown as FixtureWindow).harness.replies.find(
+              (reply) => reply.id === "shared-read"
+            )?.error?.code
+        )
+      )
+      .toBe("server_required");
     expect(
       await reader.evaluate(
         async () =>
@@ -300,7 +294,7 @@ for (const scope of ["company", "local"] as const) {
       )
     ).toBe("Still working");
     expect(page.url()).toBe(consumer.address);
-    expect(asked).toHaveLength(1);
+    expect(asked).toHaveLength(0);
 
     const frame = await loadLazy(page, consumer);
     await instance.platform.query("UPDATE users SET deactivated_at=now() WHERE id='usr_dev'");
@@ -310,6 +304,6 @@ for (const scope of ["company", "local"] as const) {
     });
     expect((await read).status()).toBe(403);
     await notice(page, "access_denied");
-    expect(asked).toHaveLength(2);
+    expect(asked).toHaveLength(1);
   });
 }

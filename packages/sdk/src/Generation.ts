@@ -14,7 +14,8 @@ import {
   type LookFiles,
   type LookRestore,
   type LookRevision,
-  type TableDefinition
+  type TableDefinition,
+  usesRefusal
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
 import { Attio, ConnectionStore, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
@@ -93,8 +94,19 @@ export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()(
     return `Patch or shared ${kind} ${this.patchId}${resource === undefined ? "" : `/${resource}`} is not openable. Ask its owner or an administrator at /company.`;
   }
 }
+/** Below tier 2 a patch declares no `uses`; generation resolves nothing for it. */
+export class TierMismatch extends Schema.TaggedError<TierMismatch>()("SdkTierMismatch", {
+  tier: Schema.Int,
+  aliases: Schema.Array(Schema.String)
+}) {
+  readonly code = "tier_mismatch" as const;
+  override get message() {
+    return usesRefusal(this.tier, this.aliases)!;
+  }
+}
 export type GenerationRefused =
   | ReleaseMismatch
+  | TierMismatch
   | UnsupportedManifestVersion
   | UnknownProjectSkill
   | UnsafeGeneratedPath
@@ -241,6 +253,9 @@ export const generate = Effect.fn("Generation.generate")(function* (
     });
   if (request.manifest.manifestVersion !== MANIFEST_VERSION)
     return yield* new UnsupportedManifestVersion({ version: request.manifest.manifestVersion });
+  const aliases = Object.keys(request.manifest.uses);
+  if (usesRefusal(request.manifest.tier, aliases) !== undefined)
+    return yield* new TierMismatch({ tier: request.manifest.tier, aliases });
   const skills = new Set([...coreSkills, ...request.skills]);
   if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
   if (request.manifest.tier === 2) skills.add("patchy-server");
@@ -558,14 +573,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
     );
     skillFiles.push({ name, path });
   }
-  files.set(
-    `${root}/client.ts`,
-    generateClient({
-      shared,
-      connections: factories,
-      tier: request.manifest.tier
-    })
-  );
+  files.set(`${root}/client.ts`, generateClient({ tier: request.manifest.tier }));
   if (request.manifest.tier === 2) {
     files.set(
       `${root}/server.ts`,

@@ -73,7 +73,6 @@ it.effect(
         { me, ...handlers },
         {
           origin: "http://localhost",
-          bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
           identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       );
@@ -123,7 +122,6 @@ it.effect(
         { me },
         {
           origin: "http://localhost",
-          bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
           identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
           called: (call) => Effect.sync(() => called.push(call))
         }
@@ -195,7 +193,6 @@ it.effect(
         { me, "tables.insert": directWrite },
         {
           origin: "http://localhost",
-          bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
           identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       ).pipe(
@@ -248,67 +245,61 @@ it.effect(
     )
 );
 
-it.effect(
-  "public principal bootstrap requires a declared tier 1 directory and respects tier 2 cutover",
-  () =>
-    Effect.gen(function* () {
-      let loaded: LoadedVersions.LoadedVersion & { readonly patchTier: number } = {
-        ...version,
-        scope: "public",
-        patchTier: 1,
-        manifest: { ...version.manifest, tier: 1, uses: { members: { kind: "members" } } }
-      };
-      const runtime = yield* Runtime.make(
-        { me },
-        {
-          origin: "http://localhost",
-          identity: Effect.fail(new Runtime.SessionExpired({})),
-          bootstrapIdentity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
-        }
-      ).pipe(
-        Effect.provideService(LoadedVersions.LoadedVersions, {
-          find: () => Effect.sync(() => Option.some(loaded))
-        })
-      );
-      const input = {
-        patchId: version.patchId,
-        versionId: version.versionId,
-        wire: WIRE_VERSION,
-        principal: null,
-        op: "principal",
-        args: {}
-      };
-      const publicVersion = loaded;
-      for (const forbidden of [
-        { ...publicVersion, scope: "company" as const },
-        { ...publicVersion, manifest: { ...publicVersion.manifest, tier: 0 as const } },
-        { ...publicVersion, manifest: { ...publicVersion.manifest, uses: {} } }
-      ]) {
-        loaded = forbidden;
-        assert.strictEqual((yield* runtime.call(input).pipe(Effect.flip)).code, "access_denied");
+it.effect("a public version reaches no data, even one that declared the member directory", () =>
+  Effect.gen(function* () {
+    const runtime = yield* Runtime.make(
+      { me },
+      {
+        origin: "http://localhost",
+        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
-      loaded = publicVersion;
-      assert.deepStrictEqual(yield* runtime.call(input), { userId: viewer.user.id });
-      loaded = { ...loaded, patchTier: 2 };
-      assert.strictEqual((yield* runtime.call(input).pipe(Effect.flip)).code, "server_required");
-      assert.strictEqual(yield* runtime.call({ ...input, op: "me" }), null);
-    }).pipe(
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(
-          new Request("http://localhost/api/runtime/call", {
-            method: "POST",
-            headers: {
-              origin: "http://localhost",
-              "x-patchy-wire": String(WIRE_VERSION),
-              "x-patchy-principal": "null"
-            }
-          })
-        )
-      ),
-      Effect.provide(Limits.layer),
-      Effect.provide(NodeCryptography.layer)
-    )
+    ).pipe(
+      Effect.provideService(LoadedVersions.LoadedVersions, {
+        find: () =>
+          Effect.succeed(
+            Option.some({
+              ...version,
+              scope: "public" as const,
+              patchTier: 1,
+              manifest: {
+                ...version.manifest,
+                tier: 1 as const,
+                uses: { members: { kind: "members" as const } }
+              }
+            })
+          )
+      })
+    );
+    const input = {
+      patchId: version.patchId,
+      versionId: version.versionId,
+      wire: WIRE_VERSION,
+      principal: null,
+      args: {}
+    };
+    for (const op of ["principal", "members.list"])
+      assert.strictEqual(
+        (yield* runtime.call({ ...input, op }).pipe(Effect.flip)).code,
+        "not_available_on_public"
+      );
+    assert.strictEqual(yield* runtime.call({ ...input, op: "me" }), null);
+  }).pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      HttpServerRequest.fromWeb(
+        new Request("http://localhost/api/runtime/call", {
+          method: "POST",
+          headers: {
+            origin: "http://localhost",
+            "x-patchy-wire": String(WIRE_VERSION),
+            "x-patchy-principal": "null"
+          }
+        })
+      )
+    ),
+    Effect.provide(Limits.layer),
+    Effect.provide(NodeCryptography.layer)
+  )
 );
 
 it.effect("reports unavailable host wiring for an admitted server call", () =>
@@ -317,7 +308,6 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
       {},
       {
         origin: "http://localhost",
-        bootstrapIdentity: Effect.fail(new Runtime.AccessDenied({})),
         identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     );

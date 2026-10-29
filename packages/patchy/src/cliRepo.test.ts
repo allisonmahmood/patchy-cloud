@@ -16,6 +16,7 @@ import {
   projectHandler,
   projectSource,
   projectTree,
+  tier2ProjectTree,
   publishTree,
   readJson,
   releaseArtifact,
@@ -349,7 +350,7 @@ describe("patch-repo commands", () => {
 
   it("adds the sole connected Postgres declaration without overwriting fixtures", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     mkdirSync(path.join(dir, "fixtures"));
     const fixture = "-- Builder-owned synthetic rows.\n";
     writeFileSync(path.join(dir, "fixtures/postgres-sales-db.sql"), fixture);
@@ -365,7 +366,7 @@ describe("patch-repo commands", () => {
         "patchy/_generated/uses/salesDb.ts",
         "patchy/_generated/context/salesDb.md"
       ]),
-      skills: [...coreProjectSkills, "patchy-postgres"].sort()
+      skills: [...coreProjectSkills, "patchy-postgres", "patchy-server"].sort()
     });
     expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
       uses: {
@@ -377,7 +378,7 @@ describe("patch-repo commands", () => {
 
   it("adds a PostHog declaration with its client and skill, and no fixture", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     const result = await runCli(["add", "posthog/product", "--as", "analytics", "--json"], {
       cwd: dir,
       env
@@ -391,7 +392,7 @@ describe("patch-repo commands", () => {
         "patchy/_generated/uses/analytics.ts",
         "patchy/_generated/context/analytics.md"
       ]),
-      skills: [...coreProjectSkills, "patchy-posthog"].sort()
+      skills: [...coreProjectSkills, "patchy-posthog", "patchy-server"].sort()
     });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
       '"analytics": { kind: "posthog", handle: "product" }'
@@ -408,7 +409,7 @@ describe("patch-repo commands", () => {
 
   it("adds a Pidgeon declaration with its client and skill, and removes them again", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     const result = await runCli(["add", "pidgeon/support", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -419,7 +420,7 @@ describe("patch-repo commands", () => {
         "patchy/_generated/uses/support.ts",
         "patchy/_generated/context/support.md"
       ]),
-      skills: [...coreProjectSkills, "patchy-pidgeon"].sort()
+      skills: [...coreProjectSkills, "patchy-pidgeon", "patchy-server"].sort()
     });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
       '"support": { kind: "pidgeon", handle: "support" }'
@@ -449,7 +450,7 @@ describe("patch-repo commands", () => {
 
   it("adds an Attio declaration with its context and skill, and removes them again", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     const result = await runCli(["add", "attio/crm", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -460,7 +461,7 @@ describe("patch-repo commands", () => {
         "patchy/_generated/uses/crm.ts",
         "patchy/_generated/context/crm.md"
       ]),
-      skills: [...coreProjectSkills, "patchy-attio"].sort()
+      skills: [...coreProjectSkills, "patchy-attio", "patchy-server"].sort()
     });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
       '"crm": { kind: "attio", handle: "crm" }'
@@ -484,7 +485,7 @@ describe("patch-repo commands", () => {
 
   it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     const added = await runCli(["add", "members", "--json"], { cwd: dir, env });
     expect(added).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(added.stdout)).toMatchObject({
@@ -498,7 +499,7 @@ describe("patch-repo commands", () => {
     expect(readJson(path.join(dir, "patchy/_generated/index.json"))).toHaveProperty("uses", []);
     const configPath = path.join(dir, "patchy.config.ts");
     const memberColumns = `import { defineConfig, members, table, t } from "patchy/config";
-export default defineConfig({ name: "member-assignments", tier: 1, uses: { members: members() },
+export default defineConfig({ name: "member-assignments", tier: 2, uses: { members: members() },
 tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } });`;
     writeFileSync(configPath, memberColumns);
     const refused = await runCli(["remove", "members", "--json"], { cwd: dir, env });
@@ -519,6 +520,21 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     );
   });
 
+  it("refuses a declaration on a tier 1 repo before generation, naming tier 2 handlers", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    for (const target of ["members", "posthog/product"]) {
+      const result = await runCli(["add", target, "--json"], { cwd: dir, env });
+      expect(result).toMatchObject({ status: 1, stdout: "" });
+      const refusal = JSON.parse(result.stderr);
+      expect(refusal).toMatchObject({ kind: "local", code: "tier_mismatch" });
+      expect(refusal.error).toContain("uses requires tier 2");
+      expect(refusal.error).toContain("server handlers");
+    }
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
+  });
+
   it("refuses a renamed member directory before generation", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = projectTree(instance.url);
@@ -529,7 +545,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
 
   it("adds and stamps a shared store by canonical id, then removes it without touching fixtures", async () => {
     const instance = await stubInstance(projectHandler);
-    const dir = projectTree(instance.url);
+    const dir = tier2ProjectTree(instance.url);
     const fixture = path.join(dir, "fixtures/shared-assets");
     mkdirSync(path.join(fixture, "nested"), { recursive: true });
     const invented = Buffer.from([0, 255, 10]);

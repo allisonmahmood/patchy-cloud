@@ -13,7 +13,7 @@ The human-readable label unique within a company's patch namespace, forming the 
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs. Tier 0 is static; tier 1 runs in the reader's browser; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it. It is not a pricing plan.
+Where a patch's code runs. Tier 0 is static; tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:

@@ -2,7 +2,7 @@ import { defineConfig, table, t } from "patchy/config";
 
 export default defineConfig({
   name: "kudos",
-  tier: 1,
+  tier: 2,
   tables: {
     kudos: table(
       "One public shout-out per id: sender thanks recipient (both member ids) for one studio value. value is a key: craft, client-love, teamwork, above-and-beyond or fresh-thinking. message is at most 280 characters. sentAt is when it was sent (ISO timestamp).",

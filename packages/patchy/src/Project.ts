@@ -30,7 +30,7 @@ import {
 import * as Instance from "./Instance.js";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
-import { configFailure, executeConfig } from "./executeConfig.js";
+import { configFailure, executeConfig, lowerTierUses } from "./executeConfig.js";
 import type { Declaration } from "./config.js";
 import {
   ConfigEdit,
@@ -535,6 +535,8 @@ export const generate = Effect.fn("Project.generate")(function* (
     ...executed,
     ...(repo.description === undefined ? {} : { description: repo.description })
   };
+  const refused = lowerTierUses(manifest);
+  if (refused !== undefined) return yield* refused;
   if (
     removedKind &&
     !Object.values(manifest.uses).some((declaration) => declaration.kind === removedKind)

@@ -22,11 +22,8 @@ Owned upload buffers transfer through the shipped `patchy/client` transport and
 detach; subviews copy only their selected bytes. Request byte defaults and
 operation classification are shared API definitions, also used by Runtime.
 
-Company and local shells pin the admitted viewer when rendered. Their stream authenticates every open and subscription update against it, and Runtime checks every other server-bound operation's pinned principal before running it, so neither waits for `me`. Identity stays lazy: the shell fetches `me` when the patch asks, and before a route change, which alters history without calling Runtime. After an `access_denied` it still sends a fresh `me`, to tell a refused source from lost access to the document. Public `me` is null. Public tier 1 documents may read their declared member directory as an authenticated company member, but cannot access tables, files or integrations. A changed or expired session stops authenticated directory work and asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
-The public shell lazily binds `{ userId }` through the internal `principal` runtime operation before its first directory call or subscription. That handshake is not a patch SDK operation. The shell pins the result for the document, then uses the existing principal checks on calls and stream reconnects; cacheable public HTML never contains a viewer identity. Public `me` remains null.
-Runtime adapters supply bootstrap identity explicitly. Production shares `StreamAdmission` between the handshake and document streams, including stale-token refresh semantics; it does not fall back to ordinary invocation admission.
-Public member-enabled shells hold the trusted session scripts in an inert template containing only public Clerk configuration. Directory authentication activates that template once, including when a stale token needs refresh during the initial handshake. Anonymous refusals leave the public page and its route bridge usable.
-A failed lazy bind can retry on the next directory request. A successful bind keeps its principal for the document's lifetime. Once bound, a public document stops on lost member authority even if it uses only direct calls and has never opened a stream.
+Company and local shells pin the admitted viewer when rendered. Their stream authenticates every open and subscription update against it, and Runtime checks every other server-bound operation's pinned principal before running it, so neither waits for `me`. Identity stays lazy: the shell fetches `me` when the patch asks, and before a route change, which alters history without calling Runtime. After an `access_denied` it still sends a fresh `me`, to tell a refused source from lost access to the document. Public `me` is null, and public tier 1 documents reach no data: tables and files answer `not_available_on_public`. A changed or expired session on a company document asks for sign-in followed by a whole-page reload. Access loss is a first-party notice without a reload offer; validation errors belong to patch code. Already-admitted work retains its original attribution; a missing reply remains an unknown outcome. Leaving the page closes the broker; a page restored from the back/forward cache reloads whole rather than reopening it.
+Cacheable public HTML never contains a viewer identity, and a public shell carries no session scripts and binds no principal. Refusals leave the public page and its route bridge usable.
 `access_denied`, `session_expired`, `principal_changed` and `revoked` stop the
 document. `not_available_on_public` remains a patch-visible refusal, and public
 patches retain their browser-owned route bridge.
@@ -48,8 +45,7 @@ An old shell with a supported bundle gets one cache-bypassing refresh. A repeate
 ## Company document streams
 
 Each company shell on tiers 1 and 2 opens one fetch-streamed SSE connection at
-bootstrap, independently of patch code. Public tier 1 shells open one lazily for
-member-directory subscriptions after authenticating a company member. Tier 0 does not.
+bootstrap, independently of patch code. Public shells and tier 0 do not.
 The shell pins its admitted viewer, patch, loaded version and document nonce.
 `GET /api/runtime/stream` rechecks the cookie session and version eligibility on
 every open. `hello` supplies a new generation and the server clock; replacement
@@ -154,8 +150,11 @@ and opens the currently served address, even from a numbered-version document,
 preserving the client route, query and fragment.
 
 The runtime loads the patch tier beside the document's eligible version at
-admission. While the served tier is 2, lower-tier documents get `me` only;
-every other direct operation is `server_required`. Rolling back to tier 1
+admission. At every tier, a browser's direct shared-resource, member-directory
+and connection operations are `server_required`: they are tier 2 handlers' to
+make, including for retained and restored tier 1 versions that declared them.
+While the served tier is 2, lower-tier documents get `me` only; every other
+direct operation is `server_required`. Rolling back to tier 1
 reopens those documents' direct operations. A tier 2 document never gains
 name-based tables, files, shared resources, connections or members, even after
 rollback. Its generated client is server-only, with `me`, the route bridge,
@@ -168,7 +167,7 @@ Tier 2 is company-only. Publish to a public patch requires explicit
 served version and refuse `tier2_not_public`. Rolling a public patch back to a
 tier 2 version is refused too; change its scope to company first.
 
-Tier 1 owned and shared-table `list` and `get` subscriptions return whole snapshots
+Tier 1 owned-table `list` and `get` subscriptions return whole snapshots
 with decimal-string revision vectors. A missing `get` still depends on its table.
 The shell sends ordered subscribe/unsubscribe changes or replaces the complete
 desired set on reconnect. Generation and sequence fences discard obsolete work;
@@ -247,7 +246,7 @@ locks, one-hour expiry and bounds are recorded in ADR-0009 and the limits regist
 
 ## Tier-scoped promise
 
-Tier 0 keeps **the patch cannot watch you**. A public shell runs only Patchy's own shell script, never analytics (tier 0 needs no script). At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches outside systems only through your company's integrations.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
+Tier 0 keeps **the patch cannot watch you**. A public shell runs only Patchy's own shell script, never analytics (tier 0 needs no script). At tier 1: **a patch acts as you, only through Patchy, and never holds your login. What you do inside it can be saved in its own tables, which your colleagues can read, and every write is logged for your company's admins. It reaches nothing outside its own patch.** This scopes, rather than removes, ADR-0006's session and no-script guarantees.
 
 The tier 2 promise: **A tier 2 patch's server code runs on Patchy's machines,
 never on yours. It holds no login and no credential and has no path to the

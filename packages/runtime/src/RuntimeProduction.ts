@@ -12,7 +12,6 @@ import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as RuntimeStream from "./RuntimeStream.js";
-import * as StreamAdmission from "./StreamAdmission.js";
 import { Cryptography } from "@patchy/core";
 
 type Dependencies =
@@ -22,7 +21,6 @@ type Dependencies =
   | Limits.Limits
   | OperatingLimits.OperatingLimits
   | RuntimeLog.RuntimeLog
-  | StreamAdmission.StreamAdmission
   | Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>;
 
 export const make = (
@@ -33,7 +31,6 @@ export const make = (
     const session = yield* Session.Session;
     // The company's bucket, which Patchy MCP's door spends agents' calls from too.
     const companyAdmission = yield* CompanyAdmission.CompanyAdmission;
-    const principalAdmission = yield* StreamAdmission.StreamAdmission;
     // The server provides the host's streams, so a call keeps its viewer's open documents
     // active; suites without streams have no documents to keep.
     const streams = yield* Effect.serviceOption(RuntimeStream.RuntimeStream);
@@ -88,10 +85,6 @@ export const make = (
     return yield* Runtime.make(handlers, {
       origin: new URL(session.publicBaseUrl).origin,
       identity,
-      bootstrapIdentity: Effect.map(principalAdmission.admit, ({ identity, recheck }) => ({
-        viewer: identity,
-        reauthorize: Effect.map(recheck, (current) => current.identity)
-      })),
       ...(Option.isSome(streams) ? { called: streams.value.called } : {}),
       admitCompany: companyAdmission.admit,
       record: ({ input, operation, binding, deadlineMs }, run) =>

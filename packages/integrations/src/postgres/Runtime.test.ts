@@ -5,25 +5,21 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as HttpServer from "effect/http/HttpServer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as HttpApi from "effect/http-api/HttpApi";
-import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
-import * as HttpApiTest from "effect/http-api/HttpApiTest";
-import { CURRENT_RELEASE, RuntimeFailure, RuntimeGroup, WIRE_VERSION } from "@patchy/api";
+import { CURRENT_RELEASE, GuestProtocol, RuntimeFailure, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { clerkEnv, PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
+import { clerkEnv } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
+  CallbackGateway,
+  InvocationCapabilities,
   LoadedVersions,
-  RuntimeProduction,
-  RuntimeApi,
-  RuntimeLog,
-  StreamAdmission
+  RuntimeLog
 } from "@patchy/runtime";
+import * as Callbacks from "../../../runtime/src/test/callbacks.js";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as ConnectionStoreDev from "../ConnectionStoreDev.js";
@@ -84,39 +80,38 @@ const connection = {
   lastDiscoveredAt: null,
   createdBy: DEV_SEED.userId
 } satisfies ConnectionStore.Connection;
+const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
+const identity = {
+  user: { id: DEV_SEED.userId, name: "Viewer", email: "viewer@example.test" },
+  company: { id: DEV_SEED.companyId, handle: "dev", name: "Dev" },
+  admin: false
+};
+/** The tier 2 version an action runs in, declaring the connection its handlers call back to. */
+const binding = {
+  ...Callbacks.binding,
+  companyId: DEV_SEED.companyId,
+  patchId,
+  versionId,
+  principal: { userId: DEV_SEED.userId },
+  identity,
+  manifest: {
+    manifestVersion: 1,
+    release: CURRENT_RELEASE,
+    tier: 2 as const,
+    tables: {},
+    files: {},
+    uses: { sales: declaration },
+    handlers: {}
+  }
+};
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
   find: (patch, version) =>
     Effect.succeed(
       patch === patchId && (version === undefined || version === versionId)
-        ? Option.some({
-            patchId,
-            versionId,
-            patchTier: 1,
-            companyId: DEV_SEED.companyId,
-            scope: "company" as const,
-            wireVersion: WIRE_VERSION,
-            manifest: {
-              manifestVersion: 1,
-              release: CURRENT_RELEASE,
-              tier: 1 as const,
-              tables: {},
-              files: {},
-              uses: { sales: declaration }
-            }
-          })
+        ? Option.some({ ...binding, patchTier: 2, wireVersion: WIRE_VERSION })
         : Option.none()
     )
 });
-const TestApi = HttpApi.make("patchy").add(
-  RuntimeGroup.add(
-    HttpApiEndpoint.post("call", "/api/runtime/call", {
-      headers: Schema.Record(Schema.String, Schema.String),
-      payload: Schema.Unknown,
-      success: Schema.Unknown
-    })
-  )
-);
-const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const services = Layer.mergeAll(
   Session.layer,
   WideEvents.layerNoop,
@@ -133,7 +128,7 @@ const services = Layer.mergeAll(
   )
   .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
-it.layer(services)("declared Postgres over the runtime wire", (it) => {
+it.layer(services)("declared Postgres from a tier 2 action", (it) => {
   it.effect(
     "dispatches every operation and attributes real source successes and read-only failures",
     () =>
@@ -158,34 +153,20 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
         });
         yield* Effect.gen(function* () {
           const handlers = yield* Operations.makeHandlers;
-          const api = yield* HttpApiTest.groups(TestApi, ["runtime"], {
-            baseUrl: PUBLIC_BASE_URL
-          }).pipe(
-            Effect.provide(
-              Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-                Layer.provide(RuntimeProduction.layer(handlers)),
-                Layer.provide(StreamAdmission.layer)
-              )
-            )
+          const capabilities = yield* InvocationCapabilities.make;
+          const gateway = yield* CallbackGateway.make(handlers).pipe(
+            Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
           );
-          const send = (op: string, args: unknown) =>
-            api.call({
-              payload: {
-                patchId,
-                versionId,
-                principal: { userId: DEV_SEED.userId },
-                wire: WIRE_VERSION,
-                op,
-                args
-              },
-              headers: {
-                "x-patchy-wire": String(WIRE_VERSION),
-                "x-patchy-principal": `{"userId":"${DEV_SEED.userId}"}`,
-                origin: PUBLIC_BASE_URL,
-                cookie: signedInCookies()
-              },
-              responseMode: "response-only"
-            });
+          const capability = yield* Callbacks.issue(capabilities, {
+            kind: "action",
+            binding,
+            reauthorize: Effect.succeed(identity)
+          });
+          const send = (op: string, args: GuestProtocol.Callback["args"]) =>
+            gateway.callback(capability.token, capability.attempt, { op, args });
+          /** The refusal a callback answered with; a success fails to decode as one. */
+          const refusal = (op: string, args: GuestProtocol.Callback["args"]) =>
+            send(op, args).pipe(Effect.map(decodeFailure));
           const relation = { schema: "public", name: "orders" };
           for (const [op, args, rows] of [
             ["postgres.list", { connection: "sales", relation }, [{ id: 1 }, { id: 2 }]],
@@ -206,20 +187,17 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
               [{ id: 7 }]
             ]
           ] as const) {
-            const response = yield* send(op, args);
-            assert.strictEqual(response.status, 200);
-            assert.deepStrictEqual(yield* response.json, {
+            assert.deepStrictEqual(yield* send(op, args), {
               ok: true,
               value: { ok: true, rows, ...(op === "postgres.list" ? { cursor: null } : {}) }
             });
           }
-          const refused = yield* send("postgres.query", {
+          const failure = yield* refusal("postgres.query", {
             connection: "sales",
             sql: "INSERT INTO public.orders VALUES ($1) RETURNING id",
             params: [3],
             shape: { id: { kind: "integer" } }
           });
-          const failure = decodeFailure(yield* refused.json);
           assert.strictEqual(failure.code, "invalid_query");
           assert.strictEqual(failure.details?.sqlstate, "25006");
           const log = yield* RuntimeLog.RuntimeLog;
@@ -232,14 +210,12 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
           assert.strictEqual(failed?.outcomeCode, "invalid_query");
           assert.strictEqual(failed?.sql, "INSERT INTO public.orders VALUES ($1) RETURNING id");
           // Postgres text can't hold NUL, so the log keeps a stand-in and the query is still refused.
-          const nul = yield* send("postgres.query", {
+          const nulFailure = yield* refusal("postgres.query", {
             connection: "sales",
             sql: "SELECT 1\u0000",
             params: [],
             shape: { id: { kind: "integer" } }
           });
-          const nulFailure = decodeFailure(yield* nul.json);
-          assert.strictEqual(nul.status, 400);
           assert.strictEqual(nulFailure.code, "invalid_request");
           const nulCall = yield* log.find({
             companyId: DEV_SEED.companyId,
@@ -267,25 +243,21 @@ it.layer(services)("declared Postgres over the runtime wire", (it) => {
               ["postgres.query", 1]
             ]
           );
-          const rowLimit = yield* send("postgres.list", {
+          const rowFailure = yield* refusal("postgres.list", {
             connection: "sales",
             relation,
             limit: 1001
           });
-          const rowFailure = decodeFailure(yield* rowLimit.json);
-          assert.strictEqual(rowLimit.status, 413);
           assert.strictEqual(rowFailure.code, "too_large");
           assert.notProperty(rowFailure, "limitId");
           assert.notProperty(rowFailure, "scope");
           assert.notProperty(rowFailure, "value");
-          const resultLimit = yield* send("postgres.query", {
+          const resultFailure = yield* refusal("postgres.query", {
             connection: "sales",
             sql: "SELECT repeat('x', 1025) AS value",
             params: [],
             shape: { value: { kind: "text" } }
           });
-          const resultFailure = decodeFailure(yield* resultLimit.json);
-          assert.strictEqual(resultLimit.status, 413);
           assert.include(resultFailure, {
             code: "too_large",
             scope: "viewer",

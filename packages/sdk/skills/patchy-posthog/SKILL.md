@@ -5,7 +5,7 @@ description: Add a company PostHog connection, read its discovered events and pr
 
 # Company PostHog reads
 
-Read `../patchy-loop/SKILL.md` first. A PostHog connection reads one PostHog Cloud project's events and people through a personal API key an admin connected. Patchy builds every request, so a patch can only send read queries. On tier 1, every row a query returns is available to whoever can open the patch, including anything events carry, such as emails or user ids; hiding a column in the UI does not protect it. Tier 2 reaches PostHog through `ctx.connections` in actions and returns only what its handlers authorize. The key stays behind Patchy, never in config, source, CLI arguments or agent transcripts.
+Read `../patchy-loop/SKILL.md` first. A PostHog connection reads one PostHog Cloud project's events and people through a personal API key an admin connected. Patchy builds every request, so a patch can only send read queries. Connections are tier 2's: actions reach PostHog through `ctx.connections` and return only what their handlers authorize, and the page calls those actions. A tier 1 page reaches only its own patch, so declaring PostHog on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says. The key stays behind Patchy, never in config, source, CLI arguments or agent transcripts.
 
 ## Declare a connected project
 
@@ -17,12 +17,10 @@ There is no fixture. `patchy dev` reads the real project through Patchy, as the 
 
 ## Querying
 
-`patchy.connections.analytics.query({ name, query, values, shape })` runs one HogQL query as the viewer and returns `{ ok: true, rows }`. On tier 2 the same call is `ctx.connections.analytics.query(...)` in an action, never in a query or mutation handler or on the page.
+`ctx.connections.analytics.query({ name, query, values, shape })` runs one HogQL query as the viewer and returns `{ ok: true, rows }`. Call it in an action, never in a query or mutation handler; the page calls the action.
 
 ```ts
-import { patchy } from "../patchy/_generated/client.js";
-
-const result = await patchy.connections.analytics.query({
+const result = await ctx.connections.analytics.query({
   name: "dailyPageviews",
   query:
     "SELECT toStartOfDay(timestamp) AS day, count() AS views FROM events WHERE event = {event} AND timestamp >= now() - INTERVAL {days} DAY GROUP BY day ORDER BY day LIMIT 100",

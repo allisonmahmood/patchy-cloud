@@ -16,8 +16,7 @@ import {
 import type { Id, Insert, Row, Update } from "./config.js";
 import type { Manifest } from "@patchy/api";
 import type { ExecutedManifest } from "./executeConfig.js";
-import type { Client, Member } from "./client.js";
-import { useQuery } from "./preact.js";
+import type { Client } from "./client.js";
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -240,28 +239,13 @@ const boundaries = (noteId: Id<"notes">, userId: Id<"users">) => {
 void boundaries;
 void config;
 
-const membersConsumer = async (client: Client<typeof config>) => {
-  const candidate = (await client.members.list()).rows[0];
-  const resolved: Member | null = await client.members.get("usr_owner");
-  await client.members.search("ann", { cursor: "next-page" });
-  await client.members.search({ text: "ann" });
-  const page = useQuery(client.members.search, { text: "ann" });
-  const name: string | undefined = page.data?.rows[0]?.name;
-  client.members.list.subscribe(undefined, () => {});
-  client.members.search.subscribe({ text: "ann" }, () => {});
-  client.members.get.subscribe("usr_owner", () => {});
-  client.members.getMany.subscribe(["usr_owner"], () => {});
-  // @ts-expect-error member directory results are readonly
-  if (candidate) candidate.name = "Changed";
-  // @ts-expect-error member resolution needs string user ids
-  await client.members.getMany([1]);
-  // @ts-expect-error directory page sizes are fixed
-  await client.members.list({ limit: 100 });
-  void [resolved, name];
-};
-const noMembers = defineConfig({ name: "without-members", tier: 1 });
-const absentMembers = (client: Client<typeof noMembers>) => {
-  // @ts-expect-error an undeclared directory has no typed client
+// Tier 1 reaches only its own tables and files: what it declares in uses has no browser client.
+const ownPatchOnly = (client: Client<typeof config>) => {
+  // @ts-expect-error the member directory is read from tier 2 handlers
   void client.members;
+  // @ts-expect-error shared tables and stores are read from tier 2 handlers
+  void client.shared;
+  // @ts-expect-error connections are read from tier 2 handlers
+  void client.connections;
 };
-void [membersConsumer, absentMembers, noMembers];
+void ownPatchOnly;

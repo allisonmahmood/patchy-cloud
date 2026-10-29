@@ -25,7 +25,7 @@
   "patches": [
     {
       "repo": "support-desk",
-      "tier": 1,
+      "tier": 2,
       "connections": ["pidgeon/support"],
       "description": "Lumen Bikes' shared support inbox: triage conversations, read attachments, reply and start emails from the support address."
     }

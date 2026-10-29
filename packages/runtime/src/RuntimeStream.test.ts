@@ -1036,6 +1036,58 @@ it.layer(layer)("document streams", (it) => {
       }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
   );
 
+  it.effect(
+    "a tier 1 document subscribes only to its own tables, and a public one to nothing",
+    () =>
+      Effect.gen(function* () {
+        const authority = yield* versionAuthority;
+        authority.state.current = authority.latest.versionId;
+        const streams = yield* makeStreams.pipe(
+          Effect.provide(authority.layer),
+          Effect.provide(WideEvents.layerNoop),
+          Effect.provideService(SubscriptionReads.SubscriptionReads, {
+            admit: () => Effect.die("A refused subscription is never admitted."),
+            revisions: () => Effect.die("A refused subscription reads no revisions."),
+            read: () => Effect.die("A refused subscription is never read.")
+          })
+        );
+        const document = { ...input("own_patch_document"), versionId: authority.latest.versionId };
+        const pull = yield* Stream.toPull(yield* streams.open(document));
+        const hello = frame(yield* pull);
+        assert(hello.type === "hello");
+        yield* pull;
+        let sequence = 0;
+        const refused = Effect.fnUntraced(function* (
+          op: RuntimeSubscription["op"],
+          args: RuntimeSubscription["args"],
+          error: Runtime.RuntimeError
+        ) {
+          yield* streams.update({
+            ...document,
+            generation: hello.generation,
+            sequence: ++sequence,
+            type: "subscribe",
+            subscription: { id: op, op, args }
+          });
+          assert.deepStrictEqual(frame(yield* pull), { type: "admitted", sequence });
+          assert.deepStrictEqual(frame(yield* pull), {
+            type: "error",
+            id: op,
+            permanent: true,
+            error: Runtime.toFailure(error)
+          });
+        });
+        // The directory and other patches' tables are tier 2 handlers' to read.
+        yield* refused("members.list", {}, new Runtime.ServerRequired());
+        yield* refused("shared.list", { alias: "source" }, new Runtime.ServerRequired());
+        authority.state.retained.set(authority.latest.versionId, {
+          ...authority.latest,
+          scope: "public"
+        });
+        yield* refused("tables.list", { table: "items" }, new Runtime.PublicUnavailable({}));
+      }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request()), Effect.scoped)
+  );
+
   for (const delivery of ["snapshot", "resume", "failure"] as const) {
     const resume = delivery === "resume";
     const subject = resume ? "an equal-vector resume" : `a ${delivery}`;

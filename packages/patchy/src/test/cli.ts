@@ -44,6 +44,7 @@ import {
   PublishRequest,
   WIRE_VERSION
 } from "@patchy/api";
+import { workerdVersion } from "@patchy/api/guest";
 import { generateClient, generateSharedStoreClient } from "../../../sdk/src/generateClient.js";
 import { generateServer } from "../../../sdk/src/generateServer.js";
 import { generate as generatePostgres } from "../../../integrations/src/postgres/Generate.js";
@@ -589,7 +590,7 @@ export const generateProjectResponse = (
   files.push(
     {
       path: "patchy/_generated/client.ts",
-      contents: generateClient({ connections, shared, tier: manifest.tier })
+      contents: generateClient({ tier: manifest.tier })
     },
     {
       path: "patchy/_generated/index.json",
@@ -659,6 +660,24 @@ export const projectTree = (instance: string, source = projectConfig) => {
   );
   mkdirSync(path.join(dir, "node_modules"));
   symlinkSync(packageDir, path.join(dir, "node_modules/patchy"), "dir");
+  return dir;
+};
+
+/**
+ * A tier 2 project, already pinning the release's workerd: declaring connections, other patches'
+ * shared resources or members is tier 2's, and refresh then installs nothing new.
+ */
+export const tier2ProjectTree = (instance: string) => {
+  const dir = projectTree(instance, projectConfig.replace("tier: 1", "tier: 2"));
+  const manifest = path.join(dir, "package.json");
+  const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+  writeFileSync(
+    manifest,
+    JSON.stringify({
+      ...pkg,
+      devDependencies: { ...pkg.devDependencies, workerd: workerdVersion }
+    }) + "\n"
+  );
   return dir;
 };
 

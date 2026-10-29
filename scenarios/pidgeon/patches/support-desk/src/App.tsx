@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "patchy/preact";
 import { isPatchyError, patchy } from "../patchy/_generated/client.js";
-import {
-  address,
-  type AttachmentText,
-  type Label,
-  type Message,
-  type SearchHit,
-  type Sent,
-  type Thread,
-  type ThreadStatus
-} from "../patchy/_generated/uses/support.js";
+import { address } from "../patchy/_generated/uses/support.js";
 
-const support = patchy.connections.support;
+// The support address is read and answered by server/desk.ts, as the person viewing.
+const desk = patchy.server.desk;
+type Thread = Awaited<ReturnType<typeof desk.inbox>>[number];
+type ThreadStatus = Thread["status"];
+type SearchHit = Awaited<ReturnType<typeof desk.search>>[number];
+type Conversation = Awaited<ReturnType<typeof desk.conversation>>;
+type Label = Conversation["labels"][number];
+type Message = Conversation["messages"][number];
+type Sent = Awaited<ReturnType<typeof desk.send>>;
 
 const statuses: ReadonlyArray<{ readonly key: ThreadStatus; readonly label: string }> = [
   { key: "open", label: "Open" },
@@ -55,9 +54,10 @@ const explain = (error: unknown) => {
 /** What to tell the person once Pidgeon answered a send; held sends went nowhere yet. */
 const outcome = (sent: Sent, to: string) => {
   if (sent.status === "pending_approval")
-    return `Waiting for approval in Pidgeon until ${new Date(sent.approval.expiresAt).toLocaleString()}. Nothing has gone to ${to} yet.`;
-  const refused = sent.rejected.map((item) => item.address);
-  return refused.length === 0 ? `Sent to ${to}.` : `Sent, but ${refused.join(", ")} refused it.`;
+    return `Waiting for approval in Pidgeon until ${new Date(sent.expiresAt ?? "").toLocaleString()}. Nothing has gone to ${to} yet.`;
+  return sent.rejected.length === 0
+    ? `Sent to ${to}.`
+    : `Sent, but ${sent.rejected.join(", ")} refused it.`;
 };
 
 export function App() {
@@ -77,10 +77,7 @@ export function App() {
   const [hits, setHits] = useState<readonly SearchHit[] | undefined>(undefined);
 
   const load = () =>
-    support.threads.list({ limit: 100 }).then(
-      (result) => setThreads(result.threads),
-      (failure: unknown) => setError(explain(failure))
-    );
+    desk.inbox({}).then(setThreads, (failure: unknown) => setError(explain(failure)));
   useEffect(() => {
     void load();
   }, []);
@@ -96,10 +93,9 @@ export function App() {
   // Patch frames block native form submission: Enter and buttons call the client directly.
   const search = () => {
     if (query.trim() === "") return setHits(undefined);
-    support.messages.search({ text: query.trim(), limit: 25 }).then(
-      (result) => setHits(result.hits),
-      (failure: unknown) => setError(explain(failure))
-    );
+    desk
+      .search({ text: query.trim() })
+      .then(setHits, (failure: unknown) => setError(explain(failure)));
   };
 
   return (
@@ -225,19 +221,6 @@ export function App() {
   );
 }
 
-/** A conversation's every message, page by page. */
-const readThread = async (id: string) => {
-  const first = await support.threads.get(id);
-  const messages = [...first.messages];
-  let cursor = first.nextCursor;
-  while (cursor !== null) {
-    const next = await support.threads.get(id, { cursor });
-    messages.push(...next.messages);
-    cursor = next.nextCursor;
-  }
-  return { thread: first.thread, labels: first.labels, messages };
-};
-
 function Conversation({
   id,
   onSending,
@@ -247,7 +230,7 @@ function Conversation({
   onSending: (sending: boolean) => void;
   onChange: () => void;
 }) {
-  const [state, setState] = useState<Awaited<ReturnType<typeof readThread>> | undefined>(undefined);
+  const [state, setState] = useState<Conversation | undefined>(undefined);
   const [allLabels, setAllLabels] = useState<readonly Label[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
   const [reply, setReply] = useState("");
@@ -257,10 +240,10 @@ function Conversation({
   const [notice, setNotice] = useState<string | undefined>(undefined);
 
   const load = () =>
-    readThread(id).then(setState, (failure: unknown) => setError(explain(failure)));
+    desk.conversation({ id }).then(setState, (failure: unknown) => setError(explain(failure)));
   useEffect(() => {
     void load();
-    void support.labels.list().then(setAllLabels);
+    void desk.labels({}).then(setAllLabels);
   }, [id]);
 
   if (error !== undefined) return <p className="error pad">{error}</p>;
@@ -301,7 +284,14 @@ function Conversation({
                 title={`Remove ${label.name}`}
                 disabled={busy}
                 onClick={() =>
-                  act(async () => void (await support.threads.unlabel(thread.id, label.id)))
+                  act(
+                    async () =>
+                      void (await desk.relabel({
+                        id: thread.id,
+                        labelId: label.id,
+                        applied: false
+                      }))
+                  )
                 }
               >
                 ×
@@ -315,7 +305,9 @@ function Conversation({
             onChange={(event) => {
               const labelId = event.currentTarget.value;
               if (labelId !== "")
-                void act(async () => void (await support.threads.label(thread.id, labelId)));
+                void act(
+                  async () => void (await desk.relabel({ id: thread.id, labelId, applied: true }))
+                );
             }}
           >
             <option value="">+ Label</option>
@@ -335,9 +327,7 @@ function Conversation({
               className={item.key === thread.status ? "pill current" : "pill"}
               disabled={busy || item.key === thread.status}
               onClick={() =>
-                act(
-                  async () => void (await support.threads.update(thread.id, { status: item.key }))
-                )
+                act(async () => void (await desk.setStatus({ id: thread.id, status: item.key })))
               }
             >
               {item.label}
@@ -369,7 +359,8 @@ function Conversation({
               disabled={busy || reply.trim() === ""}
               onClick={() =>
                 act(async () => {
-                  const sent = await support.messages.reply(last.id, {
+                  const sent = await desk.reply({
+                    id: last.id,
                     text: reply.trim(),
                     idempotencyKey: draft
                   });
@@ -390,7 +381,7 @@ function Conversation({
 }
 
 function MessageView({ message }: { message: Message }) {
-  const [opened, setOpened] = useState<Record<string, AttachmentText | string>>({});
+  const [opened, setOpened] = useState<Record<string, string>>({});
   const mine = ours(message.from.email);
   return (
     <section className={mine ? "message ours" : "message"}>
@@ -428,7 +419,7 @@ function MessageView({ message }: { message: Message }) {
                   <button
                     className="link"
                     onClick={() =>
-                      support.attachments.text(file.id).then(
+                      desk.attachment({ id: file.id }).then(
                         (text) => setOpened({ ...opened, [file.id]: text }),
                         (failure: unknown) => setOpened({ ...opened, [file.id]: explain(failure) })
                       )
@@ -437,9 +428,7 @@ function MessageView({ message }: { message: Message }) {
                     Read
                   </button>
                 ) : null}
-                {read === undefined ? null : (
-                  <pre className="file-text">{typeof read === "string" ? read : read.text}</pre>
-                )}
+                {read === undefined ? null : <pre className="file-text">{read}</pre>}
               </li>
             );
           })}
@@ -488,12 +477,7 @@ function Compose({
     onSending(true);
     setNotice(undefined);
     try {
-      const sent = await support.messages.send({
-        to: recipients,
-        subject,
-        text,
-        idempotencyKey: draft
-      });
+      const sent = await desk.send({ to: recipients, subject, text, idempotencyKey: draft });
       if (sent.status === "sent" && sent.rejected.length === 0)
         return onDone(start.key, sent.threadId);
       setAnswered(sent);
@@ -551,11 +535,7 @@ function Compose({
             onClick={() =>
               onNew(
                 answered.status === "sent"
-                  ? {
-                      to: answered.rejected.map((item) => item.address).join(", "),
-                      subject,
-                      text
-                    }
+                  ? { to: answered.rejected.join(", "), subject, text }
                   : {}
               )
             }

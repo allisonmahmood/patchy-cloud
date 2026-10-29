@@ -249,6 +249,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Stored versions retain their wire; tier 2 wire 1 fixes the guest protocol and workerd compatibility date. " +
           "Every table and file store requires a nonblank description; missing or blank descriptions " +
           "and table/store name collisions answer `invalid_manifest`. " +
+          "Only tier 2 declares `uses`: below it, any declaration answers `tier_mismatch`, since a page below " +
+          "tier 2 reaches only its own patch, and its handlers reach the rest. " +
           'The company directory is declared as `uses: { members: { kind: "members" } }`, ' +
           "without a resource id or schema stamp. Member columns require this declaration. " +
           'Postgres uses carry `{ kind: "postgres", handle, id, revision }`, keyed by alias. ' +
@@ -660,7 +662,7 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
       .annotateMerge(
         describe(
           "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
-            "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch. " +
+            "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch, and `uses` below tier 2 with tier_mismatch. " +
             "Present skills are sticky except patchy-server below tier 2 and patchy-members without uses.members; generation removes those skills. An unknown present skill refuses generation. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tiers 0 and 1 send an empty list. Generation uses them only for type-only imports and never loads handler code. " +
@@ -699,16 +701,15 @@ const runtimeAdmission =
   "Browser-only: no bearer middleware, and machine tokens are refused. Every request requires " +
   "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or " +
   '`{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. ' +
-  "A public version answers `me` with null. Public tier 1 versions admit declared `members.*` reads " +
-  "only for active signed-in members of the patch's company; all other data operations, including " +
-  "unknown ones, return `not_available_on_public`. Public HTML contains no viewer identity. " +
-  "Before directory work, the trusted shell uses the internal `principal` operation with a null " +
-  "principal to bind `{ userId }`, then pins that principal for directory calls and streams. " +
+  "A public version answers `me` with null, and every other operation, including unknown ones, " +
+  "returns `not_available_on_public`. Public HTML contains no viewer identity. " +
   "Company versions require a browser session " +
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
   "matching that session's user (`principal_changed`); company `me` may bootstrap with null. " +
-  "Tier 2 documents admit handle redemption (`files.redeem`) but refuse direct name-based primitives " +
-  "and integrations with `server_required`, even after rollback to a lower served tier. A loaded " +
+  "Every document refuses direct `shared.*`, `members.*` and integration operations with " +
+  "`server_required`, at every tier, including retained versions that declared them: only " +
+  "tier 2 handlers reach them. Tier 2 documents admit handle redemption (`files.redeem`) but " +
+  "also refuse direct name-based tables and files, even after rollback to a lower served tier. A loaded " +
   "lower-tier document cannot redeem handles and gets only `me` while tier 2 is served. " +
   "Wire compatibility is checked before dispatch (`shell_outdated`). Per-viewer per-patch calls " +
   "are limited to 300 per minute by the release contract; `rate_limited` is 429 with `Retry-After` seconds. " +
@@ -813,6 +814,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "and final wire bytes afterward. Transport whitespace can make its check stricter. " +
           "Native PostgreSQL B-tree key-size failures are `too_large`; publishing a non-unique " +
           "index adds no separate size CHECK constraint or 2,000-byte runtime write limit. " +
+          "The `shared.*`, `members.*` and integration operations below are tier 2 handlers' callbacks; " +
+          "this endpoint refuses a browser's call to them with `server_required`. " +
           "`shared.get { alias, id }`, `shared.getMany { alias, ids }` and `shared.list { alias, ... }` " +
           "reuse those read contracts and source indexes, without writes. The alias resolves through " +
           "the loaded consumer manifest to a stable source patch id and table. Every call checks " +
@@ -829,9 +832,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`members.getMany { ids }` preserves input order and duplicates with null for unknown " +
           "or other-company ids. More than 1,000 ids is `limit_exceeded` with `members.getMany`. " +
           "Each member is `{ id, name, email, admin, active }`. These reads require the fixed " +
-          "`members` declaration and active same-company viewer authority, including on public tier 1 documents. All four operations subscribe " +
-          "to the company directory revision. Tier 2 handlers may read the directory in all " +
-          "three kinds; only queries track dependencies. Directory reads use the platform " +
+          "`members` declaration and active same-company viewer authority. Tier 2 handlers may read " +
+          "the directory in all three kinds; only queries track the company directory revision. Directory reads use the platform " +
           "database, outside the query's company-database snapshot. A `member` column stores " +
           "a user id and rejects a non-candidate with `invalid_row` on insertion or changed " +
           "assignment. Member columns may be optional but cannot have defaults. An unchanged inactive id passes. Eligibility is " +
@@ -1086,8 +1088,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "`patchId` and `versionId` identify the retained loaded version; `documentId` is the " +
           "shell's 16–128 character base64url nonce. `Sec-Fetch-Site: same-origin` is required. " +
           "Every reconnect checks the session, company and loaded version again. Company " +
-          "shells bootstrap this stream; public tier 1 shells open it lazily for declared " +
-          "member-directory subscriptions after binding the authenticated principal. An authenticated " +
+          "shells bootstrap this stream; public shells open none. An authenticated " +
           "company document keeps its stream if the patch becomes public. Frames are `data: <JSON>\\n\\n`, without an event field. " +
           "The first frame is `{type:'hello',generation,serverTime}`, with an opaque generation " +
           "and Unix milliseconds; the current `{type:'served',versionId,tier}` follows. " +
@@ -1119,7 +1120,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "return without changing loaded version. Expiry of the authenticated token ends the " +
           "stream normally. A refreshable stale token answers `session_refresh_required` (401), " +
           "so the browser refreshes its cookie without discarding the document. Only definitive " +
-          "session loss is `session_expired`. Tier 1 table and member-directory subscriptions share this stream with tier 2 query subscriptions. " +
+          "session loss is `session_expired`. Tier 1 table subscriptions share this stream with tier 2 query subscriptions. " +
           "The registry bounds `stream.documents` at 8 per viewer per patch and " +
           "`stream.buffer.bytes` at 16 MiB; overflow closes with `slow_consumer`."
       )
@@ -1141,13 +1142,12 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
           "using its loaded version, document nonce and current stream generation. Control " +
           "requests share `runtime.calls.perMinute` with ordinary calls for the same viewer " +
           "and patch; exhaustion is `rate_limited` (429) with `Retry-After`. Public loaded " +
-          "tier 1 versions admit only declared `members.*` subscriptions for same-company viewers; " +
-          "other data subscriptions return `not_available_on_public` without closing " +
+          "versions admit no subscription: each returns `not_available_on_public` without closing " +
           "the lifecycle stream. Retained company versions remain eligible. Deltas " +
           "`{type:'subscribe',sequence,subscription}` and `{type:'unsubscribe',sequence,id}` " +
           "apply in order, starting at sequence 1. " +
-          "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports `tables.list`, " +
-          "`tables.get`, `shared.list`, `shared.get` and all four `members.*` reads. `get` watches the whole table. " +
+          "A subscription is `{id,op,args,vector?,revision?}`; tier 1 supports its own tables' " +
+          "`tables.list` and `tables.get`, and refuses `shared.*` and `members.*` with `server_required`. `get` watches the whole table. " +
           "Tier 2 supports `server.call` with `{handler,args}` and no mutation key; only queries " +
           "are admitted. Handlers belong to the document's retained loaded version, so publishing " +
           "a version without a handler does not remove it from an already loaded document. " +

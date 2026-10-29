@@ -1809,65 +1809,11 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   );
   await assertHtmlArtifact(updated);
   await expect(notes.locator("#list li")).toHaveText(["Hosted note"]);
-  console.log(
-    "[packed-cli-e2e] lifecycle: dependant refusal, forced retirement, restore and rollback"
-  );
-  const readerDir = path.join(tempRoot, "packed-orders-reader");
-  await runCli(
-    cliPath,
-    ["init", readerDir, "--tier", "1", "--purpose", "Reads the team's shared orders", "--json"],
-    { ...options, cwd: tempRoot }
-  );
-  const readerCli = installedCliBinPath(readerDir);
-  const readerOptions = { ...options, cwd: readerDir };
-  await runCli(
-    readerCli,
-    ["add", "shared-table", `${published.patchId}/orders`, "--json"],
-    readerOptions
-  );
-  // Existing vanilla pages keep using the framework-free generated client.
-  await checkedCall(() =>
-    Promise.all([
-      rm(path.join(readerDir, "src/main.tsx")),
-      rm(path.join(readerDir, "src/App.tsx")),
-      writeFile(
-        path.join(readerDir, "index.html"),
-        '<!doctype html><html lang="en"><head><meta charset="UTF-8"><title>Shared orders</title></head>' +
-          '<body><ul id="list"></ul><script type="module" src="/src/main.ts"></script></body></html>\n'
-      )
-    ])
-  );
-  await checkedCall(() =>
-    writeFile(
-      path.join(readerDir, "src/main.ts"),
-      'import { patchy } from "../patchy/_generated/client.js";\n' +
-        "const orders = await patchy.shared.orders.list({ limit: 20 });\n" +
-        'document.querySelector("#list")!.textContent = JSON.stringify(orders);\n'
-    )
-  );
-  const dependant = parseJsonSuccess(
-    await runCli(readerCli, ["publish", "--json"], readerOptions),
-    publishKeys
-  );
-  const openReader = async () => {
-    const [rows, response] = await checkedCall(() =>
-      Promise.all([readRuntime("shared.list", dependant), page.goto(dependant.address)])
-    );
-    assert.equal(response.status(), 200);
-    await expect(page.frameLocator("#patch").locator("#list")).toHaveText(JSON.stringify(rows));
-    assert.deepEqual(
-      rows.rows.map((row) => row.item),
-      ["Hosted note"]
-    );
-  };
-  await openReader();
-
+  console.log("[packed-cli-e2e] lifecycle: discovery, retirement, restore and rollback");
   const listing = JSON.parse((await runCli(cliPath, ["list", "--json"], options)).stdout);
-  for (const patch of [published, dependant]) {
-    const summary = listing.patches.find((entry) => entry.id === patch.patchId);
-    assert.ok(summary, `list must include ${patch.name}`);
-    assert.equal(summary.state, "live");
-  }
+  const summary = listing.patches.find((entry) => entry.id === published.patchId);
+  assert.ok(summary, `list must include ${published.name}`);
+  assert.equal(summary.state, "live");
   const detail = JSON.parse(
     (await runCli(cliPath, ["list", published.name, "--json"], options)).stdout
   );
@@ -1881,37 +1827,22 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   );
   assert.deepEqual(orderSchema.columns, [{ name: "item", kind: "text", optional: false }]);
   assert.equal(orderSchema.shared, true);
-  const readerDetail = JSON.parse(
-    (await runCli(cliPath, ["list", dependant.patchId, "--json"], options)).stdout
+  // A tier 1 page reaches only its own patch, so declaring the shared table is tier 2's.
+  const readerDir = path.join(tempRoot, "packed-orders-reader");
+  await runCli(
+    cliPath,
+    ["init", readerDir, "--tier", "1", "--purpose", "Reads the team's shared orders", "--json"],
+    { ...options, cwd: tempRoot }
   );
-  assert.deepEqual(readerDetail.reads, [
-    {
-      alias: "orders",
-      patchId: published.patchId,
-      name: published.name,
-      table: "orders",
-      state: "live"
-    }
-  ]);
+  const refusedRead = await runCli(
+    installedCliBinPath(readerDir),
+    ["add", "shared-table", `${published.patchId}/orders`, "--json"],
+    { ...options, cwd: readerDir, allowFailure: true }
+  );
+  assert.equal(refusedRead.code, 1);
+  assert.equal(JSON.parse(refusedRead.stderr).code, "tier_mismatch");
 
-  const refusedRetire = await runCli(repoCliPath, ["retire", "--json"], {
-    ...options,
-    allowFailure: true
-  });
-  assert.equal(refusedRetire.code, 2);
-  assert.equal(refusedRetire.stdout, "");
-  const refusal = JSON.parse(refusedRetire.stderr);
-  assert.equal(refusal.kind, "rejected");
-  assert.equal(refusal.code, "has_dependants");
-  assert.deepEqual(
-    refusal.dependants.map(({ patchId }) => patchId),
-    [dependant.patchId]
-  );
-  assert.match(refusal.error, /Ask the person you are working for before forcing\.$/);
-  await openReader();
-  const retired = JSON.parse(
-    (await runCli(repoCliPath, ["retire", "--force", "--json"], options)).stdout
-  );
+  const retired = JSON.parse((await runCli(repoCliPath, ["retire", "--json"], options)).stdout);
   assert.equal(retired.state, "retired");
   assert.equal((await checkedCall(() => page.goto(published.address))).status(), 200);
   await expect(page.locator("#patch")).toHaveCount(0);
@@ -1920,20 +1851,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Restore", exact: true })).toBeVisible();
   await expect(page.locator(`a[href="/patches/${published.name}"]`)).toBeVisible();
-  const [denied] = await checkedCall(() =>
-    Promise.all([
-      page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname === "/api/runtime/call" &&
-          response.request().postDataJSON()?.op === "shared.list"
-      ),
-      page.goto(dependant.address)
-    ])
-  );
-  assert.equal((await denied.json()).code, "access_denied");
   const restored = JSON.parse((await runCli(repoCliPath, ["restore", "--json"], options)).stdout);
   assert.equal(restored.state, "live");
-  await openReader();
   const rolledBack = JSON.parse(
     (await runCli(repoCliPath, ["rollback", "1", "--json"], options)).stdout
   );

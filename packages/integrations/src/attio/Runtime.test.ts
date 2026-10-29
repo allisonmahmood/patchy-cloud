@@ -34,8 +34,8 @@ import * as Operations from "./Operations.js";
 import { NodeCryptography } from "@patchy/core";
 
 /**
- * Attio journeys over answers in the probe's shapes: the generated tier 1 client over the runtime
- * wire as a signed-in viewer, and a tier 2 action in real workerd through the callback gateway,
+ * Attio journeys over answers in the probe's shapes: the generated client calling back through
+ * the gateway as a tier 2 action's viewer, and a tier 2 action in real workerd doing the same,
  * both from the packed `patchy` package. The parent's journey: deals by stage and owner, sorted by
  * value, page by page, one opened, its company resolved, its pipeline listed. The same journey
  * against Attio itself is in the live tier (`packages/integrations/live`).
@@ -166,7 +166,7 @@ const generatedClient = (call: RuntimeTest.Call) =>
     Effect.map((module) => module.createClient("crm", call))
   );
 
-const patchId = "attiotier1pg";
+const patchId = "attiocallbak";
 const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
 const tier1 = Layer.mergeAll(
   Session.layer,
@@ -185,7 +185,7 @@ const tier1 = Layer.mergeAll(
   )
   .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
-it.layer(tier1)("Attio in a tier 1 page", (it) => {
+it.layer(tier1)("Attio from a tier 2 action's callbacks", (it) => {
   it.effect(
     "the generated client walks the journey as the viewer, and records no value",
     () => {

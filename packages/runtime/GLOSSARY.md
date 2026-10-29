@@ -153,7 +153,7 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session, or whose agent connection, admits an invocation or a direct browser operation. On a public tier 1 document, only declared member-directory reads can use an authenticated company viewer's authority.
+The user whose live session, or whose agent connection, admits an invocation or a direct browser operation. A public tier 1 document has no viewer: it reaches no data.
 _Avoid_: principal, machine token, owning patch
 
 **Patch identity**:
@@ -217,7 +217,7 @@ The identity of one admitted connection. A replacement fences requests naming th
 _Avoid_: document id, wire version
 
 **Subscription**:
-A document's desired live result for one read and canonical argument set, bound to its patch, loaded version and initiating viewer, with separate desired and admitted states. Tier 1 subscribes to owned or shared table reads and declared member-directory reads; tier 2 subscribes to queries on its loaded version.
+A document's desired live result for one read and canonical argument set, bound to its patch, loaded version and initiating viewer, with separate desired and admitted states. Tier 1 subscribes to its own table reads; tier 2 subscribes to queries on its loaded version, which reach everything else.
 _Avoid_: stream, polling loop
 
 **Revision**:

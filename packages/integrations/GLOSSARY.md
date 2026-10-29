@@ -33,7 +33,7 @@ The immutable name a company connection carries beside its integration — `ware
 _Avoid_: alias, connection id (the identity, which never changes)
 
 **Declaration**:
-A patch's statement of a connection, shared table, shared file store or company member directory it uses but does not own. It binds the required resource's identity and metadata where applicable, never grants access.
+A tier 2 patch's statement of a connection, shared table, shared file store or company member directory its handlers use but it does not own. It binds the required resource's identity and metadata where applicable, never grants access; below tier 2 a patch declares nothing.
 _Avoid_: dependency, requirement, scope request
 
 **Description**:

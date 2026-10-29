@@ -8,15 +8,13 @@ import {
   FileName,
   RuntimeSubscription,
   runtimeOperations,
-  isMemberOperation,
   runtimeBodyLimit,
   runtimeBodyLimitId,
   runtimeByteLimits,
   limitRefusal,
   WIRE_VERSION
 } from "@patchy/api";
-import { RuntimePrincipal } from "@patchy/api";
-import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe } from "@patchy/api";
+import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import { serverReplyTimeoutMs } from "@patchy/api/query-config";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
@@ -30,7 +28,6 @@ const MAX_PENDING = registry["frame.outstanding"].default;
 const decodeRequest = Schema.decodeUnknownSync(RuntimeRequest, { onExcessProperty: "error" });
 const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const decodeHandlerFailure = Schema.decodeUnknownSync(HandlerFailure);
-const decodePrincipal = Schema.decodeUnknownSync(RuntimePrincipal);
 const isMe = Schema.is(runtimeOperations.me.response);
 const routeArguments = Schema.Struct({ path: Schema.String });
 const decodeRoute = Schema.decodeUnknownSync(routeArguments, { onExcessProperty: "error" });
@@ -205,7 +202,6 @@ function mount(frame: HTMLIFrameElement): void {
   const seen = new Set<string>();
   const downloads = new Map<string, { size: number; timer: number }>();
   let identity: Promise<RuntimeMe> | undefined;
-  let directoryPrincipal: Promise<void> | undefined;
   let principal: RuntimePrincipal = null;
   let stream: DocumentStream | undefined;
   let execution: "starting" | "ready" | "failed" =
@@ -313,13 +309,7 @@ function mount(frame: HTMLIFrameElement): void {
     if (error.code === "shell_outdated") stale();
     else if (
       (error.code === "session_expired" || error.code === "principal_changed") &&
-      (frame.dataset.scope !== "public" || principal !== null)
-    )
-      notice(error.code);
-    else if (
-      error.code === "access_denied" &&
-      frame.dataset.scope === "public" &&
-      principal !== null
+      frame.dataset.scope !== "public"
     )
       notice(error.code);
     else if (error.code === "access_denied") {
@@ -392,11 +382,7 @@ function mount(frame: HTMLIFrameElement): void {
       reader.releaseLock();
     }
   };
-  const runtime = async (
-    op: Operation | "principal",
-    args: unknown,
-    bytes?: ArrayBuffer
-  ): Promise<Reply> => {
+  const runtime = async (op: Operation, args: unknown, bytes?: ArrayBuffer): Promise<Reply> => {
     if (closed) throw lost();
     const readsBytes = op === "files.get" || op === "shared.files.get" || op === "files.redeem";
     const controller = new AbortController();
@@ -551,55 +537,6 @@ function mount(frame: HTMLIFrameElement): void {
       return value;
     });
     return identity;
-  };
-  const maintainSession = async () => {
-    const template = document.getElementById("patchy-session");
-    if (!(template instanceof HTMLTemplateElement)) return;
-    for (const source of template.content.querySelectorAll("script")) {
-      if (source.hasAttribute("data-clerk-publishable-key") && "Clerk" in window) continue;
-      await new Promise<void>((resolve, reject) => {
-        const script = document.createElement("script");
-        for (const attribute of source.attributes)
-          script.setAttribute(attribute.name, attribute.value);
-        script.async = false;
-        script.onload = () => resolve();
-        script.onerror = () => reject(lost());
-        document.head.append(script);
-      });
-    }
-    template.remove();
-  };
-  const bindDirectory = () => {
-    directoryPrincipal ??= (async () => {
-      let reply: Reply;
-      for (let attempts = 0; ; attempts++) {
-        try {
-          reply = await runtime("principal", {});
-          break;
-        } catch (error) {
-          if (
-            !(error instanceof Refusal) ||
-            error.code !== "session_refresh_required" ||
-            attempts >= 3
-          )
-            throw error;
-          await maintainSession();
-          if ((await window.patchySession?.refresh()) !== "refreshed") throw error;
-        }
-      }
-      try {
-        const admitted = decodePrincipal(reply.value);
-        if (admitted === null) throw lost();
-        principal = admitted;
-      } finally {
-        release(reply.heldBytes);
-      }
-      await maintainSession();
-    })().catch((error: unknown) => {
-      directoryPrincipal = undefined;
-      throw error;
-    });
-    return directoryPrincipal;
   };
   const identifyFailure = (error: unknown) => {
     if (
@@ -773,14 +710,6 @@ function mount(frame: HTMLIFrameElement): void {
         // deadline start only after ready; neither a lost stream nor a failed bind replays work.
         await awaitExecution();
       }
-      if (
-        frame.dataset.scope === "public" &&
-        (isMemberOperation(request?.op ?? "") || isMemberOperation(subscription?.op ?? ""))
-      ) {
-        await bindDirectory();
-        if (closed) return;
-        if (subscription) startStream();
-      }
       // Runtime checks a pinned document's server-bound operations against its viewer first.
       // `route.set` changes history without asking Runtime, so it checks the account through `me`.
       const me = pinned && op !== "me" && op !== "route.set" ? undefined : await identify();
@@ -790,10 +719,7 @@ function mount(frame: HTMLIFrameElement): void {
       let reply: Reply;
       if (subscriptionOperation) {
         if (!stream)
-          throw new Refusal(
-            "not_available_on_public",
-            "Public documents support only authenticated member-directory subscriptions."
-          );
+          throw new Refusal("not_available_on_public", "Public documents have no subscriptions.");
         if (subscription) stream.subscribe(subscription, size * 2);
         else stream.unsubscribe(unsubscribeId!);
         reply = { value: null, heldBytes: 0 };

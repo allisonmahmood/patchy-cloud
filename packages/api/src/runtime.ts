@@ -18,16 +18,6 @@ import { attioOperations } from "./attio.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
-/** The only data operations available to company members on public tier 1 documents. */
-export function isMemberOperation(op: string): boolean {
-  return (
-    op === "members.list" ||
-    op === "members.search" ||
-    op === "members.get" ||
-    op === "members.getMany"
-  );
-}
-
 /** Release contract shared by the browser broker and server runtime. */
 export const runtimeByteLimits = {
   callBytes: registry["runtime.call.bytes"].default,
@@ -172,7 +162,7 @@ export const RuntimeVersionId = Schema.String.check(
   Schema.makeFilter((value) => /^ver_[a-z0-9]{24}$/.test(value) || "Invalid version ID.")
 );
 
-/** Null bootstraps `me` or the shell-only public-directory `principal` handshake. */
+/** Null bootstraps `me`, the only operation a document makes before it knows its viewer. */
 export const RuntimePrincipal = Schema.NullOr(Schema.Struct({ userId: NonEmptyText })).annotate({
   identifier: "RuntimePrincipal"
 });

@@ -1,11 +1,4 @@
-import {
-  createClient,
-  createSharedTable,
-  createSharedStore,
-  isPatchyError,
-  type Call,
-  type QueryRegistry
-} from "patchy/client";
+import { createClient, isPatchyError } from "patchy/client";
 import { createElement, render, useQuery } from "patchy/preact";
 import type { RuntimeStreamFrame } from "../../packages/api/src/index.js";
 
@@ -24,7 +17,7 @@ export interface FixtureWindow extends Window {
     raw(value: unknown, transfer?: Transferable[]): void;
     image(): Promise<void>;
     queryStatuses: string[];
-    subscribeRows(source?: "own" | "shared"): void;
+    subscribeRows(): void;
   };
 }
 
@@ -58,7 +51,7 @@ const harness: FixtureWindow["harness"] = {
     );
   },
   queryStatuses: [],
-  subscribeRows(source = "own") {
+  subscribeRows() {
     const root = document.createElement("section");
     root.id = "subscribed-screen";
     document.body.append(root);
@@ -66,7 +59,7 @@ const harness: FixtureWindow["harness"] = {
       const snapshot = useQuery<
         Record<string, never>,
         { readonly rows: readonly { readonly id: string; readonly label?: unknown }[] }
-      >(source === "shared" ? client.shared.source!.list : client.tables.rows!.list, {});
+      >(client.tables.rows!.list, {});
       harness.queryStatuses.push(snapshot.status);
       return createElement(
         "div",
@@ -101,21 +94,7 @@ window.addEventListener("message", (event) => {
   });
   port.start();
 });
-const client = createClient(
-  {
-    tables: { rows: {} },
-    files: { assets: {} },
-    uses: { source: { kind: "sharedTable" }, library: { kind: "sharedStore" } }
-  },
-  {
-    shared: {
-      source: (alias: string, call: Call, queries: QueryRegistry) =>
-        createSharedTable<{ readonly id: string; readonly label: string }>(alias, call, queries),
-      library: (alias: string, call: Call) => createSharedStore(alias, call)
-    },
-    connections: {}
-  }
-);
+const client = createClient({ tables: { rows: {} }, files: { assets: {} } });
 client.route.subscribe((path) => {
   document.querySelector("#route")!.textContent = path;
 });

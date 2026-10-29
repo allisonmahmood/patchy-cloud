@@ -83,6 +83,15 @@ const publishRequest = (payload: PublishPayload) =>
   });
 const publish = (payload: PublishPayload) =>
   Effect.flatMap(client, (api) => api.publish({ payload: publishRequest(payload) }));
+/** A publish that declares `uses`: consuming connections or other patches is tier 2's. */
+const consumingRequest = (payload: PublishPayload & Pick<PublishRequest, "manifest">) =>
+  Effect.map(tier2Bundle, (server) =>
+    publishRequest({
+      ...payload,
+      server,
+      manifest: { ...payload.manifest, tier: 2, handlers: tier2Handlers }
+    })
+  );
 
 /** Records a settled handler call in a published patch's log, initiated by the reader. */
 const logCall = (
@@ -804,7 +813,7 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         })
       });
       const consumer = yield* consumerOwner.publish({
-        payload: publishRequest({
+        payload: yield* consumingRequest({
           html: html("Lifecycle reader"),
           manifest: {
             ...Fixtures.manifest,
@@ -1035,7 +1044,7 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
         })
       });
       const consumer = yield* colleague.publish({
-        payload: publishRequest({
+        payload: yield* consumingRequest({
           html: html("Reader"),
           manifest: {
             ...Fixtures.manifest,
@@ -2049,27 +2058,75 @@ it.layer(publishLayer)("publish attempts", (it) => {
       const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
       const patches = yield* Patches.Patches;
       const before = yield* patches.countQuotaPatches(admin.user.id);
+      const sales = {
+        sales: { kind: "postgres" as const, handle: "warehouse", id: "conn_1", revision: 1 }
+      };
       const cases = [
-        { manifest: { ...Fixtures.manifest, tier: 2 as const }, code: "invalid_manifest" },
-        { manifest: { ...Fixtures.manifest, tier: 3 as const }, code: "tier_mismatch" },
         {
-          manifest: {
-            ...Fixtures.manifest,
-            uses: {
-              sales: { kind: "postgres" as const, handle: "warehouse", id: "conn_1", revision: 1 }
-            }
-          },
+          payload: publishRequest({
+            html: html("Unsupported"),
+            manifest: { ...Fixtures.manifest, tier: 2 }
+          }),
+          code: "invalid_manifest"
+        },
+        {
+          payload: publishRequest({
+            html: html("Unsupported"),
+            manifest: { ...Fixtures.manifest, tier: 3 }
+          }),
+          code: "tier_mismatch"
+        },
+        {
+          payload: yield* consumingRequest({
+            html: html("Unsupported"),
+            manifest: { ...Fixtures.manifest, uses: sales }
+          }),
           code: "connection_not_connected"
         }
       ];
-      for (const { manifest, code } of cases) {
-        const response = yield* api.publish({
-          payload: publishRequest({ html: html("Unsupported"), manifest }),
-          responseMode: "response-only"
-        });
+      for (const { payload, code } of cases) {
+        const response = yield* api.publish({ payload, responseMode: "response-only" });
         assert.strictEqual(response.status, 422);
         assert.include(yield* response.json, { code });
       }
+      assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
+    })
+  );
+
+  it.effect("refuses uses below tier 2, so a page reaches only its own patch", () =>
+    Effect.gen(function* () {
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const patches = yield* Patches.Patches;
+      const before = yield* patches.countQuotaPatches(admin.user.id);
+      const declared: ReadonlyArray<PublishRequest["manifest"]["uses"]> = [
+        { members: { kind: "members" as const } },
+        {
+          analytics: { kind: "posthog" as const, handle: "product", id: "conn_2", revision: 1 }
+        },
+        {
+          contacts: {
+            kind: "sharedTable" as const,
+            patchId: "abcdefghijkl",
+            table: "contacts",
+            id: sharedTableId("abcdefghijkl", "contacts"),
+            revision: 1
+          }
+        }
+      ];
+      for (const tier of [0, 1] as const)
+        for (const uses of declared) {
+          const response = yield* api.publish({
+            payload: publishRequest({
+              html: html("Own patch only"),
+              manifest: { ...Fixtures.manifest, tier, uses }
+            }),
+            responseMode: "response-only"
+          });
+          assert.strictEqual(response.status, 422);
+          const body = yield* response.json;
+          assert.include(body, { code: "tier_mismatch" });
+          assert.include(JSON.stringify(body), "uses requires tier 2");
+        }
       assert.strictEqual(yield* patches.countQuotaPatches(admin.user.id), before);
     })
   );
@@ -2284,7 +2341,10 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           refRefusal.changes.map((change) => change.object),
           ["notes.contact"]
         );
-        const payload = publishRequest({ html: html("Consumer"), manifest: consumerManifest });
+        const payload = yield* consumingRequest({
+          html: html("Consumer"),
+          manifest: consumerManifest
+        });
         const [created, response] = yield* consumer.publish({
           payload,
           responseMode: "decoded-and-response"
@@ -2305,14 +2365,14 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const loaded = Option.getOrThrow(yield* patches.find(created.patchId));
         assert.deepInclude(loaded.version.manifest.uses.contacts, { id: declaration.id });
         yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             patchId: created.patchId,
             html: html("Another declaring version"),
             manifest: consumerManifest
           })
         });
         const historical = yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             html: html("Historical declaration"),
             manifest: {
               ...Fixtures.manifest,
@@ -2331,7 +2391,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const sql = yield* SqlClient.SqlClient;
         for (const state of ["deleted", "retired", "disabled"] as const) {
           const inactive = yield* consumer.publish({
-            payload: publishRequest({
+            payload: yield* consumingRequest({
               html: html(state),
               manifest: {
                 ...Fixtures.manifest,
@@ -2393,7 +2453,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         const store = yield* ContentStore.ContentStore;
         const before = yield* Stream.runCollect(store.list("patches/"));
         const refused = yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             patchId: created.patchId,
             html: html("Fresh attempt after unshare"),
             manifest: consumerManifest
@@ -2437,7 +2497,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           { ...declaration, patchId: "abcdefghijkl", id: "abcdefghijkl/contacts" }
         ]) {
           const refused = yield* consumer.publish({
-            payload: publishRequest({
+            payload: yield* consumingRequest({
               html: html("Refused consumer"),
               manifest: { ...Fixtures.manifest, uses: { contacts: unavailable } }
             }),
@@ -2452,7 +2512,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         VALUES ('cmp_shared_foreign', 'shared-foreign', 'Foreign company')`;
         yield* sql`UPDATE patches SET company_id = 'cmp_shared_foreign' WHERE id = ${source.patchId}`;
         const foreign = yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             html: html("Foreign consumer"),
             manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
@@ -2463,7 +2523,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${source.patchId}`;
         yield* owner.retire({ params: { patchId: source.patchId }, payload: new ForceRequest({}) });
         const retired = yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             html: html("Retired source"),
             manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
@@ -2480,7 +2540,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         assert.strictEqual(replacement.name, source.name);
         assert.notStrictEqual(replacement.patchId, source.patchId);
         const refused = yield* consumer.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             html: html("Old identity"),
             manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
           }),
@@ -2544,7 +2604,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         const { connections, connection, snapshot, identity, declaration } =
           yield* sourceConnection("publish-warehouse");
         const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-        const payload = publishRequest({
+        const payload = yield* consumingRequest({
           html: html("Warehouse report"),
           manifest: { ...Fixtures.manifest, name: "warehouse-report", uses: { sales: declaration } }
         });
@@ -2586,7 +2646,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         assert.strictEqual(stale.status, 422);
         assert.include(yield* stale.json, { code: "stale_generated" });
         const ahead = yield* api.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             ...payload,
             patchId: created.patchId,
             publishKey: crypto.randomUUID(),
@@ -2600,7 +2660,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         assert.strictEqual(ahead.status, 422);
         assert.include(yield* ahead.json, { code: "stale_generated" });
         const updated = yield* api.publish({
-          payload: publishRequest({
+          payload: yield* consumingRequest({
             ...payload,
             patchId: created.patchId,
             publishKey: crypto.randomUUID(),
@@ -2655,7 +2715,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         revision: connection.metadataRevision
       };
       const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const payload = publishRequest({
+      const payload = yield* consumingRequest({
         html: html("Analytics report"),
         manifest: {
           ...Fixtures.manifest,
@@ -2686,7 +2746,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
       assert.include(yield* stale.json, { code: "stale_generated" });
       // A Postgres declaration can't claim the PostHog connection's identity.
       const mismatched = yield* api.publish({
-        payload: publishRequest({
+        payload: yield* consumingRequest({
           ...payload,
           patchId: created.patchId,
           publishKey: crypto.randomUUID(),
@@ -2720,7 +2780,7 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         revision: connection.metadataRevision
       };
       const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const payload = publishRequest({
+      const payload = yield* consumingRequest({
         html: html("Support desk"),
         manifest: { ...Fixtures.manifest, name: "support-desk", uses: { mail: declaration } }
       });
@@ -2821,7 +2881,10 @@ const tier2Handlers = {
   "demo.write": { kind: "mutation" as const, args: {}, result: { kind: "text" as const } },
   "demo.read": { kind: "query" as const, args: {}, result: { kind: "text" as const } }
 };
-const tier2Bundle = Effect.promise(async () => {
+/** Built once: every tier 2 publish in this file sends the same server artifact. */
+let tier2Text: Promise<string> | undefined;
+const tier2Bundle = Effect.promise(() => (tier2Text ??= buildTier2Bundle()));
+async function buildTier2Bundle() {
   const built = await build({
     stdin: {
       contents: `import { createGuest, query, mutation, t } from "patchy/server";
@@ -2840,7 +2903,7 @@ const tier2Bundle = Effect.promise(async () => {
     conditions: ["development"]
   });
   return built.outputFiles[0]!.text;
-});
+}
 
 /** A tier 2 bundle whose agent area is the given createGuest source, marked as a build of agent/ does. */
 const agentBundle = (tools: string) =>

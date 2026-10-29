@@ -39,9 +39,9 @@ import * as RuntimeTest from "../test/runtime.js";
 import * as Operations from "./Operations.js";
 
 /**
- * Pidgeon journeys over answers recorded from Pidgeon: the generated tier 1 client over the
- * runtime wire with a signed-in viewer, and a tier 2 action in real workerd through the callback
- * gateway, both from the packed `patchy` package. The same journeys against Pidgeon's test mode
+ * Pidgeon journeys over answers recorded from Pidgeon: the generated client calling back through
+ * the gateway as a tier 2 action's viewer, and a tier 2 action in real workerd doing the same,
+ * both from the packed `patchy` package. The same journeys against Pidgeon's test mode
  * are in the live tier (`packages/integrations/live`).
  */
 
@@ -187,7 +187,7 @@ const credentials = Layer.mergeAll(
   AttioSource.layer
 );
 
-const patchId = "pidgeontier1";
+const patchId = "pidgeoncallb";
 const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
 const tier1 = Layer.mergeAll(
   Session.layer,
@@ -206,7 +206,7 @@ const tier1 = Layer.mergeAll(
   )
   .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
-it.layer(tier1)("Pidgeon in a tier 1 page", (it) => {
+it.layer(tier1)("Pidgeon from a tier 2 action's callbacks", (it) => {
   it.effect(
     "the generated client reads, replies and triages as the viewer, and records no body",
     () => {

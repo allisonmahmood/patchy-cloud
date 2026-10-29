@@ -1,11 +1,12 @@
 export interface ClientTemplateOptions {
-  /** Module paths relative to patchy/_generated/client.ts. Each exports createClient(alias, call). */
-  readonly shared?: Readonly<Record<string, string>>;
-  readonly connections?: Readonly<Record<string, string>>;
   readonly tier?: 0 | 1 | 2 | 3;
 }
 
-/** Finished template: importing the config must never execute it in the frame. */
+/**
+ * Finished template: importing the config must never execute it in the frame. Below tier 2 the
+ * client reaches only the patch's own tables and files; tier 2 reaches everything else through
+ * its handlers.
+ */
 export function generateClient(options: ClientTemplateOptions = {}): string {
   if (options.tier === 2) {
     return `import { createServerClient, isHandlerError as guard } from "patchy/client";
@@ -18,24 +19,14 @@ export const isHandlerError: HandlerErrorGuard<ServerModules> = guard;
 export default patchy;
 `;
   }
-  const imports: string[] = [
-    'import type config from "../../patchy.config.js";',
-    'import manifest from "./manifest.json";',
-    'import { createClient } from "patchy/client";',
-    'export { isPatchyError } from "patchy/client";'
-  ];
-  const factories = (modules: Readonly<Record<string, string>>, prefix: string) => {
-    return Object.entries(modules)
-      .map(([alias, path], index) => {
-        const name = `${prefix}${index}`;
-        imports.push(`import { createClient as ${name} } from ${JSON.stringify(path)};`);
-        return `[${JSON.stringify(alias)}]: ${name}`;
-      })
-      .join(", ");
-  };
-  const shared = factories(options.shared ?? {}, "shared");
-  const connections = factories(options.connections ?? {}, "connection");
-  return `${imports.join("\n")}\n\nconst shared = { ${shared} };\nconst connections = { ${connections} };\nexport const patchy = createClient<typeof config, typeof shared, typeof connections>(manifest, { shared, connections });\nexport default patchy;\n`;
+  return `import type config from "../../patchy.config.js";
+import manifest from "./manifest.json";
+import { createClient } from "patchy/client";
+export { isPatchyError } from "patchy/client";
+
+export const patchy = createClient<typeof config>(manifest);
+export default patchy;
+`;
 }
 
 export function generateSharedStoreClient(): string {

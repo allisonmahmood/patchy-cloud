@@ -17,7 +17,6 @@ import {
   RuntimeStreamRequest,
   RuntimeSubscriptionRequest,
   handlerKinds,
-  isMemberOperation,
   type HandlerKind,
   WIRE_VERSION
 } from "@patchy/api";
@@ -493,14 +492,16 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ),
         checkOperation: (op) =>
           Effect.gen(function* () {
-            if (binding.scope === "public" && !isMemberOperation(op))
-              return yield* new Runtime.PublicUnavailable({});
+            if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
             if (op === "server.call" && loaded.manifest.tier === 2) return;
             if (op === "server.call" || loaded.manifest.tier !== 1 || servedTier !== 1)
               return yield* new DirectSubscriptionRequired({
                 loadedTier: loaded.manifest.tier,
                 servedTier
               });
+            // Tier 1 subscribes to its own tables; anything else is a tier 2 handler's to read.
+            if (op !== "tables.list" && op !== "tables.get")
+              return yield* new Runtime.ServerRequired();
           })
       });
       // Ends once the window passes with no activity, letting go of the owner in the same step,

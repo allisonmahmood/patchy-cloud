@@ -5,7 +5,7 @@ description: Add a company email address on Pidgeon to a patch, read its convers
 
 # Company email on Pidgeon
 
-Read `../patchy-loop/SKILL.md` first. A Pidgeon connection is one company email address, such as `support@acme.example`, that an admin connected with a key reaching only that address. Patchy writes every request and fills in the address, so a patch reads and sends as that address alone, and the key stays behind Patchy, out of config, source and transcripts. Any member's patch that declares the connection uses it as the person viewing the patch. On tier 1, every message the patch reads is available to whoever can open it.
+Read `../patchy-loop/SKILL.md` first. A Pidgeon connection is one company email address, such as `support@acme.example`, that an admin connected with a key reaching only that address. Patchy writes every request and fills in the address, so a patch reads and sends as that address alone, and the key stays behind Patchy, out of config, source and transcripts. Any member's patch that declares the connection uses it as the person viewing the patch. Connections are tier 2's: actions reach the address through `ctx.connections` and return only what the page should show, and the page calls those actions. A tier 1 page reaches only its own patch, so declaring Pidgeon on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says.
 
 ## Declare an address
 
@@ -17,11 +17,11 @@ There is no fixture: mail invented for a fixture never resembles a company's. `p
 
 ## Reading
 
-```ts
-import { patchy } from "../patchy/_generated/client.js";
+In an action:
 
-const { threads, nextCursor } = await patchy.connections.inbox.threads.list({ status: "open" });
-const { thread, labels, messages } = await patchy.connections.inbox.threads.get(threads[0]!.id);
+```ts
+const { threads, nextCursor } = await ctx.connections.inbox.threads.list({ status: "open" });
+const { thread, labels, messages } = await ctx.connections.inbox.threads.get(threads[0]!.id);
 ```
 
 - `threads.list({ status, limit, cursor })` gives the address's conversations, newest first, and `nextCursor`, null on the last page; pass it back as `cursor`. A thread carries its subject, Pidgeon `status` (`open`, `waiting`, `resolved` or `human_review`, shared by everyone reading the address), newest sender, preview, message count, attachment flag and times.
@@ -42,12 +42,12 @@ Needs a connection whose key sends.
 
 ```ts
 const draft = crypto.randomUUID(); // made when the person starts this email
-const sent = await patchy.connections.inbox.messages.reply(messages.at(-1)!.id, {
+const sent = await ctx.connections.inbox.messages.reply(messages.at(-1)!.id, {
   text: "Thanks, a new chainstay is on its way.",
   idempotencyKey: draft
 });
 if (sent.status === "sent")
-  await patchy.connections.inbox.threads.update(thread.id, { status: "waiting" });
+  await ctx.connections.inbox.threads.update(thread.id, { status: "waiting" });
 ```
 
 - `messages.reply(id, { text, cc, idempotencyKey })` answers the message's sender in its thread. `messages.send({ to, cc, subject, text, idempotencyKey })` starts a conversation from the address. Plain text only, up to 100,000 characters.
@@ -63,7 +63,7 @@ if (sent.status === "sent")
 - A whole send refused, such as by the send policy, sent nothing and used nothing: fix the draft and send it with the same key.
 - After 24 hours the same draft can send again. When a send's outcome is unknown, look for it in the address's sent mail (`messages.search({ folder: "sent" })`) before sending it again.
 
-On tier 2, the page makes the draft key and passes it to an action, which calls `ctx.connections.inbox` with it. Queries and mutations can't use connections.
+The page makes the draft key and passes it to an action, which calls `ctx.connections.inbox` with it. Queries and mutations can't use connections. An action that doesn't catch Pidgeon's refusal relays it to the page, still Pidgeon's, so `isPatchyError(error, "idempotency_conflict", "pidgeon")` works there.
 
 ## In `patchy dev`
 

@@ -64,7 +64,7 @@ framework-free generated client; refresh never replaces application source.
 The starter shows pending reads and saves, ignores an initial read after unmount,
 and prevents writes while the initial read or a save is pending.
 `useQuery(read, args)` and `read.subscribe(args, listener)` support tier 1 owned
-and declared shared-table `list` and `get` in both local dev and hosted pages.
+table `list` and `get` in both local dev and hosted pages.
 For example, `useQuery(client.tables.notes.list, {})` returns
 `{ status, data, error, loading }`; render `data?.rows` and display `error` without
 discarding the last successful value. A missing `get` stays subscribed and
@@ -350,8 +350,10 @@ Config files use
 Node's native TypeScript loader, including explicit `.ts` extensions for local
 TypeScript imports.
 
-The tier 1 browser entrypoint exposes owned tables and file stores, read-only shared
-tables and stores, the declared member directory, generated connections, `me()` and `route`. It uses the hosted shell's
+The tier 1 browser entrypoint exposes owned tables and file stores, `me()` and `route`:
+a tier 1 page reaches only its own patch. Connections, shared tables and stores and the
+member directory are tier 2's, through handlers; a tier 1 config that declares any of them
+is refused with `tier_mismatch` at refresh, dev and publish. It uses the hosted shell's
 document-bound port; patch frames must not fetch the runtime directly. HTTP and
 port transport constructors remain internal, not public client exports. All
 runtime failures use `PatchyError` and `isPatchyError(error, code)`; a lost reply
@@ -365,12 +367,9 @@ Limit refusals may also carry `scope`, `limitId`, `value` and `retryAfter`.
 `retryAfter` is a delay in seconds and appears only when retrying is safe.
 
 On a company patch, every viewer who can open it can read and write all its own
-tables and files; there are no row rules or separate write scopes. Shared tables
-and stores are read-only, Postgres integrations perform constrained reads as the role
-the admin supplied, and PostHog connections run read-only HogQL with the admin's key. On a public tier 1 patch, `me()` returns null, but signed-in
-company members can read the declared member directory. Anonymous viewers and
-viewers outside the company cannot read it. Tables, files and integrations still
-fail with `not_available_on_public`, even for company members.
+tables and files; there are no row rules or separate write scopes. On a public
+tier 1 patch, `me()` returns null, and tables and files fail with
+`not_available_on_public`, even for company members.
 The route bridge still works. The frame has no direct outbound fetch, client
 storage, popups, workers or device access.
 
@@ -404,10 +403,9 @@ shell session.
 
 Share a whole store with `files("Source documents", { shared: true })`. Sharing
 publishes read access to every file in that store. Add it with
-`patchy add shared-store <patchId>/<store> --as assets`. Tier 1 pages use
-`client.shared.assets.list/get/url/download` by filename. Tier 2 queries use
-`ctx.shared.assets.list/stat`; actions also use `get` for bytes. A tier 1 consumer
-can read a tier 2 source. The consumer's served-tier gate still applies.
+`patchy add shared-store <patchId>/<store> --as assets` on a tier 2 repo. Its
+queries use `ctx.shared.assets.list/stat`; actions also use `get` for bytes. A
+store on any tier can be shared out.
 
 Every shared read, URL request and download checks that the source is openable
 and its store is still shared, including cached bytes. Unsharing, retiring or
@@ -430,12 +428,12 @@ PGlite runtime. The same tier 1 shell supplies the broker in the cloud and
 
 ### Member directory
 
-Run `patchy add members` to declare `uses: { members: { kind: "members" } }`.
+On a tier 2 repo, run `patchy add members` to declare `uses: { members: { kind: "members" } }`.
 The config helper `members()` from `patchy/config` produces the same declaration.
 Its alias is fixed; it needs no source id, revision stamp or local fixture.
-Generation adds the `patchy-members` skill and `patchy.members` on tier 1,
-or `ctx.members` in tier 2 queries, mutations and actions. Without the
-declaration there is no typed directory client.
+Generation adds the `patchy-members` skill and `ctx.members` in queries,
+mutations and actions. Without the declaration there is no typed directory
+client.
 
 `list({ cursor? }?)` and `search(text, { cursor? }?)` return candidate pages
 of 50 as `{ rows, cursor }`. Search is a case-insensitive prefix of full name
@@ -444,12 +442,11 @@ or email, not fuzzy or surname search. `get(id)` and `getMany(ids)` resolve
 other-company ids resolve to null. `getMany` accepts at most 1,000 ids and
 preserves input order and duplicates. Candidates are active company users.
 
-All four tier 1 methods expose `.subscribe(args, onSnapshot)` and work with
-`useQuery`. Search subscriptions and hooks take `{ text, cursor? }`;
-one-shot search accepts that object too. Only tier 2 queries track directory
-dependencies. Directory reads come from the platform database, outside a
-query's company-database snapshot. Outsiders on public tier 1 patches are
-refused. A lower-tier document of a patch serving tier 2 still gets only `me`.
+Only queries track directory dependencies, so a subscribed query reading the
+directory reruns on joins, deactivation and profile changes. Directory reads
+come from the platform database, outside a query's company-database snapshot.
+A page's direct directory call is refused `server_required`, and a lower-tier
+document of a patch serving tier 2 still gets only `me`.
 
 `t.member()` is a table column storing a string user id. It supports `.optional()`
 but refuses `.default()`; supply an eligible user id explicitly on insert.
@@ -1122,7 +1119,7 @@ both tiers, while the runtime sandbox still governs navigation.
 The local HTML cap is 512 KiB at tier 0 and 10 MiB at tiers 1 and 2; either excess
 is `too_large`, with a largest-contributor report. Tier 0's policy also bounds the
 parser's work: nesting past 510 elements, more than 256 attributes on an element and
-heavy repair of misnested markup are refused with a message naming the bound. `server/` or `agent/` below tier 2 remains
+heavy repair of misnested markup are refused with a message naming the bound. `server/`, `agent/` or a `uses` declaration below tier 2 remains
 `tier_mismatch`; scripts require at least tier 1. A failed repo build never falls
 back to a static file.
 

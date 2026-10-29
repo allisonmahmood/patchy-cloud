@@ -69,7 +69,7 @@ it.live(
             }
           },
           files: {},
-          uses: { members: { kind: "members" } }
+          uses: {}
         },
         identity,
         metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, shared: {} }
@@ -152,48 +152,14 @@ it.live(
       const colleagueClaims = yield* colleague.json;
       assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
       assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
-      const colleagueMember = {
-        id: "usr_dev_colleague",
-        name: "Dev Colleague",
-        email: "colleague@patchy.local",
-        admin: false,
-        active: true
-      };
-      const localMember = { ...identity.user, admin: true, active: true };
+      // Dev holds the page to its own patch as production does: the directory is a handler's.
       for (const [target, viewerId] of [
         [origin, identity.user.id],
         [colleagueOrigin, "usr_dev_colleague"]
       ]) {
         const listed = yield* call("members.list", {}, target, viewerId, target);
-        assert.strictEqual(listed.status, 200);
-        assert.deepInclude(yield* listed.json, {
-          ok: true,
-          value: { rows: [colleagueMember, localMember], cursor: null }
-        });
-        const search = yield* call(
-          "members.search",
-          { text: "COLLEAGUE@" },
-          target,
-          viewerId,
-          target
-        );
-        assert.deepInclude(yield* search.json, {
-          ok: true,
-          value: { rows: [colleagueMember], cursor: null }
-        });
-        const suffix = yield* call("members.search", { text: "league" }, target, viewerId, target);
-        assert.deepInclude(yield* suffix.json, { ok: true, value: { rows: [], cursor: null } });
-        const resolved = yield* call(
-          "members.getMany",
-          { ids: [identity.user.id, "missing", "usr_dev_colleague", identity.user.id] },
-          target,
-          viewerId,
-          target
-        );
-        assert.deepInclude(yield* resolved.json, {
-          ok: true,
-          value: [localMember, null, colleagueMember, localMember]
-        });
+        assert.strictEqual(listed.status, 403);
+        assert.deepInclude(yield* listed.json, { code: "server_required" });
       }
       const impersonation = yield* call(
         "tables.insert",

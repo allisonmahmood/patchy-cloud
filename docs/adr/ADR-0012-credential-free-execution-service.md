@@ -709,7 +709,8 @@ through `ServerBundles`, and binds and invokes `Executor`. Action slots are
 counted per host, eight per company and two per viewer per patch by default,
 including calls whose HTTP waiter has disconnected. A tier 2 document's direct
 name-based table, file, shared-resource, member and connection calls are refused
-even after a rollback serves tier 1. Conversely, while tier 2 is served, an older
+even after a rollback serves tier 1, and every document's direct shared-resource,
+member and connection calls are refused at any tier: only handlers make them. Conversely, while tier 2 is served, an older
 tier 1 document can call only `me`. Public documents cannot call handlers.
 An unwired invocation seam returns `source_unavailable` (503), not a malformed
 request refusal.

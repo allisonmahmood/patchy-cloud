@@ -21,12 +21,12 @@ There are two life cycles a patch can be thought of. The development stage and t
 Patchy implements tier 0 static pages, tier 1 sandboxed browser tools and tier 2 request-scoped server handlers, all live in production at `cloud.patchyhq.com`. `docs/product.md` records the built contracts and what remains future work.
 
 - Tier 0 is a static page with no patch execution, browser or server. A tier 0 repo may provision resources, but its page cannot call them.
-- Tier 1 runs patch code in a sandboxed browser frame. It acts as the viewer through Patchy for tables, files and declared integrations; it has no outbound fetch or hosted patch code.
+- Tier 1 runs patch code in a sandboxed browser frame. It reaches only its own patch: it acts as the viewer through Patchy for its own tables and files, `me()` and routing, and has no outbound fetch, hosted patch code, integrations, other patches' shared tables or stores, or member directory.
 - Tier 2 runs query, mutation and action handlers in credential-free workerd processes while a viewer has the patch open or their agent is calling it. Mutations are atomic; the page calls handlers instead of resources directly. People's own agents call a patch's `agent/` tools as them through Patchy MCP at `/mcp`. Production runs it on the ECS fleet, with its infrastructure in `apps/infra`, released through the deploy workflow.
 - Tier 3 is next: execution without a viewer, including inbound routes, webhooks, schedules and unattended automation. It is not built.
 - Tier 4, a sandbox for agents, remains future work.
 
-Tables and files are patch-owned. Both scripted tiers support live queries, read-only shared tables and stores, the member directory, company Postgres, PostHog, Pidgeon and Attio connections and a two-viewer local dev loop. More integrations, including Gmail and Salesforce, remain future work.
+Tables and files are patch-owned. Both scripted tiers support live queries of their own tables and a two-viewer local dev loop. Tier 2 handlers also reach read-only shared tables and stores, the member directory, and company Postgres, PostHog, Pidgeon and Attio connections. More integrations, including Gmail and Salesforce, remain future work.
 
 ## Final note from Patchy
 

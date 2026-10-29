@@ -277,11 +277,6 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           .read(served.value.version)
           .pipe(Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die }))
       : "";
-  const publicDirectory =
-    isPublic &&
-    served.value.version.tier === 1 &&
-    served.value.version.manifest.uses.members?.kind === "members";
-
   // Count only successful requests that reach the origin. Cached reads may
   // undercount visits. A failed counter write must not deny the fetched page.
   yield* patches.recordVisit(served.value.patch.id).pipe(
@@ -336,7 +331,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         ? contentSecurityPolicy(served.value.version.tier)
         : shellContentSecurityPolicy(
             served.value.version.tier,
-            !isPublic || publicDirectory ? session.clerk?.frontendApiHost : undefined
+            isPublic ? undefined : session.clerk?.frontendApiHost
           ),
     ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
     "cache-control":
@@ -362,11 +357,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
           viewerId,
-          head: isPublic
-            ? publicDirectory
-              ? `<template id="patchy-session">${sessionScripts(session)}</template>`
-              : undefined
-            : sessionScripts(session),
+          head: isPublic ? undefined : sessionScripts(session),
           ...(selection !== undefined && served.value.version.tier >= 1
             ? {
                 nonce: yield* cryptography.internalId("boot"),

@@ -6,7 +6,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
-import { configFailure, executeConfig, resolveStamps } from "./executeConfig.js";
+import { configFailure, executeConfig, lowerTierUses, resolveStamps } from "./executeConfig.js";
 import { lookNotices } from "./lookNotices.js";
 import { ManagedProject, isProjectRefusal, presentSkills, safePath } from "./ManagedProject.js";
 import * as Output from "./Output.js";
@@ -86,6 +86,8 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           ...executed,
           ...(repo.description === undefined ? {} : { description: repo.description })
         };
+        const refused = lowerTierUses(unresolved);
+        if (refused !== undefined) return yield* refused;
         for (const [alias, declaration] of Object.entries(unresolved.uses)) {
           // PostHog, Pidgeon and Attio have no fixture: dev reads the real connection.
           if (

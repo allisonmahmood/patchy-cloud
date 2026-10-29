@@ -314,7 +314,7 @@ it.effect("unsafe capability timeouts and unknown outcomes never advertise retry
     const api = yield* client;
     for (const [op, code] of [
       ["tables.insert", "timeout"],
-      ["postgres.query", "unknown_outcome"]
+      ["tables.delete", "unknown_outcome"]
     ] as const) {
       const response = yield* api.call({
         payload: {
@@ -357,8 +357,8 @@ it.effect("unsafe capability timeouts and unknown outcomes never advertise retry
               )
             )
         },
-        "postgres.query": {
-          kind: "integration",
+        "tables.delete": {
+          kind: "mutation",
           run: () =>
             Effect.fail({
               code: "unknown_outcome",

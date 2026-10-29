@@ -639,30 +639,6 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   const handlers = yield* TableOperations.make.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, versions)
   );
-  const reader = yield* SubscriptionReads.makeDev.pipe(
-    Effect.provideService(LoadedVersions.LoadedVersions, versions)
-  );
-  const subscribed = yield* reader.read({
-    op: "shared.get",
-    args: { alias: "contacts", id: rows[0]!.id },
-    binding
-  });
-  assert.deepStrictEqual(subscribed.result, rows[0]);
-  assert.deepStrictEqual(Object.keys(subscribed.vector).sort(), [
-    `patch:${source.binding.patchId}`,
-    `table:${source.binding.patchId}:notes`
-  ]);
-  const attempted: string[] = [];
-  const refused = yield* reader
-    .read({
-      op: "shared.get",
-      args: { alias: "contacts", id: rows[0]!.id },
-      binding: { ...binding, identity: null },
-      onDependency: (key) => attempted.push(key)
-    })
-    .pipe(Effect.flip);
-  assert.strictEqual(refused.code, "access_denied");
-  assert.deepStrictEqual(attempted.sort(), Object.keys(subscribed.vector).sort());
   const call = (op: keyof typeof handlers, args: unknown) =>
     handlers[op].run(args).pipe(Effect.provideService(Binding.Binding, binding));
   assert.deepStrictEqual(

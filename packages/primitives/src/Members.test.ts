@@ -143,50 +143,25 @@ it.layer(services)("Members", (it) => {
   );
 
   it.effect(
-    "subscribes every member read without company storage and rejects a changing directory fence",
+    "answers its own company's directory revision for tier 2 queries, outside company storage",
     () =>
       Effect.gen(function* () {
         const f = yield* fixture;
         const key = "members:cmp_dev";
-        const cases = [
-          { op: "members.list", args: {}, result: { rows: [], cursor: null } },
-          { op: "members.search", args: { text: "own" }, result: { rows: [], cursor: null } },
-          { op: "members.get", args: { id: "owner" }, result: member },
-          {
-            op: "members.getMany",
-            args: { ids: ["owner", "missing", "owner"] },
-            result: [member, null, member]
-          }
-        ];
-        for (const operation of cases) {
-          const dependencies: string[] = [];
-          const input = {
-            binding,
-            ...operation,
-            onDependency: (resource: string) => dependencies.push(resource)
-          };
-          assert.deepStrictEqual(yield* f.readers.admit(input), [key]);
-          assert.deepStrictEqual(yield* f.readers.read(input), {
-            result: operation.result,
-            vector: { [key]: "1" }
-          });
-          assert.deepStrictEqual(dependencies, [key, key]);
-        }
-        f.state.changeDuringRead = true;
-        const changed = yield* f.readers
-          .read({ binding, op: "members.list", args: {} })
-          .pipe(Effect.flip);
-        assert.strictEqual(changed.code, "source_unavailable");
-        f.state.changeDuringRead = false;
+        assert.deepStrictEqual(yield* f.readers.revisions("cmp_dev", [key]), { [key]: "1" });
+        f.state.revision++;
         assert.deepStrictEqual(yield* f.readers.revisions("cmp_dev", [key]), { [key]: "2" });
-        assert.deepStrictEqual(yield* f.readers.read({ binding, op: "members.list", args: {} }), {
-          result: { rows: [], cursor: null },
-          vector: { [key]: "2" }
-        });
         assert.strictEqual(
           (yield* f.readers.revisions("cmp_dev", ["members:outside"]).pipe(Effect.flip)).code,
           "access_denied"
         );
+        // A page subscribes only to its own tables; the directory is a tier 2 handler's to read.
+        assert.strictEqual(
+          (yield* f.readers.admit({ binding, op: "members.list", args: {} }).pipe(Effect.flip))
+            .code,
+          "invalid_request"
+        );
+        assert.strictEqual(f.state.reads, 0);
       })
   );
 });

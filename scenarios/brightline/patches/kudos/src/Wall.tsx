@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useQuery } from "patchy/preact";
-import { isPatchyError, patchy } from "../patchy/_generated/client.js";
+import { isHandlerError, patchy } from "../patchy/_generated/client.js";
 import { writeFailure } from "./errors.js";
 import { EMOJIS, valueLabel } from "./model.js";
 import type { Emoji, Filter, Kudos, People, Reaction } from "./model.js";
 import { Avatar, personName, usePeople } from "./people.js";
-import { SampleRefused, loadSampleData } from "./sample.js";
 import { fullDate, relativeTime } from "./time.js";
 
 const PAGE = 24;
@@ -26,16 +25,7 @@ export function Wall({
 }) {
   const [limit, setLimit] = useState(PAGE);
   const { recipient, value } = filter;
-  const wall = useQuery(
-    patchy.tables.kudos.list,
-    recipient && value
-      ? { index: "byRecipientValue", eq: { recipient, value }, order: "desc", limit }
-      : recipient
-        ? { index: "byRecipient", eq: { recipient }, order: "desc", limit }
-        : value
-          ? { index: "byValue", eq: { value }, order: "desc", limit }
-          : { index: "bySentAt", order: "desc", limit }
-  );
+  const wall = useQuery(patchy.server.wall.wall, { recipient, value, limit });
   // "Show older kudos" changes the limit, which starts a new subscription. Keep showing the
   // current page until the longer one lands so the wall doesn't blank and jump.
   const [retained, setRetained] = useState(wall.data);
@@ -44,12 +34,12 @@ export function Wall({
   }, [wall.data]);
   const page = wall.data ?? retained;
   // The newest 1,000 reactions, grouped per kudos. Plenty for a studio wall's visible history.
-  const reactionsQuery = useQuery(patchy.tables.reactions.list, { limit: 1000 });
+  const reactionsQuery = useQuery(patchy.server.wall.reactions, {});
 
   const rows = page?.rows;
   const byKudos = useMemo(() => {
     const grouped = new Map<string, Reaction[]>();
-    for (const reaction of reactionsQuery.data?.rows ?? []) {
+    for (const reaction of reactionsQuery.data ?? []) {
       const list = grouped.get(reaction.kudos) ?? [];
       list.push(reaction);
       grouped.set(reaction.kudos, list);
@@ -60,7 +50,7 @@ export function Wall({
   const ids = useMemo(
     () => [
       ...(rows ?? []).flatMap((row) => [row.sender, row.recipient]),
-      ...(reactionsQuery.data?.rows ?? []).map((reaction) => reaction.member)
+      ...(reactionsQuery.data ?? []).map((reaction) => reaction.member)
     ],
     [rows, reactionsQuery.data]
   );
@@ -285,11 +275,10 @@ function Reactions({
     if (meId === undefined || pending.has(emoji)) return;
     setPending((current) => new Set(current).add(emoji));
     try {
-      if (mine) await patchy.tables.reactions.delete(mine.id);
-      else await patchy.tables.reactions.insert({ kudos: kudos.id, member: meId, emoji });
+      // The server changes nothing when the reaction is already as asked, as from another tab.
+      await patchy.server.wall.react({ kudos: kudos.id, emoji, on: mine === undefined });
     } catch (cause) {
-      // A double click can race another tab; an existing reaction is already the state we wanted.
-      if (!isPatchyError(cause, "unique_violation")) onError(writeFailure(cause, "reaction"));
+      onError(writeFailure(cause, "reaction"));
     } finally {
       setPending((current) => {
         const next = new Set(current);
@@ -341,9 +330,15 @@ function EmptyWall({ onError }: { onError: (message: string) => void }) {
   async function load() {
     setLoading(true);
     try {
-      await loadSampleData();
+      await patchy.server.sample.load({});
     } catch (cause) {
-      onError(cause instanceof SampleRefused ? cause.message : writeFailure(cause, "sample kudos"));
+      onError(
+        isHandlerError(cause, "not_empty")
+          ? "The wall already has kudos, so sample data wasn't added."
+          : isHandlerError(cause, "too_few_people")
+            ? "Sample kudos need at least two people in your company."
+            : writeFailure(cause, "sample kudos")
+      );
     } finally {
       setLoading(false);
     }

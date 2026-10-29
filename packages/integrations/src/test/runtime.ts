@@ -1,50 +1,45 @@
 import {
   CURRENT_RELEASE,
-  RuntimeGroup,
   WIRE_VERSION,
-  type GuestProtocol,
+  GuestProtocol,
   type Manifest,
   type PidgeonSnapshot
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
 import { newInternalId, sha256 } from "../../../../test/crypto.js";
 import {
   CallbackGateway,
   CallbackGatewayApi,
   Executor,
   Invocation,
+  InvocationCapabilities,
   LoadedVersions,
-  RuntimeApi,
-  RuntimeProduction,
-  StreamAdmission,
   type Binding,
   type Runtime,
   ServerBundles
 } from "@patchy/runtime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as HttpServer from "effect/http/HttpServer";
-import * as HttpApi from "effect/http-api/HttpApi";
-import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
-import * as HttpApiTest from "effect/http-api/HttpApiTest";
 import { build } from "esbuild";
 import * as Local from "../../../execution/src/local.js";
 import type { PidgeonReader, PidgeonSender } from "../../../patchy/src/pidgeon.js";
 import { generate } from "../pidgeon/Generate.js";
 
 /**
- * Patches as the runtime runs them, for an integration's journeys: a tier 1 page's calls over the
- * runtime wire as the seeded signed-in viewer, and a tier 2 bundle in real workerd calling back
- * through the gateway. Both bundle the packed `patchy` package, never its source.
+ * Patches as the runtime runs them, for an integration's journeys: a generated client calling
+ * back through the gateway as a tier 2 action does, as the seeded viewer, and a tier 2 bundle in
+ * real workerd doing the same. Both bundle the packed `patchy` package, never its source.
  */
 
 const patchy = new URL("../../../patchy", import.meta.url).pathname;
-/** How a page's client reaches the runtime. */
+const decodeCallback = Schema.decodeUnknownSync(GuestProtocol.Callback);
+
+/** How a generated client reaches the runtime. */
 export type Call = (op: string, args: unknown) => Promise<unknown>;
 
 /** One module from the packed package's exports, bundled for the browser or a guest. */
@@ -60,7 +55,7 @@ export const bundle = (contents: string, sourcefile: string) =>
     })
   ).pipe(Effect.map((result) => result.outputFiles[0]!.text));
 
-/** The loaded versions: one tier 1 patch's version, declaring `uses` as they stand when it loads. */
+/** The loaded versions: one tier 2 patch's version, declaring `uses` as they stand when it loads. */
 export const versions = (
   patchId: string,
   versionId: string,
@@ -73,83 +68,67 @@ export const versions = (
           ? Option.some({
               patchId,
               versionId,
-              patchTier: 1,
+              patchTier: 2,
               companyId: DEV_SEED.companyId,
               scope: "company" as const,
               wireVersion: WIRE_VERSION,
               manifest: {
                 manifestVersion: 1,
                 release: CURRENT_RELEASE,
-                tier: 1 as const,
+                tier: 2 as const,
                 tables: {},
                 files: {},
-                uses: uses()
+                uses: uses(),
+                handlers: {}
               }
             })
           : Option.none()
       )
   });
 
-const TestApi = HttpApi.make("patchy").add(
-  RuntimeGroup.add(
-    HttpApiEndpoint.post("call", "/api/runtime/call", {
-      headers: Schema.Record(Schema.String, Schema.String),
-      payload: Schema.Unknown,
-      success: Schema.Unknown
-    })
-  )
-);
-
 /**
- * The shell's transport in miniature: one runtime call per client call, as the seeded viewer,
- * answering a success's value or the refusal itself.
+ * One action's callbacks in miniature: each client call is one gateway callback for the loaded
+ * version, as the seeded viewer, answering a success's value or the refusal itself.
  */
 export const page = Effect.fn("RuntimeTest.page")(function* (
   handlers: Readonly<Record<string, Runtime.Handler>>,
   patchId: string,
   versionId: string
 ) {
-  const api = yield* HttpApiTest.groups(TestApi, ["runtime"], { baseUrl: PUBLIC_BASE_URL }).pipe(
-    Effect.provide(
-      Layer.mergeAll(RuntimeApi.layer, HttpServer.layerServices).pipe(
-        Layer.provide(RuntimeProduction.layer(handlers)),
-        Layer.provide(StreamAdmission.layer)
-      )
-    )
+  const loaded = yield* (yield* LoadedVersions.LoadedVersions).find(patchId, versionId);
+  if (Option.isNone(loaded)) return yield* Effect.die("The journey's version is not loaded.");
+  const viewer = {
+    user: { id: DEV_SEED.userId, name: "Dev", email: "dev@patchy.local" },
+    company: { id: DEV_SEED.companyId, name: "Patchy Dev", handle: "patchy-dev" },
+    admin: false
+  };
+  const capabilities = yield* InvocationCapabilities.make;
+  const gateway = yield* CallbackGateway.make(handlers).pipe(
+    Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities)
   );
+  const capability = yield* capabilities.issue({
+    binding: {
+      ...loaded.value,
+      principal: { userId: viewer.user.id },
+      identity: viewer,
+      correlationId: newInternalId("call")
+    },
+    kind: "action",
+    readOnly: false,
+    attempt: {
+      invocationId: newInternalId("inv"),
+      attemptId: "journey",
+      processGeneration: 1,
+      deadline: (yield* Clock.currentTimeMillis) + 600_000
+    },
+    reauthorize: Effect.succeed(viewer)
+  });
   const run = yield* FiberSet.makeRuntimePromise();
   const call: Call = (op, args) =>
     run(
-      api
-        .call({
-          payload: {
-            patchId,
-            versionId,
-            principal: { userId: DEV_SEED.userId },
-            wire: WIRE_VERSION,
-            op,
-            args
-          },
-          headers: {
-            "x-patchy-wire": String(WIRE_VERSION),
-            "x-patchy-principal": `{"userId":"${DEV_SEED.userId}"}`,
-            origin: PUBLIC_BASE_URL,
-            cookie: signedInCookies()
-          },
-          responseMode: "response-only"
-        })
-        .pipe(
-          Effect.flatMap((response) => response.json),
-          Effect.map((body) =>
-            typeof body === "object" &&
-            body !== null &&
-            "ok" in body &&
-            body.ok === true &&
-            "value" in body
-              ? body.value
-              : body
-          )
-        )
+      gateway
+        .callback(capability.token, capability.attempt, decodeCallback({ op, args }))
+        .pipe(Effect.map((reply) => (reply.ok && "value" in reply ? reply.value : reply)))
     );
   return call;
 });
