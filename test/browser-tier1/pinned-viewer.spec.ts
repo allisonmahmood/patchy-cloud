@@ -77,12 +77,21 @@ async function load(page: Page, patch: Published): Promise<Frame> {
 const lazy = (instance: Instance) =>
   instance.html.replace("<body><h1>", '<body data-me="lazy"><h1>');
 
-/** Loads a lazy patch and waits for its fixture client. */
+/**
+ * Loads a lazy patch and waits for its fixture client and its stream's first admission. The
+ * stream opens on ready, so a test that then changes the session finds it already settled.
+ */
 async function loadLazy(page: Page, patch: Published): Promise<Frame> {
   expect((await page.goto(patch.address))?.status()).toBe(200);
   await expect(page.frameLocator("#patch").locator("#identity")).toHaveText("waiting");
   const frame = contentFrame(page);
-  await frame.waitForFunction(() => "harness" in window);
+  await frame.waitForFunction(
+    () =>
+      "harness" in window &&
+      (window as unknown as FixtureWindow).harness.replies.some(
+        (reply) => reply.event === "stream" && reply.data?.type === "admitted"
+      )
+  );
   return frame;
 }
 
