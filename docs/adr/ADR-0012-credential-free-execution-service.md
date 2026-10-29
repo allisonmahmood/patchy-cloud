@@ -152,14 +152,20 @@ and generation before forwarding and again before delivering a reply. It stamps
 the epoch and generation on forwarded callbacks. A process kill removes its
 callback routes before reaping, so late calls cannot reach the host.
 
-The watchdog samples each process every 250 ms. It kills at the caller's
-absolute deadline plus one second, after six seconds without a successful
-health probe, or at 512 MiB RSS. Dispatch belongs to the supervisor's scope:
+The watchdog samples and probes a loading process, or one with a call in flight,
+every 250 ms. A ready process with none is sampled and probed once its last good
+probe is a second old, so a long idle window stays cheap, and one that stops
+answering is watched every tick again. It kills at the caller's absolute
+deadline plus one second, after six seconds without a successful health probe,
+or at 512 MiB RSS. Dispatch belongs to the supervisor's scope:
 losing the management HTTP caller does not remove the running deadline.
 Loading a bundle does not block the watchdog. An unfinished initializer is killed
-at `execution.process.idle`, 60 seconds by default, even if health probes succeed.
-Its bind fails with `load_failed`, and its process report has the same end cause.
-Ready processes are reaped after 60 seconds idle. A touch names a version and its
+at `execution.process.load`, 60 seconds from spawn by default, even if health probes
+succeed. Its bind fails with `load_failed`, and its process report has the same end
+cause. Ready processes are reaped after `execution.process.idle`, ten minutes by
+default, without a call or touch, so someone who comes back within it finds their
+version loaded and its code warm. Residency, not the idle window, bounds what that
+costs: eviction below takes idle processes first. A touch names a version and its
 hash at the current epoch and restarts only a ready process's idle clock; it never
 loads, reserves, evicts or changes the epoch, and a loading process keeps its
 initialization deadline from spawn. Residency allows 12 processes
@@ -530,7 +536,7 @@ both slots readable.
    state, then returns `busy`. Residency is separate: at most 12 loaded-version
    processes and 1.5 GiB aggregate, including supervisor, bundles and overlapping
    versions. Evict idle processes first; refuse `busy` if none is idle. Reap at
-   60 seconds idle, where an active document's touch counts as use, and kill a
+   ten minutes idle, where an active document's touch counts as use, and kill a
    process at 512 MiB RSS. Dormant patches spawn nothing.
 3. **Idle release counts all work.** Release follows 30 minutes with no active
    tier 2 documents and no work in flight. Retries, nested calls after document

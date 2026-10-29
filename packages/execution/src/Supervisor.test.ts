@@ -606,6 +606,51 @@ it.live(
 );
 
 it.live(
+  "probes an idle process about once a second and a process with a call in flight every tick",
+  () =>
+    Effect.gen(function* () {
+      const reached = Promise.withResolvers<void>();
+      let held: ServerResponse | undefined;
+      // Holds only the callback: a stray local request must not replace the response it ends.
+      const host = yield* listener((request, response) => {
+        if (request.method !== "POST") return void response.end();
+        held = response;
+        reached.resolve();
+      });
+      let probes = 0;
+      const http = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.mapRequest((request) => {
+          if (request.url.endsWith("/healthz")) probes++;
+          return request;
+        })
+      );
+      const supervisor = yield* Supervisor.make({
+        callbackUrls: [host.url],
+        operatingLimits: { ...largeAggregate, "execution.probe.interval": 25 }
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      const loaded = yield* bind(supervisor, "ver_watched");
+      probes = 0;
+      yield* Effect.sleep(3_000);
+      const idle = probes;
+      const running = yield* supervisor
+        .invoke(invocation(loaded, host.url, "callback"))
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => reached.promise);
+      probes = 0;
+      yield* Effect.sleep(2_000);
+      const busy = probes;
+      held!.setHeader("content-type", "application/json");
+      held!.end(JSON.stringify({ ok: true, value: "released" }));
+      yield* Fiber.join(running);
+      // A probe a second over 120 idle ticks; nearly one a tick over 80 busy ones.
+      expect(idle).toBeGreaterThanOrEqual(2);
+      expect(idle).toBeLessThanOrEqual(4);
+      expect(busy).toBeGreaterThan(40);
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
+  20_000
+);
+
+it.live(
   "keeps a touched process past its idle window and loads nothing for a version it doesn't hold",
   () =>
     Effect.gen(function* () {
@@ -615,6 +660,8 @@ it.live(
         operatingLimits: {
           ...largeAggregate,
           "execution.process.idle": 2_000,
+          // A ready process answers to its idle window alone; this deadline passes mid-test.
+          "execution.process.load": 2_500,
           "execution.probe.interval": 25
         }
       });
@@ -656,7 +703,7 @@ it.live(
         callbackUrls: [host.url],
         operatingLimits: {
           ...largeAggregate,
-          "execution.process.idle": 2_000,
+          "execution.process.load": 2_000,
           "execution.probe.interval": 25
         }
       });
@@ -977,12 +1024,13 @@ it.live(
   () =>
     Effect.gen(function* () {
       const host = yield* listener(idleHost);
+      // The load deadline is its own: the ten-minute idle window never comes into it.
       const supervisor = yield* Supervisor.make({
         callbackUrls: [host.url],
         operatingLimits: {
           ...largeAggregate,
           "execution.residency.processes": 1,
-          "execution.process.idle": 2_000,
+          "execution.process.load": 2_000,
           "execution.probe.interval": 25
         }
       });

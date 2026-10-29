@@ -43,6 +43,7 @@ const decodeStop = Schema.decodeUnknownEffect(Management.StopRequest, strict);
 const decodeStats = Schema.decodeUnknownEffect(Management.StatsRequest, strict);
 const decodeTouch = Schema.decodeUnknownEffect(Management.TouchRequest, strict);
 const killGrace = 1_000;
+const idleWatch = 1_000;
 
 class CallbackBodyTooLarge extends Schema.TaggedError<CallbackBodyTooLarge>()(
   "CallbackBodyTooLarge",
@@ -74,7 +75,8 @@ const operatingLimitIds = [
   "execution.process.rss",
   "execution.residency.processes",
   "execution.residency.bytes",
-  "execution.process.idle"
+  "execution.process.idle",
+  "execution.process.load"
 ] as const;
 type SupervisorLimitId = (typeof operatingLimitIds)[number];
 
@@ -488,19 +490,27 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
     const now = Date.now();
     for (const resident of residents.values()) {
       if (!resident.alive) continue;
-      yield* sample(resident).pipe(
-        Effect.catchTags({
-          WorkerdError: (cause) =>
-            Effect.gen(function* () {
-              yield* Effect.logError("Process resource sampling failed; reaping its resident.", {
-                processGeneration: resident.generation,
-                stage: cause.stage,
-                reason: cause.reason
-              });
-              yield* terminate(resident, "metering_failed");
-            })
-        })
-      );
+      // A ready process with no call in flight is sampled and probed once its last good probe is
+      // a second old, not every tick: a long idle window stays cheap, and a process that stops
+      // answering is watched every tick again, toward the same stall kill.
+      const watched =
+        resident.loading ||
+        resident.invocations.size !== 0 ||
+        now - resident.lastHealthy >= idleWatch;
+      if (watched)
+        yield* sample(resident).pipe(
+          Effect.catchTags({
+            WorkerdError: (cause) =>
+              Effect.gen(function* () {
+                yield* Effect.logError("Process resource sampling failed; reaping its resident.", {
+                  processGeneration: resident.generation,
+                  stage: cause.stage,
+                  reason: cause.reason
+                });
+                yield* terminate(resident, "metering_failed");
+              })
+          })
+        );
       if (!resident.alive) continue;
       const child = resident.process?.child;
       if (child !== undefined && (child.exitCode !== null || child.signalCode !== null))
@@ -515,13 +525,15 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* terminate(resident, "deadline");
       else if (now - resident.lastHealthy >= registry["execution.stall"].default)
         yield* terminate(resident, "stall");
+      else if (resident.loading && now - resident.startedAt >= limit("execution.process.load"))
+        yield* terminate(resident, "load_failed");
       else if (
+        !resident.loading &&
         resident.invocations.size === 0 &&
-        now - (resident.loading ? resident.startedAt : resident.idleSince) >=
-          limit("execution.process.idle")
+        now - resident.idleSince >= limit("execution.process.idle")
       )
-        yield* terminate(resident, resident.loading ? "load_failed" : "idle");
-      else yield* probe(resident);
+        yield* terminate(resident, "idle");
+      else if (watched) yield* probe(resident);
     }
     stampPeaks();
     yield* admission.withPermit(evict(0));

@@ -335,7 +335,7 @@ it.effect("lands a touch before the reap even when the one before it is lost", (
     const document = yield* host
       .open("ver_a", false)
       .pipe(Effect.provideService(Random.Random, widestSpacing));
-    for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += 1_000) yield* TestClock.adjust(1_000);
+    for (let elapsed = 0; elapsed < 10 * idle; elapsed += 1_000) yield* TestClock.adjust(1_000);
     const landed = host.landedAt.get("ver_a")!;
     assert.isAtLeast(landed.length, 10);
     // The supervisor reaps a process idle for `idle`; each landing restarts that clock.

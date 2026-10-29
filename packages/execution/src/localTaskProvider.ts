@@ -79,6 +79,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
   const path = yield* Config.String("PATH").pipe(Config.withDefault("/usr/bin:/bin"));
   const config = yield* DeploymentConfig.load;
   const startupTimeout = config.get("execution.pool.wait");
+  const processLoad = config.get("execution.process.load");
   const cleanupTimeout = registry["tier2.settlement.cleanup"].default;
   const managementTimeout = cleanupTimeout + killGrace;
   const http = yield* HttpClient.HttpClient;
@@ -257,6 +258,7 @@ export const make = Effect.fn("LocalTaskProvider.make")(function* (options: Opti
               path,
               startupTimeout,
               cleanupTimeout,
+              processLoad,
               startedAt: Date.now()
             });
             if (request.deploymentRevision !== input.deploymentRevision)

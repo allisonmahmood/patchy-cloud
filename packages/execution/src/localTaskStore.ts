@@ -14,6 +14,11 @@ export const Request = Schema.Struct({
   path: Schema.String,
   startupTimeout: Schema.Number,
   cleanupTimeout: Schema.Number,
+  /**
+   * The deployment's `execution.process.load`, which no bind carries. Optional so a task
+   * directory written before it still starts, at the registry default.
+   */
+  processLoad: Schema.optionalKey(Schema.Number),
   startedAt: Schema.Number
 });
 export type Request = typeof Request.Type;
