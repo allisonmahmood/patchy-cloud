@@ -217,8 +217,10 @@ export const resolveCompanyIdentity = Effect.fn("RequireSession.resolveCompanyId
     email: claims.email,
     name: claims.name
   });
-  if (!guest || guest.deactivatedAt !== null || guest.endedAt !== null)
-    return found?.user.companyId === companyId ? yield* memberViewer(found) : null;
+  if (!guest || guest.deactivatedAt !== null || guest.endedAt !== null) {
+    const fallback = found?.user.companyId === companyId ? yield* memberViewer(found) : null;
+    return HttpServerResponse.isHttpServerResponse(fallback) ? fallback : null;
+  }
   return {
     kind: "guest",
     guest: { id: guest.id, email: guest.email, name: guest.name },
