@@ -1,4 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CURRENT_RELEASE, RuntimeGroup, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
@@ -192,14 +191,13 @@ const tier1 = Layer.mergeAll(
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,
-  NodeServices.layer,
   versions
 )
   .pipe(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(tier1)("PostHog in a tier 1 page", (it) => {
   it.effect(
