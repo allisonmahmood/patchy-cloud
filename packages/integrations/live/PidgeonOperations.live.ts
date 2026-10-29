@@ -580,40 +580,46 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
               }
             );
             // Pidgeon records the approval and its event as it would live, but in test mode it
-            // tells no person. The draft is deleted so no run leaves one in the approval queue.
+            // tells no person. The draft is deleted however the checks end: the sweep can't find
+            // it once the address is gone, and no run should leave one in the approval queue.
             const identityId = connection.display.identityId;
             const draftId = (held as { draftId: string }).draftId;
             const approval = `/drafts/${encodeURIComponent(draftId)}/approval`;
-            assert.deepStrictEqual(
-              (yield* decodeApproval(
-                (yield* Live.call(Live.admin(), { method: "GET", path: approval })).body
-              )).data,
-              {
-                identity_id: identityId,
-                status: "pending",
-                reason: "first_contact",
-                message_id: null
-              }
+            yield* Effect.gen(function* () {
+              assert.deepStrictEqual(
+                (yield* decodeApproval(
+                  (yield* Live.call(Live.admin(), { method: "GET", path: approval })).body
+                )).data,
+                {
+                  identity_id: identityId,
+                  status: "pending",
+                  reason: "first_contact",
+                  message_id: null
+                }
+              );
+              const requested = yield* eventually(
+                Live.call(Live.admin(), {
+                  method: "GET",
+                  path: "/events",
+                  query: { type: "draft.approval_requested", identity_id: identityId }
+                }).pipe(
+                  Effect.flatMap((answer) => decodeApprovalEvents(answer.body)),
+                  Effect.map(({ data }) => data.find((event) => event.data.draft_id === draftId))
+                ),
+                "The draft.approval_requested event"
+              );
+              assert.deepStrictEqual(requested, {
+                type: "draft.approval_requested",
+                data: { draft_id: draftId, reason: "first_contact" }
+              });
+            }).pipe(
+              Effect.ensuring(
+                Live.call(Live.admin(), {
+                  method: "DELETE",
+                  path: `/drafts/${encodeURIComponent(draftId)}`
+                }).pipe(Effect.orDie)
+              )
             );
-            const requested = yield* eventually(
-              Live.call(Live.admin(), {
-                method: "GET",
-                path: "/events",
-                query: { type: "draft.approval_requested", identity_id: identityId }
-              }).pipe(
-                Effect.flatMap((answer) => decodeApprovalEvents(answer.body)),
-                Effect.map(({ data }) => data.find((event) => event.data.draft_id === draftId))
-              ),
-              "The draft.approval_requested event"
-            );
-            assert.deepStrictEqual(requested, {
-              type: "draft.approval_requested",
-              data: { draft_id: draftId, reason: "first_contact" }
-            });
-            yield* Live.call(Live.admin(), {
-              method: "DELETE",
-              path: `/drafts/${encodeURIComponent(draftId)}`
-            });
             assert.strictEqual(
               (yield* Live.call(Live.admin(), { method: "GET", path: approval }).pipe(Effect.flip))
                 ._tag,
