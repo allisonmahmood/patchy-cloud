@@ -281,6 +281,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
       });
       const consumer = yield* setup("cmp_dev", "snapshotuse", {
         ...manifest,
+        tier: 2,
         uses: {
           contacts: {
             kind: "sharedTable",
@@ -511,6 +512,7 @@ it.layer(local)("Invocation query snapshots / PGlite", (it) => {
     Effect.gen(function* () {
       const source = yield* setup("local-company", "snapshotlocal", {
         ...manifest,
+        tier: 2,
         tables: { notes: { ...manifest.tables.notes!, shared: true } },
         uses: {
           contacts: {

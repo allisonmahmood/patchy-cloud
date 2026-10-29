@@ -60,7 +60,7 @@ interface Entry extends Row {
 type Page<R> = { readonly rows: ReadonlyArray<R>; readonly cursor: string | null };
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 
-/** The probe workspace, connected as `crm`, and its reads as a tier 1 page makes them. */
+/** The probe workspace, connected as `crm`, and its reads as a tier 2 action's callbacks make them. */
 const connect = Effect.gen(function* () {
   const store = yield* SqlConnectionStore.make;
   const connection = yield* store.connect({
@@ -93,9 +93,10 @@ const connect = Effect.gen(function* () {
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
-      tier: 1,
+      tier: 2,
       tables: {},
       files: {},
+      handlers: {},
       uses: {
         crm: {
           kind: "attio",

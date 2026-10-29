@@ -231,7 +231,7 @@ describe("wire schemas", () => {
     expect(
       decode({
         ...manifest,
-        tier: 1,
+        tier: 2,
         tables: {
           notes: {
             description: "Notes keyed by id.",
@@ -288,7 +288,7 @@ describe("wire schemas", () => {
       html: "<!doctype html><html></html>",
       manifest: {
         ...manifest,
-        tier: 1,
+        tier: 2,
         uses: { members: { kind: "members" } },
         tables: {
           tasks: {

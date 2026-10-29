@@ -184,7 +184,7 @@ describe("executeConfig", () => {
     "uses: { people: members() }"
   ])("refuses invalid member declarations: %s", async (definition) => {
     const path = await fixture(
-      `export default defineConfig({ name: "invalid-members", tier: 1, ${definition} });`
+      `export default defineConfig({ name: "invalid-members", tier: 2, ${definition} });`
     );
     await expect(ConfigExecution.executeConfig(path, { resolve: false })).rejects.toThrow();
   });

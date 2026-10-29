@@ -508,7 +508,7 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   };
   const consumer = yield* setup(companyId, "sharedfilereader", {
     ...manifest,
-    tier: 1,
+    tier: 2,
     files: {},
     uses: { documents: declaration, alternate: declaration }
   });

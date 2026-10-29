@@ -101,10 +101,10 @@ export const memberAssignmentsContract = Effect.fn("test.memberAssignmentsContra
     getMany: () => Effect.die("Assignment checks must not resolve members"),
     revision: () => Effect.die("Assignments must not acquire directory dependencies")
   });
-  // TableOperations has no tier logic, so one scripted tier covers both.
+  // TableOperations has no tier logic; member columns need the directory, which is tier 2's.
   const definition: typeof Manifest.Type = {
     ...manifest,
-    tier: 1,
+    tier: 2,
     uses: { members: { kind: "members" } },
     tables: {
       assignments: {
@@ -605,6 +605,7 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
   };
   const consumer = yield* setup(companyId, "sharedreader", {
     ...manifest,
+    tier: 2,
     uses: { contacts: declaration, alternate: declaration }
   });
   const own = yield* consumer

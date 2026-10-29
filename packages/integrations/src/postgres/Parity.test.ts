@@ -39,7 +39,7 @@ const binding = Binding.Binding.of({
   manifest: {
     manifestVersion: 1,
     release: CURRENT_RELEASE,
-    tier: 1,
+    tier: 2,
     tables: {},
     files: {},
     uses: { warehouse: declaration }

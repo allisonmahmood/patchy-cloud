@@ -281,6 +281,8 @@ it.layer(
         id: sharedTableId(source.patchId, "contacts"),
         revision: source.schemaRevision
       };
+      // Content has no tier rule for uses (PatchesApi refuses them below tier 2), and a tier 2
+      // consumer would need a built bundle for inspection that this race doesn't exercise.
       const consumerManifest = {
         ...Fixtures.manifest,
         name: "shared-racing-consumer",

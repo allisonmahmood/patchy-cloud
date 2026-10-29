@@ -252,6 +252,7 @@ const publishDependant = Effect.fn("PortalPagesTest.publishDependant")(function*
     manifest: {
       ...manifest,
       name,
+      tier: 2,
       uses: {
         source:
           kind === "table"

@@ -30,6 +30,10 @@ const decodePage = Schema.decodeUnknownEffect(TablePage);
 const decodePostgresRows = Schema.decodeUnknownEffect(PostgresRows);
 
 const decodeFiles = Schema.decodeUnknownEffect(FilePage);
+// These Prepared versions are tier 1 even where they declare `uses`, which refresh, dev and
+// publish now refuse below tier 2: preparing a tier 2 version also requires a server bundle and
+// starts the handler engine, which these fixture and storage cases don't exercise. The handlers
+// they call are the ones a tier 2 action's callbacks reach.
 it.live(
   "provisions shared fixture refs to undeclared recursive source tables without requiring target rows",
   () =>

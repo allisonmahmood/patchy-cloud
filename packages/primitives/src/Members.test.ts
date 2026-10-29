@@ -27,7 +27,7 @@ const binding = Binding.Binding.of({
   versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
   wireVersion: 1,
   scope: "company",
-  manifest: { ...manifest, tier: 1, tables: {}, uses: { members: { kind: "members" } } },
+  manifest: { ...manifest, tier: 2, tables: {}, uses: { members: { kind: "members" } } },
   principal: { userId: "viewer" },
   identity: {
     user: { id: "viewer", name: "Viewer", email: "viewer@example.test" },
@@ -86,7 +86,7 @@ it.layer(services)("Members", (it) => {
         Effect.provideService(CompanyDatabases.CompanyDatabases, f.storage)
       );
       const capability = yield* capabilities.issue({
-        binding: { ...binding, manifest: { ...binding.manifest, tier: 2 } },
+        binding,
         kind: "query",
         readOnly: false,
         attempt: {

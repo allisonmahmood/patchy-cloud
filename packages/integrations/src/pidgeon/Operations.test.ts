@@ -53,7 +53,7 @@ const viewer: Viewer = {
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
   admin: false
 };
-/** A tier 1 page's binding for `uses.inbox`, the patch `deskpatch001`, as `viewer`. */
+/** A tier 2 version's binding for `uses.inbox`, the patch `deskpatch001`, as `viewer`. */
 const binding = (
   inbox: { readonly id: string; readonly handle: string },
   overrides: Partial<Binding.Binding["Service"]> = {}
@@ -70,7 +70,7 @@ const binding = (
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
-      tier: 1,
+      tier: 2,
       tables: {},
       files: {},
       uses: {
