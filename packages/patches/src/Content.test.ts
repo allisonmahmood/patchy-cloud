@@ -19,7 +19,7 @@ import { sharedTableId } from "@patchy/api";
 import { ContentStore } from "@patchy/content-store";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
-import { newInternalId, newPatchId, sha256 } from "@patchy/core";
+import { newInternalId, newPatchId, sha256 } from "../../../test/crypto.js";
 import { Tables } from "@patchy/primitives";
 import {
   type LoadedVersions as RuntimeLoadedVersions,

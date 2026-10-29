@@ -44,7 +44,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   AttioSource.layer
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 /** A store over the canned transport, and a seeded connection. */
 const setup = (handle: string, options: { readonly test?: boolean } = {}) =>

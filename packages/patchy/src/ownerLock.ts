@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Lock ownership needs process birth time and atomic directory renames.
+// oxlint-disable-next-line no-restricted-imports -- Promise code on the lock's process boundary, outside Effect.
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";

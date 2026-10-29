@@ -30,6 +30,7 @@ import { clerkEnv, signedInCookies, signSession } from "../../packages/auth/src/
 import { WIRE_VERSION } from "../../packages/patchy/src/release.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "../../scripts/dev/src/postgres.js";
 import { escapeAttribute } from "../../packages/core/src/html.js";
+import * as NodeCryptography from "../../packages/core/src/NodeCryptography.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const decodeFrame = Schema.decodeUnknownSync(RuntimeStreamFrame);
@@ -353,6 +354,7 @@ export async function startInstance(options: {
           await Effect.runPromise(
             LocalTaskProvider.cleanup(fleetDirectory).pipe(
               Effect.provide(FetchHttpClient.layer),
+              Effect.provide(NodeCryptography.layer),
               Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ NODE_ENV: "test" })))
             )
           );

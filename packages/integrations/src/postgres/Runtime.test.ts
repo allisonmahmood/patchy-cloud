@@ -131,7 +131,7 @@ const services = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(services)("declared Postgres over the runtime wire", (it) => {
   it.effect(

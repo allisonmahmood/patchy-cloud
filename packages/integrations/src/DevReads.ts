@@ -20,7 +20,7 @@ import {
   runtimeBodyLimitId
 } from "@patchy/api";
 import { Authorization, MachineTokens } from "@patchy/auth";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { Runtime, RuntimeApi, RuntimeLog } from "@patchy/runtime";
 import * as Cause from "effect/Cause";
@@ -89,7 +89,9 @@ const live = new Set(
 const runners: {
   readonly [
     Op in "posthog.query" | "pidgeon.read" | keyof typeof AttioOperations.devReads
-  ]: DevRead<PostHogSource.Source | PidgeonSource.Source | AttioSource.Source>;
+  ]: DevRead<
+    PostHogSource.Source | PidgeonSource.Source | AttioSource.Source | Cryptography.Cryptography
+  >;
 } = { ...PostHogOperations.devReads, ...PidgeonOperations.devReads, ...AttioOperations.devReads };
 const isLive = (op: string): op is keyof typeof runners =>
   live.has(op) && Object.hasOwn(runners, op);
@@ -104,6 +106,7 @@ const noStore = { "cache-control": "no-store" };
 
 export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const runtime = yield* Runtime.Runtime;
     const limits = yield* Limits.Limits;
     const log = yield* RuntimeLog.RuntimeLog;
@@ -146,7 +149,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         Effect.result
       );
       const connectionId = lookup._tag === "Success" ? lookup.success : null;
-      const correlationId = newInternalId("call");
+      const correlationId = yield* cryptography.internalId("call");
       const startedAt = yield* Clock.currentTimeMillis;
       const sql = operation?.sql?.(input.args);
       yield* log
@@ -208,6 +211,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             Effect.provideService(PostHogSource.Source, posthogSource),
             Effect.provideService(PidgeonSource.Source, pidgeonSource),
             Effect.provideService(AttioSource.Source, attioSource),
+            Effect.provideService(Cryptography.Cryptography, cryptography),
             Effect.provideService(ConnectionStore.ConnectionStore, connections),
             Effect.catchTags({
               ConnectionNotFound: (cause) =>

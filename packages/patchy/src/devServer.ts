@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This CLI-owned local server owns its Node socket and process identity.
 import { createServer } from "node:http";
-import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { RuntimeGroup, RuntimeStreamGroup, handlerKinds } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
@@ -13,7 +12,7 @@ import {
   StreamAdmission,
   StreamLimits
 } from "@patchy/runtime/dev";
-import { documentTitle, validateHtml } from "@patchy/core";
+import { Cryptography, documentTitle, validateHtml } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import {
   brokerScript,
@@ -80,6 +79,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
   /** The machine token, when a declared integration reads the real connection; memory only. */
   token: Option.Option<Redacted.Redacted>
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   // Vite sets NODE_ENV while building. Execution uses the daemon's startup environment.
   const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
   const executionConfig = ConfigProvider.orElse(
@@ -266,7 +266,7 @@ export const serve = Effect.fn("Dev.serve")(function* (
                 wireVersion: version.wireVersion
               },
               html,
-              nonce: randomBytes(24).toString("hex"),
+              nonce: Buffer.from(yield* cryptography.randomBytes(24)).toString("hex"),
               route,
               base,
               head: `<script defer src="/~dev/reload.js?v=${revision}"></script>`

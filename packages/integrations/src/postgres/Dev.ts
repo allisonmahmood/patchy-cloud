@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local WASM queries need a killable worker for hard deadlines.
 import { Worker } from "node:worker_threads";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -282,6 +282,7 @@ export const dev = (
   Layer.effect(
     Execution.Execution,
     Effect.gen(function* () {
+      const cryptography = yield* Cryptography.Cryptography;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       for (const field of ["connectionId", "handle"] as const) {
@@ -299,7 +300,9 @@ export const dev = (
         `postgres-${fixture.connectionId}`
       );
       const stampPath = `${dataDir}.json`;
-      const stamp = sha256(encodeJson({ version: 1, snapshot: input, fixture: sql }));
+      const stamp = yield* cryptography.sha256(
+        encodeJson({ version: 1, snapshot: input, fixture: sql })
+      );
       const old = yield* fs.readFileString(stampPath).pipe(Effect.catch(() => Effect.succeed("")));
       const initialize = old !== stamp || !(yield* fs.exists(dataDir));
       if (initialize) {

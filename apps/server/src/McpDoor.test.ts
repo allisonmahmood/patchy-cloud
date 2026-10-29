@@ -135,7 +135,7 @@ const mint = mintDevAgentConnection({
   email: DEV_SEED.email,
   clientName: "Codex",
   clientId: "http://127.0.0.1:4100/dev/mcp-token"
-}).pipe(Effect.provide(AgentConnections.layer.pipe(Layer.provide(NodeCryptography.layer))));
+}).pipe(Effect.provide(AgentConnections.layer.pipe(Layer.provideMerge(NodeCryptography.layer))));
 
 const initialize = {
   jsonrpc: "2.0",
@@ -327,7 +327,8 @@ const listed = (html: string) =>
 it.layer(
   server(env).pipe(
     Layer.provideMerge(stdout),
-    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+    Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })),
+    Layer.provideMerge(NodeCryptography.layer)
   )
 )("finding patches against the portal", (it) => {
   it.effect("finds exactly what the portal lists for each person, and opens nothing else", () =>
@@ -465,7 +466,9 @@ it.layer(
           email: person.email,
           clientName: "Claude Code",
           clientId: "http://127.0.0.1:4100/dev/mcp-token"
-        }).pipe(Effect.provide(AgentConnections.layer.pipe(Layer.provide(NodeCryptography.layer))));
+        }).pipe(
+          Effect.provide(AgentConnections.layer.pipe(Layer.provideMerge(NodeCryptography.layer)))
+        );
         const found = (yield* toolCall(token, "find_patches", {})).structuredContent as {
           total: number;
           patches: ReadonlyArray<{ name: string; address: string }>;

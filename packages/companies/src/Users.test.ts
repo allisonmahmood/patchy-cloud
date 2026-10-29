@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
-import { WhatsNew } from "@patchy/core";
+import { WhatsNew, NodeCryptography } from "@patchy/core";
 import { ddl } from "@patchy/sql";
 import * as Testing from "@patchy/sql/testing";
 import * as Companies from "./Companies.js";
@@ -108,7 +108,9 @@ it("keeps a given name exactly and falls back to the whole email when its local 
   assert.strictEqual(Users.displayName({ name: "", email: "@Example.com" }), "@example.com");
 });
 
-it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(Testing.layer())))(
+const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));
+
+it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(database)))(
   "Users",
   (it) => {
     it.effect(

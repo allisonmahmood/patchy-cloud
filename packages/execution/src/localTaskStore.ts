@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off preferSchemaOverJson:off -- private on-disk records and Linux process identity belong to the local provider, not the supervisor protocol.
+// oxlint-disable-next-line no-restricted-imports -- Promise code on the offline provider's file boundary; its hashes name directories already on disk.
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalDateInEffect:off preferSchemaOverJson:off -- residency uses wall time and OS RSS; tuple keys encode already-validated identities without delimiter collisions.
-import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { limitRefusal, limitRefusalFields } from "@patchy/api";
@@ -23,6 +22,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Engine from "./engine.js";
 import { sampleProcess, startWorkerd, type WorkerdProcess } from "./process.js";
+import { Cryptography } from "@patchy/core";
 
 export class SupervisorError extends Schema.TaggedError<SupervisorError>()("SupervisorError", {
   operation: Schema.Literals(["bind", "invoke", "stop", "stats", "touch"]),
@@ -154,6 +154,7 @@ export class Supervisor extends Context.Service<
 >()("@patchy/execution/supervisor") {}
 
 export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
+  const cryptography = yield* Cryptography.Cryptography;
   const http = yield* HttpClient.HttpClient;
   const scope = yield* Effect.scope;
   const operatingLimits = { ...options.operatingLimits };
@@ -177,9 +178,9 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
   const limit = (id: SupervisorLimitId): number => operatingLimits[id] ?? registry[id].default;
   const deploymentRevision = options.deploymentRevision ?? "local";
   let configRevision = options.configRevision ?? {
-    deploymentRevision: createHash("sha256")
-      .update(operatingLimitIds.map((id) => `${id}=${limit(id)}`).join("\n"))
-      .digest("hex"),
+    deploymentRevision: yield* cryptography.sha256(
+      operatingLimitIds.map((id) => `${id}=${limit(id)}`).join("\n")
+    ),
     overrideRevision: "0"
   };
   const residents = new Map<string, Resident>();
@@ -620,7 +621,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
         yield* checkEpoch(request.bindingEpoch, "bind");
         if (stopped) return yield* new SupervisorError({ operation: "bind", reason: "stopped" });
         const now = Date.now();
-        const path = `/callback/${generation + 1}/${randomUUID()}`;
+        const path = `/callback/${generation + 1}/${yield* cryptography.randomUUID}`;
         const resident: Resident = {
           binding: {
             companyId: bundle.companyId,
@@ -636,7 +637,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: Options) {
           proxyUrl: `${proxyBase}${path}`,
           invocations: new Map(),
           startedAt: now,
-          eventId: randomUUID(),
+          eventId: yield* cryptography.randomUUID,
           epoch: bindingEpoch,
           alive: true,
           loading: true,

@@ -22,7 +22,7 @@ import {
   WIRE_VERSION
 } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits, Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import * as ConnectedVersions from "./ConnectedVersions.js";
@@ -169,10 +169,12 @@ type Dependencies =
   | WideEvents.WideEvents
   | StreamLimits.StreamLimits
   | Wakes.Wakes
-  | Subscriptions.Subscriptions;
+  | Subscriptions.Subscriptions
+  | Cryptography.Cryptography;
 
 export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies | Scope.Scope> =
   Effect.gen(function* () {
+    const cryptography = yield* Cryptography.Cryptography;
     const admission = yield* StreamAdmission.StreamAdmission;
     const executionLifecycle = yield* Effect.serviceOption(ExecutionLifecycle.ExecutionLifecycle);
     const connectedVersions = yield* Effect.serviceOption(ConnectedVersions.ConnectedVersions);
@@ -399,7 +401,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
       const viewerKey = `${identity.companyId}:${input.patchId}:${identity.viewerId}`;
       const patchKey = `${identity.companyId}:${input.patchId}`;
-      const generation = newInternalId("stream");
+      const generation = yield* cryptography.internalId("stream");
       let binding: Binding.Binding["Service"] = {
         ...loaded,
         principal,

@@ -30,6 +30,7 @@ import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as LocalTaskStore from "./localTaskStore.js";
 import * as TaskProvider from "./TaskProvider.js";
 import * as MemoryTasks from "./test/memoryTasks.js";
+import { NodeCryptography } from "@patchy/core";
 
 const callbackUrl = "http://127.0.0.1:32127/callback";
 const source = `let count = 0; export default { async fetch(request) {
@@ -39,13 +40,12 @@ const source = `let count = 0; export default { async fetch(request) {
   return Response.json({ ok: true, value: ++count });
 } };`;
 const sha256 = createHash("sha256").update(source).digest("hex");
-const services = OperatingLimits.layer
-  .pipe(
-    Layer.provideMerge(Testing.layer()),
-    Layer.merge(WideEvents.layerNoop),
-    Layer.merge(FetchHttpClient.layer)
-  )
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+const services = OperatingLimits.layer.pipe(
+  Layer.provideMerge(Testing.layer()),
+  Layer.merge(WideEvents.layerNoop),
+  Layer.merge(FetchHttpClient.layer),
+  Layer.provideMerge(Layer.merge(NodeCrypto.layer, NodeCryptography.layer))
+);
 const setup = Effect.fn("FleetTest.setup")(function* (
   name: string,
   provider: TaskProvider.TaskProvider["Service"],

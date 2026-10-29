@@ -9,7 +9,7 @@ import {
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { PUBLIC_BASE_URL, signedInCookies } from "@patchy/auth/testing";
-import { newInternalId, sha256 } from "@patchy/core";
+import { newInternalId, sha256 } from "../../../../test/crypto.js";
 import {
   CallbackGateway,
   CallbackGatewayApi,

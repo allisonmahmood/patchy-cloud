@@ -45,7 +45,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(Layer.mergeAll(Limits.layer, Analytics.layerNoop)),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(config)),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 const decodeClaims = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ azp: Schema.optional(Schema.Null), iat: Schema.Number }))

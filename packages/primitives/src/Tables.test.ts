@@ -20,6 +20,7 @@ import {
   rowExpansionLimit,
   stores
 } from "./test/provisioningContract.js";
+import { NodeCryptography } from "@patchy/core";
 
 const postgres = Tables.layer.pipe(Layer.provideMerge(CompanyTesting.layer()));
 const local = Layer.unwrap(
@@ -99,7 +100,9 @@ it.layer(postgres.pipe(Layer.provideMerge(TestWakes.layer)))("Tables (Postgres)"
   backends(it);
   refusalsAndLimits(it);
 });
-it.layer(local.pipe(Layer.provideMerge(Layer.merge(TestWakes.layer, NodeCrypto.layer))))(
-  "Tables (PGlite)",
-  backends
-);
+it.layer(
+  local.pipe(
+    Layer.provideMerge(Layer.merge(TestWakes.layer, NodeCrypto.layer)),
+    Layer.provideMerge(NodeCryptography.layer)
+  )
+)("Tables (PGlite)", backends);

@@ -27,7 +27,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { ResourceChanges } from "@patchy/company-database";
 import * as CompanyTesting from "@patchy/company-database/testing";
 import { ContentStore } from "@patchy/content-store";
-import { contentHash, newInternalId, newPatchId } from "@patchy/core";
+import { contentHash, newInternalId, newPatchId } from "../../../../test/crypto.js";
 import { Tables } from "@patchy/primitives";
 import {
   SqlConnectionStore,

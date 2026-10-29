@@ -11,6 +11,7 @@ import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 import * as Subscriptions from "./Subscriptions.js";
 import * as QuerySubscriptions from "./QuerySubscriptions.js";
+import { NodeCryptography } from "@patchy/core";
 
 const ownTable = "table:consumer:notes";
 const ownStore = "store:consumer:images";
@@ -185,7 +186,7 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
     yield* f.document.reconcile("invalidation", [ownStore, sharedTable, sourcePatch]);
     yield* Effect.yieldNow;
     assert.strictEqual(f.state.calls, 1);
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("resumes equal owned and canonical shared revisions without invoking the query", () =>
@@ -212,7 +213,7 @@ it.effect("resumes equal owned and canonical shared revisions without invoking t
       vector: { [sharedStore]: "7", [storeSource]: "6" }
     });
     assert.strictEqual(f.state.calls, 1);
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );
 
 for (const [resource, source] of [
@@ -251,7 +252,7 @@ for (const [resource, source] of [
           assert.notInclude(keys, ownTable);
           assert.notInclude(keys, ownStore);
         }
-      }).pipe(Effect.scoped)
+      }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
   );
 
 it.effect(
@@ -293,5 +294,5 @@ it.effect(
         result: "members",
         vector: { [memberDirectory]: "2" }
       });
-    })
+    }).pipe(Effect.provide(NodeCryptography.layer))
 );

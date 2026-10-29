@@ -26,6 +26,7 @@ import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { Cryptography } from "@patchy/core";
 
 export type StartupError =
   | Config.ConfigError
@@ -35,6 +36,7 @@ export type StartupError =
   | CallbackGatewayApi.ListenerUnavailable;
 
 type Dependencies =
+  | Cryptography.Cryptography
   | Scope.Scope
   | Crypto.Crypto
   | HttpClient.HttpClient
@@ -64,7 +66,9 @@ export const make: (
     return yield* new Executor.ExecutionError({ operation: "bind", reason: "production_refused" });
 
   const scope = yield* Effect.scope;
-  const context = yield* Effect.context<HttpClient.HttpClient | WideEvents.WideEvents>();
+  const context = yield* Effect.context<
+    HttpClient.HttpClient | WideEvents.WideEvents | Cryptography.Cryptography
+  >();
   const gateway = yield* CallbackGateway.make(handlers);
   const listener = yield* CallbackGatewayApi.listen().pipe(
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)
@@ -120,6 +124,7 @@ export const layer = (
   | ServerBundles.ServerBundles
   | SqlClient.SqlClient
   | WideEvents.WideEvents
+  | Cryptography.Cryptography
 > =>
   Layer.effect(Invocation.Invocation, make(handlers)).pipe(
     Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),

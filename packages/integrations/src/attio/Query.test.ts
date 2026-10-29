@@ -3,6 +3,10 @@ import type { attioReads } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import { objects, snapshot, uuid } from "../test/attioReads.js";
 import * as Query from "./Query.js";
+import { NodeCryptography } from "@patchy/core";
+
+const planned = (...args: Parameters<typeof Query.plan>) =>
+  Query.plan(...args).pipe(Effect.provide(NodeCryptography.layer));
 
 type Args = typeof attioReads.listEntries.input.Type;
 
@@ -20,12 +24,12 @@ const sent = (
   container: Parameters<typeof Query.plan>[0] = deals,
   current = noCurrent,
   options = new Map<string, ReadonlyArray<string>>()
-) => Effect.map(Query.plan(container, args, call), (plan) => Query.body(plan, current, options));
+) => Effect.map(planned(container, args, call), (plan) => Query.body(plan, current, options));
 const filter = (...args: Parameters<typeof sent>) =>
   Effect.map(sent(...args), (body) => body.filter);
 /** The details of the `invalid_request` that `args` are refused with. */
 const refused = (args: Omit<Args, "list">, container: Parameters<typeof Query.plan>[0] = deals) =>
-  Effect.flatMap(Effect.flip(Query.plan(container, args, call)), (error) =>
+  Effect.flatMap(Effect.flip(planned(container, args, call)), (error) =>
     error._tag === "AttioInvalidRequest"
       ? Effect.succeed(error.details)
       : Effect.die(`Refused ${error._tag}, not invalid_request.`)
@@ -194,7 +198,7 @@ describe("the filter table, one row per type", () => {
       });
       // No active option: every record reads empty, so nothing is excluded.
       assert.isUndefined(yield* filter({ eq: { segment: null } }, deals, noCurrent, new Map()));
-      const plan = yield* Query.plan(deals, { eq: { segment: null } }, call);
+      const plan = yield* planned(deals, { eq: { segment: null } }, call);
       assert.isFalse(Query.independent(plan));
       assert.deepStrictEqual(
         plan.options.map((attribute) => attribute.slug),
@@ -491,14 +495,14 @@ describe("a whole request", () => {
   it.effect("pages by a cursor bound to the call, refusing one from another", () =>
     Effect.gen(function* () {
       const args = { eq: { stage: "Lead" }, limit: 2 };
-      const first = yield* Query.plan(deals, args, call);
+      const first = yield* planned(deals, args, call);
       assert.isNull(Query.next(first, 2));
       const cursor = Query.next(first, 3)!;
-      const second = yield* Query.plan(deals, { ...args, cursor }, call);
+      const second = yield* planned(deals, { ...args, cursor }, call);
       assert.strictEqual(second.offset, 2);
       assert.strictEqual(Query.body(second, noCurrent, new Map()).offset, 2);
       // A changed limit keeps the offset; anything the cursor binds refuses it.
-      assert.strictEqual((yield* Query.plan(deals, { ...args, limit: 5, cursor }, call)).offset, 2);
+      assert.strictEqual((yield* planned(deals, { ...args, limit: 5, cursor }, call)).offset, 2);
       for (const [container, other, binding] of [
         [deals, { eq: { stage: "Lost" }, limit: 2 }, call],
         [deals, { ...args, orderBy: { attribute: "name" } }, call],
@@ -507,11 +511,11 @@ describe("a whole request", () => {
         [deals, args, { ...call, operation: "attio.listEntries" }],
         [people, {}, call]
       ] as const) {
-        const error = yield* Effect.flip(Query.plan(container, { ...other, cursor }, binding));
+        const error = yield* Effect.flip(planned(container, { ...other, cursor }, binding));
         assert.strictEqual(error._tag, "AttioInvalidCursor");
       }
       for (const broken of ["not a cursor!", Buffer.from("{}").toString("base64url")]) {
-        const error = yield* Effect.flip(Query.plan(deals, { ...args, cursor: broken }, call));
+        const error = yield* Effect.flip(planned(deals, { ...args, cursor: broken }, call));
         assert.strictEqual(error._tag, "AttioInvalidCursor");
       }
     })

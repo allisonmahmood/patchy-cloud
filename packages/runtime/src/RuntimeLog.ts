@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { toPostgresText } from "@patchy/api";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 
 const MUTATION_DEADLINE_MS = registry["runtime.mutation.deadline"].default;
@@ -127,6 +127,7 @@ export class RuntimeLog extends Context.Service<
 >()("@patchy/runtime/RuntimeLog") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const sql = yield* SqlClient.SqlClient;
   const columns = (now: number) => sql`
     id, at, company_id AS "companyId", patch_id AS "patchId", version_id AS "versionId",
@@ -193,7 +194,7 @@ export const make = Effect.gen(function* () {
 
   const begin = Effect.fn("RuntimeLog.begin")(function* (input: Begin) {
     const now = yield* Clock.currentTimeMillis;
-    const id = newInternalId("call");
+    const id = yield* cryptography.internalId("call");
     const machine = input.credentialKind === "machine" ? input.machine : null;
     const agent = input.credentialKind === "agent" ? input.agent : null;
     let query: string | null = null;

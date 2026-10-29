@@ -21,6 +21,7 @@ import * as Runtime from "./Runtime.js";
 import * as StreamLimits from "./StreamLimits.js";
 import * as SubscriptionReads from "./SubscriptionReads.js";
 import * as Subscriptions from "./Subscriptions.js";
+import { NodeCryptography } from "@patchy/core";
 
 const key = "table:source:items";
 const lifecycle = "patch:source";
@@ -129,7 +130,8 @@ const fixture = Effect.gen(function* () {
           state.limitsGate === undefined ? Effect.void : Deferred.await(state.limitsGate)
         ).pipe(Effect.andThen(local.getMany(input)))
     }),
-    Effect.provideService(WideEvents.WideEvents, events)
+    Effect.provideService(WideEvents.WideEvents, events),
+    Effect.provide(NodeCryptography.layer)
   );
   const document = registry.attach({
     generation: "generation",
@@ -705,7 +707,7 @@ it.effect("serves every document of two patches under sustained invalidation", (
     };
     const registry = yield* Subscriptions.make.pipe(
       Effect.provideService(SubscriptionReads.SubscriptionReads, reader),
-      Effect.provide(StreamLimits.layerLocal),
+      Effect.provide([StreamLimits.layerLocal, NodeCryptography.layer]),
       Effect.provide(WideEvents.layerNoop)
     );
     // Two documents of one patch and one of another, all in one company.

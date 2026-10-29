@@ -24,6 +24,7 @@ import * as Ecs from "./ecs.js";
 import * as EcsTaskProvider from "./ecsTaskProvider.js";
 import * as Fleet from "./fleet.js";
 import * as TaskProvider from "./TaskProvider.js";
+import { NodeCryptography } from "@patchy/core";
 
 // Synthetic account, never a real deployment identifier.
 const arnPrefix = `arn:aws:ecs:us-east-1:${"0".repeat(12)}`;
@@ -402,7 +403,10 @@ const rejectsDefinition = Effect.fnUntraced(function* (
     revision.taskDefinition,
     invalidate(aws.definitions.get(revision.taskDefinition)!)
   );
-  const error = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer), Effect.flip);
+  const error = yield* EcsTaskProvider.make(options).pipe(
+    Effect.provide([aws.layer, NodeCryptography.layer]),
+    Effect.flip
+  );
   assert.instanceOf(error, TaskProvider.TaskProviderError);
   assert.include(error, { operation: "start", reason: "provider" });
   assert.strictEqual(aws.tasks.size, 0);
@@ -447,13 +451,13 @@ it.effect("keeps a partial previous revision in the config so make refuses it", 
       Redacted.value(complete.previous!.secret),
       Redacted.value(options.previous!.secret)
     );
-    yield* EcsTaskProvider.make(complete).pipe(Effect.provide(aws.layer));
+    yield* EcsTaskProvider.make(complete).pipe(Effect.provide([aws.layer, NodeCryptography.layer]));
     assert.isUndefined((yield* configured(environment)).previous);
     for (const [name, value] of Object.entries(previousEnvironment)) {
       const partial = yield* configured({ ...environment, [name]: value });
       assert.isDefined(partial.previous, name);
       const error = yield* EcsTaskProvider.make(partial).pipe(
-        Effect.provide(aws.layer),
+        Effect.provide([aws.layer, NodeCryptography.layer]),
         Effect.flip
       );
       assert.include(error, { operation: "start", reason: "provider" }, name);
@@ -508,7 +512,7 @@ it.effect("refuses unsafe revision, callback and secret options before launching
         taskDefinitionArn: otherFamily
       });
       const error = yield* EcsTaskProvider.make(invalidOptions).pipe(
-        Effect.provide(aws.layer),
+        Effect.provide([aws.layer, NodeCryptography.layer]),
         Effect.flip
       );
       assert.include(error, { operation: "start", reason: "provider" }, name);
@@ -521,7 +525,9 @@ it.effect("retains known ARNs through omitted listings and treats MISSING as unc
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     const task = yield* provider.start({ taskId: "known", deploymentRevision: "current" });
     const arn = [...aws.tasks.keys()][0]!;
     aws.omitted.add(arn);
@@ -541,7 +547,9 @@ it.effect(
     Effect.gen(function* () {
       yield* TestClock.setTime(1_000_000);
       const aws = yield* cloud;
-      const firstHost = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+      const firstHost = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       aws.loseRunReply();
       assert.include(
         yield* firstHost
@@ -549,7 +557,9 @@ it.effect(
           .pipe(Effect.flip),
         { reason: "provider" }
       );
-      const secondHost = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+      const secondHost = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       const started = yield* secondHost.start({
         taskId: "ambiguous",
         deploymentRevision: "current"
@@ -586,7 +596,9 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const aws = yield* cloud;
-      const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+      const provider = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       for (const revision of revisions) {
         const taskId = revision.deploymentRevision;
         yield* provider.start({ taskId, deploymentRevision: taskId });
@@ -598,7 +610,7 @@ it.effect(
       }
       const { previous, ...withoutPrevious } = options;
       const oldHost = yield* EcsTaskProvider.make({ ...withoutPrevious, current: previous! }).pipe(
-        Effect.provide(aws.layer)
+        Effect.provide([aws.layer, NodeCryptography.layer])
       );
       assert.include(yield* oldHost.stats("current", { bindingEpoch: 1 }), {
         companyId: "company-current"
@@ -631,7 +643,9 @@ it.effect("reuses a task's address across calls until its lifetime ends", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     yield* provider.start({ taskId: "cached", deploymentRevision: "current" });
     const before = aws.describes();
     yield* provider.bind("cached", { companyId: "company-cached", bindingEpoch: 1 });
@@ -664,7 +678,9 @@ it.effect("binds a held version by hash and sends its bundle only when the super
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     yield* provider.start({ taskId: "hashed", deploymentRevision: "current" });
     yield* provider.bind("hashed", { companyId: "company-hashed", bindingEpoch: 1 });
     const supervisor = aws.supervisor("hashed");
@@ -687,7 +703,9 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const aws = yield* cloud;
-      const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+      const provider = yield* EcsTaskProvider.make(options).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       yield* provider.start({ taskId: "older", deploymentRevision: "previous" });
       const before = aws.describes();
       // The older supervisor refuses `taskId` and `binding`; neither is ever sent to it.
@@ -702,7 +720,9 @@ it.effect("touches only its own release's supervisors and asks ECS once about an
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     const { companyId, patchId, versionId, sha256 } = versionBind("company-touched").bundle!;
     const held = { companyId, patchId, versionId, sha256 };
     yield* provider.start({ taskId: "touched", deploymentRevision: "current" });
@@ -750,9 +770,13 @@ it.effect("refuses a stopped task's reused address before any effect and re-reso
     };
     for (const revision of ["current", "previous"]) {
       const aws = yield* cloud;
-      const provider = yield* EcsTaskProvider.make(shared).pipe(Effect.provide(aws.layer));
+      const provider = yield* EcsTaskProvider.make(shared).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       // Another host starts the spare, so this host has seen no stop.
-      const otherHost = yield* EcsTaskProvider.make(shared).pipe(Effect.provide(aws.layer));
+      const otherHost = yield* EcsTaskProvider.make(shared).pipe(
+        Effect.provide([aws.layer, NodeCryptography.layer])
+      );
       yield* provider.start({ taskId: "lost", deploymentRevision: "current" });
       yield* provider.bind("lost", { companyId: "company-lost", bindingEpoch: 1 });
       const address = yield* aws.crash("lost");
@@ -779,7 +803,9 @@ it.effect("refuses a stopped task's reused address before any effect and re-reso
 it.effect("forgets a task's address once ECS reports it stopped", () =>
   Effect.gen(function* () {
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     yield* provider.start({ taskId: "listed", deploymentRevision: "current" });
     yield* provider.bind("listed", { companyId: "company-listed", bindingEpoch: 1 });
     yield* aws.crash("listed");
@@ -795,7 +821,9 @@ it.effect("never keeps or re-sends a request whose reply was lost or malformed",
   Effect.gen(function* () {
     yield* TestClock.setTime(1_000_000);
     const aws = yield* cloud;
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     const bind = provider.bind("uncertain", { companyId: "company-uncertain", bindingEpoch: 1 });
     yield* provider.start({ taskId: "uncertain", deploymentRevision: "current" });
     const supervisor = [...aws.supervisors.values()].find((entry) => entry.taskId === "uncertain")!;
@@ -838,7 +866,9 @@ const setupFleet = Effect.fn("EcsFleetTest.setup")(function* () {
   yield* sql`INSERT INTO execution_rollout(singleton) VALUES (true)`;
   const aws = yield* cloud;
   const host = Effect.fn("EcsFleetTest.host")(function* (replicaId: string) {
-    const provider = yield* EcsTaskProvider.make(options).pipe(Effect.provide(aws.layer));
+    const provider = yield* EcsTaskProvider.make(options).pipe(
+      Effect.provide([aws.layer, NodeCryptography.layer])
+    );
     const controller = yield* Fleet.make({
       replicaId,
       deploymentRevision: "current",

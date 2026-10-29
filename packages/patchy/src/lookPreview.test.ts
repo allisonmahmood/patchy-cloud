@@ -1,5 +1,16 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { forceStates } from "./lookPreview.js";
+import { readLookFixture } from "../../../test/look-fixtures.js";
+import { forceStates, previewPage } from "./lookPreview.js";
+
+it("allows exactly the compare page's own frames script", () => {
+  const files = readLookFixture("linear");
+  const html = previewPage({ files, label: "First" }, { files, label: "Second" });
+  const scripts = [...html.matchAll(/<script>([^]*?)<\/script>/g)].map(([, script]) => script!);
+  expect(scripts).toHaveLength(1);
+  const allowed = /script-src 'sha256-([^']+)'/.exec(html)?.[1];
+  expect(allowed).toBe(createHash("sha256").update(scripts[0]!).digest("base64"));
+});
 
 describe("forceStates", () => {
   it("swaps each hover and focus pseudo-class in place for itself or its stand-in class", () => {

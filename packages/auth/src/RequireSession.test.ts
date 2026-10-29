@@ -48,7 +48,7 @@ it.layer(
   Layer.mergeAll(Session.layer, Companies.layer, Users.layer).pipe(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv()))),
-    Layer.provide(NodeCryptography.layer)
+    Layer.provideMerge(NodeCryptography.layer)
   )
 )("resolveViewer", (it) => {
   it.effect("resolves a viewer in one statement, and refreshes changed claims in three", () =>

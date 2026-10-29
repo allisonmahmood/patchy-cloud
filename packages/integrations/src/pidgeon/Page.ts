@@ -240,10 +240,8 @@ export const keyRefusalFragment = (refusal: View.Notice) =>
  * everything typed except the key; the script picks the kept address again once the key is in.
  */
 export const renderConnect = (submitted: Submitted, refusal?: View.Notice) => {
-  const attempt =
-    submitted.attempt !== undefined && Keys.isAttempt(submitted.attempt)
-      ? submitted.attempt
-      : Keys.newAttempt();
+  // ConnectionPage keeps a refused submit's attempt or makes a fresh one.
+  const attempt = submitted.attempt ?? "";
   const key = View.fieldNote("pidgeon-key", "key", KEY_HINT, refusal);
   const handle = View.fieldNote(
     "connection-handle",
@@ -307,11 +305,7 @@ const adminKeyField = (refusal: View.Notice | undefined) => {
   return `<label class="field-label" for="pidgeon-key">Admin key</label><input class="field" id="pidgeon-key" type="password" name="key" required placeholder="pgn_…" autocomplete="off" spellcheck="false"${note.attributes}>${note.note}`;
 };
 const attemptField = (submitted: Submitted) =>
-  `<input type="hidden" name="attempt" value="${escapeAttribute(
-    submitted.attempt !== undefined && Keys.isAttempt(submitted.attempt)
-      ? submitted.attempt
-      : Keys.newAttempt()
-  )}">`;
+  `<input type="hidden" name="attempt" value="${escapeAttribute(submitted.attempt ?? "")}">`;
 
 export const rotate = {
   title: (name: string) => `Replace the key for ${name}`,

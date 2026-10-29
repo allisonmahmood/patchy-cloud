@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Node supplies opaque cryptographic capability tokens.
-import { randomBytes } from "node:crypto";
 import {
   limitRefusal,
   type HandlerKind,
@@ -26,6 +24,7 @@ import * as Binding from "./Binding.js";
 import type { RuntimeError } from "./Runtime.js";
 import type { Resource } from "./QuerySnapshot.js";
 import type * as MutationTransaction from "./MutationTransaction.js";
+import { Cryptography } from "@patchy/core";
 
 export type EndReason = "returned" | "deadline" | "superseded" | "process_killed";
 export type AttemptIdentity = Pick<
@@ -152,6 +151,7 @@ export class InvocationCapabilities extends Context.Service<
 >()("@patchy/runtime/InvocationCapabilities") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const scope = yield* Effect.scope;
   const deployment = yield* DeploymentConfig.load;
   const tombstoneMs = deployment.get("tier2.capability.tombstone");
@@ -307,7 +307,7 @@ export const make = Effect.gen(function* () {
     const observe = yield* WideEvents.capture;
     const meter = yield* DatabaseMeter.current;
     const capability: Capability = Object.freeze({
-      token: randomBytes(32).toString("base64url"),
+      token: yield* cryptography.token(32),
       binding: Object.freeze({
         ...input.binding,
         ...(input.binding.identity === null

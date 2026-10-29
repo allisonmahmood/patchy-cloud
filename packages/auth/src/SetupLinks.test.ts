@@ -15,6 +15,7 @@ import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as SetupLinks from "./SetupLinks.js";
 import { DEV_SEED } from "./seed.js";
+import { NodeCryptography } from "@patchy/core";
 
 const events: Analytics.AnalyticsEvent[] = [];
 const recording = Layer.succeed(
@@ -22,7 +23,8 @@ const recording = Layer.succeed(
   Analytics.Analytics.of({ track: (event) => Effect.sync(() => void events.push(event)) })
 );
 const layer = Layer.mergeAll(MachineTokens.layer, Users.layer, recording).pipe(
-  Layer.provideMerge(Testing.layer())
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 const withDeviceLogins = Effect.provide(DeviceLogins.layer.pipe(Layer.provide(Limits.layer)));
 

@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 
 const Slug = Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/));
 const Email = Schema.String.check(Schema.isPattern(/^[^@\s]+@[^@\s]+$/));
@@ -168,6 +168,7 @@ export const publisherToken = (scenario: Scenario) =>
  */
 export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scenario) {
   const sql = yield* SqlClient.SqlClient;
+  const cryptography = yield* Cryptography.Cryptography;
   const companyId = `cmp_env_${scenario.company.handle}`;
   yield* sql.withTransaction(
     Effect.gen(function* () {
@@ -187,7 +188,7 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
           yield* sql`
             INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
             VALUES (${tokenId}, ${userId}, ${"Dev environment"},
-              ${sha256(publisherToken(scenario))}, now(), now() + interval '90 days', now())
+              ${yield* cryptography.sha256(publisherToken(scenario))}, now(), now() + interval '90 days', now())
             ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash,
               expires_at = EXCLUDED.expires_at, last_used_at = EXCLUDED.last_used_at, revoked_at = NULL`;
       }

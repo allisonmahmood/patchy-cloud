@@ -29,6 +29,7 @@ import {
   manifest,
   uuidContract
 } from "./test/operationsContract.js";
+import { NodeCryptography } from "@patchy/core";
 
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
@@ -214,7 +215,12 @@ it.layer(postgres)("TableOperations / Postgres", (it) => {
 });
 
 it.layer(
-  Layer.mergeAll(NodeFileSystem.layer, NodeCrypto.layer, TestWakes.layer, TestMemberDirectory.layer)
+  Layer.mergeAll(
+    NodeFileSystem.layer,
+    NodeCrypto.layer,
+    TestWakes.layer,
+    TestMemberDirectory.layer
+  ).pipe(Layer.provideMerge(NodeCryptography.layer))
 )("TableOperations / PGlite", (it) => {
   it.effect(
     "runs the same operations, cursors and bounds over the dev database",

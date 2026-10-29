@@ -1,6 +1,6 @@
 import type * as WideEvents from "@patchy/analytics/wide-events";
 import type { CompanyDatabases, Inventory } from "@patchy/company-database";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as Fleet from "@patchy/execution/fleet";
 import * as Ecs from "@patchy/execution/ecs";
 import * as EcsTaskProvider from "@patchy/execution/ecs-task-provider";
@@ -50,6 +50,7 @@ export type StartupError =
   | CallbackGatewayApi.ListenerUnavailable;
 
 type Dependencies =
+  | Cryptography.Cryptography
   | Scope.Scope
   | Crypto.Crypto
   | HttpClient.HttpClient
@@ -82,12 +83,13 @@ export const make: (
 > = Effect.fn("FleetInvocation.make")(function* (
   handlers: Readonly<Record<string, Runtime.Handler>>
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const environment = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"));
   const providerKind = yield* Config.String("EXECUTION_PROVIDER");
   if (environment === "production" && providerKind !== "ecs")
     return yield* new Executor.ExecutionError({ operation: "bind", reason: "production_refused" });
   const replicaId = yield* Config.String("PATCHY_REPLICA").pipe(
-    Config.withDefault(newInternalId("host"))
+    Config.withDefault(yield* cryptography.internalId("host"))
   );
   const deploymentRevision = yield* Config.String("PATCHY_DEPLOYMENT_REVISION").pipe(
     Config.withDefault("development")
@@ -161,6 +163,7 @@ export const layer = (
   | ServerBundles.ServerBundles
   | SqlClient.SqlClient
   | WideEvents.WideEvents
+  | Cryptography.Cryptography
 > =>
   Layer.effectContext(make(handlers)).pipe(
     Layer.provide([InvocationLog.layer, QuerySnapshot.layer, MutationTransaction.layer]),

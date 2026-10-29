@@ -1,5 +1,5 @@
 import { handlerKinds, type GuestProtocol, type Manifest } from "@patchy/api";
-import { sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as Local from "@patchy/execution/local";
 import { MutationTransaction, QuerySnapshot } from "@patchy/primitives";
 import {
@@ -58,6 +58,7 @@ export const make = Effect.fn("DevExecution.make")(function* (
   options: Options,
   install: (version: LoadedVersions.LoadedVersion) => void
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const invocationContext = yield* Layer.build(
     Layer.mergeAll(QuerySnapshot.layer, MutationTransaction.layer).pipe(
       Layer.provideMerge(InvocationCapabilities.layer),
@@ -100,7 +101,7 @@ export const make = Effect.fn("DevExecution.make")(function* (
   // The watcher stages and installs serially. Only inspection overlaps this preload.
   const stage = Effect.fn("DevExecution.stage")(function* (bytes: Uint8Array) {
     const source = new TextDecoder().decode(bytes);
-    const digest = sha256(source);
+    const digest = yield* cryptography.sha256(source);
     const bundle: GuestProtocol.Bundle = {
       companyId: version.companyId,
       patchId: version.patchId,

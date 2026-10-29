@@ -46,6 +46,7 @@ import {
 import * as Query from "./Query.js";
 import * as Source from "./Source.js";
 import * as Values from "./Values.js";
+import { Cryptography } from "@patchy/core";
 
 export class ConnectionNotDeclared extends Schema.TaggedError<ConnectionNotDeclared>()(
   "AttioConnectionNotDeclared",
@@ -305,7 +306,8 @@ interface Call {
 type Prepared = Effect.Effect<
   | { readonly send: (workspace: Calls.Workspace) => Effect.Effect<Json, Failure> }
   | { readonly done: Json },
-  InvalidRequest | InvalidCursor | Runtime.SourceUnavailable | TooLarge
+  InvalidRequest | InvalidCursor | Runtime.SourceUnavailable | TooLarge,
+  Cryptography.Cryptography
 >;
 type Failure =
   | InvalidRequest
@@ -766,7 +768,7 @@ export const recorded = {
 const devRead = <K extends AttioRead>(
   name: K,
   input: Schema.Decoder<Inputs[K]>
-): DevRead<Source.Source> => {
+): DevRead<Source.Source | Cryptography.Cryptography> => {
   const decode = Schema.decodeUnknownEffect(input, { onExcessProperty: "error" });
   return {
     ...recorded[name],
@@ -804,11 +806,13 @@ export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
   const directory = yield* Directory.Directory;
+  const cryptography = yield* Cryptography.Cryptography;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Directory.Directory, directory)
+      Effect.provideService(Directory.Directory, directory),
+      Effect.provideService(Cryptography.Cryptography, cryptography)
     );
   const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(
     definition: {
@@ -819,7 +823,11 @@ export const makeHandlers = Effect.gen(function* () {
       ) => Effect.Effect<
         Json,
         Runtime.RuntimeError,
-        Binding.Binding | Source.Source | ConnectionStore.ConnectionStore | Directory.Directory
+        | Binding.Binding
+        | Source.Source
+        | ConnectionStore.ConnectionStore
+        | Directory.Directory
+        | Cryptography.Cryptography
       >;
     },
     record: ReturnType<typeof recordedBy>

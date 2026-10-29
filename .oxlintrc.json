@@ -50,6 +50,22 @@
         "message": "Read the environment through Effect `Config` in the package that owns the setting."
       }
     ],
+    // Crypto comes from the environment; NodeCryptography is where it meets Node.
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "node:crypto",
+            "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+          },
+          {
+            "name": "crypto",
+            "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+          }
+        ]
+      }
+    ],
     "typescript/no-explicit-any": "error",
     "typescript/no-floating-promises": "error",
     "patchy/namespace-service-imports": "error",
@@ -82,6 +98,16 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "node:crypto",
+                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+              },
+              {
+                "name": "crypto",
+                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+              }
+            ],
             "patterns": [
               {
                 "group": [
@@ -116,6 +142,16 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "node:crypto",
+                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+              },
+              {
+                "name": "crypto",
+                "message": "Take Cryptography from @patchy/core (or effect/Crypto) from the environment."
+              }
+            ],
             "patterns": [
               {
                 "group": [
@@ -143,6 +179,19 @@
           }
         ]
       }
+    },
+    {
+      // Tests and scripts may compute Patchy's formats with node:crypto, as an independent check.
+      "files": [
+        "**/*.test.ts",
+        "**/test/**",
+        "**/testing.ts",
+        "**/live/**",
+        "scripts/**",
+        "test/**",
+        "*.config.ts"
+      ],
+      "rules": { "no-restricted-imports": "off" }
     },
     {
       "files": [

@@ -19,6 +19,7 @@ import * as Command from "effect/cli/Command";
 import { Cwd, root } from "./commands.js";
 import { RELEASE } from "./release.js";
 import { toJson } from "./Output.js";
+import { NodeCryptography } from "@patchy/core";
 
 /** Read from argv here because a parse error is rendered before any handler runs. */
 const json = process.argv.includes("--json");
@@ -49,6 +50,7 @@ Command.run(root, { version: RELEASE }).pipe(
   Effect.provide(
     Layer.mergeAll(
       NodeServices.layer,
+      NodeCryptography.layer,
       NodeHttpClient.layerUndici,
       // Login's agent gate tests presence, including explicitly empty variables.
       ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),

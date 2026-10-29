@@ -15,6 +15,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as LocalTaskProvider from "./localTaskProvider.js";
 import * as Store from "./localTaskStore.js";
 import type * as TaskProvider from "./TaskProvider.js";
+import { NodeCryptography } from "@patchy/core";
 
 const listener = (headers: IncomingMessage["headers"][]) =>
   Effect.acquireRelease(
@@ -134,7 +135,7 @@ it.live(
         .bind(input.taskId, { companyId: "other-company", bindingEpoch: 2 })
         .pipe(Effect.flip);
       assert.strictEqual(refused.reason, "stopped");
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 20_000 }
 );
 
@@ -201,7 +202,7 @@ it.live(
       loseNextHash = true;
       assert.include(yield* bind.pipe(Effect.flip), { reason: "transport" });
       assert.deepStrictEqual(binds.slice(4), ["hash"]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 20_000 }
 );
 
@@ -235,7 +236,7 @@ it.live(
       assert.deepStrictEqual(yield* left.start(input), stopped);
       assert.deepStrictEqual(yield* right.stop(input.taskId), stopped);
       assert.deepStrictEqual(yield* left.list, [stopped]);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 20_000 }
 );
 
@@ -284,7 +285,7 @@ it.live(
       const limit = report.event.limits?.find((entry) => entry.limitId === "execution.process.rss");
       assert.strictEqual(limit?.value, 1);
       assert.strictEqual(limit?.configRevision.overrideRevision, "9");
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 20_000 }
 );
 
@@ -309,7 +310,7 @@ it.live(
       assert.strictEqual(stopped?.state, "stopped");
       assert.isAtLeast(stopped!.stoppedAt!, stopped!.startedAt);
       assert.deepStrictEqual(yield* provider.stop(task.taskId), stopped);
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 10_000 }
 );
 
@@ -389,7 +390,7 @@ it.live(
       const recovered = yield* LocalTaskProvider.make(options);
       yield* reclaimedThrough(recovered, task.taskId);
       assert.isTrue(yield* isAlive(unrelated));
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 30_000 }
 );
 
@@ -432,6 +433,6 @@ it.live(
       assert.deepStrictEqual(yield* groupOf(supervisor), []);
       assert.isFalse(yield* isAlive(supervisor));
       assert.isFalse(yield* isAlive(workerd));
-    }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
+    }).pipe(Effect.scoped, Effect.provide([FetchHttpClient.layer, NodeCryptography.layer])),
   { timeout: 30_000 }
 );

@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Mutation keys use host cryptographic randomness.
-import { createHash, randomBytes } from "node:crypto";
 import { canonicalArgs, type ServerCallReply } from "@patchy/api";
 import { ContractLimits } from "@patchy/limits";
 import * as Clock from "effect/Clock";
@@ -14,6 +12,7 @@ import type * as Scope from "effect/Scope";
 import type * as Binding from "./Binding.js";
 import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Runtime from "./Runtime.js";
+import { Cryptography } from "@patchy/core";
 
 export class WriteConflict extends Schema.TaggedError<WriteConflict>()("WriteConflict", {
   scope: Schema.Literal("viewer"),
@@ -54,10 +53,10 @@ export interface Key {
   readonly viewerId: string;
   readonly fingerprint: string;
 }
-export const mint = Effect.map(
-  Clock.currentTimeMillis,
-  (now) => `${now}-${randomBytes(16).toString("base64url")}`
-);
+export const mint = Effect.gen(function* () {
+  const now = yield* Clock.currentTimeMillis;
+  return `${now}-${yield* (yield* Cryptography.Cryptography).token(16)}`;
+});
 const keySchema = Schema.String.check(Schema.isPattern(/^\d{1,16}-[A-Za-z0-9_-]{22}$/));
 const decodeKey = Schema.decodeUnknownEffect(keySchema);
 export const key = Effect.fnUntraced(function* (
@@ -69,6 +68,7 @@ export const key = Effect.fnUntraced(function* (
   const encoded = yield* decodeKey(value).pipe(
     Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
   );
+  const cryptography = yield* Cryptography.Cryptography;
   const issuedAt = Number(encoded.slice(0, encoded.indexOf("-")));
   const now = yield* Clock.currentTimeMillis;
   const lifetime = yield* ContractLimits.get("tier2.mutation.keyLifetime");
@@ -82,7 +82,7 @@ export const key = Effect.fnUntraced(function* (
     versionId: binding.versionId,
     handler,
     viewerId: binding.identity!.user.id,
-    fingerprint: createHash("sha256").update(canonicalArgs(args)).digest("hex")
+    fingerprint: yield* cryptography.sha256(canonicalArgs(args))
   } satisfies Key;
 });
 

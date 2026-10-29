@@ -38,7 +38,7 @@ import {
 import { Companies, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
-import { contentHash } from "@patchy/core";
+import { contentHash } from "../../../test/crypto.js";
 import { Content, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";

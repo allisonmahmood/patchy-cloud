@@ -5,7 +5,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { sha256, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
+import { sha256, newPatchId } from "../../../test/crypto.js";
 import { Directory } from "@patchy/companies";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
@@ -53,7 +54,8 @@ const viewer = {
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
   admin: false
 };
-const attempt = () => Keys.newAttempt();
+// An attempt has a patch id's shape: 12 of [a-z0-9].
+const attempt = () => newPatchId();
 /** One Idempotency-Key per distinct admin write of the run, so a repeat is Pidgeon's replay. */
 const keyFor = (body: unknown) => `${Live.RUN}-${sha256(JSON.stringify(body)).slice(0, 24)}`;
 
@@ -308,7 +310,7 @@ const page = Layer.mergeAll(
   }))
 )
   .pipe(Layer.provideMerge(pageServices(Live.layer)), Layer.merge(swept))
-  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
 describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test mode", () => {
   it.layer(page, { timeout: "300 seconds", excludeTestServices: true })(

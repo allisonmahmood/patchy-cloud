@@ -183,7 +183,7 @@ const tier1 = Layer.mergeAll(
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(clerkEnv())))
   )
-  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provide(NodeCryptography.layer));
+  .pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(tier1)("Attio in a tier 1 page", (it) => {
   it.effect(

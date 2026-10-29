@@ -101,7 +101,7 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
     )
   ),
   Layer.provideMerge(Layer.effectDiscard(seed).pipe(Layer.provideMerge(Testing.layer()))),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 const client = (token: string) =>
   HttpApiTest.groups(PatchyApi, ["connections"]).pipe(
@@ -399,7 +399,7 @@ it.layer(layer)("connections group", (it) => {
           Effect.provide(
             CredentialKeys.layerFromKeys(
               Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
-            ).pipe(Layer.provide(NodeCryptography.layer))
+            ).pipe(Layer.provideMerge(NodeCryptography.layer))
           )
         );
       const listed = yield* api.listConnections({ query: { integrations: "pidgeon" } });

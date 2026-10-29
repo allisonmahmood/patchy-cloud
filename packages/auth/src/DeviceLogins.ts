@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Device codes require cryptographic randomness; Effect Random is not a CSPRNG.
-import { randomInt } from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -11,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Analytics } from "@patchy/analytics";
-import { randomToken, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
@@ -188,6 +186,7 @@ export class DeviceLogins extends Context.Service<
 >()("@patchy/auth/DeviceLogins") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const sql = yield* SqlClient.SqlClient;
   const tokens = yield* MachineTokens.MachineTokens;
   const limits = yield* Limits.Limits;
@@ -274,16 +273,13 @@ export const make = Effect.gen(function* () {
           ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
           yield* sql`DELETE FROM device_logins WHERE expires_at <= to_timestamp(${now / 1_000})`;
           while (true) {
-            let code = "";
-            for (let index = 0; index < 8; index++) {
-              code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
-            }
+            const code = yield* cryptography.randomString(CODE_ALPHABET, 8);
             const userCode = `${code.slice(0, 4)}-${code.slice(4)}`;
-            const deviceCode = randomToken(32);
+            const deviceCode = yield* cryptography.token(32);
             const inserted = yield* sql`
             INSERT INTO device_logins (user_code, device_code_hash, state, machine_name_hint,
               old_token_id, expires_at, created_at)
-            VALUES (${userCode}, ${sha256(deviceCode)}, 'pending', ${hint},
+            VALUES (${userCode}, ${yield* cryptography.sha256(deviceCode)}, 'pending', ${hint},
               (SELECT id FROM machine_tokens WHERE id = ${input.previousMachineTokenId ?? null}),
               to_timestamp(${expires / 1_000}), to_timestamp(${now / 1_000}))
             ON CONFLICT DO NOTHING RETURNING user_code`;
@@ -453,7 +449,7 @@ export const make = Effect.gen(function* () {
   });
 
   const poll = Effect.fn("DeviceLogins.poll")(function* (deviceCode: string) {
-    const hash = sha256(deviceCode);
+    const hash = yield* cryptography.sha256(deviceCode);
     // The mint reports with its commit, so a poll interrupted then still reports it.
     const result = yield* withReportedCommit(
       Effect.gen(function* (): Effect.fn.Return<

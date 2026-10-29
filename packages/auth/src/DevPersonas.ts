@@ -11,7 +11,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Users } from "@patchy/companies";
-import { Cryptography, escapeAttribute, escapeHtml, randomToken, sha256 } from "@patchy/core";
+import { Cryptography, escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Session from "./Session.js";
 import { pageResponse, returnPath, withCookies } from "./page.js";
 
@@ -155,6 +155,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
   seal: (claims: typeof Session.SessionClaims.Type) => Effect.Effect<string>
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
+  const cryptography = yield* Cryptography.Cryptography;
   const url = new URL(request.url, publicUrl);
   const target = returnPath(url.searchParams.get("return"), publicUrl.origin) ?? "/";
   const as = url.searchParams.get("as")?.trim().toLowerCase();
@@ -183,10 +184,10 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
   const now = yield* Clock.currentTimeMillis;
   // A new email gets a stable stand-in Clerk id, so accepting an invitation creates its user.
   const claims = {
-    sub: user?.clerkUserId ?? `dev_${sha256(as).slice(0, 24)}`,
+    sub: user?.clerkUserId ?? `dev_${(yield* cryptography.sha256(as)).slice(0, 24)}`,
     email: user?.email ?? as,
     name: user?.name ?? "",
-    sid: `dev_${randomToken(12)}`,
+    sid: `dev_${yield* cryptography.token(12)}`,
     exp: Math.floor(now / 1_000) + LIFETIME_SECONDS
   };
   return withCookies(

@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import type { GuestProtocol } from "@patchy/api";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Local from "@patchy/execution/local";
 import { LoadedVersions } from "@patchy/patches";

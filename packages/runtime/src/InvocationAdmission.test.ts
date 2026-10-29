@@ -8,6 +8,7 @@ import * as Invocation from "./Invocation.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import { me } from "./me.js";
+import { NodeCryptography } from "@patchy/core";
 
 const viewer = {
   user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
@@ -106,7 +107,8 @@ it.effect(
       Effect.provideService(LoadedVersions.LoadedVersions, {
         find: () => Effect.succeed(Option.some({ ...version, patchTier: 1 }))
       }),
-      Effect.provide(Limits.layer)
+      Effect.provide(Limits.layer),
+      Effect.provide(NodeCryptography.layer)
     )
 );
 
@@ -177,7 +179,8 @@ it.effect(
       Effect.provideService(LoadedVersions.LoadedVersions, {
         find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
       }),
-      Effect.provide(Limits.layer)
+      Effect.provide(Limits.layer),
+      Effect.provide(NodeCryptography.layer)
     );
   }
 );
@@ -240,7 +243,8 @@ it.effect(
       });
     }).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-      Effect.provide(Limits.layer)
+      Effect.provide(Limits.layer),
+      Effect.provide(NodeCryptography.layer)
     )
 );
 
@@ -302,7 +306,8 @@ it.effect(
           })
         )
       ),
-      Effect.provide(Limits.layer)
+      Effect.provide(Limits.layer),
+      Effect.provide(NodeCryptography.layer)
     )
 );
 
@@ -335,6 +340,7 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
     Effect.provideService(LoadedVersions.LoadedVersions, {
       find: () => Effect.succeed(Option.some({ ...version, patchTier: 2 }))
     }),
-    Effect.provide(Limits.layer)
+    Effect.provide(Limits.layer),
+    Effect.provide(NodeCryptography.layer)
   )
 );

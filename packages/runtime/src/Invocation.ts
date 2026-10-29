@@ -12,7 +12,7 @@ import {
   type ServerCallReply
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as DatabaseMeter from "@patchy/analytics/database-meter";
 import { ContractLimits, DeploymentConfig, OperatingLimits } from "@patchy/limits";
@@ -235,6 +235,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
   options: Options,
   platform?: PlatformBehavior
 ) {
+  const cryptography = yield* Cryptography.Cryptography;
   const scope = yield* Effect.scope;
   const executor = yield* Executor.Executor;
   const lifecycle = yield* Effect.serviceOption(ExecutionLifecycle.ExecutionLifecycle);
@@ -335,11 +336,15 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     const mutationKey =
       descriptor.kind === "mutation"
         ? yield* MutationTransaction.key(
-            parent === undefined ? input.mutationKey : yield* MutationTransaction.mint,
+            parent === undefined
+              ? input.mutationKey
+              : yield* MutationTransaction.mint.pipe(
+                  Effect.provideService(Cryptography.Cryptography, cryptography)
+                ),
             binding,
             input.handler,
             input.args
-          )
+          ).pipe(Effect.provideService(Cryptography.Cryptography, cryptography))
         : undefined;
     // A person's worker agent has action slots of its own beside their pages', across its clients.
     const key = canonicalArgs([
@@ -418,7 +423,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
           parent?.capability.attempt.deadline ?? Infinity
         );
         const settlementDeadline = deadline + bounds.cleanup;
-        const id = newInternalId("inv");
+        const id = yield* cryptography.internalId("inv");
         let replyDelivered = true;
         let capability: InvocationCapabilities.Capability | undefined;
         let counters: InvocationCapabilities.Counters | undefined;
@@ -534,7 +539,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 binding: { ...binding, invocationId: id, effectivePrincipal: "patch" },
                 attempt: {
                   invocationId: id,
-                  attemptId: newInternalId("attempt"),
+                  attemptId: yield* cryptography.internalId("attempt"),
                   processGeneration: bound.processGeneration,
                   deadline
                 },
@@ -548,12 +553,13 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   ? {}
                   : {
                       run: (args: unknown) =>
-                        call(
-                          args,
-                          { ...binding, correlationId: newInternalId("call") },
-                          reauthorize,
-                          undefined,
-                          { capability: capability!, bundle, bound, admission }
+                        Effect.flatMap(cryptography.internalId("call"), (correlationId) =>
+                          call(args, { ...binding, correlationId }, reauthorize, undefined, {
+                            capability: capability!,
+                            bundle,
+                            bound,
+                            admission
+                          })
                         )
                     })
               });
@@ -1097,6 +1103,7 @@ export interface AgentCall {
  */
 export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: AgentCall) {
   const invocation = yield* Invocation;
+  const cryptography = yield* Cryptography.Cryptography;
   if (input.person.company.id !== input.version.companyId)
     return yield* new Runtime.AccessDenied({});
   return yield* invocation.call(
@@ -1109,7 +1116,7 @@ export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: Age
       ...input.version,
       identity: input.person,
       principal: { userId: input.person.user.id },
-      correlationId: newInternalId("call"),
+      correlationId: yield* cryptography.internalId("call"),
       agent: input.agent,
       ...(input.onReplay === undefined ? {} : { onReplay: input.onReplay }),
       ...(input.retain === undefined ? {} : { retain: input.retain })

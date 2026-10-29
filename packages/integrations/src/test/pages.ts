@@ -70,7 +70,7 @@ export const services = (
     ),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-    Layer.provide(NodeCryptography.layer)
+    Layer.provideMerge(NodeCryptography.layer)
   );
 
 export const cookie = (user: Users.User) =>

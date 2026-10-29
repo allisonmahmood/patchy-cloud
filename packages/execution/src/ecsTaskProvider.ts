@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- ECS idempotency tokens use Node's SHA-256 implementation.
-import { createHash } from "node:crypto";
 import type { Task } from "@aws-sdk/client-ecs";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Management from "@patchy/api/management";
@@ -17,6 +15,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Ecs from "./ecs.js";
 import * as TaskProvider from "./TaskProvider.js";
+import { Cryptography } from "@patchy/core";
 
 const decodeBind = Schema.decodeUnknownEffect(Management.BindReply);
 const decodeInvoke = Schema.decodeUnknownEffect(GuestProtocol.InvokeReply);
@@ -31,7 +30,6 @@ const validDefinition = Schema.is(taskDefinition);
 const validIdentity = Schema.is(Schema.NonEmptyString.check(Schema.isMaxLength(256)));
 const validPort = Schema.is(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })));
 const validCallbackUrls = Schema.is(Management.CallbackUrls);
-const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const familyOf = (definition: string) =>
   definition.slice(definition.indexOf("/") + 1, definition.lastIndexOf(":"));
 const ownerTag = "patchy:execution-fleet";
@@ -163,7 +161,8 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
   )
     return yield* new TaskProvider.TaskProviderError({ operation: "start", reason: "provider" });
 
-  const startedBy = digest(options.fleetId).slice(0, 36);
+  const cryptography = yield* Cryptography.Cryptography;
+  const startedBy = (yield* cryptography.sha256(options.fleetId)).slice(0, 36);
   const group = `patchy-exec:${startedBy}`;
   const family = familyOf(options.current.taskDefinition);
   const addresses = new Map<string, string>();
@@ -614,7 +613,7 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
                 platformVersion: "1.4.0",
                 propagateTags: "TASK_DEFINITION",
                 count: 1,
-                clientToken: digest(`${options.fleetId}\0${input.taskId}`),
+                clientToken: yield* cryptography.sha256(`${options.fleetId}\0${input.taskId}`),
                 startedBy,
                 group,
                 enableExecuteCommand: false,

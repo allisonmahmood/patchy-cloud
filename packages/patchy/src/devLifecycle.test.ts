@@ -39,6 +39,7 @@ import {
 import { RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "./release.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { sdkCapabilities } from "../../sdk/src/sdkCapabilities.js";
+import { NodeCryptography } from "@patchy/core";
 
 const packageDir = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -558,7 +559,10 @@ it.live(
         0
       );
       assert.strictEqual(requests.filter((url) => url.endsWith("/inventory")).length, 3);
-    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
+    ),
   { timeout: 60_000 }
 );
 
@@ -597,7 +601,7 @@ it.live(
       assert.deepStrictEqual(joined.warnings, []);
       assert.strictEqual(requests.length, requested);
       assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(repoPath)), synced);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCryptography.layer])),
   { timeout: 45_000 }
 );
 
@@ -646,7 +650,10 @@ it.live(
         while (!(yield* page).includes("look-two")) yield* Effect.sleep("100 millis");
       }).pipe(Effect.timeout("20 seconds"));
       assert.strictEqual((yield* command(root, instance, ["status"])).pid, first.pid);
-    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
+    ),
   { timeout: 60_000 }
 );
 
@@ -698,7 +705,7 @@ it.live(
       assert.include(lines[0], "Updated portal purpose");
       assert.include(lines[0], "Portal purpose");
       assert.strictEqual(lines[1], failure.error);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCryptography.layer])),
   { timeout: 45_000 }
 );
 
@@ -816,7 +823,10 @@ it.live(
       ]);
       yield* holdsNoKey(stateDir, (yield* Effect.promise(() => readRecord(stateDir)))!.pid);
       yield* command(root, instance, ["stop"]);
-    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
+    ),
   { timeout: 60_000 }
 );
 
@@ -866,7 +876,10 @@ it.live(
       yield* holdsNoKey(stateDir, reported.pid);
       foreground.child.kill("SIGINT");
       assert.strictEqual((yield* exited(foreground)).code, 130);
-    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp), Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
+    ),
   { timeout: 60_000 }
 );
 
@@ -913,7 +926,7 @@ it.live(
       owner.child.kill("SIGINT");
       assert.strictEqual((yield* exited(owner)).code, 130);
       assert.isFalse(yield* Effect.promise(() => sameProcess(record)));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCryptography.layer])),
   { timeout: 40_000 }
 );
 
@@ -978,7 +991,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(TestConsole.layer),
-      Effect.provide(NodeServices.layer)
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
     ),
   { timeout: 15_000 }
 );
@@ -1015,7 +1028,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(TestConsole.layer),
-      Effect.provide(NodeServices.layer)
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
     ),
   { timeout: 10_000 }
 );
@@ -1073,7 +1086,7 @@ it.live(
     }).pipe(
       Effect.provide(NodeHttpClient.layerNodeHttp),
       Effect.provide(TestConsole.layer),
-      Effect.provide(NodeServices.layer)
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
     ),
   { timeout: 10_000 }
 );

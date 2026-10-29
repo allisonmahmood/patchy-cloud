@@ -23,7 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { canonicalArgs } from "@patchy/api";
-import { newInternalId, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { MutationTransaction } from "@patchy/runtime";
 
@@ -103,6 +103,7 @@ export class ChangeKeys extends Context.Service<
 const ROUNDS = 3;
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const sql = yield* SqlClient.SqlClient;
   const lifetime = (yield* ContractLimits.get("tier2.mutation.keyLifetime")) / 1000;
   const cleanup = yield* ContractLimits.get("tier2.settlement.cleanup");
@@ -161,9 +162,9 @@ export const make = Effect.gen(function* () {
       connectionId: change.connectionId,
       patchId: change.patchId,
       // As JSON, so strings UTF-8 can't tell apart, such as two lone surrogates, stay apart.
-      keyHash: sha256(canonicalArgs(change.key))
+      keyHash: yield* cryptography.sha256(canonicalArgs(change.key))
     };
-    const argsHash = sha256(canonicalArgs(change.args));
+    const argsHash = yield* cryptography.sha256(canonicalArgs(change.args));
     const lease = leases[change.kind];
     const run = (attempt: string, mutationKey: string | null): Claim => ({
       _tag: "Run",
@@ -174,8 +175,13 @@ export const make = Effect.gen(function* () {
 
     for (let round = 0; round < ROUNDS; round++) {
       // The first try, or the first since the key's 24 hours ran out.
-      const attempt = newInternalId("try");
-      const minted = change.kind === "mutation" ? yield* MutationTransaction.mint : null;
+      const attempt = yield* cryptography.internalId("try");
+      const minted =
+        change.kind === "mutation"
+          ? yield* MutationTransaction.mint.pipe(
+              Effect.provideService(Cryptography.Cryptography, cryptography)
+            )
+          : null;
       // Runtime's key is `<ms>-<random>`: the milliseconds Runtime ages it from.
       const issuedAt = minted === null ? null : Number(minted.slice(0, minted.indexOf("-")));
       const [first] = yield* sql<{ readonly mutationKey: string | null }>`

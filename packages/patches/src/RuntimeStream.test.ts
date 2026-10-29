@@ -15,7 +15,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import * as Companies from "../../companies/src/Companies.js";
 import * as Users from "../../companies/src/Users.js";
-import { newPatchId } from "@patchy/core";
+import { newPatchId } from "../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   RuntimeStream,

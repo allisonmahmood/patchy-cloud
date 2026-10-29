@@ -8,7 +8,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Runtime } from "@patchy/runtime";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
-import { contentHash, sha256 } from "../../../packages/core/src/index.js";
+import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as LocalTaskProvider from "@patchy/execution/local-task-provider";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -19,6 +19,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { answer, publish, send, server } from "./test/server.js";
+import { NodeCryptography } from "@patchy/core";
 
 const origin = "https://patchy.example";
 const fixtures = [
@@ -106,7 +107,10 @@ const testServer = (env: Record<string, string> = {}) =>
         )
       );
     })
-  ).pipe(Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]));
+  ).pipe(
+    Layer.provide([FetchHttpClient.layer, NodeFileSystem.layer]),
+    Layer.provideMerge(NodeCryptography.layer)
+  );
 
 // Retained historical versions exercise company isolation independently of publication.
 const retain = Effect.fn("DevelopmentExecutionTest.retain")(function* (

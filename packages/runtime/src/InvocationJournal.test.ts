@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { newInternalId } from "@patchy/core";
+import { newInternalId } from "../../../test/crypto.js";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
@@ -23,6 +23,7 @@ import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import { snapshot, mutations } from "./test/callbacks.js";
 import * as MutationTransaction from "./MutationTransaction.js";
+import { NodeCryptography } from "@patchy/core";
 
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
@@ -67,7 +68,7 @@ const services = Layer.mergeAll(
   InvocationCapabilities.layer
 )
   .pipe(Layer.provideMerge(Testing.layer()))
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeCryptography.layer));
 const makeInvocation = (invoke: Executor.Executor["Service"]["invoke"]) =>
   Invocation.make({ callbackUrl: "http://127.0.0.1:1/callback" }).pipe(
     Effect.provideService(MutationTransaction.MutationTransaction, mutations),

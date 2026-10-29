@@ -27,7 +27,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { PublishRequest } from "@patchy/api";
-import { newInternalId, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { LocalError } from "./CliError.js";
 
 const Machine = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -209,6 +209,7 @@ export class State extends Context.Service<
 >()("patchy/State") {}
 
 export const make = Effect.gen(function* () {
+  const cryptography = yield* Cryptography.Cryptography;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configured = yield* Config.String("PATCHY_STATE_DIR").pipe(Config.option, Effect.orDie);
@@ -227,11 +228,8 @@ export const make = Effect.gen(function* () {
   const retiredPatchesPath = path.join(dir, "drafts.json");
   const lookPreviewPath = path.join(dir, "look-preview.html");
   const publishPath = (apiUrl: string, repo?: string) =>
-    path.join(
-      repo === undefined ? dir : path.join(repo, ".patchy"),
-      "publish",
-      sha256(apiUrl),
-      "attempt"
+    Effect.map(cryptography.sha256(apiUrl), (hash) =>
+      path.join(repo === undefined ? dir : path.join(repo, ".patchy"), "publish", hash, "attempt")
     );
 
   const credentialErrors: HostKeyedErrors = {
@@ -315,7 +313,7 @@ export const make = Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
       const tempFile = path.join(
         path.dirname(file),
-        `.${path.basename(file)}.${newInternalId("tmp")}.tmp`
+        `.${path.basename(file)}.${yield* cryptography.internalId("tmp")}.tmp`
       );
       yield* fs.writeFileString(tempFile, text, {
         flag: "wx",
@@ -364,7 +362,7 @@ export const make = Effect.gen(function* () {
     apiUrl: string,
     repo?: string
   ) {
-    const directory = publishPath(apiUrl, repo);
+    const directory = yield* publishPath(apiUrl, repo);
     const invalid = `Pending publish is invalid: ${directory}. Keep the directory until the publish outcome is resolved.`;
     const files = yield* fs.readDirectory(directory).pipe(
       Effect.catchTags({
@@ -385,7 +383,7 @@ export const make = Effect.gen(function* () {
     });
     if (Option.isNone(document)) return Option.none<PendingPublish>();
     const attempt = yield* entry(decodePendingPublish(document.value), invalid);
-    if (files[0] !== `${sha256(attempt.request.publishKey)}.json`)
+    if (files[0] !== `${yield* cryptography.sha256(attempt.request.publishKey)}.json`)
       return yield* new LocalError({ message: invalid });
     return Option.some(attempt);
   });
@@ -414,7 +412,7 @@ export const make = Effect.gen(function* () {
       encodePendingPublish(attempt),
       "Publish request is invalid. Check the patch ID and publish options."
     );
-    const directory = publishPath(apiUrl, repo);
+    const directory = yield* publishPath(apiUrl, repo);
     const created = yield* Effect.scoped(
       Effect.gen(function* () {
         yield* fs.makeDirectory(path.dirname(directory), { recursive: true, mode: 0o700 });
@@ -426,7 +424,7 @@ export const make = Effect.gen(function* () {
           (temporary) => fs.remove(temporary, { recursive: true, force: true }).pipe(Effect.orDie)
         );
         yield* fs.writeFileString(
-          path.join(staged, `${sha256(attempt.request.publishKey)}.json`),
+          path.join(staged, `${yield* cryptography.sha256(attempt.request.publishKey)}.json`),
           `${encodeJson(encoded)}\n`,
           { flag: "wx", mode: 0o600 }
         );
@@ -516,17 +514,21 @@ export const make = Effect.gen(function* () {
     readPendingPublish,
     forgetPendingPublish: (apiUrl, publishKey, repo) =>
       Effect.gen(function* () {
-        const directory = publishPath(apiUrl, repo);
+        const directory = yield* publishPath(apiUrl, repo);
         // The key is part of the filename: a late K1 reply cannot unlink K2's payload.
-        yield* fs.remove(path.join(directory, `${sha256(publishKey)}.json`), { force: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LocalError({
-                message: `Could not clear the pending publish for ${apiUrl}. Run publish again to recover it.`,
-                cause
-              })
-          )
-        );
+        yield* fs
+          .remove(path.join(directory, `${yield* cryptography.sha256(publishKey)}.json`), {
+            force: true
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new LocalError({
+                  message: `Could not clear the pending publish for ${apiUrl}. Run publish again to recover it.`,
+                  cause
+                })
+            )
+          );
         yield* removeEmptySlot(directory);
       }),
     readCachedPatch: (apiUrl, file) =>

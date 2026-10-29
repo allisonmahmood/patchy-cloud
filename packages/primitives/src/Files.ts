@@ -1,10 +1,7 @@
 import { Buffer } from "node:buffer";
 import * as Config from "effect/Config";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Base64Url from "effect/encoding/Base64Url";
-import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -23,7 +20,7 @@ import {
 import { WideEvents } from "@patchy/analytics";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore } from "@patchy/content-store";
-import { Cryptography, newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
@@ -207,7 +204,6 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     Runtime.RuntimeError
   >
 ) {
-  const crypto = yield* Crypto.Crypto;
   const cryptography = yield* Cryptography.Cryptography;
   // The company-wide unique object locator commits its immutable source patch/store too.
   const handleMac = (secret: Uint8Array, binding: Binding.Binding["Service"], locator: string) =>
@@ -224,8 +220,6 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
         ])
       )
       .pipe(Effect.map((mac) => Buffer.from(mac.subarray(0, 24)).toString("base64url")));
-  const sha256 = (bytes: Uint8Array) =>
-    crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode), Effect.orDie);
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
   const versions = yield* LoadedVersions.LoadedVersions;
@@ -412,11 +406,11 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       )
     );
     const row = {
-      objectId: newInternalId("obj"),
-      token: Base64Url.encode(yield* crypto.randomBytes(32).pipe(Effect.orDie)),
+      objectId: yield* cryptography.internalId("obj"),
+      token: yield* cryptography.token(32),
       size: bytes.byteLength,
       contentType,
-      sha256: yield* sha256(bytes)
+      sha256: yield* cryptography.sha256(bytes)
     };
     yield* withCompany(
       binding.companyId,
@@ -675,10 +669,10 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
         return yield* withStore(args.store, (binding) =>
           Effect.gen(function* () {
             const row = {
-              objectId: newInternalId("obj"),
+              objectId: yield* cryptography.internalId("obj"),
               size: bytes.byteLength,
               contentType: args.contentType,
-              sha256: yield* sha256(bytes)
+              sha256: yield* cryptography.sha256(bytes)
             };
             yield* content
               .putBytes(objectKey(binding.patchId, row.objectId), bytes)

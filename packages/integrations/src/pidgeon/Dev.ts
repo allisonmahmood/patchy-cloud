@@ -17,7 +17,7 @@ import {
   type PidgeonSent,
   type PidgeonWriteOperation
 } from "@patchy/api";
-import { newInternalId } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -53,16 +53,6 @@ const answers: {
   "attachments.text": Schema.decodeUnknownOption(pidgeonReads["attachments.text"].output)
 };
 
-/** A send or reply as Pidgeon answers one it sent, to no one. */
-const sent = (): typeof PidgeonSent.Type => ({
-  status: "sent",
-  messageId: newInternalId("dev"),
-  threadId: newInternalId("dev"),
-  rejected: [],
-  replayed: false,
-  test: true
-});
-
 /**
  * `pidgeon.read` and `pidgeon.write` for `patchy dev`. `connections` is generation's metadata for
  * the repo's Pidgeon declarations, whose snapshots say each connection's access; `simulated`
@@ -74,6 +64,18 @@ export const handlers = Effect.fn("PidgeonDev.handlers")(function* (
   simulated: (write: Simulated) => Effect.Effect<void>
 ) {
   const http = yield* HttpClient.HttpClient;
+  const cryptography = yield* Cryptography.Cryptography;
+  /** A send or reply as Pidgeon answers one it sent, to no one. */
+  const sent = Effect.gen(function* (): Effect.fn.Return<typeof PidgeonSent.Type> {
+    return {
+      status: "sent",
+      messageId: yield* cryptography.internalId("dev"),
+      threadId: yield* cryptography.internalId("dev"),
+      rejected: [],
+      replayed: false,
+      test: true
+    };
+  });
   const snapshots = new Map(
     Object.values(connections).map(({ declaration, snapshot }) => [declaration.id, snapshot])
   );
@@ -112,7 +114,7 @@ export const handlers = Effect.fn("PidgeonDev.handlers")(function* (
         if (snapshot.access !== "send") return yield* new ReadOnly({});
         const answer: typeof Schema.Json.Type =
           write.operation === "messages.send" || write.operation === "messages.reply"
-            ? sent()
+            ? yield* sent
             : write.operation === "threads.update"
               ? // The thread as the change left it, as far as dev knows it without asking Pidgeon.
                 {

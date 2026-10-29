@@ -88,7 +88,7 @@ const fixture = SqlConnectionStore.layer.pipe(
     )
   ),
   Layer.provideMerge(Testing.layer()),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
@@ -339,7 +339,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const restarted = yield* SqlConnectionStore.make.pipe(
           Effect.provide(
             CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey},old:${oldKey}`)).pipe(
-              Layer.provide(NodeCryptography.layer)
+              Layer.provideMerge(NodeCryptography.layer)
             )
           )
         );
@@ -358,7 +358,7 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const currentOnly = yield* SqlConnectionStore.make.pipe(
           Effect.provide(
             CredentialKeys.layerFromKeys(Redacted.make(`new:${newKey}`)).pipe(
-              Layer.provide(NodeCryptography.layer)
+              Layer.provideMerge(NodeCryptography.layer)
             )
           )
         );

@@ -42,6 +42,7 @@ describe("formats", () => {
       const abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
       expect(yield* cryptography.sha256("abc")).toBe(abc);
       expect(yield* cryptography.sha256(new TextEncoder().encode("abc"))).toBe(abc);
+      expect(yield* cryptography.contentHash("abc")).toBe(`sha256:${abc}`);
       expect(cryptography.sha256Unsafe("abc", "hex")).toBe(abc);
       expect(cryptography.sha256Unsafe("abc", "base64")).toBe(
         Buffer.from(abc, "hex").toString("base64")

@@ -8,6 +8,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import * as Testing from "@patchy/sql/testing";
 import * as InvocationLog from "./InvocationLog.js";
 import * as RuntimeLog from "./RuntimeLog.js";
+import { NodeCryptography } from "@patchy/core";
 
 const NOW = Date.UTC(2026, 0, 1);
 const begin = (id: string): InvocationLog.Begin => ({
@@ -49,7 +50,12 @@ const rolledBack = <A, E, R>(body: Effect.Effect<A, E, R>) =>
       .pipe(Effect.catch((error) => (error === "rolled back" ? Effect.void : Effect.fail(error))));
   });
 
-it.layer(InvocationLog.layer.pipe(Layer.provideMerge(Testing.layer())))("InvocationLog", (it) => {
+it.layer(
+  InvocationLog.layer.pipe(
+    Layer.provideMerge(Testing.layer()),
+    Layer.provideMerge(NodeCryptography.layer)
+  )
+)("InvocationLog", (it) => {
   it.effect(
     "counts each patch's failed top-level entries of the last day as the Failed filter does",
     () =>

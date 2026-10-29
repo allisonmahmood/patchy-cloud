@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { sha256 } from "@patchy/core";
+import { Cryptography, NodeCryptography } from "@patchy/core";
 import * as Sql from "@patchy/sql";
 import * as AgentConnections from "./AgentConnections.js";
 
@@ -32,6 +32,7 @@ export async function applyDevSeed(
   await Effect.runPromise(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const cryptography = yield* Cryptography.Cryptography;
       yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* sql`
@@ -49,13 +50,15 @@ export async function applyDevSeed(
           yield* sql`
         INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
         VALUES (${DEV_SEED.tokenId}, ${DEV_SEED.userId}, ${DEV_SEED.tokenName},
-          ${sha256(DEV_SEED.token)}, now(), now() + interval '90 days', now())
+          ${yield* cryptography.sha256(DEV_SEED.token)}, now(), now() + interval '90 days', now())
         ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, name = EXCLUDED.name,
           token_hash = EXCLUDED.token_hash, created_at = EXCLUDED.created_at,
           expires_at = EXCLUDED.expires_at, last_used_at = EXCLUDED.last_used_at, revoked_at = NULL`;
         })
       );
-    }).pipe(Effect.provide(Sql.layerFromUrl(Redacted.make(connectionString))))
+    }).pipe(
+      Effect.provide([Sql.layerFromUrl(Redacted.make(connectionString)), NodeCryptography.layer])
+    )
   );
 }
 
@@ -78,6 +81,7 @@ export const mintDevAgentConnection = Effect.fn("mintDevAgentConnection")(functi
   readonly clientId: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
+  const cryptography = yield* Cryptography.Cryptography;
   const connections = yield* AgentConnections.AgentConnections;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
@@ -92,7 +96,7 @@ export const mintDevAgentConnection = Effect.fn("mintDevAgentConnection")(functi
       });
       yield* sql`
         UPDATE agent_connection_access_tokens SET expires_at = clock_timestamp() + interval '365 days'
-        WHERE token_hash = ${sha256(tokens.accessToken)}`;
+        WHERE token_hash = ${yield* cryptography.sha256(tokens.accessToken)}`;
       return {
         token: tokens.accessToken,
         connection,

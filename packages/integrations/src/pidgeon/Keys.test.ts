@@ -6,6 +6,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Keys from "./Keys.js";
 import * as Source from "./Source.js";
+import { NodeCryptography } from "@patchy/core";
 
 /**
  * Minting when answers go missing, offline over scripted answers in the shapes Pidgeon sends: what
@@ -91,7 +92,7 @@ it.effect(
       assert.include(error.message, "named Patchy support attempt00001");
       assert.include(error.message, "Try again in 30 seconds.");
       assert.deepStrictEqual(sent.slice(2), ["POST /api-keys", "POST /api-keys"]);
-    })
+    }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("refuses an admin key that doesn't reach the whole account, or isn't admin", () =>
@@ -104,7 +105,7 @@ it.effect("refuses an admin key that doesn't reach the whole account, or isn't a
       assert.strictEqual((yield* connect(layer))._tag, refusal);
       assert.deepStrictEqual(sent, ["GET /me"]);
     }
-  })
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("refuses outright when nothing was lost, and nothing can have been minted", () =>
@@ -119,7 +120,7 @@ it.effect("refuses outright when nothing was lost, and nothing can have been min
       }
     ]);
     assert.strictEqual((yield* connect(layer))._tag, "PidgeonRateLimited");
-  })
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );
 
 it.effect("keeps a replayed key named when the admin key can't revoke it", () =>
@@ -149,5 +150,5 @@ it.effect("keeps a replayed key named when the admin key can't revoke it", () =>
       "POST /api-keys",
       "DELETE /api-keys/minted"
     ]);
-  })
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );

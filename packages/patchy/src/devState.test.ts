@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import { Identity } from "@patchy/api";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -18,8 +19,11 @@ import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
 import { atomicJson, birth, directory, lock, sameProcess, type Daemon } from "./devState.js";
 import { RELEASE } from "./release.js";
+import { NodeCryptography } from "@patchy/core";
 
-it.layer(NodeServices.layer)("dev process ownership", (it) => {
+const services = Layer.merge(NodeServices.layer, NodeCryptography.layer);
+
+it.layer(services)("dev process ownership", (it) => {
   it.effect("a live PID does not authenticate a stale birth record", () =>
     Effect.gen(function* () {
       const current = yield* Effect.promise(() => birth(process.pid));

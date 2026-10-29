@@ -14,8 +14,11 @@ import * as InvocationCapabilities from "./InvocationCapabilities.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as Fixtures from "./test/callbacks.js";
+import { NodeCryptography } from "@patchy/core";
 
-it.layer(RuntimeLog.layer.pipe(Layer.provide(Testing.layer())))("CallbackGateway", (it) => {
+it.layer(
+  RuntimeLog.layer.pipe(Layer.provide(Testing.layer()), Layer.provideMerge(NodeCryptography.layer))
+)("CallbackGateway", (it) => {
   it.effect(
     "kind checks refuse query writes, mutation file/shared access, and unknown nested calls",
     () =>

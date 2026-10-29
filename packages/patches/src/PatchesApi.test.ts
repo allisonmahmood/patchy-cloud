@@ -1,6 +1,6 @@
 import { assert, expect, it } from "@effect/vitest";
 import { build } from "esbuild";
-import { sha256 } from "@patchy/core";
+import { sha256 } from "../../../test/crypto.js";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodePath from "@effect/platform-node/NodePath";

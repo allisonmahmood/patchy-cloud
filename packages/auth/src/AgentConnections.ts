@@ -24,7 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Identity } from "@patchy/api";
-import { Cryptography, newInternalId, randomToken, sha256 } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { UserUnavailable } from "./MachineTokens.js";
 
 const ACCESS_SECONDS = 60 * 60;
@@ -171,14 +171,15 @@ const Retried = Schema.fromJsonString(
 const encodeRetried = Schema.encodeSync(Retried);
 const decodeRetried = Schema.decodeUnknownSync(Retried);
 
-const newTokens = () => ({
-  accessToken: `pwa_${randomToken(32)}`,
-  refreshToken: `pwr_${randomToken(32)}`
-});
-
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const cryptography = yield* Cryptography.Cryptography;
+  const newTokens = Effect.gen(function* () {
+    return {
+      accessToken: `pwa_${yield* cryptography.token(32)}`,
+      refreshToken: `pwr_${yield* cryptography.token(32)}`
+    };
+  });
 
   /** The key only the rotated refresh token yields; its stored hash yields nothing. */
   const retryKey = (refreshToken: string) =>
@@ -296,15 +297,15 @@ export const make = Effect.gen(function* () {
       FROM agent_connection_access_tokens WHERE token_hash = ${tokenHash}`
   });
 
-  const issue = (connectionId: string, tokens: ReturnType<typeof newTokens>) =>
+  const issue = (connectionId: string, tokens: Effect.Success<typeof newTokens>) =>
     Effect.gen(function* () {
       yield* sql`
         INSERT INTO agent_connection_access_tokens (token_hash, connection_id, expires_at)
-        VALUES (${sha256(tokens.accessToken)}, ${connectionId},
+        VALUES (${yield* cryptography.sha256(tokens.accessToken)}, ${connectionId},
           clock_timestamp() + make_interval(secs => ${ACCESS_SECONDS}))`;
       yield* sql`
         INSERT INTO agent_connection_refresh_tokens (token_hash, connection_id)
-        VALUES (${sha256(tokens.refreshToken)}, ${connectionId})`;
+        VALUES (${yield* cryptography.sha256(tokens.refreshToken)}, ${connectionId})`;
       return { ...tokens, expiresIn: ACCESS_SECONDS } satisfies Tokens;
     });
 
@@ -317,7 +318,7 @@ export const make = Effect.gen(function* () {
     if (site === "")
       return yield* Effect.die(new Error("An agent connection's client id is a URL."));
     const name = clientName(input.clientName, input.clientId);
-    const id = newInternalId("agc");
+    const id = yield* cryptography.internalId("agc");
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         // Created on the database's clock under the lock the endings stamp under: one made
@@ -328,7 +329,7 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO agent_connections (id, user_id, client_id, client_name, client_site, created_at)
           VALUES (${id}, ${input.userId}, ${input.clientId}, ${name}, ${site}, clock_timestamp())`;
-        const tokens = yield* issue(id, newTokens());
+        const tokens = yield* issue(id, yield* newTokens);
         return {
           connection: { id, clientName: name, clientSite: site },
           tokens
@@ -338,7 +339,7 @@ export const make = Effect.gen(function* () {
   });
 
   const authenticate = Effect.fn("AgentConnections.authenticate")(function* (accessToken: string) {
-    const used = yield* useAccessToken(sha256(accessToken)).pipe(
+    const used = yield* useAccessToken(yield* cryptography.sha256(accessToken)).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     return Option.isSome(used) ? used.value.identity : null;
@@ -353,7 +354,7 @@ export const make = Effect.gen(function* () {
 
   // A connection's client never changes; whether the token is current only feeds a limit.
   const chainOf = Effect.fn("AgentConnections.chainOf")(function* (refreshToken: string) {
-    const owner = yield* chainOwner(sha256(refreshToken)).pipe(
+    const owner = yield* chainOwner(yield* cryptography.sha256(refreshToken)).pipe(
       Effect.catchTags({ SchemaError: Effect.die })
     );
     return Option.isSome(owner)
@@ -366,7 +367,7 @@ export const make = Effect.gen(function* () {
   });
 
   const refresh = Effect.fn("AgentConnections.refresh")(function* (refreshToken: string) {
-    const tokenHash = sha256(refreshToken);
+    const tokenHash = yield* cryptography.sha256(refreshToken);
     // A refusal is a value until the transaction commits, so a reuse's ending lands first.
     const outcome = yield* sql.withTransaction(
       Effect.gen(function* (): Effect.fn.Return<Tokens | RefreshRefused["reason"], SqlError> {
@@ -383,7 +384,7 @@ export const make = Effect.gen(function* () {
         // The revocation check comes before anything is issued or served.
         if (!state.live) return "ended";
         if (state.current) {
-          const next = newTokens();
+          const next = yield* newTokens;
           const retry = yield* sealRetry(refreshToken, connectionId, next);
           yield* sql`
             UPDATE agent_connection_refresh_tokens
@@ -397,9 +398,9 @@ export const make = Effect.gen(function* () {
         }
         if (state.retry !== null) {
           const retried = yield* openRetry(refreshToken, connectionId, state.retry);
-          const { seconds } = yield* secondsLeft(sha256(retried.accessToken)).pipe(
-            Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die })
-          );
+          const { seconds } = yield* secondsLeft(
+            yield* cryptography.sha256(retried.accessToken)
+          ).pipe(Effect.catchTags({ SchemaError: Effect.die, NoSuchElementError: Effect.die }));
           return { ...retried, expiresIn: seconds };
         }
         yield* sql`

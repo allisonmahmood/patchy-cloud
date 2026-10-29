@@ -16,9 +16,11 @@ import * as Instance from "./Instance.js";
 import * as State from "./State.js";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Stdio from "effect/Stdio";
 import * as Login from "./Login.js";
 import * as Output from "./Output.js";
+import { NodeCryptography } from "@patchy/core";
 
 const apiUrl = "http://instance.test";
 const pendingLogin = {
@@ -75,7 +77,7 @@ const makeLoginHarness = (client: HttpClient.HttpClient, credentialSaveDelay = 0
       }: { complete?: boolean; json?: boolean; setup?: string } = {}
     ) =>
       Login.login({ complete, code: Option.none(), wait, setup: Option.fromNullishOr(setup) }).pipe(
-        Effect.provide(State.layer),
+        Effect.provide(State.layer.pipe(Layer.provide(NodeCryptography.layer))),
         Effect.provide(fs),
         Effect.provide(Path.layer),
         Effect.provide(

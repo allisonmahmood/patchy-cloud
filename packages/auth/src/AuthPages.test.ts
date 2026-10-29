@@ -75,7 +75,7 @@ const services = Layer.mergeAll(
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(services)("first-party pages in memory", (it) => {
@@ -432,7 +432,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         }))
       ).pipe(
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-        Layer.provide(NodeCryptography.layer)
+        Layer.provideMerge(NodeCryptography.layer)
       );
       const response = yield* send("/logout", post({}, cookie("user_revoke_failure"))).pipe(
         Effect.provide(failure)
@@ -464,7 +464,7 @@ it.layer(
     Layer.provide(Limits.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
-    Layer.provide(NodeCryptography.layer)
+    Layer.provideMerge(NodeCryptography.layer)
   )
 )("logout without a company", (it) => {
   it.effect("revokes the signed-in Clerk session and no other", () =>
@@ -508,7 +508,7 @@ it.layer(
             })
           )
         ),
-        Layer.provide(NodeCryptography.layer)
+        Layer.provideMerge(NodeCryptography.layer)
       );
       const suffix = createHash("sha1")
         .update(env.CLERK_PUBLISHABLE_KEY!)

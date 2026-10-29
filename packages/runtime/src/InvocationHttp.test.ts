@@ -37,6 +37,7 @@ import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import { snapshot, mutations } from "./test/callbacks.js";
 import * as MutationTransaction from "./MutationTransaction.js";
+import { NodeCryptography } from "@patchy/core";
 
 const viewer = {
   user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
@@ -176,7 +177,7 @@ it.effect(
         limitId: "tier2.args.bytes",
         value: runtimeByteLimits.serverArgsBytes + runtimeByteLimits.callBytes
       });
-    }).pipe(Effect.provide(layer))
+    }).pipe(Effect.provide(layer), Effect.provide(NodeCryptography.layer))
 );
 
 const callbackFailures: Readonly<Record<string, Runtime.RuntimeError>> = {
@@ -297,7 +298,7 @@ const callbackSocket = HttpRouter.serve(
   { disableLogger: true, disableListenLog: true }
 )
   .pipe(Layer.provideMerge(NodeHttpServer.layerTest))
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(callbackSocket)("Invocation callback refusal HTTP", (it) => {
   it.effect("preserves host-issued 403, 413, 429 and 504 responses and retry metadata", () =>

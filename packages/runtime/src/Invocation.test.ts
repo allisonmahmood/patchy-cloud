@@ -4,7 +4,7 @@ import { CURRENT_RELEASE, WIRE_VERSION, type GuestProtocol } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
-import { newInternalId } from "@patchy/core";
+import { newInternalId } from "../../../test/crypto.js";
 import * as Testing from "@patchy/sql/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
@@ -31,6 +31,7 @@ import * as ServerBundles from "./ServerBundles.js";
 import * as QuerySnapshot from "./QuerySnapshot.js";
 import { snapshot, mutations } from "./test/callbacks.js";
 import * as MutationTransaction from "./MutationTransaction.js";
+import { NodeCryptography } from "@patchy/core";
 
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
@@ -110,7 +111,11 @@ const services = Layer.mergeAll(
   InvocationCapabilities.layer
 )
   .pipe(Layer.provideMerge(Testing.layer()))
-  .pipe(Layer.provideMerge(NodeCrypto.layer));
+  .pipe(
+    Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(NodeCryptography.layer),
+    Layer.provideMerge(NodeCryptography.layer)
+  );
 const makeInvocation = (
   invoke: Executor.Executor["Service"]["invoke"],
   bind: Executor.Executor["Service"]["bind"] = () => Effect.succeed(bound)
@@ -849,7 +854,10 @@ it.layer(services)("Invocation", (it) => {
           tool,
           args: {},
           recheck: Effect.succeed(person)
-        }).pipe(Effect.provideService(Invocation.Invocation, invocations));
+        }).pipe(
+          Effect.provideService(Invocation.Invocation, invocations),
+          Effect.provide(NodeCryptography.layer)
+        );
       const refused = (effect: Effect.Effect<unknown, { readonly code: string }>) =>
         effect.pipe(
           Effect.flip,
@@ -1314,7 +1322,10 @@ it.layer(services)("Invocation", (it) => {
             tool: "gather",
             args: {},
             recheck: Effect.succeed(viewer)
-          }).pipe(Effect.provideService(Invocation.Invocation, invocations))
+          }).pipe(
+            Effect.provideService(Invocation.Invocation, invocations),
+            Effect.provide(NodeCryptography.layer)
+          )
         );
         const refused = (effect: Effect.Effect<unknown, Runtime.RuntimeError>) =>
           effect.pipe(

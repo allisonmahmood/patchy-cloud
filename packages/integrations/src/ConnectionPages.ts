@@ -8,7 +8,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
-import { escapeHtml } from "@patchy/core";
+import { Cryptography, escapeHtml } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
@@ -135,6 +135,7 @@ export const layer: Layer.Layer<
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
       | PidgeonSource.Source
+      | Cryptography.Cryptography
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {

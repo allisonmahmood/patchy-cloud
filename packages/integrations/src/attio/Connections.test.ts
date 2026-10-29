@@ -42,7 +42,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 const { readKey } = AttioDouble;
 const write = [...readKey.scopes, "note:read-write"];

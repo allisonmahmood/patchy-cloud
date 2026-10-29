@@ -29,7 +29,7 @@ import { Limits } from "@patchy/limits";
 import { DeviceLogins, MachineTokens, RequireSession, Session, SetupLinks } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
-import { contentHash, sha256 } from "@patchy/core";
+import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
@@ -37,6 +37,7 @@ import { Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import { InvocationLog, RuntimeLog, Wakes } from "@patchy/runtime";
+import { NodeCryptography } from "@patchy/core";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const events: Analytics.AnalyticsEvent[] = [];
@@ -106,7 +107,8 @@ const services = Layer.mergeAll(
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(services),
-  Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
+  Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" })),
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 interface Person {
@@ -2564,7 +2566,10 @@ const invoke = Effect.fn("PortalPagesTest.invoke")(function* (
     deadline: startedAt + 60_000,
     argsBytes: 2
   });
-  if (input.inside) yield* input.inside(id).pipe(Effect.provide(RuntimeLog.layer));
+  if (input.inside)
+    yield* input
+      .inside(id)
+      .pipe(Effect.provide(RuntimeLog.layer), Effect.provide(NodeCryptography.layer));
   yield* log.finish({
     id,
     outcome: input.outcome ?? "success",

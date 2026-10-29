@@ -48,9 +48,7 @@ const secret = Redacted.make(
   "postgresql://reader:do-not-log-this@warehouse.example/sales?sslmode=verify-full"
 );
 const services = Layer.mergeAll(
-  CredentialKeys.layerFromKeys(
-    Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)
-  ).pipe(Layer.provide(NodeCryptography.layer)),
+  CredentialKeys.layerFromKeys(Redacted.make(`upgrade:${Buffer.alloc(32, 7).toString("base64")}`)),
   RuntimeLog.layer,
   Layer.succeed(
     PostgresSource.Source,
@@ -66,7 +64,7 @@ const services = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   AttioSource.layer
-);
+).pipe(Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(Testing.emptyLayer(beforeIntegrations))(
   "the connections-per-integration upgrade",

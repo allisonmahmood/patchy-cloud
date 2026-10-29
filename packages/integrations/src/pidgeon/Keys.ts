@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off — node:crypto makes Pidgeon's Idempotency-Keys and a key's name.
-import { createHash, randomInt, randomUUID } from "node:crypto";
 import type { PidgeonSnapshot } from "@patchy/api";
 import { registry } from "@patchy/limits/registry";
 import * as Clock from "effect/Clock";
@@ -7,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Source from "./Source.js";
+import { Cryptography } from "@patchy/core";
 
 /**
  * The keys Patchy makes in Pidgeon. An admin pastes an admin key over the whole account, live or
@@ -305,10 +304,11 @@ const write = Effect.fn("PidgeonKeys.write")(function* (
   token: Redacted.Redacted<string>,
   request: Omit<Source.Request, "idempotencyKey">,
   until: number,
-  idempotencyKey: string = `patchy-${randomUUID()}`,
+  key?: string,
   seen: { lost: boolean } = { lost: false }
 ) {
   const source = yield* Source.Source;
+  const idempotencyKey = key ?? `patchy-${yield* (yield* Cryptography.Cryptography).randomUUID}`;
   return yield* source.call(token, { ...request, idempotencyKey }, until).pipe(
     Effect.tapError((error) =>
       Effect.sync(() => {
@@ -409,9 +409,9 @@ export const addresses = Effect.fn("PidgeonKeys.addresses")(function* (
 export const Attempt = Schema.String.check(Schema.isPattern(/^[a-z0-9]{12}$/));
 export const isAttempt = Schema.is(Attempt);
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-const code = (length: number) =>
-  Array.from({ length }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
-export const newAttempt = () => code(12);
+export const newAttempt = Cryptography.Cryptography.use((cryptography) =>
+  cryptography.randomString(ALPHABET, 12)
+);
 
 export const LocalPart = Schema.String.check(
   Schema.isPattern(/^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?$/)
@@ -478,9 +478,9 @@ export const keyName = (handle: string, attempt: string) => `Patchy ${handle} ${
 // ---------- the address ----------
 
 const idempotencyKey = (scope: string, attempt: string, body: unknown) =>
-  createHash("sha256")
-    .update(JSON.stringify([scope, attempt, body]))
-    .digest("hex");
+  Cryptography.Cryptography.use((cryptography) =>
+    cryptography.sha256(JSON.stringify([scope, attempt, body]))
+  );
 
 /** The address, refused when it has no inbox or isn't in the admin key's mode. */
 const usable = (identity: Identity, test: boolean) =>
@@ -529,7 +529,7 @@ const findOrCreate = Effect.fn("PidgeonKeys.findOrCreate")(function* (
     adminKey,
     { method: "POST", path: "/identities", body },
     until,
-    idempotencyKey(scope, attempt, body)
+    yield* idempotencyKey(scope, attempt, body)
   ).pipe(
     Effect.catchTags({
       PidgeonConflict: (cause) =>

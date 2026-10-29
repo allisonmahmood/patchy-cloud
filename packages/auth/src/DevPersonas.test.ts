@@ -81,7 +81,7 @@ const services = Layer.mergeAll(
   Layer.provide(Limits.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(settings),
-  Layer.provide(NodeCryptography.layer)
+  Layer.provideMerge(NodeCryptography.layer)
 );
 
 it.layer(services)("dev personas", (it) => {

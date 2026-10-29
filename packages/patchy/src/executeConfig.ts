@@ -2,6 +2,7 @@
 // The config entrypoint loads this Node-only process boundary only when execution is requested.
 import { fork } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
+// oxlint-disable-next-line no-restricted-imports -- Promise code in the child process that runs a config, outside Effect.
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

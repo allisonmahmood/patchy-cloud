@@ -10,7 +10,7 @@ import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.j
 import * as Inventory from "../../company-database/src/Inventory.js";
 import * as Testing from "../../company-database/src/testing.js";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
-import { newInternalId } from "@patchy/core";
+import { newInternalId } from "../../../test/crypto.js";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";

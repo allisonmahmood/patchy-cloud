@@ -167,7 +167,7 @@ export const SharedFileList = Schema.Struct({
   cursor: FileList.fields.cursor
 });
 
-/** Version ids use core's newInternalId("ver") grammar. */
+/** Version ids use the grammar of Cryptography's internalId("ver"). */
 export const RuntimeVersionId = Schema.String.check(
   Schema.makeFilter((value) => /^ver_[a-z0-9]{24}$/.test(value) || "Invalid version ID.")
 );

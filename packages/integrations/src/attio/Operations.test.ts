@@ -42,7 +42,7 @@ const fixture = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provide(NodeCryptography.layer));
+).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 const viewer: Viewer = {
