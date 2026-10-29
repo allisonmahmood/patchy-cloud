@@ -1842,6 +1842,9 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(refusedRead.code, 1);
   assert.equal(JSON.parse(refusedRead.stderr).code, "tier_mismatch");
 
+  // Leave the patch's open document first: retiring stops it with its own notice, which would
+  // race the navigation below.
+  await checkedCall(() => page.goto("about:blank"));
   const retired = JSON.parse((await runCli(repoCliPath, ["retire", "--json"], options)).stdout);
   assert.equal(retired.state, "retired");
   assert.equal((await checkedCall(() => page.goto(published.address))).status(), 200);
