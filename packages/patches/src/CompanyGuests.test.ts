@@ -115,6 +115,13 @@ it.layer(Patches.layer.pipe(Layer.provideMerge(analytics), Layer.provideMerge(Fi
               )
             );
           assert.strictEqual((yield* selected()).access, "active");
+          for (const tier of [1, 2, 0]) {
+            yield* sql`UPDATE patch_versions SET tier = ${tier} WHERE id = ${patch.versionId}`;
+            assert.strictEqual((yield* selected()).access, tier === 0 ? "active" : "unavailable");
+          }
+          yield* sql`UPDATE patches SET current_version_id = NULL WHERE id = ${patch.patchId}`;
+          assert.strictEqual((yield* selected()).access, "unavailable");
+          yield* sql`UPDATE patches SET current_version_id = ${patch.versionId} WHERE id = ${patch.patchId}`;
           yield* Guests.setDeactivated({ ...guest, deactivated: true });
           assert.instanceOf((yield* read()).guest.deactivatedAt, Date);
           assert.strictEqual((yield* selected()).access, "deactivated");

@@ -2491,11 +2491,14 @@ export const make = Effect.gen(function* () {
       guestId: Schema.String,
       patchId: Schema.String,
       name: Schema.NullOr(Schema.String),
-      title: Schema.NullOr(Schema.String)
+      title: Schema.NullOr(Schema.String),
+      tier0: Schema.Boolean
     }),
     execute: (companyId) => sql`SELECT DISTINCT g.guest_id AS "guestId", g.patch_id AS "patchId",
-      patches.name, patches.title FROM patch_guest_grants g
+      patches.name, patches.title, COALESCE(v.tier = 0, false) AS "tier0"
+      FROM patch_guest_grants g
       LEFT JOIN patches ON patches.id = g.patch_id AND patches.company_id = g.company_id
+      LEFT JOIN patch_versions v ON v.id = patches.current_version_id AND v.patch_id = patches.id
       WHERE g.company_id = ${companyId} ORDER BY g.guest_id, g.patch_id`
   });
   const companyGuests = Effect.fn("Patches.companyGuests")(function* (companyId: string) {
@@ -2504,12 +2507,14 @@ export const make = Effect.gen(function* () {
     );
     const grants = new Map<string, CompanyGuest["grants"][number][]>();
     const rows = yield* companyGuestPatches(companyId).pipe(Effect.catchTags(dieOnSchemaError));
-    for (const { guestId, patchId, name, title } of rows) {
+    for (const { guestId, patchId, name, title, tier0 } of rows) {
       // The existing decision selects the latest grant, including terminal states.
       const found = yield* guestGrant(companyId, patchId, guestId);
       if (found === null) continue;
       const entries = grants.get(guestId) ?? [];
-      entries.push({ ...found, name, title });
+      // As on Home and at the serving door, only current tier 0 versions support guests.
+      const access = found.access === "active" && !tier0 ? "unavailable" : found.access;
+      entries.push({ ...found, access, name, title });
       grants.set(guestId, entries);
     }
     return guests.map((guest): CompanyGuest => ({ guest, grants: grants.get(guest.id) ?? [] }));
