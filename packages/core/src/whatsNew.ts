@@ -52,6 +52,15 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 26,
+    date: "2026-10-30",
+    through: "eabf2e6404258c03b7f1b4e43c067b98dd95cea5",
+    changes: [],
+    behindTheScenes: [
+      "Older pages published from a single HTML file now run the same way as new ones, so Patchy has one kind of page instead of two."
+    ]
+  },
+  {
     id: 25,
     date: "2026-10-29",
     through: "18b39ae57bd98a8091bfdea23b6a76f84404e145",
