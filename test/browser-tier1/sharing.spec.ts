@@ -13,7 +13,7 @@ test("owner shares a patch, guest opens it and removes the share from Home", asy
   await expect(page.getByText("guest@patchy.local")).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy patch link" })).toBeVisible();
   await testInfo.attach("patch-sharing", {
-    body: await page.screenshot(),
+    body: await page.screenshot({ fullPage: true }),
     contentType: "image/png"
   });
 
@@ -23,7 +23,7 @@ test("owner shares a patch, guest opens it and removes the share from Home", asy
   if (await later.isVisible()) await later.click();
   await expect(page.getByRole("heading", { name: "Shared with you" })).toBeVisible();
   await testInfo.attach("shared-with-you", {
-    body: await page.screenshot(),
+    body: await page.screenshot({ fullPage: true }),
     contentType: "image/png"
   });
   await page.getByRole("link", { name: "Open", exact: true }).click();
