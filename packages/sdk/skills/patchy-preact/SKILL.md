@@ -131,10 +131,13 @@ address bar after the patch's address. Framework-free pages use the same API.
   address under the patch starts the page at that path.
 - `set(path): Promise<null>` asks the shell to push a history entry for the
   path. The frame stays loaded. Setting the path already shown still pushes an
-  entry and notifies nobody.
+  entry.
 - `subscribe(listener)` returns an unsubscribe function. The listener is called
-  asynchronously with the current path, then after each acknowledged `set` and
-  each back or forward. Unsubscribing also drops notifications already queued.
+  asynchronously with the current path, then each time the page's path string
+  changes: an acknowledged `set`, the shell's decoded form of it, and back or
+  forward. A step that leaves the same string, such as back between two
+  entries for one path, notifies nobody. Unsubscribing also drops
+  notifications already queued.
 
 A path starts with one `/` and has no query, fragment, backslash, space or
 control character, and every `%` begins a valid escape. Decoded, no segment is
