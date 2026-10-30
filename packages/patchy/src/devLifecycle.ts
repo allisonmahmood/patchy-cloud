@@ -73,7 +73,11 @@ const healthy = Effect.fn("Dev.healthy")(function* (record: Daemon) {
   if (!record.url || !(yield* io("Could not inspect the dev process.", () => sameProcess(record))))
     return false;
   const http = yield* HttpClient.HttpClient;
-  for (const address of [record.url, ...(record.colleagueUrl ? [record.colleagueUrl] : [])]) {
+  for (const address of [
+    record.url,
+    ...(record.colleagueUrl ? [record.colleagueUrl] : []),
+    ...(record.guestUrl ? [record.guestUrl] : [])
+  ]) {
     const url = new URL(address);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") return false;
     const ready = yield* http
@@ -136,6 +140,7 @@ const report = (
       ...(start === undefined ? {} : { joined: start.joined }),
       url: record.url,
       ...(record.colleagueUrl === undefined ? {} : { colleagueUrl: record.colleagueUrl }),
+      ...(record.guestUrl === undefined ? {} : { guestUrl: record.guestUrl }),
       logPath: logPath(stateDir),
       stop,
       pid: record.pid,
@@ -152,6 +157,7 @@ const report = (
         : []),
       record.url!,
       ...(record.colleagueUrl === undefined ? [] : [`Colleague: ${record.colleagueUrl}`]),
+      ...(record.guestUrl === undefined ? [] : [`Guest: ${record.guestUrl}`]),
       `Log: ${logPath(stateDir)}`,
       `Stop: ${stop}`
     ]

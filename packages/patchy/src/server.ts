@@ -155,6 +155,7 @@ export interface HandlerDescriptor {
   readonly description?: string;
   readonly readOnly?: true;
   readonly agentTool?: true;
+  readonly guest?: true;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -327,6 +328,8 @@ type HandlerDefinition<
 > = {
   /** What the handler does, for agents: nonblank, at most 2,000 characters. */
   readonly description?: NonEmptyString<D>;
+  /** Allows an admitted outside guest to start this handler. Nested calls follow existing rules. */
+  readonly guest?: true;
   readonly args: A & CheckFields<A, K, C>;
   readonly result: R & CheckSchema<R, K, "result", C, false>;
   readonly errors?: E;
@@ -402,6 +405,7 @@ const makeBuilder =
   (definition: {
     readonly description?: string;
     readonly readOnly?: true;
+    readonly guest?: true;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
@@ -421,6 +425,7 @@ const makeBuilder =
       kind,
       ...(definition.description === undefined ? {} : { description: definition.description }),
       ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly }),
+      ...(definition.guest === undefined ? {} : { guest: definition.guest }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

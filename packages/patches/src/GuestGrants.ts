@@ -16,8 +16,8 @@ export interface Unavailability {
   readonly repair: string;
 }
 
-/** Slice 3 can extend this without changing the admission and warning callers. */
-export const supportedTier = (tier: number): boolean => tier === 1;
+/** Guests may open owned-data pages and eligible handler-backed patches. */
+export const supportedTier = (tier: number): boolean => tier === 1 || tier === 2;
 
 /** Current patch/version gate; declared sources are checked by unavailability. */
 export const eligible = (patch: Patches.Patch, version: Patches.PatchVersion): boolean =>

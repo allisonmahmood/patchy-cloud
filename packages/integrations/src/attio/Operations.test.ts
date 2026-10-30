@@ -879,6 +879,14 @@ it.layer(fixture)("Attio operations, offline", (it) => {
           ...viewer,
           user: { id: "usr_attio_queued", name: "Queued", email: "queued@acme.example" }
         };
+        const reauthorizeQueued = Effect.gen(function* () {
+          const rows = yield* sql<{ active: boolean }>`SELECT deactivated_at IS NULL AS active
+            FROM users WHERE id = ${queued.user.id}`.pipe(
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+          );
+          if (rows[0]?.active) return queued;
+          return yield* new Runtime.AccessDenied({});
+        });
         const isMembers = (sent: Reads.Sent) => sent.path === "/v2/workspace_members";
         const release = yield* Deferred.make<void>();
         attio.hold(isMembers, release);
@@ -895,7 +903,11 @@ it.layer(fixture)("Attio operations, offline", (it) => {
         const byQueued = yield* call(
           "attio.listMembers",
           {},
-          binding(crm, { identity: queued, principal: { userId: queued.user.id } })
+          binding(crm, {
+            identity: queued,
+            principal: { userId: queued.user.id },
+            reauthorize: reauthorizeQueued
+          })
         ).pipe(Effect.flip, Effect.forkChild);
         yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_attio_queued'`;
         yield* Deferred.succeed(release, undefined);

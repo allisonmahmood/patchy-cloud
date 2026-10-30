@@ -52,6 +52,10 @@ it.live(
         path.join(process.cwd(), "packages/patchy"),
         path.join(root, "node_modules/patchy")
       );
+      yield* fs.symlink(
+        path.join(process.cwd(), "packages/patchy/node_modules/vite"),
+        path.join(root, "node_modules/vite")
+      );
       const document = (title: string) =>
         `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
       yield* fs.writeFileString(path.join(root, "index.html"), document("First local build"));
@@ -97,7 +101,10 @@ it.live(
       const record = yield* Effect.promise(() => readRecord(stateDir));
       assert.isString(record?.colleagueUrl);
       const colleagueOrigin = new URL(record!.colleagueUrl!).origin;
+      assert.isString(record?.guestUrl);
+      const guestOrigin = new URL(record!.guestUrl!).origin;
       assert.notStrictEqual(colleagueOrigin, origin);
+      assert.notStrictEqual(guestOrigin, colleagueOrigin);
       const client = yield* HttpClient.HttpClient;
       const http = (yield* HttpClient.HttpClient).pipe(
         HttpClient.mapRequest(HttpClientRequest.prependUrl(origin))
@@ -152,10 +159,23 @@ it.live(
       const colleagueClaims = yield* colleague.json;
       assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
       assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
+      const guest = yield* call("me", {}, guestOrigin, "usr_dev_guest", guestOrigin);
+      const guestClaims = yield* guest.json;
+      assert.nestedPropertyVal(guestClaims, "value.user.id", "usr_dev_guest");
+      assert.nestedPropertyVal(guestClaims, "value.guest", true);
+      assert.nestedPropertyVal(guestClaims, "value.company.id", identity.company.id);
+      const guestAgent = yield* client.execute(
+        HttpClientRequest.post(`${guestOrigin}/~dev/agent`).pipe(
+          HttpClientRequest.setHeader("x-patchy-dev", "local-test"),
+          HttpClientRequest.bodyJsonUnsafe({})
+        )
+      );
+      assert.strictEqual(guestAgent.status, 404);
       // Dev holds the page to its own patch as production does: the directory is a handler's.
       for (const [target, viewerId] of [
         [origin, identity.user.id],
-        [colleagueOrigin, "usr_dev_colleague"]
+        [colleagueOrigin, "usr_dev_colleague"],
+        [guestOrigin, "usr_dev_guest"]
       ]) {
         const listed = yield* call("members.list", {}, target, viewerId, target);
         assert.strictEqual(listed.status, 403);

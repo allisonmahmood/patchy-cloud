@@ -13,6 +13,11 @@ export class Binding extends Context.Service<
     /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
     readonly effectivePrincipal?: string;
     readonly invocationId?: string;
+    /** The admitted viewer's existing check, reused after queued connection waits. */
+    readonly reauthorize?: Effect.Effect<
+      NonNullable<typeof RuntimeMe.Type>,
+      import("./Runtime.js").RuntimeError
+    >;
     /**
      * The worker agent this operation runs for, set only by Patchy's own agent callers and never
      * from a request. Absent, it is a page's operation, which no agent tool admits.

@@ -18,7 +18,9 @@ export const Person = Schema.Struct({
   key: Slug,
   name: Schema.NonEmptyString,
   email: Email,
-  role: Schema.Literals(["admin", "member"])
+  role: Schema.Literals(["admin", "member"]),
+  /** Omitted means the scenario's publishing company. */
+  company: Schema.optionalKey(Slug)
 });
 export type Person = typeof Person.Type;
 
@@ -75,6 +77,10 @@ export const Scenario = Schema.Struct({
     /** The company's agent access starts on, turned on by the publisher, so worker agents can use its agent areas. */
     agentAccess: Schema.optionalKey(Schema.Boolean)
   }),
+  /** Other companies whose people can visit the publisher's patches as guests. */
+  companies: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }))
+  ),
   people: Schema.NonEmptyArray(Person),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
@@ -131,8 +137,26 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   const emails = new Set(scenario.people.map((person) => person.email.toLowerCase()));
   if (keys.size !== scenario.people.length || emails.size !== scenario.people.length)
     return yield* new ScenarioInvalid({ name, problem: "people need unique keys and emails." });
-  if (scenario.people.find((person) => person.key === scenario.publisher)?.role !== "admin")
-    return yield* new ScenarioInvalid({ name, problem: "the publisher must be an admin." });
+  const companies = [scenario.company, ...(scenario.companies ?? [])];
+  if (new Set(companies.map((company) => company.handle)).size !== companies.length)
+    return yield* new ScenarioInvalid({ name, problem: "companies need unique handles." });
+  for (const person of scenario.people)
+    if (
+      !companies.some((company) => company.handle === (person.company ?? scenario.company.handle))
+    )
+      return yield* new ScenarioInvalid({
+        name,
+        problem: `${person.key} names an unknown company.`
+      });
+  const publisher = scenario.people.find((person) => person.key === scenario.publisher);
+  if (
+    publisher?.role !== "admin" ||
+    (publisher.company ?? scenario.company.handle) !== scenario.company.handle
+  )
+    return yield* new ScenarioInvalid({
+      name,
+      problem: "the publisher must be an admin of the publishing company."
+    });
   const connections = new Set(
     (scenario.connections ?? []).map(
       (connection) => `${connection.integration}/${connection.handle}`
@@ -152,9 +176,9 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
 
 /** Stable ids, so seeding twice updates the same rows. */
 export const ids = (scenario: Scenario, person: Person) => ({
-  userId: `usr_env_${scenario.company.handle}_${person.key}`,
-  clerkUserId: `env_${scenario.company.handle}_${person.key}`,
-  tokenId: `tok_env_${scenario.company.handle}_${person.key}`
+  userId: `usr_env_${person.company ?? scenario.company.handle}_${person.key}`,
+  clerkUserId: `env_${person.company ?? scenario.company.handle}_${person.key}`,
+  tokenId: `tok_env_${person.company ?? scenario.company.handle}_${person.key}`
 });
 
 /** The publisher's machine token; dev-only and loopback-only, like the seed's. */
@@ -172,15 +196,17 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
   const companyId = `cmp_env_${scenario.company.handle}`;
   yield* sql.withTransaction(
     Effect.gen(function* () {
-      yield* sql`
-        INSERT INTO companies (id, handle, name, created_at)
-        VALUES (${companyId}, ${scenario.company.handle}, ${scenario.company.name}, now())
-        ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
+      for (const company of [scenario.company, ...(scenario.companies ?? [])])
+        yield* sql`
+          INSERT INTO companies (id, handle, name, created_at)
+          VALUES (${`cmp_env_${company.handle}`}, ${company.handle}, ${company.name}, now())
+          ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
       for (const person of scenario.people) {
         const { userId, clerkUserId, tokenId } = ids(scenario, person);
+        const personCompanyId = `cmp_env_${person.company ?? scenario.company.handle}`;
         yield* sql`
           INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
-          VALUES (${userId}, ${clerkUserId}, ${companyId}, ${person.email.toLowerCase()},
+          VALUES (${userId}, ${clerkUserId}, ${personCompanyId}, ${person.email.toLowerCase()},
             ${person.name}, ${person.role}, now())
           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
             role = EXCLUDED.role, deactivated_at = NULL`;

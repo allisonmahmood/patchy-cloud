@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 import { expect } from "vitest";
 import * as Companies from "@patchy/companies/Companies";
 import * as Testing from "@patchy/sql/testing";
@@ -19,7 +20,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon", "attio"]) {
+      for (const name of ["team", "brightline", "pidgeon", "attio", "guests"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -49,7 +50,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
-      expect(error.message).toContain("brightline, pidgeon, team");
+      expect(error.message).toContain("guests");
     })
   );
 
@@ -110,6 +111,16 @@ it.layer(Layer.mergeAll(Platform, Companies.layer.pipe(Layer.provideMerge(databa
         yield* companies.setAgentAccess({ companyId, on: false, by: publisher.userId });
         yield* seedScenario(scenario);
         expect((yield* companies.agentAccess(companyId)).on).toBe(false);
+      })
+    );
+    it.effect("seeds a guest in a second company without making them a host member", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const { scenario } = yield* loadScenario(repo, "guests");
+        yield* seedScenario(scenario);
+        const rows =
+          yield* sql`SELECT company_id AS "companyId" FROM users WHERE id = ${ids(scenario, scenario.people[2]!).userId}`;
+        expect(rows[0]).toMatchObject({ companyId: "cmp_env_pine-studio" });
       })
     );
   }

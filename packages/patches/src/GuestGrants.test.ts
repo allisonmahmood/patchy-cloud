@@ -71,7 +71,7 @@ it.layer(
         ["old version", { ...patch, currentVersionId: "old" }, version],
         ["wrong patch", { ...patch, id: "another-patch" }, version],
         ["wrong company", { ...patch, companyId: "another-company" }, version],
-        ["tier two", patch, { ...version, tier: 2 }],
+        ["unsupported tier", patch, { ...version, tier: 3 }],
         [
           "declared source",
           patch,
@@ -86,6 +86,12 @@ it.layer(
           caseName
         );
       }
+      const tierTwo = {
+        ...version,
+        tier: 2,
+        manifest: { ...version.manifest, tier: 2 as const }
+      } as Patches.PatchVersion;
+      assert.isTrue(yield* grants.hasEligibleGrant(patch, tierTwo, outsider));
       const memberVersion = {
         ...version,
         manifest: { ...version.manifest, uses: { members: { kind: "members" as const } } }

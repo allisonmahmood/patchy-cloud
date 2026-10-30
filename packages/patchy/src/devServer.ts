@@ -5,6 +5,7 @@ import { RuntimeGroup, RuntimeStreamGroup, handlerKinds } from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
   Binding,
+  Runtime,
   RuntimeDev,
   RuntimeApi,
   RuntimeStream,
@@ -41,7 +42,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as DevAgent from "./devAgent.js";
 import * as DevResources from "./devResources.js";
 import * as DevLog from "./devLog.js";
-import { colleague } from "./devMembers.js";
+import { colleague, guestAccount, guestViewer } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
 import { AgentRequest, atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
@@ -160,7 +161,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
     ).pipe(Effect.forkScoped);
   }
   const mount = Effect.fn("Dev.mount")(function* (
-    identity: NonNullable<Binding.Binding["Service"]["identity"]>
+    identity: NonNullable<Binding.Binding["Service"]["identity"]>,
+    agent: boolean
   ) {
     const origin = yield* HttpServer.addressFormattedWith(Effect.succeed);
     const version = resources.version;
@@ -183,26 +185,27 @@ export const serve = Effect.fn("Dev.serve")(function* (
         );
         // `patchy dev agent`, answering as this mount's person. The nonce keeps pages and other
         // local programs out, as for health.
-        yield* router.add(
-          "POST",
-          "/~dev/agent",
-          Effect.gen(function* () {
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
-            const body = yield* request.json.pipe(
-              Effect.flatMap(decodeAgentRequest),
-              Effect.option
-            );
-            if (Option.isNone(body))
-              return HttpServerResponse.text("Bad request", { status: 400, headers });
-            const reply = yield* DevAgent.answer(
-              agentDev,
-              { person: identity, address: `${origin}${base}` },
-              body.value
-            ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
-            return HttpServerResponse.jsonUnsafe(reply, { headers });
-          })
-        );
+        if (agent)
+          yield* router.add(
+            "POST",
+            "/~dev/agent",
+            Effect.gen(function* () {
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
+              const body = yield* request.json.pipe(
+                Effect.flatMap(decodeAgentRequest),
+                Effect.option
+              );
+              if (Option.isNone(body))
+                return HttpServerResponse.text("Bad request", { status: 400, headers });
+              const reply = yield* DevAgent.answer(
+                agentDev,
+                { person: identity, address: `${origin}${base}` },
+                body.value
+              ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
+              return HttpServerResponse.jsonUnsafe(reply, { headers });
+            })
+          );
         yield* router.add(
           "GET",
           "/~dev/build",
@@ -314,19 +317,32 @@ export const serve = Effect.fn("Dev.serve")(function* (
     );
     return `${origin}${base}`;
   });
-  const url = yield* mount({
-    user: prepared.identity.user,
-    company: prepared.identity.company,
-    admin: prepared.identity.role === "admin",
-    guest: false
-  });
+  const url = yield* mount(
+    {
+      user: prepared.identity.user,
+      company: prepared.identity.company,
+      admin: prepared.identity.role === "admin",
+      guest: false
+    },
+    true
+  );
   const colleagueServer = yield* Layer.build(Layer.fresh(layer));
-  const colleagueUrl = yield* mount({
-    user: colleague,
-    company: prepared.identity.company,
-    admin: false,
-    guest: false
-  }).pipe(Effect.provideContext(colleagueServer));
+  const colleagueUrl = yield* mount(
+    {
+      user: colleague,
+      company: prepared.identity.company,
+      admin: false,
+      guest: false
+    },
+    true
+  ).pipe(Effect.provideContext(colleagueServer));
+  const guestServer = yield* Layer.build(Layer.fresh(layer));
+  const guestIdentity = guestViewer(prepared.patchId, prepared.identity.company, guestAccount, {
+    patchId: prepared.patchId,
+    userId: guestAccount.user.id
+  });
+  if (guestIdentity === null) return yield* new Runtime.AccessDenied({});
+  const guestUrl = yield* mount(guestIdentity, false).pipe(Effect.provideContext(guestServer));
   const ready = {
     ...record,
     pid: process.pid,
@@ -336,13 +352,15 @@ export const serve = Effect.fn("Dev.serve")(function* (
       return value;
     }),
     url,
-    colleagueUrl
+    colleagueUrl,
+    guestUrl
   };
   yield* io("Could not record the healthy dev daemon.", () =>
     atomicJson(stateDir, "daemon.json", ready)
   );
   yield* Console.log(`Ready: ${ready.url}`);
   yield* Console.log(`Colleague: ${colleagueUrl}`);
+  yield* Console.log(`Guest: ${guestUrl}`);
   yield* Effect.addFinalizer(() =>
     io("Could not clear the stopped dev daemon.", async () => {
       const current = await readRecord(stateDir);
@@ -350,7 +368,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
         await atomicJson(stateDir, "daemon.json", {
           ...ready,
           url: undefined,
-          colleagueUrl: undefined
+          colleagueUrl: undefined,
+          guestUrl: undefined
         });
     }).pipe(Effect.orDie)
   );

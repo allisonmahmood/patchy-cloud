@@ -64,6 +64,9 @@ const binding: Binding.Binding["Service"] = {
       },
       "demo.mutation": { kind: "mutation", args: {}, result: { kind: "json" } },
       "demo.action": { kind: "action", args: {}, result: { kind: "json" } },
+      "demo.guestQuery": { kind: "query", guest: true, args: {}, result: { kind: "json" } },
+      "demo.guestMutation": { kind: "mutation", guest: true, args: {}, result: { kind: "json" } },
+      "demo.guestAction": { kind: "action", guest: true, args: {}, result: { kind: "json" } },
       "demo.peek": {
         kind: "action",
         description: "Reads without changing anything.",
@@ -140,6 +143,53 @@ const recorder = Effect.gen(function* () {
 });
 
 it.layer(services)("Invocation", (it) => {
+  it.effect("admits only marked guest entry handlers of every kind", () =>
+    Effect.gen(function* () {
+      const calls = yield* Queue.unbounded<string>();
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(calls, request.handler).pipe(
+          Effect.as({
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: 1 },
+            guestMs: 1
+          })
+        )
+      );
+      const guest = { ...viewer, admin: false, guest: true };
+      const guestBinding = { ...binding, identity: guest, principal: { userId: guest.user.id } };
+      for (const handler of ["demo.query", "demo.mutation", "demo.action", "agent.lookup"])
+        assert.strictEqual(
+          (yield* invocations
+            .call(
+              { handler, args: handler === "demo.query" ? { id: 1 } : {} },
+              guestBinding,
+              Effect.succeed(guest)
+            )
+            .pipe(Effect.flip)).code,
+          "access_denied"
+        );
+      assert.strictEqual(yield* Queue.size(calls), 0);
+      for (const handler of ["demo.guestQuery", "demo.guestAction"])
+        assert.deepStrictEqual(
+          yield* invocations.call({ handler, args: {} }, guestBinding, Effect.succeed(guest)),
+          { ok: true, value: 1 }
+        );
+      assert.deepStrictEqual(
+        [yield* Queue.take(calls), yield* Queue.take(calls)],
+        ["demo.guestQuery", "demo.guestAction"]
+      );
+      // This executor-only fixture cannot open the company transaction, but reaching it proves
+      // the guest entry gate admits a marked mutation before dispatch.
+      const mutation = yield* invocations
+        .call(
+          { handler: "demo.guestMutation", args: {}, mutationKey: yield* MutationTransaction.mint },
+          guestBinding,
+          Effect.succeed(guest)
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(mutation.code, "source_unavailable");
+    })
+  );
   it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(

@@ -293,6 +293,8 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     // Agent tools are for agents only, at any depth; only the binding says who called.
     if (descriptor.agentTool === true && binding.agent === undefined)
       return yield* new Runtime.AccessDenied({});
+    if (viewer.guest && parent === undefined && descriptor.guest !== true)
+      return yield* new Runtime.AccessDenied({});
     // An agent's call starts only an agent tool. Inside it, `ctx.run` reaches siblings as usual.
     if (binding.agent !== undefined && parent === undefined && descriptor.agentTool !== true)
       return yield* new Runtime.AccessDenied({});

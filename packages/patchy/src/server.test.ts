@@ -50,6 +50,7 @@ it("extracts serializable descriptors without executing handlers", () => {
     }
   });
   const upload = server.action({
+    guest: true,
     args: { file: t.upload() },
     result: t.object({ file: t.nullable(t.fileHandle()) }),
     handler: () => {
@@ -59,6 +60,7 @@ it("extracts serializable descriptors without executing handlers", () => {
   const extracted = extractHandlerDescriptors({ leads: { list, upload } });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(list)), descriptor);
   assert.deepStrictEqual(extracted["leads.list"], descriptor);
+  assert.strictEqual(extracted["leads.upload"]?.guest, true);
   assert.deepStrictEqual(decodeDescriptors(JSON.parse(JSON.stringify(extracted))), extracted);
   const manifest = decodeManifest({
     manifestVersion: MANIFEST_VERSION,

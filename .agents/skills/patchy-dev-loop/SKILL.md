@@ -92,6 +92,7 @@ Done when `pnpm dev status` exits 0.
   with the server name its `config.toml` holds. DEVELOPMENT's **Environments**
   has what each needs.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
+  `patchy dev` prints builder, Colleague and Guest URLs. Guest is an active fictional account in a second company with a local grant to this patch; its runtime viewer carries its own user id, the patch's company and `guest: true`. It cannot use `/~dev/agent`. Open Guest to test `guest: true` tier 2 handlers, including writes, or tier 1 own-data access.
   A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
   an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,
   which calls one as a dev person, so open dev pages show its changes live.

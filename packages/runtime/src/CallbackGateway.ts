@@ -316,6 +316,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         ...capability.binding,
         effectivePrincipal,
         invocationId: attempt.invocationId,
+        reauthorize: capability.reauthorize,
         correlationId: yield* cryptography.internalId("call"),
         ...(handler.kind === "read" ? {} : { deadline: now + deadlineMs })
       });

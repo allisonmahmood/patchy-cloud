@@ -1,0 +1,28 @@
+{
+  "company": { "name": "Harbor Works", "handle": "harbor-works" },
+  "companies": [{ "name": "Pine Studio", "handle": "pine-studio" }],
+  "people": [
+    { "key": "ada", "name": "Ada Park", "email": "ada@harbor.example", "role": "admin" },
+    { "key": "ben", "name": "Ben Ortiz", "email": "ben@harbor.example", "role": "member" },
+    {
+      "key": "jordan",
+      "name": "Jordan Lee",
+      "email": "jordan@pine.example",
+      "role": "member",
+      "company": "pine-studio"
+    }
+  ],
+  "publisher": "ada",
+  "patches": [
+    {
+      "repo": "guest-notes",
+      "tier": 1,
+      "description": "A tier 1 own-data page for checking guest reads and writes."
+    },
+    {
+      "repo": "guest-handlers",
+      "tier": 2,
+      "description": "Guest-marked query, mutation and action handlers alongside a private handler."
+    }
+  ]
+}

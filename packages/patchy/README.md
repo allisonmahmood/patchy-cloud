@@ -203,6 +203,12 @@ none, and config execution refuses one with `invalid_manifest`. Descriptions are
 nonblank and at most 2,000 characters; the build and the instance refuse others
 as `invalid_manifest`, naming the handler and the fix, and the build also names
 its file.
+Set `guest: true` on a query, mutation or action that an outside guest with a
+share may start. Unmarked handlers remain callable by members, and a marked
+action can reach sibling queries and mutations through `ctx.run` under the
+usual nested-call rules. Guest agent tools are unavailable. Handler code can
+use the real viewer to enforce person-specific access. A tier 1 guest can write
+the patch's owned data, so use tier 2 when guests need restricted writes.
 Server-side shared reads return promises, without browser subscription methods
 or query stores.
 

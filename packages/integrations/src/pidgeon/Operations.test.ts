@@ -1097,6 +1097,14 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           ...viewer,
           user: { id: "usr_ops_queued", name: "Queued", email: "queued@acme.example" }
         };
+        const reauthorizeQueued = Effect.gen(function* () {
+          const rows = yield* sql<{ active: boolean }>`SELECT deactivated_at IS NULL AS active
+            FROM users WHERE id = ${queued.user.id}`.pipe(
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+          );
+          if (rows[0]?.active) return queued;
+          return yield* new Runtime.AccessDenied({});
+        });
         const labels = PidgeonTest.route("GET", "/labels");
         const release = yield* Deferred.make<void>();
         const slots = 4;
@@ -1122,7 +1130,11 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           "labels.list",
           {},
           {
-            binding: binding(send, { identity: queued, principal: { userId: queued.user.id } })
+            binding: binding(send, {
+              identity: queued,
+              principal: { userId: queued.user.id },
+              reauthorize: reauthorizeQueued
+            })
           }
         ).pipe(Effect.flip, Effect.forkChild);
         yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_ops_queued'`;

@@ -10,6 +10,36 @@ export const colleague = {
   email: "colleague@patchy.local"
 } as const;
 
+/** An active account at another fictional company, granted this local patch. */
+export const guest = {
+  id: "usr_dev_guest",
+  name: "Dev Guest",
+  email: "guest@outside.patchy.local"
+} as const;
+
+/** Local account and grant fixtures model an outsider without adding them to the host directory. */
+export const guestAccount = {
+  user: guest,
+  company: { id: "cmp_dev_outside", handle: "outside", name: "Outside Company" },
+  active: true
+} as const;
+
+export const guestViewer = (
+  patchId: string,
+  host: typeof Identity.Type.company,
+  account: typeof guestAccount,
+  grant: { readonly patchId: string; readonly userId: string }
+) => {
+  if (
+    !account.active ||
+    account.company.id === host.id ||
+    grant.patchId !== patchId ||
+    grant.userId !== account.user.id
+  )
+    return null;
+  return { user: account.user, company: host, admin: false, guest: true } as const;
+};
+
 /** Dev has two candidates and no authority changes or production directory reads. */
 export const layer = (identity: typeof Identity.Type) => {
   const rows: readonly (typeof Member.Type)[] = [

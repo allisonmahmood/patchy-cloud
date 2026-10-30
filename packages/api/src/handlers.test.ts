@@ -104,7 +104,7 @@ describe("handler descriptors", () => {
     expect(encodeManifest(decodeManifest(wire))).toEqual(wire);
   });
 
-  it("round-trips descriptions, read-only actions and agent tools, and omits them when absent", () => {
+  it("round-trips descriptions, read-only actions, guest handlers and agent tools", () => {
     const wire = {
       ...manifest,
       handlers: {
@@ -112,6 +112,7 @@ describe("handler descriptors", () => {
           kind: "action" as const,
           description: "Counts leads without changing any.",
           readOnly: true as const,
+          guest: true as const,
           args: {
             filter: {
               kind: "nullable" as const,
@@ -142,6 +143,8 @@ describe("handler descriptors", () => {
   });
 
   it("allows read-only only on actions and the agent tool mark only on agent handlers", () => {
+    for (const kind of ["query", "mutation", "action"])
+      expect(decodeDescriptor({ ...query, kind, guest: true })._tag).toBe("Success");
     expect(decodeDescriptor({ ...query, kind: "action", readOnly: true })._tag).toBe("Success");
     for (const kind of ["query", "mutation"])
       expect(decodeDescriptor({ ...query, kind, readOnly: true })._tag).toBe("Failure");
@@ -150,6 +153,7 @@ describe("handler descriptors", () => {
       { readOnly: false },
       { readOnly: null },
       { agentTool: false },
+      { guest: false },
       { description: null },
       { args: { value: { kind: "text", description: null } } }
     ])

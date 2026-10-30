@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
@@ -142,14 +142,25 @@ const errorPage = Effect.fn("PortalPages.errorPage")(function* (
   );
 });
 
-/** Stored ids in the reader's words: company members' names, version numbers and the patch's title. */
+/** Stored ids in the reader's words, including outside callers in this patch's logs. */
 const logNames = Effect.fn("PortalPages.logNames")(function* (
   card: Patches.PortalCard,
-  companyId: string
+  companyId: string,
+  viewerIds: readonly string[]
 ) {
   const members = yield* (yield* Users.Users).list(companyId);
+  // These ids came from this authorized patch's log, not from the host directory.
+  // A former guest's calls keep their name after a grant is removed.
+  const sql = yield* SqlClient.SqlClient;
+  const people =
+    viewerIds.length === 0
+      ? []
+      : yield* sql<{
+          id: string;
+          name: string;
+        }>`SELECT id, name FROM users WHERE ${sql.in("id", [...new Set(viewerIds)])}`;
   return {
-    people: new Map(members.map((member) => [member.id, member.name])),
+    people: new Map([...members, ...people].map((person) => [person.id, person.name])),
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
     patch: patchTitle(card.patch),
     connections: new Map<string, string>()
@@ -170,7 +181,11 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
     trees: false
   });
   if (entries.length === 0 && card.tier < 2) return "";
-  const names = yield* logNames(card, viewer.company.id);
+  const names = yield* logNames(
+    card,
+    viewer.company.id,
+    entries.map((entry) => entry.invocation.initiatingViewerId)
+  );
   return renderRecentActivity({ patch: card.patch, now, names, entries });
 });
 
@@ -680,7 +695,13 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   const scope = { companyId: viewer.company.id, patchId: card.patch.id };
   const page = yield* log.page({ ...scope, before, filter, limit: 25 });
   const choices = yield* log.choices(scope);
-  const names = yield* logNames(card, viewer.company.id);
+  const names = yield* logNames(card, viewer.company.id, [
+    ...choices.viewerIds,
+    ...page.entries.flatMap((entry) => [
+      entry.invocation.initiatingViewerId,
+      ...entry.tree.map((item) => item.effectivePrincipal)
+    ])
+  ]);
   const now = yield* Clock.currentTimeMillis;
   // Calls record the connection's id; readers know it by its handle. A connection deleted
   // since, or a store that cannot answer, leaves the id.

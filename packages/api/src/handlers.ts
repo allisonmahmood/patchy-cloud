@@ -126,7 +126,8 @@ const schemaProblem = (
 
 /**
  * One handler's contract. An action marked `readOnly` is held to reads by the runtime. A handler
- * built from a patch's `agent/` folder is marked `agentTool`, and only agents may call it. Absent
+ * built from a patch's `agent/` folder is marked `agentTool`, and only agents may call it. `guest`
+ * exposes a page handler as an entry point to admitted outside guests. Absent
  * marks are omitted, never written as false.
  */
 export const HandlerDescriptor = Schema.Struct({
@@ -134,6 +135,7 @@ export const HandlerDescriptor = Schema.Struct({
   description,
   readOnly: Schema.optionalKey(Schema.Literal(true)),
   agentTool: Schema.optionalKey(Schema.Literal(true)),
+  guest: Schema.optionalKey(Schema.Literal(true)),
   args: fields(HandlerSchema),
   result: HandlerSchema,
   errors: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMinLength(1))))

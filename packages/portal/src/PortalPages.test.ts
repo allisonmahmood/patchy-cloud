@@ -3076,6 +3076,26 @@ it.layer(layer)("what agents can do on a socket", (it) => {
 });
 
 it.layer(layer)("patch log on a socket", (it) => {
+  it.effect("names an outside caller in the host log after their share is removed", () =>
+    Effect.gen(function* () {
+      const host = yield* company();
+      const outside = yield* company();
+      const patch = yield* publish(host.owner, "guest-log");
+      const seed = seedOf(host.id, patch);
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET name = 'Jordan Guest' WHERE id = ${outside.member.id}`;
+      yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
+        VALUES (${patch.patchId}, ${host.id}, ${outside.member.id}, ${host.owner.id})`;
+      yield* invoke(seed, outside.member, { handler: "notes.save", kind: "mutation" });
+      yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${patch.patchId}`;
+
+      const log = yield* (yield* request(logPath(patch.name), host.owner)).text;
+      const card = yield* (yield* request(cardPath(patch.name), host.owner)).text;
+      assert.include(text(log), "Jordan Guest v1 notes.save mutation");
+      assert.include(text(card), "Jordan Guest");
+    })
+  );
+
   it.effect("shows an owner the tree of a failed action and refuses another owner's log", () =>
     Effect.gen(function* () {
       const workspace = yield* company("cmp_portal_log");

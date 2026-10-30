@@ -331,7 +331,9 @@ about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
-`attio/crm` connected to Patchy's probe workspace on Attio. `up` is idempotent and resumes a
+`attio/crm` connected to Patchy's probe workspace on Attio. `guests` seeds Harbor Works
+and Pine Studio, with an outside member and tier 1 and tier 2 example patches; it
+does not seed sharing grants. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
@@ -487,8 +489,11 @@ pnpm patchy dev --json
 ```
 
 `init` already installed the release. Open the returned `url` as the machine's
-user and `colleagueUrl` as a fixed non-admin colleague on a second origin;
-writes and subscriptions are shared between them. Config and fixture edits need
+user, `colleagueUrl` as a fixed non-admin colleague, and `guestUrl` as an active
+fictional user at another company with a local grant to this patch. Each has a
+separate origin; writes and subscriptions share the patch's owned data. The guest
+mount uses the normal runtime and honors `guest: true` on tier 2 entry handlers;
+it has no `/~dev/agent` door. Config and fixture edits need
 `pnpm patchy dev stop` and a start; `src/` edits rebuild and reload the shell,
 and `server/` and `agent/` edits rebind without a reload. A tier 2 repo's agent
 tools answer `pnpm patchy dev agent`, which prints what `open_patch` would, and

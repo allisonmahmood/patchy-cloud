@@ -639,16 +639,22 @@ const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioR
     return yield* new Runtime.AccessDenied({});
   // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
   const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-  const directory = yield* Directory.Directory;
   // A viewer deactivated while the call waited sends nothing.
-  const recheck = directory.get(companyId, identity.user.id).pipe(
-    Effect.catchTags({
-      SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-    }),
-    Effect.flatMap((member) =>
-      member?.active === true ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
-    )
-  );
+  const recheck = binding.reauthorize
+    ? binding.reauthorize.pipe(
+        Effect.mapError((cause) => new Runtime.AccessDenied({ cause })),
+        Effect.flatMap((current) =>
+          current.company.id === companyId && current.user.id === identity.user.id
+            ? Effect.void
+            : Effect.fail(new Runtime.AccessDenied({}))
+        )
+      )
+    : (yield* Directory.Directory).get(companyId, identity.user.id).pipe(
+        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+        Effect.flatMap((member) =>
+          member?.active === true ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
+        )
+      );
   return yield* atWorkspace(
     {
       companyId,

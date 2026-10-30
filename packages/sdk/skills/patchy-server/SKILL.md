@@ -78,9 +78,17 @@ must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
 Keep reusable company code in `helpers/`, outside handler discovery. Import
 builders and bound context types from `patchy/_generated/server.js`, and `t` and
 `HandlerError` from `patchy/server`.
-Each builder takes `{ description?, args, result, errors?, handler }`, and
+Each builder takes `{ description?, guest?, args, result, errors?, handler }`, and
 `action` also takes `readOnly: true`. `args` is a field map; `result` is one
 descriptor. The handler receives `(ctx, args)`.
+
+An outside guest with a share may start only page handlers marked `guest: true`.
+Queries, mutations and actions can all be marked. Unmarked sibling handlers may
+still be called through a marked action's `ctx.run` under the usual nested-call
+rules; the mark controls entry, not each internal call. Check the real viewer
+where records or operations depend on that person. Guests cannot call `agent/`
+tools. A tier 1 guest can write all owned tables and files, so use tier 2
+handlers when guest access needs read-only or person-specific rules.
 
 The generated builders bind the config's table types. A helper can accept
 `QueryContext`, `MutationContext`, `ActionContext` or `ReadOnlyActionContext`
