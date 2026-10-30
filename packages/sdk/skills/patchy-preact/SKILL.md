@@ -1,6 +1,6 @@
 ---
 name: patchy-preact
-description: Build a Patchy page with components, hooks or signals; handle async reads and useQuery snapshots; resolve compat or JSX import problems.
+description: Build a Patchy page with components, hooks or signals; handle async reads and useQuery snapshots; give pages paths of their own; resolve compat or JSX import problems.
 ---
 
 # Preact pages
@@ -119,6 +119,32 @@ a separate download in Patchy's shell.
 
 See `../patchy-files/SKILL.md` for selection, access and replacement rules.
 Tier 1 retains `patchy.files.<store>.url(name)` and `.download(name)`.
+
+## Routes
+
+`patchy.route` gives a page paths of its own under the patch's address, on
+tiers 1 and 2, company and public patches, hosted and in `patchy dev`. Paths
+are relative to the patch: `/` is its root, and `/deals/42` shows in the
+address bar after the patch's address. Framework-free pages use the same API.
+
+- `get(): Promise<string>` reads the current path. Opening or reloading an
+  address under the patch starts the page at that path.
+- `set(path): Promise<null>` asks the shell to push a history entry for the
+  path. The frame stays loaded. Setting the path already shown still pushes an
+  entry and notifies nobody.
+- `subscribe(listener)` returns an unsubscribe function. The listener is called
+  asynchronously with the current path, then after each acknowledged `set` and
+  each back or forward. Unsubscribing also drops notifications already queued.
+
+A path starts with one `/` and has no query, fragment, backslash, space or
+control character, and every `%` begins a valid escape. Decoded, no segment is
+`.` or `..`, contains `/` or `\`, or starts with `~`, which Patchy keeps. `set`
+rejects any other path with `invalid_request`. Back, forward and a `set` report
+the decoded path: `set("/caf%C3%A9")` reports `/caf%C3%A9`, then `/café`.
+
+The frame is one document for the whole visit. A link that changes the route
+calls `set` instead of navigating the frame: a frame that navigates, through
+an `href` or `location`, loses its connection to Patchy.
 
 ## Development and helpers
 
