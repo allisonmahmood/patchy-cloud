@@ -80,6 +80,10 @@ export class Users extends Context.Service<
     readonly findByClerkId: (clerkUserId: string) => Effect.Effect<User | null, SqlError>;
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
+    /** Resolve only the named users; a patch log may name callers outside its company. */
+    readonly namesByIds: (
+      userIds: readonly string[]
+    ) => Effect.Effect<ReadonlyMap<string, string>, SqlError>;
     /**
      * The signed-in user and their company, with the user's email and name brought up to
      * `claims`. Unchanged claims cost one read and write nothing. `company` is null only when
@@ -142,6 +146,11 @@ export const make = Effect.gen(function* () {
     Result: User,
     execute: (companyId) =>
       sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} ORDER BY created_at, id`
+  });
+  const namedUsers = SqlSchema.findAll({
+    Request: Schema.Array(Schema.String),
+    Result: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    execute: (ids) => sql`SELECT id, name FROM users WHERE ${sql.in("id", ids)}`
   });
   const userByRef = SqlSchema.findOneOption({
     Request: ref,
@@ -206,6 +215,14 @@ export const make = Effect.gen(function* () {
   );
   const list = Effect.fn("Users.list")((companyId: string) =>
     companyUsers(companyId).pipe(Effect.catchTags(dieOnSchemaError))
+  );
+  const namesByIds = Effect.fn("Users.namesByIds")((userIds: readonly string[]) =>
+    userIds.length === 0
+      ? Effect.succeed(new Map<string, string>())
+      : namedUsers([...new Set(userIds)]).pipe(
+          Effect.catchTags(dieOnSchemaError),
+          Effect.map((people) => new Map(people.map((person) => [person.id, person.name])))
+        )
   );
   // The stored name is settled before the change check, so a nameless person's repeat
   // requests compare equal and write nothing. Changed claims keep the write path a resolve
@@ -324,6 +341,7 @@ export const make = Effect.gen(function* () {
     findByClerkId,
     findByEmail,
     list,
+    namesByIds,
     refreshClaims,
     setRole,
     checkDeactivation,

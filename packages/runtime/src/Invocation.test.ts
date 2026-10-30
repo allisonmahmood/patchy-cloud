@@ -142,19 +142,20 @@ const recorder = Effect.gen(function* () {
   return { events, next: Queue.take(records) };
 });
 
-it.layer(services)("Invocation", (it) => {
-  it.effect("admits only marked guest entry handlers of every kind", () =>
+it.layer(services)("guest invocation", (it) => {
+  it.effect("admits only marked guest entry handlers", () =>
     Effect.gen(function* () {
       const calls = yield* Queue.unbounded<string>();
-      const invocations = yield* makeInvocation((request) =>
-        Queue.offer(calls, request.handler).pipe(
+      const invocations = yield* makeInvocation((request) => {
+        assert.strictEqual(request.viewer.guest, true);
+        return Queue.offer(calls, request.handler).pipe(
           Effect.as({
             outcome: "returned" as const,
             reply: { ok: true as const, value: 1 },
             guestMs: 1
           })
-        )
-      );
+        );
+      });
       const guest = { ...viewer, admin: false, guest: true };
       const guestBinding = { ...binding, identity: guest, principal: { userId: guest.user.id } };
       for (const handler of ["demo.query", "demo.mutation", "demo.action", "agent.lookup"])
@@ -178,7 +179,7 @@ it.layer(services)("Invocation", (it) => {
         [yield* Queue.take(calls), yield* Queue.take(calls)],
         ["demo.guestQuery", "demo.guestAction"]
       );
-      // This executor-only fixture cannot open the company transaction, but reaching it proves
+      // This executor fixture cannot open the company transaction, but reaching it proves
       // the guest entry gate admits a marked mutation before dispatch.
       const mutation = yield* invocations
         .call(
@@ -190,6 +191,9 @@ it.layer(services)("Invocation", (it) => {
       assert.strictEqual(mutation.code, "source_unavailable");
     })
   );
+});
+
+it.layer(services)("Invocation", (it) => {
   it.effect("refuses a paused patch before loading code and preserves retryAfter on HTTP", () =>
     Effect.gen(function* () {
       const invocations = yield* makeInvocation(() => Effect.die("Paused code must not run.")).pipe(

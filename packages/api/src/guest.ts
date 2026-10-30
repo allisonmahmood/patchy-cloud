@@ -26,7 +26,9 @@ const args = Schema.Record(Schema.String, Schema.Json);
 const viewer = Schema.Struct({
   user: Identity.fields.user,
   company: Identity.fields.company,
-  admin: Schema.Boolean
+  admin: Schema.Boolean,
+  /** Older stored bundles may omit this; current hosts always send it. */
+  guest: Schema.optionalKey(Schema.Boolean)
 });
 /**
  * The worker agent an invocation runs for, by the name its person approved: a label, never proof.

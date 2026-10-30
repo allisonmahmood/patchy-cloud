@@ -121,6 +121,9 @@ export const Errors = Schema.Union([
   Source.Busy,
   Runtime.InvalidRequest,
   Runtime.AccessDenied,
+  Runtime.SessionExpired,
+  Runtime.SessionRefreshRequired,
+  Runtime.PrincipalChanged,
   Runtime.SourceUnavailable,
   Runtime.TooLarge
 ]);
@@ -731,7 +734,9 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
   // A viewer deactivated while the call waited sends nothing.
   const recheck = binding.reauthorize
     ? binding.reauthorize.pipe(
-        Effect.mapError((cause) => new Runtime.AccessDenied({ cause })),
+        Effect.mapError((cause) =>
+          isError(cause) ? cause : new Runtime.SourceUnavailable({ cause })
+        ),
         Effect.flatMap((current) =>
           current.company.id === companyId && current.user.id === identity.user.id
             ? Effect.void

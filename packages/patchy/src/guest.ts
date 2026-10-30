@@ -465,7 +465,7 @@ export function createGuest(
       // A read-only action keeps an action's writes here, so one forced past its types reaches
       // the host, which refuses it. Only an agent's call names its agent; a page's is null.
       const context = {
-        viewer: input.viewer,
+        viewer: { ...input.viewer, guest: input.viewer.guest ?? false },
         agent: input.agent ?? null,
         tables: names((name) => table(call, name, kind !== "query")),
         members: members(call),

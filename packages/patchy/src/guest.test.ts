@@ -45,7 +45,8 @@ const viewer = {
 const invoke = async (
   definition: unknown,
   call: (operation: unknown) => Promise<unknown>,
-  sharedStores: readonly string[] = []
+  sharedStores: readonly string[] = [],
+  actor: typeof viewer & { readonly guest?: boolean } = viewer
 ) => {
   const guest = createGuest({ demo: { run: definition } }, sharedStores);
   const response = await guest.fetch(
@@ -56,7 +57,7 @@ const invoke = async (
         type: "invoke",
         handler: "demo.run",
         args: {},
-        viewer
+        viewer: actor
       })
     }),
     undefined,
@@ -64,6 +65,23 @@ const invoke = async (
   );
   return (await response.json()) as unknown;
 };
+
+it("passes the admitted outside viewer flag to handler code", async () => {
+  const definition = server.query({
+    args: {},
+    result: t.boolean(),
+    handler: (ctx) => ctx.viewer.guest
+  });
+  const reply = await invoke(
+    definition,
+    async () => {
+      throw new Error("A viewer-only handler should make no callbacks.");
+    },
+    [],
+    { ...viewer, guest: true }
+  );
+  assert.deepInclude(reply, { ok: true, value: true });
+});
 
 it.each([
   { name: "a reference builder", column: t.ref("accounts") },

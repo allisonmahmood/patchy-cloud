@@ -544,6 +544,22 @@ it.layer(fixture)("Attio operations, offline", (it) => {
           binding(crm, { scope: "public", identity: null, principal: null })
         ],
         [
+          "an expired session at the queued recheck",
+          "attio.listMembers",
+          {},
+          { code: "session_expired" },
+          binding(crm, { reauthorize: Effect.fail(new Runtime.SessionExpired({})) })
+        ],
+        [
+          "an unavailable admission dependency at the queued recheck",
+          "attio.listMembers",
+          {},
+          { code: "source_unavailable" },
+          binding(crm, {
+            reauthorize: Effect.fail(new Runtime.SourceUnavailable({ cause: new Error("offline") }))
+          })
+        ],
+        [
           "another company's viewer",
           "attio.listMembers",
           {},

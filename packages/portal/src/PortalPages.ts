@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchName, PatchState, SharingScope } from "@patchy/api";
@@ -151,16 +151,9 @@ const logNames = Effect.fn("PortalPages.logNames")(function* (
   const members = yield* (yield* Users.Users).list(companyId);
   // These ids came from this authorized patch's log, not from the host directory.
   // A former guest's calls keep their name after a grant is removed.
-  const sql = yield* SqlClient.SqlClient;
-  const people =
-    viewerIds.length === 0
-      ? []
-      : yield* sql<{
-          id: string;
-          name: string;
-        }>`SELECT id, name FROM users WHERE ${sql.in("id", [...new Set(viewerIds)])}`;
+  const people = yield* (yield* Users.Users).namesByIds(viewerIds);
   return {
-    people: new Map([...members, ...people].map((person) => [person.id, person.name])),
+    people: new Map([...members.map((person) => [person.id, person.name] as const), ...people]),
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
     patch: patchTitle(card.patch),
     connections: new Map<string, string>()

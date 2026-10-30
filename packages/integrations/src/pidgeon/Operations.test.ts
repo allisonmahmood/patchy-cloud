@@ -1218,6 +1218,34 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           "access_denied"
         ],
         [
+          "an expired session at the queued recheck",
+          call(
+            "pidgeon.read",
+            "labels.list",
+            {},
+            {
+              binding: binding(send, { reauthorize: Effect.fail(new Runtime.SessionExpired({})) })
+            }
+          ),
+          "session_expired"
+        ],
+        [
+          "an unavailable admission dependency at the queued recheck",
+          call(
+            "pidgeon.read",
+            "labels.list",
+            {},
+            {
+              binding: binding(send, {
+                reauthorize: Effect.fail(
+                  new Runtime.SourceUnavailable({ cause: new Error("offline") })
+                )
+              })
+            }
+          ),
+          "source_unavailable"
+        ],
+        [
           "another company's viewer",
           call(
             "pidgeon.read",
