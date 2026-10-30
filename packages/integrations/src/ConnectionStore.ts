@@ -30,6 +30,7 @@ const fields = {
   description: Description,
   mode: Schema.Literal("company"),
   status: Schema.Literals(["connected", "disconnected"]),
+  blockGuests: Schema.optionalKey(Schema.Boolean),
   credentialRevision: Schema.Int,
   metadataRevision: Schema.Int,
   lastTestedAt: Schema.NullOr(Schema.String),
@@ -222,6 +223,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "disconnect",
       "reconnect",
       "describe",
+      "setGuestBlock",
       "delete",
       "resolve",
       "poolCredentials",
@@ -353,6 +355,9 @@ export class ConnectionStore extends Context.Service<
     readonly reconnect: (input: Identity) => Effect.Effect<Connection, ConnectionError>;
     readonly describe: (
       input: Identity & { readonly description: string }
+    ) => Effect.Effect<Connection, ConnectionError>;
+    readonly setGuestBlock: (
+      input: Identity & { readonly blockGuests: boolean }
     ) => Effect.Effect<Connection, ConnectionError>;
     /**
      * Returns the connection as it was before deletion; `report` runs as `connect`'s does. A key

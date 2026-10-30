@@ -278,6 +278,11 @@ export const renderOverview = (input: {
   readonly now: number;
   /** Recent activity, rendered only for the owner and admins. */
   readonly activity: string;
+  readonly guestUnavailable?: {
+    readonly source: string;
+    readonly reason: string;
+    readonly repair: string;
+  } | null;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -304,7 +309,12 @@ export const renderOverview = (input: {
     viewer.role === "admin" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
-  return `${descriptionBlock(card)}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
+  const guest = input.guestUnavailable;
+  const guestNotice =
+    manage && guest != null
+      ? `<div class="note note-warn"><strong class="note-title">Guests cannot open this patch</strong><p>${escapeHtml(guest.source)} ${escapeHtml(guest.reason)} ${escapeHtml(guest.repair)}</p></div>`
+      : "";
+  return `${descriptionBlock(card)}${facts}${guestNotice}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
 };
 
 /** The card's Settings, for the owner and admins: owner, description, who can open it, stopping or deleting. */

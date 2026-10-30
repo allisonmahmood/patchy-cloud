@@ -49,9 +49,14 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           return Effect.fail(
             new ConnectionStore.ConnectionNotFound({ companyId, lookup: { integration, handle } })
           );
-        const { description, status, metadataRevision: revision } = item.connection;
+        const { description, status, blockGuests, metadataRevision: revision } = item.connection;
         const found = item.snapshots.find((snapshot) => snapshot.revision === revision);
-        const base = { handle, description, status };
+        const base = {
+          handle,
+          description,
+          status,
+          ...(blockGuests === undefined ? {} : { blockGuests })
+        };
         if (found?.takenAt === undefined)
           return Effect.succeed({ ...base, integration, snapshot: null });
         const stamp = { revision, takenAt: found.takenAt };
@@ -121,6 +126,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       disconnect: unavailable,
       reconnect: unavailable,
       describe: unavailable,
+      setGuestBlock: unavailable,
       delete: unavailable,
       countSend: (companyId, id, day, budget) =>
         Effect.sync(() => {

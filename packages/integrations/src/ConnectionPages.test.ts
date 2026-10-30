@@ -284,6 +284,36 @@ const storeVersion = Effect.fn(function* (
 });
 
 it.layer(services)("company connection pages", (it) => {
+  it.effect("lets admins block and restore guest use on a connection", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-guests");
+      const member = yield* addUser(owner, "member");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      const store = yield* ConnectionStore.ConnectionStore;
+      const page = Effect.fn(function* (user: Users.User) {
+        const response = yield* send(path, { headers: { cookie: cookie(user) } });
+        return yield* Effect.promise(() => response.text());
+      });
+      assert.isFalse((yield* store.get(owner.company.id, connection.id)).blockGuests ?? false);
+      assert.include(yield* page(owner.user), "Block guests");
+      assert.notInclude(yield* page(member), '<button class="btn" type="submit">Block guests');
+      assert.strictEqual(
+        (yield* send(`${path}/guest-block`, post(member, { blockGuests: "true" }))).status,
+        403
+      );
+      assert.strictEqual(
+        (yield* send(`${path}/guest-block`, post(owner.user, { blockGuests: "true" }))).status,
+        303
+      );
+      assert.isTrue((yield* store.get(owner.company.id, connection.id)).blockGuests);
+      assert.include(yield* page(owner.user), "Allow guests");
+      assert.strictEqual(
+        (yield* send(`${path}/guest-block`, post(owner.user, { blockGuests: "false" }))).status,
+        303
+      );
+      assert.isFalse((yield* store.get(owner.company.id, connection.id)).blockGuests ?? false);
+    })
+  );
   it.effect(
     "shows only the selected connection's escaped recent calls to admins and never reads the log for members",
     () =>

@@ -7,6 +7,7 @@
  * The hosting server mounts the group with the rest of the API.
  */
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -75,6 +76,7 @@ import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
 import * as Content from "./Content.js";
+import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
 
@@ -366,6 +368,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const invocationLog = yield* InvocationLog.InvocationLog;
     const users = yield* Users.Users;
     const connectionStore = yield* ConnectionStore.ConnectionStore;
+    const guestGrants = yield* GuestGrants.GuestGrants;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
@@ -623,6 +626,25 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           // Before the version is recorded, so the stored response a same-key retry replays has it.
           warnings.push(...(yield* lookWarnings(metadata.look, identity.company)));
           warnings.push(...(yield* agentAccessWarnings(manifest.handlers, identity.company)));
+          if (patchId !== null) {
+            const existing = yield* patches
+              .find(patchId)
+              .pipe(Effect.catchTags({ SqlError: Effect.die }));
+            if (Option.isSome(existing) && existing.value.patch.companyId === identity.company.id) {
+              const unavailable = yield* guestGrants
+                .publishStatus(
+                  patchId,
+                  identity.company.id,
+                  payload.scope ?? existing.value.patch.scope,
+                  manifest
+                )
+                .pipe(Effect.catchTags({ SqlError: Effect.die }));
+              if (unavailable !== null)
+                warnings.push(
+                  `Guests cannot open this patch: ${unavailable.source} ${unavailable.reason}. ${unavailable.repair}`
+                );
+            }
+          }
           const recorded = yield* content
             .publish({
               patchId,
@@ -1062,4 +1084,4 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
         })
       );
   })
-);
+).pipe(Layer.provide(GuestGrants.layer));

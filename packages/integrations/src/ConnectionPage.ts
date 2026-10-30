@@ -30,7 +30,7 @@ export type Target =
 export type Change =
   | { readonly kind: "connect"; readonly integration: string }
   | {
-      readonly kind: "test" | "refresh" | "reconnect" | View.Confirmation;
+      readonly kind: "test" | "refresh" | "reconnect" | "guest-block" | View.Confirmation;
       readonly id: string;
     };
 
@@ -169,6 +169,7 @@ const results = {
   disconnect: "Connection disconnected. Patches cannot use it until an admin reconnects it.",
   reconnect: "Connection tested and reconnected. Its schema revision is unchanged.",
   description: "Description updated.",
+  "guest-block": "Guest access setting updated.",
   delete: "Connection deleted. Its schema snapshots have been kept."
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
@@ -374,6 +375,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       integration: page.integration,
       handle: connection.handle,
       description: connection.description,
+      blockGuests: connection.blockGuests,
       status: connection.status,
       mode: page.offer.mode,
       testedAt: connection.lastTestedAt,
@@ -542,6 +544,9 @@ const decodeConnect = Schema.decodeUnknownEffect(
   Schema.Struct({ handle: Schema.String, description: Schema.String })
 );
 const decodeDescription = Schema.decodeUnknownEffect(Schema.Struct({ description: Schema.String }));
+const decodeGuestBlock = Schema.decodeUnknownEffect(
+  Schema.Struct({ blockGuests: Schema.Literals(["true", "false"]) })
+);
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
 /** The form's text fields; a page echoes only the ones that are not secret. */
 const submittedOf = (form: Readonly<Record<string, unknown>> | null): Submitted =>
@@ -707,6 +712,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
       yield* store.describe({ ...input, description: fields.description });
+    } else if (kind === "guest-block") {
+      const fields = yield* decodeGuestBlock(form);
+      yield* store.setGuestBlock({ ...input, blockGuests: fields.blockGuests === "true" });
     } else if (kind === "delete") {
       const deleted = yield* store.delete(input, yield* reporter(viewer, "connection.deleted"));
       integration = deleted.connection.integration;

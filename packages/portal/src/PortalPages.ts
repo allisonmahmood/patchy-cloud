@@ -29,7 +29,7 @@ import {
   escapeHtml
 } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
-import { Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
@@ -231,6 +231,31 @@ const tabOf: Record<PatchAction, PageTab> = {
 };
 const settingsForbidden = "Only the owner or an admin can change this patch's settings.";
 
+/** Reasons are computed from the current version and stored grants on each read. */
+const guestStatus = Effect.fn("PortalPages.guestStatus")(function* (patch: Patches.Patch) {
+  if (patch.state !== "live" || patch.scope !== "company" || patch.currentVersionId === null)
+    return null;
+  const found = yield* (yield* Patches.Patches).find(patch.id, undefined, patch.currentVersionId);
+  if (Option.isNone(found)) return null;
+  return yield* (yield* GuestGrants.GuestGrants).status(found.value.patch, found.value.version);
+});
+
+const guestStatuses = Effect.fn("PortalPages.guestStatuses")(function* (
+  rows: readonly Patches.ReadPatch[],
+  viewer: RequireSession.Viewer["Service"]
+) {
+  const statuses = yield* Effect.forEach(
+    rows.filter((row) => viewer.role === "admin" || row.owner.id === viewer.user.id),
+    (row) => Effect.map(guestStatus(row.patch), (status) => [row.patch.id, status] as const),
+    { concurrency: 4 }
+  );
+  return new Map(
+    statuses.filter(
+      (entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null
+    )
+  );
+});
+
 /** One patch's card at `/patches/<name>` on one of its tabs. A member asking for Settings gets Overview. */
 const render = Effect.fn("PortalPages.render")(function* (
   name: string,
@@ -270,7 +295,13 @@ const render = Effect.fn("PortalPages.render")(function* (
         })
       : tab === "versions"
         ? renderVersions({ card, viewer, now })
-        : renderOverview({ card, viewer, now, activity: yield* recentActivity(card, now) });
+        : renderOverview({
+            card,
+            viewer,
+            now,
+            activity: yield* recentActivity(card, now),
+            guestUnavailable: manages ? yield* guestStatus(card.patch) : null
+          });
   const panel = tab === "overview" ? yield* agentPanel(card) : "";
   return pageResponse(
     {
@@ -1015,7 +1046,8 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
         publicBaseUrl: session.publicBaseUrl,
         opens,
         names: new Map(members.map((member) => [member.id, member.name])),
-        failures: yield* recentFailures(rows)
+        failures: yield* recentFailures(rows),
+        guestUnavailable: yield* guestStatuses(rows, viewer)
       }),
       styles: styles + listStyles,
       app: { viewer, section: "patches" }
@@ -1073,6 +1105,7 @@ export const layer: Layer.Layer<
       | Companies.Companies
       | Users.Users
       | Patches.Patches
+      | GuestGrants.GuestGrants
       | MachineTokens.MachineTokens
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore

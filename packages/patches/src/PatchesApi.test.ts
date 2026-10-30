@@ -3666,6 +3666,46 @@ it.layer(Layer.fresh(publishLayer))("publish look check", (it) => {
   );
 });
 
+it.layer(Layer.fresh(publishLayer))("guest publish warning", (it) => {
+  it.effect("publishes successfully with the shared source reason when grants are retained", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const first = yield* owner.publish({
+        payload: publishRequest({ html: html("Guest source") })
+      });
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_publish_guest', 'publish-guest', 'Guest company')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_publish_guest', 'clerk_publish_guest', 'cmp_publish_guest',
+          'publish-guest@patchy.local', 'Guest', 'member')`;
+      yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
+        VALUES (${first.patchId}, ${uploader.company.id}, 'usr_publish_guest', ${uploader.user.id})`;
+      const payload = yield* consumingRequest({
+        html: html("Uses members"),
+        patchId: first.patchId,
+        manifest: {
+          ...Fixtures.manifest,
+          uses: { members: { kind: "members" } }
+        }
+      });
+      const [published, response] = yield* owner.publish({
+        payload,
+        responseMode: "decoded-and-response"
+      });
+      assert.strictEqual(published.ok, true);
+      assert.deepStrictEqual(published.warnings, [
+        "Guests cannot open this patch: Member directory (members) is unavailable to guests. Remove the member directory declaration and member columns."
+      ]);
+      assert.include(JSON.stringify(yield* response.json), published.warnings[0]!);
+      const repaired = yield* owner.publish({
+        payload: publishRequest({ html: html("Own data again"), patchId: first.patchId })
+      });
+      assert.deepStrictEqual(repaired.warnings, []);
+    })
+  );
+});
+
 it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
   it.effect("lets the owner and admins read a patch's log and names the owner to anyone else", () =>
     Effect.gen(function* () {

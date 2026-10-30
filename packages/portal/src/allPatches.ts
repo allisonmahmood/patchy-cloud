@@ -105,7 +105,13 @@ const attentionOf = (
   viewer: Viewer,
   names: ReadonlyMap<string, string>,
   now: number,
-  failures: ReadonlyMap<string, number> | undefined
+  failures: ReadonlyMap<string, number> | undefined,
+  guestUnavailable:
+    | ReadonlyMap<
+        string,
+        { readonly source: string; readonly reason: string; readonly repair: string }
+      >
+    | undefined
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
@@ -124,6 +130,13 @@ const attentionOf = (
       title: "Its owner is deactivated",
       detail: "Nobody can publish to it until someone else owns it.",
       act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
+    };
+  const guest = guestUnavailable?.get(patch.id);
+  if (patch.state === "live" && guest !== undefined)
+    return {
+      title: "Guests cannot open this patch",
+      detail: `${guest.source} ${guest.reason} ${guest.repair}`,
+      act: `<a class="btn" href="${escapeAttribute(cardPath(patch))}">See the patch</a>`
     };
   const failed = failures?.get(patch.id) ?? 0;
   if (patch.state === "live" && failed > 0)
@@ -212,6 +225,10 @@ export const renderAllPatches = (input: {
   readonly names: ReadonlyMap<string, string>;
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
+  readonly guestUnavailable?: ReadonlyMap<
+    string,
+    { readonly source: string; readonly reason: string; readonly repair: string }
+  >;
 }): string => {
   const { viewer, now, show, query, names } = input;
   const byVisits = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
@@ -223,7 +240,7 @@ export const renderAllPatches = (input: {
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
-      const found = attentionOf(row, viewer, names, now, input.failures);
+      const found = attentionOf(row, viewer, names, now, input.failures, input.guestUnavailable);
       return found === undefined ? [] : [[row.patch.id, found] as const];
     })
   );

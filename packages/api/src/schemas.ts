@@ -673,6 +673,7 @@ export const ConnectionSummary = Schema.Struct({
   integration: Integration,
   description: Schema.String,
   status: Schema.Literals(["connected", "disconnected"]),
+  blockGuests: Schema.optionalKey(Schema.Boolean),
   hint: Schema.String,
   reason: Schema.optionalKey(Schema.Literal("not_connected")),
   /** A Pidgeon connection made with a test key: its mail stays in Pidgeon. Absent otherwise. */
@@ -695,6 +696,7 @@ const detail = <const I extends Integration, F extends Schema.Struct.Fields>(
     handle: ConnectionSummary.fields.handle,
     description: ConnectionSummary.fields.description,
     status: ConnectionSummary.fields.status,
+    blockGuests: ConnectionSummary.fields.blockGuests,
     snapshot: Schema.NullOr(
       Schema.Struct({ ...snapshot, revision: Revision, takenAt: Schema.String })
     )

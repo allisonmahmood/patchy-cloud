@@ -121,6 +121,7 @@ const detailFields = {
   handle: Schema.String,
   description: Schema.String,
   status: Schema.Literals(["connected", "disconnected"]),
+  blockGuests: Schema.Boolean,
   revision: Schema.Int,
   takenAt: Schema.NullOr(Schema.String)
 };
@@ -177,6 +178,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const attio = yield* AttioSource.Source;
     const audit = yield* RuntimeLog.RuntimeLog;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
+    block_guests AS "blockGuests",
     display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
     to_char(last_discovered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastDiscoveredAt",
@@ -231,7 +233,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       }),
       Result: SnapshotDetail,
       execute: ({ companyId, integration, handle }) => sql`SELECT c.integration, c.handle,
-      c.description, c.status,
+      c.description, c.status, c.block_guests AS "blockGuests",
       c.metadata_revision AS revision, s.snapshot,
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
@@ -1250,6 +1252,19 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       },
       Effect.catchTags(safe("describe"))
     );
+    const setGuestBlock = Effect.fn("ConnectionStore.setGuestBlock")(
+      function* (input: Identity & { readonly blockGuests: boolean }) {
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* lock(input);
+            yield* sql`UPDATE connections SET block_guests = ${input.blockGuests}
+              WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      },
+      Effect.catchTags(safe("setGuestBlock"))
+    );
     /**
      * Delete runs to its end even when its request is interrupted: once the row is gone, its keys
      * revoke themselves. If the COMMIT's answer is lost, the row says whether it went, but not who
@@ -1404,6 +1419,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       disconnect,
       reconnect,
       describe,
+      setGuestBlock,
       delete: remove,
       resolve,
       poolCredentials,

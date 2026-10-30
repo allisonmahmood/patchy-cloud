@@ -534,7 +534,8 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
           "integrations the caller decodes, such as postgres,posthog; only those connections and " +
           "offers are listed, and unknown names are ignored. Omitted, or the integrations=all that " +
           "CLIs from release 10 send, lists Postgres only, the shape those CLIs decode. No " +
-          "snapshots, credentials or business rows. Responses are private, no-store."
+          "snapshots, credentials or business rows. blockGuests reports the admin's guest access " +
+          "setting, false by default. Responses are private, no-store."
       )
     ),
     HttpApiEndpoint.get("getConnection", "/connections/:handle", {
@@ -555,6 +556,7 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
     }).annotateMerge(
       describe(
         "Read one company connection by its integration and exact handle, for any active member. " +
+          "blockGuests reports the admin's guest access setting, false by default. " +
           "The current immutable snapshot includes its revision and ISO takenAt timestamp, " +
           "including when the connection is disconnected. A missing snapshot is null, never an " +
           "empty database. Unknown integrations, unknown handles and another company's connections " +

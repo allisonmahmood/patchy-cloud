@@ -86,6 +86,43 @@ it.layer(
           caseName
         );
       }
+      const memberVersion = {
+        ...version,
+        manifest: { ...version.manifest, uses: { members: { kind: "members" as const } } }
+      };
+      assert.deepStrictEqual(yield* grants.unavailability(patch, memberVersion), {
+        source: "Member directory (members)",
+        reason: "is unavailable to guests",
+        repair: "Remove the member directory declaration and member columns."
+      });
+      yield* sql`INSERT INTO connections
+        (id, company_id, integration, handle, description, mode, status, display,
+         credentials, key_id, credential_revision, metadata_revision, created_by, block_guests)
+        VALUES ('conn_guest_block', ${patch.companyId}, 'postgres', 'warehouse', '', 'company',
+          'connected', '{}'::jsonb, '', '', 1, 1, ${Fixtures.identities.uploader.user.id}, true)`;
+      const connectionVersion = {
+        ...version,
+        tier: 2,
+        manifest: {
+          ...version.manifest,
+          tier: 2,
+          uses: {
+            sales: {
+              kind: "postgres" as const,
+              handle: "warehouse",
+              id: "conn_guest_block",
+              revision: 1
+            }
+          }
+        }
+      } as Patches.PatchVersion;
+      assert.deepStrictEqual(yield* grants.unavailability(patch, connectionVersion), {
+        source: "warehouse",
+        reason: "blocks guests",
+        repair: "Ask an admin to unblock it or remove the declaration."
+      });
+      yield* sql`UPDATE connections SET block_guests = false WHERE id = 'conn_guest_block'`;
+      assert.isNull(yield* grants.unavailability(patch, version));
       yield* grants.revoke(patchId, outsider);
       assert.isFalse(yield* grants.hasEligibleGrant(patch, version, outsider));
     })

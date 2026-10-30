@@ -33,7 +33,7 @@ import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import { InvocationLog, Prewarm, RuntimeLog, Wakes } from "@patchy/runtime";
@@ -76,6 +76,7 @@ const services = Layer.mergeAll(
   Limits.layer
 ).pipe(
   Layer.provideMerge(recordingAnalytics),
+  Layer.provideMerge(GuestGrants.layer),
   Layer.provideMerge(
     ConnectionStoreDev.layer([
       {
@@ -2794,6 +2795,40 @@ it.layer(layer)("all patches on a socket", (it) => {
       assert.include(text(ended), "Recovery ended");
       assert.notInclude(menuItems(ended, theirs.patchId), "Restore");
       assert.include(menuItems(ended, theirs.patchId), "Reassign…");
+    })
+  );
+
+  it.effect("shows one current guest refusal on the card and in Needs attention", () =>
+    Effect.gen(function* () {
+      const other = yield* company();
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      const source = yield* publishSource(workspace.owner, "shared-notes");
+      const patch = yield* publishDependant(workspace.owner, "guest-report", source.patchId);
+      yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
+        VALUES (${patch.patchId}, ${workspace.owner.companyId}, ${other.member.id}, ${workspace.owner.id})`;
+
+      const reason =
+        "Shared table (source) is unavailable to guests Remove this shared source declaration.";
+      const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+      const attention = yield* (yield* request("/patches?show=attention", workspace.owner)).text;
+      assert.include(text(card), reason);
+      assert.include(text(attention), reason);
+      assert.deepStrictEqual(listed(attention), [patch.name]);
+      assert.notInclude(
+        yield* (yield* request(cardPath(patch.name), workspace.member)).text,
+        "Guests cannot open this patch"
+      );
+
+      yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${patch.patchId}`;
+      assert.notInclude(
+        yield* (yield* request(cardPath(patch.name), workspace.owner)).text,
+        "Guests cannot open this patch"
+      );
+      assert.include(
+        text(yield* (yield* request("/patches?show=attention", workspace.owner)).text),
+        "Nothing needs your attention."
+      );
     })
   );
 });

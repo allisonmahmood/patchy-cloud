@@ -74,6 +74,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
                 integration: row.integration,
                 description: row.description,
                 status: row.status,
+                blockGuests: row.blockGuests,
                 ...(row.integration === "pidgeon" && row.display.test
                   ? { test: true as const }
                   : {}),

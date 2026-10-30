@@ -367,6 +367,7 @@ export interface Connection extends Usage {
   readonly handle: string;
   readonly description: string;
   readonly status: "connected" | "disconnected";
+  readonly blockGuests?: boolean;
   readonly mode: string;
   readonly testedAt: string | null;
   readonly addedBy: string;
@@ -572,7 +573,10 @@ export const renderConnection = (input: {
       : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.detail ?? (reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`)}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
   }</section>`;
   const facts = `<dl class="facts">${connection.facts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}<dt>Added by</dt><dd>${escapeHtml(connection.addedBy)}</dd><dt>Used by</dt><dd>${usedByFact(connection)}</dd></dl>`;
-  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map((item) => standing(item, input.admin)).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
+  const guestControl = input.admin
+    ? `<form method="post" action="${escapeAttribute(connectionPath(connection.id, "guest-block"))}"><input type="hidden" name="blockGuests" value="${connection.blockGuests ? "false" : "true"}"><button class="btn" type="submit">${connection.blockGuests ? "Allow guests" : "Block guests"}</button></form>`
+    : "";
+  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map((item) => standing(item, input.admin)).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}<p>Guest access: ${connection.blockGuests ? "Blocked" : "Allowed"}</p>${guestControl}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
 };
 
 // ---------- confirmations ----------

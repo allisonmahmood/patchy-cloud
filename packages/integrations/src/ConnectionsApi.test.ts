@@ -128,6 +128,7 @@ it.layer(layer)("connections group", (it) => {
               integration: "postgres",
               description: "pending description",
               status: "connected",
+              blockGuests: false,
               hint: "patchy add postgres/pending"
             },
             {
@@ -136,10 +137,11 @@ it.layer(layer)("connections group", (it) => {
               integration: "postgres",
               description: "warehouse description",
               status: "connected",
+              blockGuests: false,
               hint: "patchy add postgres/warehouse"
             }
           ]
-        };
+        } as const;
         const response = yield* api.listConnections({ query: {}, responseMode: "response-only" });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
@@ -153,9 +155,10 @@ it.layer(layer)("connections group", (it) => {
           integration: "postgres",
           description: "archive description",
           status: "disconnected",
+          blockGuests: false,
           reason: "not_connected"
         });
-        assert.deepStrictEqual(listed.connections.slice(1), expected.connections);
+        assert.deepStrictEqual(listed.connections.slice(1), [...expected.connections]);
         assert.isUndefined(listed.offered);
         assert.deepStrictEqual(yield* response.json, listed);
         assert.deepStrictEqual(yield* api.listConnections({ query: { all: false } }), listed);
@@ -202,6 +205,7 @@ it.layer(layer)("connections group", (it) => {
             handle,
             description: `${handle} description`,
             status,
+            blockGuests: false,
             snapshot: { ...snapshot, revision: 4, takenAt }
           });
         }
@@ -210,6 +214,7 @@ it.layer(layer)("connections group", (it) => {
           handle: "pending",
           description: "pending description",
           status: "connected",
+          blockGuests: false,
           snapshot: null
         });
         const unknown = yield* api.getConnection({
@@ -441,6 +446,7 @@ it.layer(layer)("connections group", (it) => {
         integration: "attio",
         description: "The CRM",
         status: "connected",
+        blockGuests: false,
         hint: "patchy add attio/crm"
       });
       assert.deepInclude(current.offered ?? [], { integration: "attio", connected: true });

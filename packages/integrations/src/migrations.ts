@@ -75,5 +75,8 @@ export const migrations: Migrations = {
       sends INTEGER NOT NULL CHECK (sends > 0),
       PRIMARY KEY (connection_id, day)
     )`
+  ),
+  "0031_connections_block_guests": ddl(
+    `ALTER TABLE connections ADD COLUMN block_guests BOOLEAN NOT NULL DEFAULT false`
   )
 };
