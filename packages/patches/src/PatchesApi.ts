@@ -100,12 +100,17 @@ const encodeRepo = Schema.encodeSync(PatchRepo);
 
 /**
  * What `patchy pull` gets from a version: its snapshot, a file-born page's one file, or nothing.
- * Only a file publish records a filename, so a version with one is that file.
+ * A file publish records its filename and sends tier 1 with no server module, tables or stores.
+ * Filename metadata on anything else is the client's say-so, and its HTML alone isn't the patch.
  */
 const pullKind = (version: Patches.PatchVersion) =>
   version.repo !== null
     ? ("repo" as const)
-    : version.originalFilename !== null
+    : version.originalFilename !== null &&
+        version.tier === 1 &&
+        version.server === null &&
+        Object.keys(version.manifest.tables).length === 0 &&
+        Object.keys(version.manifest.files).length === 0
       ? ("file" as const)
       : null;
 

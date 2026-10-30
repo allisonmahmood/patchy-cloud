@@ -3683,6 +3683,26 @@ it.layer(Layer.fresh(publishLayer))("repo snapshots over machine tokens", (it) =
         owner: { id: uploader.user.id, name: uploader.user.name }
       });
 
+      // A filename on a scripted publish doesn't make its HTML the patch: pulling that alone would
+      // lose the server code.
+      const scripted = yield* owner.publish({
+        payload: yield* consumingRequest({
+          html: html("Scripted"),
+          manifest: { ...Fixtures.manifest, name: "repo-scripted" },
+          metadata: { filename: "tool.html" }
+        })
+      });
+      assert.isNull(
+        (yield* colleague.detail({ params: { patchRef: scripted.patchId }, query: {} })).repo
+      );
+      const scriptedPull = yield* colleague.pull({
+        params: { patchRef: scripted.patchId },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(scriptedPull.status, 404);
+      expect(yield* scriptedPull.json).toMatchObject({ code: "no_repo" });
+
       // Another company's patch is the same 404 as one that doesn't exist.
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO companies (id, handle, name)
