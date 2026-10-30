@@ -112,6 +112,22 @@ export class PatchConflict extends Schema.TaggedError<PatchConflict>()("PatchCon
   }
 }
 
+/**
+ * A publish from a copy older than the patch's newest version: it was pulled from or last
+ * published as `baseVersion`, and someone has published since.
+ */
+export class Behind extends Schema.TaggedError<Behind>()("Behind", {
+  patchId: Schema.String,
+  baseVersion: Schema.Int,
+  latestVersion: Schema.Int,
+  publishedBy: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  publishedAt: Schema.String
+}) {
+  override get message() {
+    return `This copy is from v${this.baseVersion}, but ${this.publishedBy.name} published v${this.latestVersion} since, at ${this.publishedAt}.`;
+  }
+}
+
 export class NameTaken extends Schema.TaggedError<NameTaken>()("NameTaken", {
   name: PatchName
 }) {
@@ -494,6 +510,8 @@ export interface PublishTarget {
 export interface PublishPreflight extends PublishTarget {
   readonly companyId: string;
   readonly manifest: typeof Manifest.Type;
+  /** Refused as `Behind` before any upload when the patch already has a newer version. */
+  readonly baseVersion?: number | undefined;
   readonly filename: string | null;
   readonly scope?: Patch["scope"] | undefined;
   readonly force?: boolean;
@@ -527,6 +545,8 @@ export interface RecordInput extends PublishTarget {
       }
     | undefined;
   readonly repo?: RepoSnapshotRecord | undefined;
+  /** The version the publishing copy came from; a newer version refuses with `Behind`. */
+  readonly baseVersion?: number | undefined;
   readonly filename: string | null;
   readonly repoOrg: string | null;
   readonly repoName: string | null;
@@ -657,6 +677,12 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
 class Id extends Schema.Class<Id>("Id")({ id: Schema.String }) {}
 class Count extends Schema.Class<Count>("Count")({ count: Schema.Int }) {}
 class NextVersion extends Schema.Class<NextVersion>("NextVersion")({ nextVersion: Schema.Int }) {}
+class NewestVersion extends Schema.Class<NewestVersion>("NewestVersion")({
+  versionNumber: Schema.Int,
+  publisherId: Schema.String,
+  publisherName: Schema.String,
+  createdAt: Stamp
+}) {}
 class ObjectKey extends Schema.Class<ObjectKey>("ObjectKey")({ objectKey: Schema.String }) {}
 class DeclaringPatches extends Schema.Class<DeclaringPatches>("DeclaringPatches")({
   resource: Schema.String,
@@ -759,7 +785,13 @@ export class Patches extends Context.Service<
       input: PublishPreflight
     ) => Effect.Effect<
       void,
-      LifecycleError | Tier2NotPublic | PatchConflict | NameTaken | ResourceError | SqlError
+      | LifecycleError
+      | Tier2NotPublic
+      | PatchConflict
+      | NameTaken
+      | Behind
+      | ResourceError
+      | SqlError
     >;
     readonly inventory: (
       patchId: string,
@@ -845,6 +877,7 @@ export class Patches extends Context.Service<
       | ResourceError
       | LifecycleError
       | Tier2NotPublic
+      | Behind
       | SqlError
     >;
     /** Changes a live patch's audience without creating a version. */
@@ -1362,6 +1395,34 @@ export const make = Effect.gen(function* () {
       ORDER BY deleted_at, id
       LIMIT ${limit}`
   });
+
+  /** Who published a patch's newest version, and when: the owner at the time, not now. */
+  const newestVersion = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: NewestVersion,
+    execute: (patchId) => sql`
+      SELECT patch_versions.version_number AS "versionNumber",
+        patch_versions.owner_user_id AS "publisherId", users.name AS "publisherName",
+        patch_versions.created_at AS "createdAt"
+      FROM patch_versions JOIN users ON users.id = patch_versions.owner_user_id
+      WHERE patch_versions.patch_id = ${patchId}
+      ORDER BY patch_versions.version_number DESC LIMIT 1`
+  });
+
+  /** The refusal for a copy at `baseVersion` when the patch's newest version is past it. */
+  const behind = Effect.fn("Patches.behind")(
+    function* (patchId: string, baseVersion: number) {
+      const newest = yield* newestVersion(patchId);
+      return yield* new Behind({
+        patchId,
+        baseVersion,
+        latestVersion: newest.versionNumber,
+        publishedBy: { id: newest.publisherId, name: newest.publisherName },
+        publishedAt: iso(newest.createdAt)
+      });
+    },
+    Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+  );
 
   const nextVersionNumber = SqlSchema.findOne({
     Request: Schema.String,
@@ -1891,6 +1952,14 @@ export const make = Effect.gen(function* () {
 
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
+    // Before anything uploads; `record` checks again under the lock.
+    if (input.intent === "update" && input.baseVersion !== undefined) {
+      const { nextVersion } = yield* nextVersionNumber(input.patchId).pipe(
+        Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+      );
+      if (nextVersion - 1 > input.baseVersion)
+        return yield* behind(input.patchId, input.baseVersion);
+    }
     if (input.manifest.tier === 2 && input.scope === "public") return yield* new Tier2NotPublic();
     const description = input.description ?? input.manifest.description;
     if (description !== undefined) yield* normalizeDescription(description);
@@ -2092,6 +2161,10 @@ export const make = Effect.gen(function* () {
           name = input.manifest.name ?? locked.name;
           rename = name !== locked.name;
           versionNumber = (yield* nextVersionNumber(input.patchId)).nextVersion;
+          // Again under the row lock, so a second machine's publish from the same copy sees the
+          // first one's version.
+          if (input.baseVersion !== undefined && versionNumber - 1 > input.baseVersion)
+            return yield* behind(input.patchId, input.baseVersion);
         } else {
           // Serialise quota accounting across distinct creates by the same owner.
           const owner = yield* sql`SELECT id FROM users

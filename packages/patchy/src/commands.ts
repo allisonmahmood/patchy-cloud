@@ -570,6 +570,12 @@ const publish = Command.make(
       Flag.optional
     ),
     force: forceFlag,
+    allowBehind: Flag.Boolean("allow-behind").pipe(
+      Flag.withDescription(
+        "Publish this repo over versions published since it was pulled or last published; ask the person first"
+      ),
+      Flag.withDefault(false)
+    ),
     new: Flag.Boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
@@ -627,6 +633,10 @@ const publish = Command.make(
               ...(server === undefined ? {} : { server }),
               repo: snapshot,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
+              // Left out, publish goes over whatever was published since this copy's version.
+              ...(project.version === undefined || options.allowBehind
+                ? {}
+                : { baseVersion: project.version }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               ...(options.force ? { force: true } : {}),
               publishKey: yield* cryptography.internalId("pub"),
@@ -648,6 +658,11 @@ const publish = Command.make(
           );
         }
 
+        if (options.allowBehind)
+          return yield* new LocalError({
+            message:
+              "--allow-behind is for repo publishing; a file publish has no version to be behind."
+          });
         if (Option.isSome(options.patch) && options.new) {
           return yield* new LocalError({ message: "--patch and --new cannot be used together." });
         }

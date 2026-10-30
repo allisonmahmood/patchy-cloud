@@ -15,6 +15,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
+  Behind,
   Conflict,
   CurrentIdentity,
   decodeBody,
@@ -694,6 +695,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               html: payload.html,
               server: payload.server,
               repo: payload.repo,
+              baseVersion: payload.baseVersion,
               filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
               repoName: cleanText(metadata.repoName),
@@ -721,6 +723,18 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                     refuse(NameTaken, { ok: false, code: "name_taken", error: error.message })
                   ),
                 PublishKeyTaken: () => replayOrRespond(keyConflict()),
+                Behind: (error) =>
+                  replayOrRespond(
+                    refuse(Behind, {
+                      ok: false,
+                      code: "behind",
+                      error: `${error.message} Pull it into a new folder with patchy pull and make the change there, or publish again with --allow-behind to replace it.`,
+                      baseVersion: error.baseVersion,
+                      latestVersion: error.latestVersion,
+                      publishedBy: error.publishedBy,
+                      publishedAt: error.publishedAt
+                    })
+                  ),
                 PatchQuotaReached: () => replayOrRespond(quotaResponse()),
                 InvalidManifest: (error) =>
                   replayOrRespond(rejected("invalid_manifest", error.message)),

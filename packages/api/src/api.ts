@@ -31,6 +31,7 @@ import {
   PatchLog,
   LOG_PAGE_MAX,
   PatchSummary,
+  Behind,
   PatchDetail,
   PatchRepo,
   NoRepo,
@@ -208,6 +209,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         ...protectedErrors,
         PublishKeyConflict,
         NameTaken,
+        Behind,
         NotOwner,
         PatchRetired,
         PatchDeleted,
@@ -309,6 +311,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "publish and never on a file publish. Paths that repeat, differ only by case or Unicode form, or make a file " +
           "a folder answer 400. More than `publish.repo.files` (2,000) files or `publish.repo.bytes` (10 MiB) of decoded " +
           "bytes answers 413. A published snapshot returns `artifacts.repo: { files, bytes }`, counting decoded bytes. " +
+          "`baseVersion` names the version the publishing copy was pulled from or last published as. When the patch " +
+          "has a newer version, the update answers 409 `behind` with `baseVersion`, `latestVersion` and who published " +
+          "it and when (`publishedBy`, `publishedAt`). It is checked before anything is stored and again under the " +
+          "patch row lock, so two machines publishing from one copy cannot both pass. `force` does not override it; leave `baseVersion` out to publish over newer " +
+          "work, after asking the person you are working for. " +
           "The JSON body cap is three times the sum of the page and server bundle caps, plus twice " +
           "`publish.repo.bytes`."
       )

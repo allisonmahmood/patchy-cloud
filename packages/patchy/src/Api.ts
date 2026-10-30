@@ -163,6 +163,7 @@ export const isDefinitivePublishRefusal = (error: ClientFailure, update: boolean
     (error.status === 409 &&
       (error.code === "publish_key_conflict" ||
         error.code === "name_taken" ||
+        error.code === "behind" ||
         error.code === "has_dependants" ||
         error.code === "patch_retired" ||
         error.code === "patch_deleted")) ||

@@ -240,6 +240,10 @@ an admin to reassign it. `patchy list <name>` says whether a pull will work.
   generation also keeps the files, and the warning says what to fix.
 - A page published from one HTML file arrives as that file, with the publish line to
   update it.
+- The pulled `patchy.json` records the version it came from. Publishing from a copy
+  older than the patch's newest version refuses with `behind`, naming who published
+  the newer one; pull again into a new folder, or publish with `--allow-behind` once
+  the person agrees to replace that work.
 
 Everything a repo publish keeps, everyone in the company who can open the tool can
 read, so secrets never belong in the repo. `.env` files never go with it, and neither

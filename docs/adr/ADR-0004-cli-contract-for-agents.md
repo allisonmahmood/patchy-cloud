@@ -44,7 +44,7 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, admins?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive`, `not_running` and `no_agent_tools`; not every
@@ -53,7 +53,8 @@ lists of validation failures; their line count is not the branching contract.
   Lifecycle refusals retain `owner` for `not_owner`, `dependants` for
   `has_dependants`, `sources` for `sources_off` and `purgeAt` for `patch_deleted`.
   `pull`'s `no_repo` (exit 2) retains the `versionNumber` with nothing to pull and
-  the `owner`, who keeps one by publishing again from their repo.
+  the `owner`, who keeps one by publishing again from their repo. Publish's
+  `behind` retains `baseVersion`, `latestVersion`, `publishedBy` and `publishedAt`.
   The look's `admin_required` retains `admins`. A refusal Patchy MCP's door would
   give, from `dev agent`, adds the door's `from`, `details` and `retryAfterSeconds`.
   Notices discovered before a later failure remain in `warnings`; text mode
@@ -819,6 +820,11 @@ attempt. Any wire code is retained in the CLI's JSON failure document.
   restore it before publishing. `patch_deleted` supplies the recovery deadline.
 - **409** with `has_dependants`: ask the user before accepting the breakage.
   After approval, retry with `--force`; the saved refusal has been cleared.
+- **409** with `behind`: the repo's copy is older than the patch's newest version,
+  whose number, publisher and time the refusal carries. Pull the newest into a new
+  folder and make the change there, or, once the user agrees to replace the newer
+  work, retry with `--allow-behind`, which leaves `baseVersion` out. `--force` does
+  not override it.
 - **404** on an update (the saved request has `patchId`) whose `error` is
   exactly `"Patch not found."`: the target is unavailable. Repo mode requires
   intentionally removing `patch` from `patchy.json` before a new create;
