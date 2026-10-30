@@ -57,6 +57,9 @@ type Publication = PatchSubject & {
   readonly tier: number;
   readonly htmlBytes: number;
   readonly serverBytes: number;
+  /** The repo snapshot kept with the version, both 0 when it has none. */
+  readonly repoFiles: number;
+  readonly repoBytes: number;
   /** The SDK entry points the patch imports, only those in `@patchy/api`'s `SDK_ENTRY_POINTS`. */
   readonly sdkImports: ReadonlyArray<string>;
   readonly tables: ReadonlyArray<string>;

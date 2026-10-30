@@ -62,7 +62,11 @@ export const publishRecord = () => ({
 export const record = (input: Patches.RecordInput) =>
   Effect.flatMap(Patches.Patches, (patches) =>
     Effect.forEach(
-      [input.objectKey, ...(input.server === undefined ? [] : [input.server.objectKey])],
+      [
+        input.objectKey,
+        ...(input.server === undefined ? [] : [input.server.objectKey]),
+        ...(input.repo === undefined ? [] : [input.repo.objectKey])
+      ],
       patches.prepareObject
     ).pipe(Effect.andThen(patches.record(input)))
   );

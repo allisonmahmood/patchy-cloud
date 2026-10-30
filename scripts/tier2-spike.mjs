@@ -562,10 +562,13 @@ if (command === "status") {
       try {
         if ((await platform.query("SELECT to_regclass('patch_versions') AS found")).rows[0].found) {
           const versions = await platform.query(
-            "SELECT object_key, server_object_key FROM patch_versions"
+            // Through the row's JSON, so a database from before repo snapshots tears down too.
+            `SELECT object_key, server_object_key,
+              to_jsonb(patch_versions) ->> 'repo_object_key' AS repo_object_key
+            FROM patch_versions`
           );
           for (const row of versions.rows)
-            for (const key of [row.object_key, row.server_object_key]) {
+            for (const key of [row.object_key, row.server_object_key, row.repo_object_key]) {
               if (key)
                 run(
                   "aws",

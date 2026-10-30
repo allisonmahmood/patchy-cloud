@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import { TestClock } from "effect/testing";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { classify } from "./ApiGuard.js";
+import { repoLimits } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { answer, html, send, server, publish, publishBody } from "./test/server.js";
@@ -472,11 +473,13 @@ it.layer(
   it.effect("refuses a body larger than it reads, and names what a malformed one lacks", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("61 seconds");
+      // The cap: three times both 512 KiB bundle caps, plus room for a repo snapshot in base64.
+      const cap = 512 * 1024 * 2 * 3 + 2 * repoLimits.bytes;
       const tooLarge = yield* send(
         HttpClientRequest.post("/api/publish").pipe(
           HttpClientRequest.bearerToken(DEV_SEED.token),
           HttpClientRequest.setHeader("content-type", "application/json"),
-          HttpClientRequest.bodyText(`{"html":"${"x".repeat(4 * 1024 * 1024)}`)
+          HttpClientRequest.bodyText(`{"html":"${"x".repeat(cap)}`)
         )
       );
       assert.deepStrictEqual(yield* answer(tooLarge), {

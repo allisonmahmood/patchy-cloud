@@ -224,6 +224,73 @@ it.layer(services)("DeletionSweep", (it) => {
     })
   );
 
+  it.effect(
+    "keeps committed repo snapshots past their intents, then reclaims them with the patch",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const content = yield* Content.Content;
+        const repo = (text: string) => [
+          { path: "src/App.tsx", contents: Buffer.from(text).toString("base64") }
+        ];
+        const first = yield* content.publish(
+          Fixtures.publishInput(uploader, {
+            manifest: { ...Fixtures.manifest, name: "purged-repos" },
+            repo: repo("first")
+          })
+        );
+        yield* content.publish(
+          Fixtures.publishInput(uploader, {
+            patchId: first.patchId,
+            manifest: { ...Fixtures.manifest, name: "purged-repos" },
+            repo: repo("second")
+          })
+        );
+        const prefix = `patches/${first.patchId}/`;
+        assert.lengthOf(
+          (yield* keys(prefix)).filter((key) => key.endsWith(".repo.json")),
+          2
+        );
+        // Past the intent lease, a committed snapshot is the version's, not the intent sweep's,
+        // even when an intent for its key outlives the publish.
+        const sql = yield* SqlClient.SqlClient;
+        const committed = (yield* keys(prefix)).find((key) => key.endsWith(".repo.json"))!;
+        yield* sql`INSERT INTO pending_patch_objects (object_key, expires_at)
+          VALUES (${committed}, '2000-01-01T00:00:00Z')`;
+        yield* TestClock.adjust(DAY);
+        assert.deepStrictEqual(yield* patches.claimObjects(100), []);
+        yield* sql`DELETE FROM pending_patch_objects WHERE object_key = ${committed}`;
+
+        // A snapshot written for a publish whose record then fails is the intent sweep's to take.
+        const reused = Fixtures.publishInput(uploader, {
+          manifest: { ...Fixtures.manifest, name: "purged-repos-failed" },
+          repo: repo("failed")
+        });
+        const created = yield* content.publish(reused);
+        // An update reusing the create's key writes its objects, then the record refuses it.
+        const failed = yield* content
+          .publish({
+            ...reused,
+            patchId: created.patchId,
+            html: "<p>another attempt</p>",
+            repo: repo("orphaned")
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "PublishKeyTaken");
+        yield* TestClock.adjust(DAY);
+        const orphans = yield* patches.claimObjects(100);
+        assert.deepStrictEqual(orphans.map((key) => key.slice(key.lastIndexOf("."))).sort(), [
+          ".html",
+          ".json"
+        ]);
+        for (const key of orphans) yield* patches.completeObject(key);
+        yield* patches.delete(first.patchId, actor);
+        yield* TestClock.adjust(30 * DAY);
+        assert.strictEqual((yield* sweep).deleted, 1);
+        assert.deepStrictEqual(yield* keys(prefix), []);
+      })
+  );
+
   it.effect("leaves a partly reclaimed patch's files to the orphan sweep, sparing others", () =>
     Effect.gen(function* () {
       // Stored files carry wall-clock times; the orphan sweep's one-day grace reads this clock.

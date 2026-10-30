@@ -104,6 +104,10 @@ _Avoid_: patch id, machine token, version id
 A self-contained artifact of one version: the HTML content or the closed server module. A single HTML file publishes as a tier 1 bundle, checked for embedded resources as a repo's built page is. HTML runs only inside the sandbox.
 _Avoid_: source tree, manifest, patch (the entity that holds versions)
 
+**Repo snapshot**:
+The files of the patch repo one version was published from, without managed files or what `.gitignore` excludes, kept with that version so anyone who can open the patch can get the repo back. It is never served and never public; a page published from one file has none and reads back as that file.
+_Avoid_: source (shared-resource and connected sources already use it), backup, archive, checkout
+
 **Deletion sweep**:
 The reclamation of deleted patches past their recovery window, including their versions, resources and names, and unreferenced content left by failed publishes. Content awaiting removal stays durably queued until removal succeeds.
 _Avoid_: cleanup job, garbage collection, reaper, purge

@@ -361,6 +361,16 @@ export const Openability = Context.Reference<(patch: Patch, userId: string) => b
   { defaultValue: () => () => true }
 );
 
+/** Where a version's repo snapshot is stored and what it holds. */
+export interface RepoSnapshotRecord {
+  readonly objectKey: string;
+  /** The stored JSON's `sha256:` content hash. */
+  readonly contentHash: string;
+  /** Decoded file bytes, as `artifacts.repo.bytes` reports them. */
+  readonly bytes: number;
+  readonly files: number;
+}
+
 export interface PatchVersion {
   readonly id: string;
   readonly patchId: string;
@@ -373,6 +383,8 @@ export interface PatchVersion {
     readonly sha256: string;
     readonly bytes: number;
   } | null;
+  /** The repo snapshot it was published from: the stored JSON's digest, decoded bytes and files. */
+  readonly repo: RepoSnapshotRecord | null;
   readonly createdByMachineTokenId: string;
   readonly sourceIp: string | null;
   readonly userAgent: string | null;
@@ -514,6 +526,7 @@ export interface RecordInput extends PublishTarget {
         readonly bytes: number;
       }
     | undefined;
+  readonly repo?: RepoSnapshotRecord | undefined;
   readonly filename: string | null;
   readonly repoOrg: string | null;
   readonly repoName: string | null;
@@ -557,6 +570,8 @@ const publication = (input: RecordInput, versionNumber: number, scope: Patch["sc
     tier: input.manifest.tier,
     htmlBytes: input.fileSize,
     serverBytes: input.server?.bytes ?? 0,
+    repoFiles: input.repo?.files ?? 0,
+    repoBytes: input.repo?.bytes ?? 0,
     sdkImports: (input.manifest.sdkImports ?? []).filter((source) => sdkEntryPoints.has(source)),
     tables: Object.keys(input.manifest.tables),
     stores: Object.keys(input.manifest.files),
@@ -617,6 +632,10 @@ class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
   serverObjectKey: Schema.NullOr(Schema.String),
   serverContentHash: Schema.NullOr(Schema.String),
   serverFileSize: Schema.NullOr(Schema.Int),
+  repoObjectKey: Schema.NullOr(Schema.String),
+  repoContentHash: Schema.NullOr(Schema.String),
+  repoFileBytes: Schema.NullOr(Schema.Int),
+  repoFileCount: Schema.NullOr(Schema.Int),
   createdByMachineTokenId: Schema.String,
   sourceIp: Schema.NullOr(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
@@ -1004,6 +1023,15 @@ const toVersion = (row: VersionRow): PatchVersion => ({
           sha256: row.serverContentHash!,
           bytes: row.serverFileSize!
         },
+  repo:
+    row.repoObjectKey === null
+      ? null
+      : {
+          objectKey: row.repoObjectKey,
+          contentHash: row.repoContentHash!,
+          bytes: row.repoFileBytes!,
+          files: row.repoFileCount!
+        },
   createdByMachineTokenId: row.createdByMachineTokenId,
   sourceIp: row.sourceIp,
   userAgent: row.userAgent,
@@ -1048,6 +1076,8 @@ const VERSION_COLUMNS = `
   object_key AS "objectKey", content_hash AS "contentHash", file_size AS "fileSize",
   server_object_key AS "serverObjectKey", server_content_hash AS "serverContentHash",
   server_file_size AS "serverFileSize",
+  repo_object_key AS "repoObjectKey", repo_content_hash AS "repoContentHash",
+  repo_file_bytes AS "repoFileBytes", repo_file_count AS "repoFileCount",
   created_by_machine_token_id AS "createdByMachineTokenId", source_ip AS "sourceIp",
   user_agent AS "userAgent", cli_version AS "cliVersion", git_branch AS "gitBranch",
   git_commit_sha AS "gitCommitSha", original_filename AS "originalFilename",
@@ -1986,6 +2016,7 @@ export const make = Effect.gen(function* () {
             SELECT 1 FROM patch_versions
             WHERE patch_versions.object_key = pending_patch_objects.object_key
               OR patch_versions.server_object_key = pending_patch_objects.object_key
+              OR patch_versions.repo_object_key = pending_patch_objects.object_key
           )
         ORDER BY expires_at, object_key
         LIMIT ${limit}
@@ -2031,7 +2062,11 @@ export const make = Effect.gen(function* () {
         // DELETE holds the intent's row lock until commit. A concurrent sweep
         // skips it; rollback restores it; a lost commit reply cannot orphan
         // live bytes because the version and intent change atomically.
-        for (const key of [input.objectKey, ...(input.server ? [input.server.objectKey] : [])]) {
+        for (const key of [
+          input.objectKey,
+          ...(input.server ? [input.server.objectKey] : []),
+          ...(input.repo ? [input.repo.objectKey] : [])
+        ]) {
           const pending = yield* sql`
               DELETE FROM pending_patch_objects
               WHERE object_key = ${key} AND NOT claimed
@@ -2138,7 +2173,8 @@ export const make = Effect.gen(function* () {
             html: { sha256: input.contentHash.slice("sha256:".length), bytes: input.fileSize },
             ...(input.server
               ? { server: { sha256: input.server.sha256, bytes: input.server.bytes } }
-              : {})
+              : {}),
+            ...(input.repo ? { repo: { files: input.repo.files, bytes: input.repo.bytes } } : {})
           },
           ...(input.manifest.tier === 2
             ? {
@@ -2164,6 +2200,7 @@ export const make = Effect.gen(function* () {
           INSERT INTO patch_versions (
             id, patch_id, version_number, object_key, content_hash, file_size,
             server_object_key, server_content_hash, server_file_size,
+            repo_object_key, repo_content_hash, repo_file_bytes, repo_file_count,
             created_by_machine_token_id, source_ip, user_agent, cli_version,
             git_branch, git_commit_sha, original_filename,
             owner_user_id, tier, release, manifest_version, wire_version, schema_revision,
@@ -2172,6 +2209,8 @@ export const make = Effect.gen(function* () {
             ${input.versionId}, ${input.patchId}, ${versionNumber}, ${input.objectKey},
             ${input.contentHash}, ${input.fileSize},
             ${input.server?.objectKey ?? null}, ${input.server?.sha256 ?? null}, ${input.server?.bytes ?? null},
+            ${input.repo?.objectKey ?? null}, ${input.repo?.contentHash ?? null},
+            ${input.repo?.bytes ?? null}, ${input.repo?.files ?? null},
             ${input.machineTokenId}, ${input.sourceIp},
             ${input.userAgent}, ${input.cliVersion}, ${input.gitBranch}, ${input.gitCommitSha},
             ${input.filename}, ${input.ownerUserId}, ${input.manifest.tier}, ${input.manifest.release},
@@ -2610,7 +2649,10 @@ export const make = Effect.gen(function* () {
           SELECT object_key, ${stamp(millis)}, true FROM patch_versions WHERE patch_id = ${patchId}
           UNION ALL
           SELECT server_object_key, ${stamp(millis)}, true FROM patch_versions
-          WHERE patch_id = ${patchId} AND server_object_key IS NOT NULL`;
+          WHERE patch_id = ${patchId} AND server_object_key IS NOT NULL
+          UNION ALL
+          SELECT repo_object_key, ${stamp(millis)}, true FROM patch_versions
+          WHERE patch_id = ${patchId} AND repo_object_key IS NOT NULL`;
         const removed =
           yield* sql`DELETE FROM patch_versions WHERE patch_id = ${patchId} RETURNING id`;
         yield* sql`DELETE FROM patch_names WHERE patch_id = ${patchId}`;

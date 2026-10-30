@@ -120,5 +120,24 @@ export const migrations: Migrations = {
     WHERE tier = 0`,
     `ALTER TABLE patch_versions DROP CONSTRAINT patch_versions_tier_check`,
     `ALTER TABLE patch_versions ADD CONSTRAINT patch_versions_tier_check CHECK (tier BETWEEN 1 AND 3)`
+  ),
+  // The repo snapshot a version was published from, for `patchy pull`: its object, the stored
+  // JSON's digest, and its decoded file bytes and file count. Versions published before this, and
+  // file publishes, have none.
+  "0030_version_repo_snapshots": ddl(
+    `ALTER TABLE patch_versions
+    ADD COLUMN repo_object_key TEXT,
+    ADD COLUMN repo_content_hash TEXT,
+    ADD COLUMN repo_file_bytes INTEGER,
+    ADD COLUMN repo_file_count INTEGER,
+    ADD CONSTRAINT patch_versions_repo_snapshot CHECK (
+      (repo_object_key IS NULL AND repo_content_hash IS NULL
+        AND repo_file_bytes IS NULL AND repo_file_count IS NULL)
+      OR (repo_object_key IS NOT NULL AND repo_content_hash IS NOT NULL
+        AND repo_file_bytes IS NOT NULL AND repo_file_bytes >= 0
+        AND repo_file_count IS NOT NULL AND repo_file_count >= 0)
+    )`,
+    `CREATE UNIQUE INDEX patch_versions_repo_object_key_idx
+    ON patch_versions(repo_object_key) WHERE repo_object_key IS NOT NULL`
   )
 };

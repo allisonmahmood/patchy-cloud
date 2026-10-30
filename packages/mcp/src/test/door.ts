@@ -366,6 +366,7 @@ export const publish = Effect.fn("DoorTest.publish")(function* (
   yield* patches.preflight(input);
   yield* patches.prepareObject(input.objectKey);
   if (input.server) yield* patches.prepareObject(input.server.objectKey);
+  if (input.repo) yield* patches.prepareObject(input.repo.objectKey);
   yield* patches.record(input);
   return { patchId, versionId, name };
 });

@@ -41,8 +41,8 @@ export const publishRateLimitPerMinute = Config.Int(
   "PATCHY_AUTHENTICATED_PUBLISH_RATE_LIMIT_PER_MINUTE"
 ).pipe(Config.withDefault(registry["rate.publish.perMinute"].default));
 
-/** Room for both artifacts escaped into JSON and their manifest. */
+/** Room for both artifacts escaped into JSON and their manifest, and a repo snapshot in base64. */
 export const maxPublishBodyBytes = Config.map(
   maxBundleBytes,
-  (bundleBytes) => (bundleBytes + bundleBytes) * 3
+  (bundleBytes) => (bundleBytes + bundleBytes) * 3 + registry["publish.repo.bytes"].default * 2
 );

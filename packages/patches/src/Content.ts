@@ -27,9 +27,12 @@ import {
   HandlerDescriptors,
   WIRE_VERSION,
   agentAreaRefusal,
+  base64Bytes,
   checkAgentArea,
   descriptionProblem,
-  descriptionRefusal
+  descriptionRefusal,
+  RepoSnapshot,
+  type RepoFile
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
 import * as Inspection from "@patchy/execution/inspection";
@@ -38,6 +41,7 @@ import { Runtime, ServerBundles } from "@patchy/runtime";
 import * as Patches from "./Patches.js";
 
 const sameHandlers = Schema.toEquivalence(HandlerDescriptors);
+const decodeStoredRepo = Schema.decodeEffect(Schema.fromJsonString(RepoSnapshot));
 
 export class InvalidManifest extends Schema.TaggedError<InvalidManifest>()("InvalidManifest", {
   reason: Schema.Literals([
@@ -83,11 +87,13 @@ export class StoredServerUnavailable extends Schema.TaggedError<StoredServerUnav
 }
 export interface PublishInput extends Omit<
   Patches.RecordInput,
-  "intent" | "patchId" | "versionId" | "objectKey" | "contentHash" | "fileSize" | "server"
+  "intent" | "patchId" | "versionId" | "objectKey" | "contentHash" | "fileSize" | "server" | "repo"
 > {
   readonly patchId: string | null;
   readonly html: string;
   readonly server?: string | undefined;
+  /** An admitted repo snapshot: paths checked, within its limits. */
+  readonly repo?: ReadonlyArray<RepoFile> | undefined;
 }
 
 export class Content extends Context.Service<
@@ -125,6 +131,16 @@ export class Content extends Context.Service<
     readonly read: (
       version: Pick<Patches.PatchVersion, "objectKey">
     ) => Effect.Effect<string, ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable>;
+    /**
+     * Reads back a version's repo snapshot. A missing object, or one that no longer matches its
+     * recorded digest or decodes as a snapshot, is a fault.
+     */
+    readonly readRepo: (
+      repo: Patches.RepoSnapshotRecord
+    ) => Effect.Effect<
+      ReadonlyArray<RepoFile>,
+      ContentStore.InvalidObjectKey | ContentStore.StoreUnavailable
+    >;
   }
 >()("@patchy/patches/Content") {}
 
@@ -134,6 +150,21 @@ export const objectKey = (patchId: string, versionId: string) =>
 
 export const serverObjectKey = (patchId: string, versionId: string) =>
   `patches/${patchId}/versions/${versionId}.server.js`;
+
+export const repoObjectKey = (patchId: string, versionId: string) =>
+  `patches/${patchId}/versions/${versionId}.repo.json`;
+
+/** The stored form of a snapshot: its files sorted by path, so the same repo stores the same bytes. */
+export const encodeRepoSnapshot = (files: ReadonlyArray<RepoFile>): string =>
+  JSON.stringify(
+    [...files]
+      .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+      .map(({ path, contents, executable }) => ({
+        path,
+        contents,
+        ...(executable === true ? { executable } : {})
+      }))
+  );
 export const make = Effect.gen(function* () {
   const cryptography = yield* Cryptography.Cryptography;
   const patches = yield* Patches.Patches;
@@ -201,10 +232,23 @@ export const make = Effect.gen(function* () {
         bytes: Buffer.byteLength(stored, "utf8")
       };
     }
+    let repo: Patches.RecordInput["repo"];
+    if (input.repo !== undefined) {
+      const objectKey = repoObjectKey(patchId, versionId);
+      const stored = encodeRepoSnapshot(input.repo);
+      yield* put(objectKey, stored);
+      repo = {
+        objectKey,
+        contentHash: yield* cryptography.contentHash(stored),
+        bytes: input.repo.reduce((total, file) => total + base64Bytes(file.contents), 0),
+        files: input.repo.length
+      };
+    }
     return yield* patches.record({
       ...input,
       warnings,
       server,
+      repo,
       ...target,
       versionId,
       objectKey: key,
@@ -217,7 +261,16 @@ export const make = Effect.gen(function* () {
     store.get(version.objectKey).pipe(Effect.catchTags({ ObjectNotFound: Effect.die }))
   );
 
-  return Content.of({ publish, read });
+  const readRepo = Effect.fn("Content.readRepo")(function* (repo: Patches.RepoSnapshotRecord) {
+    const stored = yield* store
+      .get(repo.objectKey)
+      .pipe(Effect.catchTags({ ObjectNotFound: Effect.die }));
+    if ((yield* cryptography.contentHash(stored)) !== repo.contentHash)
+      return yield* Effect.die(`Repo snapshot ${repo.objectKey} does not match its digest.`);
+    return yield* decodeStoredRepo(stored).pipe(Effect.orDie);
+  });
+
+  return Content.of({ publish, read, readRepo });
 });
 
 /** Over `Patches` and the content store. */
