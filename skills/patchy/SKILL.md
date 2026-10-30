@@ -521,8 +521,6 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
   Prefer JSON when an address, id or recovery deadline is going into a script.
-  Check the exit code first: argument parse failures can put usage on stdout,
-  which is not a success document.
 
 ## Reading a patch
 

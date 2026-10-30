@@ -1519,8 +1519,8 @@ on a wire refusal is exit 2, `rejected`. Meanings and remedies are in the
 Other local failures may have no code; terminal login refusals currently use
 `kind` and `error` without a code.
 
-Argument parse failures can print usage on stdout before the error, as
-ADR-0004 records. Check the exit code before parsing stdout as a success document.
+An argument parse failure under `--json` is a `local` failure with empty stdout;
+without `--json`, it is one line on stderr, and usage may precede it on stdout.
 
 ## Command flags
 

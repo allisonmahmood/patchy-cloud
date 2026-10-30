@@ -107,9 +107,8 @@ describe("repo publish checks", () => {
       ["init", "static-page", "--tier", "0", "--purpose", "A static page", "--json"],
       { cwd: tempDir(), env: { ...env, PATCHY_API_URL: instance.url } }
     );
-    // Usage still prints on stdout for a flag error, as ADR-0004 records.
     expect(init.status).toBe(1);
-    expect(init.stdout).toContain("(choices: 1, 2)");
+    expect(init.stdout).toBe("");
     expect(JSON.parse(init.stderr)).toEqual({
       ok: false,
       kind: "local",
