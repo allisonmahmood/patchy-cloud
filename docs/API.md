@@ -194,8 +194,8 @@ Responses:
 - `400` { ok: false, error: string }
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
-- `404` { ok: false, error: string } | { ok: false, error: string, code: "account_not_found" }
-- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "already_member" }
+- `404` { ok: false, error: string, code: "account_not_found" } | { ok: false, error: string }
+- `409` { ok: false, error: string, code: "already_member" } | { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
 - `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `422` { ok: false, error: string, code: "guest_unavailable", source: string, reason: string, repair: string }

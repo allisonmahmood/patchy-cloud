@@ -337,8 +337,10 @@ it.layer(layer)("patches group", (it) => {
       yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_api_guest', 'api-guest', 'Guest company') ON CONFLICT DO NOTHING`;
       yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
         VALUES ('usr_api_guest', 'clerk_api_guest', 'cmp_api_guest', 'api-guest@patchy.local', 'Outside person', 'member') ON CONFLICT DO NOTHING`;
-      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
-      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const owner = yield* client.pipe(
+        Effect.provide(Fixtures.as(Fixtures.identities.guestSharer))
+      );
+      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
       const created = yield* owner.publish({
         payload: publishRequest({ html: html("Guest API") })
       });

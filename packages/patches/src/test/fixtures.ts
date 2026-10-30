@@ -209,6 +209,12 @@ export const identities = {
     role: "member",
     machine: { id: "tok_reader", name: "Reader machine" }
   }),
+  guestSharer: new Identity({
+    user: { id: "usr_guest_sharer", email: "guest-sharer@patchy.local", name: "Guest sharer" },
+    company,
+    role: "member",
+    machine: { id: "tok_guest_sharer", name: "Guest sharer machine" }
+  }),
   quota: new Identity({
     user: { id: "usr_quota", email: "quota@patchy.local", name: "Quota" },
     company,
