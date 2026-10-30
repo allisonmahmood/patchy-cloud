@@ -1469,6 +1469,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     "joined",
     "url",
     "colleagueUrl",
+    "guestUrl",
     "logPath",
     "stop",
     "pid",
@@ -1495,6 +1496,9 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(new URL(dev.url).origin.startsWith("http://127.0.0.1:"), true);
   assert.equal(new URL(dev.colleagueUrl).hostname, "127.0.0.1");
   assert.notEqual(new URL(dev.colleagueUrl).origin, new URL(dev.url).origin);
+  assert.equal(new URL(dev.guestUrl).hostname, "127.0.0.1");
+  assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.url).origin);
+  assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.colleagueUrl).origin);
   assert.ok(dev.logPath.startsWith(path.join(dir, ".patchy", "dev") + path.sep));
   assert.equal(dev.stop, `pnpm patchy dev stop --api-url '${publicBaseUrl}'`);
 
