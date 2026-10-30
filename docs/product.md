@@ -27,7 +27,9 @@ the generated client, contract, Preact with compat semantics and shell operation
 including generated-file downloads separate from stored-file access;
 Primitives supply tables and files; Integrations supply company Postgres, PostHog, Pidgeon and Attio;
 Helpers include `patchy/csv`, a synchronous text codec based on PapaParse with
-Patchy's own API, importable on both page and server graphs. Everything else
+Patchy's own API, importable on both page and server graphs, and `patchy/hotkeys`,
+keyboard shortcuts for tier 1 and 2 Preact pages over a bundled TanStack Hotkeys
+whose names never reach patch code. Everything else
 written or copied into the patch is **company code**, maintained by the company.
 Dev and publish check both import graphs, not the dependency list in `package.json`.
 An off-SDK import is local `import_refused`, with its importer, allowed entry
@@ -45,6 +47,13 @@ formula protection prefixes risky text cells with `'` but leaves numbers
 untouched. It can be disabled and is not lossless.
 After a closing quote, only a comma, line break or EOF is accepted; trailing
 whitespace outside the quote is `invalid_quotes`, not an unterminated field.
+
+`patchy/hotkeys` registers chords such as `Mod+K` (⌘ on a Mac, Ctrl elsewhere)
+and sequences such as `G H` while their component is mounted, checked at
+typecheck. Single keys wait while the viewer types; a `HotkeyScope` holds back
+the rest of the page for a dialog; `useHotkeyList` lists labelled hotkeys for a
+shortcuts sheet. Patchy keeps `Mod+Shift+K` for its own shortcuts. Viewers
+can't rebind keys, and there is no server-side surface.
 
 The generated client's `download(name, data)` accepts a Blob or bytes on
 tier 1 and 2 pages, including public tier 1 patches. The shell enforces

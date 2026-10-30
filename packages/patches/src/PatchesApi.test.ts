@@ -2922,6 +2922,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
           sdkImports: [
             "patchy/customer-jane-doe/private-project",
             "patchy/server",
+            "patchy/hotkeys",
             "Jane <jane@example.com>"
           ]
         };
@@ -3015,7 +3016,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         );
         assert.deepInclude(event?.properties, {
           tier: 2,
-          sdkImports: ["patchy/server"],
+          sdkImports: ["patchy/server", "patchy/hotkeys"],
           tables: [],
           stores: [],
           integrations: [],

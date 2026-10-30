@@ -9,8 +9,9 @@ const tsc = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.m
 
 /**
  * TypeScript's verdict on `files` against the built `patchy` package, one line per diagnostic and
- * none when they pass: strict, bundler resolution, and `patchy/client` and `patchy/config` from
- * the published declarations, as a patch repo's `tsc --noEmit` reads them. Name each file
+ * none when they pass: strict, bundler resolution, and `patchy/client`, `patchy/config` and
+ * `patchy/hotkeys` from the published declarations, as a patch repo's `tsc --noEmit` reads them.
+ * Name each file
  * relative to a directory of their own, such as `consumer.ts`.
  */
 export const typecheck = (files: Readonly<Record<string, string>>): readonly string[] => {
@@ -32,7 +33,8 @@ export const typecheck = (files: Readonly<Record<string, string>>): readonly str
           skipLibCheck: true,
           paths: {
             "patchy/client": [path.join(patchy, "client.d.ts")],
-            "patchy/config": [path.join(patchy, "config.d.ts")]
+            "patchy/config": [path.join(patchy, "config.d.ts")],
+            "patchy/hotkeys": [path.join(patchy, "hotkeys.d.ts")]
           }
         },
         files: Object.keys(files)

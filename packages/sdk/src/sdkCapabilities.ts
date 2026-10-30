@@ -223,6 +223,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     runs: "Page and server import graphs; tier 1 and 2 pages and tier 2 handlers",
     limits:
       "Based on PapaParse with Patchy's own synchronous parse, records and stringify API. Parsing allows 10,000,000 input characters and 1,000,000 cells. Records reject duplicate headers and report wrong-width rows by physical line without padding. Stringify writes CRLF; formula protection is on by default, leaves numbers untouched and is not lossless."
+  },
+  {
+    id: "helpers.hotkeys",
+    group: "Helpers",
+    name: "Keyboard shortcuts",
+    entrypoints: ["patchy/hotkeys"],
+    runs: "Page import graph; tier 1 and 2 Preact pages, in the hosted shell and patchy dev",
+    limits:
+      "Chords such as Mod+K and space-separated sequences such as G H, checked when the page typechecks. Mod is ⌘ on a Mac and Ctrl elsewhere; Patchy keeps Mod+Shift+K. Hotkeys fire while their component is mounted; single keys wait while the viewer types in a field. HotkeyScope holds back the rest of the page's hotkeys for a dialog; useHotkeyList lists labelled hotkeys for a shortcuts sheet. Keys the browser keeps, such as Mod+T and Mod+W, never reach the page. Viewers can't rebind keys."
   }
 ];
 
@@ -239,7 +248,7 @@ const unavailable: Partial<Record<(typeof groups)[number], string>> = {
 export const sdkCapabilitiesMarkdown = [
   "## What the SDK gives you",
   "",
-  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact with its JSX runtimes and patchy/csv; server runtime imports are patchy/server and patchy/csv. Everything else is company code: write or copy it into the patch.",
+  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact with its JSX runtimes, patchy/csv and patchy/hotkeys; server runtime imports are patchy/server and patchy/csv. Everything else is company code: write or copy it into the patch.",
   "",
   ...groups.flatMap((group) => [
     `### ${group}`,
