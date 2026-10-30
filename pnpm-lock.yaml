@@ -663,6 +663,9 @@ importers:
       '@patchy/serving':
         specifier: workspace:*
         version: link:../serving
+      '@tanstack/preact-hotkeys':
+        specifier: 0.17.1
+        version: 0.17.1(preact@10.29.8)
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0
@@ -2024,8 +2027,26 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
+  '@tanstack/hotkeys@0.19.0':
+    resolution: {integrity: sha512-w/YnW06vfyhomWwEpa3+sJWix3Xz1E+3AFXXPmZxg8wbeafq6F+0klVawLdzg994IetgfDjx6PaStkc8u62Z9g==}
+    engines: {node: '>=20'}
+
+  '@tanstack/preact-hotkeys@0.17.1':
+    resolution: {integrity: sha512-fTkOHmzOq6Y3qOVRdg9IimqTBgIIxNWFNjUCKpiLIrGxAAhwuYK7lr/RlfzQRxAC2PYAgmQS7lEIRroFf7gkaQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      preact: '>=10.5.2'
+
+  '@tanstack/preact-store@0.13.5':
+    resolution: {integrity: sha512-+ONKQNVqoGBpCbvahHjW39d28vwBVNRUa927m5owRQS6fySTORPKbOV6HYBXt0qHxOA8r0llg1Bfy/FKXsj3qw==}
+    peerDependencies:
+      preact: ^10.0.0 || ^11.0.0-0
+
   '@tanstack/query-core@5.104.0':
     resolution: {integrity: sha512-JrC2r/JQlXt7khBSdUpsgxNvybzOg+aITa+ARRMlP2AFo93Y8vIqz077rp+e61mJetSZ0T6AJbwW1JHer1vrPQ==}
+
+  '@tanstack/store@0.11.2':
+    resolution: {integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==}
 
   '@turbo/darwin-64@2.11.9':
     resolution: {integrity: sha512-OkW+EESJjo248CThWe9DfuUqzGcRwHe1DXKWRw9DSZ0lMkocKbbwNMjWVCiO+WNBcARDM0ibu0c9SbuIe4mw6w==}
@@ -3707,7 +3728,24 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
+  '@tanstack/hotkeys@0.19.0':
+    dependencies:
+      '@tanstack/store': 0.11.2
+
+  '@tanstack/preact-hotkeys@0.17.1(preact@10.29.8)':
+    dependencies:
+      '@tanstack/hotkeys': 0.19.0
+      '@tanstack/preact-store': 0.13.5(preact@10.29.8)
+      preact: 10.29.8
+
+  '@tanstack/preact-store@0.13.5(preact@10.29.8)':
+    dependencies:
+      '@tanstack/store': 0.11.2
+      preact: 10.29.8
+
   '@tanstack/query-core@5.104.0': {}
+
+  '@tanstack/store@0.11.2': {}
 
   '@turbo/darwin-64@2.11.9':
     optional: true

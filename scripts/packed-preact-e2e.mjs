@@ -72,6 +72,7 @@ try {
     ["preact", "@preact/signals", "@preact/signals-core"].map((name) => [name, new Set()])
   );
   const visited = new Set();
+  const tanstack = new Set();
   async function inventory(directory) {
     const physical = await realpath(directory);
     if (visited.has(physical)) return;
@@ -80,6 +81,7 @@ try {
       if (entry.name === "package.json") {
         const manifest = JSON.parse(await readFile(path.join(directory, entry.name), "utf8"));
         copies.get(manifest.name)?.add(physical);
+        if (manifest.name?.startsWith("@tanstack/")) tanstack.add(manifest.name);
       } else if (entry.isDirectory() || entry.isSymbolicLink()) {
         if (entry.name !== ".bin") await inventory(path.join(directory, entry.name));
       }
@@ -89,6 +91,9 @@ try {
   for (const [name, locations] of copies)
     assert.equal(locations.size, 1, `${name}: ${[...locations]}`);
   console.log("[packed-preact] exactly one copy of each UI runtime");
+  // patchy/hotkeys bundles TanStack Hotkeys; the consumer installs none of it.
+  assert.deepEqual([...tanstack], []);
+  console.log("[packed-preact] patchy/hotkeys installs no TanStack package");
 
   run(process.execPath, [
     "--input-type=module",
@@ -136,8 +141,8 @@ export default defineConfig({ name: "packed-config", tier: 1, tables: {
   notes: table("Notes identified by id; at is an ISO timestamp.", { title: t.text(), at: t.timestamp().default("now") })
 }, files: {}, uses: {} });\n`
   );
-  // A consumer's view of the published types: row helpers compile, internal transports and
-  // Preact's runtime-only exports do not.
+  // A consumer's view of the published types: row helpers compile; internal transports,
+  // Preact's runtime-only exports and the reserved hotkey do not.
   await writeFile(
     path.join(consumer, "contract.ts"),
     `import config from "./patchy.config";
@@ -152,6 +157,9 @@ import { createPostMessageTransport } from "patchy/client";
 import { options } from "patchy/preact";
 // @ts-expect-error Preact's types reach pages; its child flattening does not.
 import { toChildArray } from "patchy/preact";
+import { useHotkey } from "patchy/hotkeys";
+// @ts-expect-error Patchy keeps Mod+Shift+K for its own shortcuts.
+useHotkey("Mod+Shift+K", () => {});
 const inserted: Insert<typeof config, "notes"> = { title: "Saved" };
 const changed: Update<typeof config, "notes"> = { title: "Changed" };
 const at: Row<typeof config, "notes">["at"] = "2026-09-11T00:00:00.000Z";
@@ -175,6 +183,7 @@ import { createServerClient, PatchyError } from "patchy/client";
 import type { QueryFrame, Transport } from "patchy/client";
 import type { Handler } from "patchy/server";
 import { jsxDEV } from "patchy/preact/jsx-dev-runtime";
+import { formatHotkey, useHotkey } from "patchy/hotkeys";
 const count = signal(0);
 let revision = 0;
 let subscriptions = 0;
@@ -211,6 +220,8 @@ function App() {
   const [hook, setHook] = useState(0);
   const [text, setText] = useState("");
   const [late, setLate] = useState(false);
+  const [pressed, setPressed] = useState(0);
+  useHotkey("G H", () => setPressed(value => value + 1), { label: "Count" });
   const query = useQuery(client.server.counter.read, {});
   return <section><h1>Bundled Preact</h1>
     <button onClick={() => { count.value++; setHook(value => value + 1); emit({status:"ready",revision:String(++revision),data:count.value}); }}>Increment</button>
@@ -224,6 +235,7 @@ function App() {
     <button onClick={() => emit({status:"error",error:new PatchyError("handler_failed","Handler removed",{}),permanent:true})}>End query</button>
     <button onClick={() => setLate(value => !value)}>Toggle late subscriber</button>
     {late && <LateQuery/>}
+    <p id="hotkey">{formatHotkey("Mod+K")} / {pressed}</p>
   </section>;
 }
 render(<App/>, document.querySelector("#app")!);
@@ -232,7 +244,9 @@ render(probe, document.body.appendChild(document.createElement("aside")));
 Object.assign(window, { sdkIdentity: { Component, Fragment }, subscriptionCount: () => subscriptions });\n`
   );
   run("pnpm", ["exec", "tsc", "--noEmit"]);
-  console.log("[packed-preact] JSX and table types resolve without a direct Preact dependency");
+  console.log(
+    "[packed-preact] JSX, table and hotkey types resolve without a direct Preact dependency"
+  );
   const require = createRequire(path.join(consumer, "package.json"));
   // Resolve the freshly installed builder toolchain, not this repository's copy.
   const tools = await import(pathToFileURL(require.resolve("vite")).href);
@@ -270,6 +284,11 @@ Object.assign(window, { sdkIdentity: { Component, Fragment }, subscriptionCount:
     await expect(page.locator("#query")).toHaveText("query 1 / error");
     await page.getByRole("button", { name: "Toggle late subscriber" }).click();
     await expect(page.locator("#late-query")).toHaveText("error / 1");
+    // A hotkey's hooks run on the same Preact instance as the page's.
+    await page.locator("h1").click();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await expect(page.locator("#hotkey")).toHaveText("Ctrl+K / 1");
     assert.equal(await page.evaluate(() => window.subscriptionCount()), 1);
     assert.deepEqual(errors, []);
     const debug = await page.evaluate(() => ({
