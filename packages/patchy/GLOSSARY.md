@@ -151,6 +151,12 @@ A keyboard shortcut a page registers through `patchy/hotkeys`: one chord such as
 the hotkeys inside it fire. Patchy keeps `Mod+Shift+K` for its own shortcuts.
 _Avoid_: keybinding, shortcut key, accelerator
 
+**Shortcuts sheet**:
+The dialog that lists a page's labelled hotkeys under their groups, opened by `?`.
+`HotkeySheet` is the ready-made one, drawn in the company look; a builder can build
+another from `useHotkeyList`.
+_Avoid_: cheat sheet, help overlay, keyboard help
+
 **Company code**:
 Code a builder writes or copies into a patch instead of importing from the SDK.
 The company maintains it; it still obeys the sandbox and bundle limits.

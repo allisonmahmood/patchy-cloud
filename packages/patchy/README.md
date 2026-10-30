@@ -168,6 +168,16 @@ it renders fire; the component that renders it is outside it.
 `formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer.
 The `patchy-hotkeys` project skill states the typing, layout and repeat rules.
 
+`<HotkeySheet />` is a ready-made shortcuts sheet: a `?` button where it is
+mounted, and a modal dialog that it and `?` open, listing every labelled hotkey
+under its `group` option. `title` and `hotkey` change its heading and the key
+that opens it. While it is open, its `HotkeyScope` holds the page's hotkeys back;
+Escape, its close button or a click outside closes it, and focus returns. It
+draws with `--look-*` tokens in `hotkey-*` classes. The first one mounted adds
+one `<style>` with those defaults inside `@layer patchy-hotkeys`, after the
+look's styles, so it beats the look's element styles and the patch's own
+unlayered CSS beats it.
+
 ### Generated downloads and printing
 
 The generated client's `download(name, data): Promise<null>` accepts `Blob`,

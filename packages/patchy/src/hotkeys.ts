@@ -16,9 +16,10 @@ import {
   type HotkeyRegistration,
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
-import { createElement, type ComponentChildren, type JSX } from "preact";
-import { useId, useLayoutEffect, useMemo, useState } from "preact/hooks";
+import { Fragment, createElement, type ComponentChildren, type JSX } from "preact";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
+import { addSheetStyles, sections } from "./hotkeySheet.js";
 
 type Letter =
   | "A"
@@ -110,6 +111,8 @@ export type Hotkey<S extends string> = [FirstRefusal<Steps<S>>] extends [never]
 export interface HotkeyOptions {
   /** What the hotkey does, in the viewer's words. Labelled hotkeys appear in `useHotkeyList`. */
   readonly label?: string;
+  /** The heading `HotkeySheet` lists it under. Ungrouped hotkeys are listed under General. */
+  readonly group?: string;
   /** While false, the hotkey stays mounted but doesn't fire or list. Defaults to true. */
   readonly enabled?: boolean;
   /**
@@ -150,7 +153,7 @@ const definition = (binding: Checked): UseHotkeyDefinition => ({
     requireReset: binding.repeat === false,
     // TanStack's own warning names options this API doesn't have; ours follows registration.
     conflictBehavior: "allow",
-    ...(binding.label === undefined ? {} : { meta: { name: binding.label } })
+    ...(binding.label === undefined ? {} : { meta: { name: binding.label, group: binding.group } })
   }
 });
 
@@ -248,6 +251,8 @@ export const hotkeyKeys = (hotkey: string): ReadonlyArray<ReadonlyArray<string>>
 export interface ListedHotkey {
   readonly hotkey: string;
   readonly label: string;
+  /** Its `group` option, when it has one. */
+  readonly group?: string;
 }
 
 /**
@@ -255,9 +260,147 @@ export interface ListedHotkey {
  * It includes hotkeys a `HotkeyScope` is holding back, such as the page's under the sheet's own.
  */
 export function useHotkeyList(): ReadonlyArray<ListedHotkey> {
-  return useHotkeyRegistrations()
-    .map(mounted)
-    .flatMap(({ hotkey, label, enabled }) =>
-      enabled && label !== undefined ? [{ hotkey, label }] : []
-    );
+  return useHotkeyRegistrations().flatMap((registration) => {
+    const { hotkey, label, enabled } = mounted(registration);
+    const group = registration.options.meta?.group;
+    if (!enabled || label === undefined) return [];
+    return [group === undefined ? { hotkey, label } : { hotkey, label, group }];
+  });
+}
+
+// Each step's keys as keycaps, with "then" between a sequence's steps.
+const keycaps = (hotkey: string) =>
+  createElement(
+    "span",
+    { class: "hotkey-keys" },
+    hotkeyKeys(hotkey).flatMap((keys, step) => [
+      step > 0 && createElement("span", { class: "hotkey-then" }, "then"),
+      // A symbol outside ASCII, such as ⌘, draws larger than a letter.
+      ...keys.map((key) =>
+        createElement("kbd", { class: /^[^ -~]$/.test(key) ? "hotkey-symbol" : undefined }, key)
+      )
+    ])
+  );
+
+// A modal dialog: the page behind it is inert and Escape asks it to close. Its state is the
+// sheet's: the dialog closes as it unmounts, which returns focus to where it was. Chrome fires
+// the dialog's own close event late, after the next key, so nothing waits on it.
+function Sheet(props: { readonly title: string; readonly onClose: () => void }): JSX.Element {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const title = useId();
+  const list = useHotkeyList();
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return createElement(
+    "dialog",
+    {
+      ref: dialog,
+      class: "hotkey-sheet-dialog",
+      "aria-labelledby": title,
+      onCancel: props.onClose,
+      // The dialog is the scrim around the card, so a click on the dialog itself is outside it.
+      onClick: (event: MouseEvent) => {
+        if (event.target === event.currentTarget) props.onClose();
+      },
+      // The close button is the only stop; Tab would otherwise leave the frame for Patchy's bar.
+      onKeyDown: (event: KeyboardEvent) => {
+        if (event.key !== "Tab") return;
+        event.preventDefault();
+        close.current?.focus();
+      }
+    },
+    createElement(
+      "div",
+      { class: "hotkey-sheet" },
+      createElement(
+        "div",
+        { class: "hotkey-sheet-head" },
+        createElement("h2", { id: title }, props.title),
+        createElement(
+          "button",
+          {
+            ref: close,
+            type: "button",
+            class: "hotkey-sheet-close",
+            "aria-label": "Close",
+            onClick: props.onClose
+          },
+          keycaps("Escape"),
+          createElement("span", { class: "hotkey-sheet-close-word" }, "Close")
+        )
+      ),
+      createElement(
+        "div",
+        { class: "hotkey-groups" },
+        sections(list).map(([name, rows]) =>
+          createElement(
+            "section",
+            { class: "hotkey-group", key: name },
+            name !== undefined && createElement("h3", null, name),
+            createElement(
+              "ul",
+              null,
+              rows.map((row) =>
+                createElement(
+                  "li",
+                  { class: "hotkey-row", key: `${row.hotkey}\n${row.label}` },
+                  createElement("span", { class: "hotkey-label" }, row.label),
+                  keycaps(row.hotkey)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+export interface HotkeySheetProps<S extends string> {
+  /** The sheet's heading and accessible name. Defaults to "Keyboard shortcuts". */
+  readonly title?: string;
+  /** The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"`. */
+  readonly hotkey?: Hotkey<S>;
+}
+
+/**
+ * A `?` button where it is mounted, and a sheet that it and `hotkey` open, listing every labelled
+ * hotkey under its group. While the sheet is open the page's hotkeys wait. Escape, its close
+ * button and a click outside it close it, and focus goes back. It draws in the company look with
+ * `hotkey-*` classes, in `@layer patchy-hotkeys`, so the page's own CSS restyles it.
+ *
+ * ```tsx
+ * <HotkeySheet />
+ * <HotkeySheet title="Tracker shortcuts" hotkey="Mod+/" />
+ * ```
+ */
+export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProps<S>): JSX.Element {
+  const title = props.title ?? "Keyboard shortcuts";
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(addSheetStyles, []);
+  // Registered outside the sheet's scope: it fires while the sheet is closed and lists with the page's.
+  useBindings([{ hotkey: props.hotkey ?? "?", run: () => setOpen(true), label: "Show shortcuts" }]);
+  return createElement(
+    Fragment,
+    null,
+    createElement(
+      "button",
+      {
+        type: "button",
+        class: "hotkey-opener",
+        "aria-label": title,
+        "aria-haspopup": "dialog",
+        onClick: () => setOpen(true)
+      },
+      "?"
+    ),
+    open &&
+      createElement(HotkeyScope, {
+        children: createElement(Sheet, { title, onClose: () => setOpen(false) })
+      })
+  );
 }

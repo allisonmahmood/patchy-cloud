@@ -6,8 +6,8 @@ import type { Instance } from "./instance.js";
 
 // packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings'
 // words. These pages prove what only a browser shows: real key events reaching patchy/hotkeys in
-// the published frame, in fields, controls, a scope, other layouts and on a Mac, and the conflict
-// warning waiting until every hook's update has landed.
+// the published frame, in fields, controls, a scope, other layouts and on a Mac, the conflict
+// warning waiting until every hook's update has landed, and the sheet behaving as a dialog.
 test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
@@ -111,6 +111,28 @@ function App() {
   useHotkey("O", () => setPanel("first"));
   useHotkey("N", () => setPanel("second"));
   return <main>{panel && <Panel key={panel} name={panel} close={() => setPanel(undefined)} />}</main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+// The ready-made sheet over a page with grouped, ungrouped and unlabelled hotkeys of its own.
+const sheet = `import { render } from "patchy/preact";
+import { HotkeySheet, useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+const log = (name: string) => () => { fired.push(name); };
+Object.assign(window, { fired });
+
+function App() {
+  useHotkey("G H", log("G H"), { label: "Go home", group: "Navigation" });
+  useHotkey("C T", log("C T"), { label: "Create task", group: "Tasks" });
+  useHotkey("G T", log("G T"), { label: "Go to timeline", group: "Navigation" });
+  useHotkey("L", log("L"), { label: "Next" });
+  useHotkey("Escape", log("Escape"));
+  return <main>
+    <button id="search">Search</button>
+    <HotkeySheet title="Tracker shortcuts" />
+  </main>;
 }
 render(<App />, document.getElementById("app")!);
 `;
@@ -339,4 +361,77 @@ test("a conflict warning waits for every hook's update, so siblings swapping key
   expect(await warnings()).toEqual([
     'patchy/hotkeys: "Second" and "Third" both use K in the same scope, so both fire on each press.'
   ]);
+});
+
+test("the sheet opens by ? or its button, lists by group, holds the page's hotkeys and closes like a dialog", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, sheet);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const view = page.frameLocator("#patch");
+  const opener = view.getByRole("button", { name: "Tracker shortcuts" });
+  const dialog = view.getByRole("dialog", { name: "Tracker shortcuts" });
+  const close = dialog.getByRole("button", { name: "Close" });
+  await expect(opener).toBeVisible();
+
+  await test.step("? opens it, focus moves in, and it lists each group's hotkeys as keys", async () => {
+    await view.locator("#search").focus();
+    await page.keyboard.press("?");
+    await expect(dialog).toBeVisible();
+    await expect(close).toBeFocused();
+    const listed = await frame.evaluate(() =>
+      [...document.querySelectorAll(".hotkey-group")].map((group) => [
+        group.querySelector("h3")?.textContent,
+        [...group.querySelectorAll(".hotkey-row")].map(
+          (row) =>
+            `${row.querySelector(".hotkey-label")?.textContent}: ${[...row.querySelectorAll("kbd")].map((key) => key.textContent).join(" ")}`
+        )
+      ])
+    );
+    expect(listed).toEqual([
+      ["Navigation", ["Go home: G H", "Go to timeline: G T"]],
+      ["Tasks", ["Create task: C T"]],
+      ["General", ["Show shortcuts: ?", "Next: L"]]
+    ]);
+  });
+
+  await test.step("while it is open the page's hotkeys wait, and Tab stays on its close button", async () => {
+    await page.keyboard.press("l");
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(close).toBeFocused();
+  });
+
+  // Each way out releases the page's hotkeys at once, so the first key after it fires; any key
+  // pressed while it was open would show here too.
+  await test.step("Escape closes it past the page's own Escape, and focus goes back", async () => {
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(view.locator("#search")).toBeFocused();
+    await page.keyboard.press("l");
+    await firedNext(frame, ["L"]);
+  });
+
+  await test.step("its button opens it, and its close button or a click outside closes it", async () => {
+    await opener.click();
+    await expect(close).toBeFocused();
+    await close.click();
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    await page.keyboard.press("l");
+    await firedNext(frame, ["L"]);
+    await opener.click();
+    await expect(dialog).toBeVisible();
+    // The dialog is the scrim around the card; its corner is outside the card.
+    await dialog.click({ position: { x: 4, y: 4 } });
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    await page.keyboard.press("l");
+    await firedNext(frame, ["L"]);
+  });
 });
