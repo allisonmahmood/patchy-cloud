@@ -596,7 +596,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                     ...capability.attempt,
                     handler: input.handler,
                     args: input.args,
-                    viewer,
+                    // Tier 2 guests are not admitted yet. Keep the existing worker wire
+                    // shape: its strict decoder does not accept RuntimeMe's guest flag.
+                    viewer: { user: viewer.user, company: viewer.company, admin: viewer.admin },
                     // Absent for a page, so its calls still reach a loader or guest built before
                     // agents. Nested calls keep their parent's binding, and so its agent.
                     ...(binding.agent === undefined ? {} : { agent: binding.agent }),
