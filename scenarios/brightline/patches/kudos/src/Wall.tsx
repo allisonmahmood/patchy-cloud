@@ -54,7 +54,19 @@ export function Wall({
     ],
     [rows, reactionsQuery.data]
   );
-  const people = usePeople(ids);
+  const directoryPeople = usePeople(ids);
+  const people = useMemo(() => {
+    const resolved = new Map(directoryPeople);
+    // Outside authors have no Brightline directory entry. Keep the name recorded with their
+    // contribution while members still pick up live directory renames and departures.
+    for (const row of rows ?? [])
+      if (resolved.get(row.sender) === null && row.senderName)
+        resolved.set(row.sender, { name: row.senderName, active: true });
+    for (const reaction of reactionsQuery.data ?? [])
+      if (resolved.get(reaction.member) === null && reaction.memberName)
+        resolved.set(reaction.member, { name: reaction.memberName, active: true });
+    return resolved;
+  }, [directoryPeople, rows, reactionsQuery.data]);
   const { fresh, settle, announcement } = useArrivals(rows, meId, people);
   const [notice, setNotice] = useState("");
 

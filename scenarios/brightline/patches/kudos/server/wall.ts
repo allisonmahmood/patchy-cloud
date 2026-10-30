@@ -76,6 +76,7 @@ export const give = mutation({
     return ctx.tables.kudos.insert({
       recipient: recipient.id,
       sender: ctx.viewer.user.id,
+      senderName: ctx.viewer.user.name,
       message,
       value: args.value,
       sentAt: new Date().toISOString()
@@ -98,7 +99,12 @@ export const react = mutation({
     });
     const mine = rows[0];
     if (args.on && mine === undefined)
-      await ctx.tables.reactions.insert({ kudos, member, emoji: args.emoji });
+      await ctx.tables.reactions.insert({
+        kudos,
+        member,
+        memberName: ctx.viewer.user.name,
+        emoji: args.emoji
+      });
     if (!args.on && mine !== undefined) await ctx.tables.reactions.delete(mine.id);
     return args.on;
   }

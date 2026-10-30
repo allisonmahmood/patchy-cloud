@@ -9,6 +9,7 @@ export type { Emoji, ValueKey } from "../helpers/kudos.js";
 export type Kudos = Row<typeof config, "kudos">;
 export type Reaction = Row<typeof config, "reactions">;
 export type Member = NonNullable<Awaited<ReturnType<typeof patchy.server.people.people>>[number]>;
+export type Person = Pick<Member, "name" | "active">;
 
 export const valueLabel = (key: string): string =>
   VALUES.find((value) => value.key === key)?.label ?? key;
@@ -17,7 +18,7 @@ export const valueLabel = (key: string): string =>
 export type Filter = { readonly recipient: string | null; readonly value: string | null };
 
 /** Resolved directory entries by id: undefined while loading, null when the id no longer resolves. */
-export type People = ReadonlyMap<string, Member | null>;
+export type People = ReadonlyMap<string, Person | null>;
 
 export const firstName = (member: Member | null | undefined): string =>
   member ? (member.name.split(/\s+/)[0] ?? member.name) : "someone";

@@ -9,6 +9,7 @@ export default defineConfig({
       {
         recipient: t.member(),
         sender: t.text(),
+        senderName: t.text().optional(),
         message: t.text(),
         value: t.text(),
         sentAt: t.timestamp()
@@ -27,6 +28,7 @@ export default defineConfig({
       {
         kudos: t.ref("kudos"),
         member: t.text(),
+        memberName: t.text().optional(),
         emoji: t.text()
       },
       { indexes: { byKudosMemberEmoji: { columns: ["kudos", "member", "emoji"], unique: true } } }

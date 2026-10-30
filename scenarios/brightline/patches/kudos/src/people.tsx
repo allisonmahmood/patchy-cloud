@@ -1,6 +1,6 @@
 import { useMemo, useQuery } from "patchy/preact";
 import { patchy } from "../patchy/_generated/client.js";
-import type { Member, People } from "./model.js";
+import type { People, Person } from "./model.js";
 
 /**
  * Resolves member ids for display through server/people.ts, including people who have left.
@@ -10,7 +10,7 @@ export function usePeople(ids: readonly string[]): People {
   const unique = useMemo(() => [...new Set(ids)].sort(), [ids]);
   const resolved = useQuery(patchy.server.people.people, { ids: unique });
   return useMemo(() => {
-    const people = new Map<string, Member | null>();
+    const people = new Map<string, Person | null>();
     if (resolved.data?.length === unique.length)
       resolved.data.forEach((member, index) => people.set(unique[index]!, member));
     return people;
@@ -18,7 +18,7 @@ export function usePeople(ids: readonly string[]): People {
 }
 
 /** Display name for a resolved id: blank while loading, a neutral label once it can't resolve. */
-export function personName(person: Member | null | undefined): string {
+export function personName(person: Person | null | undefined): string {
   if (person === undefined) return "";
   return person?.name ?? "Former colleague";
 }
@@ -46,7 +46,7 @@ export function Avatar({
   size = "md"
 }: {
   id: string;
-  person: Member | null | undefined;
+  person: Person | null | undefined;
   size?: "sm" | "md" | "lg";
 }) {
   const gone = person === null || person?.active === false;

@@ -173,6 +173,7 @@ export const load = mutation({
         return {
           recipient: people[to]!.id,
           sender: people[from]!.id,
+          senderName: people[from]!.name,
           value: sample.value,
           message: sample.message,
           sentAt: sentAt(sample.when, now)
@@ -185,6 +186,7 @@ export const load = mutation({
         Array.from({ length: Math.min(count, others.length) }, (_, nth) => ({
           kudos: row.id,
           member: others[(nth + offset + index) % others.length]!.id,
+          memberName: others[(nth + offset + index) % others.length]!.name,
           emoji
         }))
       );
