@@ -275,6 +275,27 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
       assert.deepStrictEqual(generated, []);
     })
   );
+  it.effect("removes and names a present skill the release doesn't ship", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const loop = { path: ".agents/skills/patchy-loop/SKILL.md", contents: "This release's loop" };
+      const { root, generated, prepare } = yield* harness({
+        index: currentIndex,
+        generatedFiles: [loop]
+      });
+      // A later release's skill, as after a rollback, and a folder outside Patchy's names.
+      for (const name of ["patchy-loop", "patchy-later", "patchy-Notes"]) {
+        yield* fs.makeDirectory(`${root}/.agents/skills/${name}`, { recursive: true });
+        yield* fs.writeFileString(`${root}/.agents/skills/${name}/SKILL.md`, "Before");
+      }
+      const prepared = yield* prepare;
+      assert.deepStrictEqual(generated[0]!.skills, ["patchy-later", "patchy-loop"]);
+      assert.isFalse(yield* fs.exists(`${root}/.agents/skills/patchy-later`));
+      assert.strictEqual(yield* fs.readFileString(`${root}/${loop.path}`), loop.contents);
+      assert.isTrue(yield* fs.exists(`${root}/.agents/skills/patchy-Notes/SKILL.md`));
+      assert.include(prepared.warnings, "Removed the patchy-later skill.");
+    })
+  );
   it.effect("prepares members without requiring a fixture or declaration snapshot", () =>
     Effect.gen(function* () {
       const { prepare } = yield* harness({
