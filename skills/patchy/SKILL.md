@@ -72,8 +72,9 @@ or file contents.
 ## Where patch files live
 
 A page's file and a tool's repo are how they get updated. Republishing a file updates
-the patch it created, and a tool's repo is the only copy of its source: publish sends
-what it built, not the project. Keep both somewhere lasting:
+the patch it created. A tool's repo is where its changes are made; each publish also
+keeps a copy with the version, which [pull](#working-on-a-tool-without-its-repo) gets
+back. Keep both somewhere lasting:
 
 - The person's choice wins: a folder they name, the patch repo they are working in,
   or the file a page was published from.
@@ -215,6 +216,34 @@ failed `patchy.json` write and rerun `pnpm patchy publish` as the same owning us
 Recovery precedes release checks and rebuilding, returning the original result.
 Untargeted sharing and lifecycle commands use the repo id.
 Keep the patch id on `not_owner`, `patch_retired` or `patch_deleted`. Ask for reassignment or restoration rather than creating another patch. Only a gone patch's 404 calls for intentionally removing `patch` before a new create.
+
+## Working on a tool without its repo
+
+When a tool's repo isn't on this machine, because a colleague built it or a laptop is
+gone, pull it into a lasting folder:
+
+```sh
+patchy pull <name|id|address> ~/Patchy/<folder> --json
+```
+
+It copies the repo the served version was published from, or `--version <n>`'s, and
+sets it up on today's release like `refresh`, so `pnpm patchy dev` runs there.
+Without a folder it uses `./<name>`; the folder must be new or empty. Anyone in the
+company who can open the tool can pull it; only its owner publishes. The result's
+`mine: false` and its text name the owner; `not_owner` on publish means ask them or
+an admin to reassign it. `patchy list <name>` says whether a pull will work.
+
+- `no_repo`, exit 2, means that version was published without its repo, before Patchy
+  kept them. Its `owner` can publish again from their repo to keep one.
+- A retired or deleted tool needs `--state retired` or `--state all`. Its files arrive
+  without setup; run `patchy refresh` there once it's restored. A failed install or
+  generation also keeps the files, and the warning says what to fix.
+- A page published from one HTML file arrives as that file, with the publish line to
+  update it.
+
+Everything a repo publish keeps, everyone in the company who can open the tool can
+read, so secrets never belong in the repo. `.env` files never go with it, and neither
+does anything `.gitignore` excludes.
 
 ## Managing a patch
 

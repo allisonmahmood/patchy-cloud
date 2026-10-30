@@ -216,6 +216,7 @@ describe("repo publish recovery", () => {
     expect(readJson(path.join(moved, "patchy.json"))).toEqual({
       instance: instance.url,
       patch: response.patchId,
+      version: response.versionNumber,
       authorField: 8
     });
     expect(existsSync(attemptPath)).toBe(false);
@@ -415,6 +416,7 @@ describe("repo publish recovery", () => {
       instance: `${instance.url}/`,
       authorField: 7,
       patch: response.patchId,
+      version: response.versionNumber,
       descriptionSyncedAt: null
     });
     expect(existsSync(attemptPath)).toBe(false);

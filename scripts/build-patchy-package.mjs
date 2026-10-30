@@ -310,6 +310,10 @@ await copyFile(
   path.join(packageDir, "node_modules/papaparse/LICENSE"),
   path.join(distDir, "licenses/papaparse-LICENSE")
 );
+await copyFile(
+  path.join(packageDir, "node_modules/ignore/LICENSE-MIT"),
+  path.join(distDir, "licenses/ignore-LICENSE")
+);
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
 await rm(packageSkillsDir, { recursive: true, force: true });
 await cp(rootSkillsDir, packageSkillsDir, { recursive: true });

@@ -68,6 +68,7 @@ import { requireCurrentCli } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
 import { prepareRepoPublish } from "./repoBuild.js";
+import * as RepoSnapshot from "./repoSnapshot.js";
 import { publishLookStamp, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
 import * as Logs from "./logs.js";
@@ -506,12 +507,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   yield* Output.rememberWarnings(published.warnings);
   // Reapply creates and updates before clearing; failed local writes remain recoverable.
   if (repo !== undefined) {
-    yield* Project.recordPublish(
-      repo,
-      published.patchId,
-      instance.apiUrl,
-      published.descriptionUpdatedAt
-    );
+    yield* Project.recordPublish(repo, published, instance.apiUrl, published.descriptionUpdatedAt);
   } else if (attempt.target.mode === "file") {
     yield* state.cachePatch(
       instance.apiUrl,
@@ -536,6 +532,11 @@ const sendPublish = Effect.fn("sendPublish")(function* (
       `Patch ID: ${published.patchId}`,
       `Tier: ${published.tier}`,
       `Version: ${published.versionNumber}`,
+      ...(published.artifacts?.repo === undefined
+        ? []
+        : [
+            `Repo: ${published.artifacts.repo.files} files, ${RepoSnapshot.formatBytes(published.artifacts.repo.bytes)}, kept with this version`
+          ]),
       ...(["provisioned", "unused"] as const).flatMap((kind) =>
         Object.entries(published[kind]).map(
           ([resource, names]) =>
@@ -608,7 +609,13 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const { manifest, html, server, warnings } = yield* prepareRepoPublish(repo, apiToken);
+          const {
+            manifest,
+            html,
+            server,
+            repo: snapshot,
+            warnings
+          } = yield* prepareRepoPublish(repo, apiToken);
           const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
@@ -618,6 +625,7 @@ const publish = Command.make(
               manifest,
               html,
               ...(server === undefined ? {} : { server }),
+              repo: snapshot,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
               ...(options.force ? { force: true } : {}),
@@ -1474,6 +1482,45 @@ const init = Command.make(
   )
 );
 
+const pull = Command.make(
+  "pull",
+  {
+    patch: Argument.String("patch").pipe(
+      Argument.withDescription("A patch id, name, or pasted patch address")
+    ),
+    dir: Argument.String("dir").pipe(
+      Argument.withDescription("Directory to pull into; defaults to ./<patch name>"),
+      Argument.optional
+    ),
+    version: Flag.Int("version").pipe(
+      Flag.withDescription("Pull this version instead of the one being served"),
+      Flag.optional
+    ),
+    state: Flag.Literals("state", ["live", "retired", "all"]).pipe(
+      Flag.withDescription("Find a retired or deleted patch too; defaults to live"),
+      Flag.optional
+    )
+  },
+  (options) =>
+    run(
+      Effect.gen(function* () {
+        if (Option.exists(options.version, (version) => version < 1))
+          return yield* new LocalError({ message: "--version must be a version number, from 1." });
+        const token = yield* requiredToken();
+        const patchRef = yield* Discovery.patchReference(options.patch);
+        yield* Project.pull(yield* Cwd, token, patchRef, {
+          directory: options.dir,
+          version: options.version,
+          state: options.state
+        });
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Copy a patch's repo into a new folder, set up to run and change: the served version, or --version."
+  )
+);
+
 const refresh = Command.make("refresh", {}, () =>
   runProject(
     Effect.gen(function* () {
@@ -1696,6 +1743,7 @@ export const root = Command.make("patchy").pipe(
     withCommandHeader(describe),
     withCommandHeader(logs),
     withCommandHeader(init),
+    withCommandHeader(pull),
     withCommandHeader(dev),
     withCommandHeader(refresh),
     withCommandHeader(list),

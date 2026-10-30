@@ -119,13 +119,37 @@ describe("repo publish checks", () => {
 
   // repoBuild.test.ts owns what the inspector refuses and the cap; this proves Vite's output
   // reaches the check, and that `patchy init` produces a repo whose page publishes, in the company
-  // look with its embedded font.
-  it("refuses unbundled resources before sending, then publishes the starter", async () => {
+  // look with its embedded font, keeping its repo for a colleague to pull back set up.
+  it("refuses unbundled resources before sending, then publishes the starter with its repo and pulls it back set up", async () => {
     const registry = await localPackageRegistry();
+    let kept: ReadonlyArray<{ path: string; contents: string }> = [];
     const instance = await stubInstance(
       (request, respond, disconnect) => {
-        if (request.url === "/api/publish")
-          return respond(201, { ...publish(201, "abcdefghijkl", 1), tier: 1 });
+        if (request.url === "/api/publish") {
+          kept = decodePublishRequest(request.body).repo ?? [];
+          return respond(201, {
+            ...publish(201, "abcdefghijkl", 1, "company", "notes-page"),
+            tier: 1,
+            artifacts: {
+              ...publish(201, "abcdefghijkl", 1).artifacts,
+              repo: { files: kept.length, bytes: 1234 }
+            }
+          });
+        }
+        if (request.url.split("?")[0] === "/api/patches/notes-page/repo")
+          return respond(200, {
+            ok: true,
+            patchId: "abcdefghijkl",
+            name: "notes-page",
+            state: "live",
+            versionNumber: 1,
+            tier: 1,
+            owner: { id: "usr_colleague", name: "Colleague" },
+            description: "A page of notes, described in the portal",
+            descriptionUpdatedAt: "2026-10-29T00:00:00.000Z",
+            kind: "repo",
+            files: kept
+          });
         if (request.url === "/api/sdk/generate")
           return respond(200, generateProjectResponse(request.body, embeddedFontLook));
         projectHandler(request, respond, disconnect);
@@ -175,5 +199,66 @@ describe("repo publish checks", () => {
     expect(sent.manifest.tier).toBe(1);
     expect(sent.html).toContain(embeddedFontLook.font);
     expect(sent.html).toMatch(/main\{[^}]*max-width:960px/);
-  }, 120_000); // An offline install of the real release archive can exceed 30 seconds.
+
+    // The repo goes with the version, without installs, local state or what refresh regenerates.
+    const paths = (sent.repo ?? []).map((file) => file.path);
+    expect(paths).toEqual([...paths].sort());
+    expect(paths).toEqual(
+      expect.arrayContaining(["AGENTS.md", "index.html", "package.json", "patchy.config.ts"])
+    );
+    expect(
+      paths.filter((file) =>
+        /^(node_modules|\.patchy|patchy\/_generated|\.agents\/skills\/patchy-)/.test(file)
+      )
+    ).toEqual([]);
+    expect(JSON.parse(published.stdout)).toMatchObject({
+      artifacts: { repo: { files: paths.length } }
+    });
+    expect(JSON.parse(readFileSync(path.join(dir, "patchy.json"), "utf8"))).toMatchObject({
+      patch: "abcdefghijkl",
+      version: 1
+    });
+
+    // A colleague pulls it into a folder where the patch builds again on today's release.
+    const into = (args: ReadonlyArray<string>) =>
+      runCli(["pull", "notes-page", ...args, "--json"], {
+        cwd: parent,
+        stateDir: tempDir(),
+        env: { ...env, ...registry, pnpm_config_optional: "true" }
+      });
+    const occupied = await into([]);
+    expect(occupied).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(occupied.stderr).error).toBe(
+      `Refusing to pull into an existing tree: ${dir}`
+    );
+    const pulled = await into(["copy"]);
+    expect(pulled, pulled.stderr).toMatchObject({ status: 0, stderr: "" });
+    const copy = path.join(parent, "copy");
+    expect(JSON.parse(pulled.stdout)).toMatchObject({
+      ok: true,
+      dir: copy,
+      versionNumber: 1,
+      kind: "repo",
+      files: paths,
+      owner: { id: "usr_colleague", name: "Colleague" },
+      mine: false,
+      setUp: true,
+      release: CURRENT_RELEASE,
+      warnings: []
+    });
+    expect(JSON.parse(readFileSync(path.join(copy, "patchy.json"), "utf8"))).toMatchObject({
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      version: 1,
+      description: "A page of notes, described in the portal",
+      descriptionSyncedAt: "2026-10-29T00:00:00.000Z"
+    });
+    for (const file of [
+      "node_modules/patchy/package.json",
+      "patchy/_generated/index.json",
+      ".agents/skills/patchy-loop/SKILL.md"
+    ])
+      expect(existsSync(path.join(copy, file)), file).toBe(true);
+    expect(readFileSync(path.join(copy, "index.html"), "utf8")).toBe(starter);
+  }, 240_000); // Two offline installs of the real release archive.
 });

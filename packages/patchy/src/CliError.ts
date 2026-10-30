@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import {
   AdminRequired,
   HasDependants,
+  NoRepo,
   NotOwner,
   PatchDeleted,
   PatchRetired,
@@ -44,6 +45,8 @@ export const refusalFields = {
   sources: Schema.optionalKey(SourcesOff.fields.sources),
   state: Schema.optionalKey(PatchState),
   purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt),
+  // `no_repo`: the version that has nothing to pull; `owner` names who can publish it again.
+  versionNumber: Schema.optionalKey(NoRepo.fields.versionNumber),
   admins: Schema.optionalKey(AdminRequired.fields.admins),
   // A refusal Patchy MCP's door would give, from `patchy dev agent`.
   from: Schema.optionalKey(ToolRefusal.fields.from),
@@ -64,6 +67,7 @@ const refusal = Schema.Union([
   }),
   AdminRequired,
   NotOwner,
+  NoRepo,
   PatchRetired,
   PatchDeleted,
   HasDependants,
