@@ -143,6 +143,27 @@ const recorder = Effect.gen(function* () {
 });
 
 it.layer(services)("guest invocation", (it) => {
+  it.effect("keeps the previous worker wire shape for member calls", () =>
+    Effect.gen(function* () {
+      const invocations = yield* makeInvocation((request) => {
+        assert.isFalse(Object.hasOwn(request.viewer, "guest"));
+        return Effect.succeed({
+          outcome: "returned" as const,
+          reply: { ok: true as const, value: 1 },
+          guestMs: 1
+        });
+      });
+      assert.deepStrictEqual(
+        yield* invocations.call(
+          { handler: "demo.query", args: { id: 1 } },
+          binding,
+          Effect.succeed(viewer)
+        ),
+        { ok: true, value: 1 }
+      );
+    })
+  );
+
   it.effect("admits only marked guest entry handlers", () =>
     Effect.gen(function* () {
       const calls = yield* Queue.unbounded<string>();

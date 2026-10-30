@@ -602,7 +602,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                       user: viewer.user,
                       company: viewer.company,
                       admin: viewer.admin,
-                      guest: viewer.guest
+                      // Stored workers built before guests use a strict viewer decoder.
+                      // They can receive member calls, but never an admitted guest call.
+                      ...(viewer.guest ? { guest: true } : {})
                     },
                     // Absent for a page, so its calls still reach a loader or guest built before
                     // agents. Nested calls keep their parent's binding, and so its agent.
