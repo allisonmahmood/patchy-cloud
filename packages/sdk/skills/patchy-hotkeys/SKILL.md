@@ -41,13 +41,18 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 - Write a symbol as the character it types: `"?"`, not `"Shift+/"`. A letter or a bare
   symbol matches the character the viewer's layout types, so `"?"` fires wherever they type
   `?`, and it displays as they see it.
-- A key falls back to its US position only when what it typed can't name a shortcut: a
-  non-Latin letter, so `"J"` fires from the Russian key in J's place; the digit row, so
-  AZERTY's `&` key fires `"1"` and `"Mod+1"`; and a Latin letter on a punctuation key with
-  Mod, so German ⌘Ü fires `"Mod+["`.
-- Any other symbol with Mod matches only the character the layout types on that key, so it
-  fires only on layouts that have it there: AZERTY's ⌘= fires `"Mod+="`, never `"Mod+/"`
-  from the key in `/`'s US position.
+- A key falls back to its US position when what it typed can't name a shortcut:
+  - a non-Latin letter or symbol, or a dead key: the Russian key in J's place fires `"J"`,
+    and ⌥- on a Mac, which types `–`, fires `"Alt+-"`;
+  - anything on the digit row: AZERTY's `&` key fires `"1"` and `"Mod+1"`;
+  - an ASCII symbol typed with Shift: Ctrl+Shift+/ on a US keyboard types `?` and fires
+    `"Mod+Shift+/"`;
+  - a non-ASCII Latin letter typed with Alt, or with Mod on a punctuation key: ⌥A on a Mac
+    types `å` and fires `"Alt+A"`, and German ⌘Ü fires `"Mod+["`.
+- Anything else matches only what it typed: a named key, a letter A–Z, an ASCII symbol
+  typed without Shift, or German `ü` on its own. So an unshifted symbol with Mod fires only
+  on layouts that type it on that key: AZERTY's ⌘= fires `"Mod+="`, never `"Mod+/"` from
+  the key in `/`'s US position.
 
 ## When it fires
 

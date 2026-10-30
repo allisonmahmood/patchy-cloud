@@ -2,10 +2,12 @@ import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import type { Frame, Page } from "@playwright/test";
 import { test, expect } from "./fixtures.js";
+import type { Instance } from "./instance.js";
 
-// packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings.
-// This page proves what only a browser shows: real key events reaching patchy/hotkeys in the
-// published frame, in fields, controls, a scope, other layouts and on a Mac.
+// packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings'
+// words. These pages prove what only a browser shows: real key events reaching patchy/hotkeys in
+// the published frame, in fields, controls, a scope, other layouts and on a Mac, and the conflict
+// warning waiting until every hook's update has landed.
 test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
@@ -37,6 +39,7 @@ function App() {
   useHotkey("ArrowDown", log("ArrowDown"));
   useHotkey("Mod+=", log("Mod+="));
   useHotkey("Mod+/", log("Mod+/"));
+  useHotkey("Mod+Shift+/", log("Mod+Shift+/"));
   return <main>
     <p id="route">{route}</p>
     <p id="mod-k">{formatHotkey("Mod+K")}</p>
@@ -50,6 +53,53 @@ function App() {
 }
 render(<App />, document.getElementById("app")!);
 `;
+
+// Two siblings swap K and L in one update; a third binding K later is a real duplicate.
+const conflicts = `import { render, useState } from "patchy/preact";
+import { useHotkey, useHotkeyList } from "patchy/hotkeys";
+
+const warnings: string[] = [];
+console.warn = (message: string) => { warnings.push(message); };
+Object.assign(window, { warnings });
+
+function Binding(props: { hotkey: "K" | "L"; label: string }) {
+  useHotkey(props.hotkey, () => {}, { label: props.label });
+  return null;
+}
+
+function App() {
+  const [swapped, setSwapped] = useState(false);
+  const [third, setThird] = useState(false);
+  useHotkey("S", () => setSwapped(true));
+  useHotkey("D", () => setThird(true));
+  return <main>
+    <Binding hotkey={swapped ? "L" : "K"} label="First" />
+    <Binding hotkey={swapped ? "K" : "L"} label="Second" />
+    {third && <Binding hotkey="K" label="Third" />}
+    <ul id="listed">{useHotkeyList().map((item) => <li>{item.label}: {item.hotkey}</li>)}</ul>
+  </main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+/** Bundles a page's source against the built patchy package and publishes it. */
+const publish = async (instance: Instance, tsx: string) => {
+  const bundle = await build({
+    stdin: { contents: tsx, loader: "tsx", resolveDir: packageRoot, sourcefile: "hotkeys.tsx" },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "iife",
+    jsx: "automatic",
+    jsxImportSource: "patchy/preact",
+    define: { "import.meta.env.DEV": "false" }
+  });
+  const script = bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script");
+  return instance.publish(
+    "company",
+    `<!doctype html><html><head><title>Hotkeys</title></head><body><div id="app"></div><script>${script}</script></body></html>`
+  );
+};
 
 const contentFrame = (page: Page): Frame => {
   const frame = page.frames().find((candidate) => candidate.url().includes("/~content/"));
@@ -70,21 +120,7 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
   context,
   instance
 }) => {
-  const bundle = await build({
-    stdin: { contents: source, loader: "tsx", resolveDir: packageRoot, sourcefile: "hotkeys.tsx" },
-    bundle: true,
-    write: false,
-    platform: "browser",
-    format: "iife",
-    jsx: "automatic",
-    jsxImportSource: "patchy/preact",
-    define: { "import.meta.env.DEV": "false" }
-  });
-  const script = bundle.outputFiles[0]!.text.replaceAll("</script", "<\\/script");
-  const patch = await instance.publish(
-    "company",
-    `<!doctype html><html><head><title>Hotkeys</title></head><body><div id="app"></div><script>${script}</script></body></html>`
-  );
+  const patch = await publish(instance, source);
   expect((await page.goto(patch.address))?.status()).toBe(200);
   const frame = contentFrame(page);
   const view = page.frameLocator("#patch");
@@ -143,7 +179,7 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await firedNext(frame, ["L"]);
   });
 
-  await test.step("other layouts: ? on AZERTY, J on Russian, and AZERTY's Mod+= isn't Mod+/", async () => {
+  await test.step("other layouts: ? on AZERTY, J on Russian, AZERTY's Mod+= isn't Mod+/, shifted / is", async () => {
     // Trusted key events carrying the key and code each layout reports.
     const cdp = await context.newCDPSession(page);
     const press = async (key: string, code: string, keyCode: number, modifiers: number) => {
@@ -165,7 +201,9 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await press("о", "KeyJ", 74, 0);
     // AZERTY types = on the key in /'s US position; since TanStack/hotkeys#210 it stays =.
     await press("=", "Slash", 187, 2);
-    await firedNext(frame, ["J", "Mod+="]);
+    // Ctrl+Shift on the US / key types ?, a shifted ASCII symbol, so the key's position counts.
+    await press("?", "Slash", 191, 2 | 8);
+    await firedNext(frame, ["J", "Mod+=", "Mod+Shift+/"]);
   });
 
   await test.step("formatHotkey shows Ctrl here and ⌘ on a Mac, where Mod is ⌘", async () => {
@@ -184,4 +222,31 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await firedNext(contentFrame(mac), ["Mod+Enter"]);
     await mac.close();
   });
+});
+
+test("a conflict warning waits for every hook's update, so siblings swapping keys don't warn", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, conflicts);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const view = page.frameLocator("#patch");
+  // The list follows TanStack's registrations, so it settles only after every hook's update.
+  const listed = (expected: string[]) =>
+    expect
+      .poll(async () => (await view.locator("#listed li").allTextContents()).sort())
+      .toEqual(expected);
+  const warnings = () =>
+    contentFrame(page).evaluate(() => [...(window as unknown as { warnings: string[] }).warnings]);
+  await listed(["First: K", "Second: L"]);
+
+  await page.keyboard.press("s");
+  await listed(["First: L", "Second: K"]);
+  expect(await warnings()).toEqual([]);
+
+  await page.keyboard.press("d");
+  await listed(["First: L", "Second: K", "Third: K"]);
+  expect(await warnings()).toEqual([
+    'patchy/hotkeys: "Second" and "Third" both use K in the same scope, so both fire on each press.'
+  ]);
 });
