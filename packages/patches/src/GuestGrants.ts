@@ -16,14 +16,17 @@ export interface Unavailability {
   readonly repair: string;
 }
 
-/** A grant is usable only on the current private browser version of an active patch. */
+/** Slice 3 can extend this without changing the admission and warning callers. */
+export const supportedTier = (tier: number): boolean => tier === 1;
+
+/** Current patch/version gate; declared sources are checked by unavailability. */
 export const eligible = (patch: Patches.Patch, version: Patches.PatchVersion): boolean =>
   patch.state === "live" &&
   patch.disabledAt === null &&
   patch.scope === "company" &&
   patch.currentVersionId === version.id &&
   version.patchId === patch.id &&
-  version.tier === 1;
+  supportedTier(version.tier);
 
 export class GuestGrants extends Context.Service<
   GuestGrants,
@@ -60,7 +63,7 @@ export class GuestGrants extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const sourceUnavailability = Effect.fn("GuestGrants.sourceUnavailability")(function* (
+  const manifestUnavailability = Effect.fn("GuestGrants.manifestUnavailability")(function* (
     companyId: string,
     manifest: typeof Manifest.Type
   ) {
@@ -87,13 +90,19 @@ export const make = Effect.gen(function* () {
           repair: "Ask an admin to unblock it or remove the declaration."
         } satisfies Unavailability;
     }
-    return null;
+    return supportedTier(manifest.tier)
+      ? null
+      : ({
+          source: "This patch",
+          reason: "is not currently available to guests",
+          repair: "Publish a supported guest tier."
+        } satisfies Unavailability);
   });
   const unavailability = Effect.fn("GuestGrants.unavailability")(function* (
     patch: Patches.Patch,
     version: Patches.PatchVersion
   ) {
-    const source = yield* sourceUnavailability(patch.companyId, version.manifest);
+    const source = yield* manifestUnavailability(patch.companyId, version.manifest);
     if (source !== null) return source;
     if (eligible(patch, version)) return null;
     return {
@@ -120,17 +129,7 @@ export const make = Effect.gen(function* () {
     manifest: typeof Manifest.Type
   ) {
     if (scope !== "company" || !(yield* hasGrants(patchId))) return null;
-    const source = yield* sourceUnavailability(companyId, manifest);
-    return (
-      source ??
-      (manifest.tier === 1
-        ? null
-        : ({
-            source: "This patch",
-            reason: "is not currently available to guests",
-            repair: "Publish a supported guest tier."
-          } satisfies Unavailability))
-    );
+    return yield* manifestUnavailability(companyId, manifest);
   });
   const grantRows = SqlSchema.findOneOption({
     Request: Schema.Struct({
