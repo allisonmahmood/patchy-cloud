@@ -13,6 +13,7 @@
     "src/client.ts",
     "src/server.ts",
     "src/csv.ts",
+    "src/hotkeys.ts",
     "src/dev.ts",
     "src/executeConfig.ts",
     "src/preact.ts",

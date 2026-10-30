@@ -15,7 +15,9 @@
     "**/node_modules/**",
     "**/.turbo/**",
     ".claude/**",
-    ".local/**"
+    ".local/**",
+    // PROTOTYPE: the hotkeys demo patch compiles inside a patch repo, not this workspace.
+    "packages/patchy/prototype-hotkeys/**"
   ],
   "rules": {
     "no-array-constructor": "error",

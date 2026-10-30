@@ -582,7 +582,8 @@ export const SDK_ENTRY_POINTS: {
     "patchy/preact",
     "patchy/preact/jsx-runtime",
     "patchy/preact/jsx-dev-runtime",
-    "patchy/csv"
+    "patchy/csv",
+    "patchy/hotkeys"
   ],
   server: ["patchy/server", "patchy/csv"],
   /** Imported only by the generated client under `patchy/_generated`. */

@@ -164,6 +164,7 @@ const coreSkills = ["patchy-loop", "patchy-look", "patchy-tables", "patchy-files
 const knownSkills = [
   ...coreSkills,
   "patchy-preact",
+  "patchy-hotkeys",
   "patchy-server",
   "patchy-postgres",
   "patchy-posthog",
@@ -257,7 +258,10 @@ export const generate = Effect.fn("Generation.generate")(function* (
   if (usesRefusal(request.manifest.tier, aliases) !== undefined)
     return yield* new TierMismatch({ tier: request.manifest.tier, aliases });
   const skills = new Set([...coreSkills, ...request.skills]);
-  if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
+  if (request.manifest.tier === 1 || request.manifest.tier === 2) {
+    skills.add("patchy-preact");
+    skills.add("patchy-hotkeys");
+  }
   if (request.manifest.tier === 2) skills.add("patchy-server");
   else skills.delete("patchy-server");
   if (request.manifest.uses.members?.kind === "members") skills.add("patchy-members");

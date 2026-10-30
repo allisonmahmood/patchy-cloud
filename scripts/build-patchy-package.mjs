@@ -31,7 +31,7 @@ const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.jso
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
-const publicEntries = ["config", "client", "server", "csv", "dev", ...uiEntries];
+const publicEntries = ["config", "client", "server", "csv", "hotkeys", "dev", ...uiEntries];
 
 /** A source file's top-level string and number constants, by name. */
 const literals = async (file) => {
@@ -198,7 +198,9 @@ await bundle({
   external: ["./executeConfig.js"]
 });
 await bundle({
-  entryPoints: ["client", ...uiEntries].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["client", "hotkeys", ...uiEntries].map((name) =>
+    path.join(packageDir, `src/${name}.ts`)
+  ),
   outdir: distDir,
   outbase: path.join(packageDir, "src"),
   bundle: true,
@@ -309,6 +311,10 @@ await mkdir(path.join(distDir, "licenses"), { recursive: true });
 await copyFile(
   path.join(packageDir, "node_modules/papaparse/LICENSE"),
   path.join(distDir, "licenses/papaparse-LICENSE")
+);
+await copyFile(
+  path.join(packageDir, "node_modules/@tanstack/preact-hotkeys/LICENSE"),
+  path.join(distDir, "licenses/tanstack-hotkeys-LICENSE")
 );
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
 await rm(packageSkillsDir, { recursive: true, force: true });

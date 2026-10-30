@@ -216,6 +216,15 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     limits: `Declare a connected Attio workspace, read-only. objects.<slug>.list, get and getMany, lists.<slug>.list and get, and members.list, typed from the snapshot: eq, contains, range and orderBy by attribute slug, option titles exact, null for no value, limit 1–500 with a cursor. Each call checks the workspace's current attributes and fails shape_mismatch naming one that changed. At most 500 ids to getMany, ${runtimeByteLimits.attioBytes / 1024} KiB of arguments, ${runtimeByteLimits.resultBytes / 1024 ** 2} MiB results and a 15-second service deadline bounded by the action's remaining time. Attio's own limits fail source_rate_limited and are never retried. Queries and mutations cannot use ctx.connections; Attio reads are not live-query dependencies.`
   },
   {
+    id: "helpers.hotkeys",
+    group: "Helpers",
+    name: "Keyboard shortcuts",
+    entrypoints: ["patchy/hotkeys"],
+    runs: "Tier 1 and 2 Preact pages, in the hosted shell and patchy dev",
+    limits:
+      "Chords such as Mod+K and space-separated sequences such as G H, typed and checked at compile time. Hotkeys fire while their component is mounted; single keys wait while the viewer types in a field. HotkeyScope silences the rest of the page for a dialog; useHotkeyList lists labelled hotkeys for a shortcuts sheet. Keys the browser keeps, such as Mod+T and Mod+W, never reach the page."
+  },
+  {
     id: "helpers.csv",
     group: "Helpers",
     name: "CSV text codec",
@@ -239,7 +248,7 @@ const unavailable: Partial<Record<(typeof groups)[number], string>> = {
 export const sdkCapabilitiesMarkdown = [
   "## What the SDK gives you",
   "",
-  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact with its JSX runtimes and patchy/csv; server runtime imports are patchy/server and patchy/csv. Everything else is company code: write or copy it into the patch.",
+  "This catalogue describes the installed release, not future capabilities. Import the generated client by a relative path. Page runtime imports are patchy/preact with its JSX runtimes, patchy/hotkeys and patchy/csv; server runtime imports are patchy/server and patchy/csv. Everything else is company code: write or copy it into the patch.",
   "",
   ...groups.flatMap((group) => [
     `### ${group}`,

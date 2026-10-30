@@ -818,6 +818,9 @@ function mount(frame: HTMLIFrameElement): void {
     } catch {
       notice("bootstrap_failed");
     }
+    // Keys go to the focused document. Hand the patch the keyboard on load, unless the
+    // shell's own UI, such as the starting cover, already holds focus.
+    if (document.activeElement === null || document.activeElement === document.body) frame.focus();
   });
   window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
