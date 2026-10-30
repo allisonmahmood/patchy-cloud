@@ -5,6 +5,8 @@ import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 import {
   ago,
+  avatar,
+  copyScriptPath,
   dateLabel,
   escapeAttribute,
   escapeHtml,
@@ -29,6 +31,11 @@ export const styles = `
   .portal-address { align-items: center; }
   .portal-subpage { max-width: 760px; margin-inline: auto; }
   .portal-table { overflow-x: auto; }
+  .portal-guests .list-row { display: flex; align-items: center; gap: 12px; }
+  .portal-guests .list-row > .portal-guest-person { flex: 1; min-width: 0; }
+  .portal-guest-add { display: flex; align-items: end; gap: 12px; }
+  .portal-guest-add .field { flex: 1; min-width: 0; }
+  @media (max-width: 480px) { .portal-guest-add { flex-wrap: wrap; } }
   .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
   .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
@@ -69,7 +76,16 @@ export const refusal = (notice: string | undefined) =>
     : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
 
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
-export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAction;
+export type PatchAction =
+  "description" | "scope" | "rollback" | "guest-share" | "guest-revoke" | ConfirmationAction;
+
+export interface GuestRow {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly company: { readonly name: string };
+  readonly grantedAt: string;
+}
 
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
 const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
@@ -126,10 +142,21 @@ const descriptionForm = (card: Patches.PortalCard, submitted?: string, error?: s
   // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
   `<section class="section">${actionForm(card.patch, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
 
-const scopeForm = (card: Patches.PortalCard): string => {
+const scopeForm = (
+  card: Patches.PortalCard,
+  guests: readonly GuestRow[],
+  publicBaseUrl: string
+): string => {
   const radio = (scope: Patches.Patch["scope"], label: string) =>
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${escapeAttribute(scope)}"${card.patch.scope === scope ? " checked" : ""}>${escapeHtml(label)}</label>`;
-  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
+  const url = `${publicBaseUrl.replace(/\/+$/u, "")}/${encodeURIComponent(card.patch.companyHandle)}/${encodeURIComponent(card.patch.name)}`;
+  const guestRows = guests
+    .map(
+      (guest) =>
+        `<li class="list-row">${avatar(guest.userId, guest.name)}<div class="portal-guest-person"><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)} · ${escapeHtml(guest.company.name)}</span></div>${actionForm(card.patch, "guest-revoke")}${hidden("userId", guest.userId)}<button class="btn btn-quiet btn-danger" type="submit" aria-label="Remove ${escapeAttribute(guest.name)}">Remove</button></form></li>`
+    )
+    .join("");
+  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form><div class="portal-guests section"><h4 class="section-heading">Outside people</h4>${card.patch.scope === "company" ? `${actionForm(card.patch, "guest-share")}<label class="field-label" for="guest-email">Add by email</label><div class="portal-guest-add"><input class="field" id="guest-email" name="email" type="email" autocomplete="email" required><button class="btn btn-primary" type="submit">Share patch</button></div></form>` : ""}${guests.length ? `<ul class="list">${guestRows}</ul>` : '<p class="supporting-text">No one outside this company has been given access.</p>'}<div class="actions"><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-label="Copy patch link" aria-live="polite" hidden>Copy link</button></div></div></section>`;
 };
 
 const versionsTable = (
@@ -323,6 +350,8 @@ export const renderSettings = (input: {
   readonly viewer: Viewer;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
+  readonly guests?: readonly GuestRow[];
+  readonly publicBaseUrl?: string;
 }): string => {
   const { card, viewer } = input;
   const { patch } = card;
@@ -349,7 +378,7 @@ export const renderSettings = (input: {
       : input.submittedDescription
         ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
         : "";
-  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
+  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card, input.guests ?? [], input.publicBaseUrl ?? "") : ""}${stop}<script defer src="${copyScriptPath}"></script>`;
 };
 
 /**

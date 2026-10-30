@@ -60,6 +60,13 @@ import {
   RequestTargetTooLong,
   Shared,
   ShareRequest,
+  GuestShareRequest,
+  GuestShared,
+  GuestList,
+  GuestRevoked,
+  AccountNotFound,
+  AlreadyMember,
+  GuestUnavailable,
   StartDeviceLoginRequest,
   Unauthorized,
   PublishCreated,
@@ -428,6 +435,48 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
+      )
+    ),
+    HttpApiEndpoint.post("guestShare", "/patches/:patchId/guests", {
+      params: patchParams,
+      payload: GuestShareRequest,
+      success: GuestShared,
+      error: [
+        AccountNotFound,
+        AlreadyMember,
+        GuestUnavailable,
+        ...ownerRouteErrors,
+        PayloadTooLarge
+      ]
+    }).annotateMerge(
+      describe(
+        "Share an eligible live company patch with one existing account in another company. " +
+          "The bearer must own the patch, including when an admin holds the bearer. " +
+          "An unknown account answers `account_not_found`, a member of the patch's company " +
+          "answers `already_member`, and an ineligible patch answers `guest_unavailable` with " +
+          "the offending source, reason and repair. Repeating a share preserves the original " +
+          "grant time and grantor. No invitation or email is sent."
+      )
+    ),
+    HttpApiEndpoint.get("guestList", "/patches/:patchId/guests", {
+      params: patchParams,
+      success: GuestList,
+      error: [...ownerRouteErrors]
+    }).annotateMerge(
+      describe(
+        "List an owned patch's retained guest grants, including deactivated accounts and grants " +
+          "held while the patch is public. Each entry has the stable user ID for revocation, " +
+          "the account's current name and email, company name and original grant time."
+      )
+    ),
+    HttpApiEndpoint.delete("guestRevoke", "/patches/:patchId/guests/:userId", {
+      params: { ...patchParams, userId: Schema.String },
+      success: GuestRevoked,
+      error: [...ownerRouteErrors]
+    }).annotateMerge(
+      describe(
+        "Remove one retained grant from an owned patch. Removal is idempotent and reports whether " +
+          "a grant was removed. Public access remains available under the public patch contract."
       )
     ),
     HttpApiEndpoint.post("retire", "/patches/:patchId/retire", {

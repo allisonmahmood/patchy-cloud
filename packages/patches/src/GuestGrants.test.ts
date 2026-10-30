@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { Analytics } from "@patchy/analytics";
+import { Users } from "@patchy/companies";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -14,6 +15,7 @@ const outsider = "usr_guest_other_company";
 it.layer(
   GuestGrants.layer.pipe(
     Layer.provideMerge(Patches.layer),
+    Layer.provideMerge(Users.layer),
     Layer.provideMerge(Fixtures.database),
     Layer.provideMerge(
       Layer.succeed(Analytics.Analytics, Analytics.Analytics.of({ track: () => Effect.void }))
@@ -43,9 +45,22 @@ it.layer(
       if (Option.isNone(found)) return;
       const { patch, version } = found.value;
       assert.isFalse(yield* grants.hasEligibleGrant(patch, version, outsider));
-      assert.isTrue(
-        yield* grants.grant(patch, version, outsider, Fixtures.identities.uploader.user.id)
+      const first = yield* grants.share(
+        patch,
+        version,
+        "guest-other@patchy.local",
+        Fixtures.identities.uploader.user.id
       );
+      const again = yield* grants.share(
+        patch,
+        version,
+        "guest-other@patchy.local",
+        Fixtures.identities.uploader.user.id
+      );
+      assert.deepStrictEqual(again, first);
+      assert.strictEqual(first.userId, outsider);
+      assert.deepStrictEqual(yield* grants.list(patchId), [first]);
+      assert.strictEqual((yield* grants.sharedWith(outsider))[0]?.patchId, patchId);
       assert.isTrue(yield* grants.hasEligibleGrant(patch, version, outsider));
       yield* patches.setScope(
         patchId,
@@ -129,7 +144,8 @@ it.layer(
       });
       yield* sql`UPDATE connections SET block_guests = false WHERE id = 'conn_guest_block'`;
       assert.isNull(yield* grants.unavailability(patch, version));
-      yield* grants.revoke(patchId, outsider);
+      assert.isTrue(yield* grants.revoke(patchId, outsider));
+      assert.isFalse(yield* grants.revoke(patchId, outsider));
       assert.isFalse(yield* grants.hasEligibleGrant(patch, version, outsider));
     })
   );

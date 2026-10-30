@@ -33,6 +33,7 @@ import {
   PatchyApi,
   PatchesGroup,
   ShareRequest,
+  GuestShareRequest,
   ForceRequest,
   DescriptionRequest,
   RollbackRequest,
@@ -328,6 +329,39 @@ it.layer(layer)("patches group", (it) => {
           }
         ]);
       })
+  );
+
+  it.effect("shares one patch with an outside account and lists and revokes the grant", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_api_guest', 'api-guest', 'Guest company') ON CONFLICT DO NOTHING`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_api_guest', 'clerk_api_guest', 'cmp_api_guest', 'api-guest@patchy.local', 'Outside person', 'member') ON CONFLICT DO NOTHING`;
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const created = yield* owner.publish({
+        payload: publishRequest({ html: html("Guest API") })
+      });
+      const params = { patchId: created.patchId };
+      const first = yield* owner.guestShare({
+        params,
+        payload: new GuestShareRequest({ email: "api-guest@patchy.local" })
+      });
+      assert.strictEqual(first.guest.userId, "usr_api_guest");
+      assert.strictEqual(first.publicUrl, created.publicUrl);
+      const repeated = yield* owner.guestShare({
+        params,
+        payload: new GuestShareRequest({ email: "api-guest@patchy.local" })
+      });
+      assert.deepStrictEqual(repeated.guest, first.guest);
+      assert.deepStrictEqual((yield* owner.guestList({ params })).guests, [first.guest]);
+      const refused = yield* nonOwner.guestList({ params, responseMode: "response-only" });
+      assert.strictEqual(refused.status, 403);
+      const target = { ...params, userId: first.guest.userId };
+      assert.isTrue((yield* owner.guestRevoke({ params: target })).removed);
+      assert.isFalse((yield* owner.guestRevoke({ params: target })).removed);
+      assert.deepStrictEqual((yield* owner.guestList({ params })).guests, []);
+    })
   );
 
   it.effect("rejects null or unknown scopes on publish and share", () =>

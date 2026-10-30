@@ -65,7 +65,7 @@ export interface Instance {
   foreignRequests: string[];
   session(
     context: BrowserContext,
-    user?: "owner" | "colleague" | "expired" | "none",
+    user?: "owner" | "colleague" | "guest" | "expired" | "none",
     expiresInSeconds?: number
   ): Promise<string | null>;
   publish(
@@ -246,6 +246,14 @@ export async function startCluster(): Promise<Cluster> {
         [seed.companyId]
       )
     );
+    await connect(TEMPLATE, async (template) => {
+      await template.query(
+        "INSERT INTO companies (id, handle, name) VALUES ('cmp_guest_browser', 'pine-studio', 'Pine Studio')"
+      );
+      await template.query(
+        "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_guest_browser', 'user_guest', 'cmp_guest_browser', 'guest@patchy.local', 'Guest', 'member')"
+      );
+    });
     const baseline = await connect("postgres", async (admin) => {
       // No test can drift a template nothing connects to; cloning still works.
       await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
@@ -762,8 +770,14 @@ export async function startInstance(options: {
         const now = Math.floor(Date.now() / 1000);
         const token = signSession({
           azp: origin,
-          sub: user === "colleague" ? "user_colleague" : "user_dev",
-          email: user === "colleague" ? "colleague@patchy.local" : "dev@patchy.local",
+          sub:
+            user === "colleague" ? "user_colleague" : user === "guest" ? "user_guest" : "user_dev",
+          email:
+            user === "colleague"
+              ? "colleague@patchy.local"
+              : user === "guest"
+                ? "guest@patchy.local"
+                : "dev@patchy.local",
           iat: now - 120,
           nbf: now - 120,
           exp: user === "expired" ? now - 60 : now + expiresInSeconds

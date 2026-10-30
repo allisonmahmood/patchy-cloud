@@ -45,7 +45,7 @@ import {
   renderWatch,
   type SetupState
 } from "./guide.js";
-import { homeStyles, renderHome, renderPublishedNote } from "./home.js";
+import { homeStyles, renderHome, renderPublishedNote, type SharedHomePatch } from "./home.js";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
   type CardTab,
@@ -231,6 +231,8 @@ type PageTab = Exclude<CardTab, "log">;
 const tabOf: Record<PatchAction, PageTab> = {
   description: "settings",
   scope: "settings",
+  "guest-share": "settings",
+  "guest-revoke": "settings",
   rollback: "versions",
   retire: "overview",
   delete: "overview",
@@ -298,6 +300,8 @@ const render = Effect.fn("PortalPages.render")(function* (
       ? renderSettings({
           card,
           viewer,
+          guests: yield* (yield* GuestGrants.GuestGrants).list(card.patch.id),
+          publicBaseUrl: session.publicBaseUrl,
           submittedDescription: options.submittedDescription,
           descriptionError: options.descriptionError
         })
@@ -426,6 +430,34 @@ const home = Effect.fn("PortalPages.home")(function* () {
   const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
+  const grants = yield* GuestGrants.GuestGrants;
+  const sharedWith: readonly SharedHomePatch[] = yield* Effect.forEach(
+    yield* grants.sharedWith(viewer.user.id),
+    (shared) =>
+      Effect.gen(function* () {
+        const found = yield* patches.find(shared.patchId);
+        if (Option.isNone(found))
+          return {
+            ...shared,
+            tier: 1,
+            unavailable: {
+              source: "This patch",
+              reason: "is unavailable",
+              repair: "Ask its owner to restore it."
+            }
+          };
+        const { patch, version } = found.value;
+        return {
+          ...shared,
+          tier: version.tier,
+          unavailable:
+            patch.scope === "public" && patch.state === "live"
+              ? null
+              : yield* grants.unavailability(patch, version)
+        };
+      }),
+    { concurrency: 4 }
+  );
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
   yield* prewarm(rows, opens);
   const now = yield* Clock.currentTimeMillis;
@@ -453,7 +485,8 @@ const home = Effect.fn("PortalPages.home")(function* () {
         query,
         connected: machine !== null,
         note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
-        failures: yield* recentFailures(rows)
+        failures: yield* recentFailures(rows),
+        sharedWith
       })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
       styles: styles + homeStyles + finalStepStyles,
       app: {
@@ -848,6 +881,34 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
         );
       }
+      case "guest-share": {
+        const versionId = selected.patch.currentVersionId;
+        if (versionId === null)
+          return yield* new Patches.WrongState({ state: selected.patch.state });
+        const found = yield* patches.find(selected.patch.id, undefined, versionId);
+        if (Option.isNone(found))
+          return yield* new Patches.WrongState({ state: selected.patch.state });
+        const guest = yield* (yield* GuestGrants.GuestGrants).share(
+          selected.patch,
+          found.value.version,
+          form.email ?? "",
+          viewer.user.id
+        );
+        return landed(`Shared ${title} with ${guest.name}`);
+      }
+      case "guest-revoke": {
+        const guest = (yield* (yield* GuestGrants.GuestGrants).list(selected.patch.id)).find(
+          (entry) => entry.userId === form.userId
+        );
+        if (form.userId === undefined || form.userId === "")
+          return yield* redisplay(422, "Choose a person to remove. Nothing was done.");
+        yield* (yield* GuestGrants.GuestGrants).revoke(selected.patch.id, form.userId);
+        return landed(
+          guest === undefined
+            ? "That share was already removed"
+            : `Removed ${guest.name} from ${title}`
+        );
+      }
       case "rollback": {
         const fields = yield* decodeRollback(form);
         const rolledBack = yield* patches.rollback(
@@ -934,7 +995,10 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
         ),
       ReservedName: (error) => invalid(error.message),
       InvalidOwner: () =>
-        redisplay(409, "Choose an active member of this company. Nothing was done.")
+        redisplay(409, "Choose an active member of this company. Nothing was done."),
+      AccountNotFound: (error) => invalid(`${error.message} Nothing was done.`),
+      AlreadyMember: (error) => invalid(`${error.message} Nothing was done.`),
+      GuestUnavailable: (error) => invalid(`${error.message} Nothing was done.`)
     })
   );
 });
@@ -1073,6 +1137,39 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
 /** The server owns GET / and its signed-out door alongside the catch-all. */
 export const index = home().pipe(pageErrors);
 
+const removeShared = Effect.gen(function* () {
+  const { viewer, session } = yield* context;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = new URLSearchParams(
+    yield* request.text.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
+    )
+  );
+  const patchId = form.get("patchId") ?? "";
+  if (patchId === "" || patchId.length > 128)
+    return pageResponse(
+      {
+        title: "Share not found",
+        body: "<p>Choose a shared patch to remove.</p>",
+        status: 422,
+        app: { viewer, section: "home" }
+      },
+      session
+    );
+  const removed = yield* (yield* GuestGrants.GuestGrants).revoke(patchId, viewer.user.id);
+  return Receipt.set(
+    HttpServerResponse.redirect("/", {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    }),
+    {
+      userId: viewer.user.id,
+      text: removed ? "Removed the patch from Shared with you" : "That share was already removed",
+      publicBaseUrl: session.publicBaseUrl
+    }
+  );
+});
+
 const patchRoutes = [
   {
     method: "GET" as const,
@@ -1099,13 +1196,23 @@ const patchRoutes = [
     path: `/patches/:name/${action}` as const,
     handle: (name: string) => confirmationPage(name, action)
   })),
-  ...(["description", "scope", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
-    (action) => ({
-      method: "POST" as const,
-      path: `/patches/:name/${action}` as const,
-      handle: (name: string) => post(name, action)
-    })
-  )
+  ...(
+    [
+      "description",
+      "scope",
+      "guest-share",
+      "guest-revoke",
+      "rollback",
+      "retire",
+      "delete",
+      "restore",
+      "reassign"
+    ] as const
+  ).map((action) => ({
+    method: "POST" as const,
+    path: `/patches/:name/${action}` as const,
+    handle: (name: string) => post(name, action)
+  }))
 ];
 
 export const layer: Layer.Layer<
@@ -1144,6 +1251,11 @@ export const layer: Layer.Layer<
         contentType: "text/javascript",
         headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
       })
+    );
+    yield* router.add(
+      "POST",
+      "/shared/remove",
+      errors(RequireSession.sameOrigin(RequireSession.withViewer(removeShared.pipe(pageErrors))))
     );
     for (const action of ["deactivate", "reactivate"] as const) {
       for (const method of ["GET", "POST"] as const) {

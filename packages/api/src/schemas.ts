@@ -133,6 +133,14 @@ export const SourcesOff = failure(409, {
 });
 export const ReservedName = failure(422, { code: Schema.Literal("reserved_name") });
 export const InvalidDescription = failure(422, { code: Schema.Literal("invalid_description") });
+export const AccountNotFound = failure(404, { code: Schema.Literal("account_not_found") });
+export const AlreadyMember = failure(409, { code: Schema.Literal("already_member") });
+export const GuestUnavailable = failure(422, {
+  code: Schema.Literal("guest_unavailable"),
+  source: Schema.String,
+  reason: Schema.String,
+  repair: Schema.String
+});
 export const VersionUnavailable = failure(422, { code: Schema.Literal("version_unavailable") });
 export const Tier2NotPublic = failure(422, { code: Schema.Literal("tier2_not_public") });
 export const PublishRefused = failure(422, {
@@ -1001,6 +1009,39 @@ export class Shared extends Schema.Class<Shared>("Shared")({
   patchId: PatchId,
   scope: SharingScope,
   publicUrl: Schema.String
+}) {}
+
+/** One existing outside account's retained grant to a patch. */
+export class GuestRecord extends Schema.Class<GuestRecord>("GuestRecord")({
+  userId: Schema.String,
+  name: Schema.String,
+  email: Schema.String,
+  company: Schema.Struct({ name: Schema.String }),
+  grantedAt: Schema.String
+}) {}
+
+export class GuestShareRequest extends Schema.Class<GuestShareRequest>("GuestShareRequest")({
+  email: Schema.String
+}) {}
+
+export class GuestShared extends Schema.Class<GuestShared>("GuestShared")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  publicUrl: Schema.String,
+  guest: GuestRecord
+}) {}
+
+export class GuestList extends Schema.Class<GuestList>("GuestList")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  guests: Schema.Array(GuestRecord)
+}) {}
+
+export class GuestRevoked extends Schema.Class<GuestRevoked>("GuestRevoked")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  userId: Schema.String,
+  removed: Schema.Boolean
 }) {}
 
 export class ForceRequest extends Schema.Class<ForceRequest>("ForceRequest")({

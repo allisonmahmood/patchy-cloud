@@ -424,6 +424,59 @@ const assertStale = (html: string, action: string) => {
 };
 
 it.layer(layer)("portal pages on a socket", (it) => {
+  it.effect(
+    "shares one patch with an outside account and lets that account remove it from Home",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* company();
+        const outside = yield* company();
+        const patch = yield* publish(host.owner, "guest-notes");
+        const path = cardPath(patch.name);
+        const shared = yield* post(`${path}/guest-share`, host.owner, {
+          expectedPatchId: patch.patchId,
+          email: outside.owner.email
+        });
+        assert.strictEqual(shared.status, 303);
+        assert.include(
+          yield* receiptAfter(shared, host.owner),
+          `Shared guest-notes with ${outside.owner.name}`
+        );
+
+        const settings = yield* request(`${path}/settings`, host.owner);
+        const manage = yield* settings.text;
+        assert.include(manage, outside.owner.email);
+        assert.include(manage, outside.owner.name);
+        assert.include(manage, "Northwind");
+        assert.include(manage, `data-copy="${PUBLIC_BASE_URL}/${host.handle}/guest-notes"`);
+        const denied = yield* post(`${path}/guest-share`, host.member, {
+          expectedPatchId: patch.patchId,
+          email: outside.member.email
+        });
+        assert.strictEqual(denied.status, 403);
+
+        const home = yield* request("/", outside.owner);
+        const page = yield* home.text;
+        assert.include(text(page), "Shared with you");
+        assert.include(page, `href="/${host.handle}/guest-notes"`);
+        const removed = yield* post("/shared/remove", outside.owner, { patchId: patch.patchId });
+        assert.strictEqual(removed.status, 303);
+        assert.notInclude(
+          text(yield* (yield* request("/", outside.owner)).text),
+          "Shared with you"
+        );
+        const found = yield* (yield* Patches.Patches).find(patch.patchId);
+        assert.isTrue(found._tag === "Some");
+        if (found._tag === "Some")
+          assert.isFalse(
+            yield* (yield* GuestGrants.GuestGrants).hasEligibleGrant(
+              found.value.patch,
+              found.value.version,
+              outside.owner.id
+            )
+          );
+      })
+  );
+
   it.effect("shows member, owner and admin views of one card and its retained versions", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

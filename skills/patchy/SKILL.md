@@ -468,6 +468,14 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
   file, exactly one target. Only the owner user may change sharing, through any of
   their machine tokens. A same-company non-owner receives `not_owner`; another company gets 404.
+- For a named outside person who already has a Patchy account, the owner can run
+  `patchy share --guest jordan@example.com`. It grants that one eligible patch
+  immediately and returns the link to send. Use `patchy share --list-guests --json`
+  to find stable user IDs and `patchy share --revoke-guest <user-id>` to remove one.
+  These also accept a cached file or `--patch <id>` target. Choose one share
+  operation per command. `account_not_found` means the person needs a Patchy
+  account, `already_member` means they are already in the patch's company, and
+  `guest_unavailable` names the source that an admin or builder must fix.
 - Announce the returned `scope`, not an assumed default: `company` means signed-in
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.
@@ -518,6 +526,8 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
   `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
+  Guest share, list and revoke instead print `{ ok, patchId, publicUrl, guest }`,
+  `{ ok, patchId, guests }` and `{ ok, patchId, userId, removed }` respectively.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
   Prefer JSON when an address, id or recovery deadline is going into a script.

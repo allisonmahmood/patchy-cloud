@@ -167,6 +167,55 @@ Responses:
 - `422` { ok: false, error: string, code: "tier2_not_public" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+### `GET /api/patches/:patchId/guests`
+
+List an owned patch's retained guest grants, including deactivated accounts and grants held while the patch is public. Each entry has the stable user ID for revocation, the account's current name and email, company name and original grant time.
+
+Responses:
+
+- `200` [GuestList](#guestlist)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/patches/:patchId/guests`
+
+Share an eligible live company patch with one existing account in another company. The bearer must own the patch, including when an admin holds the bearer. An unknown account answers `account_not_found`, a member of the patch's company answers `already_member`, and an ineligible patch answers `guest_unavailable` with the offending source, reason and repair. Repeating a share preserves the original grant time and grantor. No invitation or email is sent.
+
+Request body: [GuestShareRequest](#guestsharerequest)
+
+Responses:
+
+- `200` [GuestShared](#guestshared)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string } | { ok: false, error: string, code: "account_not_found" }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "already_member" }
+- `413` { ok: false, error: string }
+- `414` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "guest_unavailable", source: string, reason: string, repair: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `DELETE /api/patches/:patchId/guests/:userId`
+
+Remove one retained grant from an owned patch. Removal is idempotent and reports whether a grant was removed. Public access remains available under the public patch contract.
+
+Responses:
+
+- `200` [GuestRevoked](#guestrevoked)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchId/retire`
 
 Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded at 1.5 MiB, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
@@ -1007,6 +1056,60 @@ RuntimeSuccess | HandlerFailure
   patchId: string,
   state: "retired",
   retiredAt: string
+}
+```
+
+### GuestRevoked
+
+```
+{
+  ok: true,
+  patchId: string,
+  userId: string,
+  removed: boolean
+}
+```
+
+### GuestList
+
+```
+{
+  ok: true,
+  patchId: string,
+  guests: GuestRecord[]
+}
+```
+
+### GuestRecord
+
+```
+{
+  userId: string,
+  name: string,
+  email: string,
+  company: {
+    name: string
+  },
+  grantedAt: string
+}
+```
+
+### GuestShared
+
+```
+{
+  ok: true,
+  patchId: string,
+  publicUrl: string,
+  guest: GuestRecord
+}
+```
+
+### GuestShareRequest
+
+```
+{
+  email: string
 }
 ```
 

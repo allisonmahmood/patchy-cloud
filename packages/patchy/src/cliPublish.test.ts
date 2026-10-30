@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -1004,6 +1005,124 @@ describe("patchy publish", async () => {
 });
 
 describe("patchy share", () => {
+  it("shares, lists and revokes a guest through the owner API with one JSON result each", async () => {
+    const patchId = "abcdefghijkl";
+    const userId = "usr_jordan";
+    const guest = {
+      userId,
+      name: "Jordan Lee",
+      email: "jordan@example.com",
+      company: { name: "Pine Studio" },
+      grantedAt: "2026-10-30T10:00:00.000Z"
+    };
+    const publicUrl = "http://instance.test/harbor/page";
+    let removed = false;
+    const instance = await stubInstance((request, respond) => {
+      if (request.authorization !== "Bearer pp_owner")
+        return respond(401, { ok: false, error: "Missing or invalid API token." });
+      if (request.url === `/api/patches/${patchId}/guests` && request.method === "POST") {
+        expect(request.body).toEqual({ email: guest.email });
+        return respond(200, { ok: true, patchId, publicUrl, guest });
+      }
+      if (request.url === `/api/patches/${patchId}/guests` && request.method === "GET")
+        return respond(200, { ok: true, patchId, guests: removed ? [] : [guest] });
+      if (
+        request.url === `/api/patches/${patchId}/guests/${userId}` &&
+        request.method === "DELETE"
+      ) {
+        const didRemove = !removed;
+        removed = true;
+        return respond(200, { ok: true, patchId, userId, removed: didRemove });
+      }
+      respond(404, { ok: false, error: "Patch not found." });
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const dir = tempDir();
+    const file = path.join(realpathSync(dir), "page.html");
+    writeFileSync(
+      path.join(dir, "patches.json"),
+      JSON.stringify({
+        hosts: {
+          [instance.url]: {
+            files: {
+              [file]: { patchId, publicUrl, latestVersionNumber: 1, updatedAt: "unchanged" }
+            }
+          }
+        }
+      })
+    );
+    const run = (args: string[]) => runCli(["share", ...args, "--json"], { stateDir: dir, env });
+    const shared = await run(["--patch", patchId, "--guest", guest.email]);
+    expect(shared).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(shared.stdout)).toEqual({ ok: true, patchId, publicUrl, guest });
+    const listed = await run(["page.html", "--list-guests"]);
+    expect(listed).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(listed.stdout)).toEqual({ ok: true, patchId, guests: [guest] });
+    const revoked = await run(["--patch", patchId, "--revoke-guest", userId]);
+    expect(revoked).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(revoked.stdout)).toEqual({ ok: true, patchId, userId, removed: true });
+    const again = await run(["--patch", patchId, "--revoke-guest", userId]);
+    expect(JSON.parse(again.stdout)).toEqual({ ok: true, patchId, userId, removed: false });
+  });
+
+  it.each([
+    ["--patch", "abcdefghijkl", "--guest", "jordan@example.com", "--list-guests"],
+    ["--patch", "abcdefghijkl", "--guest", "jordan@example.com", "--revoke-guest", "usr_jordan"],
+    ["--patch", "abcdefghijkl", "--guest", "jordan@example.com", "public"],
+    ["--patch", "abcdefghijkl", "--list-guests", "--share", "public"],
+    ["--patch", "abcdefghijkl", "--revoke-guest", "usr_jordan", "company"],
+    ["page.html", "--patch", "abcdefghijkl", "--list-guests"]
+  ])("rejects mixed guest operations before any request: %s", async (...args) => {
+    const instance = await stubInstance((_, respond) => respond(500, {}));
+    const result = await runCli(["share", ...args, "--json"], {
+      env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind: "local" });
+    expect(instance.requests).toHaveLength(0);
+  });
+
+  it.each([
+    { status: 404, code: "account_not_found", error: "That email is not on Patchy yet." },
+    { status: 409, code: "already_member", error: "That person is already in this company." },
+    {
+      status: 422,
+      code: "guest_unavailable",
+      error: "Warehouse blocks guests. Ask an admin to unblock it.",
+      source: "Warehouse",
+      reason: "blocked_connection",
+      repair: "Ask an admin to unblock it."
+    },
+    {
+      status: 403,
+      code: "not_owner",
+      error: "Only the patch owner can do that.",
+      owner: { id: "usr_owner", name: "Alex" }
+    }
+  ])(
+    "preserves $code guest-share refusal under --json",
+    async ({ status, code, error, ...details }) => {
+      const patchId = "abcdefghijkl";
+      const instance = await stubInstance((_, respond) =>
+        respond(status, { ok: false, code, error, ...details })
+      );
+      const result = await runCli(
+        ["share", "--patch", patchId, "--guest", "jordan@example.com", "--json"],
+        { env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" } }
+      );
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toMatchObject({
+        ok: false,
+        kind: "rejected",
+        code,
+        ...details
+      });
+      expect(instance.requests).toHaveLength(1);
+    }
+  );
+
   it("targets this instance's cached patch or an explicit ID, preserving the cache on success and refusal", async () => {
     const patchId = "abcdefghijkl";
     const publicUrl = `http://instance.test/${DEV_SEED.companyHandle}/page`;
@@ -1028,7 +1147,7 @@ describe("patchy share", () => {
     );
     const dir = tempDir();
     // Sharing only needs the cached path, not the original file's contents.
-    const file = path.join(dir, "page.html");
+    const file = path.join(realpathSync(dir), "page.html");
     const cached = { patchId, publicUrl, latestVersionNumber: 7, updatedAt: "unchanged" };
     const cachePath = path.join(dir, "patches.json");
     const cache = JSON.stringify({

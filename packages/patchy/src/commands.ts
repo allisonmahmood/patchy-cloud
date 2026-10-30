@@ -36,6 +36,10 @@ import {
   DescriptionRequest,
   Shared,
   ShareRequest,
+  GuestShareRequest,
+  GuestShared,
+  GuestList,
+  GuestRevoked,
   SharingScope,
   PublishMetadata,
   PublishRequest,
@@ -102,6 +106,9 @@ const encodeIdentity = Schema.encodeSync(Identity);
 const encodeDeleted = Schema.encodeSync(Deleted);
 const encodePatchLog = Schema.encodeSync(PatchLog);
 const encodeShared = Schema.encodeSync(Shared);
+const encodeGuestShared = Schema.encodeSync(GuestShared);
+const encodeGuestList = Schema.encodeSync(GuestList);
+const encodeGuestRevoked = Schema.encodeSync(GuestRevoked);
 const encodeRetired = Schema.encodeSync(Retired);
 const encodeRestored = Schema.encodeSync(Restored);
 const encodeRolledBack = Schema.encodeSync(RolledBack);
@@ -769,6 +776,18 @@ const share = Command.make(
       Argument.withDescription("company or public, after the published HTML file"),
       Argument.optional
     ),
+    guest: Flag.String("guest").pipe(
+      Flag.withDescription("Share with an existing outside Patchy account by email"),
+      Flag.optional
+    ),
+    listGuests: Flag.Boolean("list-guests").pipe(
+      Flag.withDescription("List the people this patch is shared with"),
+      Flag.withDefault(false)
+    ),
+    revokeGuest: Flag.String("revoke-guest").pipe(
+      Flag.withDescription("Remove one guest grant by the user ID from --list-guests"),
+      Flag.optional
+    ),
     share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
@@ -779,12 +798,72 @@ const share = Command.make(
     )
   },
   (options) =>
-    (Option.isNone(options.scope) &&
-      Option.isNone(options.patch) &&
-      (Option.isNone(options.share) || Option.isNone(options.fileOrScope))
+    (Option.isNone(options.patch) &&
+      (Option.isSome(options.guest) || options.listGuests || Option.isSome(options.revokeGuest)
+        ? Option.isNone(options.fileOrScope)
+        : Option.isNone(options.scope) &&
+          (Option.isNone(options.share) || Option.isNone(options.fileOrScope)))
       ? runProject
       : run)(
       Effect.gen(function* () {
+        const guestOperations =
+          Number(Option.isSome(options.guest)) +
+          Number(options.listGuests) +
+          Number(Option.isSome(options.revokeGuest));
+        const scopeOperation =
+          Option.isSome(options.share) ||
+          Option.isSome(options.scope) ||
+          (Option.isSome(options.fileOrScope) &&
+            (options.fileOrScope.value === "company" || options.fileOrScope.value === "public"));
+        if (guestOperations + Number(scopeOperation) !== 1) {
+          return yield* new LocalError({
+            message:
+              "Select exactly one sharing operation: company/public, --guest, --list-guests or --revoke-guest."
+          });
+        }
+        if (guestOperations > 0) {
+          if (Option.isSome(options.scope) || Option.isSome(options.share)) {
+            return yield* new LocalError({
+              message: "A guest operation cannot include a sharing scope."
+            });
+          }
+          const patchId = yield* patchTarget(options.fileOrScope, options.patch);
+          const token = yield* requiredToken();
+          const client = yield* Api.client(token);
+          if (Option.isSome(options.guest)) {
+            const shared = yield* client
+              .guestShare({
+                params: { patchId },
+                payload: new GuestShareRequest({ email: options.guest.value })
+              })
+              .pipe(Effect.catch((error) => refused(error, "Sharing failed.")));
+            yield* Output.report(encodeGuestShared(shared), [
+              `Shared with ${shared.guest.name} (${shared.guest.email})`,
+              `URL: ${shared.publicUrl}`,
+              `Patch ID: ${shared.patchId}`
+            ]);
+          } else if (options.listGuests) {
+            const listed = yield* client
+              .guestList({ params: { patchId } })
+              .pipe(Effect.catch((error) => refused(error, "Listing guests failed.")));
+            yield* Output.report(encodeGuestList(listed), [
+              `Guests for ${listed.patchId}:`,
+              ...listed.guests.map(
+                (guest) => `${guest.name} (${guest.email}), ${guest.company.name} — ${guest.userId}`
+              )
+            ]);
+          } else if (Option.isSome(options.revokeGuest)) {
+            const userId = options.revokeGuest.value;
+            const revoked = yield* client
+              .guestRevoke({ params: { patchId, userId } })
+              .pipe(Effect.catch((error) => refused(error, "Removing guest failed.")));
+            yield* Output.report(encodeGuestRevoked(revoked), [
+              revoked.removed ? `Removed guest ${userId}` : `Guest ${userId} was already removed`,
+              `Patch ID: ${revoked.patchId}`
+            ]);
+          }
+          return;
+        }
         if (Option.isSome(options.share) && Option.isSome(options.scope))
           return yield* new LocalError({
             message: "Pass --share or a positional scope, not both."
@@ -824,7 +903,7 @@ const share = Command.make(
     )
 ).pipe(
   Command.withDescription(
-    "Change who can open a patch: share [file] --share company|public or share --patch <id> company|public."
+    "Change a patch's company/public scope, or share, list and revoke outside guests."
   )
 );
 

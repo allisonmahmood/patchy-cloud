@@ -10,6 +10,42 @@ import { GuestAccess } from "@patchy/runtime";
 import type { Manifest } from "@patchy/api";
 import * as Patches from "./Patches.js";
 
+export interface GuestRecord {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly company: { readonly name: string };
+  readonly grantedAt: string;
+}
+
+export interface SharedPatch {
+  readonly patchId: string;
+  readonly name: string;
+  readonly title: string;
+  readonly companyHandle: string;
+  readonly companyName: string;
+}
+
+export class AccountNotFound extends Schema.TaggedError<AccountNotFound>()("AccountNotFound", {}) {
+  override get message() {
+    return "That person is not on Patchy yet.";
+  }
+}
+export class AlreadyMember extends Schema.TaggedError<AlreadyMember>()("AlreadyMember", {}) {
+  override get message() {
+    return "That person is already in this company.";
+  }
+}
+export class GuestUnavailable extends Schema.TaggedError<GuestUnavailable>()("GuestUnavailable", {
+  source: Schema.String,
+  reason: Schema.String,
+  repair: Schema.String
+}) {
+  override get message() {
+    return `${this.source} ${this.reason}. ${this.repair}`;
+  }
+}
+
 export interface Unavailability {
   readonly source: string;
   readonly reason: string;
@@ -57,7 +93,15 @@ export class GuestGrants extends Context.Service<
       userId: string,
       grantedBy: string
     ) => Effect.Effect<boolean, SqlError>;
-    readonly revoke: (patchId: string, userId: string) => Effect.Effect<void, SqlError>;
+    readonly share: (
+      patch: Patches.Patch,
+      version: Patches.PatchVersion,
+      email: string,
+      grantedBy: string
+    ) => Effect.Effect<GuestRecord, SqlError | AccountNotFound | AlreadyMember | GuestUnavailable>;
+    readonly list: (patchId: string) => Effect.Effect<readonly GuestRecord[], SqlError>;
+    readonly sharedWith: (userId: string) => Effect.Effect<readonly SharedPatch[], SqlError>;
+    readonly revoke: (patchId: string, userId: string) => Effect.Effect<boolean, SqlError>;
   }
 >()("@patchy/patches/GuestGrants") {}
 
@@ -171,10 +215,72 @@ export const make = Effect.gen(function* () {
       ON CONFLICT (patch_id, user_id) DO NOTHING RETURNING user_id`;
     return rows.length > 0;
   });
-  const revoke = Effect.fn("GuestGrants.revoke")(function* (patchId: string, userId: string) {
-    yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${patchId} AND user_id = ${userId}`;
+  const list = Effect.fn("GuestGrants.list")(function* (patchId: string) {
+    const rows = yield* sql<GuestRecord>`SELECT grants.user_id AS "userId", users.name, users.email,
+      json_build_object('name', companies.name) AS company,
+      to_char(grants.granted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "grantedAt"
+      FROM patch_guest_grants grants JOIN users ON users.id = grants.user_id
+      JOIN companies ON companies.id = users.company_id
+      WHERE grants.patch_id = ${patchId} ORDER BY grants.granted_at, grants.user_id`;
+    return rows;
   });
-  return GuestGrants.of({ unavailability, status, publishStatus, hasEligibleGrant, grant, revoke });
+  const share = Effect.fn("GuestGrants.share")(function* (
+    patch: Patches.Patch,
+    version: Patches.PatchVersion,
+    email: string,
+    grantedBy: string
+  ) {
+    const people = yield* sql<{ id: string; companyId: string; deactivatedAt: Date | null }>`
+      SELECT id, company_id AS "companyId", deactivated_at AS "deactivatedAt"
+      FROM users WHERE lower(email) = ${email.trim().toLowerCase()} LIMIT 1`;
+    const person = people[0];
+    if (person === undefined || person.deactivatedAt !== null) return yield* new AccountNotFound();
+    if (person.companyId === patch.companyId) return yield* new AlreadyMember();
+    const reason = yield* unavailability(patch, version);
+    if (reason !== null) return yield* new GuestUnavailable(reason);
+    yield* grant(patch, version, person.id, grantedBy);
+    const guests = yield* list(patch.id);
+    const guest = guests.find((entry) => entry.userId === person.id);
+    if (guest === undefined)
+      return yield* new GuestUnavailable({
+        source: "This patch",
+        reason: "is not currently available to guests",
+        repair: "Keep it live, private and on a supported guest tier."
+      });
+    return guest;
+  });
+  const sharedWith = Effect.fn("GuestGrants.sharedWith")(function* (userId: string) {
+    const rows = yield* sql<{
+      patchId: string;
+      name: string;
+      title: string;
+      companyHandle: string;
+      companyName: string;
+    }>`
+      SELECT patches.id AS "patchId", patches.name, patches.title,
+        companies.handle AS "companyHandle", companies.name AS "companyName"
+      FROM patch_guest_grants grants JOIN patches ON patches.id = grants.patch_id
+      JOIN companies ON companies.id = patches.company_id
+      WHERE grants.user_id = ${userId} AND patches.deleted_at IS NULL
+      ORDER BY companies.name, patches.name`;
+    return rows;
+  });
+  const revoke = Effect.fn("GuestGrants.revoke")(function* (patchId: string, userId: string) {
+    const rows =
+      yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${patchId} AND user_id = ${userId} RETURNING user_id`;
+    return rows.length > 0;
+  });
+  return GuestGrants.of({
+    unavailability,
+    status,
+    publishStatus,
+    hasEligibleGrant,
+    grant,
+    share,
+    list,
+    sharedWith,
+    revoke
+  });
 });
 
 export const layer = Layer.effect(GuestGrants, make);

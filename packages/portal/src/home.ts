@@ -11,7 +11,7 @@ import {
   rowMenu,
   searchField
 } from "@patchy/core";
-import type { Patches } from "@patchy/patches";
+import type { GuestGrants, Patches } from "@patchy/patches";
 import { failedLog, isNew, manages, matches, openItems, patchAddress } from "./allPatches.js";
 import { firstClause, patchTitle } from "./render.js";
 
@@ -56,6 +56,10 @@ const TOOLS = 12;
 const PAGES = 3;
 
 type Viewer = RequireSession.Viewer["Service"];
+export type SharedHomePatch = GuestGrants.SharedPatch & {
+  readonly tier: number;
+  readonly unavailable: GuestGrants.Unavailability | null;
+};
 const epoch = (iso: string) => Date.parse(iso);
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
@@ -99,6 +103,7 @@ export interface HomeInput {
   readonly connected: boolean;
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
+  readonly sharedWith?: readonly SharedHomePatch[];
 }
 
 /**
@@ -207,9 +212,22 @@ export const renderHome = (input: HomeInput): string => {
         .join("")}</ul></section>`
     : "";
   const page = (body: string, heading = '<h1 class="page-heading">Home</h1>') =>
-    `${heading}${input.note ?? ""}${warning}${search}${body}${foot}<script defer src="${copyScriptPath}"></script>`;
+    `${heading}${input.note ?? ""}${warning}${search}${body}${sharedShelf}${foot}<script defer src="${copyScriptPath}"></script>`;
 
-  if (live.length === 0 && query === "")
+  const sharedShelf =
+    (input.sharedWith ?? []).length === 0
+      ? ""
+      : `<section class="home-shelf"><h2 class="section-heading">Shared with you</h2><ul class="list home-rows">${(
+          input.sharedWith ?? []
+        )
+          .map((shared) => {
+            const title = shared.title || shared.name;
+            const address = `/${encodeURIComponent(shared.companyHandle)}/${encodeURIComponent(shared.name)}`;
+            return `<li class="home-row"><div class="tile-row tile-row-plain home-tool">${patchMark(shared.name, shared.tier)}<span class="tile-body"><span class="tile-name">${escapeHtml(title)}</span><span class="tile-text">Shared by ${escapeHtml(shared.companyName)}</span>${shared.unavailable === null ? "" : `<span class="supporting-text">${escapeHtml(shared.unavailable.source)} ${escapeHtml(shared.unavailable.reason)}. ${escapeHtml(shared.unavailable.repair)}</span>`}</span></div><div class="actions">${shared.unavailable === null ? `<a class="btn" href="${escapeAttribute(address)}">Open</a>` : ""}<form method="post" action="/shared/remove"><input type="hidden" name="patchId" value="${escapeAttribute(shared.patchId)}"><button class="btn btn-quiet btn-danger" type="submit" aria-label="Remove ${escapeAttribute(title)} from Shared with you">Remove</button></form></div></li>`;
+          })
+          .join("")}</ul></section>`;
+
+  if (live.length === 0 && query === "" && (input.sharedWith ?? []).length === 0)
     return page(
       `<section class="home-shelf">${
         input.rows.length === 0
@@ -218,6 +236,7 @@ export const renderHome = (input: HomeInput): string => {
       }${placeholder ? `<ul class="list home-rows">${placeholder}</ul>` : ""}</section>`,
       ""
     );
+  if (live.length === 0 && query === "") return page("");
 
   const tools = live.filter((row) => !isPage(row));
   const pages = live.filter(isPage);

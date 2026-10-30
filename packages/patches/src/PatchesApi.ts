@@ -59,6 +59,13 @@ import {
   refuse,
   Shared,
   ShareRequest,
+  GuestShareRequest,
+  GuestShared,
+  GuestList,
+  GuestRevoked,
+  AccountNotFound,
+  AlreadyMember,
+  GuestUnavailable,
   Manifest,
   PublishRequest,
   PublishRefused,
@@ -291,6 +298,7 @@ const decodeReplayIds = Schema.decodeUnknownOption(
   Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
 );
 const decodeShare = decodeBody(ShareRequest);
+const decodeGuestShare = decodeBody(GuestShareRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
 const decodeDescription = decodeBody(DescriptionRequest);
@@ -399,6 +407,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
       if (row === undefined) return notFound();
       yield* WideEvents.enrich(Patches.eventFields(row.patch));
       return row;
+    });
+
+    const ownedGuestTarget = Effect.fn("PatchesApi.ownedGuestTarget")(function* (
+      patchId: string,
+      identity: CurrentIdentity["Service"]
+    ) {
+      const row = yield* readOne(patchId, "all", identity);
+      if (HttpServerResponse.isHttpServerResponse(row)) return row;
+      if (row.owner.id !== identity.user.id)
+        return yield* lifecycleFailure(NotOwner, "not_owner", {
+          error: `This patch belongs to ${row.owner.name}. Ask them, or an admin, to reassign it.`,
+          owner: row.owner
+        });
+      return row.patch;
     });
 
     /**
@@ -977,6 +999,69 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             scope: shared.scope,
             publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
           });
+        })
+      )
+      .handleRaw("guestShare", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeGuestShare),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          const patch = yield* ownedGuestTarget(params.patchId, identity);
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          const found = yield* patches
+            .find(patch.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          if (Option.isNone(found)) return notFound();
+          const guest = yield* guestGrants
+            .share(patch, found.value.version, payload.email, identity.user.id)
+            .pipe(
+              Effect.catchTags({
+                AccountNotFound: (error) =>
+                  lifecycleFailure(AccountNotFound, "account_not_found", { error: error.message }),
+                AlreadyMember: (error) =>
+                  lifecycleFailure(AlreadyMember, "already_member", { error: error.message }),
+                GuestUnavailable: (error) =>
+                  lifecycleFailure(GuestUnavailable, "guest_unavailable", {
+                    error: error.message,
+                    source: error.source,
+                    reason: error.reason,
+                    repair: error.repair
+                  }),
+                SqlError: Effect.die
+              })
+            );
+          if (HttpServerResponse.isHttpServerResponse(guest)) return guest;
+          return new GuestShared({
+            ok: true,
+            patchId: patch.id,
+            publicUrl: Patches.address(publicBaseUrl, patch.companyHandle, patch.name),
+            guest
+          });
+        })
+      )
+      .handleRaw("guestList", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const patch = yield* ownedGuestTarget(params.patchId, identity);
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          const guests = yield* guestGrants
+            .list(patch.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          return new GuestList({ ok: true, patchId: patch.id, guests: [...guests] });
+        })
+      )
+      .handleRaw("guestRevoke", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const patch = yield* ownedGuestTarget(params.patchId, identity);
+          if (HttpServerResponse.isHttpServerResponse(patch)) return patch;
+          const removed = yield* guestGrants
+            .revoke(patch.id, params.userId)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          return new GuestRevoked({ ok: true, patchId: patch.id, userId: params.userId, removed });
         })
       )
       .handleRaw("retire", ({ params }) =>

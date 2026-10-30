@@ -44,7 +44,7 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, admins?, source?, reason?, repair?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive`, `not_running` and `no_agent_tools`; not every
@@ -52,7 +52,9 @@ lists of validation failures; their line count is not the branching contract.
   Discovery's `wrong_state` refusal includes the actual patch `state`.
   Lifecycle refusals retain `owner` for `not_owner`, `dependants` for
   `has_dependants`, `sources` for `sources_off` and `purgeAt` for `patch_deleted`.
-  The look's `admin_required` retains `admins`. A refusal Patchy MCP's door would
+  The look's `admin_required` retains `admins`. Guest sharing's
+  `guest_unavailable` retains `source`, `reason` and `repair`.
+  A refusal Patchy MCP's door would
   give, from `dev agent`, adds the door's `from`, `details` and `retryAfterSeconds`.
   Notices discovered before a later failure remain in `warnings`; text mode
   prints them before the error.
@@ -621,6 +623,9 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 | `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new] [--description <text>] [--force]` | Single file, tier 1 with no `sdkImports`, empty definitions/declarations, checked as `validate` checks; never reads `patchy.json`. Omitted description preserves the cloud value. `--patch` and `--new` conflict. | Publish wire response including description, descriptionUpdatedAt and warnings.               |
 | `patchy publish [--share company\|public] [--force]`                                                                      | Repo tier 1 or 2; config name and `patchy.json` identity/description. Recover first, otherwise check release, description, generation, types, artifacts and tier. `--description` remains file-only.              | Publish response with `artifacts.html`; tier 2 adds `artifacts.server` and sorted `handlers`. |
 | `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>`                                  | Change sharing without a new version; exactly one file/cache or explicit-id target.                                                                                                                               | `{ ok, patchId, scope, publicUrl }`                                                           |
+| `patchy share [file] --guest <email>`                                                                                     | Owner grants an eligible company patch to an existing outside account. Repeated share preserves the original grant.                                                                                               | `{ ok, patchId, publicUrl, guest }`                                                           |
+| `patchy share [file] --list-guests`                                                                                       | Owner lists retained grants, including temporarily deactivated recipients.                                                                                                                                        | `{ ok, patchId, guests }`                                                                     |
+| `patchy share [file] --revoke-guest <user-id>`                                                                            | Owner removes one grant; repeated removal succeeds with `removed: false`.                                                                                                                                         | `{ ok, patchId, userId, removed }`                                                            |
 | `patchy retire [file] [--patch <id>] [--force]`                                                                           | Retire from live; dependants require force.                                                                                                                                                                       | `{ ok, patchId, state: "retired", retiredAt }`                                                |
 | `patchy delete [file] [--patch <id>] [--yes] [--force]`                                                                   | Delete from live or retired; confirm interactively unless `--yes`. Non-interactive without it is local exit 1. Forget file-cache entries only after success.                                                      | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`                                       |
 | `patchy restore [file] [--patch <id>] [--force]`                                                                          | Restore to live before `purgeAt`; off sources require force.                                                                                                                                                      | `{ ok, patchId, state: "live" }`                                                              |
@@ -632,6 +637,12 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 Inside a published repo, untargeted share, retire, delete, restore, rollback and
 describe use `patchy.json`. An unpublished repo is a local refusal. A file and
 `--patch` conflict; each verb uses the same per-instance file cache.
+Each guest share result has `userId`, `name`, `email`, `company: { name }` and
+`grantedAt`. The three guest operations also accept `--patch <id>`. Exactly one
+share operation is required; mixing a guest flag with a scope or another guest
+flag fails locally before any request. Guest share refusals carry stable
+`account_not_found`, `already_member` or `guest_unavailable` codes; the last
+names the source and repair. Scope-change response shape stays unchanged.
 Only untargeted `describe` rewrites this repo's description and sync stamp.
 An explicit file or `--patch` target does not mutate the local repo binding.
 Delete leaves its repo id in place. A later publish returns `patch_deleted`

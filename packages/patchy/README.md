@@ -1234,13 +1234,39 @@ patchy publish ./plan.html                 # updates content, stays public
 patchy publish ./plan.html --share company # updates content, takes it back inside
 ```
 
-### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
+### `patchy share [file] <company|public|--guest <email>|--list-guests|--revoke-guest <user-id>> [--patch <patch-id>]`
 
 Change an existing patch's sharing without publishing a version. Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
 
 From a published repo, `patchy share company|public` uses `patchy.json` without
 a file or `--patch`. An unpublished repo is a local refusal.
 `patchy share --share company|public` selects the same scope explicitly.
+
+Owners can share one eligible company patch with an existing Patchy account at
+another company. Access begins immediately. The recipient signs in with their
+own account; the link alone grants nothing. List returns stored grants, including
+an account that is temporarily deactivated. Remove uses the stable user ID from
+that list and succeeds again if the grant is already gone. Public/private scope
+changes retain named grants. A company admin who does not own the patch cannot
+use these CLI operations.
+
+```sh
+patchy share --guest jordan@example.com
+patchy share --list-guests --json
+patchy share --revoke-guest usr_jordan
+patchy share --patch k7f2m9x1a3b8 --guest jordan@example.com
+patchy share ./plan.html --list-guests
+```
+
+Select exactly one operation: a company/public scope change, guest share,
+guest list or guest revoke. A file and `--patch` cannot both select the target;
+without either, a published repo supplies its patch ID. Invalid combinations
+fail locally without a request. Guest share refuses unknown accounts with
+`account_not_found`, same-company members with `already_member`, and an
+ineligible patch with `guest_unavailable` and its source-specific repair.
+`--json` success is one document: share `{ ok, patchId, publicUrl, guest }`,
+list `{ ok, patchId, guests }`, revoke `{ ok, patchId, userId, removed }`.
+Each `guest` has `userId`, `name`, `email`, `company: { name }` and `grantedAt`.
 
 Sharing a served tier 2 version publicly is `tier2_not_public`, exit 2, through
 both the CLI and portal. The instance reads the served version, not local config.

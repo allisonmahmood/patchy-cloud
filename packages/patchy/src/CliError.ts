@@ -10,6 +10,7 @@
 import * as Schema from "effect/Schema";
 import {
   AdminRequired,
+  GuestUnavailable,
   HasDependants,
   NotOwner,
   PatchDeleted,
@@ -45,6 +46,9 @@ export const refusalFields = {
   state: Schema.optionalKey(PatchState),
   purgeAt: Schema.optionalKey(PatchDeleted.fields.purgeAt),
   admins: Schema.optionalKey(AdminRequired.fields.admins),
+  source: Schema.optionalKey(GuestUnavailable.fields.source),
+  reason: Schema.optionalKey(GuestUnavailable.fields.reason),
+  repair: Schema.optionalKey(GuestUnavailable.fields.repair),
   // A refusal Patchy MCP's door would give, from `patchy dev agent`.
   from: Schema.optionalKey(ToolRefusal.fields.from),
   details: ToolRefusal.fields.details,
@@ -63,6 +67,7 @@ const refusal = Schema.Union([
     retryAfterSeconds: ToolRefusal.fields.retryAfterSeconds
   }),
   AdminRequired,
+  GuestUnavailable,
   NotOwner,
   PatchRetired,
   PatchDeleted,
