@@ -40,11 +40,7 @@ export function App() {
         </div>
         {me && (
           <div className="whoami">
-            <Avatar
-              id={me.user.id}
-              person={{ ...me.user, admin: me.admin, active: true }}
-              size="sm"
-            />
+            <Avatar id={me.user.id} person={{ name: me.user.name, active: true }} size="sm" />
             <span>
               Signed in as <strong>{me.user.name}</strong>
             </span>
