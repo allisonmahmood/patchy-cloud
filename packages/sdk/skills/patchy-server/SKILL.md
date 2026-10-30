@@ -65,9 +65,10 @@ Tier 2 is company-only. Publishing to a public patch needs `--share company`;
 public sharing is `tier2_not_public`. Older tier 1 pages lose direct operations
 while tier 2 is served, with `server_required` and a reload notice. A rollback
 to tier 1 reopens those pages' operations; tier 2 pages always use handlers.
-If this patch has retained guest grants, a blocked connection, member directory,
-member columns or another patch's shared table or store makes it unavailable to
-guests. Publish still succeeds and reports the source and repair in `warnings`.
+If this patch has retained guest grants, a blocked connection or another patch's
+shared table or store makes it unavailable to guests. Publish still succeeds and
+reports the source and repair in `warnings`. A declared member directory and
+member columns remain available through deliberately guest-marked handlers.
 Removing the declaration or asking an admin to unblock the connection restores
 source eligibility without removing the grants.
 

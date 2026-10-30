@@ -5,10 +5,10 @@ export default defineConfig({
   tier: 2,
   tables: {
     kudos: table(
-      "One public shout-out per id: sender thanks recipient (both member ids) for one studio value. value is a key: craft, client-love, teamwork, above-and-beyond or fresh-thinking. message is at most 280 characters. sentAt is when it was sent (ISO timestamp).",
+      "One public shout-out per id: a sender (member or invited guest user id) thanks a studio recipient for one value. value is a key: craft, client-love, teamwork, above-and-beyond or fresh-thinking. message is at most 280 characters. sentAt is when it was sent (ISO timestamp).",
       {
         recipient: t.member(),
-        sender: t.member(),
+        sender: t.text(),
         message: t.text(),
         value: t.text(),
         sentAt: t.timestamp()
@@ -23,10 +23,10 @@ export default defineConfig({
       }
     ),
     reactions: table(
-      "One emoji reaction per id: member reacted to the kudos row with emoji, one of 👏 🎉 ❤️ 🔥. At most one per kudos, member and emoji.",
+      "One emoji reaction per id: viewer (member or invited guest user id) reacted to the kudos row with emoji, one of 👏 🎉 ❤️ 🔥. At most one per kudos, viewer and emoji.",
       {
         kudos: t.ref("kudos"),
-        member: t.member(),
+        member: t.text(),
         emoji: t.text()
       },
       { indexes: { byKudosMemberEmoji: { columns: ["kudos", "member", "emoji"], unique: true } } }

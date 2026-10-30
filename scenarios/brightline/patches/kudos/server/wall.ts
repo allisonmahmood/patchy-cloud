@@ -6,6 +6,7 @@ import { EMOJIS, MESSAGE_MAX, VALUE_KEYS } from "../helpers/kudos.js";
 
 /** Newest-first kudos, narrowed to a recipient, a value or both. */
 export const wall = query({
+  guest: true,
   args: { recipient: t.nullable(t.text()), value: t.nullable(t.text()), limit: t.integer() },
   result: t.object({ rows: t.array(t.row("kudos")), cursor: t.nullable(t.text()) }),
   handler: async (ctx, { recipient, value, limit }) => {
@@ -37,6 +38,7 @@ export const wall = query({
 
 /** Every kudos sent since the timestamp, newest first, for the side panel's totals. */
 export const recent = query({
+  guest: true,
   args: { since: t.text() },
   result: t.array(t.row("kudos")),
   handler: async (ctx, args) =>
@@ -52,6 +54,7 @@ export const recent = query({
 
 /** The newest 1,000 reactions: plenty for a studio wall's visible history. */
 export const reactions = query({
+  guest: true,
   args: {},
   result: t.array(t.row("reactions")),
   handler: async (ctx) => (await ctx.tables.reactions.list({ limit: 1000 })).rows
@@ -59,6 +62,7 @@ export const reactions = query({
 
 /** Thanks a colleague, as the person viewing. */
 export const give = mutation({
+  guest: true,
   args: { recipient: t.text(), value: t.enum(VALUE_KEYS), message: t.text() },
   errors: ["self", "not_a_colleague", "invalid_message"],
   result: t.row("kudos"),
@@ -81,6 +85,7 @@ export const give = mutation({
 
 /** Adds or removes the viewer's reaction; reacting twice, or removing none, changes nothing. */
 export const react = mutation({
+  guest: true,
   args: { kudos: t.text(), emoji: t.enum(EMOJIS), on: t.boolean() },
   result: t.boolean(),
   handler: async (ctx, args) => {

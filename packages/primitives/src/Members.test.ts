@@ -78,6 +78,18 @@ const fixture = Effect.gen(function* () {
 });
 
 it.layer(services)("Members", (it) => {
+  it.effect("uses the patch company for an admitted guest's directory callback", () =>
+    Effect.gen(function* () {
+      const guestBinding = Binding.Binding.of({
+        ...binding,
+        identity: { ...binding.identity!, guest: true }
+      });
+      assert.strictEqual(
+        yield* Members.authorize.pipe(Effect.provideService(Binding.Binding, guestBinding)),
+        binding.companyId
+      );
+    })
+  );
   it.effect("keeps member-only query callbacks outside company storage and its read snapshot", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

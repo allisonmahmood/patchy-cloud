@@ -126,12 +126,7 @@ export const make = Effect.gen(function* () {
     manifest: typeof Manifest.Type
   ) {
     for (const [alias, use] of Object.entries(manifest.uses)) {
-      if (use.kind === "members")
-        return {
-          source: `Member directory (${alias})`,
-          reason: "is unavailable to guests",
-          repair: "Remove the member directory declaration and member columns."
-        } satisfies Unavailability;
+      if (use.kind === "members") continue;
       if (use.kind === "sharedTable" || use.kind === "sharedStore")
         return {
           source: `${use.kind === "sharedTable" ? "Shared table" : "Shared store"} (${alias})`,

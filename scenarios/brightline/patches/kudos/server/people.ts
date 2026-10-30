@@ -26,6 +26,7 @@ const toPerson = ({ id, name, email, admin, active }: Person) => ({
 
 /** Each id's member, in order; null for an id the directory no longer knows. */
 export const people = query({
+  guest: true,
   args: { ids: t.array(t.text()) },
   result: t.array(t.nullable(person)),
   handler: async (ctx, args) =>
@@ -38,6 +39,7 @@ export const people = query({
 
 /** Active colleagues whose name or email starts with the text; everyone for empty text. */
 export const search = query({
+  guest: true,
   args: { text: t.text() },
   result: t.array(person),
   handler: async (ctx, args) => {

@@ -129,11 +129,22 @@ it.layer(
         ["wrong company", { ...patch, companyId: "another-company" }, version],
         ["unsupported tier", patch, { ...version, tier: 3 }],
         [
-          "declared source",
+          "shared source",
           patch,
           {
             ...version,
-            manifest: { ...version.manifest, uses: { source: { kind: "members" as const } } }
+            manifest: {
+              ...version.manifest,
+              uses: {
+                source: {
+                  kind: "sharedTable" as const,
+                  patchId: "other",
+                  table: "items",
+                  id: "other/items",
+                  revision: 1
+                }
+              }
+            }
           }
         ]
       ] as const) {
@@ -152,11 +163,8 @@ it.layer(
         ...version,
         manifest: { ...version.manifest, uses: { members: { kind: "members" as const } } }
       };
-      assert.deepStrictEqual(yield* grants.unavailability(patch, memberVersion), {
-        source: "Member directory (members)",
-        reason: "is unavailable to guests",
-        repair: "Remove the member directory declaration and member columns."
-      });
+      assert.isNull(yield* grants.unavailability(patch, memberVersion));
+      assert.isTrue(yield* grants.hasEligibleGrant(patch, memberVersion, outsider));
       yield* sql`INSERT INTO connections
         (id, company_id, integration, handle, description, mode, status, display,
          credentials, key_id, credential_revision, metadata_revision, created_by, block_guests)
