@@ -32,6 +32,8 @@ import {
   LOG_PAGE_MAX,
   PatchSummary,
   PatchDetail,
+  PatchRepo,
+  NoRepo,
   PatchStateFilter,
   PrimitiveDetail,
   PublishUnavailable,
@@ -300,7 +302,15 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`warnings` names the current revision and how to catch up. The check is advisory: a failed " +
           "read warns and the publish goes ahead. Absent `metadata.look` skips the check. " +
           "`address` and `publicUrl` both name the absolute `/<company>/<name>` address. " +
-          "The JSON body cap is three times the sum of the page and server bundle caps."
+          "`repo` is the repo snapshot the bundle was built from, kept with the version for `GET /api/patches/:patchRef/repo`: " +
+          "`[{ path, contents, executable? }]` with relative POSIX paths (no empty, `.` or `..` segments, backslashes or control " +
+          "characters, at most 1,024 UTF-8 bytes), padded standard base64 contents and `executable: true` for a file its " +
+          "owner could run. The CLI sends it on every repo " +
+          "publish and never on a file publish. Paths that repeat, differ only by case or Unicode form, or make a file " +
+          "a folder answer 400. More than `publish.repo.files` (2,000) files or `publish.repo.bytes` (10 MiB) of decoded " +
+          "bytes answers 413. A published snapshot returns `artifacts.repo: { files, bytes }`, counting decoded bytes. " +
+          "The JSON body cap is three times the sum of the page and server bundle caps, plus twice " +
+          "`publish.repo.bytes`."
       )
     ),
     HttpApiEndpoint.get("list", "/patches", {
@@ -342,7 +352,33 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "`patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>`. " +
           "Unshared resources carry `not_shared` and an owner-name hint; off sources carry `source_off`. " +
           "Reads identify stores with `store`, never a `table` field. " +
+          "`repo` says what `GET /api/patches/:patchRef/repo` would return for the current version: " +
+          "`{ versionNumber, kind, files, bytes }`, or null when that version has nothing to pull. " +
           "No versions, dependants or business rows are returned. Machine tokens only. " +
+          "Overlong references answer 414. Responses are private, no-store."
+      )
+    ),
+    HttpApiEndpoint.get("pull", "/patches/:patchRef/repo", {
+      params: readParams,
+      query: {
+        ...readQuery,
+        version: Schema.optionalKey(
+          Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
+        )
+      },
+      success: PatchRepo,
+      // Before the plain 404, which would otherwise decode a `no_repo` body first and drop its code.
+      error: [NoRepo, ...patchRouteErrors, WrongState]
+    }).annotateMerge(
+      describe(
+        "Read one version's repo snapshot, for `patchy pull`: the current version, or `version`. Resolution, the " +
+          "openability gate and the state filter are the detail route's, so any member who can open the patch " +
+          "may read it; publishing stays the owner's. `kind: repo` returns the files the version was published " +
+          "from. `kind: file` is a page published from one HTML file: its one file holds that HTML under " +
+          "its original filename, reduced to a safe name ending in `.html`, or `index.html`. A version with " +
+          "neither answers 404 `no_repo` with `versionNumber` and the owner; an unknown version answers 404. " +
+          "The response names the patch, its state, the version's tier, the owner and the current description " +
+          "with `descriptionUpdatedAt`. Machine tokens only; public sharing never exposes a snapshot. " +
           "Overlong references answer 414. Responses are private, no-store."
       )
     ),

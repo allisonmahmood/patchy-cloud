@@ -569,5 +569,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `subscriptions.reconcile.interval` | operating | 30000 | milliseconds | host | Reconcile durable revisions and document authority | None | No | deployment |
 | `stream.hidden.suspend` | contract | 30000 | milliseconds | viewer | Hidden document delay before suspension | None | No | release |
 | `stream.remount.grace` | contract | 1000 | milliseconds | viewer | Document remount grace | None | No | release |
+| `publish.repo.bytes` | contract | 10485760 | bytes | patch | File bytes in one version's repo snapshot, before base64; the CLI and publish both refuse more | `too_large` | No | release |
+| `publish.repo.files` | contract | 2000 | files | patch | Files in one version's repo snapshot; the CLI and publish both refuse more | `too_large` | No | release |
 
 <!-- generated-limits:end -->

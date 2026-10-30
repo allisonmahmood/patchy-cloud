@@ -14,6 +14,7 @@ import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
+import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
   HandlerModuleName,
@@ -849,8 +850,39 @@ export class PatchDetail extends Schema.Class<PatchDetail>("PatchDetail")({
       stores: Schema.Array(PatchStoreSummary)
     })
   ),
-  reads: Schema.Array(PatchRead)
+  reads: Schema.Array(PatchRead),
+  /**
+   * What `patchy pull` would get for the current version, or null when it has nothing. Absent
+   * from an instance older than repo snapshots.
+   */
+  repo: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({ versionNumber: Schema.Int, kind: RepoKind, ...RepoSummary.fields })
+    )
+  )
 }) {}
+
+/** One version's repo snapshot, or a file-born page's one file, for `patchy pull`. */
+export class PatchRepo extends Schema.Class<PatchRepo>("PatchRepo")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  name: Schema.String,
+  state: PatchState,
+  versionNumber: Schema.Int,
+  tier: Schema.Int,
+  owner: PatchOwner,
+  description: Schema.String,
+  descriptionUpdatedAt: Schema.NullOr(IsoTimestamp),
+  kind: RepoKind,
+  files: RepoSnapshot
+}) {}
+
+/** A version published without a snapshot: before Patchy kept them, or by a hand-made request. */
+export const NoRepo = failure(404, {
+  code: Schema.Literal("no_repo"),
+  versionNumber: Schema.Int,
+  owner: PatchOwner
+});
 
 /** A missing default differs from an explicit JSON null. Stores have no columns or indexes. */
 export class PrimitiveDetail extends Schema.Class<PrimitiveDetail>("PrimitiveDetail")({
@@ -941,6 +973,11 @@ export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest
   manifest: Manifest,
   html: Schema.String,
   server: Schema.optionalKey(Schema.String),
+  /**
+   * The repo the bundle was built from, kept with the version for `patchy pull`. The CLI sends it
+   * on every repo publish; a file publish has none.
+   */
+  repo: Schema.optionalKey(RepoSnapshot),
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
   force: Schema.optionalKey(Schema.Boolean),
@@ -974,7 +1011,8 @@ const publishFields = {
   unused: ProvisioningReport,
   artifacts: Schema.Struct({
     html: ArtifactMetadata,
-    server: Schema.optionalKey(ArtifactMetadata)
+    server: Schema.optionalKey(ArtifactMetadata),
+    repo: Schema.optionalKey(RepoSummary)
   }),
   handlers: Schema.optionalKey(
     Schema.Array(Schema.Struct({ name: HandlerName, kind: HandlerKind }))

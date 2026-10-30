@@ -1190,6 +1190,25 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "publish.repo.bytes": {
+    kind: "contract",
+    default: 10485760,
+    unit: "bytes",
+    scope: "patch",
+    measure:
+      "File bytes in one version's repo snapshot, before base64; the CLI and publish both refuse more",
+    refusal: "too_large",
+    overridable: false
+  },
+  "publish.repo.files": {
+    kind: "contract",
+    default: 2000,
+    unit: "files",
+    scope: "patch",
+    measure: "Files in one version's repo snapshot; the CLI and publish both refuse more",
+    refusal: "too_large",
+    overridable: false
+  },
   "invites.batch": {
     kind: "contract",
     default: 50,

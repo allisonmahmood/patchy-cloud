@@ -66,8 +66,14 @@ import {
   MANIFEST_VERSION,
   WIRE_VERSION,
   agentToolEntries,
+  base64Bytes,
+  NoRepo,
+  PatchRepo,
+  repoLimits,
+  repoTreeProblem,
   usesRefusal,
-  type HandlerDescriptors
+  type HandlerDescriptors,
+  type RepoFile
 } from "@patchy/api";
 import { Companies, Looks, Users } from "@patchy/companies";
 import { Cryptography, documentTitle } from "@patchy/core";
@@ -90,6 +96,38 @@ const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
 const encodePrimitive = Schema.encodeSync(PrimitiveDetail);
 const encodeLog = Schema.encodeSync(PatchLog);
+const encodeRepo = Schema.encodeSync(PatchRepo);
+
+/**
+ * What `patchy pull` gets from a version: its snapshot, a file-born page's one file, or nothing.
+ * A file publish records its filename and sends tier 1 with no server module, tables or stores.
+ * Filename metadata on anything else is the client's say-so, and its HTML alone isn't the patch.
+ */
+const pullKind = (version: Patches.PatchVersion) =>
+  version.repo !== null
+    ? ("repo" as const)
+    : version.originalFilename !== null &&
+        version.tier === 1 &&
+        version.server === null &&
+        Object.keys(version.manifest.tables).length === 0 &&
+        Object.keys(version.manifest.files).length === 0
+      ? ("file" as const)
+      : null;
+
+/**
+ * A file-born page's original filename as a name safe to write anywhere, ending in `.html`.
+ * Filenames are client metadata, so nothing of a folder, a leading dot or an odd character stays.
+ */
+const pageFilename = (original: string | null) => {
+  const stem = (original ?? "")
+    .split(/[\\/]/)
+    .at(-1)!
+    .replace(/\.html?$/i, "")
+    .replace(/[^A-Za-z0-9._ -]+/g, "-")
+    .replace(/^[.\s-]+|[.\s]+$/g, "")
+    .slice(0, 100);
+  return `${stem === "" ? "index" : stem}.html`;
+};
 const readHeaders = { "cache-control": "private, no-store" };
 const summary = (row: Patches.ReadPatch, userId: string, publicBaseUrl: string) =>
   new PatchSummary({
@@ -311,7 +349,9 @@ const malformedPublish = (refusal: MalformedBody) =>
         ? "Invalid patch ID."
         : refusal.field === "html"
           ? "Missing HTML document."
-          : "Malformed request body."
+          : refusal.field === "repo"
+            ? "Invalid repo snapshot: each file needs a relative path without empty, . or .. segments, backslashes or control characters, and padded base64 contents."
+            : "Malformed request body."
   });
 
 const cleanText = (value: string | null | undefined) => {
@@ -594,6 +634,24 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               ok: false,
               error: `Server bundle is ${serverBytes} bytes; maximum is ${maxBundleBytes} bytes.`
             });
+          if (payload.repo !== undefined) {
+            const files = payload.repo.length;
+            const repoBytes = payload.repo.reduce(
+              (total, file) => total + base64Bytes(file.contents),
+              0
+            );
+            if (files > repoLimits.files || repoBytes > repoLimits.bytes)
+              return refuse(PayloadTooLarge, {
+                ok: false,
+                error:
+                  files > repoLimits.files
+                    ? `Repo snapshot has ${files} files; publish.repo.files is ${repoLimits.files}.`
+                    : `Repo snapshot holds ${repoBytes} bytes; publish.repo.bytes is ${repoLimits.bytes}.`
+              });
+            const problem = repoTreeProblem(payload.repo.map((file) => file.path));
+            if (problem !== undefined)
+              return refuse(BadRequest, { ok: false, error: `Invalid repo snapshot: ${problem}` });
+          }
           const bytes = Buffer.byteLength(payload.html, "utf8");
           if (bytes > maxBundleBytes)
             return refuse(PayloadTooLarge, {
@@ -635,6 +693,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               title,
               html: payload.html,
               server: payload.server,
+              repo: payload.repo,
               filename: cleanText(metadata.filename),
               repoOrg: cleanText(metadata.repoOrg),
               repoName: cleanText(metadata.repoName),
@@ -758,6 +817,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
             );
           if (HttpServerResponse.isHttpServerResponse(inventory)) return inventory;
+          const current = yield* patches
+            .findRetained(row.patch.id)
+            .pipe(Effect.catchTags({ SqlError: Effect.die }));
+          const version = Option.getOrUndefined(current)?.version;
+          const kind = version === undefined ? null : pullKind(version);
           return HttpServerResponse.jsonUnsafe(
             encodeDetail(
               new PatchDetail({
@@ -775,12 +839,79 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                           primitiveSummary(row, name, store, "store")
                         )
                       },
-                reads: row.reads
+                reads: row.reads,
+                repo:
+                  version === undefined || kind === null
+                    ? null
+                    : {
+                        versionNumber: version.versionNumber,
+                        kind,
+                        ...(version.repo === null
+                          ? { files: 1, bytes: version.fileSize }
+                          : { files: version.repo.files, bytes: version.repo.bytes })
+                      }
               })
             ),
             { headers: readHeaders }
           );
         })
+      )
+      .handleRaw(
+        "pull",
+        Effect.fn("PatchesApi.pull")(
+          function* ({ params, query }) {
+            const identity = yield* CurrentIdentity;
+            const row = yield* readOne(params.patchRef, query.state ?? "live", identity);
+            if (HttpServerResponse.isHttpServerResponse(row)) return row;
+            const found = yield* patches
+              .findRetained(row.patch.id, query.version)
+              .pipe(Effect.catchTags({ SqlError: Effect.die }));
+            if (Option.isNone(found))
+              return refuse(NotFound, {
+                ok: false,
+                error: `${row.patch.name} has no version ${query.version}.`
+              });
+            const { version } = found.value;
+            yield* WideEvents.enrich({ versionId: version.id });
+            const kind = pullKind(version);
+            if (kind === null)
+              return refuse(NoRepo, {
+                ok: false,
+                code: "no_repo",
+                error: `Version ${version.versionNumber} of ${row.patch.name} was published without its repo, so there is nothing to pull. Its owner, ${row.owner.name}, keeps one by publishing again from their repo.`,
+                versionNumber: version.versionNumber,
+                owner: { id: row.owner.id, name: row.owner.name }
+              });
+            const files: ReadonlyArray<RepoFile> =
+              version.repo === null
+                ? [
+                    {
+                      path: pageFilename(version.originalFilename),
+                      contents: Buffer.from(yield* content.read(version)).toString("base64")
+                    }
+                  ]
+                : yield* content.readRepo(version.repo);
+            return HttpServerResponse.jsonUnsafe(
+              encodeRepo(
+                new PatchRepo({
+                  ok: true,
+                  patchId: row.patch.id,
+                  name: row.patch.name,
+                  state: row.patch.state,
+                  versionNumber: version.versionNumber,
+                  tier: version.tier,
+                  owner: { id: row.owner.id, name: row.owner.name },
+                  description: row.patch.description,
+                  descriptionUpdatedAt: row.patch.descriptionUpdatedAt,
+                  kind,
+                  files
+                })
+              ),
+              { headers: readHeaders }
+            );
+          },
+          Effect.catchTags({ InvalidObjectKey: Effect.die, StoreUnavailable: Effect.die })
+        )
       )
       .handleRaw(
         "primitive",

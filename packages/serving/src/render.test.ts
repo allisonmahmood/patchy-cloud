@@ -89,6 +89,7 @@ describe("patch pages", () => {
     contentHash: "hash",
     fileSize: 12,
     server: null,
+    repo: null,
     createdByMachineTokenId: DEV_SEED.tokenId,
     sourceIp: null,
     userAgent: null,

@@ -43,7 +43,8 @@ import {
   CURRENT_RELEASE,
   WIRE_VERSION,
   sharedTableId,
-  sharedStoreId
+  sharedStoreId,
+  repoLimits
 } from "@patchy/api";
 import { Companies, Looks, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
@@ -1990,7 +1991,9 @@ it.layer(publishLayer)("publish attempts", (it) => {
         publishKey: crypto.randomUUID(),
         metadata: { filename: "" }
       });
-      const padding = "x".repeat(6144 - Buffer.byteLength(JSON.stringify(envelope), "utf8"));
+      // Three times both bundle caps, plus room for a full repo snapshot in base64.
+      const bodyCap = (1024 + 1024) * 3 + 2 * repoLimits.bytes;
+      const padding = "x".repeat(bodyCap - Buffer.byteLength(JSON.stringify(envelope), "utf8"));
       const atBodyLimit = publishRequest({ ...envelope, metadata: { filename: padding } });
       const accepted = yield* api.publish({ payload: atBodyLimit });
       assert.strictEqual(accepted.tier, 1);
@@ -3522,6 +3525,358 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         assert.isDefined(empty.artifacts.server);
       }),
     30_000
+  );
+});
+
+const repoFile = (path: string, text: string) => ({
+  path,
+  contents: Buffer.from(text).toString("base64")
+});
+
+it.layer(Layer.fresh(publishLayer))("repo snapshots over machine tokens", (it) => {
+  it.effect("keeps each version's repo for any colleague to pull, the served one by default", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const manifest = { ...Fixtures.manifest, name: "repo-kept", description: "Keeps its repo." };
+      const first = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Repo first"),
+          manifest,
+          repo: [
+            repoFile("src/main.ts", "first"),
+            repoFile("café.md", "notes"),
+            { ...repoFile("scripts/check.sh", "#!/bin/sh"), executable: true }
+          ]
+        })
+      });
+      assert.deepStrictEqual(first.artifacts.repo, {
+        files: 3,
+        bytes:
+          Buffer.byteLength("first") + Buffer.byteLength("notes") + Buffer.byteLength("#!/bin/sh")
+      });
+      const stored = yield* (yield* ContentStore.ContentStore).get(
+        Content.repoObjectKey(first.patchId, first.versionId)
+      );
+      // Stored sorted by path, so the same repo always stores the same bytes.
+      assert.deepStrictEqual(
+        (JSON.parse(stored) as Array<{ path: string }>).map((file) => file.path),
+        ["café.md", "scripts/check.sh", "src/main.ts"]
+      );
+      yield* owner.publish({
+        payload: publishRequest({
+          html: html("Repo second"),
+          patchId: first.patchId,
+          manifest,
+          repo: [repoFile("src/main.ts", "second")]
+        })
+      });
+
+      const [latest, response] = yield* colleague.pull({
+        params: { patchRef: "repo-kept" },
+        query: {},
+        responseMode: "decoded-and-response"
+      });
+      assert.strictEqual(response.headers["cache-control"], "private, no-store");
+      expect({ ...latest }).toMatchObject({
+        patchId: first.patchId,
+        name: "repo-kept",
+        state: "live",
+        versionNumber: 2,
+        tier: 1,
+        owner: { id: uploader.user.id, name: uploader.user.name },
+        description: "Keeps its repo.",
+        kind: "repo",
+        files: [repoFile("src/main.ts", "second")]
+      });
+      const older = yield* colleague.pull({
+        params: { patchRef: first.patchId },
+        query: { version: 1 }
+      });
+      assert.deepStrictEqual(older.files, [
+        repoFile("café.md", "notes"),
+        { ...repoFile("scripts/check.sh", "#!/bin/sh"), executable: true },
+        repoFile("src/main.ts", "first")
+      ]);
+
+      yield* owner.rollback({
+        params: { patchId: first.patchId },
+        payload: new RollbackRequest({ versionNumber: 1 })
+      });
+      assert.strictEqual(
+        (yield* colleague.pull({ params: { patchRef: "repo-kept" }, query: {} })).versionNumber,
+        1
+      );
+      const detail = yield* colleague.detail({ params: { patchRef: "repo-kept" }, query: {} });
+      assert.deepStrictEqual(detail.repo, {
+        versionNumber: 1,
+        kind: "repo",
+        files: 3,
+        bytes: first.artifacts.repo!.bytes
+      });
+
+      const missing = yield* colleague.pull({
+        params: { patchRef: "repo-kept" },
+        query: { version: 9 },
+        responseMode: "response-only"
+      });
+      assert.strictEqual(missing.status, 404);
+      assert.deepStrictEqual(yield* missing.json, {
+        ok: false,
+        error: "repo-kept has no version 9."
+      });
+
+      // A retired patch is pulled the way detail reads it: by asking for its state.
+      yield* owner.retire({ params: { patchId: first.patchId }, payload: new ForceRequest({}) });
+      const live = yield* colleague.pull({
+        params: { patchRef: "repo-kept" },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(live.status, 409);
+      expect(yield* live.json).toMatchObject({ code: "wrong_state", state: "retired" });
+      const retired = yield* colleague.pull({
+        params: { patchRef: "repo-kept" },
+        query: { state: "retired" }
+      });
+      assert.strictEqual(retired.state, "retired");
+    })
+  );
+
+  it.effect("pulls a file-born page as one safely named file, and nothing from anything else", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const page = html("From one file");
+      const file = yield* owner.publish({
+        payload: publishRequest({ html: page, metadata: { filename: "../../.Launch Plan.HTM" } })
+      });
+      const pulled = yield* colleague.pull({ params: { patchRef: file.patchId }, query: {} });
+      assert.strictEqual(pulled.kind, "file");
+      assert.deepStrictEqual(pulled.files, [repoFile("Launch Plan.html", page)]);
+      assert.deepStrictEqual(
+        (yield* colleague.detail({ params: { patchRef: file.patchId }, query: {} })).repo,
+        { versionNumber: 1, kind: "file", files: 1, bytes: Buffer.byteLength(page) }
+      );
+
+      const bare = yield* owner.publish({
+        payload: publishRequest({
+          html: html("No repo"),
+          manifest: { ...Fixtures.manifest, name: "repo-none" }
+        })
+      });
+      assert.isUndefined(bare.artifacts.repo);
+      assert.isNull(
+        (yield* colleague.detail({ params: { patchRef: bare.patchId }, query: {} })).repo
+      );
+      const none = yield* colleague.pull({
+        params: { patchRef: bare.patchId },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(none.status, 404);
+      expect(yield* none.json).toEqual({
+        ok: false,
+        code: "no_repo",
+        error: expect.stringContaining("Its owner, Uploader, keeps one"),
+        versionNumber: 1,
+        owner: { id: uploader.user.id, name: uploader.user.name }
+      });
+
+      // A filename on a scripted publish doesn't make its HTML the patch: pulling that alone would
+      // lose the server code.
+      const scripted = yield* owner.publish({
+        payload: yield* consumingRequest({
+          html: html("Scripted"),
+          manifest: { ...Fixtures.manifest, name: "repo-scripted" },
+          metadata: { filename: "tool.html" }
+        })
+      });
+      assert.isNull(
+        (yield* colleague.detail({ params: { patchRef: scripted.patchId }, query: {} })).repo
+      );
+      const scriptedPull = yield* colleague.pull({
+        params: { patchRef: scripted.patchId },
+        query: {},
+        responseMode: "response-only"
+      });
+      assert.strictEqual(scriptedPull.status, 404);
+      expect(yield* scriptedPull.json).toMatchObject({ code: "no_repo" });
+
+      // Another company's patch is the same 404 as one that doesn't exist.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_repo_foreign', 'repo-foreign', 'Foreign')`;
+      yield* sql`UPDATE patches SET company_id = 'cmp_repo_foreign' WHERE id = ${file.patchId}`;
+      for (const patchRef of [file.patchId, "abcdefghijkl"]) {
+        const hidden = yield* colleague.pull({
+          params: { patchRef },
+          query: {},
+          responseMode: "response-only"
+        });
+        assert.strictEqual(hidden.status, 404);
+        assert.deepStrictEqual(yield* hidden.json, { ok: false, error: "Patch not found." });
+      }
+    })
+  );
+
+  it.effect("hides a snapshot from everyone detail would refuse", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const colleague = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const anonymous = yield* client.pipe(
+        Effect.provide(
+          HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
+        )
+      );
+      const unopenable = yield* client.pipe(
+        Effect.provide(Fixtures.as(reader)),
+        Effect.provide(
+          Layer.fresh(
+            PatchesApi.layer.pipe(
+              Layer.provide(Limits.layer),
+              Layer.provide(publishConfig()),
+              Layer.provide(Layer.succeed(Patches.Openability, () => false))
+            )
+          )
+        )
+      );
+      const published = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Hidden repo"),
+          manifest: { ...Fixtures.manifest, name: "repo-hidden" },
+          repo: [repoFile("src/main.ts", "secret sauce")]
+        })
+      });
+      const pull = (api: typeof owner, patchRef: string, state?: "all") =>
+        api.pull({
+          params: { patchRef },
+          query: state === undefined ? {} : { state },
+          responseMode: "response-only"
+        });
+      assert.strictEqual((yield* pull(anonymous, published.patchId)).status, 401);
+      assert.strictEqual((yield* pull(unopenable, published.patchId)).status, 404);
+
+      yield* owner.delete({ params: { patchId: published.patchId }, query: {} });
+      // A deleted patch resolves only by id, as detail does.
+      assert.strictEqual((yield* pull(colleague, "repo-hidden", "all")).status, 404);
+      assert.strictEqual((yield* pull(colleague, published.patchId, "all")).status, 200);
+
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${published.patchId}`;
+      assert.strictEqual((yield* pull(colleague, published.patchId, "all")).status, 404);
+    })
+  );
+
+  it.effect(
+    "replays an identical publish with its repo, and refuses the same key for another repo",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const payload = publishRequest({
+          html: html("Replayed repo"),
+          manifest: { ...Fixtures.manifest, name: "repo-replayed" },
+          repo: [repoFile("src/main.ts", "first")]
+        });
+        const first = yield* owner.publish({ payload });
+        const again = yield* owner.publish({ payload });
+        assert.strictEqual(again.versionId, first.versionId);
+        const other = yield* owner.publish({
+          payload: publishRequest({ ...payload, repo: [repoFile("src/main.ts", "second")] }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(other.status, 409);
+        expect(yield* other.json).toMatchObject({ code: "publish_key_conflict" });
+
+        // A version keeps all of a snapshot's record or none of it.
+        const sql = yield* SqlClient.SqlClient;
+        for (const column of ["repo_file_bytes", "repo_file_count", "repo_content_hash"] as const) {
+          const partial = yield* sql`UPDATE patch_versions SET ${sql(column)} = NULL
+          WHERE id = ${first.versionId}`.pipe(Effect.flip);
+          assert.strictEqual(partial._tag, "SqlError");
+        }
+      })
+  );
+
+  it.effect("refuses a repo that can't be written into one folder, or over its limits", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const sql = yield* SqlClient.SqlClient;
+      const count = sql`SELECT count(*)::int AS count FROM patches`;
+      const before = yield* count;
+      const attempt = (repo: ReadonlyArray<{ path: string; contents: string }>) =>
+        owner.publish({
+          payload: publishRequest({
+            html: html("Refused repo"),
+            manifest: { ...Fixtures.manifest, name: "repo-refused" },
+            repo
+          }),
+          responseMode: "response-only"
+        });
+      for (const [repo, error] of [
+        [
+          [repoFile("App.tsx", ""), repoFile("app.tsx", "")],
+          "Invalid repo snapshot: App.tsx and app.tsx differ only by case or Unicode form."
+        ],
+        [
+          [repoFile("café.md", ""), repoFile("café.md", "")],
+          "Invalid repo snapshot: café.md and café.md differ only by case or Unicode form."
+        ],
+        [
+          [repoFile("src", ""), repoFile("src/main.ts", "")],
+          "Invalid repo snapshot: src is a file, but src/main.ts needs it to be a folder."
+        ]
+      ] as const) {
+        const response = yield* attempt(repo);
+        assert.strictEqual(response.status, 400);
+        assert.deepStrictEqual(yield* response.json, { ok: false, error });
+      }
+      for (const repo of [
+        [repoFile("../escape.ts", "")],
+        [repoFile("/etc/passwd", "")],
+        [repoFile("src\\main.ts", "")],
+        [{ path: "src/main.ts", contents: "not base64" }]
+      ]) {
+        // The client refuses to encode these, so the body goes as written.
+        const raw = HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
+          next(
+            request.pipe(
+              HttpClientRequest.bearerToken(uploader.machine.id),
+              HttpClientRequest.bodyJsonUnsafe({
+                ...publishRequest({ html: html("Refused repo") }),
+                repo
+              })
+            )
+          )
+        );
+        const api = yield* client.pipe(Effect.provide(raw));
+        const response = yield* api.publish({
+          payload: publishRequest({ html: html("Refused repo") }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 400);
+        expect(yield* response.json).toMatchObject({
+          error: expect.stringMatching(/^Invalid repo snapshot: /)
+        });
+      }
+      const many = yield* attempt(
+        Array.from({ length: 2_001 }, (_, index) => repoFile(`f/${index}`, ""))
+      );
+      assert.strictEqual(many.status, 413);
+      assert.deepStrictEqual(yield* many.json, {
+        ok: false,
+        error: "Repo snapshot has 2001 files; publish.repo.files is 2000."
+      });
+      const large = yield* attempt([
+        { path: "big.bin", contents: Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64") }
+      ]);
+      assert.strictEqual(large.status, 413);
+      assert.deepStrictEqual(yield* large.json, {
+        ok: false,
+        error: "Repo snapshot holds 10485761 bytes; publish.repo.bytes is 10485760."
+      });
+      assert.deepStrictEqual(yield* count, before);
+    })
   );
 });
 
