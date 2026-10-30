@@ -105,7 +105,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["agent/*.ts", "patchy/_generated/server.ts"],
     runs: "Tier 2, called by people's own agents through Patchy MCP at <instance>/mcp, as the person who connected them",
     limits:
-      "Every export of agent/*.ts is a described query, mutation or action, named after its export; pages can't call them. Queries and read-only actions are reads, everything else changes. Agents know only descriptions and schemas. Descriptions are at most 2,000 characters and one patch's tools at most 64 KiB, rows expanded. JSON only: no uploads, file handles or push. Agent access is a company switch an admin turns on."
+      "Every export of agent/*.ts is a described query, mutation or action, named after its export; pages can't call them. Queries and read-only actions are reads, everything else changes. Agents know only descriptions and schemas. Descriptions are at most 2,000 characters and one patch's tools at most 60 KiB, rows expanded. JSON only: no uploads, file handles or push. Agent access is a company switch an admin turns on."
   },
   {
     id: "primitives.tables",
