@@ -489,16 +489,22 @@ it.layer(layer)("SDK company generation", (it) => {
     })
   );
   it.effect(
-    "requires bearer auth, handles primitive-free companies, and retains installed skills",
+    "requires bearer auth, handles primitive-free companies, and retains the installed skills it ships",
     () =>
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
         assert.strictEqual((yield* client.post("/api/sdk/generate")).status, 401);
+        // A release before a skill leaves it out, never reading its name as a path.
         const generated = yield* client.execute(
           HttpClientRequest.post("/api/sdk/generate").pipe(
             HttpClientRequest.bearerToken(identity.machine.id),
             HttpClientRequest.bodyJsonUnsafe(
-              generateRequest(Fixtures.manifest, ["patchy-postgres", "patchy-shared-tables"])
+              generateRequest(Fixtures.manifest, [
+                "patchy-postgres",
+                "patchy-removed",
+                "patchy-../../package.json",
+                "patchy-shared-tables"
+              ])
             )
           )
         );
@@ -519,21 +525,14 @@ it.layer(layer)("SDK company generation", (it) => {
           ".agents/skills/patchy-shared-tables/SKILL.md",
           ".agents/skills/patchy-tables/SKILL.md"
         ]);
-        for (const payload of [
-          { ...generateRequest(), release: "0.0.0" },
-          generateRequest(Fixtures.manifest, ["patchy-removed"])
-        ]) {
-          const response = yield* client.execute(
-            HttpClientRequest.post("/api/sdk/generate").pipe(
-              HttpClientRequest.bearerToken(identity.machine.id),
-              HttpClientRequest.bodyJsonUnsafe(payload)
-            )
-          );
-          assert.strictEqual(response.status, 422);
-          assert.include(yield* response.json, {
-            code: payload.release === "0.0.0" ? "release_mismatch" : "invalid_manifest"
-          });
-        }
+        const mismatched = yield* client.execute(
+          HttpClientRequest.post("/api/sdk/generate").pipe(
+            HttpClientRequest.bearerToken(identity.machine.id),
+            HttpClientRequest.bodyJsonUnsafe({ ...generateRequest(), release: "0.0.0" })
+          )
+        );
+        assert.strictEqual(mismatched.status, 422);
+        assert.include(yield* mismatched.json, { code: "release_mismatch" });
         const sql = yield* SqlClient.SqlClient;
         const placements =
           yield* sql`SELECT company_id FROM company_databases WHERE company_id = ${identity.company.id}`;

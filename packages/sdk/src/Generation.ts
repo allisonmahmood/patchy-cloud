@@ -42,15 +42,6 @@ export class UnsupportedManifestVersion extends Schema.TaggedError<UnsupportedMa
     return `Generation refused: manifest version ${this.version} is not supported.`;
   }
 }
-export class UnknownProjectSkill extends Schema.TaggedError<UnknownProjectSkill>()(
-  "UnknownProjectSkill",
-  { skill: Schema.String.check(Schema.isMaxLength(128)) }
-) {
-  readonly code = "invalid_manifest" as const;
-  override get message() {
-    return `Generation refused: present skill ${JSON.stringify(this.skill)} is not offered by this release.`;
-  }
-}
 export class UnsafeGeneratedPath extends Schema.TaggedError<UnsafeGeneratedPath>()(
   "UnsafeGeneratedPath",
   { path: Schema.String }
@@ -108,7 +99,6 @@ export type GenerationRefused =
   | ReleaseMismatch
   | TierMismatch
   | UnsupportedManifestVersion
-  | UnknownProjectSkill
   | UnsafeGeneratedPath
   | ConnectionNotConnected
   | PatchNotOpenable;
@@ -256,16 +246,17 @@ export const generate = Effect.fn("Generation.generate")(function* (
   const aliases = Object.keys(request.manifest.uses);
   if (usesRefusal(request.manifest.tier, aliases) !== undefined)
     return yield* new TierMismatch({ tier: request.manifest.tier, aliases });
-  const skills = new Set([...coreSkills, ...request.skills]);
+  // A present skill this release doesn't ship, as after a rollback past the release that added
+  // it, is left out and never read as a path; the CLI removes its folder.
+  const skills = new Set([
+    ...coreSkills,
+    ...request.skills.filter((skill) => knownSkills.includes(skill))
+  ]);
   if (request.manifest.tier === 1 || request.manifest.tier === 2) skills.add("patchy-preact");
   if (request.manifest.tier === 2) skills.add("patchy-server");
   else skills.delete("patchy-server");
   if (request.manifest.uses.members?.kind === "members") skills.add("patchy-members");
   else skills.delete("patchy-members");
-  for (const skill of skills) {
-    if (!knownSkills.includes(skill))
-      return yield* new UnknownProjectSkill({ skill: skill.slice(0, 128) });
-  }
   if (request.patchId !== undefined) {
     const existing = yield* patches
       .find(request.patchId)

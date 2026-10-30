@@ -103,7 +103,6 @@ export const layer: Layer.Layer<
               SdkReleaseMismatch: rejected,
               SdkTierMismatch: rejected,
               UnsupportedManifestVersion: rejected,
-              UnknownProjectSkill: rejected,
               UnsafeGeneratedPath: rejected,
               SdkConnectionNotConnected: rejected,
               SdkPatchNotOpenable: rejected,
