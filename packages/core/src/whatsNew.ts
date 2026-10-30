@@ -52,6 +52,21 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 27,
+    date: "2026-10-30",
+    through: "d285816c49b771baebb3c6528e245c7e70690d0a",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "Your agent gets just the error when it mistypes a command",
+        detail:
+          "When your agent got an option wrong in a patchy command, patchy used to answer with a page of help as well as the error, which the agent could mistake for a result. Now it answers with just the error, naming the option to fix.",
+        prs: [1073]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 26,
     date: "2026-10-30",
     through: "eabf2e6404258c03b7f1b4e43c067b98dd95cea5",
