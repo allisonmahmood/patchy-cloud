@@ -413,7 +413,7 @@ takes a list.
 
 A tool needs a `description` of at most 2,000 characters, and publish warns
 about top-level arguments without `.describe()`. One patch's tools fit in
-64 KiB, as agents read them with rows expanded. Tools exchange JSON only: there
+60 KiB, as agents read them with rows expanded. Tools exchange JSON only: there
 are no uploads or file handles, though handlers still read the patch's own
 files, and MCP can't push. `t.timestamp()` is an ISO date-time string, so an
 agent must send a time of day; a plain date is a `t.text()` the handler checks.
