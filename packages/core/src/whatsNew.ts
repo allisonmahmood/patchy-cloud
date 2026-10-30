@@ -52,6 +52,15 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 28,
+    date: "2026-10-30",
+    through: "ebbc21598f7821ceeef12f64fc46213a4bcb93cd",
+    changes: [],
+    behindTheScenes: [
+      "Patchy can now keep the files of the repo each version was published from, the groundwork for pulling a patch back down to work on it."
+    ]
+  },
+  {
     id: 27,
     date: "2026-10-30",
     through: "d285816c49b771baebb3c6528e245c7e70690d0a",
