@@ -1,0 +1,28 @@
+{
+  "company": { "name": "Harbor Works", "handle": "harbor" },
+  "companies": [{ "name": "Pine Studio", "handle": "pine" }],
+  "people": [
+    { "key": "ada", "name": "Ada Park", "email": "ada@harbor.example", "role": "admin" },
+    { "key": "ben", "name": "Ben Ortiz", "email": "ben@harbor.example", "role": "member" },
+    {
+      "key": "jo",
+      "name": "Jo Rivera",
+      "email": "jo@pine.example",
+      "role": "member",
+      "company": "pine"
+    }
+  ],
+  "publisher": "ada",
+  "patches": [
+    {
+      "repo": "site-notes",
+      "tier": 1,
+      "description": "Notes about the harbour site, which everyone who opens it reads and adds to."
+    },
+    {
+      "repo": "visit-log",
+      "tier": 2,
+      "description": "A log of site visits: everyone who opens it reads and adds visits; only Harbor Works clears it."
+    }
+  ]
+}

@@ -51,7 +51,7 @@ it.live(
 );
 
 it.live(
-  "reads descriptions, read-only actions and agent tools, and refuses the flag on a query",
+  "reads descriptions, read-only actions, guest handlers and agent tools, and refuses the flag on a query",
   () =>
     Effect.gen(function* () {
       const described = {
@@ -62,6 +62,7 @@ it.live(
           args: { since: { kind: "timestamp", description: "Oldest to include." } },
           result: { kind: "text" }
         },
+        "demo.add": { kind: "mutation", guest: true, args: {}, result: { kind: "text" } },
         "agent.lookup": {
           kind: "query",
           description: "Looks something up.",

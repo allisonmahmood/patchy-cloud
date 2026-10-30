@@ -102,6 +102,7 @@ const setup = Effect.fnUntraced(function* (patchId: string) {
     wireVersion: WIRE_VERSION,
     scope: "company",
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     principal: { userId: viewer.user.id },
     correlationId: "mutation-acceptance"
   });
@@ -186,8 +187,7 @@ const host = Effect.fnUntraced(function* (
           args: { id },
           mutationKey: key ?? (yield* MutationTransaction.mint)
         },
-        { ...binding, correlationId: newInternalId("call") },
-        Effect.succeed(binding.identity!)
+        { ...binding, correlationId: newInternalId("call") }
       );
     });
   return { call, invocations, storage, capabilities };

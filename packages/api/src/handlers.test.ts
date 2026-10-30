@@ -104,7 +104,7 @@ describe("handler descriptors", () => {
     expect(encodeManifest(decodeManifest(wire))).toEqual(wire);
   });
 
-  it("round-trips descriptions, read-only actions and agent tools, and omits them when absent", () => {
+  it("round-trips descriptions, read-only actions, guest handlers and agent tools, and omits them when absent", () => {
     const wire = {
       ...manifest,
       handlers: {
@@ -125,6 +125,7 @@ describe("handler descriptors", () => {
           },
           result: { kind: "integer" as const, description: "How many matched." }
         },
+        "leads.list": { ...query, guest: true as const },
         "agent.addLead": {
           kind: "mutation" as const,
           description: "Adds one lead.",
@@ -150,6 +151,7 @@ describe("handler descriptors", () => {
       { readOnly: false },
       { readOnly: null },
       { agentTool: false },
+      { guest: false },
       { description: null },
       { args: { value: { kind: "text", description: null } } }
     ])

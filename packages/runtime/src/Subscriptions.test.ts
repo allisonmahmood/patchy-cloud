@@ -34,6 +34,7 @@ const binding: Binding.Binding["Service"] = {
   scope: "company",
   principal: { userId: "viewer" },
   identity: null,
+  reauthorize: Effect.fail(new Runtime.AccessDenied({})),
   correlationId: "stream-test",
   manifest: {
     manifestVersion: 1,

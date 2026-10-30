@@ -535,7 +535,9 @@ A daemon started with `--json` writes full wide events, invocation JSON and
 `{ type: "simulated", viewerId, connection, operation, summary }` lines to
 `dev.log`; `dev logs --json` still returns `{ ok, log, text }`.
 Every session returns a second `colleagueUrl` at a distinct loopback origin,
-authenticated as a fixed non-admin colleague in the same company. Both mounts
+authenticated as a fixed non-admin colleague in the same company, and a third
+`guestUrl`, as the patch's guest from another company: in the patch's company,
+never its admin, with `guest: true` and no `/~dev/agent` door. All three mounts
 share data, fixtures and subscriptions; the primary remains the machine user.
 Tier 2 uses the supervised workerd engine and private callback gateway.
 
@@ -555,13 +557,13 @@ owned local files remain intact. Fixture bytes use `application/octet-stream`.
 Both tiers consume the same source fixtures through real runtime handlers.
 Edit fixtures and restart to change sources locally; authority changes are not simulated.
 
-| command                 | `--json` success                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `dev`                   | `{ ok, healthy: true, joined, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
-| `dev status`            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }`         |
-| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                                      |
-| `dev logs`              | `{ ok, log, text }`                                                                                  |
-| `dev agent`             | `open_patch`'s answer, or a call's `{ result, version }`, adding `warnings` when stale               |
+| command                 | `--json` success                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `dev`                   | `{ ok, healthy: true, joined, url, colleagueUrl?, guestUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev status`            | `{ ok, healthy: true, url, colleagueUrl?, guestUrl?, logPath, stop, pid, release, identity, warnings }`         |
+| `dev stop`, `dev reset` | `{ ok, healthy: false, reset }`                                                                                 |
+| `dev logs`              | `{ ok, log, text }`                                                                                             |
+| `dev agent`             | `open_patch`'s answer, or a call's `{ result, version }`, adding `warnings` when stale                          |
 
 Start exits 0 only after the first valid single-file bundle and runtime are
 healthy. The daemon persists the checked release and full `/api/me` identity

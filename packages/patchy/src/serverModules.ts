@@ -10,6 +10,7 @@ import {
   type HandlerDescriptors,
   type Manifest
 } from "@patchy/api";
+import type { InspectionError } from "@patchy/execution/inspection";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -195,6 +196,16 @@ export const descriptionFailure = (
   const file = module === "agent" ? agentFile(agentTools, tool) : `server/${module}.ts`;
   return `${file}: ${descriptionRefusal(problem)}`;
 };
+
+/**
+ * Why the build couldn't inspect its server bundle: workerd didn't start, which reinstalling the
+ * repo's dependencies fixes, the bundle refused its own modules, or they don't load as handlers.
+ */
+export const inspectionFailure = (error: InspectionError): string =>
+  error.reason === "process"
+    ? "workerd couldn't start to inspect the server bundle. Run `pnpm install`, then try again."
+    : (error.problem ??
+      "Could not inspect the server bundle. Its modules must load and export only valid handlers.");
 
 /**
  * The build's refusal from the agent area check the instance also runs, naming the tool's file.

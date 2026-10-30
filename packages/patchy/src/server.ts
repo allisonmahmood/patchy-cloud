@@ -155,6 +155,7 @@ export interface HandlerDescriptor {
   readonly description?: string;
   readonly readOnly?: true;
   readonly agentTool?: true;
+  readonly guest?: true;
   readonly args: Readonly<Record<string, ValueDescriptor>>;
   readonly result: ValueDescriptor;
   readonly errors?: readonly string[];
@@ -327,6 +328,11 @@ type HandlerDefinition<
 > = {
   /** What the handler does, for agents: nonblank, at most 2,000 characters. */
   readonly description?: NonEmptyString<D>;
+  /**
+   * The patch's guests may start this handler from its page. They start no other; what it calls
+   * through `ctx.run` follows the usual rules. Check `ctx.viewer` where it matters who they are.
+   */
+  readonly guest?: true;
   readonly args: A & CheckFields<A, K, C>;
   readonly result: R & CheckSchema<R, K, "result", C, false>;
   readonly errors?: E;
@@ -402,6 +408,7 @@ const makeBuilder =
   (definition: {
     readonly description?: string;
     readonly readOnly?: true;
+    readonly guest?: true;
     readonly args: Fields;
     readonly result: SchemaInput;
     readonly errors?: readonly string[];
@@ -421,6 +428,7 @@ const makeBuilder =
       kind,
       ...(definition.description === undefined ? {} : { description: definition.description }),
       ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly }),
+      ...(definition.guest === undefined ? {} : { guest: definition.guest }),
       args,
       result: definition.result.toJSON(),
       ...(definition.errors === undefined ? {} : { errors: definition.errors })

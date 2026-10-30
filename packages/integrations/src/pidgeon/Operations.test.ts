@@ -67,6 +67,7 @@ const binding = (
     correlationId: "pidgeon-test",
     principal: { userId: viewer.user.id },
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
@@ -1088,14 +1089,13 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         const { call, pidgeon, send, store } = yield* setup(() => [
           { match: PidgeonTest.route("GET", "/labels"), body: page([]) }
         ]);
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-          VALUES ('usr_ops_queued', 'user_ops_queued', ${who.companyId}, 'queued@acme.example',
-            'Queued', 'member')`;
-        const queued: Viewer = {
-          ...viewer,
-          user: { id: "usr_ops_queued", name: "Queued", email: "queued@acme.example" }
-        };
+        // The door's own check of the viewer, until they're deactivated.
+        let active = true;
+        const queued = binding(send, {
+          reauthorize: Effect.suspend(() =>
+            active ? Effect.succeed(viewer) : Effect.fail(new Runtime.AccessDenied({}))
+          )
+        });
         const labels = PidgeonTest.route("GET", "/labels");
         const release = yield* Deferred.make<void>();
         const slots = 4;
@@ -1116,15 +1116,11 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         yield* TestClock.adjust("1 second");
         assert.include(Runtime.toFailure(yield* Fiber.join(busy)), { code: "busy" });
         // One viewer is deactivated and the connection disconnected while their calls wait.
-        const byQueued = yield* call(
-          "pidgeon.read",
-          "labels.list",
-          {},
-          {
-            binding: binding(send, { identity: queued, principal: { userId: queued.user.id } })
-          }
-        ).pipe(Effect.flip, Effect.forkChild);
-        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_ops_queued'`;
+        const byQueued = yield* call("pidgeon.read", "labels.list", {}, { binding: queued }).pipe(
+          Effect.flip,
+          Effect.forkChild
+        );
+        active = false;
         yield* Deferred.succeed(release, undefined);
         yield* Effect.forEach(running, Fiber.join);
         assert.include(Runtime.toFailure(yield* Fiber.join(byQueued)), { code: "access_denied" });
@@ -1166,14 +1162,6 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
       const { call, refused, pidgeon, send, read } = yield* setup(() => [
         { match: () => true, status: 202, body: { data: sentRow } }
       ]);
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, deactivated_at)
-        VALUES ('usr_ops_gone', 'user_ops_gone', ${who.companyId}, 'gone@acme.example', 'Gone',
-          'member', now())`;
-      const gone: Viewer = {
-        ...viewer,
-        user: { id: "usr_ops_gone", name: "Gone", email: "gone@acme.example" }
-      };
       const elsewhere: Viewer = {
         ...viewer,
         company: { id: "co_elsewhere", name: "Elsewhere", handle: "elsewhere" }
@@ -1215,14 +1203,12 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
           "access_denied"
         ],
         [
-          "a deactivated viewer",
+          "a viewer the door now refuses",
           call(
             "pidgeon.read",
             "labels.list",
             {},
-            {
-              binding: binding(send, { identity: gone, principal: { userId: gone.user.id } })
-            }
+            { binding: binding(send, { reauthorize: Effect.fail(new Runtime.AccessDenied({})) }) }
           ),
           "access_denied"
         ],

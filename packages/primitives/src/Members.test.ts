@@ -21,6 +21,11 @@ const member: typeof Member.Type = {
   admin: true,
   active: false
 };
+const viewer = {
+  user: { id: "viewer", name: "Viewer", email: "viewer@example.test" },
+  company: { id: "cmp_dev", name: "Company", handle: "company" },
+  admin: false
+};
 const binding = Binding.Binding.of({
   companyId: "cmp_dev",
   patchId: "memberdirectory",
@@ -29,11 +34,8 @@ const binding = Binding.Binding.of({
   scope: "company",
   manifest: { ...manifest, tier: 2, tables: {}, uses: { members: { kind: "members" } } },
   principal: { userId: "viewer" },
-  identity: {
-    user: { id: "viewer", name: "Viewer", email: "viewer@example.test" },
-    company: { id: "cmp_dev", name: "Company", handle: "company" },
-    admin: false
-  },
+  identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   correlationId: "member-directory-test"
 });
 const services = Testing.layer().pipe(
@@ -94,8 +96,7 @@ it.layer(services)("Members", (it) => {
           attemptId: "one",
           processGeneration: 1,
           deadline: (yield* Clock.currentTimeMillis) + 3000
-        },
-        reauthorize: Effect.succeed(binding.identity!)
+        }
       });
       const snapshot = yield* snapshots.open(capability);
       yield* Effect.addFinalizer(() => snapshot.cancel);

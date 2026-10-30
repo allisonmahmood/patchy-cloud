@@ -40,6 +40,7 @@ const binding: Binding.Binding["Service"] = {
   wireVersion: WIRE_VERSION,
   scope: "company",
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   principal: { userId: "usr_dev" },
   correlationId: "setup",
   manifest: {
@@ -182,8 +183,7 @@ const host = Effect.gen(function* () {
           ? { mutationKey: `${now}-${randomBytes(16).toString("base64url")}` }
           : {})
       },
-      { ...binding, correlationId },
-      Effect.succeed(viewer)
+      { ...binding, correlationId }
     );
   });
   return { call, opened };

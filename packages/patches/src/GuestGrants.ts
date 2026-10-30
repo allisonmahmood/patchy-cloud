@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { PatchState } from "@patchy/api";
+import { Manifest, PatchState } from "@patchy/api";
 import type { Patch, PatchVersion } from "./Patches.js";
 
 /**
@@ -24,26 +24,45 @@ import type { Patch, PatchVersion } from "./Patches.js";
 export const Reason = Schema.TaggedUnion({
   Retired: {},
   Deleted: {},
-  /** Guests open tier 1 pages. */
-  Tier: { tier: Schema.Int }
+  /** Guests open tier 1 and tier 2 patches. */
+  Tier: { tier: Schema.Int },
+  /** The version reads another patch's shared table or store, which only its company may read. */
+  SharedSource: { kind: Schema.Literals(["table", "store"]), alias: Schema.String }
 });
 export type Reason = typeof Reason.Type;
 
-/** Why guests can't open this patch at this version, or none when they can. */
+/** What eligibility reads of a version: its tier and what it declares. */
+type Version = Pick<PatchVersion, "tier"> & {
+  readonly manifest: Pick<PatchVersion["manifest"], "uses">;
+};
+
+/**
+ * Why guests can't open this patch at this version, or none when they can. The member directory
+ * doesn't count against it: a guest reads it as a member does.
+ */
 export const unavailable = (
   patch: Pick<Patch, "state">,
-  version: Pick<PatchVersion, "tier">
+  version: Version
 ): Option.Option<Reason> => {
   if (patch.state === "retired") return Option.some(Reason.cases.Retired.make({}));
   if (patch.state === "deleted") return Option.some(Reason.cases.Deleted.make({}));
-  if (version.tier !== 1) return Option.some(Reason.cases.Tier.make({ tier: version.tier }));
+  if (version.tier !== 1 && version.tier !== 2)
+    return Option.some(Reason.cases.Tier.make({ tier: version.tier }));
+  for (const [alias, use] of Object.entries(version.manifest.uses))
+    if (use.kind === "sharedTable" || use.kind === "sharedStore")
+      return Option.some(
+        Reason.cases.SharedSource.make({
+          kind: use.kind === "sharedTable" ? "table" : "store",
+          alias
+        })
+      );
   return Option.none();
 };
 
 /** Whether this version admits the patch's guests: only its current version, while available. */
 export const admitsGuests = (
   patch: Pick<Patch, "state" | "currentVersionId">,
-  version: Pick<PatchVersion, "id" | "tier">
+  version: Pick<PatchVersion, "id"> & Version
 ) => patch.currentVersionId === version.id && Option.isNone(unavailable(patch, version));
 
 /** A patch's guest: who they are and where they're from, read from their own account. */
@@ -63,7 +82,8 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   companyName: Schema.String,
   grantedAt: Schema.Date,
   state: PatchState,
-  tier: Schema.Int
+  tier: Schema.Int,
+  uses: Manifest.fields.uses
 }) {}
 
 class RevokedRow extends Schema.Class<RevokedRow>("RevokedRow")({ userId: Schema.String }) {}
@@ -145,7 +165,8 @@ export const make = Effect.gen(function* () {
     execute: (userId) => sql`
       SELECT p.id AS "patchId", p.name, p.title, c.handle AS "companyHandle",
         c.name AS "companyName", g.granted_at AS "grantedAt",
-        CASE WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END AS state, v.tier
+        CASE WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END AS state, v.tier,
+        v.manifest->'uses' AS uses
       FROM patch_guest_grants g
       JOIN patches p ON p.id = g.patch_id
       JOIN patch_versions v ON v.id = p.current_version_id
@@ -205,7 +226,10 @@ export const make = Effect.gen(function* () {
       title: row.title,
       company: { handle: row.companyHandle, name: row.companyName },
       grantedAt: row.grantedAt,
-      unavailable: unavailable({ state: row.state }, { tier: row.tier })
+      unavailable: unavailable(
+        { state: row.state },
+        { tier: row.tier, manifest: { uses: row.uses } }
+      )
     }));
   }, Effect.catchTags(dieOnSchemaError));
   const host = Effect.fn("GuestGrants.host")(

@@ -239,6 +239,7 @@ const desk = Effect.fn("live.desk")(function* (
     correlationId: "pidgeon-live",
     principal: { userId: who.userId },
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,

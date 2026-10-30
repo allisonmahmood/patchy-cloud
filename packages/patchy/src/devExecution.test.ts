@@ -189,10 +189,10 @@ it.live(
           {
             ...resources.version,
             identity: current,
+            reauthorize: Effect.succeed(current),
             principal: { userId: current.user.id },
             correlationId: "dev-fixtures"
-          },
-          Effect.succeed(current)
+          }
         );
       const colleague = {
         ...viewer,
@@ -227,6 +227,7 @@ it.live(
           Effect.provideService(Binding.Binding, {
             ...resources.version,
             identity: viewer,
+            reauthorize: Effect.succeed(viewer),
             principal: { userId: viewer.user.id },
             correlationId: "local-stage"
           }),
@@ -390,10 +391,10 @@ it.live(
           {
             ...resources.version,
             identity: current,
+            reauthorize: Effect.succeed(current),
             principal: { userId: current.user.id },
             correlationId: "dev-posthog"
-          },
-          Effect.succeed(current)
+          }
         );
       for (const current of [viewer, colleague])
         assert.deepStrictEqual(yield* call("views", current), {
@@ -412,10 +413,10 @@ it.live(
           {
             ...resources.version,
             identity: viewer,
+            reauthorize: Effect.succeed(viewer),
             principal: { userId: viewer.user.id },
             correlationId: "dev-posthog-relay"
-          },
-          Effect.succeed(viewer)
+          }
         )
         .pipe(Effect.flip);
       assert.deepInclude(Runtime.toFailure(relayed), {
@@ -559,10 +560,10 @@ export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
           {
             ...resources.version,
             identity: current,
+            reauthorize: Effect.succeed(current),
             principal: { userId: current.user.id },
             correlationId: "dev-pidgeon"
-          },
-          Effect.succeed(current)
+          }
         );
         if (!answered.ok) return assert.fail(JSON.stringify(answered));
         const value = answered.value as {
@@ -693,10 +694,10 @@ export default createGuest({desk:{deals}}, [], {}, [], ["crm"]);`)
         {
           ...resources.version,
           identity: viewer,
+          reauthorize: Effect.succeed(viewer),
           principal: { userId: viewer.user.id },
           correlationId: "dev-attio"
-        },
-        Effect.succeed(viewer)
+        }
       );
       if (!answered.ok) return assert.fail(JSON.stringify(answered));
       assert.deepStrictEqual(answered.value, {
@@ -749,11 +750,11 @@ it.live(
         Binding.Binding.of({
           ...resources.version,
           identity: viewer,
+          reauthorize: Effect.succeed(viewer),
           principal: { userId: viewer.user.id },
           correlationId: "dev-rebind"
         });
-      const call = (handler: string) =>
-        invocation.call({ handler, args: {} }, binding(), Effect.succeed(viewer));
+      const call = (handler: string) => invocation.call({ handler, args: {} }, binding());
       const reached = yield* Queue.unbounded<void>();
       let hold: Deferred.Deferred<void> | undefined;
       const list = resources.handlers["tables.list"];

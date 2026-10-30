@@ -19,7 +19,7 @@ import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { Files, TableOperations, Tables } from "@patchy/primitives";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
-import { Binding, LoadedVersions } from "@patchy/runtime";
+import { Binding, LoadedVersions, Runtime } from "@patchy/runtime";
 import * as Content from "./Content.js";
 import * as DeletionSweep from "./DeletionSweep.js";
 import * as Patches from "./Patches.js";
@@ -114,6 +114,7 @@ const bindingFor = Effect.fn("SdkConcurrency.bindingFor")(function* (
     ...Option.getOrThrow(yield* versions.find(patchId, versionId)),
     identity: null,
     principal: null,
+    reauthorize: Effect.fail(new Runtime.AccessDenied({})),
     correlationId: "real-postgres-concurrency"
   });
 });

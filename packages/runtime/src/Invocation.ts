@@ -208,7 +208,6 @@ export class Invocation extends Context.Service<
     readonly call: (
       args: unknown,
       binding: Binding.Binding["Service"],
-      reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>,
       observation?: QueryObservation
     ) => Effect.Effect<ServerCallReply, Runtime.RuntimeError>;
   }
@@ -269,7 +268,6 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
   const call = Effect.fn("Invocation.call")(function* (
     args: unknown,
     binding: Binding.Binding["Service"],
-    reauthorize: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>,
     observation?: QueryObservation,
     parent?: Parent
   ): Effect.fn.Return<ServerCallReply, Runtime.RuntimeError> {
@@ -295,6 +293,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
       return yield* new Runtime.AccessDenied({});
     // An agent's call starts only an agent tool. Inside it, `ctx.run` reaches siblings as usual.
     if (binding.agent !== undefined && parent === undefined && descriptor.agentTool !== true)
+      return yield* new Runtime.AccessDenied({});
+    // A guest's call starts only a handler marked for guests, live queries included.
+    if (viewer.guest === true && parent === undefined && descriptor.guest !== true)
       return yield* new Runtime.AccessDenied({});
     if (parent !== undefined) {
       yield* capabilities
@@ -545,7 +546,6 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                 },
                 kind: descriptor.kind,
                 readOnly: descriptor.readOnly === true,
-                reauthorize,
                 ...(observation === undefined ? {} : { onDependency: observation.onDependency }),
                 tree,
                 ...(counters === undefined ? {} : { counters }),
@@ -554,7 +554,7 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
                   : {
                       run: (args: unknown) =>
                         Effect.flatMap(cryptography.internalId("call"), (correlationId) =>
-                          call(args, { ...binding, correlationId }, reauthorize, undefined, {
+                          call(args, { ...binding, correlationId }, undefined, {
                             capability: capability!,
                             bundle,
                             bound,
@@ -1116,11 +1116,11 @@ export const callAgent = Effect.fn("Invocation.callAgent")(function* (input: Age
       ...input.version,
       identity: input.person,
       principal: { userId: input.person.user.id },
+      reauthorize: input.recheck,
       correlationId: yield* cryptography.internalId("call"),
       agent: input.agent,
       ...(input.onReplay === undefined ? {} : { onReplay: input.onReplay }),
       ...(input.retain === undefined ? {} : { retain: input.retain })
-    }),
-    input.recheck
+    })
   );
 });

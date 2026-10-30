@@ -90,6 +90,7 @@ const connect = Effect.gen(function* () {
     correlationId: "attio-live",
     principal: { userId: viewer.user.id },
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,

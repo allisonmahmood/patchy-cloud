@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { expect } from "vitest";
 import * as Companies from "@patchy/companies/Companies";
+import { Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import { decodeMail } from "./pidgeon.js";
 import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
@@ -19,7 +20,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon", "attio"]) {
+      for (const name of ["team", "brightline", "pidgeon", "attio", "guests"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -49,7 +50,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
-      expect(error.message).toContain("brightline, pidgeon, team");
+      expect(error.message).toContain("brightline, guests, pidgeon, team");
     })
   );
 
@@ -89,28 +90,44 @@ it.layer(Platform)("scenarios", (it) => {
 
 const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));
 
-it.layer(Layer.mergeAll(Platform, Companies.layer.pipe(Layer.provideMerge(database))))(
-  "seeding a scenario",
-  (it) => {
-    it.effect("turns brightline's agent access on as its publisher, once", () =>
-      Effect.gen(function* () {
-        const companies = yield* Companies.Companies;
-        const { scenario } = yield* loadScenario(repo, "brightline");
-        const companyId = `cmp_env_${scenario.company.handle}`;
-        const publisher = ids(
-          scenario,
-          scenario.people.find((p) => p.key === scenario.publisher)!
-        );
-        yield* seedScenario(scenario);
-        const seeded = yield* companies.agentAccess(companyId);
-        expect(seeded.on).toBe(true);
-        expect(seeded.latest?.by.id).toBe(publisher.userId);
+it.layer(
+  Layer.mergeAll(
+    Platform,
+    Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(database))
+  )
+)("seeding a scenario", (it) => {
+  it.effect("turns brightline's agent access on as its publisher, once", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      const { scenario } = yield* loadScenario(repo, "brightline");
+      const companyId = `cmp_env_${scenario.company.handle}`;
+      const publisher = ids(
+        scenario,
+        scenario.people.find((p) => p.key === scenario.publisher)!
+      );
+      yield* seedScenario(scenario);
+      const seeded = yield* companies.agentAccess(companyId);
+      expect(seeded.on).toBe(true);
+      expect(seeded.latest?.by.id).toBe(publisher.userId);
 
-        // Every start seeds again; an admin's switch at Company stays.
-        yield* companies.setAgentAccess({ companyId, on: false, by: publisher.userId });
-        yield* seedScenario(scenario);
-        expect((yield* companies.agentAccess(companyId)).on).toBe(false);
-      })
-    );
-  }
-);
+      // Every start seeds again; an admin's switch at Company stays.
+      yield* companies.setAgentAccess({ companyId, on: false, by: publisher.userId });
+      yield* seedScenario(scenario);
+      expect((yield* companies.agentAccess(companyId)).on).toBe(false);
+    })
+  );
+
+  it.effect("seeds a person at another company as theirs, not the publisher's", () =>
+    Effect.gen(function* () {
+      const users = yield* Users.Users;
+      const { scenario } = yield* loadScenario(repo, "guests");
+      yield* seedScenario(scenario);
+      const jo = ids(
+        scenario,
+        scenario.people.find((p) => p.key === "jo")!
+      );
+      expect((yield* users.findByClerkId(jo.clerkUserId))?.companyId).toBe("cmp_env_pine");
+      expect((yield* users.list("cmp_env_harbor")).map((user) => user.id)).not.toContain(jo.userId);
+    })
+  );
+});

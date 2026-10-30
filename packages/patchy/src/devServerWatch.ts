@@ -17,7 +17,8 @@ import {
   agentTypecheckWarning,
   descriptionFailure,
   discoverAgentFiles,
-  discoverServerModules
+  discoverServerModules,
+  inspectionFailure
 } from "./serverModules.js";
 
 export interface ServerBuild extends BuiltServer {
@@ -216,10 +217,7 @@ export const watch = Effect.fn("Dev.watchServer")(function* (
             (cause) =>
               new LocalError({
                 code: "invalid_manifest",
-                message:
-                  cause.problem === undefined
-                    ? "Could not inspect the server bundle. Its modules must load and export only valid handlers; the last successful binding stays served."
-                    : `${cause.problem} The last successful binding stays served.`,
+                message: `${inspectionFailure(cause)} The last successful binding stays served.`,
                 cause
               })
           ),

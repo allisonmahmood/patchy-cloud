@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type { RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import type { LoadedVersion } from "./LoadedVersions.js";
+import type { RuntimeError } from "./Runtime.js";
 
 /** Only admission constructs a binding; handlers acquire it from the environment. */
 export class Binding extends Context.Service<
@@ -9,6 +10,12 @@ export class Binding extends Context.Service<
   LoadedVersion & {
     readonly principal: typeof RuntimePrincipal.Type;
     readonly identity: typeof RuntimeMe.Type;
+    /**
+     * The door's own check of `identity`, asked again: the viewer now, or the refusal a call
+     * should end with. A guest's answers whether their grant still stands. A binding without a
+     * viewer refuses.
+     */
+    readonly reauthorize: Effect.Effect<NonNullable<typeof RuntimeMe.Type>, RuntimeError>;
     readonly correlationId: string;
     /** Invocation callbacks retain the viewer but act as the patch for owned resources. */
     readonly effectivePrincipal?: string;

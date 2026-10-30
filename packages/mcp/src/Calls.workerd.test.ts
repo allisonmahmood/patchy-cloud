@@ -179,6 +179,7 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
                     Binding.Binding.of({
                       ...version,
                       identity,
+                      reauthorize: Effect.succeed(identity),
                       principal: { userId: person.id },
                       correlationId: `seed-${name}`
                     })

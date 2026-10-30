@@ -1,0 +1,7 @@
+/* Layout only: colours, fonts and element styles come from the look. */
+main {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: calc(var(--look-space, 8px) * 6) calc(var(--look-space, 8px) * 4);
+}

@@ -178,7 +178,8 @@ navigation, not missing resources.
 
 Before publishing, run `pnpm patchy dev --json` and exercise the local shell at
 `url`. Tiers 1 and 2 also return `colleagueUrl`, a separate origin for a fixed
-non-admin viewer sharing the same local data. Tier 2 handlers and subscriptions
+non-admin viewer, and `guestUrl`, another for the patch's guest from another
+company, all sharing the same local data. Tier 2 handlers and subscriptions
 use the supervised production engine and callback gateway over local PGlite and
 fixtures. `server/` edits atomically rebind without reload; calls and nested calls
 in flight finish on the old binding, while subscriptions rerun on the new one.

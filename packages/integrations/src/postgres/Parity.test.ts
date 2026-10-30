@@ -32,6 +32,11 @@ const declaration = {
   handle: "warehouse",
   revision: 1
 };
+const viewer = {
+  user: { id: "usr_parity", email: "member@example.test", name: "Member" },
+  company: { id: "cmp_parity", handle: "parity", name: "Parity" },
+  admin: false
+};
 const binding = Binding.Binding.of({
   companyId: "cmp_parity",
   patchId: "parity01",
@@ -48,11 +53,8 @@ const binding = Binding.Binding.of({
   scope: "company",
   correlationId: "parity-test",
   principal: { userId: "usr_parity" },
-  identity: {
-    user: { id: "usr_parity", email: "member@example.test", name: "Member" },
-    company: { id: "cmp_parity", handle: "parity", name: "Parity" },
-    admin: false
-  }
+  identity: viewer,
+  reauthorize: Effect.succeed(viewer)
 });
 const connection = {
   companyId: binding.companyId,

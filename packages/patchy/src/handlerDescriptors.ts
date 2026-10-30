@@ -5,6 +5,7 @@ import {
   serverAgentModuleFix
 } from "@patchy/api/handlers";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { InvalidManifestError } from "./invalidManifestError.js";
 
 const decodeDescriptor = Schema.decodeUnknownSync(HandlerDescriptor, {
@@ -61,7 +62,8 @@ export function foldAgentArea(
 /**
  * Inspect the structural handler contract across module copies without calling user code. The
  * folded agent area becomes the module `agent`, and each of its handlers is marked an agent tool;
- * a re-exported server handler keeps its server name unmarked beside its tool name.
+ * a re-exported server handler keeps its server name unmarked beside its tool name. Agent tools
+ * are for agents only, so a re-exported guest handler's tool drops the guest mark.
  */
 export function extractHandlerDescriptors(
   modules: Readonly<Record<string, unknown>>,
@@ -101,7 +103,7 @@ export function extractHandlerDescriptors(
           `Server export "${module}.${name}" does not match its descriptor kind.`
         );
       descriptors[`${module}.${name}`] = agentTool
-        ? { ...descriptor, agentTool: true }
+        ? { ...Struct.omit(descriptor, ["guest"]), agentTool: true }
         : descriptor;
     }
   };

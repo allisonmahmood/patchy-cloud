@@ -1068,7 +1068,7 @@ export const printCard = (manifest: Manifest, layout: Layout) => {
   const width = Math.max(...manifest.people.map((person) => person.key.length));
   const people = manifest.people.map(
     (person) =>
-      `    ${person.key.padEnd(width)}  ${person.name} · ${person.role}${person.key === manifest.publisher ? " · the CLI publishes as them" : ""}`
+      `    ${person.key.padEnd(width)}  ${person.name} · ${person.role}${person.company === undefined ? "" : ` at ${person.company}`}${person.key === manifest.publisher ? " · the CLI publishes as them" : ""}`
   );
   const patches = manifest.patches.map((patch) => `    ${patch.address}`);
   return Console.log(

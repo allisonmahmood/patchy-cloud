@@ -19,7 +19,6 @@ import {
   type AttioRead,
   type AttioSnapshot
 } from "@patchy/api";
-import { Directory } from "@patchy/companies";
 import { registry } from "@patchy/limits/registry";
 import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
@@ -30,7 +29,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, type DevRead } from "../definition.js";
+import { operation, viewerRecheck, ViewerRefusal, type DevRead } from "../definition.js";
 import * as Calls from "./Calls.js";
 import {
   Changed,
@@ -75,8 +74,7 @@ export const Errors = Schema.Union([
   Source.Timeout,
   Source.Busy,
   Runtime.InvalidRequest,
-  Runtime.AccessDenied,
-  Runtime.SourceUnavailable,
+  ...ViewerRefusal.members,
   Runtime.TooLarge
 ]);
 const isError = Schema.is(Errors);
@@ -616,8 +614,8 @@ const atWorkspace = Effect.fnUntraced(function* <K extends AttioRead, E>(
 
 /**
  * One operation as a loaded version's door admitted it: the declared connection, its revision and
- * its viewer. A viewer deactivated or a connection that stopped working while the call waited
- * sends nothing.
+ * its viewer. A viewer who may no longer call it, or a connection that stopped working, while the
+ * call waited sends nothing.
  */
 const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioRead>(
   connection: string,
@@ -639,16 +637,7 @@ const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioR
     return yield* new Runtime.AccessDenied({});
   // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
   const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-  const directory = yield* Directory.Directory;
-  // A viewer deactivated while the call waited sends nothing.
-  const recheck = directory.get(companyId, identity.user.id).pipe(
-    Effect.catchTags({
-      SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-    }),
-    Effect.flatMap((member) =>
-      member?.active === true ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
-    )
-  );
+  const recheck = viewerRecheck(binding);
   return yield* atWorkspace(
     {
       companyId,
@@ -805,13 +794,11 @@ export const devReads = {
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
-  const directory = yield* Directory.Directory;
   const cryptography = yield* Cryptography.Cryptography;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Directory.Directory, directory),
       Effect.provideService(Cryptography.Cryptography, cryptography)
     );
   const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(
@@ -826,7 +813,6 @@ export const makeHandlers = Effect.gen(function* () {
         | Binding.Binding
         | Source.Source
         | ConnectionStore.ConnectionStore
-        | Directory.Directory
         | Cryptography.Cryptography
       >;
     },

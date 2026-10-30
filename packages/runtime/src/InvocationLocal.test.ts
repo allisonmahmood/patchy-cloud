@@ -48,6 +48,7 @@ const binding: Binding.Binding["Service"] = {
   wireVersion: WIRE_VERSION,
   scope: "company",
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   principal: { userId: "usr_dev" },
   correlationId: "setup",
   manifest: {
@@ -429,8 +430,7 @@ it.live(
           assert.deepStrictEqual(
             yield* invocations.call(
               { handler, args: {} },
-              { ...resourceFree, correlationId: newInternalId("call") },
-              Effect.succeed(viewer)
+              { ...resourceFree, correlationId: newInternalId("call") }
             ),
             { ok: true, value: "usr_dev" }
           );
@@ -538,8 +538,7 @@ it.live(
       const call = (handler: string) =>
         invocations.call(
           { handler, args: {} },
-          { ...marked, correlationId: newInternalId("call") },
-          Effect.succeed(viewer)
+          { ...marked, correlationId: newInternalId("call") }
         );
       const refusal = (handler: string) =>
         call(handler).pipe(
@@ -690,8 +689,7 @@ it.live(
       assert.deepStrictEqual(
         yield* invocations.call(
           { handler: "deals.who", args: {} },
-          { ...area, correlationId: newInternalId("call") },
-          Effect.succeed(viewer)
+          { ...area, correlationId: newInternalId("call") }
         ),
         { ok: true, value: { viewer: "usr_dev", agent: null } }
       );

@@ -41,7 +41,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as DevAgent from "./devAgent.js";
 import * as DevResources from "./devResources.js";
 import * as DevLog from "./devLog.js";
-import { colleague } from "./devMembers.js";
+import { colleague, guest } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
 import { AgentRequest, atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
 import { watch } from "./devWatch.js";
@@ -182,27 +182,28 @@ export const serve = Effect.fn("Dev.serve")(function* (
           })
         );
         // `patchy dev agent`, answering as this mount's person. The nonce keeps pages and other
-        // local programs out, as for health.
-        yield* router.add(
-          "POST",
-          "/~dev/agent",
-          Effect.gen(function* () {
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
-            const body = yield* request.json.pipe(
-              Effect.flatMap(decodeAgentRequest),
-              Effect.option
-            );
-            if (Option.isNone(body))
-              return HttpServerResponse.text("Bad request", { status: 400, headers });
-            const reply = yield* DevAgent.answer(
-              agentDev,
-              { person: identity, address: `${origin}${base}` },
-              body.value
-            ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
-            return HttpServerResponse.jsonUnsafe(reply, { headers });
-          })
-        );
+        // local programs out, as for health. A guest's has none: agents reach their own company's.
+        if (identity.guest !== true)
+          yield* router.add(
+            "POST",
+            "/~dev/agent",
+            Effect.gen(function* () {
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              if (request.headers["x-patchy-dev"] !== record.nonce) return absent;
+              const body = yield* request.json.pipe(
+                Effect.flatMap(decodeAgentRequest),
+                Effect.option
+              );
+              if (Option.isNone(body))
+                return HttpServerResponse.text("Bad request", { status: 400, headers });
+              const reply = yield* DevAgent.answer(
+                agentDev,
+                { person: identity, address: `${origin}${base}` },
+                body.value
+              ).pipe(Effect.provideContext(resources.context), Effect.provideContext(events));
+              return HttpServerResponse.jsonUnsafe(reply, { headers });
+            })
+          );
         yield* router.add(
           "GET",
           "/~dev/build",
@@ -326,6 +327,14 @@ export const serve = Effect.fn("Dev.serve")(function* (
     company: prepared.identity.company,
     admin: false
   }).pipe(Effect.provideContext(colleagueServer));
+  // The patch's guest: themselves, in the patch's company, never its admin.
+  const guestServer = yield* Layer.build(Layer.fresh(layer));
+  const guestUrl = yield* mount({
+    user: guest,
+    company: prepared.identity.company,
+    admin: false,
+    guest: true
+  }).pipe(Effect.provideContext(guestServer));
   const ready = {
     ...record,
     pid: process.pid,
@@ -335,13 +344,15 @@ export const serve = Effect.fn("Dev.serve")(function* (
       return value;
     }),
     url,
-    colleagueUrl
+    colleagueUrl,
+    guestUrl
   };
   yield* io("Could not record the healthy dev daemon.", () =>
     atomicJson(stateDir, "daemon.json", ready)
   );
   yield* Console.log(`Ready: ${ready.url}`);
   yield* Console.log(`Colleague: ${colleagueUrl}`);
+  yield* Console.log(`Guest: ${guestUrl}`);
   yield* Effect.addFinalizer(() =>
     io("Could not clear the stopped dev daemon.", async () => {
       const current = await readRecord(stateDir);
@@ -349,7 +360,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
         await atomicJson(stateDir, "daemon.json", {
           ...ready,
           url: undefined,
-          colleagueUrl: undefined
+          colleagueUrl: undefined,
+          guestUrl: undefined
         });
     }).pipe(Effect.orDie)
   );

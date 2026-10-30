@@ -346,6 +346,11 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
       () =>
         Effect.gen(function* () {
           const { handlers: built, requests } = yield* handlers;
+          const viewer = {
+            user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
+            company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
+            admin: false
+          };
           const binding = Binding.Binding.of({
             companyId: who.companyId,
             patchId: "pidgeontier2",
@@ -354,11 +359,8 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
             scope: "company",
             correlationId: "pidgeon-tier2",
             principal: { userId: who.userId },
-            identity: {
-              user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
-              company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-              admin: false
-            },
+            identity: viewer,
+            reauthorize: Effect.succeed(viewer),
             manifest: {
               manifestVersion: 1,
               release: CURRENT_RELEASE,
