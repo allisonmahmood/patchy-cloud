@@ -3703,7 +3703,7 @@ it.layer(Layer.fresh(publishLayer))("publish look check", (it) => {
 });
 
 it.layer(Layer.fresh(publishLayer))("guest publish warning", (it) => {
-  it.effect("publishes successfully with the shared source reason when grants are retained", () =>
+  it.effect("keeps directory use eligible and warns for a shared source with retained grants", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
@@ -3717,7 +3717,7 @@ it.layer(Layer.fresh(publishLayer))("guest publish warning", (it) => {
           'publish-guest@patchy.local', 'Guest', 'member')`;
       yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
         VALUES (${first.patchId}, ${uploader.company.id}, 'usr_publish_guest', ${uploader.user.id})`;
-      const payload = yield* consumingRequest({
+      const directoryPayload = yield* consumingRequest({
         html: html("Uses members"),
         patchId: first.patchId,
         manifest: {
@@ -3726,14 +3726,53 @@ it.layer(Layer.fresh(publishLayer))("guest publish warning", (it) => {
         }
       });
       const [published, response] = yield* owner.publish({
-        payload,
+        payload: directoryPayload,
         responseMode: "decoded-and-response"
       });
       assert.strictEqual(published.ok, true);
-      assert.deepStrictEqual(published.warnings, [
-        "Guests cannot open this patch: Member directory (members) is unavailable to guests. Remove the member directory declaration and member columns."
+      assert.deepStrictEqual(published.warnings, []);
+      assert.include(JSON.stringify(yield* response.json), '"warnings":[]');
+      const source = yield* owner.publish({
+        payload: publishRequest({
+          html: html("Shared source"),
+          manifest: {
+            ...Fixtures.manifest,
+            name: "guest-warning-source",
+            tables: {
+              notes: {
+                description: "Shared notes",
+                columns: { text: { kind: "text" } },
+                indexes: {},
+                shared: true
+              }
+            }
+          }
+        })
+      });
+      const sharedPayload = yield* consumingRequest({
+        html: html("Uses shared notes"),
+        patchId: first.patchId,
+        manifest: {
+          ...Fixtures.manifest,
+          uses: {
+            notes: {
+              kind: "sharedTable",
+              patchId: source.patchId,
+              table: "notes",
+              id: sharedTableId(source.patchId, "notes"),
+              revision: source.schemaRevision
+            }
+          }
+        }
+      });
+      const [blocked, blockedResponse] = yield* owner.publish({
+        payload: sharedPayload,
+        responseMode: "decoded-and-response"
+      });
+      assert.deepStrictEqual(blocked.warnings, [
+        "Guests cannot open this patch: Shared table (notes) is unavailable to guests. Remove this shared source declaration."
       ]);
-      assert.include(JSON.stringify(yield* response.json), published.warnings[0]!);
+      assert.include(JSON.stringify(yield* blockedResponse.json), blocked.warnings[0]!);
       const repaired = yield* owner.publish({
         payload: publishRequest({ html: html("Own data again"), patchId: first.patchId })
       });
