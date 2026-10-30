@@ -139,5 +139,20 @@ export const migrations: Migrations = {
     )`,
     `CREATE UNIQUE INDEX patch_versions_repo_object_key_idx
     ON patch_versions(repo_object_key) WHERE repo_object_key IS NOT NULL`
+  ),
+  // One person's access to one patch of another company (GuestGrants). Revoking keeps the row
+  // with its revoked_at, so history still names the person; sharing again clears it. Reclaiming
+  // the patch removes its grants.
+  "0031_patch_guest_grants": ddl(
+    `CREATE TABLE patch_guest_grants (
+    patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL REFERENCES companies(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    granted_by TEXT NOT NULL REFERENCES users(id),
+    granted_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    PRIMARY KEY (patch_id, user_id)
+    )`,
+    `CREATE INDEX patch_guest_grants_user_id_idx ON patch_guest_grants(user_id)`
   )
 };

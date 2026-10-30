@@ -73,11 +73,19 @@ import {
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
-import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
+import {
+  Content,
+  LoadedVersions,
+  DeletionSweep,
+  GuestGrants,
+  Patches,
+  PatchesApi
+} from "@patchy/patches";
 import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  GrantedGuests,
   InvocationLog,
   Runtime,
   RuntimeProduction,
@@ -158,6 +166,14 @@ const resourceChanges = Layer.effect(
   Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
 );
 
+/** Runtime's doors admit a patch's guests by Patches' grants, which Runtime cannot depend on. */
+const grantedGuests = Layer.effect(
+  GrantedGuests.GrantedGuests,
+  Effect.map(GuestGrants.GuestGrants, (grants) =>
+    GrantedGuests.GrantedGuests.of({ host: grants.host })
+  )
+);
+
 /** The Company page's Patches column comes from Patches, which Companies cannot depend on. */
 const ownedPatches = Layer.effect(
   CompanyPage.OwnedPatches,
@@ -233,7 +249,7 @@ const services = Layer.mergeAll(
     })
   ).pipe(
     // Pidgeon's calls check their viewer again in the directory once they hold a slot.
-    Layer.provide([LoadedVersions.layer, PostgresExecution.layer, Directory.layer])
+    Layer.provide([LoadedVersions.layer, PostgresExecution.layer, Directory.layer, grantedGuests])
   )
 ).pipe(
   Layer.provideMerge(
@@ -246,6 +262,7 @@ const services = Layer.mergeAll(
       AgentConnections.layer,
       ChangeKeys.layer,
       Patches.layer,
+      GuestGrants.layer,
       Companies.layer,
       Users.layer,
       Looks.layer,

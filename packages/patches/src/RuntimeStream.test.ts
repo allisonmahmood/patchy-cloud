@@ -18,6 +18,7 @@ import * as Users from "../../companies/src/Users.js";
 import { newPatchId } from "../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import {
+  GrantedGuests,
   RuntimeStream,
   Runtime,
   StreamAdmission,
@@ -54,7 +55,11 @@ const layer = RuntimeStream.layer.pipe(
   Layer.provide(SubscriptionReads.layer),
   Layer.provide(TestMemberDirectory.layer),
   Layer.provideMerge(
-    Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(
+    Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer).pipe(
+      Layer.provideMerge(LoadedVersions.layer),
+      Layer.provide(
+        Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) })
+      ),
       Layer.provideMerge(dependencies)
     )
   ),
@@ -138,14 +143,15 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
         { me },
         {
           origin: PUBLIC_BASE_URL,
-          identity: Effect.succeed({
-            viewer: { user: identity.user, company: identity.company, admin: false },
-            reauthorize: Effect.succeed({
-              user: identity.user,
-              company: identity.company,
-              admin: false
+          identity: () =>
+            Effect.succeed({
+              viewer: { user: identity.user, company: identity.company, admin: false },
+              reauthorize: Effect.succeed({
+                user: identity.user,
+                company: identity.company,
+                admin: false
+              })
             })
-          })
         }
       );
       const refused = yield* runtime

@@ -39,7 +39,7 @@ import { Companies, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
-import { Content, Patches } from "@patchy/patches";
+import { Content, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
@@ -116,6 +116,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Patches.layer,
+      GuestGrants.layer,
       memoryStore,
       Session.layer,
       Companies.layer,

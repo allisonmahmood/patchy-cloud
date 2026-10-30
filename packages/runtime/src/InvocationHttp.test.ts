@@ -79,7 +79,7 @@ const layer = Layer.unwrap(
       {},
       {
         origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     ).pipe(Effect.provideService(Invocation.Invocation, invocation));
     return RuntimeApi.layer.pipe(Layer.provide(Layer.succeed(Runtime.Runtime, runtime)));
@@ -268,7 +268,7 @@ const callbackRuntime = Layer.unwrap(
       {},
       {
         origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     ).pipe(Effect.provideService(Invocation.Invocation, invocation));
     return RuntimeApi.layer.pipe(Layer.provide(Layer.succeed(Runtime.Runtime, runtime)));

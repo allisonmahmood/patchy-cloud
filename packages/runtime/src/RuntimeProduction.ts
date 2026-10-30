@@ -8,6 +8,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
 import type { Limits, OperatingLimits } from "@patchy/limits";
 import * as CompanyAdmission from "./CompanyAdmission.js";
+import * as GrantedGuests from "./GrantedGuests.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
@@ -17,6 +18,7 @@ import { Cryptography } from "@patchy/core";
 type Dependencies =
   | CompanyAdmission.CompanyAdmission
   | Cryptography.Cryptography
+  | GrantedGuests.GrantedGuests
   | LoadedVersions.LoadedVersions
   | Limits.Limits
   | OperatingLimits.OperatingLimits
@@ -39,7 +41,10 @@ export const make = (
       yield* Effect.context<
         Exclude<Effect.Services<typeof RequireSession.resolveViewer>, RequireSession.SignedIn>
       >();
-    const identity = Effect.gen(function* () {
+    const guestContext = yield* Effect.context<
+      GrantedGuests.GrantedGuests | LoadedVersions.LoadedVersions
+    >();
+    const identity = Effect.fnUntraced(function* (loaded: LoadedVersions.LoadedVersion) {
       const admission = yield* RequireSession.admission.pipe(
         Effect.provideService(Session.Session, session),
         Effect.mapError((cause) => new Runtime.SessionExpired({ cause }))
@@ -52,9 +57,14 @@ export const make = (
         Effect.provideService(RequireSession.SignedIn, claims),
         Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
       );
-      const viewer = yield* resolveViewer;
-      if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
+      const person = yield* resolveViewer;
+      if (person === null || HttpServerResponse.isHttpServerResponse(person))
         return yield* new Runtime.AccessDenied({});
+      const viewer = yield* GrantedGuests.viewerOf(loaded, person).pipe(
+        Effect.provideContext(guestContext),
+        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+      );
+      if (Option.isNone(viewer)) return yield* new Runtime.AccessDenied({});
       // Admission covers the JWT's remaining lifetime. After expiry, concurrent
       // callbacks share one backend result for this invocation, including failures.
       const activeAfterExpiry = yield* session.isActive(claims).pipe(
@@ -62,7 +72,7 @@ export const make = (
         Effect.cached
       );
       return {
-        viewer: { user: viewer.user, company: viewer.company, admin: viewer.role === "admin" },
+        viewer: viewer.value,
         reauthorize: Effect.gen(function* () {
           if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
             return yield* new Runtime.SessionExpired({});
@@ -70,15 +80,16 @@ export const make = (
           if (
             current === null ||
             HttpServerResponse.isHttpServerResponse(current) ||
-            current.user.id !== viewer.user.id ||
-            current.company.id !== viewer.company.id
+            current.user.id !== person.user.id ||
+            current.company.id !== person.company.id
           )
             return yield* new Runtime.AccessDenied({});
-          return {
-            user: current.user,
-            company: current.company,
-            admin: current.role === "admin"
-          };
+          const rechecked = yield* GrantedGuests.recheck(loaded, viewer.value, current).pipe(
+            Effect.provideContext(guestContext),
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+          );
+          if (Option.isNone(rechecked)) return yield* new Runtime.AccessDenied({});
+          return rechecked.value;
         })
       };
     });

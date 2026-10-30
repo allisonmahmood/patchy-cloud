@@ -258,7 +258,7 @@ const runtime = Layer.effect(
     {},
     {
       origin: "https://patchy.example",
-      identity: Effect.fail(new Runtime.AccessDenied({}))
+      identity: () => Effect.fail(new Runtime.AccessDenied({}))
     }
   )
 ).pipe(

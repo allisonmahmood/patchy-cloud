@@ -294,8 +294,10 @@ export const serve = Effect.fn("Dev.serve")(function* (
           StreamLimits.layerLocal,
           Layer.succeed(StreamAdmission.StreamAdmission, {
             admit: Effect.succeed({
-              ...streamIdentity,
-              recheck: Effect.succeed(streamIdentity)
+              viewerId: streamIdentity.viewerId,
+              expiresAt: streamIdentity.expiresAt,
+              viewer: () =>
+                Effect.succeed({ ...streamIdentity, recheck: Effect.succeed(streamIdentity) })
             })
           })
         ])

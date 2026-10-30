@@ -73,7 +73,7 @@ it.effect(
         { me, ...handlers },
         {
           origin: "http://localhost",
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       );
       for (const op of operations) {
@@ -122,7 +122,7 @@ it.effect(
         { me },
         {
           origin: "http://localhost",
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) }),
           called: (call) => Effect.sync(() => called.push(call))
         }
       );
@@ -193,7 +193,7 @@ it.effect(
         { me, "tables.insert": directWrite },
         {
           origin: "http://localhost",
-          identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+          identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
         }
       ).pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
@@ -251,7 +251,7 @@ it.effect("a public version reaches no data, even one that declared the member d
       { me },
       {
         origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     ).pipe(
       Effect.provideService(LoadedVersions.LoadedVersions, {
@@ -308,7 +308,7 @@ it.effect("reports unavailable host wiring for an admitted server call", () =>
       {},
       {
         origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }
     );
     const error = yield* runtime

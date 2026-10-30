@@ -81,6 +81,13 @@ export class Users extends Context.Service<
     readonly findByEmail: (email: string) => Effect.Effect<User | null, SqlError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<User>, SqlError>;
     /**
+     * The names of these people, whichever company is theirs: a log reader names the actors in
+     * its company's records with it, guests from other companies included. Unknown ids are absent.
+     */
+    readonly names: (
+      ids: ReadonlyArray<string>
+    ) => Effect.Effect<ReadonlyMap<string, string>, SqlError>;
+    /**
      * The signed-in user and their company, with the user's email and name brought up to
      * `claims`. Unchanged claims cost one read and write nothing. `company` is null only when
      * its row is missing.
@@ -142,6 +149,11 @@ export const make = Effect.gen(function* () {
     Result: User,
     execute: (companyId) =>
       sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} ORDER BY created_at, id`
+  });
+  const namesById = SqlSchema.findAll({
+    Request: Schema.Array(Schema.String),
+    Result: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    execute: (ids) => sql`SELECT id, name FROM users WHERE ${sql.in("id", ids)}`
   });
   const userByRef = SqlSchema.findOneOption({
     Request: ref,
@@ -207,6 +219,11 @@ export const make = Effect.gen(function* () {
   const list = Effect.fn("Users.list")((companyId: string) =>
     companyUsers(companyId).pipe(Effect.catchTags(dieOnSchemaError))
   );
+  const names = Effect.fn("Users.names")(function* (ids: ReadonlyArray<string>) {
+    if (ids.length === 0) return new Map<string, string>();
+    const rows = yield* namesById([...new Set(ids)]).pipe(Effect.catchTags(dieOnSchemaError));
+    return new Map(rows.map((row) => [row.id, row.name]));
+  });
   // The stored name is settled before the change check, so a nameless person's repeat
   // requests compare equal and write nothing. Changed claims keep the write path a resolve
   // always took, in its own statements: the UPDATE waits out a concurrent change to the row,
@@ -324,6 +341,7 @@ export const make = Effect.gen(function* () {
     findByClerkId,
     findByEmail,
     list,
+    names,
     refreshClaims,
     setRole,
     checkDeactivation,
