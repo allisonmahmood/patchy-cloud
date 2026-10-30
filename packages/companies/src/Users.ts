@@ -73,6 +73,11 @@ export const displayName = ({ name, email }: Pick<Claims, "name" | "email">) => 
   return at > 0 ? address.slice(0, at) : address;
 };
 
+class NameRow extends Schema.Class<NameRow>("NameRow")({
+  id: Schema.String,
+  name: Schema.String
+}) {}
+
 /** Admin actions are company-scoped; the caller authorizes the acting admin. */
 export class Users extends Context.Service<
   Users,
@@ -152,7 +157,7 @@ export const make = Effect.gen(function* () {
   });
   const namesById = SqlSchema.findAll({
     Request: Schema.Array(Schema.String),
-    Result: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    Result: NameRow,
     execute: (ids) => sql`SELECT id, name FROM users WHERE ${sql.in("id", ids)}`
   });
   const userByRef = SqlSchema.findOneOption({

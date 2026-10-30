@@ -66,6 +66,8 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   tier: Schema.Int
 }) {}
 
+class RevokedRow extends Schema.Class<RevokedRow>("RevokedRow")({ userId: Schema.String }) {}
+
 /** A patch shared with a person, and why they can't open it now, if they can't. */
 export interface Shared {
   readonly patchId: string;
@@ -76,7 +78,11 @@ export interface Shared {
   readonly unavailable: Option.Option<Reason>;
 }
 
-const Host = Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String });
+class Host extends Schema.Class<Host>("Host")({
+  id: Schema.String,
+  handle: Schema.String,
+  name: Schema.String
+}) {}
 
 /** Grants are written by their callers' checks: Share decides who may receive one and when. */
 export class GuestGrants extends Context.Service<
@@ -105,7 +111,7 @@ export class GuestGrants extends Context.Service<
       readonly patchId: string;
       readonly companyId: string;
       readonly userId: string;
-    }) => Effect.Effect<Option.Option<typeof Host.Type>, SqlError>;
+    }) => Effect.Effect<Option.Option<Host>, SqlError>;
   }
 >()("@patchy/patches/GuestGrants") {}
 
@@ -115,7 +121,7 @@ export const make = Effect.gen(function* () {
 
   const revoked = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String, at: Schema.Number }),
-    Result: Schema.Struct({ userId: Schema.String }),
+    Result: RevokedRow,
     execute: ({ patchId, userId, at }) => sql`
       UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
       WHERE patch_id = ${patchId} AND user_id = ${userId} AND revoked_at IS NULL
