@@ -12,11 +12,12 @@ import {
   useHotkeyRegistrations,
   useHotkeys as useTanStackHotkeys,
   type HotkeyChord,
+  type HotkeyRegistration,
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
 import { createElement, type ComponentChildren, type JSX } from "preact";
 import { useEffect, useId } from "preact/hooks";
-import { duplicateWarnings, permitted, steps } from "./hotkeyRules.js";
+import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
 
 type Letter =
   | "A"
@@ -152,24 +153,34 @@ const definition = (binding: Checked): UseHotkeyDefinition => ({
   }
 });
 
+// A TanStack registration, or its view, as the duplicate check and `useHotkeyList` read it.
+const mounted = ({ hotkey, options }: Pick<HotkeyRegistration, "hotkey" | "options">): Mounted => ({
+  scope: options.scope ?? "global",
+  hotkey: typeof hotkey === "string" ? hotkey : hotkey.join(" "),
+  label: options.meta?.name,
+  enabled: options.enabled !== false
+});
+
 const warned = new Set<string>();
-const warnDuplicates = () => {
-  const mounted = [...getHotkeyManager().registrations.state.values()].map((registration) => ({
-    scope: registration.options.scope ?? "global",
-    hotkey:
-      typeof registration.hotkey === "string" ? registration.hotkey : registration.hotkey.join(" "),
-    label: registration.options.meta?.name,
-    enabled: registration.options.enabled !== false
-  }));
-  // oxlint-disable-next-line no-console -- the warning is for the builder, in the page's console.
-  for (const warning of duplicateWarnings(mounted, warned)) console.warn(warning);
+let checking = false;
+// Preact runs a commit's effects one component after another in a single task, so while two
+// siblings swap keys, both hold the same one until the second updates. One check, in a
+// microtask after them all, sees where every hook landed.
+const checkDuplicates = () => {
+  if (checking) return;
+  checking = true;
+  queueMicrotask(() => {
+    checking = false;
+    const registrations = [...getHotkeyManager().registrations.state.values()].map(mounted);
+    // oxlint-disable-next-line no-console -- the warning is for the builder, in the page's console.
+    for (const warning of duplicateWarnings(registrations, warned)) console.warn(warning);
+  });
 };
 
 function useBindings(bindings: ReadonlyArray<Checked>): void {
   const kept = permitted(bindings);
   useTanStackHotkeys(kept.map(definition));
-  // TanStack registers in an effect declared before this one, so the check sees these hotkeys.
-  useEffect(warnDuplicates, [
+  useEffect(checkDuplicates, [
     kept.map((binding) => `${binding.hotkey}\n${binding.label}\n${binding.enabled}`).join("\n\n")
   ]);
 }
@@ -223,17 +234,9 @@ export interface ListedHotkey {
  * It includes hotkeys a `HotkeyScope` is holding back, such as the page's under the sheet's own.
  */
 export function useHotkeyList(): ReadonlyArray<ListedHotkey> {
-  return useHotkeyRegistrations().flatMap((registration) =>
-    registration.status !== "disabled" && registration.options.meta?.name !== undefined
-      ? [
-          {
-            hotkey:
-              typeof registration.hotkey === "string"
-                ? registration.hotkey
-                : registration.hotkey.join(" "),
-            label: registration.options.meta.name
-          }
-        ]
-      : []
-  );
+  return useHotkeyRegistrations()
+    .map(mounted)
+    .flatMap(({ hotkey, label, enabled }) =>
+      enabled && label !== undefined ? [{ hotkey, label }] : []
+    );
 }
