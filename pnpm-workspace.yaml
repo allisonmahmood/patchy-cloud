@@ -8,11 +8,11 @@ catalog:
   # (see .github/dependabot.yml). Only the Effect checker has its own release
   # line: it ships Effect-patched builds of exact TypeScript versions, so it
   # moves with `typescript` instead.
-  effect: 4.0.5
-  "@effect/platform-node": 4.0.5
-  "@effect/sql-pg": 4.0.5
-  "@effect/sql-pglite": 4.0.5
-  "@effect/vitest": 4.0.5
+  effect: 4.0.6
+  "@effect/platform-node": 4.0.6
+  "@effect/sql-pg": 4.0.6
+  "@effect/sql-pglite": 4.0.6
+  "@effect/vitest": 4.0.6
   "@effect/tsgo": 0.62.0
 # Wait one day before resolving new releases so compromised versions have time to be removed.
 minimumReleaseAge: 1440
