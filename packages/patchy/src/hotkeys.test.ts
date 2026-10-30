@@ -1,16 +1,18 @@
 import { expect, it } from "vitest";
 import { typecheck } from "../../../test/typescript.js";
 
-it("accepts chords, sequences and data-built chords against the published types", () => {
-  const source = `import { useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
+it("accepts chords, sequences, data-built chords and a sheet against the published types", () => {
+  const source = `import { HotkeySheet, useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
 const run = () => {};
 useHotkey("Mod+K", run);
 useHotkey("?", run);
-useHotkey("G H", run);
+useHotkey("G H", run, { label: "Go home", group: "Navigation" });
 useHotkey("Alt+ArrowUp", run);
 const digits: Chord[] = ["1", "2"];
 useHotkeys(digits.map((hotkey) => ({ hotkey, run })));
 for (const hotkey of digits) useHotkey(hotkey, run);
+HotkeySheet({});
+HotkeySheet({ title: "Tracker shortcuts", hotkey: "Mod+/" });
 `;
   expect(typecheck({ "consumer.ts": source })).toEqual([]);
 });
@@ -42,4 +44,16 @@ it("refuses each string that isn't a hotkey, saying what to write instead", () =
         `consumer.ts(${index + 2},11): error TS2345: Argument of type '${JSON.stringify(hotkey)}' is not assignable to parameter of type '"${message}"'.`
     )
   );
+});
+
+it("refuses a sheet's opening hotkey that isn't one, as useHotkey does", () => {
+  const source = `import { HotkeySheet } from "patchy/hotkeys";
+HotkeySheet({ hotkey: "Ctrl+/" });
+`;
+  const lines = typecheck({ "consumer.ts": source }).map((line) =>
+    line.slice(line.indexOf("consumer.ts"))
+  );
+  expect(lines).toEqual([
+    `consumer.ts(2,15): error TS2322: Type '"Ctrl+/"' is not assignable to type '"'Ctrl+/' isn't a chord: write 'Mod+/', which is ⌘ on a Mac and Ctrl elsewhere"'.`
+  ]);
 });
