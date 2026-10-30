@@ -282,7 +282,7 @@ of each tier; durable data goes through Patchy.
 
 ### Sharing and finding
 
-A published patch is shared with everyone in the company by default. Tier 1 may be made public so anyone can open the current version without a login; tier 2 is company-only. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can change a live patch's scope on its portal card. Public tier 1 versions reach no data. Narrower sharing remains future work, as described under [Identity and access](#access-to-a-patch).
+A published patch is shared with everyone in the company by default. Tier 1 may be made public so anyone can open the current version without a login; tier 2 is company-only. The owner chooses the scope with `patchy publish [file] --share company|public` or `patchy share`, using the repo id, file cache or explicit `--patch <id>`. A publish without `--share` preserves the scope. Owners and admins can change a live patch's scope on its portal card. Public tier 1 versions reach no data. Owners and admins can also share an eligible company-scoped patch with an existing outside account from that patch's Settings page. Owner-only and group sharing remain future work, as described under [Identity and access](#access-to-a-patch).
 
 A person finds a patch in the portal or through its shared address. A patch's identity is its **id**, while its **name** is unique within the company. Two sales dashboards need different names, but renaming one never changes which patch it is. See [Addresses](#addresses).
 
@@ -618,8 +618,13 @@ An **admin** runs the company's invitations, roles, deactivation, reactivation a
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
-can open. Tabs narrow it to admins, invites or deactivated users, and a search
-matches names and emails. Invites that need an admin, because their email did
+can open. Tabs narrow it to admins, invites or deactivated users. The secondary **Guests** tab
+lists outside accounts with stored grants on this company's patches, once per account, with
+their home company and number of patches. Each list searches names and emails. A host admin
+can remove one guest's grants across this company's patches from Guests; this does not change
+their home membership or grants from another company. Stored grants remain visible when a
+patch is public or unavailable, or the outside account is deactivated. Sharing and removing
+access to one patch remain on that patch's Settings page. Invites that need an admin, because their email did
 not go out or they expired, come first with Resend beside them. Admins invite
 from Invite people in the page's toolbar, pasting up to `invites.batch` addresses at once, and
 manage roles, deactivation and reactivation from each row's menu; members read
@@ -747,9 +752,9 @@ Sharing decides who may open a live patch. The owner may publish, change sharing
 
 **Admins see every company patch.** The portal shows their management controls and a Reassign confirmation page for live, retired and deleted patches. Reassignment is repeatable and preserves every version's publisher attribution. The company owns what is built in it; future owner-only sharing is not a secret from the company.
 
-Across the company line there is nothing but **public**: a patch is inside the company or it is anyone-with-the-link. Guests — a named outsider with a login — are not a thing Patchy does yet.
+Across the company line, a host can also grant a named outside account access to an eligible company-scoped patch. That person signs in with their own account. The grant belongs to the patch and host company, and only the patch owner or host admin shares that patch from its Settings page. The host admin can remove all of one outside person's grants from People → Guests.
 
-Today a published patch is either company-scoped or explicitly public. A public patch's current version opens without a session; older versions and company patches have three outcomes: an active colleague gets the page; a signed-out reader gets a 401 login door with a **Sign in** link rather than a redirect; a signed-in reader from another company gets the same 404 as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees a 403 deactivated page instead of a sign-in loop. The door admits browser sessions, never machine tokens. When owner-only sharing is built, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
+Today a published patch is either company-scoped or explicitly public. A public patch's current version opens without a session. An eligible company-scoped patch also opens for a signed-in outside person with a stored grant; an outside person without one gets the same 404 as a missing link. A signed-out reader gets a 401 login door with a **Sign in** link rather than a redirect; a deactivated user sees a 403 deactivated page instead of a sign-in loop. A signed-in person without a company goes through create-or-join with the patch as the return destination. The door admits browser sessions, never machine tokens. When owner-only sharing is built, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
 ### Machines and tokens
 

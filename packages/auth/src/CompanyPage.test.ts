@@ -155,6 +155,64 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("company page and actions", (it) => {
+  it.effect("shows a searchable Guests list and lets only the host admin remove all grants", () =>
+    Effect.gen(function* () {
+      const host = yield* createCompany("company-guest-list");
+      const home = yield* createCompany("guest-home-view");
+      const guest = {
+        userId: home.user.id,
+        name: "<Outside Person>",
+        email: home.user.email,
+        companyName: home.company.name,
+        patchCount: 2
+      };
+      let stored = [guest];
+      const calls: Array<readonly [string, string]> = [];
+      const access = {
+        list: (companyId: string) =>
+          Effect.sync(() => (companyId === host.company.id ? stored : [])),
+        remove: (companyId: string, userId: string) =>
+          Effect.sync(() => {
+            calls.push([companyId, userId]);
+            stored = [];
+            return 2;
+          })
+      };
+      const request = (path: string, user: Users.User, options: RequestInit = {}) =>
+        send(path, {
+          ...options,
+          headers: {
+            cookie: cookie(user),
+            ...(options.headers as Record<string, string> | undefined)
+          }
+        }).pipe(Effect.provideService(CompanyPage.GuestGrants, access));
+      const listResponse = yield* request("/company?show=guests&q=outside", host.user);
+      const list = yield* Effect.promise(() => listResponse.text());
+      assert.include(list, "&lt;Outside Person&gt;");
+      assert.include(list, home.user.email);
+      assert.include(list, "<td>2</td>");
+      assert.include(list, `/company/guests/${home.user.id}/remove`);
+      const hiddenResponse = yield* request("/company?show=guests&q=missing", host.user);
+      const hidden = yield* Effect.promise(() => hiddenResponse.text());
+      assert.include(hidden, "0 matches");
+      const foreignResponse = yield* request("/company?show=guests", home.user);
+      const foreign = yield* Effect.promise(() => foreignResponse.text());
+      assert.notInclude(foreign, `/company/guests/${home.user.id}/remove`);
+      const member = yield* addUser(host, "guest-list-member");
+      const denied = yield* request(`/company/guests/${home.user.id}/remove`, member, post(member));
+      assert.strictEqual(denied.status, 403);
+      assert.deepStrictEqual(calls, []);
+      const removed = yield* request(
+        `/company/guests/${home.user.id}/remove`,
+        host.user,
+        post(host.user)
+      );
+      assert.strictEqual(removed.status, 303);
+      assert.strictEqual(removed.headers.get("location"), "/company?show=guests");
+      assert.deepStrictEqual(calls, [[host.company.id, home.user.id]]);
+      assert.deepStrictEqual(stored, []);
+    })
+  );
   it.effect(
     "lists only this company's users and pending invites, with escaped data and admin-only controls",
     () =>

@@ -227,6 +227,19 @@ export const layer: Layer.Layer<
         errors(RequireSession.withViewer(company({ kind: "view" })))
       );
       yield* router.add(
+        "POST",
+        "/company/guests/:id/remove",
+        errors(
+          RequireSession.sameOrigin(
+            RequireSession.withViewer(
+              Effect.flatMap(HttpRouter.params, (params) =>
+                company({ kind: "remove-guest", id: params.id ?? "" })
+              )
+            )
+          )
+        )
+      );
+      yield* router.add(
         "GET",
         "/company/agent-access",
         errors(RequireSession.withViewer(company({ kind: "view-agent-access" })))

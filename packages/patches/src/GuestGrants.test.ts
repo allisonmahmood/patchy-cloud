@@ -22,6 +22,47 @@ it.layer(
     )
   )
 )("patch guest grants", (it) => {
+  it.effect("lists retained host grants once and removes only that host's grants", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const grants = yield* GuestGrants.GuestGrants;
+      const host = Fixtures.identities.uploader.company.id;
+      const other = "cmp_guest_other_host";
+      const guestHome = "cmp_guest_home_for_list";
+      const person = "usr_guest_for_list";
+      yield* sql`INSERT INTO companies (id, handle, name) VALUES
+        (${guestHome}, 'guest-home-list', 'Guest Home'),
+        (${other}, 'guest-other-host', 'Other Host')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${person}, 'clerk_guest_for_list', ${guestHome}, 'person@guest-home.example',
+          'Outside Person', 'member')`;
+      for (const [patchId, companyId] of [
+        ["guest-host-one", host],
+        ["guest-host-two", host],
+        ["guest-other-one", other]
+      ]) {
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, name, title, scope)
+          VALUES (${patchId}, ${companyId}, ${Fixtures.identities.uploader.user.id}, ${patchId}, ${patchId}, 'company')`;
+        yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
+          VALUES (${patchId}, ${companyId}, ${person}, ${Fixtures.identities.uploader.user.id})`;
+      }
+      yield* sql`UPDATE patches SET scope = 'public' WHERE id = 'guest-host-one'`;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${person}`;
+      assert.deepStrictEqual(yield* grants.forCompany(host), [
+        {
+          userId: person,
+          name: "Outside Person",
+          email: "person@guest-home.example",
+          companyName: "Guest Home",
+          patchCount: 2
+        }
+      ]);
+      assert.strictEqual(yield* grants.revokeForCompany(host, person), 2);
+      assert.deepStrictEqual(yield* grants.forCompany(host), []);
+      assert.strictEqual((yield* grants.forCompany(other))[0]?.patchCount, 1);
+      assert.strictEqual(yield* grants.revokeForCompany(host, person), 0);
+    })
+  );
   it.effect("admits only a granted outsider to the current eligible private version", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

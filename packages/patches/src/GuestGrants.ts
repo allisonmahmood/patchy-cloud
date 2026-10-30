@@ -26,6 +26,15 @@ export interface SharedPatch {
   readonly companyName: string;
 }
 
+/** One outside account with stored grants on this company's patches. */
+export interface CompanyGuest {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly companyName: string;
+  readonly patchCount: number;
+}
+
 export class AccountNotFound extends Schema.TaggedError<AccountNotFound>()("AccountNotFound", {}) {
   override get message() {
     return "That person is not on Patchy yet.";
@@ -101,6 +110,11 @@ export class GuestGrants extends Context.Service<
     ) => Effect.Effect<GuestRecord, SqlError | AccountNotFound | AlreadyMember | GuestUnavailable>;
     readonly list: (patchId: string) => Effect.Effect<readonly GuestRecord[], SqlError>;
     readonly sharedWith: (userId: string) => Effect.Effect<readonly SharedPatch[], SqlError>;
+    readonly forCompany: (companyId: string) => Effect.Effect<readonly CompanyGuest[], SqlError>;
+    readonly revokeForCompany: (
+      companyId: string,
+      userId: string
+    ) => Effect.Effect<number, SqlError>;
     readonly revoke: (patchId: string, userId: string) => Effect.Effect<boolean, SqlError>;
   }
 >()("@patchy/patches/GuestGrants") {}
@@ -270,6 +284,39 @@ export const make = Effect.gen(function* () {
       yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${patchId} AND user_id = ${userId} RETURNING user_id`;
     return rows.length > 0;
   });
+  const companyGuestRows = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      userId: Schema.String,
+      name: Schema.String,
+      email: Schema.String,
+      companyName: Schema.String,
+      patchCount: Schema.Int
+    }),
+    execute: (companyId) => sql`
+      SELECT grants.user_id AS "userId", users.name, users.email,
+        companies.name AS "companyName", count(*)::integer AS "patchCount"
+      FROM patch_guest_grants grants
+      JOIN users ON users.id = grants.user_id
+      JOIN companies ON companies.id = users.company_id
+      WHERE grants.company_id = ${companyId}
+      GROUP BY grants.user_id, users.name, users.email, companies.name
+      ORDER BY users.name, users.email, grants.user_id`
+  });
+  const forCompany = Effect.fn("GuestGrants.forCompany")(
+    function* (companyId: string) {
+      return yield* companyGuestRows(companyId);
+    },
+    Effect.catchTags({ SchemaError: Effect.die })
+  );
+  const revokeForCompany = Effect.fn("GuestGrants.revokeForCompany")(function* (
+    companyId: string,
+    userId: string
+  ) {
+    const rows = yield* sql`DELETE FROM patch_guest_grants
+      WHERE company_id = ${companyId} AND user_id = ${userId} RETURNING user_id`;
+    return rows.length;
+  });
   return GuestGrants.of({
     unavailability,
     status,
@@ -279,7 +326,9 @@ export const make = Effect.gen(function* () {
     share,
     list,
     sharedWith,
-    revoke
+    revoke,
+    forCompany,
+    revokeForCompany
   });
 });
 

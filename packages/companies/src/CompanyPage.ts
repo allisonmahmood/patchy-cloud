@@ -31,6 +31,7 @@ interface Viewer {
 /** `view` reads People and `view-agent-access` reads Agent access; the rest are admins' forms. */
 export type Action =
   | { readonly kind: "view" }
+  | { readonly kind: "remove-guest"; readonly id: string }
   | { readonly kind: "view-agent-access" }
   | { readonly kind: "invite" }
   | { readonly kind: "agent-access" }
@@ -59,6 +60,22 @@ export const OwnedPatches = Context.Reference<
     }) => Effect.Effect<ReadonlyMap<string, number>, SqlError>)
   | undefined
 >("@patchy/companies/CompanyPage/OwnedPatches", { defaultValue: () => undefined });
+
+/** Patches supplies the existing grants without making Companies depend on Patches. */
+export interface Guest {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  readonly companyName: string;
+  readonly patchCount: number;
+}
+export const GuestGrants = Context.Reference<
+  | {
+      readonly list: (companyId: string) => Effect.Effect<readonly Guest[], SqlError>;
+      readonly remove: (companyId: string, userId: string) => Effect.Effect<number, SqlError>;
+    }
+  | undefined
+>("@patchy/companies/CompanyPage/GuestGrants", { defaultValue: () => undefined });
 
 /** The pages' layout; components come from the shell. */
 export const styles = `
@@ -89,13 +106,14 @@ export const styles = `
     }
 `;
 
-const shows = ["all", "admins", "invited", "deactivated"] as const;
+const shows = ["all", "admins", "invited", "deactivated", "guests"] as const;
 type Show = (typeof shows)[number];
 const showLabels: Record<Show, string> = {
   all: "All",
   admins: "Admins",
   invited: "Invited",
-  deactivated: "Deactivated"
+  deactivated: "Deactivated",
+  guests: "Guests"
 };
 
 /** What a GET of the page narrows its list to. */
@@ -233,6 +251,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const now = yield* Clock.currentTimeMillis;
   const admin = viewer.role === "admin";
   const { show, query } = view.filter ?? { show: "all", query: "" };
+  const guestAccess = yield* GuestGrants;
+  const guests = guestAccess === undefined ? [] : yield* guestAccess.list(viewer.company.id);
 
   const byName = (a: Users.User, b: Users.User) =>
     a.name.localeCompare(b.name) || a.email.localeCompare(b.email);
@@ -261,13 +281,17 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ],
     admins: people(active.filter((user) => user.role === "admin")),
     invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
-    deactivated: people(deactivated)
+    deactivated: people(deactivated),
+    guests: []
   };
   const needle = query.toLowerCase();
   const entries = lists[show].filter((entry) =>
     entry.kind === "invite"
       ? entry.invite.email.toLowerCase().includes(needle)
       : `${entry.user.name}\n${entry.user.email}`.toLowerCase().includes(needle)
+  );
+  const guestEntries = guests.filter((guest) =>
+    `${guest.name}\n${guest.email}`.toLowerCase().includes(needle)
   );
   // While every row is someone who joined, the column holds only dates and is named for them.
   const joinedOnly = entries.every(
@@ -334,11 +358,15 @@ const render = Effect.fn("CompanyPage.render")(function* (
     all: invites.length + users.length,
     admins: lists.admins.length,
     invited: invites.length,
-    deactivated: deactivated.length
+    deactivated: deactivated.length,
+    guests: guests.length
   };
   // Invited and Deactivated appear once there is something in them.
   const tabs = shows
-    .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
+    .filter(
+      (tab) =>
+        tab === "all" || tab === "admins" || tab === "guests" || counts[tab] > 0 || tab === show
+    )
     .map(
       (tab) =>
         `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
@@ -354,15 +382,20 @@ const render = Effect.fn("CompanyPage.render")(function* (
     className: "company-search"
   });
   const matches = query
-    ? `<p class="supporting-text company-matches">${plural(entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
+    ? `<p class="supporting-text company-matches">${plural(show === "guests" ? guestEntries.length : entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
     : "";
   const empty = query
     ? `<p>No one matches “${escapeHtml(query)}”.</p>`
-    : show === "invited"
-      ? "<p>No open invites.</p>"
-      : "<p>No one is deactivated.</p>";
+    : show === "guests"
+      ? "<p>No outside people have access to this company's patches.</p>"
+      : show === "invited"
+        ? "<p>No open invites.</p>"
+        : "<p>No one is deactivated.</p>";
   const table = entries.length
     ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">${joinedOnly ? "Joined" : "Status"}</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${entries.map((entry) => (entry.kind === "invite" ? inviteRow(entry.invite) : userRow(entry.user))).join("")}</tbody></table></div>`
+    : empty;
+  const guestTable = guestEntries.length
+    ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Company</th><th scope="col">Patches</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${guestEntries.map((guest) => `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${escapeHtml(guest.companyName)}</td><td>${guest.patchCount}</td>${admin ? `<td class="company-row-actions"><form method="post" action="/company/guests/${encodeURIComponent(guest.userId)}/remove"><button class="btn btn-danger" type="submit" aria-label="Remove ${escapeAttribute(guest.name)} from all company patches">Remove</button></form></td>` : ""}</tr>`).join("")}</tbody></table></div>`
     : empty;
 
   const draft = view.draft;
@@ -375,7 +408,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const admins = active.filter((user) => user.role === "admin");
   return {
     title: "People",
-    body: `<p class="supporting-text">${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${noticeHtml(view.notice)}<div class="company-tools">${search}<nav class="tabs" aria-label="Show">${tabs}</nav>${invite}</div>${matches}${table}`,
+    body: `<p class="supporting-text">${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${noticeHtml(view.notice)}<div class="company-tools">${search}<nav class="tabs" aria-label="Show">${tabs}</nav>${show === "guests" ? "" : invite}</div>${matches}${show === "guests" ? guestTable : table}`,
     status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
   };
 });
@@ -443,6 +476,34 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
   }
   if (action.kind === "view-agent-access") return yield* renderAgentAccess(viewer);
   if (action.kind === "agent-access") return yield* setAgentAccess(viewer);
+  if (action.kind === "remove-guest") {
+    if (viewer.role !== "admin")
+      return yield* render(viewer, {
+        filter: { show: "guests", query: "" },
+        notice: { message: "Only an admin can remove guests.", status: 403 }
+      });
+    const access = yield* GuestGrants;
+    if (access === undefined)
+      return yield* render(viewer, {
+        filter: { show: "guests", query: "" },
+        notice: { message: "Guest access is unavailable.", status: 503 }
+      });
+    const guest = (yield* access.list(viewer.company.id)).find(
+      (person) => person.userId === action.id
+    );
+    if (guest === undefined)
+      return yield* render(viewer, {
+        filter: { show: "guests", query: "" },
+        notice: { message: "That guest has no grants in this company.", status: 404 }
+      });
+    const removed = yield* access.remove(viewer.company.id, guest.userId);
+    return {
+      title: "People",
+      body: "",
+      redirect: "/company?show=guests",
+      receipt: `Removed ${guest.name} from ${removed} ${removed === 1 ? "patch" : "patches"}`
+    } satisfies Page;
+  }
   if (viewer.role !== "admin")
     return yield* refuse(viewer, "Only an admin can manage this company.", 403);
   // Narrowed here, so the effect below keeps the forms that remain.
