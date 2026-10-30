@@ -40,6 +40,7 @@ const binding: Binding.Binding["Service"] = {
   scope: "company",
   principal: { userId: viewer.user.id },
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   correlationId: "query-subscription-test",
   manifest: {
     manifestVersion: 1,
@@ -93,10 +94,10 @@ const fixture = Effect.gen(function* () {
       })
   };
   const invocations: Invocation.Invocation["Service"] = {
-    call: (_args, _binding, reauthorize, observation) =>
+    call: (_args, called, observation) =>
       Effect.gen(function* () {
         state.calls++;
-        yield* reauthorize;
+        yield* called.reauthorize;
         for (const key of state.dependencies) observation?.onDependency(key);
         if (state.failure !== undefined) return yield* Effect.fail(state.failure);
         observation?.onSnapshot(state.revisions);
@@ -273,7 +274,7 @@ it.effect(
             )
         }),
         Effect.provideService(Invocation.Invocation, {
-          call: (_args, _binding, _reauthorize, observation) =>
+          call: (_args, _binding, observation) =>
             Effect.sync(() => {
               observation?.onDependency(memberDirectory);
               observation?.onSnapshot({});
@@ -285,8 +286,7 @@ it.effect(
       const input = {
         binding,
         op: "server.call",
-        args: { handler: "demo.read", args: {} },
-        reauthorize: Effect.succeed(viewer)
+        args: { handler: "demo.read", args: {} }
       };
       assert.include(yield* readers.read(input).pipe(Effect.flip), { code: "source_unavailable" });
       changeDuringQuery = false;

@@ -108,6 +108,10 @@ _Avoid_: MCP validation, tool lint
 An action declared `readOnly: true`, held to reads by its context type and Patchy's callback gate, so connection reads count as reads.
 _Avoid_: read action, query (a different kind), safe action
 
+**Guest mark**:
+`guest: true` on a tier 2 page handler, query, mutation or action: the patch's [guests](../companies/GLOSSARY.md) may start it, live queries included, and no unmarked one. What it reaches through `ctx.run` follows the usual rules, so it checks `ctx.viewer` where it matters who called. Agent tools never carry it.
+_Avoid_: guest handler (the [Runtime](../runtime/GLOSSARY.md)'s guest is the sandboxed code that runs every handler), public handler
+
 **Server bundle**:
 The single closed module built from a tier 2 version's handler code and stored beside its browser HTML. Its hash and handler descriptors identify the server artifact in the manifest; it is distinct from the generated server module list.
 _Avoid_: page bundle, manifest, hosted instance

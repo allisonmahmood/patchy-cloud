@@ -271,6 +271,7 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
             correlationId: "posthog-tier2",
             principal: { userId: viewer.user.id },
             identity: viewer,
+            reauthorize: Effect.succeed(viewer),
             manifest: {
               manifestVersion: 1,
               release: CURRENT_RELEASE,
@@ -328,8 +329,7 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
           );
           const result = yield* invocations.call(
             { handler: "report.views", args: {} },
-            { ...binding, correlationId: newInternalId("call") },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: newInternalId("call") }
           );
           assert.deepStrictEqual(result, { ok: true, value: { ok: true, rows: expected } });
           assert.deepStrictEqual(requests.at(-1)!.body, {
@@ -340,8 +340,7 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
           const refused = yield* invocations
             .call(
               { handler: "report.broken", args: {} },
-              { ...binding, correlationId: newInternalId("call") },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: newInternalId("call") }
             )
             .pipe(Effect.flip);
           assert.include(Runtime.toFailure(refused), {

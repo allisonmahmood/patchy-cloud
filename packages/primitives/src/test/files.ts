@@ -8,7 +8,7 @@ import { CURRENT_RELEASE, Manifest, WIRE_VERSION } from "@patchy/api";
 import { CompanyDatabases } from "@patchy/company-database";
 import * as Testing from "@patchy/company-database/testing";
 import { FilesystemContentStore } from "@patchy/content-store";
-import { Binding } from "@patchy/runtime";
+import { Binding, Runtime } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
 import * as TestWakes from "./wakes.js";
@@ -64,6 +64,7 @@ export const setup = Effect.fn("test.files.setup")(function* (patchId: string) {
     wireVersion: WIRE_VERSION,
     scope: "company",
     identity: null,
+    reauthorize: Effect.fail(new Runtime.AccessDenied({})),
     principal: null,
     correlationId: "files-contract"
   });

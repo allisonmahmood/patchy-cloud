@@ -21,7 +21,6 @@ import {
   type PidgeonThread,
   type PidgeonWriteOperation
 } from "@patchy/api";
-import { Directory } from "@patchy/companies";
 import { Cryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
@@ -34,7 +33,7 @@ import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, type DevRead } from "../definition.js";
+import { operation, viewerRecheck, ViewerRefusal, type DevRead } from "../definition.js";
 import * as Calls from "./Calls.js";
 import * as Source from "./Source.js";
 
@@ -120,8 +119,7 @@ export const Errors = Schema.Union([
   Source.Timeout,
   Source.Busy,
   Runtime.InvalidRequest,
-  Runtime.AccessDenied,
-  Runtime.SourceUnavailable,
+  ...ViewerRefusal.members,
   Runtime.TooLarge
 ]);
 const isError = Schema.is(Errors);
@@ -728,16 +726,7 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
     return yield* new Runtime.AccessDenied({});
   // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
   const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-  const directory = yield* Directory.Directory;
-  // A viewer deactivated while the call waited sends nothing.
-  const recheck = directory.get(companyId, identity.user.id).pipe(
-    Effect.catchTags({
-      SqlError: (cause) => Effect.fail(new Runtime.SourceUnavailable({ cause }))
-    }),
-    Effect.flatMap((member) =>
-      member?.active === true ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
-    )
-  );
+  const recheck = viewerRecheck(binding);
   return yield* atAddress(
     { companyId, connection: declaration, deadline, recheck },
     kind,
@@ -880,13 +869,11 @@ export const devReads: {
 export const makeHandlers = Effect.gen(function* () {
   const source = yield* Source.Source;
   const connections = yield* ConnectionStore.ConnectionStore;
-  const directory = yield* Directory.Directory;
   const cryptography = yield* Cryptography.Cryptography;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Source.Source, source),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Directory.Directory, directory),
       Effect.provideService(Cryptography.Cryptography, cryptography)
     );
   return {

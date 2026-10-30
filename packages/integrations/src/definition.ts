@@ -1,7 +1,7 @@
-import type { Runtime } from "@patchy/runtime/core";
-import type * as Effect from "effect/Effect";
+import { Runtime, type Binding } from "@patchy/runtime/core";
+import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
 import type * as ConnectionStore from "./ConnectionStore.js";
 
 /** Which connection a call goes to and until when, for a caller its door already admitted. */
@@ -18,6 +18,33 @@ export interface Target<E = never> {
   /** The caller, checked again once the call holds a slot and before anything is sent. */
   readonly recheck: Effect.Effect<void, E>;
 }
+
+/** How a door's recheck of its viewer refuses a call; any other failure leaves it unanswered. */
+export const ViewerRefusal = Schema.Union([
+  Runtime.AccessDenied,
+  Runtime.SessionExpired,
+  Runtime.SessionRefreshRequired,
+  Runtime.PrincipalChanged,
+  Runtime.SourceUnavailable
+]);
+const isViewerRefusal = Schema.is(ViewerRefusal);
+
+/**
+ * A loaded version's `Target.recheck`: its door asks again whether the same person may still
+ * call it, as a member or the patch's guest. Someone deactivated, signed out or whose grant ended
+ * while the call waited sends nothing.
+ */
+export const viewerRecheck = (binding: Binding.Binding["Service"]) =>
+  binding.reauthorize.pipe(
+    Effect.mapError((error) =>
+      isViewerRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
+    ),
+    Effect.flatMap((current) =>
+      current.user.id === binding.identity?.user.id && current.company.id === binding.companyId
+        ? Effect.void
+        : Effect.fail(new Runtime.AccessDenied({}))
+    )
+  );
 
 /**
  * A `live` operation as the instance's dev door runs it (ADR-0013): its arguments arrive without

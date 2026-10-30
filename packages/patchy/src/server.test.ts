@@ -213,9 +213,10 @@ it("rejects non-handlers and nested names as invalid_manifest", () => {
   assert.deepStrictEqual(extractHandlerDescriptors({ empty: {} }), {});
 });
 
-it("folds agent files into agent tools, keeping a re-exported handler's page name unmarked", () => {
+it("folds agent files into agent tools, keeping a re-exported handler's page name and guest mark", () => {
   const list = server.query({
     description: "Lists leads.",
+    guest: true,
     args: {},
     result: t.boolean(),
     handler: () => true
@@ -232,9 +233,11 @@ it("folds agent files into agent tools, keeping a re-exported handler's page nam
     "leads.list": {
       kind: "query",
       description: "Lists leads.",
+      guest: true,
       args: {},
       result: { kind: "boolean" }
     },
+    // An agent tool is for agents only, so the guest mark stays with the page's handler.
     "agent.list": {
       kind: "query",
       description: "Lists leads.",

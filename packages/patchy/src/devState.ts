@@ -23,6 +23,7 @@ export const Daemon = Schema.Struct({
   birth: Schema.String,
   url: Schema.optionalKey(Schema.String),
   colleagueUrl: Schema.optionalKey(Schema.String),
+  guestUrl: Schema.optionalKey(Schema.String),
   logJson: Schema.optionalKey(Schema.Boolean)
 });
 export type Daemon = typeof Daemon.Type;

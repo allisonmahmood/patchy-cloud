@@ -251,14 +251,16 @@ const make = Effect.fn("DevResources.make")(function* (
   const fileHandlers = yield* Files.makeLocal;
   for (const fixture of state.storeFixtures) {
     const source = state.versions.get(fixture.patchId)!;
+    const publisher = {
+      user: prepared.identity.user,
+      company: prepared.identity.company,
+      admin: prepared.identity.role === "admin"
+    };
     const binding = Binding.Binding.of({
       ...source,
-      identity: {
-        user: prepared.identity.user,
-        company: prepared.identity.company,
-        admin: prepared.identity.role === "admin"
-      },
+      identity: publisher,
       principal: { userId: prepared.identity.user.id },
+      reauthorize: Effect.succeed(publisher),
       correlationId: "dev-shared-fixture"
     });
     yield* databases.withCompany(companyId)(

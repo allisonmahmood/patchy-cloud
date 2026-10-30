@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { runtimeOperations, sharedStoreId, sharedTableId, TablePage } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { PgliteCompanyDatabases } from "@patchy/company-database/dev";
-import { Binding, InvocationCapabilities, LoadedVersions } from "@patchy/runtime";
+import { Binding, InvocationCapabilities, LoadedVersions, Runtime } from "@patchy/runtime";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -50,7 +50,12 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
     admin: false
   };
   const capability = yield* capabilities.issue({
-    binding: { ...binding, identity, principal: { userId: identity.user.id } },
+    binding: {
+      ...binding,
+      identity,
+      principal: { userId: identity.user.id },
+      reauthorize: Effect.succeed(identity)
+    },
     kind: "query",
     readOnly: false,
     attempt: {
@@ -58,8 +63,7 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
       attemptId: "attempt_one",
       processGeneration: 1,
       deadline: (yield* Clock.currentTimeMillis) + budget
-    },
-    reauthorize: Effect.succeed(identity)
+    }
   });
   const resource = yield* snapshots.open(capability);
   capability.snapshot.value = resource;
@@ -94,6 +98,7 @@ it.layer(layer)("Invocation query snapshots", (it) => {
         wireVersion: 1,
         scope: "company",
         identity: null,
+        reauthorize: Effect.fail(new Runtime.AccessDenied({})),
         principal: null,
         correlationId: "resource-free-snapshot"
       });

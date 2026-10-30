@@ -152,6 +152,25 @@ it.live(
       const colleagueClaims = yield* colleague.json;
       assert.nestedPropertyVal(colleagueClaims, "value.user.id", "usr_dev_colleague");
       assert.nestedPropertyVal(colleagueClaims, "value.admin", false);
+      // The guest mount is the patch's guest, in its company, with no agent door.
+      const guestOrigin = new URL(record!.guestUrl!).origin;
+      assert.notInclude([origin, colleagueOrigin], guestOrigin);
+      const guest = yield* (yield* call("me", {}, guestOrigin, "usr_dev_guest", guestOrigin)).json;
+      assert.deepNestedInclude(guest, {
+        "value.user.id": "usr_dev_guest",
+        "value.company": prepared.identity.company,
+        "value.admin": false,
+        "value.guest": true
+      });
+      const agentDoor = (target: string) =>
+        client.execute(
+          HttpClientRequest.post(`${target}/~dev/agent`).pipe(
+            HttpClientRequest.setHeader("x-patchy-dev", record!.nonce),
+            HttpClientRequest.bodyJsonUnsafe({})
+          )
+        );
+      assert.strictEqual((yield* agentDoor(colleagueOrigin)).status, 200);
+      assert.strictEqual((yield* agentDoor(guestOrigin)).status, 404);
       // Dev holds the page to its own patch as production does: the directory is a handler's.
       for (const [target, viewerId] of [
         [origin, identity.user.id],

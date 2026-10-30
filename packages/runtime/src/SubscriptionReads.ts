@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HandlerFailure, type RuntimeMe } from "@patchy/api";
+import { HandlerFailure } from "@patchy/api";
 import type * as Binding from "./Binding.js";
 import type * as Runtime from "./Runtime.js";
 
@@ -20,7 +20,6 @@ export interface Input {
   /** Called before access checks, including attempts which fail. */
   readonly onDependency?: (key: string) => void;
   readonly dependencies?: readonly string[];
-  readonly reauthorize?: Effect.Effect<NonNullable<RuntimeMe>, Runtime.RuntimeError>;
 }
 
 /** Primitives supplies tier 1 reads without Runtime importing its storage adapter. */

@@ -43,14 +43,21 @@ export const binding = Binding.Binding.of({
   scope: "company",
   principal: { userId: identity.user.id },
   identity,
+  reauthorize: Effect.succeed(identity),
   correlationId: "call_initiating"
 });
+/** A capability over `binding`, or the options' own; `reauthorize` replaces its binding's. */
 export const issue = Effect.fnUntraced(function* (
   capabilities: InvocationCapabilities.InvocationCapabilities["Service"],
-  options: Partial<InvocationCapabilities.Issue> = {}
+  {
+    reauthorize,
+    ...options
+  }: Partial<InvocationCapabilities.Issue> & {
+    readonly reauthorize?: Binding.Binding["Service"]["reauthorize"];
+  } = {}
 ) {
+  const bound = options.binding ?? binding;
   const capability = yield* capabilities.issue({
-    binding,
     kind: "query",
     readOnly: false,
     attempt: {
@@ -59,8 +66,8 @@ export const issue = Effect.fnUntraced(function* (
       processGeneration: 1,
       deadline: (yield* Clock.currentTimeMillis) + 60_000
     },
-    reauthorize: Effect.succeed(identity),
-    ...options
+    ...options,
+    binding: reauthorize === undefined ? bound : { ...bound, reauthorize }
   });
   capability.snapshot.value = snapshot;
   capability.mutation.value = {

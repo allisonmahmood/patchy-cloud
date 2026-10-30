@@ -27,6 +27,7 @@ import {
   descriptionFailure,
   discoverAgentFiles,
   discoverServerModules,
+  inspectionFailure,
   validateGeneratedServerModules
 } from "./serverModules.js";
 
@@ -236,13 +237,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         yield* Inspection.inspect(built.server, { workerdFrom: cwd }).pipe(
           Effect.mapError(
             (cause) =>
-              new LocalError({
-                message:
-                  cause.problem ??
-                  "Could not inspect the server bundle. Its modules must load and export only valid handlers.",
-                code: "invalid_manifest",
-                cause
-              })
+              new LocalError({ message: inspectionFailure(cause), code: "invalid_manifest", cause })
           )
         );
   const refusal =

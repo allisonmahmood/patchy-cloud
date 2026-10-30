@@ -349,6 +349,7 @@ const local = (uses: (typeof Manifest.Type)["uses"], now: number, viewer: Viewer
       uses
     },
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     principal: { userId: viewer.user.id },
     correlationId: "local-dev-call",
     deadline: now + 15_000

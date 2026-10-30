@@ -19,7 +19,7 @@ import {
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContractLimits } from "@patchy/limits";
-import { Binding, LoadedVersions, Wakes } from "@patchy/runtime";
+import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime";
 import * as Tables from "../Tables.js";
 import * as TableOperations from "../TableOperations.js";
 import * as SubscriptionReads from "../SubscriptionReads.js";
@@ -76,6 +76,7 @@ export const setup = Effect.fn("test.tableOperations.setup")(function* (
     wireVersion: WIRE_VERSION,
     scope: "company",
     identity: null,
+    reauthorize: Effect.fail(new Runtime.AccessDenied({})),
     principal: null,
     correlationId: "operation-contract"
   });
@@ -614,14 +615,16 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
       row: { title: "mine", slug: "first" }
     })
     .pipe(Effect.flatMap(decodeRow));
+  const viewer = {
+    user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
+    company: { id: companyId, handle: "company", name: "Company" },
+    admin: false
+  };
   const binding: Binding.Binding["Service"] = {
     ...consumer.binding,
     principal: { userId: "usr_viewer" },
-    identity: {
-      user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
-      company: { id: companyId, handle: "company", name: "Company" },
-      admin: false
-    }
+    identity: viewer,
+    reauthorize: Effect.succeed(viewer)
   };
   const live = yield* Ref.make(
     new Map<string, LoadedVersions.LoadedVersion>([[source.binding.patchId, source.binding]])

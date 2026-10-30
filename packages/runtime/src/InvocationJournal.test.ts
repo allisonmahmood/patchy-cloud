@@ -38,6 +38,7 @@ const binding: Binding.Binding["Service"] = {
   scope: "company",
   principal: { userId: viewer.user.id },
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   correlationId: "journal-test",
   manifest: {
     manifestVersion: 1,
@@ -96,8 +97,7 @@ const call = (invocations: Invocation.Invocation["Service"]) =>
   Effect.suspend(() =>
     invocations.call(
       { handler: "demo.action", args: {} },
-      { ...binding, correlationId: newInternalId("journal") },
-      Effect.succeed(viewer)
+      { ...binding, correlationId: newInternalId("journal") }
     )
   );
 

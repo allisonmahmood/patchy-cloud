@@ -30,6 +30,12 @@ const decodePage = Schema.decodeUnknownEffect(TablePage);
 const decodePostgresRows = Schema.decodeUnknownEffect(PostgresRows);
 
 const decodeFiles = Schema.decodeUnknownEffect(FilePage);
+/** The runtime viewer a dev session's person is. */
+const viewerOf = ({ identity }: Pick<Prepared, "identity">) => ({
+  user: identity.user,
+  company: identity.company,
+  admin: identity.role === "admin"
+});
 // These Prepared versions are tier 1 even where they declare `uses`, which refresh, dev and
 // publish now refuse below tier 2: preparing a tier 2 version also requires a server bundle and
 // starts the handler engine, which these fixture and storage cases don't exercise. The handlers
@@ -110,11 +116,8 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
       );
       const binding = Binding.Binding.of({
         ...resources.version,
-        identity: {
-          user: prepared.identity.user,
-          company: prepared.identity.company,
-          admin: prepared.identity.role === "admin"
-        },
+        identity: viewerOf(prepared),
+        reauthorize: Effect.succeed(viewerOf(prepared)),
         principal: { userId: prepared.identity.user.id },
         correlationId: "shared-fixture-refs"
       });
@@ -216,11 +219,8 @@ it.live(
         );
         const binding = Binding.Binding.of({
           ...resources.version,
-          identity: {
-            user: prepared.identity.user,
-            company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
-          },
+          identity: viewerOf(prepared),
+          reauthorize: Effect.succeed(viewerOf(prepared)),
           principal: { userId: prepared.identity.user.id },
           correlationId: "shared-store-fixture"
         });
@@ -376,11 +376,8 @@ it.live(
         const resources = yield* DevResources.prepare(current, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
-          identity: {
-            user: current.identity.user,
-            company: current.identity.company,
-            admin: current.identity.role === "admin"
-          },
+          identity: viewerOf(current),
+          reauthorize: Effect.succeed(viewerOf(current)),
           principal: { userId: current.identity.user.id },
           correlationId: "fixture-owned-data"
         });
@@ -503,11 +500,8 @@ it.live(
         const resources = yield* DevResources.prepare(prepared, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
-          identity: {
-            user: prepared.identity.user,
-            company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
-          },
+          identity: viewerOf(prepared),
+          reauthorize: Effect.succeed(viewerOf(prepared)),
           principal: { userId: prepared.identity.user.id },
           correlationId: "fixture-retry"
         });
@@ -607,11 +601,8 @@ it.live(
         const resources = yield* DevResources.prepare(current, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
-          identity: {
-            user: current.identity.user,
-            company: current.identity.company,
-            admin: current.identity.role === "admin"
-          },
+          identity: viewerOf(current),
+          reauthorize: Effect.succeed(viewerOf(current)),
           principal: { userId: current.identity.user.id },
           correlationId: "published-inventory"
         });
@@ -786,11 +777,8 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
         const resources = yield* DevResources.prepare(prepared, root, stateDir, offline);
         const binding = Binding.Binding.of({
           ...resources.version,
-          identity: {
-            user: prepared.identity.user,
-            company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
-          },
+          identity: viewerOf(prepared),
+          reauthorize: Effect.succeed(viewerOf(prepared)),
           principal: { userId: prepared.identity.user.id },
           correlationId: "postgres-dispatch"
         });
