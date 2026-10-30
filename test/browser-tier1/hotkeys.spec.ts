@@ -434,4 +434,24 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await page.keyboard.press("l");
     await firedNext(frame, ["L"]);
   });
+
+  // A key dispatched as the dialog's `open` appears lands before anything else can run, so it
+  // reaches the page unless the sheet's scope is already holding the page's hotkeys back.
+  await test.step("a key pressed the moment it opens waits too", async () => {
+    await frame.evaluate(() => {
+      new MutationObserver((_, observer) => {
+        if (!document.querySelector("dialog[open]")) return;
+        observer.disconnect();
+        for (const type of ["keydown", "keyup"])
+          document.activeElement?.dispatchEvent(
+            new KeyboardEvent(type, { key: "l", code: "KeyL", bubbles: true, cancelable: true })
+          );
+      }).observe(document.body, { attributes: true, attributeFilter: ["open"], subtree: true });
+    });
+    await page.keyboard.press("?");
+    await expect(dialog).toBeVisible();
+    await firedNext(frame, []);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  });
 });
