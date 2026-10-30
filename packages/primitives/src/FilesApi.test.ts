@@ -23,6 +23,7 @@ import { ContentStore } from "@patchy/content-store";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
   Binding,
+  GuestAccess,
   LoadedVersions,
   RuntimeProduction,
   RuntimeApi,
@@ -76,7 +77,8 @@ const dependencies = Layer.mergeAll(
   RuntimeLog.layer,
   Session.layer,
   Users.layer,
-  Companies.layer
+  Companies.layer,
+  Layer.succeed(GuestAccess.GuestAccess, { admit: () => Effect.succeed(false) })
 ).pipe(Layer.provideMerge(services));
 const runtime = Layer.unwrap(
   Effect.map(Files.make, (files) => RuntimeProduction.layer({ me, ...files }))
@@ -269,7 +271,8 @@ it.layer(socket)("Files HTTP / authorised handles", (it) => {
         const identity = {
           user: { id: "usr_dev", name: "Viewer", email: "viewer@example.test" },
           company: { id: companyId, handle: "company", name: "Company" },
-          admin: false
+          admin: false,
+          guest: false
         };
         const binding = {
           ...fixture.binding,

@@ -54,6 +54,7 @@ export interface Me {
   readonly user: { readonly id: string; readonly name: string; readonly email: string };
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
   readonly admin: boolean;
+  readonly guest: boolean;
 }
 
 /** Structural subset implemented by browser MessagePort and the fake-port acceptance seam. */

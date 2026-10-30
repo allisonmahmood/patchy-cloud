@@ -37,7 +37,8 @@ const binding = Binding.Binding.of({
   identity: {
     user: { id: "usr_posthog", email: "member@example.test", name: "Member" },
     company: { id: "cmp_posthog", handle: "posthog", name: "Northwind" },
-    admin: false
+    admin: false,
+    guest: false
   }
 });
 const project = {

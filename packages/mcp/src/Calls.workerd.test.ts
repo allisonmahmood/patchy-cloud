@@ -170,7 +170,8 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
               const identity: NonNullable<RuntimeMe> = {
                 user: { id: person.id, name: person.name, email: person.email },
                 company: { id: acme.id, handle: acme.handle, name: acme.name },
-                admin: person.role === "admin"
+                admin: person.role === "admin",
+                guest: false
               };
               for (const name of rows)
                 yield* tables["tables.insert"].run({ table, row: { name } }).pipe(

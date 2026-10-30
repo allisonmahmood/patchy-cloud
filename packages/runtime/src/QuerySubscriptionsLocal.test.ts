@@ -53,7 +53,8 @@ const decodeFrame = Schema.decodeUnknownSync(RuntimeStreamFrame);
 const viewer = {
   user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
   company: { id: "cmp_dev", name: "Patchy Dev", handle: "patchy-dev" },
-  admin: true
+  admin: true,
+  guest: false
 };
 const table = {
   description: "Subscription input",

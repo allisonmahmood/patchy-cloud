@@ -18,6 +18,7 @@ import { contentHash, newInternalId, newPatchId } from "../../../test/crypto.js"
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
 import {
+  GuestAccess,
   LoadedVersions,
   RuntimeStream,
   StreamAdmission,
@@ -31,6 +32,7 @@ import * as MemberDirectory from "./MemberDirectory.js";
 const identity = Fixtures.identities.uploader;
 const dependencies = Layer.mergeAll(
   Patches.layer,
+  Layer.succeed(GuestAccess.GuestAccess, { admit: () => Effect.succeed(false) }),
   OperatingLimits.layer,
   Limits.layer,
   Session.layer,

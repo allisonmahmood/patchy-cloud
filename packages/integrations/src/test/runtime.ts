@@ -100,7 +100,8 @@ export const page = Effect.fn("RuntimeTest.page")(function* (
   const viewer = {
     user: { id: DEV_SEED.userId, name: "Dev", email: "dev@patchy.local" },
     company: { id: DEV_SEED.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-    admin: false
+    admin: false,
+    guest: false
   };
   const capabilities = yield* InvocationCapabilities.make;
   const gateway = yield* CallbackGateway.make(handlers).pipe(

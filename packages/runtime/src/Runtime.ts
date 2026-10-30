@@ -450,11 +450,11 @@ export interface AdmittedIdentity {
 /** Environment adapters choose identity and recording; admission and execution stay shared. */
 export interface Options {
   readonly origin: string;
-  readonly identity: Effect.Effect<
-    AdmittedIdentity,
-    RuntimeError,
-    HttpServerRequest.HttpServerRequest
-  >;
+  readonly identity:
+    | Effect.Effect<AdmittedIdentity, RuntimeError, HttpServerRequest.HttpServerRequest>
+    | ((
+        loaded: LoadedVersions.LoadedVersion & { readonly patchTier: number }
+      ) => Effect.Effect<AdmittedIdentity, RuntimeError, HttpServerRequest.HttpServerRequest>);
   /** Production operating admission, once per incoming operation, never inside a handler. */
   readonly admitCompany?: (companyId: string) => Effect.Effect<void, RuntimeError>;
   /**
@@ -620,7 +620,9 @@ export const make = (
         if (version.scope === "public" && input.op !== "me")
           return yield* new PublicUnavailable({});
         if (version.scope !== "public") {
-          const admitted = yield* options.identity;
+          const admitted = yield* typeof options.identity === "function"
+            ? options.identity(version)
+            : options.identity;
           identity = admitted.viewer;
           reauthorize = admitted.reauthorize;
           yield* WideEvents.enrich({ viewerId: identity.user.id });

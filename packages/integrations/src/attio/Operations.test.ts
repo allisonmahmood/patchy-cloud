@@ -48,7 +48,8 @@ type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 const viewer: Viewer = {
   user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-  admin: false
+  admin: false,
+  guest: false
 };
 /** A tier 2 version's binding, declaring `crm` at `revision`, as `viewer`. */
 const binding = (

@@ -47,7 +47,8 @@ import * as Runtime from "./Runtime.js";
 const viewer = {
   user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
   company: { id: "cmp_dev", name: "Dev", handle: "patchy-dev" },
-  admin: true
+  admin: true,
+  guest: false
 };
 const definition = {
   manifestVersion: 1,

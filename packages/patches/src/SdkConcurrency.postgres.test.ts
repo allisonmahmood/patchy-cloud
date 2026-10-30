@@ -12,19 +12,22 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { inject } from "vitest";
-import { FilePage, Manifest, TablePage, TableRow } from "@patchy/api";
+import { FilePage, Manifest, TablePage, TableRow, WIRE_VERSION } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { Files, TableOperations, Tables } from "@patchy/primitives";
 import * as TestMemberDirectory from "../../primitives/src/test/memberDirectory.js";
-import { Binding, LoadedVersions } from "@patchy/runtime";
+import { Binding, GuestAccess, LoadedVersions, Runtime } from "@patchy/runtime";
+import { Limits, OperatingLimits } from "@patchy/limits";
 import * as Content from "./Content.js";
 import * as DeletionSweep from "./DeletionSweep.js";
 import * as Patches from "./Patches.js";
 import * as PatchLoadedVersions from "./LoadedVersions.js";
 import * as Fixtures from "./test/fixtures.js";
+import * as GuestGrants from "./GuestGrants.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const { admin, uploader, reader } = Fixtures.identities;
@@ -87,8 +90,20 @@ const realPostgres = Layer.unwrap(
   })
 );
 
-const services = Layer.mergeAll(Content.layer, PatchLoadedVersions.layer, DeletionSweep.layer).pipe(
+const services = Layer.mergeAll(
+  Content.layer,
+  PatchLoadedVersions.layer,
+  DeletionSweep.layer,
+  Limits.layer,
+  OperatingLimits.layer
+).pipe(
   Layer.provideMerge(Patches.layer),
+  Layer.provideMerge(
+    GuestGrants.runtimeLayer.pipe(
+      Layer.provideMerge(GuestGrants.layer),
+      Layer.provide(Patches.layer)
+    )
+  ),
   Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(Layer.mergeAll(realPostgres, filesystem, Analytics.layerNoop))
 );
@@ -257,6 +272,101 @@ const heldProvision = Effect.fn("SdkConcurrency.heldProvision")(function* () {
     )
   );
   return { ...held, sessions, patches };
+});
+
+it.layer(services, { timeout: "60 seconds" })("guest runtime / real PostgreSQL only", (it) => {
+  it.effect(
+    "a granted person in another company reads and writes the patch's own table and files",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const grants = yield* GuestGrants.GuestGrants;
+        const guestAccess = yield* GuestAccess.GuestAccess;
+        const patches = yield* Patches.Patches;
+        const guest = {
+          user: { id: "usr_sdk_guest", name: "Guest", email: "sdk-guest@patchy.local" },
+          company: { id: "cmp_sdk_guest", name: "Guest company", handle: "sdk-guest" }
+        };
+        yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES (${guest.company.id}, ${guest.company.handle}, ${guest.company.name})`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES (${guest.user.id}, 'clerk_sdk_guest', ${guest.company.id},
+          ${guest.user.email}, ${guest.user.name}, 'member')`;
+        const published = yield* publish(definition, "<p>Guest resource test</p>");
+        const found = Option.getOrThrow(yield* patches.find(published.patchId));
+        assert.isTrue(
+          yield* grants.grant(found.patch, found.version, guest.user.id, uploader.user.id)
+        );
+        const operations = { ...(yield* TableOperations.make), ...(yield* Files.makeLocal) };
+        const runtime = yield* Runtime.make(operations, {
+          origin: "https://patchy.example",
+          identity: (loaded) =>
+            Effect.gen(function* () {
+              if (
+                !(yield* guestAccess
+                  .admit(loaded, guest.user.id)
+                  .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))))
+              )
+                return yield* new Runtime.AccessDenied({});
+              const viewer = { ...guest, company: uploader.company, admin: false, guest: true };
+              return { viewer, reauthorize: Effect.succeed(viewer) };
+            })
+        });
+        const envelope = (op: string, args: Record<string, unknown>) => ({
+          patchId: published.patchId,
+          versionId: published.versionId,
+          wire: WIRE_VERSION,
+          principal: { userId: guest.user.id },
+          op,
+          args
+        });
+        const request = (method: string) =>
+          HttpServerRequest.fromWeb(
+            new Request("https://patchy.example/api/runtime/call", {
+              method,
+              headers: {
+                origin: "https://patchy.example",
+                "sec-fetch-site": "same-origin",
+                "x-patchy-wire": String(WIRE_VERSION),
+                "x-patchy-principal": JSON.stringify({ userId: guest.user.id })
+              }
+            })
+          );
+        const insert = yield* runtime
+          .call(
+            envelope("tables.insert", {
+              table: "notes",
+              row: { title: "Guest note", slug: "guest-note" }
+            })
+          )
+          .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request("POST")));
+        const row = yield* decodeRow(insert);
+        const read = yield* runtime
+          .call(
+            envelope("tables.get", {
+              table: "notes",
+              id: row.id
+            })
+          )
+          .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request("POST")));
+        assert.strictEqual((yield* decodeRow(read)).title, "Guest note");
+        yield* runtime
+          .putFile(
+            envelope("files.put", { store: "docs", name: "guest.txt", contentType: "text/plain" }),
+            Effect.succeed(new TextEncoder().encode("guest bytes"))
+          )
+          .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request("PUT")));
+        const file = yield* runtime
+          .getFile(
+            envelope("files.get", {
+              store: "docs",
+              name: "guest.txt"
+            })
+          )
+          .pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request("GET")));
+        assert.deepStrictEqual(file.bytes, new TextEncoder().encode("guest bytes"));
+      })
+  );
 });
 
 it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreSQL only", (it) => {

@@ -1,5 +1,6 @@
 export * as Binding from "./Binding.js";
 export * as LoadedVersions from "./LoadedVersions.js";
+export * as GuestAccess from "./GuestAccess.js";
 export * as Executor from "./Executor.js";
 export * as ExecutionLifecycle from "./ExecutionLifecycle.js";
 export * as CompanyAdmission from "./CompanyAdmission.js";

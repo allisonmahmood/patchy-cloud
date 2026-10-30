@@ -79,7 +79,8 @@ const connect = Effect.gen(function* () {
   const viewer: Viewer = {
     user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
     company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-    admin: false
+    admin: false,
+    guest: false
   };
   const binding = Binding.Binding.of({
     companyId: who.companyId,

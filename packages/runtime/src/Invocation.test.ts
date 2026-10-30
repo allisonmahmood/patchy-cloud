@@ -36,7 +36,8 @@ import { NodeCryptography } from "@patchy/core";
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
   company: { id: DEV_SEED.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-  admin: true
+  admin: true,
+  guest: false
 };
 const binding: Binding.Binding["Service"] = {
   patchId: "invoke397001",

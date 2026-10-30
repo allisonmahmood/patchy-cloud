@@ -27,7 +27,7 @@ import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { Cryptography, isWelcomePage } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
-import { Content, Patches, PatchesConfig } from "@patchy/patches";
+import { Content, GuestGrants, Patches, PatchesConfig } from "@patchy/patches";
 import { withReportedCommit } from "@patchy/sql";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
@@ -206,9 +206,17 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         cookies
       );
     }
-    if (served.value.patch.companyId !== admission.company.id) {
+    const outsider = served.value.patch.companyId !== admission.company.id;
+    if (
+      outsider &&
+      !(yield* (yield* GuestGrants.GuestGrants)
+        .hasEligibleGrant(served.value.patch, served.value.version, admission.user.id)
+        .pipe(Effect.catchTags({ SqlError: Effect.die })))
+    ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
+    if (outsider && (served.value.patch.state !== "live" || isAlias))
+      return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     if (served.value.patch.state !== "live" && !isAlias) {
       const canOpen = yield* Patches.Openability;
       const notice = yield* patches
@@ -290,7 +298,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // in it. It reports with the open's commit, so a reader who leaves mid-COMMIT can't leave a first
   // open recorded and never reported, while the open itself, lock waits included, stays
   // cancellable. Tracking never fails the page.
-  if (kind === "address" && viewerId !== undefined) {
+  if (
+    kind === "address" &&
+    viewerId !== undefined &&
+    !HttpServerResponse.isHttpServerResponse(admission) &&
+    admission.company.id === served.value.patch.companyId
+  ) {
     const { patch } = served.value;
     yield* withReportedCommit(patches.recordOpen(viewerId, patch.id, version.id), (firstOpen) =>
       firstOpen && viewerId !== patch.ownerUserId
@@ -476,6 +489,7 @@ export const layer: Layer.Layer<
       | Cryptography.Cryptography
       | Content.Content
       | Patches.Patches
+      | GuestGrants.GuestGrants
       | Session.Session
       | Analytics.Analytics
       | SqlClient.SqlClient

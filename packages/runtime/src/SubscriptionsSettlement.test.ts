@@ -37,7 +37,8 @@ interface Attempt {
 const viewer = {
   user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Dev" },
   company: { id: DEV_SEED.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-  admin: true
+  admin: true,
+  guest: false
 };
 
 const services = Layer.mergeAll(InvocationLog.layer, OperatingLimits.layer, Limits.layer)

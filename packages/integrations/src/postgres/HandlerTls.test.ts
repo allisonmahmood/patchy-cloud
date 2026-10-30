@@ -282,7 +282,8 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
         const viewer = {
           user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
           company: { id: "cmp_dev", name: "Patchy Dev", handle: "patchy-dev" },
-          admin: false
+          admin: false,
+          guest: false
         };
         const binding = Binding.Binding.of({
           companyId: "cmp_dev",

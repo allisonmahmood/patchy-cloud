@@ -515,7 +515,8 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   const identity = {
     user: { id: "usr_reader", name: "Reader", email: "reader@example.test" },
     company: { id: companyId, handle: "company", name: "Company" },
-    admin: false
+    admin: false,
+    guest: false
   };
   let live = true;
   let sourceCompany = companyId;
@@ -672,7 +673,8 @@ const handlesContract = Effect.fn("test.filesContract.handles")(function* (compa
   const identity = {
     user: { id: "usr_selected", name: "Selected viewer", email: "selected@example.test" },
     company: { id: companyId, handle: "company", name: "Company" },
-    admin: false
+    admin: false,
+    guest: false
   };
   const binding = { ...fixture.binding, identity, principal: { userId: identity.user.id } };
   const name = "folder/雪 % report.svg";
@@ -781,7 +783,8 @@ const stageOnlyContract = Effect.fn("test.filesContract.stageOnly")(function* (c
     identity: {
       user: { id: "stage-only-viewer", name: "Viewer", email: "viewer@example.test" },
       company: { id: companyId, handle: "company", name: "Company" },
-      admin: false
+      admin: false,
+      guest: false
     },
     principal: { userId: "stage-only-viewer" },
     correlationId: "stage-only"
@@ -814,7 +817,8 @@ const setupStaged = Effect.fn("test.filesContract.setupStaged")(function* (
   const identity = {
     user: { id: "usr_staging", name: "Staging viewer", email: "staging@example.test" },
     company: { id: companyId, handle: "company", name: "Company" },
-    admin: false
+    admin: false,
+    guest: false
   };
   const binding = { ...fixture.binding, identity, principal: { userId: identity.user.id } };
   const stage = (bytes: Uint8Array, contentType = "text/plain") =>

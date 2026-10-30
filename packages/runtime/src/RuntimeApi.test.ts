@@ -89,7 +89,8 @@ it.layer(Fixtures.layer())("runtime HTTP admission", (it) => {
               handle: DEV_SEED.companyHandle,
               name: DEV_SEED.companyName
             },
-            admin: true
+            admin: true,
+            guest: false
           }
         });
         const changed = yield* api.call({
@@ -416,7 +417,8 @@ it.effect(
             handle: DEV_SEED.companyHandle,
             name: DEV_SEED.companyName
           },
-          admin: false
+          admin: false,
+          guest: false
         }
       });
     }).pipe(Effect.provide(Fixtures.layer()))

@@ -955,7 +955,8 @@ it.each([
   {
     user: { id: "user-1", name: "Pat", email: "pat@example.com" },
     company: { id: "co", handle: "company", name: "Company" },
-    admin: false
+    admin: false,
+    guest: false
   }
 ])("HTTP bootstraps me once before JSON and byte calls as the bound principal: %j", async (me) => {
   const requests: Request[] = [];

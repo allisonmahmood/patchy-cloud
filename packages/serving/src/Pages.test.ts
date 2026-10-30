@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Scheduler from "effect/Scheduler";
@@ -39,7 +40,7 @@ import { Companies, InviteMail, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
-import { Content, Patches } from "@patchy/patches";
+import { Content, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
@@ -116,6 +117,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Patches.layer,
+      GuestGrants.layer,
       memoryStore,
       Session.layer,
       Companies.layer,
@@ -1335,7 +1337,7 @@ it.layer(services)("pages in memory", (it) => {
 
   it.effect("admits every content request, so a kept document is refused once access ends", () =>
     Effect.gen(function* () {
-      const { url, html, patchId } = yield* scripted("Kept behind the door");
+      const { url, path, html, patchId } = yield* scripted("Kept behind the door");
       const { control, request } = yield* host();
       const sql = yield* SqlClient.SqlClient;
       const memberId = "usr_content_member";
@@ -1355,6 +1357,31 @@ it.layer(services)("pages in memory", (it) => {
         email: "content-outsider@example.com",
         userName: "Outsider"
       });
+      const outsider = yield* (yield* Users.Users).findByClerkId("user_content_outsider");
+      assert.isNotNull(outsider);
+      if (outsider === null) return;
+      const foreign = {
+        cookie: signedInCookies(
+          signSession({ sub: "user_content_outsider", email: "content-outsider@example.com" })
+        ),
+        "accept-encoding": "br"
+      };
+      const current = Option.getOrThrow(yield* (yield* Patches.Patches).find(patchId));
+      const grants = yield* GuestGrants.GuestGrants;
+      assert.isTrue(
+        yield* grants.grant(current.patch, current.version, outsider.id, DEV_SEED.userId)
+      );
+      const guestAddress = yield* request(path, foreign);
+      assert.strictEqual(guestAddress.status, 200);
+      assert.include(yield* Effect.promise(() => guestAddress.text()), outsider.id);
+      const guestContent = yield* request(url, foreign);
+      assert.strictEqual(guestContent.status, 200);
+      assert.strictEqual(new TextDecoder().decode(yield* decoded(guestContent)), html);
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outsider.id}`;
+      assert.strictEqual((yield* request(url, foreign)).status, 403);
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${outsider.id}`;
+      assert.strictEqual((yield* request(url, foreign)).status, 200);
+      yield* grants.revoke(patchId, outsider.id);
       const refusals = {
         "signed out": [{ "accept-encoding": "br" }, 401],
         "another company": [

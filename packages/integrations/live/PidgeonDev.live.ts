@@ -48,7 +48,8 @@ type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;
 const owner: Viewer = {
   user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
   company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: DEV_SEED.companyName },
-  admin: true
+  admin: true,
+  guest: false
 };
 
 /** Before the block, stale leftovers of any run go; after it, everything this run made. */

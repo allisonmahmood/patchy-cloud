@@ -4,4 +4,5 @@ export * as Patches from "./Patches.js";
 export * as PatchesApi from "./PatchesApi.js";
 export * as PatchesConfig from "./PatchesConfig.js";
 export * as LoadedVersions from "./LoadedVersions.js";
+export * as GuestGrants from "./GuestGrants.js";
 export { migrations } from "./migrations.js";

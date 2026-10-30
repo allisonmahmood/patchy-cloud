@@ -256,7 +256,8 @@ const make = Effect.fn("DevResources.make")(function* (
       identity: {
         user: prepared.identity.user,
         company: prepared.identity.company,
-        admin: prepared.identity.role === "admin"
+        admin: prepared.identity.role === "admin",
+        guest: false
       },
       principal: { userId: prepared.identity.user.id },
       correlationId: "dev-shared-fixture"

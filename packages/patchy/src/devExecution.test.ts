@@ -36,7 +36,7 @@ const identity = new Identity({
   role: "admin",
   machine: { id: "machine_dev", name: "Dev machine" }
 });
-const viewer = { user: identity.user, company: identity.company, admin: true };
+const viewer = { user: identity.user, company: identity.company, admin: true, guest: false };
 const notes = { description: "Notes", columns: { title: { kind: "text" as const } }, indexes: {} };
 const prepared: Prepared = {
   patchId: "localdev0000",
@@ -197,7 +197,8 @@ it.live(
       const colleague = {
         ...viewer,
         user: { id: "usr_colleague", name: "Colleague", email: "colleague@patchy.local" },
-        admin: false
+        admin: false,
+        guest: false
       };
       for (const current of [viewer, colleague]) {
         const reply = yield* call("demo.fixtures", current);
@@ -382,7 +383,8 @@ it.live(
       const colleague = {
         ...viewer,
         user: { id: "usr_colleague", name: "Colleague", email: "colleague@patchy.local" },
-        admin: false
+        admin: false,
+        guest: false
       };
       const call = (name: string, current: typeof viewer) =>
         invocation.call(
@@ -551,7 +553,8 @@ export default createGuest({desk:{answer}}, [], {}, ["support"]);`)
       const colleague = {
         ...viewer,
         user: { id: "usr_colleague", name: "Colleague", email: "colleague@patchy.local" },
-        admin: false
+        admin: false,
+        guest: false
       };
       for (const current of [viewer, colleague]) {
         const answered = yield* invocation.call(

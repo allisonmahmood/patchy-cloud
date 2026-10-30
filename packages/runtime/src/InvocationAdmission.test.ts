@@ -13,7 +13,8 @@ import { NodeCryptography } from "@patchy/core";
 const viewer = {
   user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
   company: { id: "cmp_test", name: "Test", handle: "test" },
-  admin: false
+  admin: false,
+  guest: false
 };
 const version: LoadedVersions.LoadedVersion = {
   patchId: "testpatch001",

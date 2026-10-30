@@ -153,7 +153,7 @@ The patch whose loaded version defines its owned resources and declares the outs
 _Avoid_: effective principal, patch owner
 
 **Initiating viewer**:
-The user whose live session, or whose agent connection, admits an invocation or a direct browser operation. A public tier 1 document has no viewer: it reaches no data.
+The user whose live session, or whose agent connection, admits an invocation or a direct browser operation. A granted outsider remains that user, while their runtime viewer names the patch's company and has `guest: true`, `admin: false`. A public tier 1 document has no viewer: it reaches no data.
 _Avoid_: principal, machine token, owning patch
 
 **Patch identity**:

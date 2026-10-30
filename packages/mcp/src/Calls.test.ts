@@ -112,7 +112,8 @@ it.layer(harness)("read_patch", (it) => {
         assert.deepStrictEqual(handed.binding.identity, {
           user: { id: ben.id, name: "Ben Okafor", email: ben.email },
           company: { id: acme.id, handle: acme.handle, name: "Acme" },
-          admin: false
+          admin: false,
+          guest: false
         });
         assert.deepStrictEqual(handed.binding.principal, { userId: ben.id });
         assert.deepStrictEqual(handed.binding.agent, { name: "Claude Code" });

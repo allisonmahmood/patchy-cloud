@@ -120,5 +120,18 @@ export const migrations: Migrations = {
     WHERE tier = 0`,
     `ALTER TABLE patch_versions DROP CONSTRAINT patch_versions_tier_check`,
     `ALTER TABLE patch_versions ADD CONSTRAINT patch_versions_tier_check CHECK (tier BETWEEN 1 AND 3)`
+  ),
+  // A grant names an existing person and survives temporary patch and account changes.
+  // Permanent patch reclamation removes it with the patch.
+  "0030_patch_guest_grants": ddl(
+    `CREATE TABLE patch_guest_grants (
+      patch_id TEXT NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      user_id TEXT NOT NULL REFERENCES users(id),
+      granted_by TEXT NOT NULL REFERENCES users(id),
+      granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (patch_id, user_id)
+    )`,
+    `CREATE INDEX patch_guest_grants_user_id_idx ON patch_guest_grants(user_id)`
   )
 };

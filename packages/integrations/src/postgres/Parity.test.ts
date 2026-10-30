@@ -51,7 +51,8 @@ const binding = Binding.Binding.of({
   identity: {
     user: { id: "usr_parity", email: "member@example.test", name: "Member" },
     company: { id: "cmp_parity", handle: "parity", name: "Parity" },
-    admin: false
+    admin: false,
+    guest: false
   }
 });
 const connection = {

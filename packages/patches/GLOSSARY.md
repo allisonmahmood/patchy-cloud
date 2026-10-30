@@ -25,8 +25,12 @@ An admin changing a patch's owner to an active member of the same company, inclu
 _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
-Who may open a patch: `company` means signed-in colleagues in its company; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
+Who may open a patch: `company` means signed-in colleagues in its company, plus an existing outsider with a guest grant to an eligible current private tier 1 version; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
+
+**Guest grant**:
+A patch-specific invitation for an existing active person in another company to open an eligible current private tier 1 version as themselves. The grant gives no membership or access to other company resources. It remains recorded while the patch is public, retired, deleted in recovery, or disabled, and is removed by revocation or permanent patch reclamation.
+_Avoid_: company membership, guest account (the person keeps their existing account)
 
 **Openable patch**:
 A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.

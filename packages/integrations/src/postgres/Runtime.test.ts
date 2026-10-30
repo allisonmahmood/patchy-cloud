@@ -84,7 +84,8 @@ const decodeFailure = Schema.decodeUnknownSync(RuntimeFailure);
 const identity = {
   user: { id: DEV_SEED.userId, name: "Viewer", email: "viewer@example.test" },
   company: { id: DEV_SEED.companyId, handle: "dev", name: "Dev" },
-  admin: false
+  admin: false,
+  guest: false
 };
 /** The tier 2 version an action runs in, declaring the connection its handlers call back to. */
 const binding = {

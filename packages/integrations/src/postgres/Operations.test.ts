@@ -151,7 +151,8 @@ const binding = Binding.Binding.of({
   identity: {
     user: { id: "usr_operations", email: "member@example.test", name: "Member" },
     company: { id: "cmp_operations", handle: "operations", name: "Operations" },
-    admin: false
+    admin: false,
+    guest: false
   }
 });
 const connection = {

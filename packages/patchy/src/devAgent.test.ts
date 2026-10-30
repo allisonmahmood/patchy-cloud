@@ -25,8 +25,12 @@ const identity = new Identity({
   role: "admin",
   machine: { id: "machine_dev", name: "Dev machine" }
 });
-const viewer = { person: { user: identity.user, company: identity.company, admin: true } };
-const peer = { person: { user: colleague, company: identity.company, admin: false } };
+const viewer = {
+  person: { user: identity.user, company: identity.company, admin: true, guest: false }
+};
+const peer = {
+  person: { user: colleague, company: identity.company, admin: false, guest: false }
+};
 const prepared: Prepared = {
   patchId: "localdev0000",
   identity,

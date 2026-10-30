@@ -28,6 +28,7 @@ import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
 import * as RuntimeLog from "./RuntimeLog.js";
 import * as CompanyAdmission from "./CompanyAdmission.js";
+import * as GuestAccess from "./GuestAccess.js";
 import * as RuntimeProduction from "./RuntimeProduction.js";
 import * as StreamAdmission from "./StreamAdmission.js";
 import { NodeCryptography } from "@patchy/core";
@@ -117,6 +118,7 @@ const dependencies = Layer.mergeAll(
   OperatingLimits.layer,
   RuntimeLog.layer,
   Limits.layer,
+  Layer.succeed(GuestAccess.GuestAccess, { admit: () => Effect.succeed(false) }),
   Layer.succeed(LoadedVersions.LoadedVersions, {
     find: () => Effect.succeed(Option.some({ ...version, patchTier: version.manifest.tier }))
   })
@@ -192,7 +194,8 @@ it.effect(
           handle: DEV_SEED.companyHandle,
           name: DEV_SEED.companyName
         },
-        admin: true
+        admin: true,
+        guest: false
       });
       const calls = yield* BackendCalls;
       yield* TestClock.setTime(NOW + 59_999);

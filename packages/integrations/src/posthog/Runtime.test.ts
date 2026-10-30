@@ -260,7 +260,8 @@ it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })(
           const viewer = {
             user: { id: DEV_SEED.userId, name: "Dev", email: "dev@patchy.local" },
             company: { id: DEV_SEED.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-            admin: false
+            admin: false,
+            guest: false
           };
           const binding = Binding.Binding.of({
             companyId: DEV_SEED.companyId,

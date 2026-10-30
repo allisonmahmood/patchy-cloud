@@ -105,7 +105,8 @@ it.effect(
               handle: DEV_SEED.companyHandle,
               name: DEV_SEED.companyName
             },
-            admin: true
+            admin: true,
+            guest: false
           }
         });
         const event = yield* events.next;

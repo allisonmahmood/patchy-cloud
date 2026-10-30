@@ -24,7 +24,8 @@ export const snapshot: Resource = {
 export const identity = {
   user: { id: "usr_viewer", email: "viewer@example.com", name: "Viewer" },
   company: { id: "cmp_callbacks", handle: "callbacks", name: "Callbacks" },
-  admin: false
+  admin: false,
+  guest: false
 };
 export const binding = Binding.Binding.of({
   companyId: identity.company.id,

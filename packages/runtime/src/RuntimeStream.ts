@@ -371,17 +371,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
-      if (principal === null || principal.userId !== identity.viewerId)
-        return yield* new Runtime.PrincipalChanged({});
       const find = (versionId?: string) =>
         versions
           .find(input.patchId, versionId)
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const found = yield* find(input.versionId);
-      if (Option.isNone(found) || found.value.companyId !== identity.companyId)
-        return yield* new Runtime.AccessDenied({});
+      if (Option.isNone(found)) return yield* new Runtime.AccessDenied({});
       const loaded = found.value;
+      const identity = yield* admission.admit(loaded);
+      if (principal === null || principal.userId !== identity.viewerId)
+        return yield* new Runtime.PrincipalChanged({});
+      if (loaded.companyId !== identity.companyId) return yield* new Runtime.AccessDenied({});
       const { buffer, idle } = yield* operatingLimits.getMany({
         companyId: identity.companyId,
         limits: { buffer: "stream.buffer.bytes", idle: "execution.document.idle" }
@@ -859,7 +859,11 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
+      const found = yield* versions
+        .find(input.patchId, input.versionId)
+        .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+      if (Option.isNone(found)) return yield* new Runtime.AccessDenied({});
+      const identity = yield* admission.admit(found.value);
       if (principal === null || principal.userId !== identity.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;

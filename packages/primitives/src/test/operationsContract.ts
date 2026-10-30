@@ -620,7 +620,8 @@ export const sharedOperationsContract = Effect.fn("test.sharedOperationsContract
     identity: {
       user: { id: "usr_viewer", name: "Viewer", email: "viewer@example.test" },
       company: { id: companyId, handle: "company", name: "Company" },
-      admin: false
+      admin: false,
+      guest: false
     }
   };
   const live = yield* Ref.make(

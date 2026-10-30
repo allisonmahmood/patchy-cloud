@@ -32,7 +32,8 @@ const binding = Binding.Binding.of({
   identity: {
     user: { id: "viewer", name: "Viewer", email: "viewer@example.test" },
     company: { id: "cmp_dev", name: "Company", handle: "company" },
-    admin: false
+    admin: false,
+    guest: false
   },
   correlationId: "member-directory-test"
 });

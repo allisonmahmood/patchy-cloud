@@ -293,10 +293,11 @@ export const serve = Effect.fn("Dev.serve")(function* (
         Layer.provide([
           StreamLimits.layerLocal,
           Layer.succeed(StreamAdmission.StreamAdmission, {
-            admit: Effect.succeed({
-              ...streamIdentity,
-              recheck: Effect.succeed(streamIdentity)
-            })
+            admit: () =>
+              Effect.succeed({
+                ...streamIdentity,
+                recheck: Effect.succeed(streamIdentity)
+              })
           })
         ])
       )
@@ -316,13 +317,15 @@ export const serve = Effect.fn("Dev.serve")(function* (
   const url = yield* mount({
     user: prepared.identity.user,
     company: prepared.identity.company,
-    admin: prepared.identity.role === "admin"
+    admin: prepared.identity.role === "admin",
+    guest: false
   });
   const colleagueServer = yield* Layer.build(Layer.fresh(layer));
   const colleagueUrl = yield* mount({
     user: colleague,
     company: prepared.identity.company,
-    admin: false
+    admin: false,
+    guest: false
   }).pipe(Effect.provideContext(colleagueServer));
   const ready = {
     ...record,

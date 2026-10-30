@@ -52,7 +52,8 @@ const who = { companyId: DEV_SEED.companyId, userId: DEV_SEED.userId };
 const viewer = {
   user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
   company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
-  admin: false
+  admin: false,
+  guest: false
 };
 // An attempt has a patch id's shape: 12 of [a-z0-9].
 const attempt = () => newPatchId();

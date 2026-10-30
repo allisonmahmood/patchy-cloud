@@ -47,7 +47,8 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
   const identity = {
     user: { id: "usr_dev", name: "Viewer", email: "viewer@example.test" },
     company: { id: binding.companyId, handle: "company", name: "Company" },
-    admin: false
+    admin: false,
+    guest: false
   };
   const capability = yield* capabilities.issue({
     binding: { ...binding, identity, principal: { userId: identity.user.id } },

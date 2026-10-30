@@ -23,7 +23,8 @@ const memberDirectory = "members:company";
 const viewer = {
   user: { id: "viewer", name: "Viewer", email: "viewer@patchy.local" },
   company: { id: "company", name: "Company", handle: "company" },
-  admin: false
+  admin: false,
+  guest: false
 };
 const shared = {
   kind: "sharedTable" as const,

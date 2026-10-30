@@ -292,7 +292,8 @@ export const RuntimeMe = Schema.NullOr(
   Schema.Struct({
     user: Identity.fields.user,
     company: Identity.fields.company,
-    admin: Schema.Boolean
+    admin: Schema.Boolean,
+    guest: Schema.Boolean
   })
 ).annotate({ identifier: "RuntimeMe" });
 export type RuntimeMe = typeof RuntimeMe.Type;

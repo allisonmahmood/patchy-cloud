@@ -113,7 +113,8 @@ VALUES ('invented-contact', 'Invented contact', 'missing-member');\n`;
         identity: {
           user: prepared.identity.user,
           company: prepared.identity.company,
-          admin: prepared.identity.role === "admin"
+          admin: prepared.identity.role === "admin",
+          guest: false
         },
         principal: { userId: prepared.identity.user.id },
         correlationId: "shared-fixture-refs"
@@ -219,7 +220,8 @@ it.live(
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
+            admin: prepared.identity.role === "admin",
+            guest: false
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "shared-store-fixture"
@@ -379,7 +381,8 @@ it.live(
           identity: {
             user: current.identity.user,
             company: current.identity.company,
-            admin: current.identity.role === "admin"
+            admin: current.identity.role === "admin",
+            guest: false
           },
           principal: { userId: current.identity.user.id },
           correlationId: "fixture-owned-data"
@@ -506,7 +509,8 @@ it.live(
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
+            admin: prepared.identity.role === "admin",
+            guest: false
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "fixture-retry"
@@ -610,7 +614,8 @@ it.live(
           identity: {
             user: current.identity.user,
             company: current.identity.company,
-            admin: current.identity.role === "admin"
+            admin: current.identity.role === "admin",
+            guest: false
           },
           principal: { userId: current.identity.user.id },
           correlationId: "published-inventory"
@@ -789,7 +794,8 @@ CREATE TEMP TABLE session_marker AS SELECT * FROM fixture_marker;`
           identity: {
             user: prepared.identity.user,
             company: prepared.identity.company,
-            admin: prepared.identity.role === "admin"
+            admin: prepared.identity.role === "admin",
+            guest: false
           },
           principal: { userId: prepared.identity.user.id },
           correlationId: "postgres-dispatch"

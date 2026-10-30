@@ -324,12 +324,14 @@ const connection = Effect.gen(function* () {
 const owner: Viewer = {
   user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
   company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: DEV_SEED.companyName },
-  admin: true
+  admin: true,
+  guest: false
 };
 const colleague: Viewer = {
   ...owner,
   user: { id: "usr_dev_colleague", email: "colleague@patchy.local", name: "Dev Colleague" },
-  admin: false
+  admin: false,
+  guest: false
 };
 
 /** A local tier 2 dev binding declaring `uses`, as `patchy dev` admits either viewer. */

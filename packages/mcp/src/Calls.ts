@@ -106,7 +106,8 @@ export type Reached = { readonly target: Target } | { readonly refused: ToolCall
 const personOf = (identity: AgentConnections.AgentIdentity): NonNullable<RuntimeMe> => ({
   user: identity.user,
   company: identity.company,
-  admin: identity.role === "admin"
+  admin: identity.role === "admin",
+  guest: false
 });
 
 /** A retired patch, to someone who could open it: who retired it and when, and what to do. */

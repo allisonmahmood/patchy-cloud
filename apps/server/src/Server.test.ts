@@ -613,6 +613,62 @@ const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 const decodeUpdated = Schema.decodeUnknownSync(PublishUpdated);
 const decodeStreamFrame = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeStreamFrame));
 it.layer(server())("runtime over the real server and Patches resolver", (it) => {
+  it.effect("admits a granted outsider as a guest and refuses a revoked grant", () =>
+    Effect.gen(function* () {
+      const created = decodeCreated(
+        yield* (yield* publish(DEV_SEED.token, { html: html("Guest runtime") })).json
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies (id, handle, name)
+        VALUES ('cmp_runtime_guest', 'runtime-guest', 'Runtime guest')`;
+      yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_runtime_guest', 'clerk_runtime_guest', 'cmp_runtime_guest',
+          'runtime-guest@example.com', 'Runtime guest', 'member')`;
+      yield* sql`INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by)
+        VALUES (${created.patchId}, ${DEV_SEED.companyId}, 'usr_runtime_guest', ${DEV_SEED.userId})`;
+      const invoke = () =>
+        send(
+          HttpClientRequest.post("/api/runtime/call").pipe(
+            HttpClientRequest.setHeaders({
+              cookie: sessionCookie("clerk_runtime_guest", "runtime-guest@example.com"),
+              origin: publicBaseUrl,
+              "sec-fetch-site": "same-origin",
+              "x-patchy-wire": String(WIRE_VERSION),
+              "x-patchy-principal": JSON.stringify({ userId: "usr_runtime_guest" })
+            }),
+            HttpClientRequest.bodyJsonUnsafe({
+              patchId: created.patchId,
+              versionId: created.versionId,
+              wire: WIRE_VERSION,
+              principal: { userId: "usr_runtime_guest" },
+              op: "me",
+              args: {}
+            })
+          )
+        );
+      const allowed = yield* invoke();
+      assert.strictEqual(allowed.status, 200);
+      assert.deepInclude(yield* allowed.json, {
+        ok: true,
+        value: {
+          user: {
+            id: "usr_runtime_guest",
+            email: "runtime-guest@example.com",
+            name: DEV_SEED.userName
+          },
+          company: {
+            id: DEV_SEED.companyId,
+            handle: DEV_SEED.companyHandle,
+            name: DEV_SEED.companyName
+          },
+          admin: false,
+          guest: true
+        }
+      });
+      yield* sql`DELETE FROM patch_guest_grants WHERE patch_id = ${created.patchId}`;
+      assert.include(yield* (yield* invoke()).json, { code: "access_denied" });
+    })
+  );
   it.effect("binds exact versions and rechecks sharing without passing the bearer API guard", () =>
     Effect.gen(function* () {
       const created = decodeCreated(
@@ -661,7 +717,8 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
             handle: DEV_SEED.companyHandle,
             name: DEV_SEED.companyName
           },
-          admin: true
+          admin: true,
+          guest: false
         }
       });
       assert.include(yield* (yield* call(updated.versionId, sessionCookie(), "tables.get")).json, {

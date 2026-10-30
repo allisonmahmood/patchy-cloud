@@ -22,6 +22,7 @@ import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import type { ContractLimitId } from "@patchy/limits/registry";
 import * as Testing from "@patchy/sql/testing";
 import * as LoadedVersions from "../LoadedVersions.js";
+import * as GuestAccess from "../GuestAccess.js";
 import * as Runtime from "../Runtime.js";
 import * as RuntimeProduction from "../RuntimeProduction.js";
 import * as RuntimeApi from "../RuntimeApi.js";
@@ -116,7 +117,10 @@ export const layer = (
         RuntimeLog.layer,
         Session.layer,
         Users.layer,
-        Companies.layer
+        Companies.layer,
+        Layer.succeed(GuestAccess.GuestAccess, {
+          admit: () => Effect.succeed(false)
+        })
       )
     ),
     Layer.provideMerge(seed.pipe(Layer.provideMerge(Testing.layer()))),

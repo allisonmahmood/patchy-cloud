@@ -39,7 +39,8 @@ import * as ServerBundles from "./ServerBundles.js";
 const viewer = {
   user: { id: "usr_dev", name: "Dev", email: "dev@patchy.local" },
   company: { id: "cmp_dev", name: "Patchy Dev", handle: "patchy-dev" },
-  admin: true
+  admin: true,
+  guest: false
 };
 const binding: Binding.Binding["Service"] = {
   patchId: "local3970001",

@@ -73,7 +73,14 @@ import {
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
-import { Content, LoadedVersions, DeletionSweep, Patches, PatchesApi } from "@patchy/patches";
+import {
+  Content,
+  LoadedVersions,
+  DeletionSweep,
+  GuestGrants,
+  Patches,
+  PatchesApi
+} from "@patchy/patches";
 import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
@@ -207,13 +214,14 @@ const services = Layer.mergeAll(
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
+        Layer.provide(GuestGrants.runtimeLayer),
         Layer.provideMerge(
           RuntimeStream.layer.pipe(
             Layer.provide(Subscriptions.layer),
             Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
           )
         ),
-        Layer.provide(StreamAdmission.layer)
+        Layer.provide(StreamAdmission.layer.pipe(Layer.provide(GuestGrants.runtimeLayer)))
       );
       // The invocation that runs a page's calls also runs agents' calls at Patchy MCP's door,
       // which finds it, when the host runs patch code at all, beside Runtime.
@@ -246,6 +254,7 @@ const services = Layer.mergeAll(
       AgentConnections.layer,
       ChangeKeys.layer,
       Patches.layer,
+      GuestGrants.layer,
       Companies.layer,
       Users.layer,
       Looks.layer,

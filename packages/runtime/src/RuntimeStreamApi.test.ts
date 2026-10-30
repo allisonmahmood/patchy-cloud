@@ -152,10 +152,10 @@ it.layer(layer)("stream HTTP admission", (it) => {
             "principal_changed"
           ],
           [{ ...headers, "x-patchy-principal": "null" }, {}, 409, "principal_changed"],
-          // The document is another viewer's, another company's, or from a previous
-          // generation or version: each is a replaced stream (409), never control.
+          // Another member or generation cannot control this document. An outsider
+          // without a grant is refused before the document is considered.
           [viewer("usr_member", "user_member", "member@patchy.local"), {}, 409, "invalid_request"],
-          [viewer("usr_other", "user_other", "other@patchy.local"), {}, 409, "invalid_request"],
+          [viewer("usr_other", "user_other", "other@patchy.local"), {}, 403, "access_denied"],
           [headers, { generation: "stream_stale" }, 409, "invalid_request"],
           [headers, { versionId: Fixtures.tier1VersionId }, 409, "invalid_request"]
         ] as const;

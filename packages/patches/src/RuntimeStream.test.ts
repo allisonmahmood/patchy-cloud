@@ -20,6 +20,7 @@ import { Limits, OperatingLimits } from "@patchy/limits";
 import {
   RuntimeStream,
   Runtime,
+  GuestAccess,
   StreamAdmission,
   StreamLimits,
   Subscriptions,
@@ -55,6 +56,7 @@ const layer = RuntimeStream.layer.pipe(
   Layer.provide(TestMemberDirectory.layer),
   Layer.provideMerge(
     Layer.mergeAll(LoadedVersions.layer, StreamAdmission.layer, StreamLimits.layer).pipe(
+      Layer.provide(Layer.succeed(GuestAccess.GuestAccess, { admit: () => Effect.succeed(false) })),
       Layer.provideMerge(dependencies)
     )
   ),
@@ -139,11 +141,12 @@ it.layer(layer)("committed patch lifecycle streams", (it) => {
         {
           origin: PUBLIC_BASE_URL,
           identity: Effect.succeed({
-            viewer: { user: identity.user, company: identity.company, admin: false },
+            viewer: { user: identity.user, company: identity.company, admin: false, guest: false },
             reauthorize: Effect.succeed({
               user: identity.user,
               company: identity.company,
-              admin: false
+              admin: false,
+              guest: false
             })
           })
         }
