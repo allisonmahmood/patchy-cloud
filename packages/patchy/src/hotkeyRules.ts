@@ -6,7 +6,7 @@
 import { normalizeHotkey } from "@tanstack/preact-hotkeys";
 
 /** Patchy keeps this chord for its own shortcuts. `Hotkey` refuses it at compile time. */
-export const reservedChord = "Mod+Shift+K";
+const reservedChord = "Mod+Shift+K";
 
 /** A hotkey's steps, split on spaces. A lone trailing lowercase letter is the same key as its capital. */
 export const steps = (hotkey: string): string[] =>
