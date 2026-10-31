@@ -64,13 +64,16 @@ Bun is pinned once, as the `bun: runtime:<version>` devDependency in
 `package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
 devDependency rather than `devEngines.runtime` because npm, which the packed CLI
 tests run from the repository root, refuses a `devEngines.runtime` that isn't Node.
-Dependabot doesn't bump it: change the version there and run `pnpm install` to
-rewrite the lockfile.
+Dependabot doesn't bump it, and pnpm's one-day `minimumReleaseAge` doesn't cover
+runtime downloads. To bump it, pick a release at least a day old (`gh release view
+bun-v<version> -R oven-sh/bun --json publishedAt`), change the version there and
+run `pnpm install` to rewrite the lockfile.
 
 Format is `bun fmt`, which reads `prettier.config.js` and `.prettierignore` and
-checks the whole repo in a fraction of a second. The pre-commit hook formats what
-you stage, but refuses a partly staged file whose staged part needs formatting:
-stage the whole file, or run `pnpm format` and stage the part again.
+checks the whole repo in a fraction of a second. The pre-commit hook is still
+`pnpm exec lint-staged`, now running `bun fmt` on what you stage: every worktree of
+a clone shares one `.git/hooks`, so the hook's text stays the same across branches
+from before and after the switch.
 Lint is Oxlint, with its type-aware rules run by `oxlint-tsgolint`; it keeps no
 cache and checks the whole repo in seconds.
 
