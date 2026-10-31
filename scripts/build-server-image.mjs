@@ -39,15 +39,16 @@ Exports a Docker-loadable image tar and FILE.json without a daemon or registry p
 The default output is .local/server-image.tar; --stage only assembles the runtime.
 SOURCE_DATE_EPOCH and REVISION default to the current git commit's time and hash.
 VERSION defaults to the server package version. No credentials enter the image.
-Host: node dist/start.js (default, user node). Exec: node dist/exec.js.
-Fleet operations, such as a deploy's promote: node dist/fleet.js.`);
+The server runs on the Bun the root package.json pins ("bun": "runtime:<version>").
+Host: bun dist/start.js (default, user bun, uid 1000). Exec: bun dist/exec.js.
+Fleet operations, such as a deploy's promote: bun dist/fleet.js.`);
   process.exit(0);
 }
 if (process.platform !== "linux" || process.arch !== "x64") {
   throw new Error("The server image recipe requires Linux x64 (the ECS X86_64 target).");
 }
 if (process.version !== "v24.20.0") {
-  throw new Error("Use Node 24.20.0, matching the pinned image and CI builder.");
+  throw new Error("Use Node 24.20.0, matching the Dockerfile's builder and CI.");
 }
 
 const run = (command, args, options = {}) =>
@@ -64,8 +65,18 @@ if (capture("pnpm", ["--version"]) !== pnpmVersion) {
   throw new Error(`Use pnpm ${pnpmVersion}, as pinned in packageManager.`);
 }
 const dockerfile = await readFile(path.join(root, "apps/server/Dockerfile"), "utf8");
-const base = /^FROM (node:24-slim@sha256:[a-f0-9]{64}) AS builder$/m.exec(dockerfile)?.[1];
-if (!base) throw new Error("Dockerfile must pin the node:24-slim builder by digest.");
+if (!/^FROM node:24-slim@sha256:[a-f0-9]{64} AS builder$/m.test(dockerfile))
+  throw new Error("Dockerfile must pin the node:24-slim builder by digest.");
+// One Bun version: the root devDependency, which pnpm installs and CI tests on. The
+// runner's tag must name it; the export below also checks the binary itself.
+const bun = /^runtime:(\S+)$/.exec(rootPackage.devDependencies?.bun ?? "")?.[1];
+if (!bun) throw new Error('The root package.json must pin Bun as "bun": "runtime:<version>".');
+const runner = /^FROM (oven\/bun:([^@\s]+)-slim@sha256:[a-f0-9]{64}) AS runner$/m.exec(dockerfile);
+if (!runner) throw new Error("Dockerfile must pin the oven/bun slim runner by digest.");
+const [, base, baseBun] = runner;
+if (baseBun !== bun) {
+  throw new Error(`Dockerfile runs Bun ${baseBun}, but the root package.json pins Bun ${bun}.`);
+}
 const epoch = Number(
   process.env.SOURCE_DATE_EPOCH ?? capture("git", ["show", "-s", "--format=%ct", "HEAD"])
 );
@@ -82,10 +93,13 @@ const metadata = {
   version: process.env.VERSION ?? serverPackage.version,
   node: process.version,
   pnpm: pnpmVersion,
-  hostCommand: ["node", "dist/start.js"],
-  execCommand: ["node", "dist/exec.js"],
-  fleetCommand: ["node", "dist/fleet.js"],
-  user: "node"
+  bun,
+  // The deploy workflow promotes with fleetCommand, so a rollback to an image on
+  // another runtime promotes with that image's own.
+  hostCommand: ["bun", "dist/start.js"],
+  execCommand: ["bun", "dist/exec.js"],
+  fleetCommand: ["bun", "dist/fleet.js"],
+  user: "bun"
 };
 const buildEnv = { ...process.env, SOURCE_DATE_EPOCH: String(epoch), TZ: "UTC", LC_ALL: "C" };
 const temporary = await mkdtemp(path.join(tmpdir(), "patchy-image-"));
@@ -177,6 +191,18 @@ try {
     if (!capture("tar", ["--version"]).startsWith("tar (GNU tar)")) {
       throw new Error("GNU tar is required for deterministic archive metadata.");
     }
+    // The image must run the very binary the lockfile pins, the one CI's tests run on.
+    const baseFiles = path.join(temporary, "base");
+    await mkdir(baseFiles);
+    run("crane", ["export", "--platform", metadata.platform, base, path.join(baseFiles, "fs.tar")]);
+    run("tar", ["--extract", "--file", "fs.tar", "usr/local/bin/bun"], { cwd: baseFiles });
+    const [baseBinary, pinnedBinary] = await Promise.all([
+      readFile(path.join(baseFiles, "usr/local/bin/bun")),
+      readFile(path.join(root, "node_modules/bun/bun"))
+    ]);
+    if (digest(baseBinary) !== digest(pinnedBinary))
+      throw new Error(`${base} does not carry the Bun binary pnpm-lock.yaml pins.`);
+    await rm(baseFiles, { recursive: true });
     const rootfs = path.join(temporary, "rootfs");
     await stageRuntime(rootfs);
     const layer = path.join(temporary, "runtime.tar");
@@ -257,8 +283,8 @@ try {
       ],
       ExposedPorts: { "3000/tcp": {} },
       Volumes: { "/data": {} },
+      // The base's own labels describe Bun, not this image.
       Labels: {
-        ...config.config.Labels,
         "org.opencontainers.image.source": "https://github.com/allisonmahmood/patchy-cloud",
         "org.opencontainers.image.licenses": "UNLICENSED",
         "org.opencontainers.image.version": metadata.version,

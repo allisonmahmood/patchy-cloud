@@ -35,6 +35,8 @@ const check: ReadonlyArray<Suite> = [
 ];
 
 const acceptance: ReadonlyArray<Suite> = [
+  // The offline tests again on Bun, the server's runtime.
+  { name: "test (bun)", commands: [pnpm("test:bun")] },
   { name: "postgres-concurrency", commands: [pnpm("test:postgres-concurrency")] },
   {
     name: "cli-smoke",

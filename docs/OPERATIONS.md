@@ -537,8 +537,8 @@ To run only the execution task from this checkout:
 node --import tsx --conditions=development apps/server/src/exec.ts
 ```
 
-The server image includes the same entrypoint as `node dist/exec.js`; its default
-command remains the host (`node dist/start.js`).
+The server image includes the same entrypoint as `bun dist/exec.js`; its default
+command remains the host (`bun dist/start.js`).
 
 It requires `EXECUTION_MANAGEMENT_SECRET`, `EXECUTION_CALLBACK_URLS` as a JSON
 array of trusted host callback URLs, `EXECUTION_DEPLOYMENT_REVISION` and
@@ -633,7 +633,7 @@ Promotion returns false until the required warm capacity exists. Existing compan
 move to ready replacement tasks incrementally, retaining admitted work on the old
 binding. Rollback stages and promotes the earlier revision through the same operations.
 No direct row edits are needed. `Fleet.promote` does both, polling until the spares
-are warm; the image runs it as `node dist/fleet.js promote <revision>`, which
+are warm; the image runs it as `bun dist/fleet.js promote <revision>`, which
 production's [deploy workflow](#deploying) runs as a one-off host task.
 
 The housekeeping lease renews during provider work, and a failing task does not
@@ -694,6 +694,10 @@ address, which stays cached.
 In production `apps/infra` sets all of these; see [Production](#production).
 
 ## Production
+
+Hosts, exec tasks and the promote task run on Bun, at the version the root
+`package.json` pins (`"bun": "runtime:<version>"`), through `@effect/platform-node`'s
+node:http compatibility. The CLI stays on Node.
 
 Production runs on AWS in `us-east-1`, written as AWS CDK in `apps/infra`;
 [ADR-0012](adr/ADR-0012-credential-free-execution-service.md#production-topology)
@@ -794,9 +798,11 @@ One run goes at a time; a second waits. A run:
    as its previous revision. CloudFormation waits for ECS to settle. A host that
    cannot start trips the circuit breaker: the service rolls back and the stack
    update fails and rolls back, before any promotion;
-8. promotes the fleet with `node dist/fleet.js promote <revision>`, run once as a
+8. promotes the fleet with `bun dist/fleet.js promote <revision>`, run once as a
    task from the host task definition, and records the release as promoted. The
-   promotion waits up to five minutes for the new hosts to warm their spares;
+   command is the `fleetCommand` the image build recorded, so a release from
+   before the move to Bun promotes with its own `node`. The promotion waits up to
+   five minutes for the new hosts to warm their spares;
 9. confirms the service's primary deployment is on the new task definition.
 
 A release's deployment revision is its commit, and `/healthz/deep` names it.
@@ -862,6 +868,14 @@ rules a release ahead of the CLI, so a rollback lands on a release that reads
 every published patch and still refuses a read-only action's writes and a page's
 call to an agent tool.
 
+A rollback across the move from Node to Bun works the same way. Each release's
+task definitions name its own runtime, and the deploy promotes with the command
+its image records. A host no longer overrides an exec task's command, so it
+starts an older release's spares with that release's `node`. The other way
+round, an older host starts exec tasks with `node dist/exec.js`, and in the Bun
+image `node` falls back to Bun. Credentials sealed on either runtime open on the
+other.
+
 CI's `rollback-rehearsal` tries the first of these before a migration merges. On
 a pull request that changes a capability's `src/migrations.ts`, the handler
 descriptor schemas or the CLI code that writes descriptors, the live release,
@@ -869,7 +883,8 @@ the commit `/healthz/deep` names, starts a fresh dev-runner instance, migrates
 and seeds the brightline scenario; the PR's server starts on that data and
 migrates it; then the live release's server starts on it again, and the PR's
 once more. Those three swap only the server build and seed nothing, so rows stay
-as the migration left them.
+as the migration left them. Each build's server runs on the runtime its server
+package's `start` script names, as production would run it.
 After each start it exercises the deep health check, that build's CLI (whoami,
 list and a publish) and, in Chromium, the portal and every scenario patch, whose
 live queries must deliver again as they did for the live release and whose
@@ -1100,10 +1115,14 @@ node scripts/tier2-spike.mjs status
 node scripts/tier2-spike.mjs up .local/server-image.tar
 ```
 
-The image pins the Node base digest and normalizes archive metadata.
-`.github/workflows/server-image.yml` builds it twice and compares the archives.
-The default command is `node dist/start.js`, as user `node`; exec tasks override
-it with `node dist/exec.js`. Only the supervisor runs as root, retaining the
+The image builds on a digest-pinned Node and runs on Bun, from the digest-pinned
+`oven/bun` slim image, and normalizes archive metadata. The build refuses a runner
+whose tag names another Bun than the root `package.json` pins, or whose `bun`
+binary differs from the lockfile's, the one CI tests on.
+`.github/workflows/server-image.yml` builds it twice and compares the archives,
+then runs it with `scripts/server-image-smoke.mjs`.
+The default command is `bun dist/start.js`, as user `bun` (uid 1000); exec tasks
+override it with `bun dist/exec.js`. Only the supervisor runs as root, retaining the
 capabilities needed to chown temporary files, switch child uid/gid, sample and
 kill children. Workerd children have distinct unprivileged uids and empty
 environments. The execution package's build bundles their loader worker into
