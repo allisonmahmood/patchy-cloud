@@ -113,7 +113,7 @@ it.layer(services)("company directory", (it) => {
     })
   );
 
-  it.effect("offers and checks a scope's active guests, and resolves every guest in it", () =>
+  it.effect("offers and checks a scope's active guests, and names every guest in it", () =>
     Effect.gen(function* () {
       const directory = yield* Directory.Directory;
       const { company, user: admin } = yield* createCompany("directory-host");
@@ -141,6 +141,7 @@ it.layer(services)("company directory", (it) => {
         null
       ]);
 
+      // Their grant on the scope's patch ended, or they hold another of the company's patches.
       const ended: Directory.Scope = { ...shared, guests: new Map([[guest.id, false]]) };
       assert.deepStrictEqual(yield* directory.list(ended, 50), {
         rows: [memberValue(admin)],
@@ -149,7 +150,7 @@ it.layer(services)("company directory", (it) => {
       assert.deepStrictEqual(yield* directory.candidates(ended, [guest.id]), []);
       assert.deepStrictEqual(
         yield* directory.get(ended, guest.id),
-        new Directory.Member({ ...asGuest, active: false })
+        new Directory.Member({ ...asGuest, email: "", active: false })
       );
       assert.isNull(yield* directory.get(members(company.id), guest.id));
     })

@@ -48,7 +48,7 @@ export const make = Effect.gen(function* () {
         output: runtimeOperations["members.get"].response
       },
       Effect.fn("Members.get")(function* (args) {
-        return yield* directory.get((yield* authorize).companyId, args.id);
+        return yield* directory.get(yield* authorize, args.id);
       })
     ),
     "members.getMany": Runtime.handler(
@@ -58,10 +58,10 @@ export const make = Effect.gen(function* () {
         output: runtimeOperations["members.getMany"].response
       },
       Effect.fn("Members.getMany")(function* (args) {
-        const { companyId } = yield* authorize;
+        const patch = yield* authorize;
         if (args.ids.length > maxItems)
           return yield* new Runtime.LimitExceeded({ limitId: "members.getMany", value: maxItems });
-        return yield* directory.getMany(companyId, args.ids);
+        return yield* directory.getMany(patch, args.ids);
       })
     )
   } satisfies Readonly<Record<string, Runtime.Handler>>;

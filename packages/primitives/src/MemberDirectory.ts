@@ -17,13 +17,14 @@ export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()(
   }
 }
 
-/** The patch a picker or assignment is for: its company's members and its active guests. */
+/** The patch a read is for: its company's members, and the guests it's shared with. */
 type Patch = Pick<Binding.Binding["Service"], "companyId" | "patchId">;
 
 /**
  * Platform-backed in production; the mount identities in local development. Pickers and
- * assignment checks are a patch's; resolution is its company's, so a patch reading another's
- * shared table resolves that patch's guests too.
+ * assignment checks offer the patch's active guests. Resolution names anyone holding one of its
+ * company's grants, so a patch reading another's shared table names that patch's guests too, but
+ * a guest is active, with their email, only in a patch they're currently shared with.
  */
 export class MemberDirectory extends Context.Service<
   MemberDirectory,
@@ -38,11 +39,11 @@ export class MemberDirectory extends Context.Service<
       cursor?: string
     ) => Effect.Effect<typeof MembersPage.Type, Runtime.RuntimeError>;
     readonly get: (
-      companyId: string,
+      patch: Patch,
       id: string
     ) => Effect.Effect<typeof Member.Type | null, Runtime.RuntimeError>;
     readonly getMany: (
-      companyId: string,
+      patch: Patch,
       ids: readonly string[]
     ) => Effect.Effect<readonly (typeof Member.Type | null)[], Runtime.RuntimeError>;
     readonly candidates: (

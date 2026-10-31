@@ -380,6 +380,13 @@ const inDirectory = ({ user }: { readonly user: Users.User }) => ({
   guest: true as const
 });
 
+/** How a patch the guest isn't shared with now shows them: by name, inactive, without email. */
+const unshared = (guest: { readonly user: Users.User }) => ({
+  ...inDirectory(guest),
+  email: "",
+  active: false
+});
+
 /** The fixtures' mutations, whose calls carry a fresh key. */
 const mutations = new Set(
   [handlers, tasks].flatMap((fixture) =>
@@ -625,12 +632,9 @@ it.layer(layer({ NODE_ENV: "development" }), { excludeTestServices: true })(
           assert.deepInclude((yield* assign("Theirs")).body, { ok: true });
           assert.deepStrictEqual((yield* lookUp).body, { ok: true, value: asGuest });
 
-          // Ended: they resolve inactive, and no one assigns them anew.
+          // Ended: they resolve by name, inactive, and no one assigns them anew.
           yield* grants.revoke({ patchId: created.patchId, userId: guest.user.id });
-          assert.deepStrictEqual((yield* lookUp).body, {
-            ok: true,
-            value: { ...asGuest, active: false }
-          });
+          assert.deepStrictEqual((yield* lookUp).body, { ok: true, value: unshared(guest) });
           assert.deepInclude((yield* assign("Too late")).body, { code: "invalid_row" });
 
           // Shared again: active and assignable.
@@ -642,7 +646,37 @@ it.layer(layer({ NODE_ENV: "development" }), { excludeTestServices: true })(
     );
 
     it.effect(
-      "is resolved by another of the company's patches, through the table it shares",
+      "is inactive where their grant ended, whatever their grant on another patch",
+      () =>
+        Effect.gen(function* () {
+          const grants = yield* GuestGrants.GuestGrants;
+          const guest = yield* outsider("proseware");
+          const first = yield* publishTasks("First tasks");
+          const second = yield* publishTasks("Second tasks");
+          const share = (patchId: string) =>
+            grants.grant({ patchId, userId: guest.user.id, grantedBy: DEV_SEED.userId });
+          const revoke = (patchId: string) => grants.revoke({ patchId, userId: guest.user.id });
+          const lookUp = (version: typeof first) =>
+            handle(version, admin, "people.get", { id: guest.user.id }).pipe(
+              Effect.map(({ body }) => body)
+            );
+          yield* share(first.patchId);
+          yield* share(second.patchId);
+
+          yield* revoke(first.patchId);
+          assert.deepStrictEqual(yield* lookUp(first), { ok: true, value: unshared(guest) });
+          assert.deepStrictEqual(yield* lookUp(second), { ok: true, value: inDirectory(guest) });
+
+          // Sharing the other patch again doesn't bring them back in the first.
+          yield* revoke(second.patchId);
+          yield* share(second.patchId);
+          assert.deepStrictEqual(yield* lookUp(first), { ok: true, value: unshared(guest) });
+        }),
+      30_000
+    );
+
+    it.effect(
+      "is named, without their email, by another of the company's patches reading its shared table",
       () =>
         Effect.gen(function* () {
           const grants = yield* GuestGrants.GuestGrants;
@@ -684,7 +718,7 @@ export default createGuest({ owners: { list } });`),
           );
           assert.deepStrictEqual((yield* handle(reader, admin, "owners.list")).body, {
             ok: true,
-            value: [inDirectory(guest)]
+            value: [unshared(guest)]
           });
         }),
       30_000

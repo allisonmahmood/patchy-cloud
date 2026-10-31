@@ -57,7 +57,7 @@ const fixture = Effect.gen(function* () {
     list: () => read.pipe(Effect.as({ rows: [], cursor: null })),
     search: () => read.pipe(Effect.as({ rows: [], cursor: null })),
     get: () => read,
-    getMany: (_companyId, ids) =>
+    getMany: (_patch, ids) =>
       read.pipe(Effect.as(ids.map((id) => (id === member.id ? member : null)))),
     candidates: () => Effect.succeed([]),
     revision: () => Effect.sync(() => String(state.revision))

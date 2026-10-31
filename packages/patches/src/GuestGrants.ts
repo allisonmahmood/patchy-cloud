@@ -186,11 +186,11 @@ export class GuestGrants extends Context.Service<
     /** A patch's guests with active grants, deactivated accounts included, oldest grant first. */
     readonly guests: (patchId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
     /**
-     * Which of these people hold a grant to one of the company's patches, `true` while one is
-     * active: the guests the company's member directory resolves.
+     * Which of these people hold a grant to one of the company's patches, `true` while their
+     * grant on this patch is active: the guests the patch's member directory resolves.
      */
     readonly holders: (
-      companyId: string,
+      patch: { readonly companyId: string; readonly patchId: string },
       userIds: ReadonlyArray<string>
     ) => Effect.Effect<ReadonlyMap<string, boolean>, SqlError>;
     /** The patches shared with a person, by company and name; deleted ones are absent. */
@@ -270,10 +270,14 @@ export const make = Effect.gen(function* () {
       ORDER BY g.granted_at, g.user_id`
   });
   const holderRows = SqlSchema.findAll({
-    Request: Schema.Struct({ companyId: Schema.String, userIds: Schema.Array(Schema.String) }),
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      patchId: Schema.String,
+      userIds: Schema.Array(Schema.String)
+    }),
     Result: HolderRow,
-    execute: ({ companyId, userIds }) => sql`
-      SELECT user_id AS "userId", bool_or(revoked_at IS NULL) AS active
+    execute: ({ companyId, patchId, userIds }) => sql`
+      SELECT user_id AS "userId", bool_or(patch_id = ${patchId} AND revoked_at IS NULL) AS active
       FROM patch_guest_grants
       WHERE company_id = ${companyId} AND ${sql.in("user_id", userIds)}
       GROUP BY user_id`
@@ -349,11 +353,11 @@ export const make = Effect.gen(function* () {
     Effect.catchTags(dieOnSchemaError)
   );
   const holders = Effect.fn("GuestGrants.holders")(function* (
-    companyId: string,
+    { companyId, patchId }: { readonly companyId: string; readonly patchId: string },
     userIds: ReadonlyArray<string>
   ) {
     if (userIds.length === 0) return new Map<string, boolean>();
-    const rows = yield* holderRows({ companyId, userIds: [...new Set(userIds)] });
+    const rows = yield* holderRows({ companyId, patchId, userIds: [...new Set(userIds)] });
     return new Map(rows.map(({ userId, active }) => [userId, active]));
   }, Effect.catchTags(dieOnSchemaError));
   const sharedWith = Effect.fn("GuestGrants.sharedWith")(function* (userId: string) {

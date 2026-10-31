@@ -867,10 +867,13 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "company candidates as `{ rows, cursor }`, in pages of 50. Search matches a literal, " +
           "case-insensitive prefix of the full name or email, not a surname or substring. " +
           "Order is lowercased name, lowercased email, then id; cursors bind to company and search. " +
-          "`members.get { id }` resolves any company user, including deactivated users; " +
+          "`members.get { id }` resolves any company user, including deactivated users, and " +
+          "anyone holding one of the company's guest grants, with `guest: true`; " +
           "`members.getMany { ids }` preserves input order and duplicates with null for unknown " +
           "or other-company ids. More than 1,000 ids is `limit_exceeded` with `members.getMany`. " +
-          "Each member is `{ id, name, email, admin, active }`. These reads require the fixed " +
+          "Each member is `{ id, name, email, admin, active, guest? }`. A guest is never admin, " +
+          "and is active with their email only in a patch currently shared with them; elsewhere " +
+          "`active` is false and `email` empty. These reads require the fixed " +
           "`members` declaration and active same-company viewer authority. Tier 2 handlers may read " +
           "the directory in all three kinds; only queries track the company directory revision. Directory reads use the platform " +
           "database, outside the query's company-database snapshot. A `member` column stores " +
