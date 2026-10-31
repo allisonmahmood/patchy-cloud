@@ -71,5 +71,12 @@
   },
   "lint-staged": {
     "*": "prettier --write --cache --ignore-unknown"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "bun",
+      "version": "1.4.4",
+      "onFail": "download"
+    }
   }
 }
