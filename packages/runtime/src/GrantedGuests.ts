@@ -14,7 +14,8 @@ export class GrantedGuests extends Context.Service<
   {
     /**
      * The patch's company, while this person holds an active grant to the patch and its guests
-     * can open this version: its current one, with nothing it declares keeping guests out.
+     * can open this version: its current one when `loaded` was read, with nothing it declares
+     * keeping guests out.
      */
     readonly host: (
       loaded: LoadedVersions.LoadedVersion,
