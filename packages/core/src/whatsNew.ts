@@ -52,6 +52,21 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 30,
+    date: "2026-10-31",
+    through: "e3d50f042c177121b4c2338ef7350d3b9a49ccca",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Patches move to Preact 11",
+        detail:
+          "Patches now build on Preact 11, and each page comes out a little smaller. An existing patch moves over the next time you publish it, and your agent may need to fix a few type errors first; publishing tells it where to look. Your published patches keep working the whole time.",
+        prs: [975]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 29,
     date: "2026-10-31",
     through: "5eeb1545ae83dacab543aa9e06e6bb2a107b4bb3",
