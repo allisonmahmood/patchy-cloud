@@ -575,7 +575,7 @@ button:disabled {
   font-size: 13.5px;
 }
 
-.picker__email {
+.picker__note {
   font-size: 12px;
   color: var(--muted);
   overflow: hidden;

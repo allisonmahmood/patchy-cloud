@@ -42,7 +42,7 @@ export function App() {
           <div className="whoami">
             <Avatar
               id={me.user.id}
-              person={{ ...me.user, admin: me.admin, active: true }}
+              person={{ ...me.user, active: true, guest: me.guest === true }}
               size="sm"
             />
             <span>

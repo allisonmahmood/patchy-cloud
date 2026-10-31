@@ -324,12 +324,18 @@ export const TablePage = Schema.Struct({
   cursor: Schema.NullOr(Schema.String)
 });
 
+/**
+ * A person in a patch's member directory: one of its company's members, or one of its guests.
+ * Only a guest carries `guest`, so a member reads as before and published result schemas that
+ * pass members through whole keep decoding.
+ */
 export const Member = Schema.Struct({
   id: NonEmptyText,
   name: Schema.String,
   email: Schema.String,
   admin: Schema.Boolean,
-  active: Schema.Boolean
+  active: Schema.Boolean,
+  guest: Schema.optionalKey(Schema.Literal(true))
 });
 export type Member = typeof Member.Type;
 export const MembersPage = Schema.Struct({

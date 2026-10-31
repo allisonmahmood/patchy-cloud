@@ -33,15 +33,15 @@ A column identifying a row in a named table, without requiring that row to exist
 _Avoid_: foreign key, join, embedded row
 
 **Member directory**:
-A declared company primitive, read by tier 2 handlers, exposing candidates to assign and resolving stored user ids, including deactivated users. Companies owns the users and directory revision; Primitives owns how patch code reads them and checks assignments.
+A declared company primitive, read by tier 2 handlers, exposing candidates to assign and resolving stored user ids, including deactivated users and the company's [guests](../companies/GLOSSARY.md). Companies owns the users and directory revision, and Patches the grants that bring guests in; Primitives owns how patch code reads them and checks assignments.
 _Avoid_: members table, native resource, roster
 
 **Candidate**:
-A user who can currently be assigned in a patch. Today that is every active user of its company; public sharing does not widen the candidates.
+A user who can currently be assigned in a patch: every active user of its company, and the patch's guests while their grant and account are active. Public sharing does not widen the candidates.
 _Avoid_: active member (active does not imply assignable)
 
 **Member column**:
-A table column holding a user id, checked against the candidates on insertion or when its value changes. An unchanged value remains valid after its user is deactivated; deactivation never rewrites stored values.
+A table column holding a user id, checked against the candidates on insertion or when its value changes. An unchanged value remains valid after its user is deactivated or their grant ends; neither rewrites stored values.
 _Avoid_: user ref, owner field
 
 **Shared table**:

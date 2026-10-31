@@ -128,6 +128,11 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
 
 class RevokedRow extends Schema.Class<RevokedRow>("RevokedRow")({ userId: Schema.String }) {}
 
+class HolderRow extends Schema.Class<HolderRow>("HolderRow")({
+  userId: Schema.String,
+  active: Schema.Boolean
+}) {}
+
 /** A patch shared with a person, and why they can't open it now, if they can't. */
 export interface Shared {
   readonly patchId: string;
@@ -180,6 +185,14 @@ export class GuestGrants extends Context.Service<
     }) => Effect.Effect<boolean, SqlError>;
     /** A patch's guests with active grants, deactivated accounts included, oldest grant first. */
     readonly guests: (patchId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
+    /**
+     * Which of these people hold a grant to one of the company's patches, `true` while their
+     * grant on this patch is active: the guests the patch's member directory resolves.
+     */
+    readonly holders: (
+      patch: { readonly companyId: string; readonly patchId: string },
+      userIds: ReadonlyArray<string>
+    ) => Effect.Effect<ReadonlyMap<string, boolean>, SqlError>;
     /** The patches shared with a person, by company and name; deleted ones are absent. */
     readonly sharedWith: (userId: string) => Effect.Effect<ReadonlyArray<Shared>, Failure>;
     /**
@@ -256,6 +269,19 @@ export const make = Effect.gen(function* () {
       WHERE g.patch_id = ${patchId} AND g.revoked_at IS NULL
       ORDER BY g.granted_at, g.user_id`
   });
+  const holderRows = SqlSchema.findAll({
+    Request: Schema.Struct({
+      companyId: Schema.String,
+      patchId: Schema.String,
+      userIds: Schema.Array(Schema.String)
+    }),
+    Result: HolderRow,
+    execute: ({ companyId, patchId, userIds }) => sql`
+      SELECT user_id AS "userId", bool_or(patch_id = ${patchId} AND revoked_at IS NULL) AS active
+      FROM patch_guest_grants
+      WHERE company_id = ${companyId} AND ${sql.in("user_id", userIds)}
+      GROUP BY user_id`
+  });
   const sharedRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: SharedRow,
@@ -326,6 +352,14 @@ export const make = Effect.gen(function* () {
     (patchId: string) => patchGuests(patchId),
     Effect.catchTags(dieOnSchemaError)
   );
+  const holders = Effect.fn("GuestGrants.holders")(function* (
+    { companyId, patchId }: { readonly companyId: string; readonly patchId: string },
+    userIds: ReadonlyArray<string>
+  ) {
+    if (userIds.length === 0) return new Map<string, boolean>();
+    const rows = yield* holderRows({ companyId, patchId, userIds: [...new Set(userIds)] });
+    return new Map(rows.map(({ userId, active }) => [userId, active]));
+  }, Effect.catchTags(dieOnSchemaError));
   const sharedWith = Effect.fn("GuestGrants.sharedWith")(function* (userId: string) {
     const rows = yield* sharedRows(userId);
     const blocked = yield* blockedAmong(rows.map(versionOf));
@@ -386,6 +420,7 @@ export const make = Effect.gen(function* () {
     grant,
     revoke,
     guests,
+    holders,
     sharedWith,
     host,
     unavailableToGuests,
