@@ -86,6 +86,23 @@ it.layer(Platform)("scenarios", (it) => {
       expect(error.message).toContain("desk names pidgeon/support");
     }).pipe(Effect.scoped)
   );
+
+  it.effect("refuses a guest from the scenario's own company", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(root, "scenarios", "inside"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "scenarios", "inside", "scenario.json"),
+        `{"company":{"name":"Inside","handle":"inside"},"publisher":"a",
+          "people":[{"key":"a","name":"A","email":"a@inside.example","role":"admin"}],
+          "patches":[{"repo":"desk","tier":1,"description":"Desk","guests":["a"]}]}`
+      );
+      const error = yield* Effect.flip(loadScenario(root, "inside"));
+      expect(error.message).toContain("desk names guest a");
+    }).pipe(Effect.scoped)
+  );
 });
 
 const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));

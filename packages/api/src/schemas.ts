@@ -1052,6 +1052,92 @@ export class Shared extends Schema.Class<Shared>("Shared")({
   publicUrl: Schema.String
 }) {}
 
+// --- guests ---------------------------------------------------------------
+
+/**
+ * Why a patch's guests can't open it, as a code with its facts; `guestReasonText` words it. The
+ * owner, an admin, a publishing agent and the guest all read the same reason, so a guest can pass
+ * it on. An operator-disabled patch needs none: it is absent at every door and in every list.
+ */
+export const GuestReason = Schema.Union([
+  Schema.Struct({ code: Schema.Literal("retired") }),
+  Schema.Struct({ code: Schema.Literal("deleted") }),
+  /** Guests open tier 1 and tier 2 patches. */
+  Schema.Struct({ code: Schema.Literal("tier"), tier: Schema.Int }),
+  /** The version reads another patch's shared table or store, which only its company may read. */
+  Schema.Struct({
+    code: Schema.Literal("shared_source"),
+    kind: Schema.Literals(["table", "store"]),
+    alias: Schema.String
+  }),
+  /** The version uses a connection an admin blocked guests from. */
+  Schema.Struct({
+    code: Schema.Literal("connection_blocked"),
+    integration: Integration,
+    handle: Schema.String
+  })
+]);
+export type GuestReason = typeof GuestReason.Type;
+
+/** A reason in words. */
+export const guestReasonText = (reason: GuestReason): string => {
+  switch (reason.code) {
+    case "retired":
+      return "It's retired.";
+    case "deleted":
+      return "It's deleted.";
+    case "tier":
+      return `Guests open tier 1 and tier 2 patches, and this one is tier ${reason.tier}.`;
+    case "shared_source":
+      return `It reads ${reason.alias}, another patch's shared ${reason.kind}, which only its company can read. Remove ${reason.alias} from the patch to let guests in.`;
+    case "connection_blocked":
+      return `It uses ${reason.integration}/${reason.handle}, which blocks guests. Allow guests on that connection, or remove it from the patch.`;
+  }
+};
+
+/** The email belongs to nobody on Patchy, or to a deactivated account. */
+export const NotOnPatchy = failure(422, { code: Schema.Literal("not_on_patchy") });
+/** The email belongs to someone in the patch's own company, who opens it as a member. */
+export const AlreadyMember = failure(409, { code: Schema.Literal("already_member") });
+/** The patch's current version is one its guests can't open. */
+export const GuestsUnavailable = failure(422, {
+  code: Schema.Literal("guests_unavailable"),
+  reason: GuestReason
+});
+
+/** Someone at another company a patch is shared with, by their own account. */
+export class PatchGuest extends Schema.Class<PatchGuest>("PatchGuest")({
+  userId: Schema.String,
+  name: Schema.String,
+  email: Schema.String,
+  company: Schema.Struct({ name: Schema.String }),
+  grantedAt: Schema.String
+}) {}
+
+/** Share an owned patch with the person who signs in to Patchy with `email`. */
+export class GuestRequest extends Schema.Class<GuestRequest>("GuestRequest")({
+  email: Schema.String.check(Schema.isMaxLength(320))
+}) {}
+
+export class GuestShared extends Schema.Class<GuestShared>("GuestShared")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  address: Schema.String,
+  guest: PatchGuest
+}) {}
+
+export class PatchGuests extends Schema.Class<PatchGuests>("PatchGuests")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  guests: Schema.Array(PatchGuest)
+}) {}
+
+export class GuestRemoved extends Schema.Class<GuestRemoved>("GuestRemoved")({
+  ok: Schema.Literal(true),
+  patchId: PatchId,
+  removed: Schema.Boolean
+}) {}
+
 export class ForceRequest extends Schema.Class<ForceRequest>("ForceRequest")({
   force: Schema.optionalKey(Schema.Boolean)
 }) {}

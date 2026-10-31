@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import {
   AdminRequired,
   Behind,
+  GuestsUnavailable,
+  guestReasonText,
   HasDependants,
   NoRepo,
   NotOwner,
@@ -54,6 +56,7 @@ export const refusalFields = {
   publishedBy: Schema.optionalKey(Behind.fields.publishedBy),
   publishedAt: Schema.optionalKey(Behind.fields.publishedAt),
   admins: Schema.optionalKey(AdminRequired.fields.admins),
+  reason: Schema.optionalKey(GuestsUnavailable.fields.reason),
   // A refusal Patchy MCP's door would give, from `patchy dev agent`.
   from: Schema.optionalKey(ToolRefusal.fields.from),
   details: ToolRefusal.fields.details,
@@ -72,6 +75,7 @@ const refusal = Schema.Union([
     retryAfterSeconds: ToolRefusal.fields.retryAfterSeconds
   }),
   AdminRequired,
+  GuestsUnavailable,
   NotOwner,
   NoRepo,
   Behind,
@@ -112,6 +116,10 @@ const refusalMessage = (value: typeof refusal.Type): string => {
     case "wrong_state":
       if ("state" in value)
         return `This patch is ${value.state}; this action is not available in that state.`;
+      break;
+    case "guests_unavailable":
+      if ("reason" in value)
+        return `Guests can't open this patch. ${guestReasonText(value.reason)}`;
   }
   return value.error;
 };

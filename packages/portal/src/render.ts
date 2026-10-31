@@ -1,10 +1,11 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
-import type { AgentTool } from "@patchy/api";
+import { type AgentTool, type GuestReason, guestReasonText } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 import {
   ago,
+  copyScriptPath,
   dateLabel,
   escapeAttribute,
   escapeHtml,
@@ -13,7 +14,7 @@ import {
   renderOffPatch,
   sentenceList
 } from "@patchy/core";
-import { GuestGrants, Patches } from "@patchy/patches";
+import { Patches } from "@patchy/patches";
 
 export const styles = `
   .portal-card { min-width: 0; max-width: 920px; }
@@ -22,6 +23,7 @@ export const styles = `
   .portal-card-head .page-heading { margin: 0; }
   .portal-card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
   .portal-card-tags .tag { margin: 0; }
+  .portal-card-act { display: flex; align-items: center; gap: 6px; }
   .portal-card-act form { margin: 0; }
   .portal-card-tabs { margin: 18px 0 20px; }
   .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -69,7 +71,7 @@ export const refusal = (notice: string | undefined) =>
     : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
 
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
-export type PatchAction = "description" | "scope" | "rollback" | ConfirmationAction;
+export type PatchAction = "description" | "rollback" | ConfirmationAction;
 
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
 const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
@@ -125,12 +127,6 @@ const dependantsFact = (groups: readonly DependantGroup[]): string => {
 const descriptionForm = (card: Patches.PortalCard, submitted?: string, error?: string): string =>
   // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
   `<section class="section">${actionForm(card.patch, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
-
-const scopeForm = (card: Patches.PortalCard): string => {
-  const radio = (scope: Patches.Patch["scope"], label: string) =>
-    `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${escapeAttribute(scope)}"${card.patch.scope === scope ? " checked" : ""}>${escapeHtml(label)}</label>`;
-  return `<section class="section"><h3 class="section-heading" id="scope-heading">Who can open it</h3>${actionForm(card.patch, "scope")}${hidden("expectedScope", card.patch.scope)}<div role="radiogroup" aria-labelledby="scope-heading" aria-describedby="scope-hint">${radio("company", "People at the company")}${radio("public", "Anyone on the internet")}</div><p class="field-hint" id="scope-hint">This governs opening the page only. Which tables and stores other patches may read is declared in code and changes at publish.</p><div class="actions"><button class="btn" type="submit">Save who can open it</button></div></form></section>`;
-};
 
 const versionsTable = (
   card: Patches.PortalCard,
@@ -195,6 +191,8 @@ export const renderCardFrame = (input: {
   readonly body: string;
   /** A `side-panel` to the card's right, such as `renderAgentPanel`'s. */
   readonly panel?: string;
+  /** The patch's menu beside its act, as All patches' rows have it. */
+  readonly menu?: string;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -202,9 +200,7 @@ export const renderCardFrame = (input: {
   const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${address}`;
   const restore = input.readOnly ? "" : (offState(card, viewer, now)?.restoreControl ?? "");
-  const act = live
-    ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>`
-    : restore;
+  const act = `${live ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>` : restore}${input.menu ?? ""}`;
   const title = patchTitle(patch);
   // Kind, audience and version are facts on Overview; only an off patch's state rides the heading.
   const tags = live
@@ -228,7 +224,7 @@ export const renderCardFrame = (input: {
     title === patch.name
       ? ""
       : `<p class="supporting-text"><code>${escapeHtml(patch.name)}</code></p>`;
-  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>`;
+  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>${input.menu ? `<script defer src="${copyScriptPath}"></script>` : ""}`;
   return input.panel ? `<div class="card-split">${article}${input.panel}</div>` : article;
 };
 
@@ -285,7 +281,7 @@ export const renderOverview = (input: {
   /** Recent activity, rendered only for the owner and admins. */
   readonly activity: string;
   /** Why the patch's guests can't open it, for the owner and admins; absent while they can. */
-  readonly turnedAway?: GuestGrants.Reason;
+  readonly turnedAway?: GuestReason;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -315,11 +311,11 @@ export const renderOverview = (input: {
   const turnedAway =
     input.turnedAway === undefined
       ? ""
-      : `<div class="note note-warn"><strong class="note-title">${turnedAwayTitle}</strong><p>${escapeHtml(GuestGrants.describe(input.turnedAway))}</p></div>`;
+      : `<div class="note note-warn"><strong class="note-title">${turnedAwayTitle}</strong><p>${escapeHtml(guestReasonText(input.turnedAway))}</p></div>`;
   return `${descriptionBlock(card)}${turnedAway}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
 };
 
-/** The card's Settings, for the owner and admins: owner, description, who can open it, stopping or deleting. */
+/** The card's Settings, for the owner and admins: owner, description, stopping or deleting. Who can open it is Share's. */
 export const renderSettings = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: Viewer;
@@ -351,17 +347,7 @@ export const renderSettings = (input: {
       : input.submittedDescription
         ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
         : "";
-  return `${adminLine}${deactivated}${owner}${description}${live ? scopeForm(card) : ""}${stop}`;
-};
-
-/**
- * The step before a live patch goes public, rendered in answer to its Settings save: what that
- * means, then Make public, which posts the same scope form with `confirm=public`, or Cancel.
- */
-export const renderPublicConfirmation = (patch: Patches.Patch): string => {
-  const title = escapeHtml(patchTitle(patch));
-  const settings = escapeAttribute(cardPath(patch, "settings"));
-  return `<article class="portal-subpage"><p><a href="${settings}">Back to settings</a></p><h1 class="page-heading">Make ${title} public?</h1>${actionForm(patch, "scope", "confirmation-form")}${hidden("expectedScope", patch.scope)}${hidden("scope", "public")}${hidden("confirm", "public")}<p class="confirmation-consequence">Anyone with the link can open it without signing in.</p><div class="confirmation-actions"><button class="btn btn-primary" type="submit" aria-label="Make ${title} public">Make public</button><a class="btn btn-quiet" href="${settings}">Cancel</a></div></form></article>`;
+  return `${adminLine}${deactivated}${owner}${description}${stop}`;
 };
 
 /** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
