@@ -12,7 +12,10 @@ import base from "./vitest.config.js";
  *   `--input-type=module --eval`, Node's own HTTP dispatcher, and the repo's
  *   Vite resolved the way Node resolves it;
  * - the SDK's install tests, which spawn `process.execPath` the same way;
- * - the lint rules' tests, because Oxlint's RuleTester runs only on Node.
+ * - the lint rules' tests, because Oxlint's RuleTester runs only on Node;
+ * - the dev runner's test, which runs `pnpm dev` as the root script names it,
+ *   `node --import tsx`. Under `pnpm test:bun` in CI that `node` is Bun, which
+ *   then can't resolve the runner's workspace imports.
  */
 const nodeOnly = [
   "packages/patchy/src/cli.test.ts",
@@ -29,7 +32,8 @@ const nodeOnly = [
   "packages/patchy/src/devServerWatch.test.ts",
   "packages/patchy/src/help.test.ts",
   "packages/sdk/src/install.test.ts",
-  "lint/rules.test.ts"
+  "lint/rules.test.ts",
+  "scripts/dev/src/main.test.ts"
 ];
 
 export default mergeConfig(base, defineConfig({ test: { exclude: nodeOnly } }));
