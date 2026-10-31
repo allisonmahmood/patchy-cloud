@@ -64,6 +64,7 @@ const connection = {
   description: "Discovered native and dev parity",
   mode: "company",
   status: "connected",
+  blockGuests: false,
   credentialRevision: 1,
   metadataRevision: 1,
   display: { host: "fixture.example", port: 5432, database: "fixture", role: "reader" },

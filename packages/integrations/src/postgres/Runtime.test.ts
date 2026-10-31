@@ -73,6 +73,7 @@ const connection = {
   description: "Runtime fixture",
   mode: "company",
   status: "connected",
+  blockGuests: false,
   credentialRevision: 1,
   metadataRevision: 1,
   display: { host: "fixture.invalid", port: 5432, database: "fixture", role: "reader" },

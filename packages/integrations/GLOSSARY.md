@@ -40,6 +40,10 @@ _Avoid_: dependency, requirement, scope request
 An admin's hint about a connection's purpose, helping a builder choose it. It neither grants nor restricts access.
 _Avoid_: permission, policy, grant
 
+**Block guests**:
+An admin's setting on one connection that keeps a patch's [guests](../companies/GLOSSARY.md) out of every patch whose current version declares it, while it's on. Their grants stay, so they're back once it's off or the patch stops declaring it; members are unaffected. Off for every connection until an admin turns it on, and it applies to the next call. The owner and admins see why on the patch's card and in Needs attention, and publish warns.
+_Avoid_: guest access, allow list, sensitive flag
+
 **Metadata**:
 The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture

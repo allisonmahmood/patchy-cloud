@@ -13,7 +13,7 @@ import {
   renderOffPatch,
   sentenceList
 } from "@patchy/core";
-import { Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 
 export const styles = `
   .portal-card { min-width: 0; max-width: 920px; }
@@ -271,13 +271,21 @@ export const renderAgentPanel = (input: {
   return `<aside class="side-panel" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><p class="supporting-text">As the person who connected them.</p>${off}<ul class="list list-compact">${tools}</ul>${connect}</aside>`;
 };
 
-/** The card's Overview: the description, its facts, an off patch's note and the recent log. */
+/** What the card and Needs attention call a patch its guests can't open. */
+export const turnedAwayTitle = "Guests can't open this";
+
+/**
+ * The card's Overview: the description, why its guests can't open it, its facts, an off patch's
+ * note and the recent log.
+ */
 export const renderOverview = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: Viewer;
   readonly now: number;
   /** Recent activity, rendered only for the owner and admins. */
   readonly activity: string;
+  /** Why the patch's guests can't open it, for the owner and admins; absent while they can. */
+  readonly turnedAway?: GuestGrants.Reason;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
@@ -304,7 +312,11 @@ export const renderOverview = (input: {
     viewer.role === "admin" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
-  return `${descriptionBlock(card)}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
+  const turnedAway =
+    input.turnedAway === undefined
+      ? ""
+      : `<div class="note note-warn"><strong class="note-title">${turnedAwayTitle}</strong><p>${escapeHtml(GuestGrants.describe(input.turnedAway))}</p></div>`;
+  return `${descriptionBlock(card)}${turnedAway}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
 };
 
 /** The card's Settings, for the owner and admins: owner, description, who can open it, stopping or deleting. */

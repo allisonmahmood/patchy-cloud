@@ -61,8 +61,7 @@ export const make = (
       if (person === null || HttpServerResponse.isHttpServerResponse(person))
         return yield* new Runtime.AccessDenied({});
       const viewer = yield* GrantedGuests.viewerOf(loaded, person).pipe(
-        Effect.provideContext(guestContext),
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+        Effect.provideContext(guestContext)
       );
       if (Option.isNone(viewer)) return yield* new Runtime.AccessDenied({});
       // Admission covers the JWT's remaining lifetime. After expiry, concurrent
@@ -85,8 +84,7 @@ export const make = (
           )
             return yield* new Runtime.AccessDenied({});
           const rechecked = yield* GrantedGuests.recheck(loaded, viewer.value, current).pipe(
-            Effect.provideContext(guestContext),
-            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+            Effect.provideContext(guestContext)
           );
           if (Option.isNone(rechecked)) return yield* new Runtime.AccessDenied({});
           return rechecked.value;

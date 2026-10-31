@@ -170,7 +170,16 @@ const resourceChanges = Layer.effect(
 const grantedGuests = Layer.effect(
   GrantedGuests.GrantedGuests,
   Effect.map(GuestGrants.GuestGrants, (grants) =>
-    GrantedGuests.GrantedGuests.of({ host: grants.host })
+    GrantedGuests.GrantedGuests.of({
+      host: (loaded, userId) =>
+        grants
+          .host({
+            patchId: loaded.patchId,
+            userId,
+            version: { id: loaded.versionId, tier: loaded.manifest.tier, manifest: loaded.manifest }
+          })
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
+    })
   )
 );
 

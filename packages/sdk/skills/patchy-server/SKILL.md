@@ -155,7 +155,9 @@ actions alike, live queries included; any other refuses them with
 their own user, the patch's company, `admin: false` and `guest: true`, so a
 handler checks it wherever the record or the change depends on who called.
 Agent tools never take guests. A version that declares another patch's shared
-table or store is closed to its guests. On tier 1 a guest writes all of the
+table or store, or a connection an admin set to block guests, is closed to its
+guests; their grants stay, and a publish that closes it to them succeeds with a
+`warnings` entry saying why. On tier 1 a guest writes all of the
 patch's own tables and files, as a colleague does, so use tier 2 with marked
 handlers when guests mustn't write everything.
 

@@ -75,5 +75,10 @@ export const migrations: Migrations = {
       sends INTEGER NOT NULL CHECK (sends > 0),
       PRIMARY KEY (connection_id, day)
     )`
+  ),
+  // An admin may keep guests off a connection: patches that declare it turn their guests away
+  // while it's set. Every existing connection allows guests, as a new one does.
+  "0032_connections_block_guests": ddl(
+    `ALTER TABLE connections ADD COLUMN block_guests BOOLEAN NOT NULL DEFAULT false`
   )
 };

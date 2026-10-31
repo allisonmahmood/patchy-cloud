@@ -217,6 +217,9 @@ For a company connection, run `pnpm patchy list connections`, then
 `list connections --all` adds offered integrations. A null snapshot is
 unavailable, not an empty source. Only connected entries carry an `add` hint;
 disconnected entries point to `/company/connections`. Discovery grants no access.
+An admin can set a connection to block guests on its page: a patch that declares
+it is closed to its guests while that's on, and publishing to a patch with guests
+says so in `warnings` without failing.
 
 ## Commands and ownership
 

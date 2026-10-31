@@ -9,7 +9,7 @@ Read `../patchy-loop/SKILL.md` first. A Pidgeon connection is one company email 
 
 ## Declare an address
 
-1. Run `pnpm patchy list connections` and choose a connected `pidgeon/<handle>` by description. `pnpm patchy list connections pidgeon/<handle>` shows the address, whether its key reads or also sends, its send policy, its labels and whether it's a test address. An admin connects addresses at `/company/connections`; ask them there rather than for a key.
+1. Run `pnpm patchy list connections` and choose a connected `pidgeon/<handle>` by description. `pnpm patchy list connections pidgeon/<handle>` shows the address, whether its key reads or also sends, its send policy, its labels and whether it's a test address. An admin connects addresses at `/company/connections`; ask them there rather than for a key. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add pidgeon/<handle> --as inbox`. It inserts `inbox: { kind: "pidgeon", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `inbox`: the address, its access, its send policy and its labels with their ids. A `read` connection's client has no reply, send or triage methods, so code using them doesn't typecheck.
 

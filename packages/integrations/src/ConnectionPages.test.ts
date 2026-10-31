@@ -284,6 +284,35 @@ const storeVersion = Effect.fn(function* (
 });
 
 it.layer(services)("company connection pages", (it) => {
+  it.effect("lets only an admin block guests from a connection, and shows everyone which", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-blocking");
+      const member = yield* addUser(owner, "member");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      const store = yield* ConnectionStore.ConnectionStore;
+      const blocked = Effect.map(
+        store.get(owner.company.id, connection.id),
+        (row) => row.blockGuests
+      );
+      const page = (user: Users.User) =>
+        Effect.flatMap(send(path, { headers: { cookie: cookie(user) } }), (response) =>
+          Effect.promise(() => response.text())
+        );
+
+      assert.strictEqual((yield* send(`${path}/block-guests`, post(member))).status, 403);
+      assert.isFalse(yield* blocked);
+      yield* follow(yield* send(`${path}/block-guests`, post(owner.user)), owner.user);
+      assert.isTrue(yield* blocked);
+      // A member reads that guests are blocked, with no way to change it.
+      const seen = yield* page(member);
+      assert.match(seen, /<dt>Guests<\/dt><dd>Blocked<\/dd>/);
+      assert.notInclude(seen, `${path}/allow-guests`);
+      assert.include(yield* page(owner.user), `${path}/allow-guests`);
+
+      yield* follow(yield* send(`${path}/allow-guests`, post(owner.user)), owner.user);
+      assert.isFalse(yield* blocked);
+    })
+  );
   it.effect(
     "shows only the selected connection's escaped recent calls to admins and never reads the log for members",
     () =>

@@ -1365,6 +1365,7 @@ it.layer(layer)("SDK company generation", (it) => {
                     description: "Metadata-only fixture",
                     mode: "company",
                     status: "connected",
+                    blockGuests: false,
                     display: {
                       host: "db.example.com",
                       port: 5432,
