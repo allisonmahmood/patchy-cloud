@@ -32,7 +32,7 @@
   "dependencies": {
     "@effect/sql-pg": "catalog:",
     "@effect/sql-pglite": "catalog:",
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.13",
     "@patchy/analytics": "workspace:*",
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
