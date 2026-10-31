@@ -17,7 +17,8 @@ import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, newInternalId, newPatchId } from "../../../test/crypto.js";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
+import { ConnectionStoreDev } from "@patchy/integrations/dev";
+import { LoadedVersions as DurableVersions, GuestGrants, Patches } from "@patchy/patches";
 import {
   GrantedGuests,
   LoadedVersions,
@@ -38,7 +39,9 @@ const dependencies = Layer.mergeAll(
   Session.layer,
   Companies.layer,
   Users.layer,
-  MemberDirectory.layer
+  MemberDirectory.layer.pipe(
+    Layer.provide(GuestGrants.layer.pipe(Layer.provide(ConnectionStoreDev.layer())))
+  )
 ).pipe(
   Layer.provideMerge(Analytics.layerNoop),
   Layer.provideMerge(Fixtures.database),

@@ -153,7 +153,7 @@ function sentAt(when: SampleKudos["when"], now: number): string {
   return date.toISOString();
 }
 
-/** Fills an empty wall, refusing one that already has kudos or a company of one. */
+/** Fills an empty wall with the studio's own people, refusing one that has kudos or a company of one. */
 export const load = mutation({
   args: {},
   errors: ["not_empty", "too_few_people"],
@@ -161,7 +161,9 @@ export const load = mutation({
   handler: async (ctx) => {
     const existing = await ctx.tables.kudos.list({ limit: 1 });
     if (existing.rows.length > 0) throw new HandlerError("not_empty", {});
-    const people = (await ctx.members.list()).rows.filter((member) => member.active);
+    const people = (await ctx.members.list()).rows.filter(
+      (member) => member.active && !member.guest
+    );
     if (people.length < 2) throw new HandlerError("too_few_people", {});
 
     const slot = (index: number) => index % people.length;

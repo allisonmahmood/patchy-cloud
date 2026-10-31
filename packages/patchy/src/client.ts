@@ -39,12 +39,18 @@ export interface Page<R> {
   readonly rows: readonly R[];
   readonly cursor: string | null;
 }
+/**
+ * A person in the patch's member directory. Only a guest, from another company, carries `guest`;
+ * they're never an admin, and `active` is false once their account is deactivated or they're no
+ * longer a guest of the company.
+ */
 export interface Member {
   readonly id: string;
   readonly name: string;
   readonly email: string;
   readonly admin: boolean;
   readonly active: boolean;
+  readonly guest?: true;
 }
 export interface MemberListOptions {
   readonly cursor?: string;

@@ -750,7 +750,7 @@ Sharing decides who may open a live patch. The owner may publish, change sharing
 
 **Admins see every company patch.** The portal shows their management controls and a Reassign confirmation page for live, retired and deleted patches. Reassignment is repeatable and preserves every version's publisher attribution. The company owns what is built in it; future owner-only sharing is not a secret from the company.
 
-Across the company line a patch is **public**, anyone-with-the-link, or shared with **guests**: people at other companies who already have a Patchy account, each granted one patch. A guest opens the patch's current version as themselves in the patch's company, never its admin, and reads and writes its own tables and files as a colleague does; the grant gives them no membership or other patch. A live tier 1 or tier 2 patch is open to its guests, unless its current version reads another patch's shared table or store, whose rows belong to that patch's company, or declares a connection an admin has set to **Block guests** on its page. Blocking keeps every grant, applies to guests' next call and leaves members alone; turning it off, or removing the declaration, lets the same guests back in. While a patch with guests turns them away, its card and Needs attention say why to the owner and admins, and a publish that turns them away still succeeds with a warning saying why. On tier 2 a guest starts only the handlers marked `guest: true`, live queries included; what those handlers reach, the member directory and connections included, follows the usual rules, so a handler checks the real viewer where it matters who called. A tier 1 guest writes all of the patch's own data, so a patch whose guests mustn't write is tier 2. Ending a grant keeps its record, so history still names the person, and sharing again restores it. Going public, retiring and deleting keep a patch's grants; permanent reclamation removes them. Logs name a guest's calls as theirs, billed to the patch's company. Sharing from the portal and the CLI is not built yet.
+Across the company line a patch is **public**, anyone-with-the-link, or shared with **guests**: people at other companies who already have a Patchy account, each granted one patch. A guest opens the patch's current version as themselves in the patch's company, never its admin, and reads and writes its own tables and files as a colleague does; the grant gives them no membership or other patch. A live tier 1 or tier 2 patch is open to its guests, unless its current version reads another patch's shared table or store, whose rows belong to that patch's company, or declares a connection an admin has set to **Block guests** on its page. Blocking keeps every grant, applies to guests' next call and leaves members alone; turning it off, or removing the declaration, lets the same guests back in. While a patch with guests turns them away, its card and Needs attention say why to the owner and admins, and a publish that turns them away still succeeds with a warning saying why. On tier 2 a guest starts only the handlers marked `guest: true`, live queries included; what those handlers reach, the member directory and connections included, follows the usual rules, so a handler checks the real viewer where it matters who called. A guest can be the person in the patch's member columns: its pickers offer them and its writes accept them, marked as a guest, while their grant stands. A tier 1 guest writes all of the patch's own data, so a patch whose guests mustn't write is tier 2. Ending a grant keeps its record, so history still names the person, shown inactive in member columns, and sharing again restores it. Going public, retiring and deleting keep a patch's grants; permanent reclamation removes them. Logs name a guest's calls as theirs, billed to the patch's company. Sharing from the portal and the CLI is not built yet.
 
 Today a published patch is either company-scoped or explicitly public. A public patch's current version opens without a session; older versions and company patches have three outcomes: an active colleague gets the page; a signed-out reader gets a 401 login door with a **Sign in** link rather than a redirect; a signed-in reader from another company, unless they are the patch's guest at its current version, gets the same 404 as a missing link, confirming nothing. A signed-in person without a company goes through create-or-join with the patch as the return destination; a deactivated user sees a 403 deactivated page instead of a sign-in loop. The door admits browser sessions, never machine tokens. When owner-only sharing is built, a colleague outside that narrower scope will see "you don't have access to this patch", who owns it, and **request access**; that state is not offered today.
 
@@ -841,30 +841,37 @@ with no resource stamp or fixture. All three tier 2 handler kinds use `ctx.membe
 a page reaches the directory only through them. A lower-tier document gets only `me`
 while its patch serves tier 2.
 
-Candidates are active company users. `list` and `search` return `{ rows, cursor }`
+Candidates are active company users and the patch's [guests](#access-to-a-patch) whose grant
+and account are active. `list` and `search` return `{ rows, cursor }`
 in pages of 50, ordered by lowercased name, lowercased email and id. Search matches
 a case-insensitive prefix of the full name or email: "ann" finds Anna, not Joanne.
 `get` and `getMany`, at most 1,000 ids, resolve any company user as
-`{ id, name, email, admin, active }`, including deactivated users. Unknown and
-other-company ids return null; bulk resolution preserves input order and duplicates.
+`{ id, name, email, admin, active }`, including deactivated users, and anyone holding
+a grant to one of the company's patches, ended or not, with `guest: true`, so another
+patch reading a shared table resolves its guests too. A guest is never `admin`, and is
+inactive once their account is deactivated or none of their grants in the company is
+active. Only guests carry `guest`, so members resolve as before. Unknown ids and
+everyone else at other companies return null; bulk resolution preserves input order
+and duplicates.
 
-A query reading the directory is subscribable. Joins, deactivation, reactivation and
-profile or role changes commit a directory revision and wake subscriptions after the
-platform transaction commits. Only query handlers acquire this dependency. Directory reads
+A query reading the directory is subscribable. Joins, deactivation, reactivation,
+profile or role changes, and grants starting, ending or going with their patch commit
+a directory revision and wake subscriptions after the platform transaction commits. A
+guest's own profile changes reach a host company's subscriptions at their next rerun. Only query handlers acquire this dependency. Directory reads
 are outside a query's company-database snapshot; a directory-only query needs no
 company database.
 
 `t.member()` stores a user id and requires the declaration, so member columns are
 tier 2's. It supports `.optional()` but not `.default()`. Inserts and changed
 assignments check the current candidates; invalid assignments fail `invalid_row`. An unchanged value passes after its
-user is deactivated, and deactivation never rewrites rows. Eligibility is checked
+user is deactivated or their grant ends, and neither rewrites rows. Eligibility is checked
 when the write arrives, not at commit, so deactivation during a mutation can still
 leave a committed assignment. Resolve a page's distinct ids once with `getMany`.
 `remove members` refuses while a configured member column remains.
 
-Both local dev mounts expose the same two active candidates: the machine's user
-and the fixture colleague. Dev imports no real directory and simulates no
-membership changes.
+The local dev mounts expose the same three active candidates: the machine's user,
+the fixture colleague and the fixture guest. Dev imports no real directory and
+simulates no membership or grant changes.
 
 ### Additive publishing
 

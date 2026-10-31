@@ -195,9 +195,10 @@ export default defineConfig({ name: "tier2-acceptance", tier: 2,
     )
   );
   assert.notEqual(localIdentities[0].viewer, localIdentities[1].viewer);
+  // Every dev mount's person is a candidate: these two viewers and the patch's guest.
   assert.deepEqual(
     localIdentities[0].members.map((member) => member.id).sort(),
-    localIdentities.map((identity) => identity.viewer).sort()
+    [...localIdentities.map((identity) => identity.viewer), "usr_dev_guest"].sort()
   );
   await localWriter.evaluate(() =>
     window.probe.patchy.server.notes.create({ title: "Local write" })

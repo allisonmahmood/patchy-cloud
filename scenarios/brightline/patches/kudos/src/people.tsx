@@ -39,7 +39,10 @@ function initials(name: string): string {
   return letters.join("").toUpperCase();
 }
 
-/** Initials in a coloured circle. Someone who has left keeps their initials on a muted circle. */
+/**
+ * Initials in a coloured circle. Someone who has left, or a guest no longer shared with, keeps
+ * their initials on a muted circle.
+ */
 export function Avatar({
   id,
   person,
@@ -54,7 +57,16 @@ export function Avatar({
     <span
       className={`avatar avatar--${size}`}
       data-hue={gone ? "none" : hueFor(id)}
-      title={person ? person.name + (person.active ? "" : " (no longer at the studio)") : undefined}
+      title={
+        person
+          ? person.name +
+            (person.active
+              ? ""
+              : person.guest
+                ? " (no longer a guest)"
+                : " (no longer at the studio)")
+          : undefined
+      }
       aria-hidden="true"
     >
       {person ? initials(person.name) : person === null ? "?" : ""}

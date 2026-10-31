@@ -11,30 +11,33 @@ const identity = {
 };
 const local = { ...identity.user, admin: true, active: true };
 const colleague = { ...DevMembers.colleague, admin: false, active: true };
+const guest = { ...DevMembers.guest, admin: false, active: true, guest: true as const };
+const patch = { companyId: "cmp_dev", patchId: "pat_dev" };
 
 it.effect(
-  "lists the local person and one colleague by name, searched by name or email prefix",
+  "lists the local person, the colleague and the guest by name, searched by name or email prefix",
   () =>
     Effect.gen(function* () {
       const directory = yield* MemberDirectory.MemberDirectory;
-      assert.deepStrictEqual(yield* directory.list("cmp_dev"), {
-        rows: [local, colleague],
+      assert.deepStrictEqual(yield* directory.list(patch), {
+        rows: [local, colleague, guest],
         cursor: null
       });
-      assert.deepStrictEqual(yield* directory.search("cmp_dev", "COLLEAGUE@"), {
+      assert.deepStrictEqual(yield* directory.search(patch, "COLLEAGUE@"), {
         rows: [colleague],
         cursor: null
       });
-      assert.deepStrictEqual(yield* directory.search("cmp_dev", "league"), {
+      assert.deepStrictEqual(yield* directory.search(patch, "league"), {
         rows: [],
         cursor: null
       });
       assert.deepStrictEqual(
-        yield* directory.getMany("cmp_dev", [local.id, "missing", colleague.id, local.id]),
-        [local, null, colleague, local]
+        yield* directory.getMany("cmp_dev", [local.id, "missing", guest.id, local.id]),
+        [local, null, guest, local]
       );
+      assert.deepStrictEqual(yield* directory.candidates(patch, [guest.id, "missing"]), [guest.id]);
       assert.strictEqual(
-        (yield* directory.list("cmp_other").pipe(Effect.flip)).code,
+        (yield* directory.list({ ...patch, companyId: "cmp_other" }).pipe(Effect.flip)).code,
         "access_denied"
       );
     }).pipe(Effect.provide(DevMembers.layer(identity)))

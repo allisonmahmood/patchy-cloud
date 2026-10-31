@@ -17,11 +17,15 @@ export const guest = {
   email: "guest@elsewhere.patchy.local"
 } as const;
 
-/** Dev has two candidates and no authority changes or production directory reads. */
+/**
+ * Dev's candidates are the mounts' people, the guest among them as on a shared patch; no authority
+ * changes or production directory reads.
+ */
 export const layer = (identity: typeof Identity.Type) => {
   const rows: readonly (typeof Member.Type)[] = [
     { ...identity.user, admin: identity.role === "admin", active: true },
-    { ...colleague, admin: false, active: true }
+    { ...colleague, admin: false, active: true },
+    { ...guest, admin: false, active: true, guest: true as const }
   ].sort((left, right) => {
     const a = left.name.toLowerCase();
     const b = right.name.toLowerCase();
@@ -30,8 +34,12 @@ export const layer = (identity: typeof Identity.Type) => {
   const byId = new Map(rows.map((member) => [member.id, member]));
   const authorize = (companyId: string) =>
     companyId === identity.company.id ? Effect.void : Effect.fail(new Runtime.AccessDenied({}));
-  const page = Effect.fnUntraced(function* (companyId: string, text: string, cursor?: string) {
-    yield* authorize(companyId);
+  const page = Effect.fnUntraced(function* (
+    patch: { readonly companyId: string },
+    text: string,
+    cursor?: string
+  ) {
+    yield* authorize(patch.companyId);
     if (cursor !== undefined) return yield* new MemberDirectory.InvalidCursor({});
     const prefix = text.toLowerCase();
     return {
@@ -49,13 +57,13 @@ export const layer = (identity: typeof Identity.Type) => {
   return Layer.succeed(
     MemberDirectory.MemberDirectory,
     MemberDirectory.MemberDirectory.of({
-      list: (companyId, cursor) => page(companyId, "", cursor),
+      list: (patch, cursor) => page(patch, "", cursor),
       search: page,
       get: (companyId, id) => authorize(companyId).pipe(Effect.as(byId.get(id) ?? null)),
       getMany: (companyId, ids) =>
         authorize(companyId).pipe(Effect.as(ids.map((id) => byId.get(id) ?? null))),
-      candidates: (companyId, ids) =>
-        authorize(companyId).pipe(Effect.as([...new Set(ids)].filter((id) => byId.has(id)))),
+      candidates: (patch, ids) =>
+        authorize(patch.companyId).pipe(Effect.as([...new Set(ids)].filter((id) => byId.has(id)))),
       revision: (companyId) => authorize(companyId).pipe(Effect.as("0"))
     })
   );

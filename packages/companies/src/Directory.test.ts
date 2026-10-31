@@ -47,6 +47,8 @@ const memberValue = (user: Users.User): Directory.Member =>
     admin: user.role === "admin",
     active: user.deactivatedAt === null
   });
+/** A company's own members, with no guests in scope. */
+const members = (companyId: string): Directory.Scope => ({ companyId, guests: new Map() });
 const decodeWake = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.String) }))
 );
@@ -63,29 +65,34 @@ it.layer(services)("company directory", (it) => {
       const { company, user: admin } = yield* createCompany("directory-candidates");
       const { user: outsider } = yield* createCompany("directory-outsider");
       const member = yield* join(company.id, admin.id, "anna@example.com", "Anna Park");
-      assert.deepStrictEqual(yield* directory.list(company.id, 50), {
+      assert.deepStrictEqual(yield* directory.list(members(company.id), 50), {
         rows: [memberValue(member), memberValue(admin)],
         cursor: null
       });
-      assert.deepStrictEqual(yield* directory.candidates(company.id, [member.id]), [member.id]);
+      assert.deepStrictEqual(yield* directory.candidates(members(company.id), [member.id]), [
+        member.id
+      ]);
       const left = yield* users.deactivate({ companyId: company.id, userId: member.id });
-      assert.deepStrictEqual(yield* directory.list(company.id, 50), {
+      assert.deepStrictEqual(yield* directory.list(members(company.id), 50), {
         rows: [memberValue(admin)],
         cursor: null
       });
-      assert.deepStrictEqual(yield* directory.search(company.id, "ann", 50), {
+      assert.deepStrictEqual(yield* directory.search(members(company.id), "ann", 50), {
         rows: [],
         cursor: null
       });
-      assert.deepStrictEqual(yield* directory.get(company.id, member.id), memberValue(left));
       assert.deepStrictEqual(
-        yield* directory.candidates(company.id, [member.id, outsider.id, "missing"]),
+        yield* directory.get(members(company.id), member.id),
+        memberValue(left)
+      );
+      assert.deepStrictEqual(
+        yield* directory.candidates(members(company.id), [member.id, outsider.id, "missing"]),
         []
       );
-      assert.isNull(yield* directory.get(company.id, outsider.id));
-      assert.isNull(yield* directory.get(company.id, "missing"));
+      assert.isNull(yield* directory.get(members(company.id), outsider.id));
+      assert.isNull(yield* directory.get(members(company.id), "missing"));
       assert.deepStrictEqual(
-        yield* directory.getMany(company.id, [
+        yield* directory.getMany(members(company.id), [
           member.id,
           outsider.id,
           admin.id,
@@ -94,10 +101,57 @@ it.layer(services)("company directory", (it) => {
         ]),
         [memberValue(left), null, memberValue(admin), null, memberValue(left)]
       );
-      assert.deepStrictEqual(yield* directory.getMany(company.id, []), []);
+      assert.deepStrictEqual(yield* directory.getMany(members(company.id), []), []);
       yield* users.reactivate({ companyId: company.id, userId: member.id });
-      assert.deepStrictEqual(yield* directory.get(company.id, member.id), memberValue(member));
-      assert.deepStrictEqual(yield* directory.candidates(company.id, [member.id]), [member.id]);
+      assert.deepStrictEqual(
+        yield* directory.get(members(company.id), member.id),
+        memberValue(member)
+      );
+      assert.deepStrictEqual(yield* directory.candidates(members(company.id), [member.id]), [
+        member.id
+      ]);
+    })
+  );
+
+  it.effect("offers and checks a scope's active guests, and resolves every guest in it", () =>
+    Effect.gen(function* () {
+      const directory = yield* Directory.Directory;
+      const { company, user: admin } = yield* createCompany("directory-host");
+      // An admin of their own company, and never of the one they're a guest of.
+      const { user: guest } = yield* createCompany("directory-guest");
+      const { user: stranger } = yield* createCompany("directory-stranger");
+      const asGuest = new Directory.Member({ ...memberValue(guest), admin: false, guest: true });
+      const shared: Directory.Scope = {
+        companyId: company.id,
+        guests: new Map([[guest.id, true]])
+      };
+      assert.deepStrictEqual(yield* directory.list(shared, 50), {
+        rows: [asGuest, memberValue(admin)],
+        cursor: null
+      });
+      assert.deepStrictEqual(yield* directory.search(shared, "directory-g", 50), {
+        rows: [asGuest],
+        cursor: null
+      });
+      assert.deepStrictEqual(yield* directory.candidates(shared, [guest.id, stranger.id]), [
+        guest.id
+      ]);
+      assert.deepStrictEqual(yield* directory.getMany(shared, [guest.id, stranger.id]), [
+        asGuest,
+        null
+      ]);
+
+      const ended: Directory.Scope = { ...shared, guests: new Map([[guest.id, false]]) };
+      assert.deepStrictEqual(yield* directory.list(ended, 50), {
+        rows: [memberValue(admin)],
+        cursor: null
+      });
+      assert.deepStrictEqual(yield* directory.candidates(ended, [guest.id]), []);
+      assert.deepStrictEqual(
+        yield* directory.get(ended, guest.id),
+        new Directory.Member({ ...asGuest, active: false })
+      );
+      assert.isNull(yield* directory.get(members(company.id), guest.id));
     })
   );
 
@@ -127,14 +181,14 @@ it.layer(services)("company directory", (it) => {
       const ids = [inactive.id, admin.id, outsider.id, "missing"];
       assert.deepStrictEqual(
         yield* directory.candidates(
-          company.id,
+          members(company.id),
           Array.from({ length: 1000 }, (_, index) => ids[index % ids.length]!)
         ),
         [admin.id]
       );
-      assert.deepStrictEqual(queries, [2]);
-      assert.deepStrictEqual(yield* directory.candidates(company.id, []), []);
-      assert.deepStrictEqual(queries, [2]);
+      assert.deepStrictEqual(queries, [3]);
+      assert.deepStrictEqual(yield* directory.candidates(members(company.id), []), []);
+      assert.deepStrictEqual(queries, [3]);
     })
   );
 
@@ -167,32 +221,35 @@ it.layer(services)("company directory", (it) => {
               active: true
             })
         );
-        const first = yield* directory.list(company.id, 50);
+        const first = yield* directory.list(members(company.id), 50);
         assert.deepStrictEqual(first.rows, expected.slice(0, 50));
         assert.isNotNull(first.cursor);
-        const second = yield* directory.list(company.id, 50, first.cursor!);
+        const second = yield* directory.list(members(company.id), 50, first.cursor!);
         assert.deepStrictEqual(second.rows, expected.slice(50, 100));
-        const third = yield* directory.list(company.id, 50, second.cursor!);
+        const third = yield* directory.list(members(company.id), 50, second.cursor!);
         assert.deepStrictEqual(third.rows.slice(0, 3), expected.slice(100));
         assert.strictEqual(third.rows[3]?.name, "Founder");
         assert.isNull(third.cursor);
-        const search = yield* directory.search(company.id, "aNn", 50);
+        const search = yield* directory.search(members(company.id), "aNn", 50);
         assert.deepStrictEqual(search.rows, expected.slice(0, 50));
-        const searchNext = yield* directory.search(company.id, "aNn", 50, search.cursor!);
+        const searchNext = yield* directory.search(members(company.id), "aNn", 50, search.cursor!);
         assert.deepStrictEqual(searchNext.rows, expected.slice(50, 100));
-        assert.deepStrictEqual(yield* directory.search(company.id, "aNn", 50, searchNext.cursor!), {
-          rows: expected.slice(100),
-          cursor: null
-        });
-        assert.deepStrictEqual(yield* directory.search(company.id, "PERSON100@", 50), {
+        assert.deepStrictEqual(
+          yield* directory.search(members(company.id), "aNn", 50, searchNext.cursor!),
+          {
+            rows: expected.slice(100),
+            cursor: null
+          }
+        );
+        assert.deepStrictEqual(yield* directory.search(members(company.id), "PERSON100@", 50), {
           rows: [expected[100]!],
           cursor: null
         });
-        assert.deepStrictEqual(yield* directory.search(company.id, "Team", 50), {
+        assert.deepStrictEqual(yield* directory.search(members(company.id), "Team", 50), {
           rows: [],
           cursor: null
         });
-        assert.deepStrictEqual(yield* directory.search(company.id, "nna", 50), {
+        assert.deepStrictEqual(yield* directory.search(members(company.id), "nna", 50), {
           rows: [],
           cursor: null
         });
@@ -206,7 +263,7 @@ it.layer(services)("company directory", (it) => {
           ["_", "_Under"],
           ["\\", "\\Slash"]
         ]) {
-          const page = yield* directory.search(company.id, prefix!, 50);
+          const page = yield* directory.search(members(company.id), prefix!, 50);
           assert.deepStrictEqual(
             page.rows.map((member) => member.name),
             [name]
@@ -214,7 +271,7 @@ it.layer(services)("company directory", (it) => {
           assert.isNull(page.cursor);
         }
         assert.deepStrictEqual(
-          (yield* directory.search(company.id, "ann", 50)).rows,
+          (yield* directory.search(members(company.id), "ann", 50)).rows,
           expected.slice(0, 50)
         );
       })
@@ -225,7 +282,7 @@ it.layer(services)("company directory", (it) => {
       const directory = yield* Directory.Directory;
       const { company, user } = yield* createCompany("directory-cursors");
       yield* join(company.id, user.id, "cursor@directory.test", "Anna Cursor");
-      const first = yield* directory.list(company.id, 1);
+      const first = yield* directory.list(members(company.id), 1);
       assert.isNotNull(first.cursor);
       const invalid = [
         "not+base64",
@@ -244,20 +301,22 @@ it.layer(services)("company directory", (it) => {
       ];
       for (const cursor of invalid)
         assert.instanceOf(
-          yield* directory.list(company.id, 50, cursor).pipe(Effect.flip),
+          yield* directory.list(members(company.id), 50, cursor).pipe(Effect.flip),
           Directory.InvalidCursor
         );
       assert.instanceOf(
-        yield* directory.list("other-company", 50, first.cursor!).pipe(Effect.flip),
+        yield* directory.list(members("other-company"), 50, first.cursor!).pipe(Effect.flip),
         Directory.InvalidCursor
       );
       assert.instanceOf(
-        yield* directory.search(company.id, "ann", 50, first.cursor!).pipe(Effect.flip),
+        yield* directory.search(members(company.id), "ann", 50, first.cursor!).pipe(Effect.flip),
         Directory.InvalidCursor
       );
-      const search = yield* directory.search(company.id, "", 1);
+      const search = yield* directory.search(members(company.id), "", 1);
       assert.instanceOf(
-        yield* directory.search(company.id, "founder", 50, search.cursor!).pipe(Effect.flip),
+        yield* directory
+          .search(members(company.id), "founder", 50, search.cursor!)
+          .pipe(Effect.flip),
         Directory.InvalidCursor
       );
     })
@@ -302,7 +361,7 @@ it.layer(services)("company directory", (it) => {
         assert.strictEqual(yield* directory.revision(company.id), "4");
         yield* users.setRole({ ...ref, role: "admin" });
         assert.strictEqual(yield* directory.revision(company.id), "5");
-        assert.isTrue((yield* directory.get(company.id, joined.id))!.admin);
+        assert.isTrue((yield* directory.get(members(company.id), joined.id))!.admin);
         yield* users.deactivate(ref);
         assert.strictEqual(yield* directory.revision(company.id), "6");
         yield* users.reactivate(ref);
@@ -324,7 +383,7 @@ it.layer(services)("company directory", (it) => {
           .pipe(Effect.flip);
         assert.strictEqual(yield* directory.revision(company.id), "7");
         assert.deepStrictEqual(
-          yield* directory.get(company.id, joined.id),
+          yield* directory.get(members(company.id), joined.id),
           new Directory.Member({
             id: joined.id,
             name: "Renamed",
@@ -379,7 +438,7 @@ it.layer(services)("company directory", (it) => {
           })
         );
         assert.deepStrictEqual(decodeWake((yield* Queue.take(notifications)).payload), expected);
-        assert.isFalse((yield* directory.get(company.id, member.id))!.active);
+        assert.isFalse((yield* directory.get(members(company.id), member.id))!.active);
         yield* marker;
         yield* users.deactivate(ref);
         yield* marker;
@@ -426,7 +485,7 @@ it.layer(services)("company directory", (it) => {
         yield* Fiber.join(admin);
         assert.strictEqual(yield* directory.revision(company.id), "4");
         assert.deepStrictEqual(
-          yield* directory.get(company.id, member.id),
+          yield* directory.get(members(company.id), member.id),
           new Directory.Member({
             id: member.id,
             name: "After",
@@ -453,13 +512,13 @@ it.layer(services)("company directory", (it) => {
       yield* sql`UPDATE users SET company_id = ${target.company.id} WHERE id = ${member.id}`;
       assert.strictEqual(yield* directory.revision(source.company.id), "3");
       assert.strictEqual(yield* directory.revision(target.company.id), "2");
-      assert.isNull(yield* directory.get(source.company.id, member.id));
-      assert.deepStrictEqual(yield* directory.candidates(target.company.id, [member.id]), [
+      assert.isNull(yield* directory.get(members(source.company.id), member.id));
+      assert.deepStrictEqual(yield* directory.candidates(members(target.company.id), [member.id]), [
         member.id
       ]);
       yield* sql`DELETE FROM users WHERE id = ${member.id}`;
       assert.strictEqual(yield* directory.revision(target.company.id), "3");
-      assert.isNull(yield* directory.get(target.company.id, member.id));
+      assert.isNull(yield* directory.get(members(target.company.id), member.id));
     })
   );
 });

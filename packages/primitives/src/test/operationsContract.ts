@@ -91,10 +91,10 @@ export const memberAssignmentsContract = Effect.fn("test.memberAssignmentsContra
   const active = new Set(["owner", "colleague"]);
   const checks: string[][] = [];
   const directory = MemberDirectory.MemberDirectory.of({
-    candidates: (company, ids) =>
+    candidates: (patch, ids) =>
       Effect.sync(() => {
         checks.push([...ids]);
-        return company === companyId ? ids.filter((id) => active.has(id)) : [];
+        return patch.companyId === companyId ? ids.filter((id) => active.has(id)) : [];
       }),
     list: () => Effect.die("Assignment checks must not list the directory"),
     search: () => Effect.die("Assignment checks must not search the directory"),

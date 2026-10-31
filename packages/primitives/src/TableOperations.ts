@@ -366,8 +366,9 @@ export const make = Effect.gen(function* () {
   const settings = yield* config;
   const wakes = yield* Wakes.Wakes;
   const directory = yield* MemberDirectory.MemberDirectory;
+  /** New member values must each name one of the patch's candidates: a member or active guest. */
   const validateMembers = Effect.fn("TableOperations.validateMembers")(function* (
-    companyId: string,
+    patch: { readonly companyId: string; readonly patchId: string },
     name: string,
     table: Table,
     rows: readonly Row[],
@@ -390,7 +391,7 @@ export const make = Effect.gen(function* () {
       }
     }
     if (assignments.size === 0) return;
-    const candidates = new Set(yield* directory.candidates(companyId, [...assignments.keys()]));
+    const candidates = new Set(yield* directory.candidates(patch, [...assignments.keys()]));
     for (const [id, column] of assignments) {
       if (!candidates.has(id))
         return yield* new InvalidRow({ table: name, column, problem: "invalid value" });
@@ -501,11 +502,11 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
+      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
         Effect.gen(function* () {
           yield* byteLimit(args.row, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.row, true);
-          yield* validateMembers(companyId, args.table, table, [args.row]);
+          yield* validateMembers({ companyId, patchId }, args.table, table, [args.row]);
           return yield* sql.withTransaction(insert(sql, table, qualified, args.row));
         })
       )
@@ -519,7 +520,7 @@ export const make = Effect.gen(function* () {
       rowCount: (value) => (Array.isArray(value) ? value.length : null)
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
+      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
         Effect.gen(function* () {
           if (args.rows.length > settings.maxItems)
             return yield* new ItemLimit({ maxItems: settings.maxItems });
@@ -528,7 +529,7 @@ export const make = Effect.gen(function* () {
             yield* byteLimit(row, settings.rowBytes, "runtime.row.bytes");
             yield* validateRow(args.table, table, row, true);
           }
-          yield* validateMembers(companyId, args.table, table, args.rows);
+          yield* validateMembers({ companyId, patchId }, args.table, table, args.rows);
           return yield* sql.withTransaction(
             Effect.gen(function* () {
               const result: Row[] = [];
@@ -558,7 +559,7 @@ export const make = Effect.gen(function* () {
       rowCount: () => 1
     },
     (args) =>
-      withWriteTable(args.table, (sql, table, qualified, _patchId, _name, companyId) =>
+      withWriteTable(args.table, (sql, table, qualified, patchId, _name, companyId) =>
         Effect.gen(function* () {
           yield* byteLimit(args.patch, settings.rowBytes, "runtime.row.bytes");
           yield* validateRow(args.table, table, args.patch, false);
@@ -582,7 +583,13 @@ export const make = Effect.gen(function* () {
                   [args.id]
                 );
                 if (previous.length === 0) return yield* new RowNotFound({ table: args.table });
-                yield* validateMembers(companyId, args.table, table, [args.patch], previous[0]!);
+                yield* validateMembers(
+                  { companyId, patchId },
+                  args.table,
+                  table,
+                  [args.patch],
+                  previous[0]!
+                );
               }
               const rows = yield* queryRows(
                 sql,
