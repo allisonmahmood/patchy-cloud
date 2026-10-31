@@ -59,9 +59,9 @@ export const layer = (identity: typeof Identity.Type) => {
     MemberDirectory.MemberDirectory.of({
       list: (patch, cursor) => page(patch, "", cursor),
       search: page,
-      get: (companyId, id) => authorize(companyId).pipe(Effect.as(byId.get(id) ?? null)),
-      getMany: (companyId, ids) =>
-        authorize(companyId).pipe(Effect.as(ids.map((id) => byId.get(id) ?? null))),
+      get: (patch, id) => authorize(patch.companyId).pipe(Effect.as(byId.get(id) ?? null)),
+      getMany: (patch, ids) =>
+        authorize(patch.companyId).pipe(Effect.as(ids.map((id) => byId.get(id) ?? null))),
       candidates: (patch, ids) =>
         authorize(patch.companyId).pipe(Effect.as([...new Set(ids)].filter((id) => byId.has(id)))),
       revision: (companyId) => authorize(companyId).pipe(Effect.as("0"))

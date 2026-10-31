@@ -41,8 +41,8 @@ export interface Page<R> {
 }
 /**
  * A person in the patch's member directory. Only a guest, from another company, carries `guest`;
- * they're never an admin, and `active` is false once their account is deactivated or they're no
- * longer a guest of the company.
+ * they're never an admin, and are `active`, with their `email`, only in a patch currently shared
+ * with them. Elsewhere, after its grant ends or through a shared table, `email` is empty.
  */
 export interface Member {
   readonly id: string;

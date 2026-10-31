@@ -7,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SqlError } from "effect/sql/SqlError";
 
+type Patch = { readonly companyId: string; readonly patchId: string };
+
 /**
  * Companies owns the directory and Patches the grants that bring guests into it, neither knowing
  * the other; Primitives owns its runtime policy and page bound.
@@ -25,15 +27,18 @@ export const make = Effect.gen(function* () {
       })
     );
   /** A patch's pickers and assignments: its company's members and its active guests. */
-  const ofPatch = (patch: { readonly companyId: string; readonly patchId: string }) =>
+  const ofPatch = (patch: Patch) =>
     Effect.map(grants.guests(patch.patchId), (guests): Directory.Scope => ({
       companyId: patch.companyId,
       guests: new Map(guests.map(({ userId }) => [userId, true]))
     }));
-  /** Resolution: the company's members and anyone holding one of its grants, ended or not. */
-  const ofCompany = (companyId: string, ids: readonly string[]) =>
-    Effect.map(grants.holders(companyId, ids), (guests): Directory.Scope => ({
-      companyId,
+  /**
+   * A patch's resolution: its company's members and anyone holding one of the company's grants,
+   * ended or not, active only by their grant on this patch.
+   */
+  const resolving = (patch: Patch, ids: readonly string[]) =>
+    Effect.map(grants.holders(patch, ids), (guests): Directory.Scope => ({
+      companyId: patch.companyId,
       guests
     }));
   return MemberDirectory.MemberDirectory.of({
@@ -47,13 +52,13 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((scope) => directory.search(scope, text, pageSize, cursor)),
         pageErrors
       ),
-    get: (companyId, id) =>
-      ofCompany(companyId, [id]).pipe(
+    get: (patch, id) =>
+      resolving(patch, [id]).pipe(
         Effect.flatMap((scope) => directory.get(scope, id)),
         unavailable
       ),
-    getMany: (companyId, ids) =>
-      ofCompany(companyId, ids).pipe(
+    getMany: (patch, ids) =>
+      resolving(patch, ids).pipe(
         Effect.flatMap((scope) => directory.getMany(scope, ids)),
         unavailable
       ),

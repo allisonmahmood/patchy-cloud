@@ -25,7 +25,7 @@ A user with the role that manages the company's invitations, roles, deactivation
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Guest**:
-A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory resolves them as a guest while they hold any of its grants, ended ones included, and shows them inactive once none is active; that patch's pickers and member columns offer and accept them while their grant is active. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
+A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory names them as a guest while they hold any of its grants, ended ones included, but shows them active, with their email, only in a patch whose grant is active; that patch's pickers and member columns offer and accept them while their grant is active. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
 _Avoid_: outside person, external member, visitor, collaborator
 
 **Directory revision**:

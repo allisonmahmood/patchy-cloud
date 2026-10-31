@@ -37,9 +37,9 @@ export interface Page {
 }
 
 /**
- * Whose people a read covers: the company's members, and guests of its patches by user id,
- * `true` while their grant is active. Patches holds the grants; the host reads them and passes
- * them in.
+ * Whose people a read covers, for one of the company's patches: the company's members, and
+ * guests of its patches by user id, `true` while they hold an active grant on that patch.
+ * Patches holds the grants; the host reads them and passes them in.
  */
 export interface Scope {
   readonly companyId: string;
@@ -62,24 +62,26 @@ class CandidateRow extends PersonRow.extend<CandidateRow>("DirectoryCandidateRow
 }) {}
 
 /**
- * What a person is to the scope's company: a member, or a guest, who is never its admin and is
- * active while both their account and a grant are.
+ * What a person is to the scope's company: a member, or a guest, who is never its admin. A guest
+ * is active while both their account and their grant on the scope's patch are, and only that
+ * grant reveals their email; anywhere else they're a name.
  */
 const memberOf = ({ companyId, guests }: Scope, row: PersonRow) => {
   const { id, name, email } = row;
-  return row.companyId === companyId
-    ? new Member({ id, name, email, admin: row.admin, active: row.accountActive })
-    : new Member({
-        id,
-        name,
-        email,
-        admin: false,
-        active: row.accountActive && guests.get(id) === true,
-        guest: true
-      });
+  if (row.companyId === companyId)
+    return new Member({ id, name, email, admin: row.admin, active: row.accountActive });
+  const granted = guests.get(id) === true;
+  return new Member({
+    id,
+    name,
+    email: granted ? email : "",
+    admin: false,
+    active: row.accountActive && granted,
+    guest: true
+  });
 };
 
-/** The guests a scope lets pickers offer and assignments name: those whose grant is active. */
+/** The guests a scope lets pickers offer and assignments name: those granted its patch. */
 const activeGuests = (scope: Scope) =>
   [...scope.guests].flatMap(([id, active]) => (active ? [id] : []));
 

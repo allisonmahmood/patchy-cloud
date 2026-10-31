@@ -32,7 +32,7 @@ it.effect(
         cursor: null
       });
       assert.deepStrictEqual(
-        yield* directory.getMany("cmp_dev", [local.id, "missing", guest.id, local.id]),
+        yield* directory.getMany(patch, [local.id, "missing", guest.id, local.id]),
         [local, null, guest, local]
       );
       assert.deepStrictEqual(yield* directory.candidates(patch, [guest.id, "missing"]), [guest.id]);
