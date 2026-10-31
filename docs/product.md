@@ -849,8 +849,9 @@ a case-insensitive prefix of the full name or email: "ann" finds Anna, not Joann
 `{ id, name, email, admin, active }`, including deactivated users, and anyone holding
 a grant to one of the company's patches, ended or not, with `guest: true`, so another
 patch reading a shared table resolves its guests too. A guest is never `admin`. They
-are active, and carry their email, only in a patch currently shared with them while
-their account is active; anywhere else, after its grant ends or in another patch
+carry their email only in a patch currently shared with them, and are active there while
+their account is, so a deactivated guest keeps their email in that patch but resolves
+inactive; anywhere else, after its grant ends or in another patch
 reading its shared table, they resolve by name, inactive, with an empty email. Only guests carry `guest`, so members resolve as before. Unknown ids and
 everyone else at other companies return null; bulk resolution preserves input order
 and duplicates.

@@ -872,8 +872,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "`members.getMany { ids }` preserves input order and duplicates with null for unknown " +
           "or other-company ids. More than 1,000 ids is `limit_exceeded` with `members.getMany`. " +
           "Each member is `{ id, name, email, admin, active, guest? }`. A guest is never admin, " +
-          "and is active with their email only in a patch currently shared with them; elsewhere " +
-          "`active` is false and `email` empty. These reads require the fixed " +
+          "and carries their email only in a patch currently shared with them, where they are active " +
+          "while their account is; elsewhere `active` is false and `email` empty. These reads require the fixed " +
           "`members` declaration and active same-company viewer authority. Tier 2 handlers may read " +
           "the directory in all three kinds; only queries track the company directory revision. Directory reads use the platform " +
           "database, outside the query's company-database snapshot. A `member` column stores " +

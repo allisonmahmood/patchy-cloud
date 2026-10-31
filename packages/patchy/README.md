@@ -442,9 +442,9 @@ client.
 of 50 as `{ rows, cursor }`. Search is a case-insensitive prefix of full name
 or email, not fuzzy or surname search. `get(id)` and `getMany(ids)` resolve
 `{ id, name, email, admin, active }`, including deactivated users, and the
-company's guests with `guest: true`. A guest is active, with their email,
-only in a patch currently shared with them; elsewhere they resolve by name,
-inactive, with an empty email. Unknown ids and everyone else at other
+company's guests with `guest: true`. A guest carries their email only in a
+patch currently shared with them, and is active there while their account is;
+elsewhere they resolve by name, inactive, with an empty email. Unknown ids and everyone else at other
 companies resolve to null. `getMany` accepts at most 1,000 ids and preserves
 input order and duplicates. Candidates are active company users and the
 patch's active guests.
