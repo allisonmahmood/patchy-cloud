@@ -52,6 +52,37 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 32,
+    date: "2026-11-01",
+    through: "58d94b3050a2704b00a1fc92b6e9698e5b47f267",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "A patch takes the keyboard as soon as it opens",
+        detail:
+          "Open a patch and its keyboard shortcuts work straight away, and a page scrolls with Space or Page Down, without clicking into it first.",
+        prs: [1097]
+      },
+      {
+        kind: "Improved",
+        title: "Agents give a patch pages of its own",
+        detail:
+          "Ask your agent for a patch with separate views, such as one page per deal, and each view gets its own address under the patch. You can bookmark it and share it, and back and forward work. Your agent picks this up the next time it refreshes the patch.",
+        prs: [1095]
+      },
+      {
+        kind: "Fixed",
+        title: "Pidgeon's hold on a new message is explained",
+        detail:
+          "Pidgeon holds back a new message to someone the address has just written to, while replies always go. A patch that hits that hold is now told that nothing was sent and to reply in the conversation, instead of being told to wait and try again.",
+        prs: [1139]
+      }
+    ],
+    behindTheScenes: [
+      "Refreshing a patch repo and starting a local preview keep working when the repo holds a skill this release doesn't ship, so a rollback can't break them."
+    ]
+  },
+  {
     id: 31,
     date: "2026-10-31",
     through: "5888411ffba9cbeaab212583c466f23412a3b0d7",
