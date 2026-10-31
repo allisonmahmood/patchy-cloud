@@ -60,8 +60,14 @@ CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
 to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
 `node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
+Bun is pinned once, by `devEngines.runtime` in `package.json`, and `pnpm install`
+downloads it with the lockfile's hashes. Dependabot doesn't bump it: change the
+version there and run `pnpm install` to rewrite the lockfile.
 
-Format caches its results, so a repeat run rechecks only the files that changed.
+Format is `bun fmt`, which reads `prettier.config.js` and `.prettierignore` and
+checks the whole repo in a fraction of a second. The pre-commit hook formats what
+you stage, but refuses a partly staged file whose staged part needs formatting:
+stage the whole file, or run `pnpm format` and stage the part again.
 Lint is Oxlint, with its type-aware rules run by `oxlint-tsgolint`; it keeps no
 cache and checks the whole repo in seconds.
 
