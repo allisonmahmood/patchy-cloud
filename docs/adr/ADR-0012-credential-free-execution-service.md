@@ -555,7 +555,7 @@ The **app stack** is one release, pinned to an image digest:
 
 A release is one run of the deploy workflow: build the reproducible image,
 deploy the base stack, push the image, deploy the app stack, which waits for ECS
-to settle, then promote the fleet with `node dist/fleet.js promote <revision>`
+to settle, then promote the fleet with `bun dist/fleet.js promote <revision>`
 as a one-off host task. Promotion follows the rollout, never precedes it: a
 staged revision whose hosts failed would have none. Until promotion the fleet
 still replenishes the promoted revision's spares, so each release's hosts

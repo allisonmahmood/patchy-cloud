@@ -601,7 +601,9 @@ export async function startInstance(options: {
       }
       if (fleet) fleetStarted = true;
       let log = "";
-      const server = spawn(process.execPath, [path.join(root, "apps/server/dist/start.js")], {
+      // The server runs on production's runtime, the Bun the root package.json pins.
+      const bun = path.join(root, "node_modules/bun/bun");
+      const server = spawn(bun, [path.join(root, "apps/server/dist/start.js")], {
         cwd: root,
         env: {
           PATH: process.env.PATH,

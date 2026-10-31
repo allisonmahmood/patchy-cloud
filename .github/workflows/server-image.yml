@@ -26,7 +26,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          # Matches the digest-pinned node:24-slim image and the local recipe.
+          # Builds the image, as the Dockerfile's node:24-slim builder and the local recipe do.
           node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
@@ -48,6 +48,12 @@ jobs:
           node scripts/build-server-image.mjs --tag patchy-server:ci --output "$RUNNER_TEMP/server-image-rebuild.tar"
           cmp .local/server-image.tar "$RUNNER_TEMP/server-image-rebuild.tar"
           cmp .local/server-image.tar.json "$RUNNER_TEMP/server-image-rebuild.tar.json"
+      # The image as production runs it, on Bun: boots on TLS and SCRAM, promotes and
+      # rolls back, stops on SIGTERM, drops workerd's uid. scripts/server-image-smoke.mjs.
+      - name: Run the built image
+        run: |
+          docker load --input .local/server-image.tar
+          node scripts/server-image-smoke.mjs --image patchy-server:ci
       - uses: actions/upload-artifact@v7
         with:
           name: server-image-linux-amd64
