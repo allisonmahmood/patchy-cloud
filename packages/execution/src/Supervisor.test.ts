@@ -394,16 +394,17 @@ it.live.skipIf(process.platform !== "linux")(
       process.kill(pid, "SIGKILL");
       yield* reaped(pid);
       // This bind holds admission while it discards the dead standby; the newer host's bind
-      // and the older host's stop queue behind it, in that order.
-      const slow = yield* bind(supervisor, "ver_slow").pipe(Effect.result, Effect.forkChild);
-      yield* Effect.yieldNow;
+      // and the older host's stop queue behind it, in that order. Each fork runs to its first
+      // suspension at once, so all three are queued before the event loop can finish the
+      // discard. Otherwise a discard that ends between forks, as it does on Bun, frees the
+      // permit before the stop asks, and a semaphore hands a free permit to whoever asks
+      // first, even ahead of a waiter still waking.
+      const forkNow = Effect.forkChild({ startImmediately: true });
+      const slow = yield* bind(supervisor, "ver_slow").pipe(Effect.result, forkNow);
       const newer = yield* supervisor
         .bind({ companyId: "com_supervisor", bindingEpoch: 2 })
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      const older = yield* supervisor
-        .stop({ bindingEpoch: 1 })
-        .pipe(Effect.result, Effect.forkChild);
+        .pipe(forkNow);
+      const older = yield* supervisor.stop({ bindingEpoch: 1 }).pipe(Effect.result, forkNow);
       expect(yield* Fiber.join(newer)).toEqual({ bindingEpoch: 2 });
       expect(yield* Fiber.join(older)).toMatchObject({
         _tag: "Failure",
