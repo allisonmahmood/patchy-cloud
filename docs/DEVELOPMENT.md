@@ -13,9 +13,9 @@ pnpm install
 pnpm exec playwright install --with-deps chromium   # browser and packed suites
 ```
 
-Install pins `workerd` and embedded Postgres per platform; nothing is installed
-globally. In T3 Code, `t3.json` runs the install for each new worktree and
-offers start, stop, environment and **Check** actions; import them once from
+Install pins `workerd`, embedded Postgres and Bun per platform; nothing is
+installed globally. In T3 Code, `t3.json` runs the install for each new worktree
+and offers start, stop, environment and **Check** actions; import them once from
 **From t3.json** in the project actions menu.
 
 ## Checks
@@ -162,6 +162,12 @@ Starting is idempotent and the processes outlive the shell, so an agent starts
 once and keeps using the instance. Ports come from a hash of the worktree path,
 so worktrees run side by side; use the printed URL, not a remembered port. The
 server is not watched: after a code change, `pnpm dev stop && pnpm dev`.
+
+The runner, its supervisor and the server run on the Bun that `package.json`
+pins, as production's server does. The CLI runs on Node, as on people's
+machines, and so do the release builds. They take the first `node` on `PATH`,
+which must be Node, not Bun: an environment's `bin/node` links to it, and its
+workspace's `mise.toml` pins its version.
 
 | Command                                       | What it does                                                                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
