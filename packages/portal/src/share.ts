@@ -19,8 +19,7 @@ export const shareStyles = `
   .share-add-row .field { flex: 1; min-width: 0; }
   .share-add .field-callout { margin-bottom: 0; }
   .share-guests { margin: 10px 0 0; }
-  .share-guest { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
-  .share-guest:last-child { border-bottom: 0; }
+  .share-guest { display: flex; align-items: center; gap: 12px; }
   .share-guest-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .share-guest form { margin: 0; }
   .share-audience { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--line-strong); }
@@ -107,7 +106,7 @@ export const renderShareDialog = (input: {
   const guestRow = (guest: GuestGrants.Guest) =>
     `<li class="list-row share-guest">${avatar(guest.userId, guest.name)}<span class="share-guest-name"><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}</span></span>${form("remove-guest", "share-remove", `${hidden("guest", guest.userId)}<button class="btn btn-quiet btn-danger" type="submit" aria-label="${escapeAttribute(`Remove ${guest.name}`)}">Remove</button>`)}</li>`;
   const guests = input.guests.length
-    ? `${isPublic ? '<p class="field-label" id="share-guests-label">Guests</p>' : ""}<ul class="list share-guests" ${isPublic ? 'aria-labelledby="share-guests-label"' : 'aria-label="Guests"'}>${input.guests.map(guestRow).join("")}</ul>`
+    ? `${isPublic ? '<p class="field-label" id="share-guests-label">Guests</p>' : ""}<ul class="list list-snug share-guests" ${isPublic ? 'aria-labelledby="share-guests-label"' : 'aria-label="Guests"'}>${input.guests.map(guestRow).join("")}</ul>`
     : "";
 
   // The saved audience carries data-current, so picking the other one shows what comes next.

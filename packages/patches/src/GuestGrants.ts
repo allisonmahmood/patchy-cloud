@@ -109,20 +109,24 @@ export const admitsGuests = (
 ) => loaded.current && Option.isNone(unavailable(loaded, version, blocked));
 
 /** Someone at another company, read from their own account. */
-export const Person = Schema.Struct({
+export class Person extends Schema.Class<Person>("Person")({
   userId: Schema.String,
   name: Schema.String,
   email: Schema.String,
   companyName: Schema.String
-});
-export type Person = typeof Person.Type;
+}) {}
 
 /** A patch's guest, and when they were added. */
-export const Guest = Schema.Struct({ ...Person.fields, grantedAt: Schema.Date });
-export type Guest = typeof Guest.Type;
+export class Guest extends Person.extend<Guest>("Guest")({ grantedAt: Schema.Date }) {}
 
-/** A person as every surface names them: by their name, or their email's when it's blank. */
-const named = <A extends Person>(person: A): A => ({ ...person, name: Users.displayName(person) });
+/**
+ * A decoded row rebuilt as `Row`, naming its person as every surface does: by their name, or their
+ * email's when it's blank.
+ */
+const named =
+  <A extends Person>(Row: new (fields: A) => A) =>
+  (row: A) =>
+    new Row({ ...row, name: Users.displayName(row) });
 
 class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   patchId: Schema.String,
@@ -436,7 +440,7 @@ export const make = Effect.gen(function* () {
     return Option.isSome(yield* revoked({ ...input, at }));
   }, Effect.catchTags(dieOnSchemaError));
   const guests = Effect.fn("GuestGrants.guests")(
-    (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named)),
+    (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named(Guest))),
     Effect.catchTags(dieOnSchemaError)
   );
   const holders = Effect.fn("GuestGrants.holders")(function* (
@@ -525,7 +529,10 @@ export const make = Effect.gen(function* () {
         return yield* new NotOnPatchy({ email: address });
       if (person.companyId === patch.companyId) return yield* new AlreadyMember({ email: address });
       yield* grant({ patchId: patch.id, userId: person.id, grantedBy: actor.userId });
-      return { patch, guest: named(yield* patchGuest({ patchId: patch.id, userId: person.id })) };
+      return {
+        patch,
+        guest: named(Guest)(yield* patchGuest({ patchId: patch.id, userId: person.id }))
+      };
     },
     sql.withTransaction,
     Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
@@ -555,7 +562,7 @@ export const make = Effect.gen(function* () {
     return { patch, guests: yield* guests(patch.id) };
   }, sql.withTransaction);
   const sharedBefore = Effect.fn("GuestGrants.sharedBefore")(
-    (companyId: string) => Effect.map(recentPeople(companyId), (rows) => rows.map(named)),
+    (companyId: string) => Effect.map(recentPeople(companyId), (rows) => rows.map(named(Person))),
     Effect.catchTags(dieOnSchemaError)
   );
   return GuestGrants.of({
