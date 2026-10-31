@@ -241,8 +241,9 @@ try {
   // 1. The default command and user, against TLS and SCRAM.
   start("smoke-host-a", { env: host(portA, callbackA, "smoke-a") });
   say(`host a (smoke-a) served /healthz ${await healthy("smoke-host-a", portA)} ms after start`);
-  const identity = docker("top", "smoke-host-a", "-o", "uid,comm");
-  if (!/^\s*1000\s+bun\b/m.test(identity))
+  // docker top refuses -o fields without pid, so every row starts with the pid.
+  const identity = docker("top", "smoke-host-a", "-o", "pid,uid,comm");
+  if (!/^\s*\d+\s+1000\s+bun\b/m.test(identity))
     throw new Error(`The host should run Bun as uid 1000:\n${identity}`);
   start("smoke-host-b", { env: host(portB, callbackB, "smoke-b") });
   say(`host b (smoke-b) served /healthz ${await healthy("smoke-host-b", portB)} ms after start`);
@@ -303,14 +304,14 @@ try {
   let processes = "";
   await until("The exec supervisor did not start its standby workerd as another uid", () => {
     if (!running("smoke-exec")) throw new Error(`The exec task exited:\n${logs("smoke-exec")}`);
-    processes = docker("top", "smoke-exec", "-o", "uid,args");
+    processes = docker("top", "smoke-exec", "-o", "pid,uid,args");
     return (
-      /^\s*0\s+bun dist\/exec\.js/m.test(processes) &&
-      /^\s*[1-9]\d*\s+\S*\s*serve /m.test(processes)
+      /^\s*\d+\s+0\s+bun dist\/exec\.js/m.test(processes) &&
+      /^\s*\d+\s+[1-9]\d*\s+\S*\s*serve /m.test(processes)
     );
   });
   say(
-    `the exec supervisor runs as root and workerd as uid ${/^\s*([1-9]\d*)\s+\S*\s*serve /m.exec(processes)[1]}`
+    `the exec supervisor runs as root and workerd as uid ${/^\s*\d+\s+([1-9]\d*)\s+\S*\s*serve /m.exec(processes)[1]}`
   );
   const exec = stop("smoke-exec");
   say(`smoke-exec exited ${exec.code} ${exec.ms} ms after SIGTERM`);
