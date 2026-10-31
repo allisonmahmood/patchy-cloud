@@ -36,7 +36,9 @@ import {
   ConfigEdit,
   ManagedProject,
   isProjectRefusal,
+  omittedSkills,
   presentSkills,
+  removedSkillNotice,
   safePath
 } from "./ManagedProject.js";
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
@@ -577,14 +579,6 @@ export const generate = Effect.fn("Project.generate")(function* (
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
-  if (manifest.tier !== 2 && skills.includes("patchy-server")) {
-    removedSkills.push("patchy-server");
-    skills = skills.filter((name) => name !== "patchy-server");
-  }
-  if (manifest.uses.members?.kind !== "members" && skills.includes("patchy-members")) {
-    removedSkills.push("patchy-members");
-    skills = skills.filter((name) => name !== "patchy-members");
-  }
   const serverModules = manifest.tier === 2 ? yield* discoverServerModules(cwd) : [];
   const client = yield* Api.client(token);
   const generated = yield* client
@@ -598,6 +592,7 @@ export const generate = Effect.fn("Project.generate")(function* (
       }
     })
     .pipe(Effect.catch((error) => refusal(error, "Generation failed.")));
+  removedSkills.push(...omittedSkills(skills, generated.files));
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
   const stamps = new Map(generated.uses.map((stamp) => [stamp.alias, stamp]));
   const stampedDeclarations = Object.entries(manifest.uses).filter(
@@ -761,11 +756,12 @@ const refreshRepo = Effect.fn("Project.refreshRepo")(function* (
               Effect.orElseSucceed(() => "The company")
             )
           );
+          const landed = [...lookWarnings, ...result.removedSkills.map(removedSkillNotice)];
           const warnings = [
             ...syncWarnings,
             ...toolchainWarnings,
             ...(yield* primitiveReminders(cwd, result.manifest)),
-            ...lookWarnings
+            ...landed
           ];
           const changed = yield* localIO("Activate generated files", () =>
             transaction.activate(
@@ -775,7 +771,7 @@ const refreshRepo = Effect.fn("Project.refreshRepo")(function* (
               result.configEdit
             )
           ).pipe(Effect.uninterruptible);
-          yield* Output.rememberWarnings(lookWarnings);
+          yield* Output.rememberWarnings(landed);
           return { changed, from, pinChanged, warnings, addedCapabilities };
         }),
       (transaction, exit) =>

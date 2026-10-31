@@ -8,7 +8,14 @@ import * as Api from "./Api.js";
 import { LocalError } from "./CliError.js";
 import { configFailure, executeConfig, lowerTierUses, resolveStamps } from "./executeConfig.js";
 import { lookNotices } from "./lookNotices.js";
-import { ManagedProject, isProjectRefusal, presentSkills, safePath } from "./ManagedProject.js";
+import {
+  ManagedProject,
+  isProjectRefusal,
+  omittedSkills,
+  presentSkills,
+  removedSkillNotice,
+  safePath
+} from "./ManagedProject.js";
 import * as Output from "./Output.js";
 import * as Project from "./Project.js";
 import { RELEASE } from "./release.js";
@@ -186,10 +193,12 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
           generated.files,
           Effect.succeed(identity.company.name)
         );
+        const removedSkills = omittedSkills(skills, generated.files);
+        const landed = [...lookWarnings, ...removedSkills.map(removedSkillNotice)];
         const warnings = [
           ...syncWarnings,
           ...(yield* primitiveReminders(root, manifest)),
-          ...lookWarnings
+          ...landed
         ];
         // Dev refreshes declarations, but only refresh owns the server module type list.
         const serverFile = "patchy/_generated/server.ts";
@@ -202,17 +211,14 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         if (yield* fs.exists(serverPath))
           files.push({ path: serverFile, contents: yield* fs.readFileString(serverPath) });
         yield* io("Activate generated files", () =>
-          transaction.activate(
-            files,
-            encodeManifest(manifest),
-            manifest.uses.members?.kind !== "members" && skills.includes("patchy-members")
-              ? ["patchy-members"]
-              : [],
-            { before: source, after: source }
-          )
+          transaction.activate(files, encodeManifest(manifest), removedSkills, {
+            before: source,
+            after: source
+          })
         ).pipe(Effect.uninterruptible);
-        // The look landed; a failing first build still names the revision it brought.
-        yield* Output.rememberWarnings(lookWarnings);
+        // The look and removals landed; a failing first build still names the revision it brought
+        // and the skills that went.
+        yield* Output.rememberWarnings(landed);
         return {
           manifest,
           identity,
