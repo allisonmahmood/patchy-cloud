@@ -534,8 +534,8 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
             const { call } = yield* desk(store, connection, patchId);
-            // Someone the desk hasn't written to: Pidgeon refuses a new message to someone the
-            // address wrote to in the last few minutes, and the desk has answered the customer.
+            // Someone the desk hasn't written to: Pidgeon holds back new messages from an address
+            // to someone it has just written to, and the desk has answered the customer.
             yield* inbound(connection.display.email, {
               from: "Lena Ortiz <lena@post.example>",
               subject: `Is my bike ready? ${Live.RUN}`,
