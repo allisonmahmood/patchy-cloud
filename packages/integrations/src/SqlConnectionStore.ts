@@ -177,7 +177,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const attio = yield* AttioSource.Source;
     const audit = yield* RuntimeLog.RuntimeLog;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
-    display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
+    block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
     to_char(last_tested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastTestedAt",
     to_char(last_discovered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastDiscoveredAt",
     created_by AS "createdBy"`;
@@ -1250,6 +1250,30 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       },
       Effect.catchTags(safe("describe"))
     );
+    const blockGuests = Effect.fn("ConnectionStore.blockGuests")(
+      function* (input: Identity & { readonly block: boolean }) {
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* lock(input);
+            yield* sql`UPDATE connections SET block_guests = ${input.block} WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            return yield* get(input.companyId, input.id);
+          })
+        );
+      },
+      Effect.catchTags(safe("blockGuests"))
+    );
+    const blockingRows = SqlSchema.findAll({
+      Request: Schema.Array(Schema.String),
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (ids) => sql`SELECT id FROM connections WHERE id IN ${sql.in(ids)} AND block_guests`
+    });
+    const blockingGuests = Effect.fn("ConnectionStore.blockingGuests")(
+      function* (ids: ReadonlyArray<string>) {
+        if (ids.length === 0) return new Set<string>();
+        return new Set((yield* blockingRows(ids)).map((row) => row.id));
+      },
+      Effect.catchTags(safe("blockingGuests"))
+    );
     /**
      * Delete runs to its end even when its request is interrupted: once the row is gone, its keys
      * revoke themselves. If the COMMIT's answer is lost, the row says whether it went, but not who
@@ -1404,6 +1428,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       disconnect,
       reconnect,
       describe,
+      blockGuests,
+      blockingGuests,
       delete: remove,
       resolve,
       poolCredentials,

@@ -33,7 +33,7 @@ import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import { InvocationLog, Prewarm, RuntimeLog, Wakes } from "@patchy/runtime";
@@ -68,6 +68,7 @@ const lifecycleEvents = (companyId: string) =>
   );
 const services = Layer.mergeAll(
   Patches.layer,
+  GuestGrants.layer,
   Session.layer,
   Companies.layer,
   Users.layer,
@@ -87,12 +88,32 @@ const services = Layer.mergeAll(
           description: "The sales warehouse",
           mode: "company",
           status: "connected",
+          blockGuests: false,
           display: { host: "db.example.com", port: 5432, database: "sales", role: "reader" },
           credentialRevision: 1,
           metadataRevision: 1,
           lastTestedAt: null,
           lastDiscoveredAt: null,
           createdBy: "usr_portal_log"
+        } satisfies ConnectionStore.Connection,
+        snapshots: []
+      },
+      {
+        connection: {
+          id: "con_payroll",
+          companyId: "cmp_portal_guests",
+          integration: "postgres",
+          handle: "payroll",
+          description: "Payroll",
+          mode: "company",
+          status: "connected",
+          blockGuests: true,
+          display: { host: "db.example.com", port: 5432, database: "payroll", role: "reader" },
+          credentialRevision: 1,
+          metadataRevision: 1,
+          lastTestedAt: null,
+          lastDiscoveredAt: null,
+          createdBy: "usr_portal_guests"
         } satisfies ConnectionStore.Connection,
         snapshots: []
       }
@@ -2738,6 +2759,46 @@ it.layer(layer)("all patches on a socket", (it) => {
         menuItems(off, shelved.patchId),
         "old-map About this patch Settings Restore Delete…"
       );
+    })
+  );
+
+  it.effect("warns its owner when a patch with guests uses a connection that blocks them", () =>
+    Effect.gen(function* () {
+      const guest = yield* company();
+      const workspace = yield* company("cmp_portal_guests");
+      const payroll = yield* publish(workspace.owner, "payroll-review", {
+        filename: null,
+        manifest: {
+          ...manifest,
+          name: "payroll-review",
+          tier: 2,
+          handlers: {},
+          uses: { payroll: { kind: "postgres", handle: "payroll", id: "con_payroll", revision: 1 } }
+        },
+        server: {
+          objectKey: "patches/payroll-review/server.js",
+          sha256: sha256("payroll"),
+          bytes: 0
+        }
+      });
+      const card = (person: Person) =>
+        Effect.flatMap(request(cardPath(payroll.name), person), (response) => response.text);
+      const attention = Effect.flatMap(
+        request("/patches?show=attention", workspace.owner),
+        (response) => response.text
+      );
+      // Nobody to turn away yet.
+      assert.notInclude(text(yield* card(workspace.owner)), "postgres/payroll");
+      assert.deepStrictEqual(listed(yield* attention), []);
+
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId: payroll.patchId,
+        userId: guest.member.id,
+        grantedBy: workspace.owner.id
+      });
+      assert.include(text(yield* card(workspace.owner)), "postgres/payroll");
+      assert.deepStrictEqual(listed(yield* attention), [payroll.name]);
+      assert.notInclude(text(yield* card(workspace.member)), "postgres/payroll");
     })
   );
 

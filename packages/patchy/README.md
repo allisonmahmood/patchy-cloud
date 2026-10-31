@@ -1164,7 +1164,9 @@ publish with agent tools adds a line built from the manifest it sent, such as
 through Patchy's MCP at <instance>/mcp.`; JSON gains no field, since `handlers`
 lists them as `agent.<export>` with their handler `kind`. While the company's
 agent access is off, publish warns that no agent can use them yet and that an
-admin turns it on at `<instance>/company`.
+admin turns it on at `<instance>/company`. When the patch has guests and the
+version would close it to them, such as by declaring a connection an admin set to
+block guests, publish still succeeds, exit 0, and a `warnings` entry says why.
 
 Every publish JSON success includes `artifacts.html: { sha256, bytes }`.
 Tier 2 adds `artifacts.server: { sha256, bytes }` and

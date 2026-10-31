@@ -116,7 +116,6 @@ export const make: Effect.Effect<StreamAdmission["Service"], never, Dependencies
             Effect.gen(function* () {
               const admitted = yield* GrantedGuests.viewerOf(loaded, person).pipe(
                 Effect.provideContext(guestContext),
-                Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
                 Effect.flatMap((viewer) => identity(viewer, expiresAt))
               );
               const recheck = Effect.gen(function* () {
@@ -127,10 +126,7 @@ export const make: Effect.Effect<StreamAdmission["Service"], never, Dependencies
                   loaded,
                   admitted.identity,
                   current.person
-                ).pipe(
-                  Effect.provideContext(guestContext),
-                  Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-                );
+                ).pipe(Effect.provideContext(guestContext));
                 return yield* identity(viewer, current.expiresAt);
               }).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request));
               return { ...admitted, recheck };

@@ -150,10 +150,15 @@ const grantedGuest = Effect.fn("Pages.grantedGuest")(function* (
   version: Patches.PatchVersion,
   userId: string
 ) {
-  if (!GuestGrants.admitsGuests(patch, version)) return false;
   const host = yield* (yield* GuestGrants.GuestGrants)
-    .host({ patchId: patch.id, companyId: patch.companyId, userId })
-    .pipe(Effect.catchTags({ SqlError: Effect.die }));
+    .host({
+      patchId: patch.id,
+      userId,
+      state: patch.state,
+      current: patch.currentVersionId === version.id,
+      version
+    })
+    .pipe(Effect.catchTags({ SqlError: Effect.die, ConnectionStorageFailed: Effect.die }));
   return Option.isSome(host);
 });
 

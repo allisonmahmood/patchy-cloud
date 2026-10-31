@@ -82,6 +82,7 @@ const connection = {
   description: "Journey analytics",
   mode: "company",
   status: "connected",
+  blockGuests: false,
   display: { region: "us", projectId: project.id, keyHint: "phx_…0001" },
   credentialRevision: 1,
   metadataRevision: 1,

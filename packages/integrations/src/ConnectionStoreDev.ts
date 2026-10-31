@@ -121,6 +121,15 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       disconnect: unavailable,
       reconnect: unavailable,
       describe: unavailable,
+      blockGuests: unavailable,
+      blockingGuests: (ids) =>
+        Effect.succeed(
+          new Set(
+            metadata
+              .filter((item) => item.connection.blockGuests && ids.includes(item.connection.id))
+              .map((item) => item.connection.id)
+          )
+        ),
       delete: unavailable,
       countSend: (companyId, id, day, budget) =>
         Effect.sync(() => {
