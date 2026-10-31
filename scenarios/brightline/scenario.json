@@ -1,5 +1,6 @@
 {
   "company": { "name": "Brightline Studio", "handle": "brightline", "agentAccess": true },
+  "companies": [{ "name": "Cedar Works", "handle": "cedar" }],
   "people": [
     {
       "key": "allison",
@@ -25,6 +26,13 @@
       "name": "Sofia Alvarez",
       "email": "sofia@brightline.example",
       "role": "member"
+    },
+    {
+      "key": "taylor",
+      "name": "Taylor Morgan",
+      "email": "taylor@cedar.example",
+      "role": "member",
+      "company": "cedar"
     }
   ],
   "publisher": "allison",

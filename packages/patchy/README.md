@@ -441,12 +441,17 @@ client.
 `list({ cursor? }?)` and `search(text, { cursor? }?)` return candidate pages
 of 50 as `{ rows, cursor }`. Search is a case-insensitive prefix of full name
 or email, not fuzzy or surname search. `get(id)` and `getMany(ids)` resolve
-`{ id, name, email, admin, active }`, including deactivated users; unknown or
-other-company ids resolve to null. `getMany` accepts at most 1,000 ids and
-preserves input order and duplicates. Candidates are active company users.
+`{ id, name, email, admin, active }`, including deactivated users, and the
+company's guests with `guest: true`. A guest carries their email only in a
+patch currently shared with them, and is active there while their account is;
+elsewhere they resolve by name, inactive, with an empty email. Unknown ids and everyone else at other
+companies resolve to null. `getMany` accepts at most 1,000 ids and preserves
+input order and duplicates. Candidates are active company users and the
+patch's active guests.
 
 Only queries track directory dependencies, so a subscribed query reading the
-directory reruns on joins, deactivation and profile changes. Directory reads
+directory reruns on joins, deactivation, profile changes and guest grants
+starting or ending. Directory reads
 come from the platform database, outside a query's company-database snapshot.
 A page's direct directory call is refused `server_required`, and a lower-tier
 document of a patch serving tier 2 still gets only `me`.

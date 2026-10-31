@@ -190,7 +190,7 @@ function useDebounced<T>(value: T, ms: number): T {
   return settled;
 }
 
-/** Colleague search by name or email prefix. Shows the picked person as a removable pill. */
+/** Colleague search by name or email prefix, guests marked. Shows the pick as a removable pill. */
 function MemberPicker({
   selected,
   excludeId,
@@ -297,7 +297,7 @@ function MemberPicker({
             >
               <Avatar id={member.id} person={member} size="sm" />
               <span className="picker__name">{member.name}</span>
-              <span className="picker__email">{member.email}</span>
+              {member.guest && <span className="picker__note">Guest</span>}
             </li>
           ))}
           {options.length === 0 && (

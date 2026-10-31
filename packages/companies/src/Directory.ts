@@ -18,12 +18,17 @@ export class InvalidCursor extends Schema.TaggedError<InvalidCursor>()("Director
   }
 }
 
+/**
+ * A person as a company's directory shows them: one of its members, or one of its guests, who
+ * alone carry `guest`.
+ */
 export class Member extends Schema.Class<Member>("DirectoryMember")({
   id: Schema.String,
   name: Schema.String,
   email: Schema.String,
   admin: Schema.Boolean,
-  active: Schema.Boolean
+  active: Schema.Boolean,
+  guest: Schema.optionalKey(Schema.Literal(true))
 }) {}
 
 export interface Page {
@@ -31,10 +36,54 @@ export interface Page {
   readonly cursor: string | null;
 }
 
-class CandidateRow extends Member.extend<CandidateRow>("DirectoryCandidateRow")({
+/**
+ * Whose people a read covers, for one of the company's patches: the company's members, and
+ * guests of its patches by user id, `true` while they hold an active grant on that patch.
+ * Patches holds the grants; the host reads them and passes them in.
+ */
+export interface Scope {
+  readonly companyId: string;
+  readonly guests: ReadonlyMap<string, boolean>;
+}
+
+/** A user as stored, before a scope says what they are to its company. */
+class PersonRow extends Schema.Class<PersonRow>("DirectoryPersonRow")({
+  id: Schema.String,
+  name: Schema.String,
+  email: Schema.String,
+  companyId: Schema.String,
+  admin: Schema.Boolean,
+  accountActive: Schema.Boolean
+}) {}
+
+class CandidateRow extends PersonRow.extend<CandidateRow>("DirectoryCandidateRow")({
   sortName: Schema.String,
   sortEmail: Schema.String
 }) {}
+
+/**
+ * What a person is to the scope's company: a member, or a guest, who is never its admin. A guest
+ * is active while both their account and their grant on the scope's patch are, and only that
+ * grant reveals their email; anywhere else they're a name.
+ */
+const memberOf = ({ companyId, guests }: Scope, row: PersonRow) => {
+  const { id, name, email } = row;
+  if (row.companyId === companyId)
+    return new Member({ id, name, email, admin: row.admin, active: row.accountActive });
+  const granted = guests.get(id) === true;
+  return new Member({
+    id,
+    name,
+    email: granted ? email : "",
+    admin: false,
+    active: row.accountActive && granted,
+    guest: true
+  });
+};
+
+/** The guests a scope lets pickers offer and assignments name: those granted its patch. */
+const activeGuests = (scope: Scope) =>
+  [...scope.guests].flatMap(([id, active]) => (active ? [id] : []));
 
 const CursorData = Schema.Struct({
   version: Schema.Literal(1),
@@ -49,28 +98,31 @@ const decodeCursor = Schema.decodeUnknownEffect(Cursor);
 const encodeCursor = Schema.encodeSync(Cursor);
 const isCursorEncoding = Schema.is(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/)));
 
-/** Platform-domain reads. Callers authorize access and supply their page bound. */
+/**
+ * Platform-domain reads. Callers authorize access and supply their page bound and scope. Lists,
+ * searches and candidates hold active people; `get` and `getMany` resolve anyone in scope.
+ */
 export class Directory extends Context.Service<
   Directory,
   {
     readonly list: (
-      companyId: string,
+      scope: Scope,
       limit: number,
       cursor?: string
     ) => Effect.Effect<Page, InvalidCursor | SqlError>;
     readonly search: (
-      companyId: string,
+      scope: Scope,
       text: string,
       limit: number,
       cursor?: string
     ) => Effect.Effect<Page, InvalidCursor | SqlError>;
-    readonly get: (companyId: string, id: string) => Effect.Effect<Member | null, SqlError>;
+    readonly get: (scope: Scope, id: string) => Effect.Effect<Member | null, SqlError>;
     readonly getMany: (
-      companyId: string,
+      scope: Scope,
       ids: readonly string[]
     ) => Effect.Effect<readonly (Member | null)[], SqlError>;
     readonly candidates: (
-      companyId: string,
+      scope: Scope,
       ids: readonly string[]
     ) => Effect.Effect<readonly string[], SqlError>;
     readonly revision: (companyId: string) => Effect.Effect<string, CompanyNotFound | SqlError>;
@@ -80,28 +132,27 @@ export class Directory extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
-  const columns = sql`id, name, email, role = 'admin' AS admin, deactivated_at IS NULL AS active`;
-  const ref = Schema.Struct({ companyId: Schema.String, id: Schema.String });
-  const byId = SqlSchema.findOneOption({
-    Request: ref,
-    Result: Member,
-    execute: ({ companyId, id }) =>
-      sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} AND id = ${id}`
+  const columns = sql`id, name, email, company_id AS "companyId", role = 'admin' AS admin,
+    deactivated_at IS NULL AS "accountActive"`;
+  const people = Schema.Struct({
+    companyId: Schema.String,
+    guests: Schema.Array(Schema.String),
+    ids: Schema.Array(Schema.String)
   });
   const byIds = SqlSchema.findAll({
-    Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
-    Result: Member,
-    execute: ({ companyId, ids }) =>
-      sql`SELECT ${columns} FROM users WHERE company_id = ${companyId} AND ${sql.in("id", ids)}`
+    Request: people,
+    Result: PersonRow,
+    execute: ({ companyId, guests, ids }) => sql`SELECT ${columns} FROM users
+      WHERE ${sql.in("id", ids)} AND (company_id = ${companyId} OR ${sql.in("id", guests)})`
   });
   const candidatesByIds = SqlSchema.findAll({
-    Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+    Request: people,
     Result: Schema.Struct({ id: Schema.String }),
-    execute: ({ companyId, ids }) =>
+    execute: ({ companyId, guests, ids }) =>
       sql.unsafe(
-        `SELECT id FROM users WHERE company_id = $1
-          AND id = ANY($2::text[]) AND deactivated_at IS NULL`,
-        [companyId, ids]
+        `SELECT id FROM users WHERE id = ANY($1::text[]) AND deactivated_at IS NULL
+          AND (company_id = $2 OR id = ANY($3::text[]))`,
+        [ids, companyId, guests]
       )
   });
   const directoryRevision = SqlSchema.findOneOption({
@@ -115,12 +166,13 @@ export const make = Effect.gen(function* () {
   const candidatePage = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
+      guests: Schema.Array(Schema.String),
       text: Schema.NullOr(Schema.String),
       limit: Schema.Int,
       after: Schema.NullOr(CursorData)
     }),
     Result: CandidateRow,
-    execute: ({ companyId, text, limit, after }) => {
+    execute: ({ companyId, guests, text, limit, after }) => {
       // Escape the escape character before SQL's two pattern metacharacters.
       const prefix = text === null ? "" : `${text.replaceAll(/[%_\\]/g, "\\$&")}%`;
       const match =
@@ -135,19 +187,20 @@ export const make = Effect.gen(function* () {
             > (${after.name}, ${after.email}, ${after.id})`;
       return sql`
         SELECT ${columns}, lower(name) AS "sortName", lower(email) AS "sortEmail"
-        FROM users WHERE company_id = ${companyId} AND deactivated_at IS NULL
-          AND ${match} AND ${position}
+        FROM users WHERE (company_id = ${companyId} OR ${sql.in("id", guests)})
+          AND deactivated_at IS NULL AND ${match} AND ${position}
         ORDER BY lower(name) COLLATE "C", lower(email) COLLATE "C", id COLLATE "C"
         LIMIT ${limit + 1}`;
     }
   });
 
   const page = Effect.fn("Directory.page")(function* (
-    companyId: string,
+    scope: Scope,
     text: string | null,
     limit: number,
     cursor?: string
   ) {
+    const { companyId } = scope;
     let after: typeof Cursor.Type | null = null;
     if (cursor !== undefined) {
       if (!isCursorEncoding(cursor)) return yield* new InvalidCursor({ companyId });
@@ -160,12 +213,14 @@ export const make = Effect.gen(function* () {
       if (after.companyId !== companyId || after.text !== text)
         return yield* new InvalidCursor({ companyId });
     }
-    const found = yield* candidatePage({ companyId, text, limit, after }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
-    const rows = found
-      .slice(0, limit)
-      .map(({ id, name, email, admin, active }) => new Member({ id, name, email, admin, active }));
+    const found = yield* candidatePage({
+      companyId,
+      guests: activeGuests(scope),
+      text,
+      limit,
+      after
+    }).pipe(Effect.catchTags(dieOnSchemaError));
+    const rows = found.slice(0, limit).map((row) => memberOf(scope, row));
     const last = found[limit - 1];
     return {
       rows,
@@ -184,28 +239,26 @@ export const make = Effect.gen(function* () {
           : null
     } satisfies Page;
   });
-  const get = Effect.fn("Directory.get")((companyId: string, id: string) =>
-    byId({ companyId, id }).pipe(Effect.catchTags(dieOnSchemaError), Effect.map(Option.getOrNull))
-  );
-  const getMany = Effect.fn("Directory.getMany")(function* (
-    companyId: string,
-    ids: readonly string[]
-  ) {
+  const getMany = Effect.fn("Directory.getMany")(function* (scope: Scope, ids: readonly string[]) {
     if (ids.length === 0) return [];
-    const found = yield* byIds({ companyId, ids: [...new Set(ids)] }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
-    const members = new Map(found.map((member) => [member.id, member]));
+    const found = yield* byIds({
+      companyId: scope.companyId,
+      guests: [...scope.guests.keys()],
+      ids: [...new Set(ids)]
+    }).pipe(Effect.catchTags(dieOnSchemaError));
+    const members = new Map(found.map((row) => [row.id, memberOf(scope, row)]));
     return ids.map((id) => members.get(id) ?? null);
   });
   const candidates = Effect.fn("Directory.candidates")(function* (
-    companyId: string,
+    scope: Scope,
     ids: readonly string[]
   ) {
     if (ids.length === 0) return [];
-    const found = yield* candidatesByIds({ companyId, ids }).pipe(
-      Effect.catchTags(dieOnSchemaError)
-    );
+    const found = yield* candidatesByIds({
+      companyId: scope.companyId,
+      guests: activeGuests(scope),
+      ids
+    }).pipe(Effect.catchTags(dieOnSchemaError));
     return found.map(({ id }) => id);
   });
   const revision = Effect.fn("Directory.revision")(function* (companyId: string) {
@@ -214,9 +267,9 @@ export const make = Effect.gen(function* () {
     return found.value.revision;
   });
   return Directory.of({
-    list: (companyId, limit, cursor) => page(companyId, null, limit, cursor),
-    search: (companyId, text, limit, cursor) => page(companyId, text, limit, cursor),
-    get,
+    list: (scope, limit, cursor) => page(scope, null, limit, cursor),
+    search: (scope, text, limit, cursor) => page(scope, text, limit, cursor),
+    get: (scope, id) => getMany(scope, [id]).pipe(Effect.map(([member]) => member ?? null)),
     getMany,
     candidates,
     revision

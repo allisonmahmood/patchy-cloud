@@ -154,5 +154,30 @@ export const migrations: Migrations = {
     PRIMARY KEY (patch_id, user_id)
     )`,
     `CREATE INDEX patch_guest_grants_user_id_idx ON patch_guest_grants(user_id)`
+  ),
+  // A patch's guests are in its company's member directory, so a grant that starts, ends,
+  // restarts or goes with its patch advances that company's directory revision and wakes its
+  // readers, as a change to one of its users does.
+  "0033_guest_grants_directory": ddl(
+    `CREATE FUNCTION patch_guest_grants_directory_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE
+      changed_company TEXT;
+    BEGIN
+      IF TG_OP = 'UPDATE' AND (OLD.revoked_at IS NULL) = (NEW.revoked_at IS NULL) THEN
+        RETURN NULL;
+      END IF;
+      IF TG_OP = 'DELETE' THEN changed_company := OLD.company_id;
+      ELSE changed_company := NEW.company_id;
+      END IF;
+      INSERT INTO companies_directory (company_id, revision) VALUES (changed_company, 1)
+      ON CONFLICT (company_id) DO UPDATE SET revision = companies_directory.revision + 1;
+      PERFORM pg_notify('patchy_runtime_wakes',
+        json_build_object('keys', ARRAY['members:' || changed_company])::text);
+      RETURN NULL;
+    END;
+    $$`,
+    `CREATE TRIGGER patch_guest_grants_directory_changed
+      AFTER INSERT OR UPDATE OR DELETE ON patch_guest_grants
+      FOR EACH ROW EXECUTE FUNCTION patch_guest_grants_directory_changed()`
   )
 };
