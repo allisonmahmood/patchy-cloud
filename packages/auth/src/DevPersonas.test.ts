@@ -35,26 +35,33 @@ const probe = HttpRouter.use((router) =>
 );
 const routes = Layer.mergeAll(AuthPages.layer, DevPersonas.routes, probe);
 const settings = ConfigProvider.layer(ConfigProvider.fromUnknown(env));
-const send = Effect.fn(function* (
-  path: string,
-  cookie?: string,
-  headers: Readonly<Record<string, string>> = {}
-) {
-  const app = yield* HttpRouter.toHttpEffect(routes).pipe(
-    Effect.provide([settings, NodeCryptography.layer])
-  );
-  const response = yield* app.pipe(
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(
-        new Request(new URL(path, base), {
-          headers: { ...headers, ...(cookie === undefined ? {} : { cookie }) }
-        })
+const keyed = ConfigProvider.layer(
+  ConfigProvider.fromUnknown({ ...env, PATCHY_DEV_PERSONAS_KEY: "door-key" })
+);
+/** Sends a request through the routes, under `config`'s settings. */
+const sendUnder = (config: typeof settings) =>
+  Effect.fn(function* (
+    path: string,
+    cookie?: string,
+    headers: Readonly<Record<string, string>> = {}
+  ) {
+    const app = yield* HttpRouter.toHttpEffect(routes).pipe(
+      Effect.provide([config, NodeCryptography.layer])
+    );
+    const response = yield* app.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(new URL(path, base), {
+            headers: { ...headers, ...(cookie === undefined ? {} : { cookie }) }
+          })
+        )
       )
-    )
-  );
-  return HttpServerResponse.toWeb(response);
-});
+    );
+    return HttpServerResponse.toWeb(response);
+  });
+const send = sendUnder(settings);
+const sendKeyed = sendUnder(keyed);
 /** The persona cookie a sign-in sets, as a request `cookie` header. */
 const signIn = Effect.fn(function* (email: string, target = "/private") {
   const response = yield* send(
@@ -145,6 +152,39 @@ it.layer(services)("dev personas", (it) => {
       ];
       for (const headers of direct)
         assert.strictEqual((yield* send(path, undefined, headers)).status, 303);
+    })
+  );
+
+  it.effect("behind a door key, refuses without it and names no one", () =>
+    Effect.gen(function* () {
+      for (const path of [
+        "/dev/sign-in",
+        `/dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}`,
+        `/dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}&key=wrong`
+      ]) {
+        const door = yield* sendKeyed(path);
+        assert.strictEqual(door.status, 403);
+        assert.isEmpty(door.headers.getSetCookie());
+        const body = yield* Effect.promise(() => door.text());
+        assert.notInclude(body, DEV_SEED.email);
+      }
+    })
+  );
+
+  it.effect("behind a door key, signs in with it and carries it through the picker", () =>
+    Effect.gen(function* () {
+      const picker = yield* sendKeyed("/dev/sign-in?key=door-key");
+      assert.strictEqual(picker.status, 200);
+      assert.include(
+        yield* Effect.promise(() => picker.text()),
+        `as=${encodeURIComponent(DEV_SEED.email)}&amp;return=%2F&amp;key=door-key"`
+      );
+      const signedIn = yield* sendKeyed(
+        `/dev/sign-in?as=${encodeURIComponent(DEV_SEED.email)}&return=%2Fprivate&key=door-key`
+      );
+      assert.strictEqual(signedIn.status, 303);
+      const cookie = signedIn.headers.getSetCookie()[0]!.split(";")[0]!;
+      assert.strictEqual((yield* send("/private", cookie)).status, 200);
     })
   );
 

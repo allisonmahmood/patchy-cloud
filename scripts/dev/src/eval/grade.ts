@@ -1,0 +1,379 @@
+/**
+ * Grading a run, after its builder has ended: checks are authoritative, and
+ * they look at what was published, not at the builder's working folder.
+ *
+ * - The target is the patch the run left published in its own company: for a
+ *   `create` task, the most recently published one.
+ * - `published`: it has a served version.
+ * - `typechecks`: its published source, pulled into the run's HOME, passes
+ *   `pnpm typecheck`.
+ * - `opens ready`: a colleague opens it through the instance's keyed personas
+ *   door and its frame renders content; console errors, and failed calls the
+ *   patch's log records during grading against that version, fail it. Desktop
+ *   and phone screenshots are kept for the judges.
+ * - The task's own checks, each with fresh browsers as the run's people.
+ */
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import type { Browser, Page } from "@playwright/test";
+import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
+import type { CheckContext, CheckOutcome, RunPerson, Target, Task } from "./task.js";
+
+export class BrowserGradingFailed extends Schema.TaggedError<BrowserGradingFailed>()(
+  "BrowserGradingFailed",
+  { cause: Schema.Defect() }
+) {
+  override get message() {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+export const CheckResult = Schema.Struct({
+  name: Schema.String,
+  status: Schema.Literals(["pass", "fail", "skipped"]),
+  detail: Schema.NullOr(Schema.String)
+});
+export type CheckResult = typeof CheckResult.Type;
+
+export const TargetRecord = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  address: Schema.String,
+  tier: Schema.Int,
+  version: Schema.Int
+});
+
+export const Graded = Schema.Struct({
+  target: Schema.NullOr(TargetRecord),
+  checks: Schema.Array(CheckResult),
+  /** Inside the run's folder: the published source the judges read, when there is one. */
+  source: Schema.NullOr(Schema.String),
+  screenshots: Schema.Array(Schema.String)
+});
+export type Graded = typeof Graded.Type;
+
+const Listed = Schema.Struct({
+  patches: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      address: Schema.String,
+      tier: Schema.Int,
+      state: Schema.String,
+      currentVersion: Schema.NullOr(Schema.Int),
+      publishedAt: Schema.NullOr(Schema.String)
+    })
+  )
+});
+const decodeListed = Schema.decodeUnknownOption(Schema.fromJsonString(Listed));
+
+const LogPage = Schema.Struct({
+  entries: Schema.Array(
+    Schema.Struct({
+      startedAt: Schema.String,
+      version: Schema.NullOr(Schema.Int),
+      handler: Schema.String,
+      outcome: Schema.String,
+      code: Schema.NullOr(Schema.String)
+    })
+  )
+});
+const decodeLogPage = Schema.decodeUnknownOption(Schema.fromJsonString(LogPage));
+
+/** The patch the run left published: the most recently published live patch in its company. */
+export const pickTarget = (listed: typeof Listed.Type): Target | null => {
+  const served = listed.patches
+    .filter(
+      (patch) =>
+        patch.state === "live" && patch.currentVersion !== null && patch.publishedAt !== null
+    )
+    .sort((a, b) => b.publishedAt!.localeCompare(a.publishedAt!));
+  const latest = served[0];
+  return latest === undefined
+    ? null
+    : {
+        id: latest.id,
+        name: latest.name,
+        address: latest.address,
+        tier: latest.tier,
+        version: latest.currentVersion!
+      };
+};
+
+const pass = (name: string, detail: string | null = null): CheckResult => ({
+  name,
+  status: "pass",
+  detail
+});
+const fail = (name: string, detail: string): CheckResult => ({ name, status: "fail", detail });
+const skipped = (name: string, detail: string): CheckResult => ({
+  name,
+  status: "skipped",
+  detail
+});
+
+const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
+
+const READY_MS = 60_000;
+const SETTLE_MS = 1_000;
+
+const POLL_MS = 250;
+
+/**
+ * Waits until the shell has started the patch and its frame shows something,
+ * polling for at most `READY_MS` of waiting. A cold tier 2 start shows the
+ * shell's starting cover first.
+ */
+const waitReady = async (page: Page) => {
+  const frame = page.frameLocator("iframe").first();
+  for (let waited = 0; waited < READY_MS; waited += POLL_MS) {
+    const starting = await page.locator('dialog[data-stream-status="starting"][open]').count();
+    const text =
+      starting > 0
+        ? ""
+        : await frame
+            .locator("body")
+            .innerText({ timeout: POLL_MS })
+            .catch(() => "");
+    if (text.trim() !== "") {
+      await page.waitForTimeout(SETTLE_MS);
+      return true;
+    }
+    await page.waitForTimeout(POLL_MS);
+  }
+  return false;
+};
+
+interface Door {
+  readonly apiUrl: string;
+  readonly key: string;
+}
+
+const VIEWPORTS = {
+  desktop: { width: 1280, height: 800 },
+  phone: { width: 390, height: 844 }
+} as const;
+
+/** A fresh browser context signed in as `person` through the keyed door, on `address + path`. */
+const openAs = async (
+  browser: Browser,
+  door: Door,
+  person: RunPerson,
+  address: string,
+  path = "",
+  viewport: { readonly width: number; readonly height: number } = VIEWPORTS.desktop
+) => {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  const errors: Array<string> = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  const target = new URL(address).pathname + path;
+  const response = await page.goto(
+    `${door.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=${encodeURIComponent(target)}&key=${encodeURIComponent(door.key)}`
+  );
+  if (response === null || response.status() >= 400)
+    throw new Error(`Signing ${person.key} in answered ${response?.status() ?? "nothing"}.`);
+  const ready = await waitReady(page);
+  return { context, page, errors, ready };
+};
+
+/**
+ * The browser half of grading: `opens ready` as a colleague, the screenshots,
+ * then the task's checks. Each check gets fresh contexts, closed after it.
+ */
+const inBrowser = (input: {
+  readonly task: Task;
+  readonly target: Target;
+  readonly people: ReadonlyArray<RunPerson>;
+  readonly colleague: RunPerson;
+  readonly door: Door;
+  readonly shots: string;
+}) =>
+  Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const results: Array<CheckResult> = [];
+        const screenshots: Array<string> = [];
+        const first = await openAs(browser, input.door, input.colleague, input.target.address);
+        const browserErrors = [...first.errors];
+        await first.page.screenshot({ path: `${input.shots}/desktop.png`, fullPage: true });
+        screenshots.push(`${input.shots}/desktop.png`);
+        await first.context.close();
+        const phone = await openAs(
+          browser,
+          input.door,
+          input.colleague,
+          input.target.address,
+          "",
+          VIEWPORTS.phone
+        );
+        await phone.page.screenshot({ path: `${input.shots}/phone.png`, fullPage: true });
+        screenshots.push(`${input.shots}/phone.png`);
+        browserErrors.push(...phone.errors);
+        await phone.context.close();
+        const opened = first.ready && phone.ready;
+        for (const check of input.task.checks) {
+          const contexts: Array<{ close: () => Promise<void> }> = [];
+          const ctx: CheckContext = {
+            target: input.target,
+            people: input.people,
+            open: async (key, path) => {
+              const person = input.people.find((p) => p.key === key);
+              if (person === undefined) throw new Error(`The run has no person ${key}.`);
+              const each = await openAs(browser, input.door, person, input.target.address, path);
+              contexts.push(each.context);
+              if (!each.ready) throw new Error(`The patch never showed ${key} anything.`);
+              return { page: each.page, frame: each.page.frameLocator("iframe").first() };
+            }
+          };
+          const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => ({
+            ok: false,
+            reason: error instanceof Error ? error.message : String(error)
+          }));
+          results.push(
+            outcome.ok ? pass(check.name, outcome.note ?? null) : fail(check.name, outcome.reason)
+          );
+          await Promise.all(contexts.map((context) => context.close()));
+        }
+        return { opened, browserErrors, results, screenshots };
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => new BrowserGradingFailed({ cause })
+  });
+
+/** Grades a run once its builder has ended. Never fails: a check that can't run says why. */
+export const grade = Effect.fn("Eval.grade")(function* (input: {
+  readonly task: Task;
+  readonly spec: SandboxSpec;
+  readonly runDir: string;
+  readonly people: ReadonlyArray<RunPerson>;
+  readonly publisher: RunPerson;
+  readonly door: Door;
+}) {
+  const path = yield* Path.Path;
+  const listed = yield* runSandboxed(input.spec, "patchy", ["list", "--json"], {
+    timeout: "1 minute"
+  });
+  const target = Option.match(decodeListed(listed.stdout), {
+    onNone: () => null,
+    onSome: pickTarget
+  });
+  const names = [
+    "published",
+    "typechecks",
+    "opens ready",
+    ...input.task.checks.map((check) => check.name)
+  ];
+  if (target === null) {
+    const why =
+      listed.exitCode === 0
+        ? "Nothing is published in the run's company."
+        : `\`patchy list\` failed: ${lastLine(listed.stderr)}`;
+    return {
+      target: null,
+      checks: [
+        fail("published", why),
+        ...names.slice(1).map((name) => skipped(name, "Nothing to check."))
+      ],
+      source: null,
+      screenshots: []
+    } satisfies Graded;
+  }
+  const checks: Array<CheckResult> = [
+    pass("published", `${target.name} v${target.version}, tier ${target.tier}`)
+  ];
+
+  let source: string | null = null;
+  if (input.task.target.create === "page")
+    checks.push(skipped("typechecks", "A single-file page has no repo."));
+  else {
+    const pulled = yield* runSandboxed(
+      input.spec,
+      "patchy",
+      ["pull", target.id, `${HOME}/.eval/published`, "--version", String(target.version), "--json"],
+      { timeout: "5 minutes" }
+    );
+    if (pulled.exitCode !== 0)
+      checks.push(fail("typechecks", `\`patchy pull\` failed: ${lastLine(pulled.stderr)}`));
+    else {
+      source = path.join("home", ".eval", "published");
+      const typecheck = yield* runSandboxed(
+        { ...input.spec, cwd: `${HOME}/.eval/published` },
+        "pnpm",
+        ["typecheck"],
+        { timeout: "5 minutes" }
+      );
+      checks.push(
+        typecheck.exitCode === 0
+          ? pass("typechecks")
+          : fail(
+              "typechecks",
+              lastLine(`${typecheck.stderr}\n${typecheck.stdout}`) || "It didn't finish."
+            )
+      );
+    }
+  }
+
+  const colleague =
+    input.people.find((person) => person.key !== input.publisher.key) ?? input.publisher;
+  const gradingFrom = DateTime.formatIso(yield* DateTime.now);
+  const browsed = yield* inBrowser({
+    task: input.task,
+    target,
+    people: input.people,
+    colleague,
+    door: input.door,
+    shots: input.runDir
+  }).pipe(Effect.result);
+  if (Result.isFailure(browsed)) {
+    const why = `The browser couldn't grade it: ${browsed.failure.message}`;
+    checks.push(
+      fail("opens ready", why),
+      ...input.task.checks.map((check) => skipped(check.name, why))
+    );
+    return { target, checks, source, screenshots: [] } satisfies Graded;
+  }
+
+  // Failed calls during grading, against the graded version; a tier 1 patch has no log.
+  const failures: Array<string> = [];
+  if (target.tier === 2) {
+    const logged = yield* runSandboxed(
+      input.spec,
+      "patchy",
+      ["logs", "--patch", target.id, "--failed", "--limit", "25", "--json"],
+      { timeout: "1 minute" }
+    );
+    Option.map(decodeLogPage(logged.stdout), (page) => {
+      for (const entry of page.entries)
+        if (entry.startedAt >= gradingFrom && entry.version === target.version)
+          failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
+    });
+  }
+  const { opened, browserErrors, results, screenshots } = browsed.success;
+  const problems = [
+    ...(opened ? [] : [`${colleague.name}'s view never showed anything`]),
+    ...browserErrors.slice(0, 3).map((error) => `console: ${error.split("\n")[0]}`),
+    ...failures.slice(0, 3).map((failure) => `failed call ${failure}`)
+  ];
+  checks.push(
+    problems.length === 0 ? pass("opens ready") : fail("opens ready", problems.join("; "))
+  );
+  checks.push(...results);
+  return {
+    target,
+    checks,
+    source,
+    screenshots: screenshots.map((file) => path.relative(input.runDir, file))
+  } satisfies Graded;
+});

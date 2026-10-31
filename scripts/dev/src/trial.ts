@@ -215,7 +215,10 @@ const Content = Schema.Union([
     )
   })
 ]);
-const decodeContent = Schema.decodeUnknownOption(Content);
+/** A part of a Claude Code message the logs read: a tool call or its result. `pnpm dev eval` shares it. */
+export const decodeContent = Schema.decodeUnknownOption(Content);
+
+const Count = Schema.optional(Schema.NullOr(Schema.Number));
 
 /** The events of Claude Code's stream-json the log reads; every other line is skipped. */
 const Event = Schema.Union([
@@ -246,10 +249,23 @@ const Event = Schema.Union([
     total_cost_usd: Schema.optional(Schema.NullOr(Schema.Number)),
     permission_denials: Schema.optional(
       Schema.NullOr(Schema.Array(Schema.Struct({ tool_use_id: Schema.String })))
+    ),
+    /** The run's tokens, which `pnpm dev eval` records. */
+    usage: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          input_tokens: Count,
+          cache_read_input_tokens: Count,
+          cache_creation_input_tokens: Count,
+          output_tokens: Count
+        })
+      )
     )
   })
 ]);
-const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(Event));
+export type ClaudeEvent = typeof Event.Type;
+/** One line of Claude Code's stream-json, when it is an event the logs read. `pnpm dev eval` shares it. */
+export const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(Event));
 
 /** The input field that names what a tool call was about, in the order they are tried. */
 const TARGETS = ["command", "skill", "file_path", "pattern", "url", "query", "description", "path"];

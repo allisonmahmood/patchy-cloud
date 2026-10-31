@@ -13,6 +13,7 @@ import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
@@ -27,6 +28,7 @@ import {
   developerEnvFile,
   readCredentialKeys,
   readDeveloperEnv,
+  readPersonasKey,
   readPersonasSecret
 } from "./developerEnv.js";
 import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
@@ -199,11 +201,14 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
     try: () => applyDevSeed(plan.databaseUrl, PATCHY_DEV_CLERK_USER_ID || undefined),
     catch: (cause) => new DatabaseSetupError({ cause })
   });
+  const personasFile = path.join(plan.stateDir, "personas.env");
+  const doorKey = personas ? yield* readPersonasKey(personasFile) : Option.none();
   const signIn = personas
     ? {
-        PATCHY_DEV_PERSONAS_SECRET: Redacted.value(
-          yield* readPersonasSecret(path.join(plan.stateDir, "personas.env"))
-        )
+        PATCHY_DEV_PERSONAS_SECRET: Redacted.value(yield* readPersonasSecret(personasFile)),
+        ...(Option.isSome(doorKey)
+          ? { PATCHY_DEV_PERSONAS_KEY: Redacted.value(doorKey.value) }
+          : {})
       }
     : clerk;
   if (plan.environment !== undefined) {

@@ -432,6 +432,24 @@ const bringUp = Effect.fn("Evidence.bringUp")(function* (
 });
 
 /**
+ * The side's `personas.env` before it starts: a fresh personas secret and the
+ * door key, so `/dev/sign-in` answers only a request carrying the key. A
+ * commit whose runner predates the key ignores it and keeps the door open.
+ */
+const writeDoorKey = Effect.fn("Evidence.writeDoorKey")(function* (clone: string, key: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const stateDir = path.join(clone, ".local", "dev");
+  yield* fs.makeDirectory(stateDir, { recursive: true });
+  const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  yield* fs.writeFileString(
+    path.join(stateDir, "personas.env"),
+    `PATCHY_DEV_PERSONAS_SECRET=${secret}\nPATCHY_DEV_PERSONAS_KEY=${key}\n`,
+    { mode: 0o600 }
+  );
+});
+
+/**
  * One side, up for the rest of the scope. The finalizer is registered before
  * `up` starts, so an `up` that fails or is interrupted halfway is taken down
  * too. A take-down that fails is reported, not raised: the evidence is
@@ -442,7 +460,8 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
   name: SideName,
   commit: Commit,
   scenario: string,
-  runDir: string
+  runDir: string,
+  personasKey: string | undefined
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -465,6 +484,7 @@ const serveSide = Effect.fn("Evidence.serveSide")(function* (
       )
     )
   );
+  if (personasKey !== undefined) yield* writeDoorKey(dir, personasKey);
   yield* Console.error(`  ${name.padEnd(6)}  bringing up ${scenario}`);
   // The take-down deletes the instance's log, so a side that fails to come up keeps a copy.
   const log = path.join(dir, ".local", "dev", "dev.log");
@@ -495,6 +515,8 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
   readonly after: Commit;
   /** The run's folder, absolute; a side that fails to come up leaves its log here. */
   readonly runDir: string;
+  /** Closes each side's personas door to requests without this key (`pnpm dev eval`). */
+  readonly personasKey?: string;
 }) {
   yield* acquireLock((yield* evidencePaths(input.root)).lock, input.command);
   const [before, after] = yield* Effect.all(
@@ -504,7 +526,14 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
         onSome: (commit) => {
           const unavailable = (reason: string) =>
             Effect.succeed<Before>({ status: "unavailable", commit, reason });
-          return serveSide(input.root, "before", commit, input.scenario, input.runDir).pipe(
+          return serveSide(
+            input.root,
+            "before",
+            commit,
+            input.scenario,
+            input.runDir,
+            input.personasKey
+          ).pipe(
             Effect.map((side): Before => ({ status: "served", side })),
             // The reason goes in a public PR, so it names the step, never its output.
             Effect.catchTags({
@@ -518,7 +547,7 @@ export const evidence = Effect.fn("Evidence.evidence")(function* (input: {
           );
         }
       }),
-      serveSide(input.root, "after", input.after, input.scenario, input.runDir)
+      serveSide(input.root, "after", input.after, input.scenario, input.runDir, input.personasKey)
     ],
     { concurrency: "unbounded" }
   );

@@ -43,6 +43,19 @@ export const readPersonasSecret = Effect.fn("readPersonasSecret")(function* (fil
   );
 });
 
+/**
+ * An environment's personas door key, when its `personas.env` holds one: `pnpm dev eval` writes
+ * it before an instance starts, so only its grader can sign people in there.
+ */
+export const readPersonasKey = Effect.fn("readPersonasKey")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(file))) return Option.none();
+  const provider = ConfigProvider.fromDotEnvContents(yield* fs.readFileString(file));
+  return yield* Config.option(Config.Redacted("PATCHY_DEV_PERSONAS_KEY")).pipe(
+    Effect.provide(ConfigProvider.layer(provider))
+  );
+});
+
 const DEVELOPER_ENV_NAMES = [
   "CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
