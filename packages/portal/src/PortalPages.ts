@@ -26,7 +26,8 @@ import {
   copyScript,
   copyScriptPath,
   escapeAttribute,
-  escapeHtml
+  escapeHtml,
+  rowMenu
 } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
 import { GuestGrants, Patches } from "@patchy/patches";
@@ -34,7 +35,14 @@ import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import { InvocationLog, Prewarm } from "@patchy/runtime";
-import { listStyles, renderAllPatches, searchQuery, shows } from "./allPatches.js";
+import {
+  listStyles,
+  manages,
+  openItems,
+  renderAllPatches,
+  searchQuery,
+  shows
+} from "./allPatches.js";
 import {
   finalStepStyles,
   firstPatch,
@@ -55,12 +63,17 @@ import {
   renderCardFrame,
   renderConfirmation,
   renderOverview,
-  renderPublicConfirmation,
   renderSettings,
   renderVersions,
   patchTitle,
   styles
 } from "./render.js";
+import {
+  renderLeaveConfirmation,
+  renderShareDialog,
+  type ShareRefusal,
+  shareStyles
+} from "./share.js";
 import * as UserLifecyclePage from "./UserLifecyclePage.js";
 
 const isName = Schema.is(PatchName);
@@ -112,11 +125,12 @@ const context = Effect.gen(function* () {
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const canOpen = yield* Patches.Openability;
-  const query = new URL(request.url, session.publicBaseUrl).searchParams;
+  const url = new URL(request.url, session.publicBaseUrl);
   return {
     viewer,
     session,
-    query: request.method === "GET" ? (query.get("q") ?? "") : "",
+    url,
+    query: request.method === "GET" ? (url.searchParams.get("q") ?? "") : "",
     access: {
       companyId: viewer.company.id,
       userId: viewer.user.id,
@@ -230,11 +244,95 @@ const newestMachine = Effect.fn("PortalPages.newestMachine")(function* (userId: 
   return newest === undefined ? null : { name: newest.name, createdAt: newest.createdAt };
 });
 
+/**
+ * A Share dialog a page shows over itself: the patch it shares, the page's own URL, and what a
+ * refused form of the dialog's left to say. `?share=<name>` asks for one on Home, All patches and
+ * a card's tabs.
+ */
+interface Sharing {
+  readonly name: string;
+  readonly at: URL;
+  readonly status?: number;
+  readonly notice?: string;
+  readonly refused?: { readonly email: string; readonly refusal: ShareRefusal };
+  readonly confirmPublic?: boolean;
+}
+
+/** The Share dialog `url` asks for, if it asks. */
+const asked = (url: URL): Sharing | undefined => {
+  const name = url.searchParams.get("share");
+  return name === null || name === "" ? undefined : { name, at: url };
+};
+
+/** A page's own path and query without the dialog: where Share's forms return and Done goes. */
+const pagePath = (url: URL) => {
+  const params = new URLSearchParams(url.search);
+  params.delete("share");
+  const search = params.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}`;
+};
+
+/**
+ * Where a Share dialog's form returns: the page it opened over, when that is Home, All patches or
+ * the patch's own card, with only the query those pages read. Anything else is the card.
+ */
+const behind = (back: string | undefined, name: string, base: string): URL => {
+  const card = `/patches/${encodeURIComponent(name)}`;
+  const fallback = new URL(card, base);
+  if (back === undefined || !back.startsWith("/") || back.startsWith("//")) return fallback;
+  const url = new URL(back, base);
+  if (
+    url.origin !== fallback.origin ||
+    !["/", "/patches", card, `${card}/versions`, `${card}/settings`].includes(url.pathname)
+  )
+    return fallback;
+  const kept = new URL(url.pathname, base);
+  for (const key of ["q", "show"]) {
+    const value = url.searchParams.get(key);
+    if (value) kept.searchParams.set(key, value);
+  }
+  return kept;
+};
+
+/**
+ * The Share dialog over a page, for a live patch among `rows` the viewer manages; none otherwise,
+ * so a stale or foreign `?share=` shows just the page. It shows the receipt its last form left,
+ * which the page behind then leaves out.
+ */
+const shareOverlay = Effect.fn("PortalPages.shareOverlay")(function* (
+  rows: readonly Patches.ReadPatch[],
+  sharing: Sharing | undefined
+) {
+  if (sharing === undefined) return undefined;
+  const { viewer, session } = yield* context;
+  const row = rows.find((candidate) => candidate.patch.name === sharing.name);
+  if (row === undefined || row.patch.state !== "live" || !manages(row, viewer)) return undefined;
+  const grants = yield* GuestGrants.GuestGrants;
+  return renderShareDialog({
+    row,
+    viewer,
+    publicBaseUrl: session.publicBaseUrl,
+    back: pagePath(sharing.at),
+    guests: yield* grants.guests(row.patch.id),
+    suggestions: yield* grants.sharedBefore(viewer.company.id),
+    ...(viewer.receipt === undefined ? {} : { receipt: viewer.receipt }),
+    ...(sharing.notice === undefined ? {} : { notice: sharing.notice }),
+    ...(sharing.refused === undefined ? {} : { refused: sharing.refused }),
+    ...(sharing.confirmPublic === true ? { confirmPublic: true } : {})
+  });
+});
+
+/** The app shell's options for a page with or without the Share dialog over it. */
+const withOverlay = (
+  viewer: RequireSession.Viewer["Service"],
+  overlay: string | undefined
+): { viewer: RequireSession.Viewer["Service"]; overlay?: string } =>
+  overlay === undefined ? { viewer } : { viewer: { ...viewer, receipt: undefined }, overlay };
+
 /** A card tab that is not the log: Overview at `/patches/<name>`, then `/versions` and `/settings`. */
 type PageTab = Exclude<CardTab, "log">;
 const tabOf: Record<PatchAction, PageTab> = {
   description: "settings",
-  scope: "settings",
   rollback: "versions",
   retire: "overview",
   delete: "overview",
@@ -254,9 +352,11 @@ const render = Effect.fn("PortalPages.render")(function* (
     descriptionError?: string;
     /** No forms at all, for a refusal of a form that was rendered for another patch. */
     readOnly?: boolean;
+    /** The Share dialog a refused form of it shows again; a GET asks with `?share=`. */
+    sharing?: Sharing;
   } = {}
 ) {
-  const { viewer, session, access } = yield* context;
+  const { viewer, session, access, url } = yield* context;
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
@@ -290,6 +390,14 @@ const render = Effect.fn("PortalPages.render")(function* (
             turnedAway: (yield* turnedAway([selected]))?.get(card.patch.id)
           });
   const panel = tab === "overview" ? yield* agentPanel(card) : "";
+  const here = `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`;
+  const sharing = options.sharing ?? (options.readOnly ? undefined : asked(url));
+  const overlay = yield* shareOverlay([selected], sharing);
+  // The card already holds its other acts: Settings, and Restore while it's off.
+  const items = openItems(selected, viewer, session.publicBaseUrl, here, false);
+  const cardMenu = items.length
+    ? rowMenu(`card-${selected.patch.id}`, patchTitle(selected.patch), items)
+    : undefined;
   return pageResponse(
     {
       title: `${patchTitle(card.patch)}${tab === "overview" ? "" : ` ${tab}`}`,
@@ -303,11 +411,12 @@ const render = Effect.fn("PortalPages.render")(function* (
         notice: refused ? settingsForbidden : options.notice,
         readOnly: options.readOnly,
         body,
-        panel
+        panel,
+        menu: options.readOnly ? undefined : cardMenu
       }),
-      styles,
-      status: refused ? 403 : (options.status ?? 200),
-      app: { viewer, section: "patches" }
+      styles: styles + shareStyles,
+      status: refused ? 403 : (options.status ?? sharing?.status ?? 200),
+      app: { ...withOverlay(viewer, overlay), section: "patches" }
     },
     session
   );
@@ -398,11 +507,11 @@ const setupLine = Effect.fn("PortalPages.setupLine")(function* () {
  * over it at each sign-in for their first week or first three sign-ins, whichever lasts longer,
  * unless they pressed Later.
  */
-const home = Effect.fn("PortalPages.home")(function* () {
-  const { viewer, session, access } = yield* context;
+const home = Effect.fn("PortalPages.home")(function* (refused?: Sharing) {
+  const { viewer, session, access, url } = yield* context;
   const signedIn = yield* RequireSession.SignedIn;
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const query = searchQuery(new URL(request.url, session.publicBaseUrl).searchParams.get("q"));
+  const at = refused?.at ?? url;
+  const query = searchQuery(at.searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
@@ -419,6 +528,11 @@ const home = Effect.fn("PortalPages.home")(function* () {
       ? prompt.later
       : now - Date.parse(machine.createdAt) < watchWindow &&
         (yield* setupState()).state.kind === "connected";
+  const sharing = refused ?? asked(at);
+  const overlay = yield* shareOverlay(rows, sharing);
+  const shared = yield* (yield* GuestGrants.GuestGrants)
+    .sharedWith(viewer.user.id)
+    .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
   return pageResponse(
     {
       title: "Home",
@@ -432,15 +546,17 @@ const home = Effect.fn("PortalPages.home")(function* () {
         query,
         connected: machine !== null,
         note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
-        failures: yield* recentFailures(rows)
+        failures: yield* recentFailures(rows),
+        shared
       })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
-      styles: styles + homeStyles + finalStepStyles,
+      styles: styles + homeStyles + finalStepStyles + shareStyles,
+      status: sharing?.status ?? 200,
       app: {
-        viewer,
         section: "home",
         query,
-        ...(machine === null && prompt.show
+        ...(overlay === undefined && machine === null && prompt.show
           ? {
+              viewer,
               overlay: renderFinalStep({
                 state: (yield* setupState()).state,
                 setupLink: yield* setupLine(),
@@ -449,7 +565,7 @@ const home = Effect.fn("PortalPages.home")(function* () {
                 mode: "modal"
               })
             }
-          : {})
+          : withOverlay(viewer, overlay))
       }
     },
     session
@@ -790,37 +906,6 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
         );
         return landed(`Saved ${title}’s description`);
       }
-      case "scope": {
-        const fields = yield* decodeScope(form);
-        // Going public asks first, and only the answer applies it, re-running every check. An
-        // unasked save to public never reaches setScope: what the snapshot says setScope would
-        // refuse is refused from the snapshot, so a change between this read and setScope's lock
-        // can't make it apply unasked.
-        if (fields.scope === "public" && form.confirm !== "public") {
-          if (selected.patch.scope !== fields.expectedScope)
-            return yield* new Patches.StaleAction({ patchId: selected.patch.id });
-          if (selected.patch.state !== "live")
-            return yield* new Patches.WrongState({ state: selected.patch.state });
-          if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
-          // Already public: nothing to change, so nothing to ask.
-          if (fields.expectedScope === "public")
-            return landed(`${title} is open to anyone on the internet`);
-          return pageResponse(
-            {
-              title: `Make ${title} public?`,
-              heading: "",
-              body: renderPublicConfirmation(selected.patch),
-              styles,
-              app: { viewer, section: "patches" }
-            },
-            session
-          );
-        }
-        yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
-        return landed(
-          `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
-        );
-      }
       case "rollback": {
         const fields = yield* decodeRollback(form);
         const rolledBack = yield* patches.rollback(
@@ -863,16 +948,11 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   // A refused description keeps the person's draft, whatever refused it.
   const draft = action === "description" ? { submittedDescription: form.description ?? "" } : {};
   const stale = Effect.fn("PortalPages.stale")(function* (state?: Patches.Patch["state"]) {
-    const fresh = yield* patches.portalCard(selected.patch.id, access);
-    const when =
-      fresh.patch.lastChangedAt === null
-        ? ""
-        : ` ${ago(fresh.patch.lastChangedAt, yield* Clock.currentTimeMillis)}`;
     return yield* render(name, {
       tab,
       status: 409,
       ...draft,
-      notice: `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`
+      notice: yield* staleNotice(selected.patch.id, state)
     });
   });
   const invalid = (notice: string) =>
@@ -909,6 +989,199 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
       InvalidOwner: () =>
         redisplay(409, "Choose an active member of this company. Nothing was done.")
     })
+  );
+});
+
+/**
+ * What a form posted after its patch changed says: what changed, by whom and when, and the state
+ * it's in now when that's why. Nothing was done.
+ */
+const staleNotice = Effect.fn("PortalPages.staleNotice")(function* (
+  patchId: string,
+  state?: Patches.Patch["state"]
+) {
+  const { access } = yield* context;
+  const fresh = yield* (yield* Patches.Patches).portalCard(patchId, access);
+  const when =
+    fresh.patch.lastChangedAt === null
+      ? ""
+      : ` ${ago(fresh.patch.lastChangedAt, yield* Clock.currentTimeMillis)}`;
+  return `${state === undefined ? "" : `This patch is ${state}. `}This patch changed while you had this page open: ${fresh.lastChangedAction ?? "updated"} by ${fresh.actorNames.lastChanged ?? fresh.owner.name}${when}. Nothing was done.`;
+});
+
+/** The forms of the Share dialog, each posted to `/patches/<name>/<act>`. */
+type ShareAct = "add-guest" | "remove-guest" | "scope";
+
+/**
+ * A Share dialog form: add a guest, remove one, or change who can open the patch, as its owner or
+ * an admin. Done, it lands back on the page the dialog opened over, open, with a receipt; going
+ * public unasked asks in the dialog, and a refusal shows there, with the email kept.
+ */
+const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act: ShareAct) {
+  if (name.length > maxNameLength) return yield* overlongName;
+  if (!isName(name))
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  const { viewer, session, access } = yield* context;
+  const patches = yield* Patches.Patches;
+  const selected = (yield* patches.read({ ...access, state: "all" })).find(
+    (row) => row.patch.name === name
+  );
+  if (!selected)
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = Object.fromEntries(
+    new URLSearchParams(
+      yield* request.text.pipe(
+        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
+      )
+    )
+  );
+  // As every patch form: one rendered for whichever patch had this name stops here.
+  if (form.expectedPatchId !== selected.patch.id)
+    return yield* render(name, {
+      status: 409,
+      readOnly: true,
+      notice: form.expectedPatchId
+        ? "This name now belongs to a different patch. Nothing was done."
+        : "This form is out of date. Nothing was done."
+    });
+  if (!manages(selected, viewer)) return yield* render(name, { status: 403, notice: forbidden });
+  const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
+  const at = behind(form.back, name, session.publicBaseUrl);
+  const title = patchTitle(selected.patch);
+  const grants = yield* GuestGrants.GuestGrants;
+  /** Back to the page behind with the dialog open, and a receipt for it when something changed. */
+  const reopened = (receipt?: string) => {
+    const response = HttpServerResponse.redirect(
+      pagePath(at) + `${at.search ? "&" : "?"}share=${encodeURIComponent(name)}`,
+      { status: 303, headers: { "cache-control": "private, no-store" } }
+    );
+    return receipt === undefined
+      ? response
+      : Receipt.set(response, {
+          userId: viewer.user.id,
+          text: receipt,
+          publicBaseUrl: session.publicBaseUrl
+        });
+  };
+  /** The page behind again, with the dialog open and what it has to say. */
+  const again = Effect.fnUntraced(function* (sharing: Omit<Sharing, "name" | "at">) {
+    const shown = { ...sharing, name, at };
+    if (at.pathname === "/") return yield* home(shown);
+    if (at.pathname === "/patches") return yield* allPatchesPage(shown);
+    const tab = at.pathname.endsWith("/versions")
+      ? "versions"
+      : at.pathname.endsWith("/settings")
+        ? "settings"
+        : undefined;
+    return yield* render(name, { ...(tab === undefined ? {} : { tab }), sharing: shown });
+  });
+  const email = (form.email ?? "").trim();
+  const run = Effect.gen(function* () {
+    // The dialog opens only over a live patch, so a form from it for one that's off is stale.
+    if (selected.patch.state !== "live")
+      return yield* new Patches.WrongState({ state: selected.patch.state });
+    switch (act) {
+      case "add-guest": {
+        if (email === "") return reopened();
+        const { guest } = yield* grants.share({ patchId: selected.patch.id, actor, email });
+        return reopened(`Shared ${title} with ${guest.name}`);
+      }
+      case "remove-guest": {
+        const userId = form.guest ?? "";
+        const { removed } = yield* grants.remove({
+          patchId: selected.patch.id,
+          actor,
+          guest: userId
+        });
+        const named = removed
+          ? (yield* (yield* Users.Users).names([userId])).get(userId)
+          : undefined;
+        return reopened(named === undefined ? undefined : `Stopped sharing ${title} with ${named}`);
+      }
+      case "scope": {
+        const fields = yield* decodeScope(form);
+        // Going public asks first, and only its answer applies it, re-running every check.
+        if (fields.scope === "public" && form.confirm !== "public") {
+          if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
+          return yield* again({ confirmPublic: true });
+        }
+        yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
+        return reopened(
+          `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
+        );
+      }
+    }
+  });
+  const nothing = (notice: string) => `${notice} Nothing was done.`;
+  // setScope's type names every lifecycle refusal; one that can't answer a scope change still says why.
+  const onCard = (error: { readonly message: string }) =>
+    render(name, { status: 409, notice: nothing(error.message) });
+  return yield* run.pipe(
+    Effect.catchTags({
+      PatchRetired: onCard,
+      PatchDeleted: onCard,
+      HasDependants: onCard,
+      SourcesOff: onCard,
+      ReservedName: onCard,
+      InvalidDescription: onCard,
+      VersionUnavailable: onCard,
+      InvalidOwner: onCard,
+      NotOnPatchy: (refusal) => again({ status: 422, refused: { email, refusal } }),
+      AlreadyMember: (refusal) => again({ status: 409, refused: { email, refusal } }),
+      GuestsUnavailable: (refusal) => again({ status: 422, refused: { email, refusal } }),
+      NotOwner: () => render(name, { status: 403, notice: forbidden }),
+      WrongState: (error) =>
+        Effect.flatMap(staleNotice(selected.patch.id, error.state), (notice) =>
+          render(name, { status: 409, notice })
+        ),
+      StaleAction: () =>
+        Effect.flatMap(staleNotice(selected.patch.id), (notice) => again({ status: 409, notice })),
+      Tier2NotPublic: (error) => again({ status: 422, notice: nothing(error.message) }),
+      SchemaError: () =>
+        again({ status: 422, notice: nothing("Check the submitted fields and try again.") }),
+      ConnectionStorageFailed: Effect.die
+    })
+  );
+});
+
+/**
+ * Remove… on a patch shared with the viewer: GET asks, POST ends their own grant and lands Home
+ * with a receipt. A patch no longer shared with them is not found.
+ */
+const leave = Effect.fn("PortalPages.leave")(function* (patchId: string, method: "GET" | "POST") {
+  const { viewer, session } = yield* context;
+  const grants = yield* GuestGrants.GuestGrants;
+  const shared = (yield* grants
+    .sharedWith(viewer.user.id)
+    .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }))).find(
+    (entry) => entry.patchId === patchId
+  );
+  if (shared === undefined)
+    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
+  if (method === "GET")
+    return pageResponse(
+      {
+        title: `Remove ${patchTitle(shared)}?`,
+        heading: "",
+        body: renderLeaveConfirmation(shared),
+        styles,
+        app: { viewer, section: "home" }
+      },
+      session
+    );
+  yield* grants.revoke({ patchId, userId: viewer.user.id });
+  return Receipt.set(
+    HttpServerResponse.redirect("/", {
+      status: 303,
+      headers: { "cache-control": "private, no-store" }
+    }),
+    {
+      userId: viewer.user.id,
+      text: `Removed ${patchTitle(shared)}`,
+      publicBaseUrl: session.publicBaseUrl
+    }
   );
 });
 
@@ -1029,10 +1302,10 @@ const prewarm = Effect.fn("PortalPages.prewarm")(function* (
 });
 
 /** All patches at `/patches`: every patch the viewer can open, in `?show=` tabs, searched by `?q=`. */
-const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
-  const { viewer, session, access } = yield* context;
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const params = new URL(request.url, session.publicBaseUrl).searchParams;
+const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* (refused?: Sharing) {
+  const { viewer, session, access, url } = yield* context;
+  const at = refused?.at ?? url;
+  const params = at.searchParams;
   const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
   const query = searchQuery(params.get("q"));
   const patches = yield* Patches.Patches;
@@ -1040,6 +1313,8 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
   yield* prewarm(rows, opens);
   const members = yield* (yield* Users.Users).list(viewer.company.id);
+  const sharing = refused ?? asked(at);
+  const overlay = yield* shareOverlay(rows, sharing);
   return pageResponse(
     {
       title: "All patches",
@@ -1056,8 +1331,9 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
         failures: yield* recentFailures(rows),
         turnedAway: yield* turnedAway(rows)
       }),
-      styles: styles + listStyles,
-      app: { viewer, section: "patches" }
+      styles: styles + listStyles + shareStyles,
+      status: sharing?.status ?? 200,
+      app: { ...withOverlay(viewer, overlay), section: "patches" }
     },
     session
   );
@@ -1092,7 +1368,7 @@ const patchRoutes = [
     path: `/patches/:name/${action}` as const,
     handle: (name: string) => confirmationPage(name, action)
   })),
-  ...(["description", "scope", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
+  ...(["description", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
     (action) => ({
       method: "POST" as const,
       path: `/patches/:name/${action}` as const,
@@ -1162,6 +1438,32 @@ export const layer: Layer.Layer<
         route.method,
         route.path,
         errors(route.method === "POST" ? RequireSession.sameOrigin(handler) : handler)
+      );
+    }
+    for (const act of ["add-guest", "remove-guest", "scope"] as const)
+      yield* router.add(
+        "POST",
+        `/patches/:name/${act}`,
+        errors(
+          RequireSession.sameOrigin(
+            RequireSession.withViewer(
+              Effect.flatMap(HttpRouter.params, (params) => shareAct(params.name ?? "", act)).pipe(
+                pageErrors
+              )
+            )
+          )
+        )
+      );
+    for (const method of ["GET", "POST"] as const) {
+      const handler = RequireSession.withViewer(
+        Effect.flatMap(HttpRouter.params, (params) => leave(params.patchId ?? "", method)).pipe(
+          pageErrors
+        )
+      );
+      yield* router.add(
+        method,
+        "/shared/:patchId/remove",
+        errors(method === "POST" ? RequireSession.sameOrigin(handler) : handler)
       );
     }
     yield* router.add(

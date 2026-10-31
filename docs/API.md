@@ -181,6 +181,55 @@ Responses:
 - `422` { ok: false, error: string, code: "tier2_not_public" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 
+### `GET /api/patches/:patchId/guests`
+
+List the guests of a patch owned by the bearer token's user: people at other companies it is shared with, oldest first, each with their user id, name, email, company and when they were added. Grants outlast public sharing and retirement, so the list stays. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404.
+
+Responses:
+
+- `200` [PatchGuests](#patchguests)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `POST /api/patches/:patchId/guests`
+
+Share an owned live patch with the person who signs in to Patchy with `email`, at another company. They can open it at once as themselves, at the returned `address`; Patchy sends nothing. Sharing with a current guest changes nothing, and sharing with a removed one adds them back. An email with no active Patchy account answers 422 `not_on_patchy`; someone in the patch's own company answers 409 `already_member`. A version guests can't open answers 422 `guests_unavailable` with `reason`: `{ code: "tier", tier }`, `{ code: "shared_source", kind, alias }` or `{ code: "connection_blocked", integration, handle }`. A retired or deleted patch answers `wrong_state`; a same-company non-owner answers 403 `not_owner`. The JSON body is bounded at 1.5 MiB; an oversized declared body answers 413.
+
+Request body: [GuestRequest](#guestrequest)
+
+Responses:
+
+- `200` [GuestShared](#guestshared)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "already_member" }
+- `413` { ok: false, error: string }
+- `414` { ok: false, error: string }
+- `422` { ok: false, error: string, code: "not_on_patchy" } | { ok: false, error: string, code: "guests_unavailable", reason: { code: "retired" } | { code: "deleted" } | { code: "tier", tier: integer } | { code: "shared_source", kind: "table" | "store", alias: string } | { code: "connection_blocked", integration: "postgres" | "posthog" | "pidgeon" | "attio", handle: string } }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
+### `DELETE /api/patches/:patchId/guests/:guest`
+
+Stop sharing an owned patch with one guest, named by email or user id. `removed` says whether they were a guest; removing someone who isn't changes nothing. Their history in the patch keeps their name. A same-company non-owner answers 403 `not_owner`; another company answers 404.
+
+Responses:
+
+- `200` [GuestRemoved](#guestremoved)
+- `400` { ok: false, error: string }
+- `401` { ok: false, error: "Missing or invalid API token." }
+- `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
+- `404` { ok: false, error: string }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `414` { ok: false, error: string }
+- `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+
 ### `POST /api/patches/:patchId/retire`
 
 Retire an owned live patch. It stops serving and its shared tables and stores stop answering readers. Everything is retained indefinitely, including its names. Live dependants refuse with `has_dependants` unless `force` is true. Ask the person you are working for before forcing. The JSON body is bounded at 1.5 MiB, before decoding. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the patch unchanged.
@@ -1021,6 +1070,59 @@ RuntimeSuccess | HandlerFailure
   patchId: string,
   state: "retired",
   retiredAt: string
+}
+```
+
+### GuestRemoved
+
+```
+{
+  ok: true,
+  patchId: string,
+  removed: boolean
+}
+```
+
+### GuestShared
+
+```
+{
+  ok: true,
+  patchId: string,
+  address: string,
+  guest: PatchGuest
+}
+```
+
+### PatchGuest
+
+```
+{
+  userId: string,
+  name: string,
+  email: string,
+  company: {
+    name: string
+  },
+  grantedAt: string
+}
+```
+
+### GuestRequest
+
+```
+{
+  email: string
+}
+```
+
+### PatchGuests
+
+```
+{
+  ok: true,
+  patchId: string,
+  guests: PatchGuest[]
 }
 ```
 

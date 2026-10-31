@@ -53,7 +53,8 @@
       "repo": "kudos",
       "tier": 2,
       "description": "Give a colleague a public shout-out for great work; the whole studio sees kudos appear live.",
-      "sampleData": true
+      "sampleData": true,
+      "guests": ["taylor"]
     },
     {
       "file": "harbor-pine-kickoff.html",

@@ -502,6 +502,13 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patchy share --patch <id> public` (or `company`) selects an id instead of the cached
   file, exactly one target. Only the owner user may change sharing, through any of
   their machine tokens. A same-company non-owner receives `not_owner`; another company gets 404.
+- A patch can also have guests: people at other companies, each opening it as themselves
+  with their own Patchy account. `patchy share './plan.html' --add <email>` shares it at once
+  and sends nothing, so pass on the returned `address`; `--list` shows its guests and
+  `--remove <email>` stops sharing with one. Same targets as a scope change, owner only.
+  `not_on_patchy` means the email has no Patchy account yet, `already_member` that they're
+  in the company already, and `guests_unavailable` says, in its `reason`, what keeps guests
+  out of the current version and how to let them in.
 - Announce the returned `scope`, not an assumed default: `company` means signed-in
   colleagues in the user's company can open the link; `public` means anyone with
   the link can open it without signing in. Text output names both scope and readership.

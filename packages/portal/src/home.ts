@@ -1,3 +1,5 @@
+import * as Option from "effect/Option";
+import { guestReasonText } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import {
   copyLine,
@@ -11,7 +13,7 @@ import {
   rowMenu,
   searchField
 } from "@patchy/core";
-import type { Patches } from "@patchy/patches";
+import type { GuestGrants, Patches } from "@patchy/patches";
 import { failedLog, isNew, manages, matches, openItems, patchAddress } from "./allPatches.js";
 import { firstClause, patchTitle } from "./render.js";
 
@@ -99,13 +101,39 @@ export interface HomeInput {
   readonly connected: boolean;
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
+  /** Other companies' patches shared with the viewer. */
+  readonly shared: readonly GuestGrants.Shared[];
 }
 
 /**
+ * Other companies' patches shared with the viewer, each opening the patch, or saying why it can't
+ * while its guests can't open it, with Remove… in its menu. Nothing when there are none.
+ */
+const sharedShelf = (shared: readonly GuestGrants.Shared[]) => {
+  if (shared.length === 0) return "";
+  const row = (entry: GuestGrants.Shared) => {
+    const title = patchTitle(entry);
+    const address = `/${encodeURIComponent(entry.company.handle)}/${encodeURIComponent(entry.name)}`;
+    const body = `${patchMark(entry.name, entry.tier)}<span class="tile-body"><span class="tile-name">${escapeHtml(title)}</span><span class="tile-text">${escapeHtml(entry.company.name)}</span>${Option.match(entry.unavailable, { onNone: () => "", onSome: (reason) => `<span class="tile-meta">Can’t open it now. ${escapeHtml(guestReasonText(reason))}</span>` })}</span>`;
+    const open = Option.isNone(entry.unavailable);
+    const menu = rowMenu(`shared-${entry.patchId}`, title, [
+      ...(open
+        ? [
+            `<a class="menu-item" href="${escapeAttribute(address)}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`
+          ]
+        : []),
+      menuLink(`/shared/${encodeURIComponent(entry.patchId)}/remove`, "Remove…", true, title)
+    ]);
+    return `<li class="home-row">${open ? `<a class="tile-row tile-row-plain" href="${escapeAttribute(address)}">${body}</a>` : `<div class="tile-row tile-row-plain">${body}</div>`}${menu}</li>`;
+  };
+  return `<section class="home-shelf" aria-labelledby="shared-heading"><h2 class="section-heading" id="shared-heading">Shared with you</h2><ul class="list home-rows">${shared.map(row).join("")}</ul></section>`;
+};
+
+/**
  * Home at `/`: the viewer's usual patches, the company's tools and its pages, each opening the
- * patch, with About this patch in its menu. Below 900px it keeps its own search, which the
- * sidebar holds wider. Until the viewer connects an agent it offers Connect your agent, and the
- * caller may lay the Final step panel over it.
+ * patch, with About this patch in its menu, and what other companies shared with them. Below
+ * 900px it keeps its own search, which the sidebar holds wider. Until the viewer connects an
+ * agent it offers Connect your agent, and the caller may lay the Final step panel over it.
  */
 export const renderHome = (input: HomeInput): string => {
   const { viewer, opens, now, query } = input;
@@ -156,9 +184,10 @@ export const renderHome = (input: HomeInput): string => {
     return parts.length ? `<span class="tile-meta">${parts.join(" · ")}</span>` : "";
   };
   // Shelves can hold the same patch twice, so each menu's id names its shelf.
+  const here = query === "" ? "/" : `/?q=${encodeURIComponent(query)}`;
   const menu = (row: Patches.ReadPatch, shelf: string) =>
     rowMenu(`${shelf}-${row.patch.id}`, patchTitle(row.patch), [
-      ...openItems(row.patch, input.publicBaseUrl),
+      ...openItems(row, viewer, input.publicBaseUrl, here),
       ...(manages(row, viewer)
         ? [menuLink(`/patches/${encodeURIComponent(row.patch.name)}/settings`, "Settings")]
         : [])
@@ -215,7 +244,7 @@ export const renderHome = (input: HomeInput): string => {
         input.rows.length === 0
           ? `<h1 class="page-heading">Nothing here yet</h1><p>${escapeHtml(company)}’s tools and pages show up here as people publish them.</p>`
           : `<h1 class="page-heading">Nothing is live</h1><p>None of ${escapeHtml(company)}’s patches is live right now.${off > 0 ? " Retired and deleted patches can be restored from All patches." : ""}</p>`
-      }${placeholder ? `<ul class="list home-rows">${placeholder}</ul>` : ""}</section>`,
+      }${placeholder ? `<ul class="list home-rows">${placeholder}</ul>` : ""}</section>${sharedShelf(input.shared)}`,
       ""
     );
 
@@ -297,6 +326,6 @@ export const renderHome = (input: HomeInput): string => {
     : "";
 
   return page(
-    `<div class="home${pageShelf ? "" : " home-solo"}"><div class="home-main">${usualShelf}${toolShelf}</div>${pageShelf}</div>`
+    `<div class="home${pageShelf ? "" : " home-solo"}"><div class="home-main">${usualShelf}${toolShelf}${sharedShelf(input.shared)}</div>${pageShelf}</div>`
   );
 };

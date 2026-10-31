@@ -59,6 +59,14 @@ import {
   refuse,
   Shared,
   ShareRequest,
+  AlreadyMember,
+  GuestRemoved,
+  GuestRequest,
+  GuestShared,
+  GuestsUnavailable,
+  NotOnPatchy,
+  PatchGuest,
+  PatchGuests,
   Manifest,
   PublishRequest,
   PublishRefused,
@@ -234,6 +242,36 @@ const readFailures = {
 };
 const isPatchId = Schema.is(PatchId);
 
+/** A patch's guest as the wire names them. */
+const patchGuest = (guest: GuestGrants.Guest) =>
+  new PatchGuest({
+    userId: guest.userId,
+    name: guest.name,
+    email: guest.email,
+    company: { name: guest.companyName },
+    grantedAt: guest.grantedAt.toISOString()
+  });
+/** Who may manage the patch: the owner check every guest act makes first. */
+const managerFailures = {
+  NotOwner: lifecycleFailures.NotOwner,
+  PatchUnavailable: ownerFailures.PatchUnavailable,
+  SqlError: Effect.die
+};
+/** Share's refusals: a patch that isn't live, guests can't open, or someone who can't be its guest. */
+const shareFailures = {
+  WrongState: lifecycleFailures.WrongState,
+  NotOnPatchy: (error: GuestGrants.NotOnPatchy) =>
+    lifecycleFailure(NotOnPatchy, "not_on_patchy", { error: error.message }),
+  AlreadyMember: (error: GuestGrants.AlreadyMember) =>
+    lifecycleFailure(AlreadyMember, "already_member", { error: error.message }),
+  GuestsUnavailable: (error: GuestGrants.GuestsUnavailable) =>
+    lifecycleFailure(GuestsUnavailable, "guests_unavailable", {
+      error: error.message,
+      reason: error.reason
+    }),
+  ConnectionStorageFailed: Effect.die
+};
+
 /** A log page stops before passing this many bytes, so one noisy patch can't flood an agent. */
 const LOG_PAGE_BYTES = 2 * 1024 * 1024;
 
@@ -329,6 +367,7 @@ const decodeReplayIds = Schema.decodeUnknownOption(
   Schema.Struct({ patchId: Schema.String, versionId: Schema.String })
 );
 const decodeShare = decodeBody(ShareRequest);
+const decodeGuest = decodeBody(GuestRequest);
 const decodeForce = decodeBody(ForceRequest);
 const decodeRollback = decodeBody(RollbackRequest);
 const decodeDescription = decodeBody(DescriptionRequest);
@@ -1136,6 +1175,65 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             patchId: params.patchId,
             scope: shared.scope,
             publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
+          });
+        })
+      )
+      .handleRaw("listGuests", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const listed = yield* guestGrants
+            .list({ patchId: params.patchId, actor: { userId: identity.user.id, admin: false } })
+            .pipe(Effect.catchTags(managerFailures));
+          if (HttpServerResponse.isHttpServerResponse(listed)) return listed;
+          yield* WideEvents.enrich(Patches.eventFields(listed.patch));
+          return new PatchGuests({
+            ok: true,
+            patchId: listed.patch.id,
+            guests: listed.guests.map(patchGuest)
+          });
+        })
+      )
+      .handleRaw("addGuest", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const payload = yield* readBody(maxShareBodyBytes).pipe(
+            Effect.flatMap(decodeGuest),
+            Effect.catchTags(bodyFailures)
+          );
+          if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          const shared = yield* guestGrants
+            .share({
+              patchId: params.patchId,
+              actor: { userId: identity.user.id, admin: false },
+              email: payload.email
+            })
+            .pipe(Effect.catchTags({ ...managerFailures, ...shareFailures }));
+          if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
+          yield* WideEvents.enrich(Patches.eventFields(shared.patch));
+          return new GuestShared({
+            ok: true,
+            patchId: shared.patch.id,
+            address: Patches.address(publicBaseUrl, shared.patch.companyHandle, shared.patch.name),
+            guest: patchGuest(shared.guest)
+          });
+        })
+      )
+      .handleRaw("removeGuest", ({ params }) =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const removed = yield* guestGrants
+            .remove({
+              patchId: params.patchId,
+              actor: { userId: identity.user.id, admin: false },
+              guest: params.guest
+            })
+            .pipe(Effect.catchTags(managerFailures));
+          if (HttpServerResponse.isHttpServerResponse(removed)) return removed;
+          yield* WideEvents.enrich(Patches.eventFields(removed.patch));
+          return new GuestRemoved({
+            ok: true,
+            patchId: removed.patch.id,
+            removed: removed.removed
           });
         })
       )
