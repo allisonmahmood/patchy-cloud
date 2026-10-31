@@ -142,14 +142,26 @@ const errorPage = Effect.fn("PortalPages.errorPage")(function* (
   );
 });
 
-/** Stored ids in the reader's words: company members' names, version numbers and the patch's title. */
+/**
+ * Stored ids in the reader's words: the names of the people in these entries, the patch's guests
+ * from other companies included, version numbers and the patch's title.
+ */
 const logNames = Effect.fn("PortalPages.logNames")(function* (
   card: Patches.PortalCard,
-  companyId: string
+  entries: ReadonlyArray<InvocationLog.Entry>,
+  viewerIds: ReadonlyArray<string> = []
 ) {
-  const members = yield* (yield* Users.Users).list(companyId);
+  const people = yield* (yield* Users.Users).names([
+    ...viewerIds,
+    ...entries.flatMap(({ invocation, tree }) => [
+      invocation.initiatingViewerId,
+      ...tree.flatMap((item) =>
+        item.effectivePrincipal === "patch" ? [] : [item.effectivePrincipal]
+      )
+    ])
+  ]);
   return {
-    people: new Map(members.map((member) => [member.id, member.name])),
+    people,
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
     patch: patchTitle(card.patch),
     connections: new Map<string, string>()
@@ -170,7 +182,7 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
     trees: false
   });
   if (entries.length === 0 && card.tier < 2) return "";
-  const names = yield* logNames(card, viewer.company.id);
+  const names = yield* logNames(card, entries);
   return renderRecentActivity({ patch: card.patch, now, names, entries });
 });
 
@@ -649,7 +661,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
   const scope = { companyId: viewer.company.id, patchId: card.patch.id };
   const page = yield* log.page({ ...scope, before, filter, limit: 25 });
   const choices = yield* log.choices(scope);
-  const names = yield* logNames(card, viewer.company.id);
+  const names = yield* logNames(card, page.entries, choices.viewerIds);
   const now = yield* Clock.currentTimeMillis;
   // Calls record the connection's id; readers know it by its handle. A connection deleted
   // since, or a store that cannot answer, leaves the id.

@@ -3248,6 +3248,29 @@ it.layer(layer)("patch log on a socket", (it) => {
     })
   );
 
+  it.effect("names a guest from another company in the log, its filter and the card", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const guest = (yield* company()).member;
+      const patch = yield* publish(workspace.owner, "guest-log", { title: "Guest Log" });
+      yield* invoke(seedOf(workspace.id, patch), guest, { handler: "notes.add", kind: "mutation" });
+
+      const log = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.notInclude(text(log), guest.id);
+      assert.include(text(log), `${guest.name} v1 notes.add mutation Succeeded`);
+      assert.deepStrictEqual(
+        [
+          ...(log.match(/<select[^>]*name="person"[\s\S]*?<\/select>/)?.[0] ?? "").matchAll(
+            /<option value="([^"]+)">([^<]*)<\/option>/g
+          )
+        ].map((match) => [match[1], match[2]]),
+        [[guest.id, guest.name]]
+      );
+      const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+      assert.include(text(card), `${guest.name} · Guest Log v1 · notes.add (mutation) Succeeded`);
+    })
+  );
+
   it.effect("pages by cursor, filters, and says when nothing is logged or matches", () =>
     Effect.gen(function* () {
       const workspace = yield* company();

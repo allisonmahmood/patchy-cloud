@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -18,6 +19,7 @@ import { contentHash, newInternalId, newPatchId } from "../../../test/crypto.js"
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { LoadedVersions as DurableVersions, Patches } from "@patchy/patches";
 import {
+  GrantedGuests,
   LoadedVersions,
   RuntimeStream,
   StreamAdmission,
@@ -124,7 +126,16 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
               })
           }),
           Effect.provide(WideEvents.layerNoop),
-          Effect.provide(Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer)),
+          Effect.provide(
+            Layer.mergeAll(StreamAdmission.layer, StreamLimits.layer).pipe(
+              Layer.provide([
+                DurableVersions.layer,
+                Layer.succeed(GrantedGuests.GrantedGuests, {
+                  host: () => Effect.succeed(Option.none())
+                })
+              ])
+            )
+          ),
           Effect.provideService(Scope.Scope, lifecycleScope)
         );
         const firstPull = yield* streams

@@ -424,7 +424,15 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
           viewer.company.id,
           list.flatMap((call) => (call.versionId === null ? [] : [call.versionId]))
         );
-        return { list, names: { people, versions } };
+        // A patch's guests call as themselves, from outside the company's directory.
+        const guests = yield* (yield* Users.Users).names(
+          list.flatMap((call) =>
+            call.effectivePrincipal === "patch" || people.has(call.effectivePrincipal)
+              ? []
+              : [call.effectivePrincipal]
+          )
+        );
+        return { list, names: { people: new Map([...people, ...guests]), versions } };
       }).pipe(
         Effect.catch(() =>
           Effect.succeed({

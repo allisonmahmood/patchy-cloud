@@ -186,7 +186,7 @@ it.live(
       );
       const runtime = yield* Runtime.make(handlers, {
         origin: "http://localhost",
-        identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+        identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
       }).pipe(Effect.provideService(Invocation.Invocation, invocations));
       const request = HttpServerRequest.fromWeb(
         new Request("http://localhost/api/runtime/call", {

@@ -27,7 +27,7 @@ import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { Cryptography, isWelcomePage } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
-import { Content, Patches, PatchesConfig } from "@patchy/patches";
+import { Content, GuestGrants, Patches, PatchesConfig } from "@patchy/patches";
 import { withReportedCommit } from "@patchy/sql";
 import * as Door from "./Door.js";
 import { renderNotFound } from "./render.js";
@@ -144,6 +144,19 @@ const negotiated = (document: Document, acceptEncoding: string | undefined) => {
   return { coding, body: document[coding] };
 };
 
+/** Whether this person may open this version as the patch's guest. */
+const grantedGuest = Effect.fn("Pages.grantedGuest")(function* (
+  patch: Patches.Patch,
+  version: Patches.PatchVersion,
+  userId: string
+) {
+  if (!GuestGrants.admitsGuests(patch, version)) return false;
+  const host = yield* (yield* GuestGrants.GuestGrants)
+    .host({ patchId: patch.id, companyId: patch.companyId, userId })
+    .pipe(Effect.catchTags({ SqlError: Effect.die }));
+  return Option.isSome(host);
+});
+
 const servePatch = Effect.fn("Pages.servePatch")(function* (
   kind: "address" | "content",
   documents: Documents
@@ -206,7 +219,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         cookies
       );
     }
-    if (served.value.patch.companyId !== admission.company.id) {
+    // Someone from another company opens only the current version of a patch shared with them,
+    // while its guests can open it; anyone else gets the same 404 as a stranger.
+    if (
+      served.value.patch.companyId !== admission.company.id &&
+      !(yield* grantedGuest(served.value.patch, served.value.version, admission.user.id))
+    ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
     if (served.value.patch.state !== "live" && !isAlias) {
@@ -286,11 +304,15 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
       ? admission.user.id
       : undefined;
+  // A guest has no Home in the patch's company to record an open for.
+  const member =
+    !HttpServerResponse.isHttpServerResponse(admission) &&
+    admission.company.id === served.value.patch.companyId;
   // A colleague's first open is the one business event serving reports: activation is counted
   // in it. It reports with the open's commit, so a reader who leaves mid-COMMIT can't leave a first
   // open recorded and never reported, while the open itself, lock waits included, stays
   // cancellable. Tracking never fails the page.
-  if (kind === "address" && viewerId !== undefined) {
+  if (kind === "address" && viewerId !== undefined && member) {
     const { patch } = served.value;
     yield* withReportedCommit(patches.recordOpen(viewerId, patch.id, version.id), (firstOpen) =>
       firstOpen && viewerId !== patch.ownerUserId
@@ -476,6 +498,7 @@ export const layer: Layer.Layer<
       | Cryptography.Cryptography
       | Content.Content
       | Patches.Patches
+      | GuestGrants.GuestGrants
       | Session.Session
       | Analytics.Analytics
       | SqlClient.SqlClient

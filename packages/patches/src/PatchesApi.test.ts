@@ -104,6 +104,8 @@ const logCall = (
     readonly logLines?: InvocationLog.Finish["logLines"];
     /** The reader's worker agent made the call; absent for the reader's page. */
     readonly agent?: { readonly name: string };
+    /** Who made the call, the reader unless another person did. */
+    readonly viewerId?: string;
   }
 ) =>
   Effect.gen(function* () {
@@ -116,7 +118,7 @@ const logCall = (
       versionId: published.versionId,
       handler: "leads.import",
       kind: "action",
-      initiatingViewerId: reader.user.id,
+      initiatingViewerId: call.viewerId ?? reader.user.id,
       agent: call.agent ?? null,
       parentId: null,
       correlationId: `cor_${id}`,
@@ -4186,6 +4188,30 @@ it.layer(Layer.fresh(publishLayer))("patch log over machine tokens", (it) => {
         responseMode: "response-only"
       });
       assert.strictEqual(missing.status, 404);
+    })
+  );
+
+  it.effect("names a guest from another company who called the patch", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const published = yield* owner.publish({ payload: publishRequest({ html: html("Shared") }) });
+      const { user: guest } = yield* (yield* Companies.Companies).create({
+        handle: "log-guests",
+        name: "Log Guests",
+        clerkUserId: "user_log_guest",
+        email: "gina@log-guests.example",
+        userName: "Gina"
+      });
+      yield* logCall(published, {
+        at: Date.parse("2026-10-19T12:00:00Z"),
+        outcome: "success",
+        viewerId: guest.id
+      });
+      const log = yield* owner.log({ params: { patchId: published.patchId }, query: {} });
+      assert.deepStrictEqual(
+        log.entries.map((entry) => entry.viewer),
+        [{ id: guest.id, name: "Gina" }]
+      );
     })
   );
 

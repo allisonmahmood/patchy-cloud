@@ -988,7 +988,7 @@ it.layer(services)("Invocation", (it) => {
           {},
           {
             origin: "http://localhost",
-            identity: Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
+            identity: () => Effect.succeed({ viewer, reauthorize: Effect.succeed(viewer) })
           }
         ).pipe(
           Effect.provideService(Invocation.Invocation, invocations),

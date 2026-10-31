@@ -23,6 +23,7 @@ import { clerkEnv, PUBLIC_BASE_URL, signSession, signedInCookies } from "@patchy
 import { Companies, Users } from "@patchy/companies";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as Testing from "@patchy/sql/testing";
+import * as GrantedGuests from "./GrantedGuests.js";
 import * as Invocation from "./Invocation.js";
 import * as LoadedVersions from "./LoadedVersions.js";
 import * as Runtime from "./Runtime.js";
@@ -114,6 +115,7 @@ const version: LoadedVersions.LoadedVersion = {
 const dependencies = Layer.mergeAll(
   Users.layer,
   Companies.layer,
+  Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) }),
   OperatingLimits.layer,
   RuntimeLog.layer,
   Limits.layer,

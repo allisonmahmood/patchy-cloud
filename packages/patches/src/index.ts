@@ -1,5 +1,6 @@
 export * as Content from "./Content.js";
 export * as DeletionSweep from "./DeletionSweep.js";
+export * as GuestGrants from "./GuestGrants.js";
 export * as Patches from "./Patches.js";
 export * as PatchesApi from "./PatchesApi.js";
 export * as PatchesConfig from "./PatchesConfig.js";

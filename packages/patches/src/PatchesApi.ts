@@ -1052,8 +1052,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               limit: query.limit ?? LOG_PAGE_DEFAULT
             })
             .pipe(Effect.catchTags({ SqlError: Effect.die }));
-          const members = yield* users
-            .list(identity.company.id)
+          // Actors by name, the patch's guests from other companies included.
+          const people = yield* users
+            .names(page.entries.map((entry) => entry.invocation.initiatingViewerId))
             .pipe(Effect.catchTags({ SqlError: Effect.die }));
           // A connection deleted since, or a store that cannot answer, leaves the id.
           const connections = page.entries.some((entry) =>
@@ -1063,7 +1064,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             : [];
           const names: LogNames = {
             versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
-            people: new Map(members.map((member) => [member.id, member.name])),
+            people,
             connections: new Map(
               connections.map((connection) => [
                 connection.id,

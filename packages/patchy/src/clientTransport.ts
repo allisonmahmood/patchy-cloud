@@ -50,10 +50,12 @@ export interface Transport {
   handlerKind(name: string): HandlerKindName | undefined;
   close(): void;
 }
+/** A guest is someone from another company the patch is shared with, in the patch's company. */
 export interface Me {
   readonly user: { readonly id: string; readonly name: string; readonly email: string };
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
   readonly admin: boolean;
+  readonly guest?: true;
 }
 
 /** Structural subset implemented by browser MessagePort and the fake-port acceptance seam. */

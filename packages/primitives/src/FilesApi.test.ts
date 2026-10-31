@@ -23,6 +23,7 @@ import { ContentStore } from "@patchy/content-store";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import {
   Binding,
+  GrantedGuests,
   LoadedVersions,
   RuntimeProduction,
   RuntimeApi,
@@ -71,6 +72,7 @@ const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
 });
 const dependencies = Layer.mergeAll(
   versions,
+  Layer.succeed(GrantedGuests.GrantedGuests, { host: () => Effect.succeed(Option.none()) }),
   Limits.layer,
   OperatingLimits.layer,
   RuntimeLog.layer,

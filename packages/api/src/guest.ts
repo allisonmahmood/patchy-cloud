@@ -23,10 +23,12 @@ const identity = Schema.NonEmptyString;
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 const milliseconds = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
 const args = Schema.Record(Schema.String, Schema.Json);
+/** Only a patch's guest carries `guest`: stored bundles that predate it refuse unknown keys. */
 const viewer = Schema.Struct({
   user: Identity.fields.user,
   company: Identity.fields.company,
-  admin: Schema.Boolean
+  admin: Schema.Boolean,
+  guest: Schema.optionalKey(Schema.Literal(true))
 });
 /**
  * The worker agent an invocation runs for, by the name its person approved: a label, never proof.

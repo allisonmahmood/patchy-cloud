@@ -371,17 +371,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
-      if (principal === null || principal.userId !== identity.viewerId)
+      const admitted = yield* admission.admit;
+      if (principal === null || principal.userId !== admitted.viewerId)
         return yield* new Runtime.PrincipalChanged({});
       const find = (versionId?: string) =>
         versions
           .find(input.patchId, versionId)
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const found = yield* find(input.versionId);
-      if (Option.isNone(found) || found.value.companyId !== identity.companyId)
-        return yield* new Runtime.AccessDenied({});
+      if (Option.isNone(found)) return yield* new Runtime.AccessDenied({});
       const loaded = found.value;
+      const identity = yield* admitted.viewer(loaded);
       const { buffer, idle } = yield* operatingLimits.getMany({
         companyId: identity.companyId,
         limits: { buffer: "stream.buffer.bytes", idle: "execution.document.idle" }
@@ -397,7 +397,8 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const lifecycleClosed = yield* Deferred.make<void>();
       const scope = yield* Scope.Scope;
       const now = yield* Clock.currentTimeMillis;
-      const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
+      // A patch id names one company's patch, so it scopes the browser's document id alone.
+      const key = `${input.patchId}:${input.documentId}`;
       const viewerKey = `${identity.companyId}:${input.patchId}:${identity.viewerId}`;
       const patchKey = `${identity.companyId}:${input.patchId}`;
       const generation = yield* cryptography.internalId("stream");
@@ -859,18 +860,17 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       const principal = yield* decodePrincipal(request.headers["x-patchy-principal"]).pipe(
         Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
       );
-      const identity = yield* admission.admit;
-      if (principal === null || principal.userId !== identity.viewerId)
+      // The viewer's sign-in alone: the entry says which patch, company and person it admitted.
+      const admitted = yield* admission.admit;
+      if (principal === null || principal.userId !== admitted.viewerId)
         return yield* new Runtime.PrincipalChanged({});
-      const key = `${identity.companyId}:${input.patchId}:${input.documentId}`;
-      const entry = entries.get(key);
+      const entry = entries.get(`${input.patchId}:${input.documentId}`);
       // Whether this host holds the document, and under which generation, tells a request
       // routed to the wrong replica from one naming a replaced stream. The patch and version
       // come from the admitted stream, never the request; a generation is kept only in
       // the form this host mints.
       yield* WideEvents.enrich({
-        companyId: identity.companyId,
-        viewerId: identity.viewerId,
+        viewerId: admitted.viewerId,
         documentId: input.documentId,
         ...(/^stream_[a-z0-9]{24}$/.test(input.generation) ? { streamId: input.generation } : {}),
         subscriptionRequest: input.type,
@@ -879,6 +879,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ...(entry === undefined
           ? {}
           : {
+              companyId: entry.companyId,
               patchId: entry.patchId,
               versionId: entry.versionId,
               currentStreamId: entry.generation
@@ -887,7 +888,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       if (
         entry === undefined ||
         entry.generation !== input.generation ||
-        entry.viewerId !== identity.viewerId ||
+        entry.viewerId !== admitted.viewerId ||
         entry.versionId !== input.versionId
       ) {
         yield* WideEvents.enrich({ refusal: "stream_replaced" });
@@ -895,7 +896,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
       }
       // Share the call budget across documents and generations for this viewer and patch.
       const attempt = yield* limits.consume({
-        key: `runtime:${identity.viewerId}:${input.patchId}`,
+        key: `runtime:${admitted.viewerId}:${input.patchId}`,
         limit: callsPerMinute,
         window: "1 minute"
       });

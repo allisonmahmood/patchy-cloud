@@ -17,7 +17,7 @@ export const layer = (
   never,
   LoadedVersions.LoadedVersions | Limits.Limits | Cryptography.Cryptography
 > => {
-  const identity = Effect.succeed({
+  const admitted = Effect.succeed({
     viewer: options.identity,
     reauthorize: Effect.succeed(options.identity)
   });
@@ -25,7 +25,7 @@ export const layer = (
     Runtime.Runtime,
     Runtime.make(handlers, {
       origin: options.origin,
-      identity
+      identity: () => admitted
     })
   );
 };

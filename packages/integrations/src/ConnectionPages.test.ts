@@ -1016,6 +1016,32 @@ it.layer(services)("company connection pages", (it) => {
         );
       })
   );
+  it.effect("names a patch's guest from another company in recent calls", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connections-guests");
+      const guest = yield* createCompany("connections-guests-home");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      const audit = yield* RuntimeLog.RuntimeLog;
+      yield* audit.begin({
+        companyId: owner.company.id,
+        patchId: "guest-patch",
+        versionId: "guest-version",
+        userId: guest.user.id,
+        credentialKind: "session",
+        op: "postgres.list",
+        resource: "public.orders",
+        connectionId: connection.id,
+        correlationId: "guest-call",
+        deadlineMs: 15_000
+      });
+      const response = yield* send(path, { headers: { cookie: cookie(owner.user) } });
+      const html = yield* Effect.promise(() => response.text());
+      const row = html
+        .split("<tr><td><time")
+        .find((item) => item.includes("<code>guest-call</code>"));
+      assert.include(row, `<td>${guest.user.name}</td>`);
+    })
+  );
   it.effect("keeps a connection's page and actions when the company directory cannot be read", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("connections-directory");

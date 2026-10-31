@@ -287,12 +287,16 @@ export const RuntimeEventStream = Schema.String.pipe(
   HttpApiSchema.asText({ contentType: "text/event-stream" })
 );
 
-/** Public versions return null, including when their viewer has a session. */
+/**
+ * Public versions return null, including when their viewer has a session. A guest is their own
+ * user in the patch's company, never its admin, and only they carry `guest`.
+ */
 export const RuntimeMe = Schema.NullOr(
   Schema.Struct({
     user: Identity.fields.user,
     company: Identity.fields.company,
-    admin: Schema.Boolean
+    admin: Schema.Boolean,
+    guest: Schema.optionalKey(Schema.Literal(true))
   })
 ).annotate({ identifier: "RuntimeMe" });
 export type RuntimeMe = typeof RuntimeMe.Type;

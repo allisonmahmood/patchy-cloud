@@ -21,6 +21,7 @@ import { Companies, Users } from "@patchy/companies";
 import { ContractLimits, Limits, OperatingLimits } from "@patchy/limits";
 import type { ContractLimitId } from "@patchy/limits/registry";
 import * as Testing from "@patchy/sql/testing";
+import * as GrantedGuests from "../GrantedGuests.js";
 import * as LoadedVersions from "../LoadedVersions.js";
 import * as Runtime from "../Runtime.js";
 import * as RuntimeProduction from "../RuntimeProduction.js";
@@ -88,6 +89,11 @@ const seed = Layer.effectDiscard(
   })
 );
 
+/** Suites without Patches hold no grants: nobody from another company is its guest. */
+export const noGuests = Layer.succeed(GrantedGuests.GrantedGuests, {
+  host: () => Effect.succeed(Option.none())
+});
+
 /** Lifecycle-only suites explicitly refuse data reads; subscription suites supply storage. */
 export const streamPorts = Layer.mergeAll(
   Wakes.layer,
@@ -111,6 +117,7 @@ export const layer = (
     Layer.provideMerge(
       Layer.mergeAll(
         versions,
+        noGuests,
         Limits.layer,
         OperatingLimits.layer,
         RuntimeLog.layer,
