@@ -152,7 +152,7 @@ class CompanyGrantRow extends Schema.Class<CompanyGrantRow>("CompanyGrantRow")({
   patchName: Schema.String,
   title: Schema.String,
   tier: Schema.Int,
-  state: PatchState,
+  state: Schema.Union([PatchState, Schema.Literal("disabled")]),
   sharerName: Schema.String,
   sharerEmail: Schema.String,
   sharedAt: Schema.Date
@@ -242,7 +242,8 @@ export class GuestGrants extends Context.Service<
     ) => Effect.Effect<ReadonlyMap<string, boolean>, SqlError>;
     /**
      * The company's guests by name, each with the patches shared with them now, who shared each and
-     * when, newest first: People's Guests. Ended grants and disabled patches are left out; one read.
+     * when, newest first: People's Guests. Ended grants are left out; a patch the operator disabled
+     * stays in, as `disabled`, since its grants come back with it. One read.
      */
     readonly companyGuests: (
       companyId: string
@@ -336,7 +337,7 @@ export const make = Effect.gen(function* () {
     connections.blockingGuests([
       ...new Set(versions.flatMap((version) => connectionIds(version.manifest.uses)))
     ]);
-  // A patch is in one state: deleted, then retired, else live; disabled ones are never asked.
+  // A patch is in one state: deleted, then retired, else live. Only People's guests mark disabled.
   const state = sql`CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted'
     WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END`;
   const granted = sql`EXISTS (SELECT 1 FROM patch_guest_grants g
@@ -393,7 +394,8 @@ export const make = Effect.gen(function* () {
     Result: CompanyGrantRow,
     execute: (companyId) => sql`
       SELECT g.user_id AS "userId", u.name, u.email, c.name AS "companyName",
-        p.name AS "patchName", p.title, v.tier, ${state} AS state,
+        p.name AS "patchName", p.title, v.tier,
+        CASE WHEN p.disabled_at IS NOT NULL THEN 'disabled' ELSE ${state} END AS state,
         s.name AS "sharerName", s.email AS "sharerEmail", g.granted_at AS "sharedAt"
       FROM patch_guest_grants g
       JOIN users u ON u.id = g.user_id
@@ -401,7 +403,7 @@ export const make = Effect.gen(function* () {
       JOIN patches p ON p.id = g.patch_id
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN users s ON s.id = g.granted_by
-      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL AND p.disabled_at IS NULL
+      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL
       ORDER BY u.name, u.email, g.user_id, g.granted_at DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
