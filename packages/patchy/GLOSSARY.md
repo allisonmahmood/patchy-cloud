@@ -76,6 +76,10 @@ _Avoid_: upload history, manifest
 A complete publish attempt whose outcome or local application remains unsettled, retaining its original content, owner and patch identity even when a repo moves. Concurrent invocations recover the same attempt only for its original owner, and settling it preserves the repo's instance binding.
 _Avoid_: queued publish, upload history
 
+**Pull**:
+Copying the [repo snapshot](../patches/GLOSSARY.md) a version was published from into a new folder and setting it up the way refresh does, so it runs on today's release. Anyone in the company who can open the patch may pull it; publishing stays the owner's. A pulled `patchy.json` records the version it came from.
+_Avoid_: clone, checkout, fork (a pull is the same patch), download
+
 **Description sync**:
 The reconciliation of a patch repo's description with cloud edits, using the last synchronized timestamp rather than remembered text. A newer cloud edit replaces local text with a notice; otherwise local edits remain authoritative for the next publish. The build purpose and primitive descriptions are independent. [ADR-0004](../../docs/adr/ADR-0004-cli-contract-for-agents.md) owns the command and file contract.
 _Avoid_: last synced text, purpose sync, generated description

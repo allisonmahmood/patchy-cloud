@@ -1757,9 +1757,12 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     const response = await context.request.get(new URL(source, publicBaseUrl).href);
     assert.equal(response.status(), 200);
     const bytes = await response.body();
-    assert.deepEqual(receipt.artifacts, {
+    const { repo, ...artifacts } = receipt.artifacts;
+    assert.deepEqual(artifacts, {
       html: { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length }
     });
+    // A repo publish keeps the repo it was built from.
+    assert.ok(repo?.files > 0 && repo.bytes > 0, "a repo publish keeps its repo snapshot");
   };
   await assertHtmlArtifact(published);
   // Publish carries the application and schema, never local rows. Exercise the same

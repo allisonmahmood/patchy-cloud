@@ -16,6 +16,7 @@ import { checkRelease } from "./ReleaseCheck.js";
 import { RELEASE } from "./release.js";
 import { processResult } from "./processResult.js";
 import * as Project from "./Project.js";
+import * as RepoSnapshot from "./repoSnapshot.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain, typescriptRefusal } from "./toolchainProcess.js";
 import { guestAliases } from "./serverBuild.js";
@@ -141,6 +142,9 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     catch: configFailure
   });
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
+  // Packed before the build, so an oversized repo is refused before any of the slow work.
+  const snapshot = yield* RepoSnapshot.pack(cwd);
+  warnings.push(...snapshot.warnings);
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
   const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
   const skipped = yield* agentTypecheckWarning(cwd, agentFiles);
@@ -257,7 +261,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   if (handlers !== undefined && Object.keys(handlers).length === 0)
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
   yield* validateRepoBundle(cwd, manifest, built.html);
-  return { manifest, html: built.html, server: built.server, warnings };
+  return { manifest, html: built.html, server: built.server, repo: snapshot.files, warnings };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */

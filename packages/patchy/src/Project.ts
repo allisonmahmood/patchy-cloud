@@ -52,6 +52,8 @@ import { discoverServerModules } from "./serverModules.js";
 const repoSchema = Schema.Struct({
   instance: Schema.String,
   patch: Schema.optionalKey(Schema.String),
+  /** The version this copy was last published as or pulled from. */
+  version: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   description: Schema.optionalKey(Schema.String),
   descriptionSyncedAt: Schema.optionalKey(Schema.NullOr(IsoTimestamp))
 });
@@ -174,7 +176,7 @@ export const readRepo = Effect.fn("Project.readRepo")(function* (cwd: string) {
     catch: (cause) =>
       new LocalError({
         message:
-          "patchy.json must contain an instance, with string values for description and patch when present, and a timestamp or null for descriptionSyncedAt.",
+          "patchy.json must contain an instance, with string values for description and patch and a positive whole version when present, and a timestamp or null for descriptionSyncedAt.",
         code: "invalid_manifest",
         cause
       })
@@ -311,17 +313,26 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
   };
 });
 
-/** Reapply a returned patch id only while the repo retains its original instance binding. */
+/**
+ * Reapply a returned patch id and version only while the repo retains its original instance
+ * binding.
+ */
 export const recordPublish = Effect.fn("Project.recordPublish")(function* (
   cwd: string,
-  patchId: string,
+  published: { readonly patchId: string; readonly versionNumber: number },
   apiUrl: string,
   descriptionUpdatedAt?: string | null
 ) {
+  const { patchId, versionNumber } = published;
   const repo = yield* readRepo(cwd);
   if (Instance.normalizeApiUrl(repo.instance) !== Instance.normalizeApiUrl(apiUrl))
     return yield* InstanceMismatch.new({ stored: repo.instance, requested: apiUrl });
-  if (repo.patch === patchId && descriptionUpdatedAt === undefined) return;
+  if (
+    repo.patch === patchId &&
+    repo.version === versionNumber &&
+    descriptionUpdatedAt === undefined
+  )
+    return;
   if (repo.patch !== undefined && repo.patch !== patchId)
     return yield* new LocalError({
       message:
@@ -332,6 +343,7 @@ export const recordPublish = Effect.fn("Project.recordPublish")(function* (
     {
       ...repo,
       patch: patchId,
+      version: versionNumber,
       ...(descriptionUpdatedAt === undefined ? {} : { descriptionSyncedAt: descriptionUpdatedAt })
     },
     "Could not write patch into patchy.json. Run publish again to recover the saved result."
@@ -617,7 +629,12 @@ export const generate = Effect.fn("Project.generate")(function* (
   );
 });
 
-export const refresh = Effect.fn("Project.refresh")(function* (
+/**
+ * Refresh's transaction without its report: the instance's release pinned and installed, then
+ * generation, the workerd pin, the toolchain check and the managed files. `patchy pull` runs it on
+ * the repo it is writing.
+ */
+const refreshRepo = Effect.fn("Project.refreshRepo")(function* (
   cwd: string,
   token: Redacted.Redacted,
   change?: Change
@@ -766,6 +783,19 @@ export const refresh = Effect.fn("Project.refresh")(function* (
           Effect.orDie
         )
     );
+  return { release, changed, from, pinChanged, warnings, addedCapabilities };
+});
+
+export const refresh = Effect.fn("Project.refresh")(function* (
+  cwd: string,
+  token: Redacted.Redacted,
+  change?: Change
+) {
+  const { release, changed, from, pinChanged, warnings, addedCapabilities } = yield* refreshRepo(
+    cwd,
+    token,
+    change
+  );
   const capabilityNotices = addedCapabilities.map(
     (capability) =>
       `New SDK capability: ${capability.name} (${capability.group}). Entrypoints: ${capability.entrypoints.join(", ")}. Runs: ${capability.runs}. Limits: ${capability.limits}`
@@ -935,6 +965,33 @@ export const add = Effect.fn("Project.add")(function* (
   yield* refresh(cwd, token, { kind: "add", alias, declaration });
 });
 
+/**
+ * The folder init and pull fill: its parent must exist, and it must be absent or empty. Returns the
+ * parent's real path, where the staging folder goes.
+ */
+const emptyTarget = Effect.fn("Project.emptyTarget")(function* (
+  dir: string,
+  verb: "initialize" | "pull into"
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // realPath on the parent plus safePath refuses a target symlink, including a dangling one.
+  const parent = yield* fs
+    .realPath(path.dirname(dir))
+    .pipe(
+      Effect.mapError(
+        (cause) => new LocalError({ message: "The parent directory must exist.", cause })
+      )
+    );
+  yield* localIO("Check the target directory", () => safePath(parent, path.basename(dir)));
+  const inspectFailed = (cause: unknown) =>
+    new LocalError({ message: "Could not inspect the target directory.", cause });
+  const exists = yield* fs.exists(dir).pipe(Effect.mapError(inspectFailed));
+  if (exists && (yield* fs.readDirectory(dir).pipe(Effect.mapError(inspectFailed))).length > 0)
+    return yield* new LocalError({ message: `Refusing to ${verb} an existing tree: ${dir}` });
+  return parent;
+});
+
 export const init = Effect.fn("Project.init")(function* (
   cwd: string,
   token: Redacted.Redacted,
@@ -981,33 +1038,7 @@ export const init = Effect.fn("Project.init")(function* (
     cwd,
     Option.getOrElse(directory, () => ".")
   );
-  // realPath on the parent plus safePath refuses a target symlink, including a dangling one.
-  const parent = yield* fs
-    .realPath(path.dirname(dir))
-    .pipe(
-      Effect.mapError(
-        (cause) => new LocalError({ message: "The parent directory must exist.", cause })
-      )
-    );
-  yield* localIO("Check init directory", () => safePath(parent, path.basename(dir)));
-  const exists = yield* fs
-    .exists(dir)
-    .pipe(
-      Effect.mapError(
-        (cause) => new LocalError({ message: "Could not inspect the init directory.", cause })
-      )
-    );
-  if (
-    exists &&
-    (yield* fs
-      .readDirectory(dir)
-      .pipe(
-        Effect.mapError(
-          (cause) => new LocalError({ message: "Could not inspect the init directory.", cause })
-        )
-      )).length > 0
-  )
-    return yield* new LocalError({ message: `Refusing to initialize an existing tree: ${dir}` });
+  const parent = yield* emptyTarget(dir, "initialize");
   const candidate = path
     .basename(dir)
     .toLowerCase()
@@ -1109,6 +1140,153 @@ export const init = Effect.fn("Project.init")(function* (
               : "Test with: pnpm patchy dev"
           ]
         );
+      }),
+    (staging) => fs.remove(staging, { recursive: true, force: true }).pipe(Effect.orDie)
+  );
+});
+
+/** One argument a shell reads back unchanged: as is when plain, else single-quoted. */
+const shellQuote = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+
+const decodeAnyRepo = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
+);
+
+/**
+ * Writes a version's repo snapshot into a new folder and sets it up the way refresh does, so
+ * `patchy dev` runs there on today's release. `patchy.json` names this instance, the patch, the
+ * version and the cloud description. A file-born page arrives as its one file. When setup can't
+ * run, for a patch that isn't live or an install or generation that fails, the files stay and the
+ * reason comes back as a warning.
+ */
+export const pull = Effect.fn("Project.pull")(function* (
+  cwd: string,
+  token: Redacted.Redacted,
+  patchRef: string,
+  options: {
+    readonly directory: Option.Option<string>;
+    readonly version: Option.Option<number>;
+    readonly state: Option.Option<"live" | "retired" | "all">;
+  }
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const instance = yield* Instance.Instance;
+  const client = yield* Api.client(token);
+  const identity = yield* client
+    .me()
+    .pipe(Effect.catch((error) => refusal(error, "Authentication failed.")));
+  yield* requireCurrentCli(client);
+  const pulled = yield* client
+    .pull({
+      params: { patchRef },
+      query: {
+        ...(Option.isSome(options.state) ? { state: options.state.value } : {}),
+        ...(Option.isSome(options.version) ? { version: options.version.value } : {})
+      }
+    })
+    .pipe(Effect.catch((error) => refusal(error, "Could not read the patch's repo.")));
+  const dir = path.resolve(
+    cwd,
+    Option.getOrElse(options.directory, () => pulled.name)
+  );
+  const parent = yield* emptyTarget(dir, "pull into");
+  yield* Effect.acquireUseRelease(
+    fs
+      .makeTempDirectory({ directory: parent, prefix: ".patchy-pull-" })
+      .pipe(
+        Effect.mapError(
+          (cause) => new LocalError({ message: "Could not stage the pulled repo.", cause })
+        )
+      ),
+    (staging) =>
+      Effect.gen(function* () {
+        for (const file of pulled.files) {
+          const target = yield* localIO(`Resolve ${file.path}`, () => safePath(staging, file.path));
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(
+            Effect.andThen(
+              fs.writeFile(target, Buffer.from(file.contents, "base64"), {
+                flag: "wx",
+                ...(file.executable === true ? { mode: 0o755 } : {})
+              })
+            ),
+            Effect.mapError(
+              (cause) => new LocalError({ message: `Could not write ${file.path}.`, cause })
+            )
+          );
+        }
+        let notSetUp: string | undefined;
+        let release: string | undefined;
+        const warnings: string[] = [];
+        if (pulled.kind === "repo") {
+          const stored = yield* fs
+            .readFileString(path.join(staging, "patchy.json"))
+            .pipe(Effect.option, Effect.map(Option.flatMap(decodeAnyRepo)));
+          yield* replaceFile(
+            staging,
+            "patchy.json",
+            json({
+              ...Option.getOrElse(stored, () => ({})),
+              instance: instance.apiUrl,
+              patch: pulled.patchId,
+              version: pulled.versionNumber,
+              description: pulled.description,
+              descriptionSyncedAt: pulled.descriptionUpdatedAt
+            }),
+            "Could not write patchy.json."
+          );
+          if (pulled.state !== "live")
+            notSetUp = `${pulled.name} is ${pulled.state}, so its dependencies and generated files weren't set up. Once it's restored, run patchy refresh in ${dir}.`;
+          else {
+            const refreshed = yield* refreshRepo(staging, token).pipe(Effect.result);
+            if (refreshed._tag === "Success") {
+              release = refreshed.success.release.release;
+              warnings.push(...refreshed.success.warnings);
+            } else
+              notSetUp = `Its dependencies and generated files weren't set up: ${refreshed.failure.message}\nFix that, then run patchy refresh in ${dir}.`;
+          }
+        }
+        yield* localIO("Activate the pulled repo", () => activateStarter(staging, dir)).pipe(
+          Effect.uninterruptible
+        );
+        const mine = pulled.owner.id === identity.user.id;
+        if (notSetUp !== undefined) warnings.push(notSetUp);
+        yield* Output.report(
+          {
+            ok: true,
+            dir,
+            patchId: pulled.patchId,
+            name: pulled.name,
+            state: pulled.state,
+            versionNumber: pulled.versionNumber,
+            kind: pulled.kind,
+            files: pulled.files.map((file) => file.path),
+            owner: pulled.owner,
+            mine,
+            setUp: notSetUp === undefined && pulled.kind === "repo",
+            ...(release === undefined ? {} : { release }),
+            warnings
+          },
+          [
+            `Pulled ${pulled.name} v${pulled.versionNumber} into ${dir} (${pulled.files.length} ${pulled.files.length === 1 ? "file" : "files"}).`,
+            ...(pulled.kind === "file"
+              ? [
+                  `It is one HTML file. Publish a change with: patchy publish ${shellQuote(path.join(dir, pulled.files[0]!.path))} --patch ${pulled.patchId}${instance.source === "flag" ? ` --api-url ${shellQuote(instance.apiUrl)}` : ""}`
+                ]
+              : release === undefined
+                ? []
+                : [
+                    `Set up on release ${release}: dependencies installed and generated files current. Run pnpm patchy dev there to work on it.`
+                  ]),
+            ...(mine
+              ? []
+              : [
+                  `Only ${pulled.owner.name} publishes ${pulled.name}. An admin can reassign it to you.`
+                ])
+          ]
+        );
+        for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
       }),
     (staging) => fs.remove(staging, { recursive: true, force: true }).pipe(Effect.orDie)
   );

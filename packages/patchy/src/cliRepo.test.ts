@@ -1,5 +1,13 @@
 // Patch-repo declarations, refresh and init through the bundled CLI.
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
@@ -8,6 +16,7 @@ import {
   coreProjectSkills,
   exec,
   generateProjectResponse,
+  identity,
   localPackageRegistry,
   packageDir,
   patchyLookFiles,
@@ -1125,4 +1134,169 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     });
     expect(readFileSync(path.join(dir, "package.json"))).toEqual(before["package.json"]);
   }, 120_000); // Real archives, isolated pnpm installs and tier-transition typechecks can exceed 30 seconds.
+});
+
+describe("patchy pull", () => {
+  const env = { PATCHY_API_TOKEN: "pp_project" };
+  const base64 = (text: string) => Buffer.from(text).toString("base64");
+  const pulled = (overrides: Record<string, unknown>) => ({
+    ok: true,
+    patchId: "abcdefghijkl",
+    name: "team-notes",
+    state: "live",
+    versionNumber: 3,
+    tier: 1,
+    owner: { id: identity.user.id, name: identity.user.name },
+    description: "Team notes",
+    descriptionUpdatedAt: null,
+    kind: "repo",
+    files: [],
+    ...overrides
+  });
+  const serving = (route: string, status: number, body: unknown) =>
+    stubInstance((request, respond) => {
+      if (request.url === "/api/me") return respond(200, identity);
+      if (request.url.split("?")[0] === route) return respond(status, body);
+      respond(404, { ok: false, error: "Unexpected fixture route." });
+    });
+
+  it("writes a file-born page as its one file, with the publish line for it", async () => {
+    const instance = await serving(
+      "/api/patches/launch-plan/repo",
+      200,
+      pulled({
+        name: "launch-plan",
+        tier: 1,
+        kind: "file",
+        files: [{ path: "Launch Plan.html", contents: base64("<p>Plan</p>") }]
+      })
+    );
+    const parent = tempDir();
+    const result = await runCli(
+      ["pull", `${instance.url}/acme/launch-plan`, "--api-url", instance.url],
+      {
+        cwd: parent,
+        env
+      }
+    );
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const file = path.join(parent, "launch-plan", "Launch Plan.html");
+    expect(readFileSync(file, "utf8")).toBe("<p>Plan</p>");
+    expect(result.stdout.split("\n")).toEqual([
+      `Pulled launch-plan v3 into ${path.join(parent, "launch-plan")} (1 file).`,
+      `It is one HTML file. Publish a change with: patchy publish '${file}' --patch abcdefghijkl --api-url ${instance.url}`,
+      ""
+    ]);
+  });
+
+  it("keeps a retired patch's files, names its owner, and leaves setup until it's restored", async () => {
+    const instance = await serving(
+      "/api/patches/team-notes/repo",
+      200,
+      pulled({
+        state: "retired",
+        owner: { id: "usr_colleague", name: "Colleague" },
+        files: [
+          { path: "patchy.json", contents: base64('{"instance":"https://old.example","extra":1}') },
+          { path: "src/App.tsx", contents: base64("export const App = 1;") },
+          { path: "scripts/check.sh", contents: base64("#!/bin/sh\n"), executable: true }
+        ]
+      })
+    );
+    const parent = tempDir();
+    const result = await runCli(
+      ["pull", "team-notes", "--state", "retired", "--api-url", instance.url, "--json"],
+      { cwd: parent, env }
+    );
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const dir = path.join(parent, "team-notes");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      dir,
+      state: "retired",
+      mine: false,
+      setUp: false,
+      warnings: [
+        `team-notes is retired, so its dependencies and generated files weren't set up. Once it's restored, run patchy refresh in ${dir}.`
+      ]
+    });
+    expect(readJson(path.join(dir, "patchy.json"))).toEqual({
+      instance: instance.url,
+      extra: 1,
+      patch: "abcdefghijkl",
+      version: 3,
+      description: "Team notes",
+      descriptionSyncedAt: null
+    });
+    expect(readFileSync(path.join(dir, "src/App.tsx"), "utf8")).toBe("export const App = 1;");
+    expect(statSync(path.join(dir, "scripts/check.sh")).mode & 0o111).not.toBe(0);
+    expect(statSync(path.join(dir, "src/App.tsx")).mode & 0o111).toBe(0);
+    expect(instance.requests.find((request) => request.url.includes("/repo"))?.url).toBe(
+      "/api/patches/team-notes/repo?state=retired"
+    );
+    expect(instance.requests.some((request) => request.url === "/api/sdk/generate")).toBe(false);
+  });
+
+  it("keeps the files and says how to finish when setup fails, leaving no staging behind", async () => {
+    // The stub answers no patch detail, so refresh's description sync fails.
+    const instance = await serving(
+      "/api/patches/team-notes/repo",
+      200,
+      pulled({ files: [{ path: "src/App.tsx", contents: base64("export const App = 1;") }] })
+    );
+    const parent = tempDir();
+    const result = await runCli(["pull", "team-notes", "--api-url", instance.url, "--json"], {
+      cwd: parent,
+      env
+    });
+    expect(result, result.stderr).toMatchObject({ status: 0, stderr: "" });
+    const dir = path.join(parent, "team-notes");
+    const document = JSON.parse(result.stdout);
+    expect(document).toMatchObject({ ok: true, setUp: false });
+    expect(document.warnings).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^Its dependencies and generated files weren't set up: .+\\nFix that, then run patchy refresh in ${dir.replaceAll("/", "\\/")}\\.$`,
+          "s"
+        )
+      )
+    ]);
+    expect(readFileSync(path.join(dir, "src/App.tsx"), "utf8")).toBe("export const App = 1;");
+    expect(readdirSync(parent)).toEqual(["team-notes"]);
+  });
+
+  it("relays a version with nothing to pull, and refuses a version number below 1 first", async () => {
+    const instance = await serving("/api/patches/team-notes/repo", 404, {
+      ok: false,
+      code: "no_repo",
+      error: "Version 3 of team-notes was published without its repo, so there is nothing to pull.",
+      versionNumber: 3,
+      owner: { id: "usr_colleague", name: "Colleague" }
+    });
+    const parent = tempDir();
+    const none = await runCli(["pull", "team-notes", "--api-url", instance.url, "--json"], {
+      cwd: parent,
+      env
+    });
+    expect(none).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(none.stderr)).toMatchObject({
+      ok: false,
+      kind: "rejected",
+      code: "no_repo",
+      versionNumber: 3,
+      owner: { id: "usr_colleague", name: "Colleague" }
+    });
+    expect(readdirSync(parent)).toEqual([]);
+
+    const sent = () =>
+      instance.requests.filter((request) => request.url.startsWith("/api/")).length;
+    const before = sent();
+    const zero = await runCli(["pull", "team-notes", "--version", "0", "--json"], {
+      cwd: parent,
+      env
+    });
+    expect(zero).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(zero.stderr).error).toBe("--version must be a version number, from 1.");
+    expect(sent()).toBe(before);
+  });
 });

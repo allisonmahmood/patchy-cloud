@@ -16,6 +16,7 @@ import {
 import * as Api from "./Api.js";
 import { LocalError, RejectedError } from "./CliError.js";
 import * as Output from "./Output.js";
+import { formatBytes } from "./repoSnapshot.js";
 
 const encodeList = Schema.encodeSync(
   Schema.Struct({
@@ -31,6 +32,27 @@ const isWrongState = Schema.is(WrongState);
 const decodePatchReference = Schema.decodeUnknownEffect(
   Schema.String.check(Schema.isPattern(/^[^/]+$/))
 );
+
+/** A patch id, a name, or a pasted patch address, as the patch routes take it. */
+export const patchReference = Effect.fn("Discovery.patchReference")(function* (target: string) {
+  const reference = yield* Effect.try({
+    try: () =>
+      /^https?:\/\//i.test(target)
+        ? decodeURIComponent(new URL(target).pathname.replace(/\/+$/, "").split("/").at(-1) ?? "")
+        : target,
+    catch: (cause) => new LocalError({ message: "Could not read the patch address.", cause })
+  });
+  return yield* decodePatchReference(reference).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message:
+            "Use a patch id, name, or full patch address; list paths use separate arguments.",
+          cause
+        })
+    )
+  );
+});
 
 const refusal = Effect.fn("Discovery.refusal")(function* (error: Api.ClientFailure) {
   if (isWrongState(error)) {
@@ -277,23 +299,7 @@ export const list = Effect.fn("Discovery.list")(function* (
       [...yours, ...company, "Connections:", ...connectionLines(connections)]
     );
   }
-  const reference = yield* Effect.try({
-    try: () =>
-      /^https?:\/\//i.test(target)
-        ? decodeURIComponent(new URL(target).pathname.replace(/\/+$/, "").split("/").at(-1) ?? "")
-        : target,
-    catch: (cause) => new LocalError({ message: "Could not read the patch address.", cause })
-  });
-  const patchRef = yield* decodePatchReference(reference).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LocalError({
-          message:
-            "Use a patch id, name, or full patch address; list paths use separate arguments.",
-          cause
-        })
-    )
-  );
+  const patchRef = yield* patchReference(target);
   if (detail !== undefined) {
     const result = yield* client
       .primitive({ params: { patchRef, name: detail }, query: { state } })
@@ -325,6 +331,13 @@ export const list = Effect.fn("Discovery.list")(function* (
   for (const read of result.reads)
     lines.push(
       `  ${read.alias}: ${read.patchId}${read.name === undefined ? "" : ` (${read.name})`} ${"store" in read ? read.store : read.table}  ${read.state}`
+    );
+  // An older instance says nothing about repos, so neither does the line.
+  if (result.repo !== undefined)
+    lines.push(
+      result.repo === null
+        ? `Repo: none kept with v${result.currentVersion}`
+        : `Repo: v${result.repo.versionNumber}, ${result.repo.kind === "file" ? "one HTML file" : `${result.repo.files} files`}, ${formatBytes(result.repo.bytes)}. Pull it with: patchy pull ${result.name}`
     );
   yield* Output.report(encodePatch(result), lines);
 });

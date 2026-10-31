@@ -64,6 +64,7 @@ describe("repo description sync and change notices", () => {
     expect(readJson(repoFile)).toEqual({
       instance: instance.url,
       patch: "abcdefghijkl",
+      version: 2,
       description: "New portal text",
       descriptionSyncedAt: "2026-09-17T00:00:00.000Z",
       authorField: 7
