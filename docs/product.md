@@ -51,9 +51,10 @@ whitespace outside the quote is `invalid_quotes`, not an unterminated field.
 `patchy/hotkeys` registers chords such as `Mod+K` (⌘ on a Mac, Ctrl elsewhere)
 and sequences such as `G H` while their component is mounted, checked at
 typecheck. Single keys wait while the viewer types; a `HotkeyScope` holds back
-the rest of the page for a dialog; `useHotkeyList` lists labelled hotkeys for a
-shortcuts sheet. Patchy keeps `Mod+Shift+K` for its own shortcuts. Viewers
-can't rebind keys, and there is no server-side surface.
+the rest of the page for a dialog. `HotkeySheet` is a ready-made `?` shortcuts
+sheet in the company look, listing labelled hotkeys by group; `useHotkeyList`
+lists them for a sheet of the builder's own. Patchy keeps `Mod+Shift+K` for its
+own shortcuts. Viewers can't rebind keys, and there is no server-side surface.
 
 The generated client's `download(name, data)` accepts a Blob or bytes on
 tier 1 and 2 pages, including public tier 1 patches. The shell enforces
