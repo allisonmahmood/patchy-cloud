@@ -33,8 +33,8 @@
     "lint": "oxlint",
     "typecheck": "node scripts/build-serving-broker.mjs && turbo run typecheck typecheck:tests",
     "typecheck:tests": "effect-tsgo tsc -p tsconfig.test.json",
-    "format": "prettier --write --cache .",
-    "format:check": "prettier --check --cache ."
+    "format": "bun fmt",
+    "format:check": "bun fmt --check"
   },
   "devDependencies": {
     "@babel/parser": "8.0.8",
@@ -50,13 +50,11 @@
     "effect": "catalog:",
     "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.2",
-    "lint-staged": "^17.6.0",
     "minimatch": "^10.2.6",
     "npm": "12.2.1",
     "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
     "pg": "^8.23.1",
-    "prettier": "^3.9.10",
     "rolldown": "1.2.15",
     "rolldown-plugin-dts": "0.28.8",
     "simple-git-hooks": "^2.14.0",
@@ -67,10 +65,7 @@
     "yaml": "^2.9.1"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged"
-  },
-  "lint-staged": {
-    "*": "prettier --write --cache --ignore-unknown"
+    "pre-commit": "pnpm exec bun fmt --staged"
   },
   "devEngines": {
     "runtime": {
