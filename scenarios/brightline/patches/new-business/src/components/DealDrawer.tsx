@@ -54,7 +54,7 @@ export function DealDrawer({
   return (
     <div class="drawer-layer">
       <div class="backdrop" onClick={onClose} />
-      <aside class="drawer" role="dialog" aria-modal="true" aria-label={deal.client}>
+      <div class="drawer" role="dialog" aria-modal="true" aria-label={deal.client}>
         <header class="drawer-head">
           <div class="drawer-titles">
             <div class="drawer-stage">
@@ -111,7 +111,7 @@ export function DealDrawer({
             <Timeline dealId={deal.id} viewerId={viewer?.user.id ?? null} now={now} />
           </Section>
         </div>
-      </aside>
+      </div>
     </div>
   );
 }

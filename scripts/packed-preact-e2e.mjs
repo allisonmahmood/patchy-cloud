@@ -136,7 +136,8 @@ export default defineConfig({ name: "packed-config", tier: 1, tables: {
   notes: table("Notes identified by id; at is an ISO timestamp.", { title: t.text(), at: t.timestamp().default("now") })
 }, files: {}, uses: {} });\n`
   );
-  // A consumer's view of the published types: row helpers compile, internal transports do not.
+  // A consumer's view of the published types: row helpers compile, internal transports and
+  // Preact's runtime-only exports do not.
   await writeFile(
     path.join(consumer, "contract.ts"),
     `import config from "./patchy.config";
@@ -147,6 +148,10 @@ import { createHttpTransport } from "patchy/client";
 import { createPortTransport } from "patchy/client";
 // @ts-expect-error postMessage transport construction is internal.
 import { createPostMessageTransport } from "patchy/client";
+// @ts-expect-error Preact's types reach pages; its hook options do not.
+import { options } from "patchy/preact";
+// @ts-expect-error Preact's types reach pages; its child flattening does not.
+import { toChildArray } from "patchy/preact";
 const inserted: Insert<typeof config, "notes"> = { title: "Saved" };
 const changed: Update<typeof config, "notes"> = { title: "Changed" };
 const at: Row<typeof config, "notes">["at"] = "2026-09-11T00:00:00.000Z";
@@ -165,6 +170,7 @@ export default defineConfig({ plugins: [viteSingleFile()], oxc: { jsx: { importS
   await writeFile(
     path.join(consumer, "main.tsx"),
     `import { Component, Fragment, PureComponent, forwardRef, memo, render, signal, useQuery, useState } from "patchy/preact";
+import type { CSSProperties, FunctionComponent, TargetedEvent } from "patchy/preact";
 import { createServerClient, PatchyError } from "patchy/client";
 import type { QueryFrame, Transport } from "patchy/client";
 import type { Handler } from "patchy/server";
@@ -194,6 +200,9 @@ class Counter extends PureComponent<{ hook: number; query: number | undefined }>
   render() { return <output id="class">class {this.props.hook} / {count.value} / {this.props.query}</output>; }
 }
 const Label = memo(forwardRef<HTMLSpanElement, { hook: number; query: number | undefined }>((props, ref) => <span ref={ref} id="memo">memo {props.hook} / {count.value} / {props.query}</span>));
+const sized: CSSProperties = { width: 240 };
+const Greeting: FunctionComponent<{ name?: string }> = ({ name }) => <p id="defaulted">hello {name}</p>;
+Greeting.defaultProps = { name: "compat" };
 function LateQuery() {
   const query = useQuery(client.server.counter.read, {});
   return <output id="late-query">{query.status} / {query.data}</output>;
@@ -208,7 +217,8 @@ function App() {
     <p id="hook">hook {hook}</p><p id="signal">signal {count}</p>
     <p id="query">query {query.data} / {query.status}</p>
     <Counter hook={hook} query={query.data}/><Label hook={hook} query={query.data}/>
-    <label>Compat input <input value={text} onChange={event => setText(event.currentTarget.value)}/></label><p id="change">{text}</p>
+    <label>Compat input <input value={text} onChange={(event: TargetedEvent<HTMLInputElement>) => setText(event.currentTarget.value)}/></label><p id="change">{text}</p>
+    <p id="sized" style={sized}>Compat sizes numbers in pixels</p><Greeting/>
     <button onClick={() => emit({status:"error",error:new PatchyError("access_denied","Source unshared",{}),permanent:false})}>Refuse source</button>
     <button onClick={() => emit({status:"up-to-date",revision:String(revision)})}>Reshare source</button>
     <button onClick={() => emit({status:"error",error:new PatchyError("handler_failed","Handler removed",{}),permanent:true})}>End query</button>
@@ -250,6 +260,8 @@ Object.assign(window, { sdkIdentity: { Component, Fragment }, subscriptionCount:
     await expect(page.locator("#memo")).toHaveText("memo 1 / 1 / 1");
     await page.getByLabel("Compat input").fill("compat change");
     await expect(page.locator("#change")).toHaveText("compat change");
+    await expect(page.locator("#sized")).toHaveCSS("width", "240px");
+    await expect(page.locator("#defaulted")).toHaveText("hello compat");
     await page.getByRole("button", { name: "Refuse source", exact: true }).click();
     await expect(page.locator("#query")).toHaveText("query 1 / error");
     await page.getByRole("button", { name: "Reshare source", exact: true }).click();

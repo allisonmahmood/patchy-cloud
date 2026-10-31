@@ -44,8 +44,8 @@ Package exports are not all page entry points.
 ### Bundled UI runtime
 
 `patchy/preact` supplies Preact with compat semantics, hooks and signals. It
-bundles exact Preact 10.29.8, `@preact/signals` 2.11.3 and
-`@preact/signals-core` 1.14.4. Do not add direct Preact dependencies or
+bundles exact Preact 11.1.0, `@preact/signals` 2.11.4 and
+`@preact/signals-core` 1.14.5. Do not add direct Preact dependencies or
 `pnpm.overrides`. Compat initializes before rendering through any of the three
 entries. In DEV the SDK initializes debugging against that same instance;
 patch code never imports `preact/debug`.
@@ -54,7 +54,10 @@ Import UI functions from `patchy/preact`, for example `render`, `useState`,
 `useSignal`, `signal`, `computed`, `memo` and `forwardRef`. Set TypeScript's
 `jsx: "react-jsx"` and `jsxImportSource: "patchy/preact"` and Vite's
 `oxc.jsx.importSource: "patchy/preact"` when writing TSX. Compat transitions
-are synchronous; there is no React scheduler.
+are synchronous; there is no React scheduler. Preact's types are type exports
+of `patchy/preact` too, including attribute and event types such as
+`HTMLAttributes`, `CSSProperties` and `TargetedEvent`; `JSX` holds only what
+the compiler reads, such as `Element` and `IntrinsicElements`.
 
 Tiers 1 and 2 start with `src/main.tsx` and `src/App.tsx`, an empty HTML root, and
 matching JSX settings. `pnpm lint` checks hooks, including `useQuery`, and refuses

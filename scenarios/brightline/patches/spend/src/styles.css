@@ -528,6 +528,7 @@ button:disabled {
 .table-row {
   width: 100%;
   min-height: 64px;
+  cursor: pointer;
   text-align: left;
   background: var(--surface-2);
   border: 1px solid var(--surface-2-border);

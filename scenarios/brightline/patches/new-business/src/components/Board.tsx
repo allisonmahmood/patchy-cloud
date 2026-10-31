@@ -1,5 +1,5 @@
 import { useState } from "patchy/preact";
-import type { ComponentChildren, JSX } from "patchy/preact";
+import type { ComponentChildren, TargetedDragEvent } from "patchy/preact";
 import { BOARD_STAGES, STAGE_LABELS, isClosed, type Stage } from "../../helpers/pipeline.js";
 import { compactMoney, dayLabel, daysSince, firstName } from "../format.js";
 import type { Deal, PendingMove, Person } from "../types.js";
@@ -37,7 +37,7 @@ export function Board({
   const stageOf = (deal: Deal) => pending.get(deal.id)?.to ?? deal.stage;
   const inStage = (stage: Stage) => deals.filter((deal) => stageOf(deal) === stage).sort(byValue);
 
-  const drop = (stage: Stage) => (event: JSX.TargetedDragEvent<HTMLElement>) => {
+  const drop = (stage: Stage) => (event: TargetedDragEvent<HTMLElement>) => {
     event.preventDefault();
     const id = event.dataTransfer?.getData("text/plain");
     const deal = deals.find((candidate) => candidate.id === id);
@@ -46,13 +46,13 @@ export function Board({
     if (deal !== undefined && stageOf(deal) !== stage) onMove(deal, stage);
   };
   const dropTarget = (stage: Stage) => ({
-    onDragOver: (event: JSX.TargetedDragEvent<HTMLElement>) => {
+    onDragOver: (event: TargetedDragEvent<HTMLElement>) => {
       if (dragging === null) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       if (over !== stage) setOver(stage);
     },
-    onDragLeave: (event: JSX.TargetedDragEvent<HTMLElement>) => {
+    onDragLeave: (event: TargetedDragEvent<HTMLElement>) => {
       const next = event.relatedTarget;
       if (!(next instanceof Node) || !event.currentTarget.contains(next))
         setOver((current) => (current === stage ? null : current));
@@ -171,7 +171,7 @@ interface CardProps {
   readonly now: number;
   readonly dragging: boolean;
   readonly onOpen: () => void;
-  readonly onDragStart: (event: JSX.TargetedDragEvent<HTMLElement>) => void;
+  readonly onDragStart: (event: TargetedDragEvent<HTMLElement>) => void;
   readonly onDragEnd: () => void;
 }
 
