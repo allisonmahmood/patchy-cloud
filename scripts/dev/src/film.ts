@@ -114,8 +114,9 @@ const recordTake = Effect.fn("Film.recordTake")(function* (input: {
         baseURL: input.apiUrl,
         recordVideo: { dir: input.videoDir, size }
       });
-      // tsx wraps named inner functions in `__name(...)`, which the page
-      // lacks, so the overlay goes in as source with a local stand-in.
+      // A transpiler that keeps names, as tsx does, wraps named inner functions
+      // in `__name(...)`, which the page lacks, so the overlay goes in as
+      // source with a local stand-in.
       await context.addInitScript({
         content: `(() => { const __name = (f) => f; (${overlay.toString()})({ label: ${encodeString(input.label)} }); })();`
       });

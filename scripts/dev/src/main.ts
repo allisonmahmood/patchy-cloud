@@ -72,6 +72,7 @@ import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf }
 import { isPortFree } from "./ports.js";
 import { takeDownRecorded } from "./pidgeon.js";
 import { alive, signal } from "./process.js";
+import { bun, realNode } from "./runtimes.js";
 import { loadScenario, Person } from "./scenario.js";
 import {
   checkPr,
@@ -343,8 +344,9 @@ const dev = Command.make(
 const buildBroker = Effect.fn("buildBroker")(function* (worktree: string) {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const node = yield* realNode();
   const exitCode = yield* spawner.exitCode(
-    ChildProcess.make(process.execPath, [path.join(worktree, "scripts/build-serving-broker.mjs")], {
+    ChildProcess.make(node.execPath, [path.join(worktree, "scripts/build-serving-broker.mjs")], {
       cwd: worktree,
       stdin: "ignore",
       stdout: "ignore",
@@ -369,18 +371,14 @@ const start = Effect.fn("start")(function* (plan: Plan) {
 
   const main = yield* path.fromFileUrl(new URL(import.meta.url));
   const supervisor = yield* spawner.spawn(
-    ChildProcess.make(
-      process.execPath,
-      ["--import", "tsx", "--conditions=development", main, "supervise"],
-      {
-        cwd: plan.worktree,
-        detached: true,
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-        extendEnv: true
-      }
-    )
+    ChildProcess.make(bun, ["--conditions=development", main, "supervise"], {
+      cwd: plan.worktree,
+      detached: true,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      extendEnv: true
+    })
   );
   yield* Effect.asVoid(supervisor.unref);
   yield* writePlan({ ...plan, pids: { supervisor: supervisor.pid } });
