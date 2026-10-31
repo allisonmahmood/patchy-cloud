@@ -82,6 +82,9 @@ component that renders `<HotkeyScope>` is outside it, and the scope holds it bac
 page's. Register the dialog's own keys, such as its Escape, in a component within:
 
 ```tsx
+import { useLayoutEffect, useRef } from "patchy/preact";
+import { HotkeyScope, useHotkey } from "patchy/hotkeys";
+
 function Dialog(props: { close: () => void }) {
   return (
     <HotkeyScope>
@@ -91,10 +94,20 @@ function Dialog(props: { close: () => void }) {
 }
 
 function DialogBody(props: { close: () => void }) {
+  const title = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => title.current?.focus(), []);
   useHotkey("Escape", props.close, { label: "Close" });
-  return <div role="dialog">…</div>;
+  return (
+    <div role="dialog" aria-label="New task">
+      <input ref={title} aria-label="Title" />
+    </div>
+  );
 }
 ```
+
+A dialog opened by a hotkey moves focus into itself from code, as above. A patch's page runs
+in a cross-origin frame, where browsers ignore `autofocus`, so typing would otherwise go
+nowhere.
 
 The scope already holds the page's hotkeys back, so leave them enabled while a dialog is
 open. `useHotkeyList` lists only enabled hotkeys, so a page hotkey disabled for the dialog
