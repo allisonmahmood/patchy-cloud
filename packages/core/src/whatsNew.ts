@@ -52,6 +52,35 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 31,
+    date: "2026-10-31",
+    through: "5888411ffba9cbeaab212583c466f23412a3b0d7",
+    changes: [
+      {
+        kind: "New",
+        title: "Share a patch with someone at another company",
+        detail:
+          "Choose Share… in a patch's menu and add someone at another company by email, as long as they have a Patchy account. They're in at once, find it under Shared with you on their Home, and use it as themselves. They can also be picked wherever the patch asks for a person. On a patch that runs code on Patchy, they reach only the parts its builder opened to guests. Whether the patch is open to your company or to anyone on the internet is set in the same dialog now, and your agent can share too.",
+        prs: [1108, 1110, 1113, 1114]
+      },
+      {
+        kind: "New",
+        title: "See your company's guests in People",
+        detail:
+          "People has a Guests tab listing everyone outside your company that your patches are shared with. Open a guest to see which patches they have, and who shared each one and when. An admin can remove a guest from all of them at once.",
+        prs: [1115]
+      },
+      {
+        kind: "New",
+        title: "Keep a connection away from guests",
+        detail:
+          "Connections let guests through until an admin blocks guests on the connection's page. Guests then can't use the patches that rely on it until the block comes off, and the patch's owner sees why on its card.",
+        prs: [1112]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 30,
     date: "2026-10-31",
     through: "e3d50f042c177121b4c2338ef7350d3b9a49ccca",
