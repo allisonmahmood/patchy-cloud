@@ -163,7 +163,8 @@ hotkey fails typecheck, naming the step to fix and what to write; `Chord` types
 hotkeys built from data. Patchy keeps `"Mod+Shift+K"`: the types refuse it, and
 one cast past them is skipped with a console warning. Two enabled hotkeys with
 the same keys in one scope both fire, and the console warns once naming both.
-While a `<HotkeyScope>` is mounted, only the hotkeys inside it fire.
+While a `<HotkeyScope>` is mounted, only the hotkeys registered by components
+it renders fire; the component that renders it is outside it.
 `formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer.
 The `patchy-hotkeys` project skill states the typing, layout and repeat rules.
 
