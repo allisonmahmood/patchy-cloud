@@ -9,6 +9,7 @@ import {
   HotkeysProvider,
   formatForDisplay,
   getHotkeyManager,
+  useDefaultHotkeysOptions,
   useHotkeyRegistrations,
   useHotkeys as useTanStackHotkeys,
   type HotkeyChord,
@@ -16,7 +17,7 @@ import {
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
 import { createElement, type ComponentChildren, type JSX } from "preact";
-import { useEffect, useId } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useMemo } from "preact/hooks";
 import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
 
 type Letter =
@@ -214,7 +215,17 @@ export function useHotkeys<const T extends readonly string[]>(bindings: {
  */
 export function HotkeyScope(props: { readonly children: ComponentChildren }): JSX.Element {
   const scope = useId();
-  return createElement(HotkeysProvider, { scope, exclusive: true, children: props.children });
+  const parent = useDefaultHotkeysOptions().hotkey?.scope;
+  // TanStack's provider holds its scope in a passive effect, whose cleanup Preact 11 runs after
+  // the next paint, so the page's hotkeys would stay held for a frame after the scope unmounts.
+  // A layout effect holds them from the commit that mounts the scope to the one that removes it.
+  useLayoutEffect(
+    () => getHotkeyManager().activateScope(scope, { exclusive: true, parent }),
+    [scope, parent]
+  );
+  // Without a `scope` prop the provider activates nothing; it only puts its hotkeys in ours.
+  const defaultOptions = useMemo(() => ({ hotkey: { scope } }), [scope]);
+  return createElement(HotkeysProvider, { defaultOptions, children: props.children });
 }
 
 /** How the viewer's keyboard writes a hotkey: `"⌘ K"` on a Mac, `"Ctrl+K"` elsewhere, `"G H"`. */
