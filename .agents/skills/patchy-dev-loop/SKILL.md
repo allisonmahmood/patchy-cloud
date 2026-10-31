@@ -21,7 +21,8 @@ pnpm dev up [scenario]   # an environment: a scenario's company, people and patc
 
 Use an environment for anything with more than one person (live sync,
 assignments, admin-only rules, invitations) and for demos. `guests` adds a
-person at a second company, for anything a patch's guests see. Use the URL each
+person at a second company and shares both its patches with them, for anything
+a patch's guests see. Use the URL each
 start prints; ports can change between starts. A failed start names its log:
 read `pnpm dev logs`. A failed migration also prints which step failed and why.
 

@@ -9,9 +9,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
@@ -37,6 +39,11 @@ import {
   Shared,
   ShareRequest,
   SharingScope,
+  GuestRemoved,
+  GuestRequest,
+  GuestShared,
+  PatchGuest,
+  PatchGuests,
   PublishMetadata,
   PublishRequest,
   CompanyLook,
@@ -103,6 +110,9 @@ const encodeIdentity = Schema.encodeSync(Identity);
 const encodeDeleted = Schema.encodeSync(Deleted);
 const encodePatchLog = Schema.encodeSync(PatchLog);
 const encodeShared = Schema.encodeSync(Shared);
+const encodeGuestShared = Schema.encodeSync(GuestShared);
+const encodeGuestRemoved = Schema.encodeSync(GuestRemoved);
+const encodePatchGuests = Schema.encodeSync(PatchGuests);
 const encodeRetired = Schema.encodeSync(Retired);
 const encodeRestored = Schema.encodeSync(Restored);
 const encodeRolledBack = Schema.encodeSync(RolledBack);
@@ -111,8 +121,9 @@ const encodeCompanyLook = Schema.encodeSync(CompanyLook);
 const encodeLookPublished = Schema.encodeSync(LookPublished);
 const encodeLookRestored = Schema.encodeSync(LookRestored);
 const decodeLookNote = Schema.decodeUnknownEffect(LookNote);
-const decodeSharingScope = Schema.decodeUnknownEffect(SharingScope);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
+/** A guest in one line: "Jo Rivera (jo@pine.example), Pine Studio". */
+const guestLine = (guest: PatchGuest) => `${guest.name} (${guest.email}), ${guest.company.name}`;
 const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",
   public: "Scope: public (anyone with the link)"
@@ -781,6 +792,55 @@ const patchTarget = Effect.fn("patchTarget")(function* (
 
 // --- share ------------------------------------------------------------------
 
+const isScope = Schema.is(SharingScope);
+
+/** What `share` was asked to do, read once from its arguments and flags, and the file it names. */
+type ShareOperation = { readonly file: Option.Option<string> } & (
+  | { readonly _tag: "Scope"; readonly scope: typeof SharingScope.Type }
+  | { readonly _tag: "Add"; readonly email: string }
+  | { readonly _tag: "Remove"; readonly guest: string }
+  | { readonly _tag: "List" }
+);
+
+/** `share`'s arguments as the one operation they ask for, or why they don't. */
+const shareOperation = (options: {
+  readonly fileOrScope: Option.Option<string>;
+  readonly scope: Option.Option<typeof SharingScope.Type>;
+  readonly share: Option.Option<typeof SharingScope.Type>;
+  readonly add: Option.Option<string>;
+  readonly remove: Option.Option<string>;
+  readonly list: boolean;
+}): Result.Result<ShareOperation, LocalError> => {
+  const refuse = (message: string) => Result.fail(new LocalError({ message }));
+  const guests = [
+    ...Option.toArray(options.add).map((email) => ({ _tag: "Add", email }) as const),
+    ...Option.toArray(options.remove).map((guest) => ({ _tag: "Remove", guest }) as const),
+    ...(options.list ? [{ _tag: "List" } as const] : [])
+  ];
+  const [guest, ...others] = guests;
+  if (guest !== undefined) {
+    if (others.length > 0) return refuse("Pass one of --add, --remove or --list.");
+    if (
+      Option.isSome(options.scope) ||
+      Option.isSome(options.share) ||
+      Option.exists(options.fileOrScope, isScope)
+    )
+      return refuse("Change who can open the patch, or its guests, not both.");
+    return Result.succeed({ ...guest, file: options.fileOrScope });
+  }
+  if (Option.isSome(options.share) && Option.isSome(options.scope))
+    return refuse("Pass --share or a positional scope, not both.");
+  const named = Option.orElse(options.share, () => options.scope);
+  const scope = Option.isSome(named) ? named : Option.filter(options.fileOrScope, isScope);
+  if (Option.isNone(scope))
+    return refuse("Pass a sharing scope, company or public, or one of --add, --remove or --list.");
+  return Result.succeed({
+    _tag: "Scope",
+    scope: scope.value,
+    file: Option.isSome(named) ? options.fileOrScope : Option.none()
+  });
+};
+
 const share = Command.make(
   "share",
   {
@@ -796,58 +856,92 @@ const share = Command.make(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
     ),
+    add: Flag.String("add").pipe(
+      Flag.withDescription(
+        "Share the patch with someone at another company, by the email they sign in to Patchy with"
+      ),
+      Flag.optional
+    ),
+    remove: Flag.String("remove").pipe(
+      Flag.withDescription("Stop sharing the patch with one guest, by email or user id"),
+      Flag.optional
+    ),
+    list: Flag.Boolean("list").pipe(
+      Flag.withDescription("List the patch's guests"),
+      Flag.withDefault(false)
+    ),
     patch: Flag.String("patch").pipe(
       Flag.withDescription("Change sharing for this patch by ID instead of by file"),
       Flag.optional
     )
   },
-  (options) =>
-    (Option.isNone(options.scope) &&
-      Option.isNone(options.patch) &&
-      (Option.isNone(options.share) || Option.isNone(options.fileOrScope))
-      ? runProject
-      : run)(
+  (options) => {
+    const decoded = shareOperation(options);
+    // Without a file or --patch, the repo's patchy.json names the patch.
+    const untargeted =
+      Result.isSuccess(decoded) &&
+      Option.isNone(decoded.success.file) &&
+      Option.isNone(options.patch);
+    return (untargeted ? runProject : run)(
       Effect.gen(function* () {
-        if (Option.isSome(options.share) && Option.isSome(options.scope))
-          return yield* new LocalError({
-            message: "Pass --share or a positional scope, not both."
-          });
-        const file =
-          Option.isSome(options.share) || Option.isSome(options.scope)
-            ? options.fileOrScope
-            : Option.none<string>();
-        const scope = yield* decodeSharingScope(
-          Option.getOrUndefined(
-            Option.orElse(options.share, () =>
-              Option.orElse(options.scope, () => options.fileOrScope)
+        const operation = yield* Effect.fromResult(decoded);
+        const patchId = yield* patchTarget(operation.file, options.patch);
+        const client = yield* Api.client(yield* requiredToken());
+        yield* Match.valueTags(operation, {
+          Scope: ({ scope }) =>
+            client.share({ params: { patchId }, payload: new ShareRequest({ scope }) }).pipe(
+              Effect.catch((error) => refused(error, "Sharing failed.")),
+              Effect.flatMap((shared) =>
+                Output.report(encodeShared(shared), [
+                  "Changed patch sharing",
+                  `URL: ${shared.publicUrl}`,
+                  scopeLines[shared.scope],
+                  `Patch ID: ${shared.patchId}`
+                ])
+              )
+            ),
+          Add: ({ email }) =>
+            client.addGuest({ params: { patchId }, payload: new GuestRequest({ email }) }).pipe(
+              Effect.catch((error) => refused(error, "Sharing failed.")),
+              Effect.flatMap((added) =>
+                Output.report(encodeGuestShared(added), [
+                  `Shared with ${guestLine(added.guest)}`,
+                  `They open it as themselves at ${added.address}. Patchy sends nothing, so send them the link.`,
+                  `Patch ID: ${added.patchId}`
+                ])
+              )
+            ),
+          Remove: ({ guest }) =>
+            client.removeGuest({ params: { patchId, guest } }).pipe(
+              Effect.catch((error) => refused(error, "Removing the guest failed.")),
+              Effect.flatMap((removed) =>
+                Output.report(encodeGuestRemoved(removed), [
+                  removed.removed
+                    ? `Stopped sharing with ${guest}`
+                    : `${guest} wasn't a guest of this patch`,
+                  `Patch ID: ${removed.patchId}`
+                ])
+              )
+            ),
+          List: () =>
+            client.listGuests({ params: { patchId } }).pipe(
+              Effect.catch((error) => refused(error, "Listing the guests failed.")),
+              Effect.flatMap((listed) =>
+                Output.report(encodePatchGuests(listed), [
+                  ...(listed.guests.length === 0
+                    ? ["No guests"]
+                    : listed.guests.map((guest) => `${guestLine(guest)} · ${guest.userId}`)),
+                  `Patch ID: ${listed.patchId}`
+                ])
+              )
             )
-          )
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LocalError({
-                message: "Pass a sharing scope: company or public.",
-                cause
-              })
-          )
-        );
-        const patchId = yield* patchTarget(file, options.patch);
-        const token = yield* requiredToken();
-        const client = yield* Api.client(token);
-        const shared = yield* client
-          .share({ params: { patchId }, payload: new ShareRequest({ scope }) })
-          .pipe(Effect.catch((error) => refused(error, "Sharing failed.")));
-        yield* Output.report(encodeShared(shared), [
-          "Changed patch sharing",
-          `URL: ${shared.publicUrl}`,
-          scopeLines[shared.scope],
-          `Patch ID: ${shared.patchId}`
-        ]);
+        });
       })
-    )
+    );
+  }
 ).pipe(
   Command.withDescription(
-    "Change who can open a patch: share [file] --share company|public or share --patch <id> company|public."
+    "Change who can open a patch, share [file] company|public, or its guests at other companies: share [file] --add <email>, --remove <email> or --list."
   )
 );
 

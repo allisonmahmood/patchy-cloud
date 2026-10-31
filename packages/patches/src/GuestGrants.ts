@@ -2,8 +2,9 @@
  * Guests: people at another company whom a company shares one patch with. A grant names the
  * person and the patch; revoking it keeps the row, ended, so history still names them, and
  * sharing again restores it. Whether guests may open a patch at all is `unavailable`, the one
- * rule every door and surface asks; the service reads the facts it takes, connections' blocks
- * included, and `describe` words its answer.
+ * rule every door and surface asks, answered as `@patchy/api`'s `GuestReason`; the service reads
+ * the facts it takes, connections' blocks included. Share, remove and list are the owner's and
+ * admins' acts, checked as every lifecycle act is.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -14,44 +15,49 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { Integration, Manifest, PatchState, SharingScope } from "@patchy/api";
+import { GuestReason, guestReasonText, Manifest, PatchState, SharingScope } from "@patchy/api";
+import { Users } from "@patchy/companies";
 import { ConnectionStore } from "@patchy/integrations";
-import type { Patch, PatchVersion } from "./Patches.js";
+import * as Patches from "./Patches.js";
+
+/** What publish warns, and Share refuses with, when guests can't open a version. */
+export const warning = (reason: GuestReason) =>
+  `Guests can't open this patch. ${guestReasonText(reason)}`;
 
 /**
- * Why a patch's guests can't open it, as codes with their facts; `describe` words them. A guest
- * may see the reason, so they can pass it on. An operator-disabled patch needs none: it is absent
- * at every door and in every list.
+ * Nobody signs in to Patchy with this email, or their account is deactivated: one answer, so
+ * Share never tells another company's state.
  */
-export const Reason = Schema.TaggedUnion({
-  Retired: {},
-  Deleted: {},
-  /** Guests open tier 1 and tier 2 patches. */
-  Tier: { tier: Schema.Int },
-  /** The version reads another patch's shared table or store, which only its company may read. */
-  SharedSource: { kind: Schema.Literals(["table", "store"]), alias: Schema.String },
-  /** The version uses a connection an admin blocked guests from. */
-  ConnectionBlocked: { integration: Integration, handle: Schema.String }
-});
-export type Reason = typeof Reason.Type;
+export class NotOnPatchy extends Schema.TaggedError<NotOnPatchy>()("NotOnPatchy", {
+  email: Schema.String
+}) {
+  override get message() {
+    return `${this.email} isn't on Patchy yet.`;
+  }
+}
 
-/** A reason in words, the same for the owner, an admin, a publishing agent and the guest. */
-export const describe = Reason.match({
-  Retired: () => "It's retired.",
-  Deleted: () => "It's deleted.",
-  Tier: ({ tier }) => `Guests open tier 1 and tier 2 patches, and this one is tier ${tier}.`,
-  SharedSource: ({ kind, alias }) =>
-    `It reads ${alias}, another patch's shared ${kind}, which only its company can read. Remove ${alias} from the patch to let guests in.`,
-  ConnectionBlocked: ({ integration, handle }) =>
-    `It uses ${integration}/${handle}, which blocks guests. Allow guests on that connection, or remove it from the patch.`
-});
+/** The email is someone's in the patch's own company, who opens it as a member. */
+export class AlreadyMember extends Schema.TaggedError<AlreadyMember>()("AlreadyMember", {
+  email: Schema.String
+}) {
+  override get message() {
+    return `${this.email} is already in this company.`;
+  }
+}
 
-/** What publish warns when a patch with guests publishes a version they can't open. */
-export const warning = (reason: Reason) => `Guests can't open this patch. ${describe(reason)}`;
+/** The patch's current version is one its guests can't open. */
+export class GuestsUnavailable extends Schema.TaggedError<GuestsUnavailable>()(
+  "GuestsUnavailable",
+  { reason: GuestReason }
+) {
+  override get message() {
+    return warning(this.reason);
+  }
+}
 
 /** What eligibility reads of a version: its tier and what it declares. */
-type Version = Pick<PatchVersion, "tier"> & {
-  readonly manifest: Pick<PatchVersion["manifest"], "uses">;
+type Version = Pick<Patches.PatchVersion, "tier"> & {
+  readonly manifest: Pick<Patches.PatchVersion["manifest"], "uses">;
 };
 type Uses = Version["manifest"]["uses"];
 
@@ -70,26 +76,23 @@ const connectionIds = (uses: Uses) =>
  * directory doesn't count against it: a guest reads it as a member does.
  */
 export const unavailable = (
-  patch: Pick<Patch, "state">,
+  patch: Pick<Patches.Patch, "state">,
   version: Version,
   blocked: ReadonlySet<string>
-): Option.Option<Reason> => {
-  if (patch.state === "retired") return Option.some(Reason.cases.Retired.make({}));
-  if (patch.state === "deleted") return Option.some(Reason.cases.Deleted.make({}));
+): Option.Option<GuestReason> => {
+  if (patch.state === "retired") return Option.some({ code: "retired" });
+  if (patch.state === "deleted") return Option.some({ code: "deleted" });
   if (version.tier !== 1 && version.tier !== 2)
-    return Option.some(Reason.cases.Tier.make({ tier: version.tier }));
+    return Option.some({ code: "tier", tier: version.tier });
   for (const [alias, use] of Object.entries(version.manifest.uses)) {
     if (use.kind === "sharedTable" || use.kind === "sharedStore")
-      return Option.some(
-        Reason.cases.SharedSource.make({
-          kind: use.kind === "sharedTable" ? "table" : "store",
-          alias
-        })
-      );
+      return Option.some({
+        code: "shared_source",
+        kind: use.kind === "sharedTable" ? "table" : "store",
+        alias
+      });
     if (use.kind !== "members" && blocked.has(use.id))
-      return Option.some(
-        Reason.cases.ConnectionBlocked.make({ integration: use.kind, handle: use.handle })
-      );
+      return Option.some({ code: "connection_blocked", integration: use.kind, handle: use.handle });
   }
   return Option.none();
 };
@@ -100,19 +103,26 @@ export const unavailable = (
  * after that read can't turn away a guest the read admits.
  */
 export const admitsGuests = (
-  loaded: Pick<Patch, "state"> & { readonly current: boolean },
+  loaded: Pick<Patches.Patch, "state"> & { readonly current: boolean },
   version: Version,
   blocked: ReadonlySet<string>
 ) => loaded.current && Option.isNone(unavailable(loaded, version, blocked));
 
-/** A patch's guest: who they are and where they're from, read from their own account. */
-export class Guest extends Schema.Class<Guest>("Guest")({
+/** Someone at another company, read from their own account. */
+export const Person = Schema.Struct({
   userId: Schema.String,
   name: Schema.String,
   email: Schema.String,
-  companyName: Schema.String,
-  grantedAt: Schema.Date
-}) {}
+  companyName: Schema.String
+});
+export type Person = typeof Person.Type;
+
+/** A patch's guest, and when they were added. */
+export const Guest = Schema.Struct({ ...Person.fields, grantedAt: Schema.Date });
+export type Guest = typeof Guest.Type;
+
+/** A person as every surface names them: by their name, or their email's when it's blank. */
+const named = <A extends Person>(person: A): A => ({ ...person, name: Users.displayName(person) });
 
 class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   patchId: Schema.String,
@@ -138,9 +148,10 @@ export interface Shared {
   readonly patchId: string;
   readonly name: string;
   readonly title: string;
+  readonly tier: number;
   readonly company: { readonly handle: string; readonly name: string };
   readonly grantedAt: Date;
-  readonly unavailable: Option.Option<Reason>;
+  readonly unavailable: Option.Option<GuestReason>;
 }
 
 class Host extends Schema.Class<Host>("Host")({
@@ -157,6 +168,12 @@ class SharedPatchRow extends Schema.Class<SharedPatchRow>("SharedPatchRow")({
   uses: Manifest.fields.uses
 }) {}
 
+/** A version as eligibility reads it. */
+class VersionRow extends Schema.Class<VersionRow>("VersionRow")({
+  tier: Schema.Int,
+  uses: Manifest.fields.uses
+}) {}
+
 /** A patch with an active grant, as publish reads it. */
 class GrantedPatchRow extends Schema.Class<GrantedPatchRow>("GrantedPatchRow")({
   state: PatchState,
@@ -164,8 +181,13 @@ class GrantedPatchRow extends Schema.Class<GrantedPatchRow>("GrantedPatchRow")({
 }) {}
 
 type Failure = SqlError | ConnectionStore.ConnectionStorageFailed;
+/** Who may manage the patch decides, as for every lifecycle act. */
+type Refusal = Patches.PatchUnavailable | Patches.NotOwner;
 
-/** Grants are written by their callers' checks: Share decides who may receive one and when. */
+/**
+ * `grant` and `revoke` write what their caller decided; `share`, `remove` and `list` are the owner's
+ * and admins' acts, which check who may act, who may receive a grant and when.
+ */
 export class GuestGrants extends Context.Service<
   GuestGrants,
   {
@@ -204,7 +226,7 @@ export class GuestGrants extends Context.Service<
     readonly host: (input: {
       readonly patchId: string;
       readonly userId: string;
-      readonly state: Patch["state"];
+      readonly state: Patches.Patch["state"];
       readonly current: boolean;
       readonly version: Version;
     }) => Effect.Effect<Option.Option<Host>, Failure>;
@@ -214,7 +236,7 @@ export class GuestGrants extends Context.Service<
      */
     readonly unavailableToGuests: (
       companyId: string
-    ) => Effect.Effect<ReadonlyMap<string, Reason>, Failure>;
+    ) => Effect.Effect<ReadonlyMap<string, GuestReason>, Failure>;
     /**
      * Why the patch's guests couldn't open this version as it publishes, at `scope` when the
      * publish changes it: what publish warns of. None while nobody holds an active grant, or once
@@ -225,13 +247,52 @@ export class GuestGrants extends Context.Service<
       readonly companyId: string;
       readonly scope: typeof SharingScope.Type | undefined;
       readonly version: Version;
-    }) => Effect.Effect<Option.Option<Reason>, Failure>;
+    }) => Effect.Effect<Option.Option<GuestReason>, Failure>;
+    /**
+     * Shares a live patch with the person who signs in with `email`, as its owner or an admin.
+     * Sharing with a guest again changes nothing; sharing with a removed one adds them back.
+     */
+    readonly share: (input: {
+      readonly patchId: string;
+      readonly actor: Patches.Actor;
+      readonly email: string;
+    }) => Effect.Effect<
+      { readonly patch: Patches.Patch; readonly guest: Guest },
+      Refusal | Patches.WrongState | GuestsUnavailable | NotOnPatchy | AlreadyMember | Failure
+    >;
+    /**
+     * Stops sharing the patch with one guest, named by email or user id, as its owner or an admin,
+     * in any state. `removed` says whether they were a guest.
+     */
+    readonly remove: (input: {
+      readonly patchId: string;
+      readonly actor: Patches.Actor;
+      readonly guest: string;
+    }) => Effect.Effect<
+      { readonly patch: Patches.Patch; readonly removed: boolean },
+      Refusal | SqlError
+    >;
+    /** The patch's guests, as `guests` lists them, for its owner or an admin. */
+    readonly list: (input: {
+      readonly patchId: string;
+      readonly actor: Patches.Actor;
+    }) => Effect.Effect<
+      { readonly patch: Patches.Patch; readonly guests: ReadonlyArray<Guest> },
+      Refusal | SqlError
+    >;
+    /**
+     * The people this company has shared any patch with, active accounts only, most recent first:
+     * what Share suggests.
+     */
+    readonly sharedBefore: (companyId: string) => Effect.Effect<ReadonlyArray<Person>, SqlError>;
   }
 >()("@patchy/patches/GuestGrants") {}
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const connections = yield* ConnectionStore.ConnectionStore;
+  const patches = yield* Patches.Patches;
+  const users = yield* Users.Users;
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   /** A row's current version, as the rule reads it. */
   const versionOf = (row: { readonly tier: number; readonly uses: Uses }): Version => ({
@@ -257,17 +318,43 @@ export const make = Effect.gen(function* () {
       WHERE patch_id = ${patchId} AND user_id = ${userId} AND revoked_at IS NULL
       RETURNING user_id AS "userId"`
   });
+  const activeGuests = sql`SELECT g.user_id AS "userId", u.name, u.email,
+      c.name AS "companyName", g.granted_at AS "grantedAt"
+    FROM patch_guest_grants g
+    JOIN users u ON u.id = g.user_id
+    JOIN companies c ON c.id = u.company_id
+    WHERE g.revoked_at IS NULL`;
   const patchGuests = SqlSchema.findAll({
     Request: Schema.String,
     Result: Guest,
-    execute: (patchId) => sql`
-      SELECT g.user_id AS "userId", u.name, u.email, c.name AS "companyName",
-        g.granted_at AS "grantedAt"
-      FROM patch_guest_grants g
-      JOIN users u ON u.id = g.user_id
-      JOIN companies c ON c.id = u.company_id
-      WHERE g.patch_id = ${patchId} AND g.revoked_at IS NULL
+    execute: (patchId) => sql`${activeGuests} AND g.patch_id = ${patchId}
       ORDER BY g.granted_at, g.user_id`
+  });
+  const patchGuest = SqlSchema.findOne({
+    Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
+    Result: Guest,
+    execute: ({ patchId, userId }) => sql`${activeGuests}
+      AND g.patch_id = ${patchId} AND g.user_id = ${userId}`
+  });
+  const currentVersion = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: VersionRow,
+    execute: (patchId) => sql`
+      SELECT v.tier, v.manifest->'uses' AS uses
+      FROM patches p JOIN patch_versions v ON v.id = p.current_version_id
+      WHERE p.id = ${patchId}`
+  });
+  const recentPeople = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Person,
+    execute: (companyId) => sql`
+      SELECT u.id AS "userId", u.name, u.email, c.name AS "companyName"
+      FROM (SELECT user_id, max(granted_at) AS at FROM patch_guest_grants
+        WHERE company_id = ${companyId} GROUP BY user_id) g
+      JOIN users u ON u.id = g.user_id AND u.deactivated_at IS NULL
+      JOIN companies c ON c.id = u.company_id
+      ORDER BY g.at DESC, u.id
+      LIMIT 50`
   });
   const holderRows = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -349,7 +436,7 @@ export const make = Effect.gen(function* () {
     return Option.isSome(yield* revoked({ ...input, at }));
   }, Effect.catchTags(dieOnSchemaError));
   const guests = Effect.fn("GuestGrants.guests")(
-    (patchId: string) => patchGuests(patchId),
+    (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named)),
     Effect.catchTags(dieOnSchemaError)
   );
   const holders = Effect.fn("GuestGrants.holders")(function* (
@@ -367,6 +454,7 @@ export const make = Effect.gen(function* () {
       patchId: row.patchId,
       name: row.name,
       title: row.title,
+      tier: row.tier,
       company: { handle: row.companyHandle, name: row.companyName },
       grantedAt: row.grantedAt,
       unavailable: unavailable(row, versionOf(row), blocked)
@@ -380,7 +468,7 @@ export const make = Effect.gen(function* () {
   }: {
     readonly patchId: string;
     readonly userId: string;
-    readonly state: Patch["state"];
+    readonly state: Patches.Patch["state"];
     readonly current: boolean;
     readonly version: Version;
   }) {
@@ -416,6 +504,60 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(found) || (scope ?? found.value.scope) === "public") return Option.none();
     return unavailable(found.value, version, yield* blockedAmong([version]));
   }, Effect.catchTags(dieOnSchemaError));
+  const share = Effect.fn("GuestGrants.share")(
+    function* ({
+      patchId,
+      actor,
+      email
+    }: {
+      readonly patchId: string;
+      readonly actor: Patches.Actor;
+      readonly email: string;
+    }) {
+      const patch = yield* patches.manage(patchId, actor);
+      if (patch.state !== "live") return yield* new Patches.WrongState({ state: patch.state });
+      const version = versionOf(yield* currentVersion(patch.id));
+      const reason = unavailable(patch, version, yield* blockedAmong([version]));
+      if (Option.isSome(reason)) return yield* new GuestsUnavailable({ reason: reason.value });
+      const address = email.trim();
+      const person = yield* users.findByEmail(address);
+      if (person === null || person.deactivatedAt !== null)
+        return yield* new NotOnPatchy({ email: address });
+      if (person.companyId === patch.companyId) return yield* new AlreadyMember({ email: address });
+      yield* grant({ patchId: patch.id, userId: person.id, grantedBy: actor.userId });
+      return { patch, guest: named(yield* patchGuest({ patchId: patch.id, userId: person.id })) };
+    },
+    sql.withTransaction,
+    Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+  );
+  const remove = Effect.fn("GuestGrants.remove")(function* ({
+    patchId,
+    actor,
+    guest
+  }: {
+    readonly patchId: string;
+    readonly actor: Patches.Actor;
+    readonly guest: string;
+  }) {
+    const patch = yield* patches.manage(patchId, actor);
+    const named = guest.trim();
+    const userId = named.includes("@") ? (yield* users.findByEmail(named))?.id : named;
+    return {
+      patch,
+      removed: userId !== undefined && (yield* revoke({ patchId: patch.id, userId }))
+    };
+  }, sql.withTransaction);
+  const list = Effect.fn("GuestGrants.list")(function* (input: {
+    readonly patchId: string;
+    readonly actor: Patches.Actor;
+  }) {
+    const patch = yield* patches.manage(input.patchId, input.actor);
+    return { patch, guests: yield* guests(patch.id) };
+  }, sql.withTransaction);
+  const sharedBefore = Effect.fn("GuestGrants.sharedBefore")(
+    (companyId: string) => Effect.map(recentPeople(companyId), (rows) => rows.map(named)),
+    Effect.catchTags(dieOnSchemaError)
+  );
   return GuestGrants.of({
     grant,
     revoke,
@@ -424,7 +566,11 @@ export const make = Effect.gen(function* () {
     sharedWith,
     host,
     unavailableToGuests,
-    unavailableAfterPublish
+    unavailableAfterPublish,
+    share,
+    remove,
+    list,
+    sharedBefore
   });
 });
 

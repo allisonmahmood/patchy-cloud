@@ -1265,7 +1265,7 @@ patchy publish ./plan.html --share company # updates content, takes it back insi
 
 ### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
 
-Change an existing patch's sharing without publishing a version. Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
+Change an existing patch's sharing without publishing a version, or its [guests](#guests-patchy-share-file---add-email---remove-email-or-user-id-or---list). Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
 
 From a published repo, `patchy share company|public` uses `patchy.json` without
 a file or `--patch`. An unpublished repo is a local refusal.
@@ -1291,6 +1291,43 @@ patchy share --patch k7f2m9x1a3b8 company --json
 ```
 
 Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. A same-company non-owner receives `not_owner`, a non-live patch receives `wrong_state`, and a foreign or gone patch answers 404. Each is `rejected`, exit 2.
+
+#### Guests: `patchy share [file] --add <email>`, `--remove <email-or-user-id>` or `--list`
+
+A patch's guests are people at other companies it is shared with. Each opens it
+as themselves, signed in to their own Patchy account; the link alone grants
+nothing. `--add` shares it at once and sends nothing, so pass the returned
+address on. The target is chosen as for a scope change: the repo's `patchy.json`,
+a published file, or `--patch <id>`. Only the owner can use these, through any of
+their machine tokens; in the portal, an admin can too.
+
+```sh
+patchy share --add jo@pine.example
+# Shared with Jo Rivera (jo@pine.example), Pine Studio
+# They open it as themselves at https://pages.example.com/acme/plan. Patchy sends nothing, so send them the link.
+# Patch ID: k7f2m9x1a3b8
+
+patchy share ./plan.html --list --json
+# {"ok":true,"patchId":"k7f2m9x1a3b8","guests":[{"userId":"usr_…","name":"Jo Rivera","email":"jo@pine.example","company":{"name":"Pine Studio"},"grantedAt":"2026-10-30T10:00:00.000Z"}]}
+
+patchy share --patch k7f2m9x1a3b8 --remove jo@pine.example --json
+# {"ok":true,"patchId":"k7f2m9x1a3b8","removed":true}
+```
+
+Pass exactly one of a scope, `--add`, `--remove` or `--list`; anything else is
+`local`, exit 1, before a request. Adding a current guest changes nothing, and
+adding a removed one brings them back. `--remove` answers `removed: false` for
+someone who wasn't a guest. Grants outlast public sharing and retirement, so a
+patch's guests stay listed; while it is public, anyone can open it anyway.
+
+`--add` refusals are `rejected`, exit 2, each with a stable `code`:
+`not_on_patchy` when the email has no active Patchy account, `already_member`
+for someone in the patch's own company, `guests_unavailable` with `reason` when
+guests can't open the patch's current version, and `wrong_state` for a retired
+or deleted patch. `reason.code` is `tier` (with `tier`), `shared_source` (with
+`kind` and `alias`, another patch's shared table or store) or
+`connection_blocked` (with `integration` and `handle`, a connection an admin
+blocked guests from), and the text says how to let them in.
 
 Only the current version of a public patch is public; older versions stay behind the company door. Read company pages through the user's signed-in browser. The current public version has `Cache-Control: public, max-age=60` at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`. Older versions, and all versions after changing to company, have origin responses of `private, no-store` and answer 401 to a cookie-free fetch. A previously cached public copy may remain reachable for up to 60 seconds; already downloaded copies cannot be recalled.
 

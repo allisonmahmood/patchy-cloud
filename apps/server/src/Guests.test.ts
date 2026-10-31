@@ -28,7 +28,6 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, type Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
-import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { GuestGrants } from "@patchy/patches";
 import { MutationTransaction } from "@patchy/runtime";
 import { answer, html, publish, send, server } from "./test/server.js";
@@ -52,12 +51,8 @@ const manifest = {
   files: {},
   uses: {}
 };
-// The tests' own grants: Share arrives later. Its connection reads aren't what they check.
 const layer = (env: Record<string, string> = {}) =>
-  Layer.mergeAll(
-    Companies.layer,
-    GuestGrants.layer.pipe(Layer.provide(ConnectionStoreDev.layer()))
-  ).pipe(Layer.provideMerge(server(env)), Layer.provideMerge(NodeCryptography.layer));
+  Companies.layer.pipe(Layer.provideMerge(server(env)), Layer.provideMerge(NodeCryptography.layer));
 
 /** A person from another company, an admin there, with their browser's session cookie. */
 const outsider = Effect.fn("GuestsTest.outsider")(function* (handle: string) {

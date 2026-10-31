@@ -63,6 +63,13 @@ import {
   RequestTargetTooLong,
   Shared,
   ShareRequest,
+  AlreadyMember,
+  GuestRemoved,
+  GuestRequest,
+  GuestShared,
+  GuestsUnavailable,
+  NotOnPatchy,
+  PatchGuests,
   StartDeviceLoginRequest,
   Unauthorized,
   PublishCreated,
@@ -471,6 +478,47 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. " +
           "An oversized declared body answers 413; " +
           "streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged."
+      )
+    ),
+    HttpApiEndpoint.get("listGuests", "/patches/:patchId/guests", {
+      params: patchParams,
+      success: PatchGuests,
+      error: [...ownerRouteErrors]
+    }).annotateMerge(
+      describe(
+        "List the guests of a patch owned by the bearer token's user: people at other companies it is " +
+          "shared with, oldest first, each with their user id, name, email, company and when they were " +
+          "added. Grants outlast public sharing and retirement, so the list stays. A same-company " +
+          "non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404."
+      )
+    ),
+    HttpApiEndpoint.post("addGuest", "/patches/:patchId/guests", {
+      params: patchParams,
+      payload: GuestRequest,
+      success: GuestShared,
+      error: [...ownerRouteErrors, NotOnPatchy, AlreadyMember, GuestsUnavailable, PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Share an owned live patch with the person who signs in to Patchy with `email`, at another " +
+          "company. They can open it at once as themselves, at the returned `address`; Patchy sends " +
+          "nothing. Sharing with a current guest changes nothing, and sharing with a removed one adds " +
+          "them back. An email with no active Patchy account answers 422 `not_on_patchy`; someone in " +
+          "the patch's own company answers 409 `already_member`. A version guests can't open answers " +
+          '422 `guests_unavailable` with `reason`: `{ code: "tier", tier }`, ' +
+          '`{ code: "shared_source", kind, alias }` or `{ code: "connection_blocked", integration, handle }`. ' +
+          "A retired or deleted patch answers `wrong_state`; a same-company non-owner answers 403 `not_owner`. " +
+          "The JSON body is bounded at 1.5 MiB; an oversized declared body answers 413."
+      )
+    ),
+    HttpApiEndpoint.delete("removeGuest", "/patches/:patchId/guests/:guest", {
+      params: { ...patchParams, guest: Schema.String },
+      success: GuestRemoved,
+      error: [...ownerRouteErrors]
+    }).annotateMerge(
+      describe(
+        "Stop sharing an owned patch with one guest, named by email or user id. `removed` says whether " +
+          "they were a guest; removing someone who isn't changes nothing. Their history in the patch " +
+          "keeps their name. A same-company non-owner answers 403 `not_owner`; another company answers 404."
       )
     ),
     HttpApiEndpoint.post("retire", "/patches/:patchId/retire", {

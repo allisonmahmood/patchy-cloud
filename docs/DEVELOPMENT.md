@@ -332,8 +332,9 @@ new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
 `attio/crm` connected to Patchy's probe workspace on Attio; `guests` is Harbor Works
-with a tier 1 and a tier 2 patch, and Jo at a second company, Pine Studio, to share
-them with. `up` is idempotent and resumes a
+with a tier 1 and a tier 2 patch, both shared with Jo at a second company, Pine
+Studio, and brightline shares Kudos with Taylor at Cedar Works. `up` shares a
+patch's `guests` through the CLI as the publisher. `up` is idempotent and resumes a
 failed run. Run on a plain personas instance, it turns that instance into the
 environment, keeping its data but moving it to the environment's host; a
 `--clerk` instance has to go `down` first.
