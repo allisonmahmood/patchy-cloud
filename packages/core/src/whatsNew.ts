@@ -52,6 +52,28 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 29,
+    date: "2026-10-31",
+    through: "5eeb1545ae83dacab543aa9e06e6bb2a107b4bb3",
+    changes: [
+      {
+        kind: "New",
+        title: "Pick up a patch someone else built",
+        detail:
+          "Your agent can now pull a copy of any patch you can open, with the files it was published from, ready to change and run. A patch handed to you, or a new laptop, no longer means starting over. Files kept out of git and .env files stay on the computer they came from. A patch built in a repo before today can be pulled once its owner publishes it again.",
+        prs: [1003]
+      },
+      {
+        kind: "Improved",
+        title: "Publishing won't replace newer work",
+        detail:
+          "If someone published a newer version after your copy was made, publishing now stops and says so instead of replacing it. Your agent can pull the newest version and make the change there, or publish anyway when replacing it is what you meant.",
+        prs: [1004]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 28,
     date: "2026-10-30",
     through: "ebbc21598f7821ceeef12f64fc46213a4bcb93cd",
