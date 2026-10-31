@@ -15,6 +15,7 @@
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
@@ -261,6 +262,7 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   readonly publisher: RunPerson;
   readonly door: Door;
 }) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const listed = yield* runSandboxed(input.spec, "patchy", ["list", "--json"], {
     timeout: "1 minute"
@@ -298,6 +300,8 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   if (input.task.target.create === "page")
     checks.push(skipped("typechecks", "A single-file page has no repo."));
   else {
+    // `patchy pull` makes the folder, not its parent.
+    yield* fs.makeDirectory(path.join(input.spec.home, ".eval"), { recursive: true });
     const pulled = yield* runSandboxed(
       input.spec,
       "patchy",

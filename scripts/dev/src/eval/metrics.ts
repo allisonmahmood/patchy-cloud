@@ -19,7 +19,7 @@ export const Metrics = Schema.Struct({
   refusals: Schema.Record(Schema.String, Schema.Int),
   /** Observed explicit accesses to our texts, by name: `patchy` is the global skill. */
   skillAccesses: Schema.Record(Schema.String, Schema.Int),
-  /** Reads into the installed package's code, type declarations or generated client: questions the skills didn't answer. */
+  /** Reads into the installed package's code or type declarations: questions the skills didn't answer. */
   offSkillLookups: Schema.Int,
   helpLookups: Schema.Int,
   typecheckRuns: Schema.Int,
@@ -32,21 +32,28 @@ export const Metrics = Schema.Struct({
 export type Metrics = typeof Metrics.Type;
 
 const SKILL = /skills\/(patchy[\w-]*)\/(SKILL\.md|references\/[\w.-]+)/g;
-const OFF_SKILL =
-  /node_modules\/patchy\/(?!skills\/)|\.d\.ts\b|_generated\/(?:client|server)\.(?:ts|js)\b/;
+const OFF_SKILL = /node_modules\/patchy\/(?!skills\/)|\.d\.ts\b/;
 const TYPECHECK = /\bpnpm\s+(?:run\s+)?typecheck\b|\btsc\b/;
 const PUBLISH = /\bpatchy\s+publish\b/;
 const DEV_START = /\bpatchy\s+dev\b(?!\s+(?:stop|status|logs|reset)\b)/;
 const PAGE_CHECK = /\bchromium\b|\bchrome\b|playwright|\bcurl\b[^|;&]*(?:localhost|127\.0\.0\.1)/i;
 
+/**
+ * What a step was pointed at: a command's first line, so a heredoc's body (the
+ * code it writes, imports and all) isn't mistaken for something it read.
+ */
+const pointedAt = (step: Step) =>
+  step.tool === "Bash" ? (step.input.split("\n")[0] ?? "") : step.input;
+
 /** Every one of our texts a step names: a skill or its reference, the repo's `AGENTS.md`, the generated index. */
 export const textsIn = (step: Step): ReadonlyArray<string> => {
   if (step.tool === "Skill") return step.input === "" ? [] : [step.input];
-  const named = [...step.input.matchAll(SKILL)].map(([, skill, file]) =>
+  const target = pointedAt(step);
+  const named = [...target.matchAll(SKILL)].map(([, skill, file]) =>
     file === "SKILL.md" ? skill! : `${skill}/${file}`
   );
-  if (/\bAGENTS\.md\b/.test(step.input)) named.push("AGENTS.md");
-  if (/_generated\/index\.json\b/.test(step.input)) named.push("index.json");
+  if (/\bAGENTS\.md\b/.test(target)) named.push("AGENTS.md");
+  if (/_generated\/index\.json\b/.test(target)) named.push("index.json");
   return named;
 };
 
@@ -71,7 +78,8 @@ export const metricsOf = (log: BuilderLog): Metrics => {
     skillAccesses,
     offSkillLookups: count(
       log.steps,
-      (step) => ["Bash", "Read", "Grep", "Glob"].includes(step.tool) && OFF_SKILL.test(step.input)
+      (step) =>
+        ["Bash", "Read", "Grep", "Glob"].includes(step.tool) && OFF_SKILL.test(pointedAt(step))
     ),
     helpLookups: count(commands, (step) => isHelpLookup(step.input)),
     typecheckRuns: typechecks.length,

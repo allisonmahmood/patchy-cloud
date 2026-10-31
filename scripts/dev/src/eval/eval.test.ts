@@ -272,6 +272,9 @@ describe("what a run is", () => {
             "cat .agents/skills/patchy-loop/SKILL.md .agents/skills/patchy-tables/SKILL.md AGENTS.md"
           ),
           step("grep -rn route node_modules/patchy/dist/client.d.ts"),
+          step(
+            "cat > src/App.tsx <<'EOF'\nimport { patchy } from \"../patchy/_generated/client.js\";\n// see node_modules/patchy/dist/x.d.ts\nEOF"
+          ),
           step("pnpm typecheck", "failed"),
           step("pnpm typecheck && pnpm patchy publish --json")
         ]

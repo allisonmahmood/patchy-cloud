@@ -1,6 +1,6 @@
 ---
 name: patchy-dev-loop
-description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages, a flow, CLI lines or a fresh agent's attempt at a task before and after for a PR, or when a dev instance is reported unhealthy.
+description: Run a change against this worktree's local Patchy Cloud instance. Use when asked to check that a change works for real, to measure how agents build from the skills (pnpm dev eval), to start or stop the dev instance, to drive the patchy CLI locally, to see a page as a signed-in person, to capture pages, a flow, CLI lines or a fresh agent's attempt at a task before and after for a PR, or when a dev instance is reported unhealthy.
 metadata:
   internal: "true"
 ---
@@ -247,3 +247,14 @@ patchy whoami
 - Origins and paths read `<origin>`, `<env>`, `<checkout>` and `~`; every
   other difference shows. Collected secrets read `[redacted]`. Read the
   section before publishing anyway.
+
+## Measuring how agents build
+
+`pnpm dev eval --only-head [--tasks cheers] [--builders sonnet,terra] [--repeats 3]`
+gives the eval suite's tasks to sandboxed builders on an evidence instance at
+`HEAD` and grades what they publish: Sonnet 5.5 high in Claude Code and GPT-6.1
+Terra high in Codex, each in `bwrap` with a HOME of its own and nothing of this
+machine's. Use it to tell whether a change to skill text, the `AGENTS.md`
+template or CLI messages helps builders. It needs bubblewrap, both CLIs signed
+in and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
+the rest. Results land in `.local/evals/<suite>/`, `scorecard.md` first.
