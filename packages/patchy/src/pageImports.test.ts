@@ -120,6 +120,32 @@ globalThis.csvResult = parse(stringify([["=1", -42], ["a,b", "line\\nnext"]]));
   }
 );
 
+it("builds and runs patchy/hotkeys on the page graph", async () => {
+  const root = page(`import { formatHotkey, hotkeyKeys } from "patchy/hotkeys";
+globalThis.hotkeysResult = [formatHotkey("Mod+K"), hotkeyKeys("g h")];
+`);
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [pageImports(root, () => {})],
+    build: {
+      write: false,
+      lib: { entry: path.join(root, "main.ts"), formats: ["iife"], name: "HotkeysExample" }
+    }
+  });
+  const output = Array.isArray(result) ? result[0]! : result;
+  if (!("output" in output)) throw new Error("Expected a completed hotkeys page build.");
+  const chunk = output.output.find((file) => file.type === "chunk");
+  if (!chunk || chunk.type !== "chunk") throw new Error("The hotkeys page emitted no JavaScript.");
+  const run = `${chunk.code}\nJSON.stringify(hotkeysResult)`;
+  expect(JSON.parse(runInNewContext(run, { navigator: { platform: "MacIntel" } }))).toEqual([
+    "⌘ K",
+    [["G"], ["H"]]
+  ]);
+  expect(JSON.parse(runInNewContext(run, { navigator: { platform: "Win32" } }))[0]).toBe("Ctrl+K");
+});
+
 it.each(
   ["server", "agent"].flatMap((folder) => [
     `import { handler } from "./${folder}/leads.ts"; console.log(handler);`,
@@ -156,6 +182,7 @@ it.each(
 
 it.each([
   ['import "patchy/preact";', "import_refused"],
+  ['import "patchy/hotkeys";', "import_refused"],
   ['import "node:fs";', "import_refused"],
   ['if (false) void import("./never.ts");', "invalid_manifest"],
   ['const source = "./never.ts"; void import(source);', "invalid_manifest"],

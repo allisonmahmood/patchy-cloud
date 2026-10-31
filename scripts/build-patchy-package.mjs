@@ -31,7 +31,7 @@ const packageJson = JSON.parse(await readFile(path.join(packageDir, "package.jso
 const rootSkillsDir = path.join(repoRoot, "skills");
 const packageSkillsDir = path.join(packageDir, "skills");
 const uiEntries = ["preact", "preact/jsx-runtime", "preact/jsx-dev-runtime"];
-const publicEntries = ["config", "client", "server", "csv", "dev", ...uiEntries];
+const publicEntries = ["config", "client", "server", "csv", "hotkeys", "dev", ...uiEntries];
 
 /** A source file's top-level string and number constants, by name. */
 const literals = async (file) => {
@@ -198,7 +198,9 @@ await bundle({
   external: ["./executeConfig.js"]
 });
 await bundle({
-  entryPoints: ["client", ...uiEntries].map((name) => path.join(packageDir, `src/${name}.ts`)),
+  entryPoints: ["client", "hotkeys", ...uiEntries].map((name) =>
+    path.join(packageDir, `src/${name}.ts`)
+  ),
   outdir: distDir,
   outbase: path.join(packageDir, "src"),
   bundle: true,
@@ -313,6 +315,19 @@ await copyFile(
 await copyFile(
   path.join(packageDir, "node_modules/ignore/LICENSE-MIT"),
   path.join(distDir, "licenses/ignore-LICENSE")
+);
+// The hotkeys bundle carries TanStack Hotkeys and the TanStack Store it builds on, each with its
+// own notice; @tanstack/store's matches @tanstack/preact-store's.
+const tanstackHotkeys = await realpath(
+  path.join(packageDir, "node_modules/@tanstack/preact-hotkeys")
+);
+await copyFile(
+  path.join(tanstackHotkeys, "LICENSE"),
+  path.join(distDir, "licenses/tanstack-hotkeys-LICENSE")
+);
+await copyFile(
+  path.join(tanstackHotkeys, "../preact-store/LICENSE"),
+  path.join(distDir, "licenses/tanstack-store-LICENSE")
 );
 await access(path.join(rootSkillsDir, "patchy/SKILL.md"));
 await rm(packageSkillsDir, { recursive: true, force: true });

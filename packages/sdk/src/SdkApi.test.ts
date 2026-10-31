@@ -47,6 +47,7 @@ import * as Generation from "./Generation.js";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import * as Artifact from "./Artifact.js";
 import * as SdkApi from "./SdkApi.js";
+import { sdkCapabilities } from "./sdkCapabilities.js";
 import { readLookFixture } from "../../../test/look-fixtures.js";
 
 const exec = promisify(execFile);
@@ -512,6 +513,7 @@ it.layer(layer)("SDK company generation", (it) => {
         const skillFiles = output.files.filter(({ path }) => path.startsWith(".agents/skills/"));
         assert.deepStrictEqual(skillFiles.map(({ path }) => path).sort(), [
           ".agents/skills/patchy-files/SKILL.md",
+          ".agents/skills/patchy-hotkeys/SKILL.md",
           ".agents/skills/patchy-look/SKILL.md",
           ".agents/skills/patchy-loop/SKILL.md",
           ".agents/skills/patchy-postgres/SKILL.md",
@@ -542,32 +544,45 @@ it.layer(layer)("SDK company generation", (it) => {
   );
 
   it.effect(
-    "selects page and server skills by tier, with only the server skill removed on downgrade",
+    "selects page, hotkeys and server skills by tier, with only the server skill removed on downgrade",
     () =>
       Effect.gen(function* () {
         const api = yield* sdkOver(Layer.empty);
+        const skills = (output: typeof Generated.Type) =>
+          output.files.flatMap(({ path }) =>
+            path.startsWith(".agents/skills/") ? [path.split("/")[2]] : []
+          );
         for (const tier of [1, 2] as const) {
           const output = yield* api.generate({
             payload: { ...generateRequest(), manifest: { ...Fixtures.manifest, tier } }
           });
-          assert.isTrue(
-            output.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
-          );
-          assert.strictEqual(
-            output.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md"),
-            tier === 2
-          );
+          assert.includeMembers(skills(output), ["patchy-preact", "patchy-hotkeys"]);
+          assert.strictEqual(skills(output).includes("patchy-server"), tier === 2);
           assert.isFalse(output.files.some(({ path }) => path.startsWith("src/")));
+          const file = (path: string) => output.files.find((item) => item.path === path)?.contents;
+          const index = JSON.parse(file("patchy/_generated/index.json")!);
+          assert.deepInclude(index.skills, {
+            name: "patchy-hotkeys",
+            path: ".agents/skills/patchy-hotkeys/SKILL.md"
+          });
+          assert.deepInclude(
+            index.capabilities,
+            sdkCapabilities.find(({ id }) => id === "helpers.hotkeys")
+          );
+          assert.include(
+            file(".agents/skills/patchy-loop/SKILL.md"),
+            "Keyboard shortcuts. Entrypoints: `patchy/hotkeys`."
+          );
         }
         const downgraded = yield* api.generate({
-          payload: generateRequest(Fixtures.manifest, ["patchy-preact", "patchy-server"])
+          payload: generateRequest(Fixtures.manifest, [
+            "patchy-preact",
+            "patchy-hotkeys",
+            "patchy-server"
+          ])
         });
-        assert.isTrue(
-          downgraded.files.some(({ path }) => path === ".agents/skills/patchy-preact/SKILL.md")
-        );
-        assert.isFalse(
-          downgraded.files.some(({ path }) => path === ".agents/skills/patchy-server/SKILL.md")
-        );
+        assert.includeMembers(skills(downgraded), ["patchy-preact", "patchy-hotkeys"]);
+        assert.notInclude(skills(downgraded), "patchy-server");
       })
   );
 

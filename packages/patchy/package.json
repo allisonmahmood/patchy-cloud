@@ -47,6 +47,10 @@
       "types": "./dist/csv.d.ts",
       "import": "./dist/csv.js"
     },
+    "./hotkeys": {
+      "types": "./dist/hotkeys.d.ts",
+      "import": "./dist/hotkeys.js"
+    },
     "./dev": {
       "types": "./dist/dev.d.ts",
       "import": "./dist/dev.js"
@@ -93,6 +97,8 @@
     "@patchy/primitives": "workspace:*",
     "@patchy/runtime": "workspace:*",
     "@patchy/serving": "workspace:*",
+    "@tanstack/hotkeys": "0.19.0",
+    "@tanstack/preact-hotkeys": "0.17.1",
     "@types/css-tree": "^3.2.0",
     "@types/papaparse": "5.5.2",
     "@types/semver": "^7.7.1",
