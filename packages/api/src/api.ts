@@ -964,7 +964,10 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "hash of the connection, the patch and it. Pidgeon's 409 fails `idempotency_conflict` with " +
           "`details.reason` `mismatch` or `in_progress` (with `retryAfter`), sending nothing; held " +
           "mail and send refusals fail `access_denied` with `details.reason`; the daily send budget " +
-          "and Pidgeon's own limits fail `source_rate_limited` with `details.limit`. Arguments are " +
+          "and Pidgeon's own limits fail `source_rate_limited` with `details.limit`: `budget`, " +
+          "`requests` or `plan`, or `recipient_cooldown` when Pidgeon holds back a new message to someone " +
+          "the address just wrote to, which a reply in their conversation avoids; Pidgeon's own carry its " +
+          "explanation in `details.message`. Arguments are " +
           "bounded by `runtime.pidgeon.bytes`. Recent calls name each call's ids, a send's subject " +
           "and recipients and a reply's CC, never a body or search text. " +
           "`attio.listRecords { connection, object, eq?, contains?, range?, orderBy?, limit?, cursor? }`, " +
