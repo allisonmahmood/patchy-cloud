@@ -1,7 +1,8 @@
 /**
  * A patch's guest over the whole server: someone from another company opens the patch shared
  * with them and uses its own data as themselves, until the grant ends and after it's restored.
- * On tier 2 they start only the handlers marked for guests.
+ * On tier 2 they start only the handlers marked for guests, and none while a connection the
+ * patch uses blocks guests.
  */
 import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
@@ -11,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as SqlClient from "effect/sql/SqlClient";
 import {
   CURRENT_RELEASE,
   MANIFEST_VERSION,
@@ -24,6 +26,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
+import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { GuestGrants } from "@patchy/patches";
 import { MutationTransaction } from "@patchy/runtime";
 import { answer, html, publish, send, server } from "./test/server.js";
@@ -43,11 +46,12 @@ const manifest = {
   files: {},
   uses: {}
 };
+// The tests' own grants: Share arrives later. Its connection reads aren't what they check.
 const layer = (env: Record<string, string> = {}) =>
-  Layer.mergeAll(Companies.layer, GuestGrants.layer).pipe(
-    Layer.provideMerge(server(env)),
-    Layer.provideMerge(NodeCryptography.layer)
-  );
+  Layer.mergeAll(
+    Companies.layer,
+    GuestGrants.layer.pipe(Layer.provide(ConnectionStoreDev.layer()))
+  ).pipe(Layer.provideMerge(server(env)), Layer.provideMerge(NodeCryptography.layer));
 
 /** A person from another company, an admin there, with their browser's session cookie. */
 const outsider = Effect.fn("GuestsTest.outsider")(function* (handle: string) {
@@ -65,6 +69,19 @@ const outsider = Effect.fn("GuestsTest.outsider")(function* (handle: string) {
 });
 
 type Person = { readonly user: { readonly id: string }; readonly cookie: string };
+
+/** The dev company's admin, who publishes the patches here, in a browser. */
+const admin: Person = {
+  user: { id: DEV_SEED.userId },
+  cookie: signedInCookies(
+    signSession({
+      sub: DEV_SEED.clerkUserId,
+      email: DEV_SEED.email,
+      name: DEV_SEED.userName,
+      azp: origin
+    })
+  )
+};
 
 /** A browser's headers for this person, as the patch's shell sends them. */
 const headers = (person: Person) => ({
@@ -408,6 +425,65 @@ it.layer(layer({ NODE_ENV: "development" }), { excludeTestServices: true })(
             "error.code": "access_denied"
           });
         }).pipe(Effect.scoped),
+      30_000
+    );
+
+    it.effect(
+      "turns guests away while a connection the patch uses blocks them, and lets them back after",
+      () =>
+        Effect.gen(function* () {
+          const grants = yield* GuestGrants.GuestGrants;
+          const guest = yield* outsider("woodgrove");
+          // Connecting needs a warehouse to reach; publish and the doors read only this row.
+          const connectionId = "con_guests_warehouse";
+          yield* (yield* SqlClient.SqlClient)`INSERT INTO connections (id, company_id,
+            integration, handle, description, mode, status, display, credentials, key_id,
+            credential_revision, metadata_revision, created_by)
+            VALUES (${connectionId}, ${DEV_SEED.companyId}, 'postgres', 'guests-warehouse',
+              'Sales warehouse', 'company', 'connected',
+              ${JSON.stringify({ host: "warehouse.invalid", port: 5432, database: "sales", role: "reader" })},
+              'unused', 'unused', 1, 1, ${DEV_SEED.userId})`;
+          const created = decodeCreated(
+            yield* (yield* publish(DEV_SEED.token, {
+              html: html("Guests and the warehouse"),
+              server: yield* handlersServer,
+              manifest: {
+                ...handlers,
+                uses: {
+                  sales: {
+                    kind: "postgres",
+                    handle: "guests-warehouse",
+                    id: connectionId,
+                    revision: 1
+                  }
+                }
+              }
+            })).json
+          );
+          yield* grants.grant({
+            patchId: created.patchId,
+            userId: guest.user.id,
+            grantedBy: DEV_SEED.userId
+          });
+          const list = (person: Person) =>
+            call(created, person, "server.call", { handler: "notes.list", args: {} });
+          /** The admin's Block guests or Allow guests, landing back on the connection's page. */
+          const set = (action: "block-guests" | "allow-guests") =>
+            send(
+              HttpClientRequest.post(`/company/connections/${connectionId}/${action}`).pipe(
+                HttpClientRequest.setHeaders({ origin, cookie: admin.cookie }),
+                HttpClientRequest.bodyUrlParams({})
+              )
+            );
+          assert.deepStrictEqual((yield* list(guest)).body, { ok: true, value: [] });
+
+          assert.strictEqual((yield* set("block-guests")).status, 200);
+          assert.deepInclude((yield* list(guest)).body, { code: "access_denied" });
+          assert.deepStrictEqual((yield* list(admin)).body, { ok: true, value: [] });
+
+          assert.strictEqual((yield* set("allow-guests")).status, 200);
+          assert.deepStrictEqual((yield* list(guest)).body, { ok: true, value: [] });
+        }),
       30_000
     );
   }

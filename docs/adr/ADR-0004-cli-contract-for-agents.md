@@ -404,7 +404,10 @@ restored by Ada: rev 8 failed dark mode.", or "…, restored by Ada." without a
 note. Repo `publish` never pulls a revision: for such a page it sends the
 repo's revision with the publish and ships the repo's own, and when that isn't
 the company's current revision the publish response adds a `warnings` entry
-naming `patchy refresh`, exit 0. That entry comes from the publish response, so
+naming `patchy refresh`, exit 0. A patch with guests holding an active grant
+that publishes a version they can't open, such as one declaring a connection an
+admin set to block guests, gets a `warnings` entry saying why, exit 0 as well;
+a patch without guests, or a public one, gets none. That entry comes from the publish response, so
 a failed local build or an unsuccessful upload carries none; the warnings of a
 publish the instance accepted are reported even when a later local write fails.
 These checks are advisory: a failed look or identity read becomes a warning or a

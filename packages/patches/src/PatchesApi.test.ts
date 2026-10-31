@@ -55,6 +55,7 @@ import { ConnectionStore, SqlConnectionStore, PostgresSource } from "@patchy/int
 import * as PostHogDouble from "../../integrations/src/test/posthog.js";
 import * as PidgeonTest from "../../integrations/src/test/pidgeon.js";
 import * as Content from "./Content.js";
+import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
 import * as PatchesConfig from "./PatchesConfig.js";
@@ -163,7 +164,7 @@ const lifecycleEvents = (patchId: string) =>
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, GuestGrants.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
@@ -432,7 +433,7 @@ const publishConfig = (
 const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, looks, memoryStore)),
+  Layer.provideMerge(Layer.mergeAll(Patches.layer, GuestGrants.layer, looks, memoryStore)),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
@@ -2578,6 +2579,46 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
 });
 
 it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
+  it.effect("publishes a version its guests can't open, and says why only when it has guests", () =>
+    Effect.gen(function* () {
+      const { connections, identity, declaration } = yield* sourceConnection("guest-warehouse");
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const version = (patchId?: string) =>
+        Effect.flatMap(
+          consumingRequest({
+            html: html("Guest report"),
+            manifest: { ...Fixtures.manifest, name: "guest-report", uses: { sales: declaration } },
+            ...(patchId === undefined ? {} : { patchId })
+          }),
+          (payload) => api.publish({ payload })
+        );
+      const created = yield* version();
+      yield* connections.blockGuests({ ...identity, block: true });
+      const warning = GuestGrants.warning(
+        GuestGrants.Reason.cases.ConnectionBlocked.make({
+          integration: "postgres",
+          handle: "guest-warehouse"
+        })
+      );
+      assert.notInclude((yield* version(created.patchId)).warnings, warning);
+
+      const guest = yield* (yield* Companies.Companies).create({
+        handle: "guest-publish",
+        name: "Guest Publish",
+        clerkUserId: "user_guest_publish",
+        email: "gina@guest-publish.example",
+        userName: "Gina"
+      });
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId: created.patchId,
+        userId: guest.user.id,
+        grantedBy: uploader.user.id
+      });
+      const updated = yield* version(created.patchId);
+      assert.instanceOf(updated, PublishUpdated);
+      assert.include(updated.warnings, warning);
+    })
+  );
   it.effect(
     "binds an immutable connection snapshot and refuses new publishes after disconnect or discovery",
     () =>

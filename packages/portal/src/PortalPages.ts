@@ -29,7 +29,7 @@ import {
   escapeHtml
 } from "@patchy/core";
 import { Companies, Users } from "@patchy/companies";
-import { Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
@@ -282,7 +282,13 @@ const render = Effect.fn("PortalPages.render")(function* (
         })
       : tab === "versions"
         ? renderVersions({ card, viewer, now })
-        : renderOverview({ card, viewer, now, activity: yield* recentActivity(card, now) });
+        : renderOverview({
+            card,
+            viewer,
+            now,
+            activity: yield* recentActivity(card, now),
+            turnedAway: (yield* turnedAway([selected]))?.get(card.patch.id)
+          });
   const panel = tab === "overview" ? yield* agentPanel(card) : "";
   return pageResponse(
     {
@@ -974,6 +980,26 @@ const recentFailures = Effect.fn("PortalPages.recentFailures")(function* (
 });
 
 /**
+ * Why guests can't open each of the company's patches that has guests and turns them away, or
+ * nothing when the viewer manages no live patch here, so a member's pages never read grants.
+ */
+const turnedAway = Effect.fn("PortalPages.turnedAway")(function* (
+  rows: readonly Patches.ReadPatch[]
+) {
+  const { viewer } = yield* context;
+  if (
+    !rows.some(
+      (row) =>
+        row.patch.state === "live" && (viewer.role === "admin" || row.owner.id === viewer.user.id)
+    )
+  )
+    return undefined;
+  return yield* (yield* GuestGrants.GuestGrants)
+    .unavailableToGuests(viewer.company.id)
+    .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
+});
+
+/**
  * Starts readying the viewer's company task and the live tier 2 tools they are likeliest to open,
  * theirs by how much they open them and then everyone's by visits, without waiting. Hosts without
  * the execution fleet have nothing to ready.
@@ -1027,7 +1053,8 @@ const allPatchesPage = Effect.fn("PortalPages.allPatchesPage")(function* () {
         publicBaseUrl: session.publicBaseUrl,
         opens,
         names: new Map(members.map((member) => [member.id, member.name])),
-        failures: yield* recentFailures(rows)
+        failures: yield* recentFailures(rows),
+        turnedAway: yield* turnedAway(rows)
       }),
       styles: styles + listStyles,
       app: { viewer, section: "patches" }
@@ -1085,6 +1112,7 @@ export const layer: Layer.Layer<
       | Companies.Companies
       | Users.Users
       | Patches.Patches
+      | GuestGrants.GuestGrants
       | MachineTokens.MachineTokens
       | InvocationLog.InvocationLog
       | ConnectionStore.ConnectionStore

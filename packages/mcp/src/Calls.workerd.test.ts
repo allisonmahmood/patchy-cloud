@@ -61,6 +61,7 @@ const connection = (companyId: string) => ({
     description: "The sales warehouse.",
     mode: "company" as const,
     status: "connected" as const,
+    blockGuests: false,
     credentialRevision: 1,
     metadataRevision: 1,
     display: { host: "warehouse.invalid", port: 5432, database: "warehouse", role: "reader" },

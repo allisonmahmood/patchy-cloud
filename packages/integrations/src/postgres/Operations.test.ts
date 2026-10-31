@@ -164,6 +164,7 @@ const connection = {
   description: "Operation fixture",
   mode: "company",
   status: "connected",
+  blockGuests: false,
   credentialRevision: 1,
   metadataRevision: 2,
   display: { host: "fixture.example", port: 5432, database: "fixture", role: "reader" },

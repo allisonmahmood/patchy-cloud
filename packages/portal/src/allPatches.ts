@@ -15,8 +15,8 @@ import {
   rowMenu,
   searchField
 } from "@patchy/core";
-import type { Patches } from "@patchy/patches";
-import { firstClause, hidden, patchTitle } from "./render.js";
+import { GuestGrants, type Patches } from "@patchy/patches";
+import { firstClause, hidden, patchTitle, turnedAwayTitle } from "./render.js";
 
 /** All patches' layout; components come from the shell. */
 export const listStyles = `
@@ -105,7 +105,8 @@ const attentionOf = (
   viewer: Viewer,
   names: ReadonlyMap<string, string>,
   now: number,
-  failures: ReadonlyMap<string, number> | undefined
+  failures: ReadonlyMap<string, number> | undefined,
+  turnedAway: ReadonlyMap<string, GuestGrants.Reason> | undefined
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
@@ -131,6 +132,13 @@ const attentionOf = (
       title: `${plural(failed, "call", "calls")} failed in the last day`,
       detail: "Its log says which, and why.",
       act: `<a class="btn" href="${escapeAttribute(failedLog(patch))}">See the log</a>`
+    };
+  const reason = turnedAway?.get(patch.id);
+  if (patch.state === "live" && reason !== undefined)
+    return {
+      title: turnedAwayTitle,
+      detail: GuestGrants.describe(reason),
+      act: `<a class="btn" href="${escapeAttribute(cardPath(patch))}">View patch</a>`
     };
   return undefined;
 };
@@ -212,6 +220,8 @@ export const renderAllPatches = (input: {
   readonly names: ReadonlyMap<string, string>;
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
+  /** Why guests can't open each patch with guests that turns them away; absent for a member. */
+  readonly turnedAway?: ReadonlyMap<string, GuestGrants.Reason>;
 }): string => {
   const { viewer, now, show, query, names } = input;
   const byVisits = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
@@ -223,7 +233,7 @@ export const renderAllPatches = (input: {
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
-      const found = attentionOf(row, viewer, names, now, input.failures);
+      const found = attentionOf(row, viewer, names, now, input.failures, input.turnedAway);
       return found === undefined ? [] : [[row.patch.id, found] as const];
     })
   );

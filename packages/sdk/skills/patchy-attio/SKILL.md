@@ -11,7 +11,7 @@ Connections are tier 2's: actions read the workspace through `ctx.connections` a
 
 ## Declare a workspace
 
-1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/company/connections`; ask them there rather than for a token.
+1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/company/connections`; ask them there rather than for a token. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add attio/<handle> --as crm`. It inserts `crm: { kind: "attio", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `crm`: the workspace's objects and lists, each attribute's slug, title and type, record references' target objects, the options of each select and status, and what discovery left out.
 

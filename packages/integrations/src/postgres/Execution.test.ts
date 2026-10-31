@@ -25,6 +25,7 @@ const connection = {
   description: "Isolated native execution",
   mode: "company",
   status: "connected",
+  blockGuests: false,
   display: { host: "warehouse.example", port: 5432, database: "warehouse", role: "reader1" },
   credentialRevision: 1,
   metadataRevision: 1,
