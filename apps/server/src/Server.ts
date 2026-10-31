@@ -39,15 +39,7 @@ import {
   RequireSession,
   Session
 } from "@patchy/auth";
-import {
-  Companies,
-  CompanyPage,
-  Directory,
-  InviteMail,
-  LookApi,
-  Looks,
-  Users
-} from "@patchy/companies";
+import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -262,8 +254,9 @@ const services = Layer.mergeAll(
         : runtime;
     })
   ).pipe(
-    // Pidgeon's calls check their viewer again in the directory once they hold a slot.
-    Layer.provide([LoadedVersions.layer, PostgresExecution.layer, Directory.layer, grantedGuests])
+    // The member directory brings in the guests Patches' grants name, as Runtime's doors do.
+    Layer.provideMerge(MemberDirectory.layer),
+    Layer.provide([LoadedVersions.layer, PostgresExecution.layer, grantedGuests])
   )
 ).pipe(
   Layer.provideMerge(
@@ -300,7 +293,6 @@ const services = Layer.mergeAll(
   ),
   Layer.provideMerge(RuntimeLog.layer),
   Layer.provideMerge(InvocationLog.layer),
-  Layer.provideMerge(MemberDirectory.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),
   Layer.provide(migrated)

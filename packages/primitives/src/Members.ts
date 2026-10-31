@@ -4,6 +4,7 @@ import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as MemberDirectory from "./MemberDirectory.js";
 
+/** The patch whose directory a handler reads, once it declares one and its viewer is in. */
 export const authorize = Effect.gen(function* () {
   const binding = yield* Binding.Binding;
   if (
@@ -13,7 +14,7 @@ export const authorize = Effect.gen(function* () {
     return yield* new Runtime.AccessDenied({});
   if (binding.identity === null || binding.identity.company.id !== binding.companyId)
     return yield* new Runtime.AccessDenied({});
-  return binding.companyId;
+  return { companyId: binding.companyId, patchId: binding.patchId };
 });
 
 export const make = Effect.gen(function* () {
@@ -47,7 +48,7 @@ export const make = Effect.gen(function* () {
         output: runtimeOperations["members.get"].response
       },
       Effect.fn("Members.get")(function* (args) {
-        return yield* directory.get(yield* authorize, args.id);
+        return yield* directory.get((yield* authorize).companyId, args.id);
       })
     ),
     "members.getMany": Runtime.handler(
@@ -57,7 +58,7 @@ export const make = Effect.gen(function* () {
         output: runtimeOperations["members.getMany"].response
       },
       Effect.fn("Members.getMany")(function* (args) {
-        const companyId = yield* authorize;
+        const { companyId } = yield* authorize;
         if (args.ids.length > maxItems)
           return yield* new Runtime.LimitExceeded({ limitId: "members.getMany", value: maxItems });
         return yield* directory.getMany(companyId, args.ids);
