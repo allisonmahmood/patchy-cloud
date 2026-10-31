@@ -418,10 +418,13 @@ export const embeddedFontLook = (() => {
   return { "look.css": `${fontFace}\n${readLookFixture("linear")["look.css"]}`, font };
 })();
 
+const shippedSkills = readdirSync(path.join(packageDir, "../sdk/skills"));
+
 /**
  * Only the instance metadata is stubbed: these are the shipped client generators. `look` stands
  * in for the company's current look, `revision` its stamp, absent for the Patchy look, and
- * `restored` the restore that set it; skills are served as their release templates.
+ * `restored` the restore that set it; skills are served as their release templates, and a present
+ * skill stays when the release ships it, as in generation.
  */
 export const generateProjectResponse = (
   body: unknown,
@@ -432,7 +435,7 @@ export const generateProjectResponse = (
     readonly restored?: typeof LookRestore.Encoded;
   } = patchyLookFiles
 ): typeof Generated.Type => {
-  const { manifest, serverModules } = decodeGenerateRequest(body);
+  const { manifest, serverModules, skills: present } = decodeGenerateRequest(body);
   const files: Array<{ path: string; contents: string }> = [];
   const uses: Array<{
     alias: string;
@@ -447,8 +450,13 @@ export const generateProjectResponse = (
   const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
   const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
-  const skills = new Set(coreProjectSkills);
+  const skills = new Set([
+    ...coreProjectSkills,
+    ...present.filter((skill) => shippedSkills.includes(skill))
+  ]);
   if (manifest.tier === 2) skills.add("patchy-server");
+  else skills.delete("patchy-server");
+  if (manifest.uses.members?.kind !== "members") skills.delete("patchy-members");
   for (const [alias, declaration] of Object.entries(manifest.uses)) {
     if (declaration.kind === "members") {
       skills.add("patchy-members");

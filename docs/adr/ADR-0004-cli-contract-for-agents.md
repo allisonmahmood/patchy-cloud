@@ -471,7 +471,9 @@ returns `stale_generated` for additions, removals or renames.
 Skills are sticky: refresh re-fetches every present skill and adds config-implied
 ones. `patchy-server` is the tier-keyed exception, removed below tier 2;
 `patchy-members` is declaration-keyed, removed when `uses.members` is absent.
-A different present skill no longer offered by the release fails refresh.
+A present skill the release doesn't ship, as after a rollback past the release
+that added it, is left out by generation. Refresh and a new `dev` start remove
+every present skill generation left out and name each one in `warnings`.
 Their canonical source is `packages/sdk`.
 
 Vite, `vite-plugin-singlefile`, TypeScript and `@types/node` belong to the builder.

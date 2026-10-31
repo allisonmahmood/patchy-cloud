@@ -108,8 +108,12 @@ implied by the config. The sole tier-keyed exception is `patchy-server`: changin
 `tier` and running refresh adds it on tier 2 or removes it below tier 2, alongside
 the `workerd` pin and generated `patchy/_generated/server.ts`. The declaration-keyed
 `patchy-members` skill follows `uses.members`; other skills, including
-`patchy-preact`, stay sticky. A present skill no longer offered by the release
-fails refresh rather than silently retaining stale instructions.
+`patchy-preact`, stay sticky. Generation leaves out a present skill the release
+doesn't ship, as after a rollback past the release that added it, and never
+reads its name as a path. Refresh and a new dev start remove every present
+skill generation left out and name each one in `warnings`, so no stale
+instructions remain and the repo still refreshes. Only `patchy-[a-z0-9-]+`
+folders are present skills; others under `.agents/skills/` are the builder's.
 `remove` may remove a declaration's skill when no declaration of that kind remains.
 Edit canonical SDK sources here; in a patch repo change definitions or declarations
 and run `pnpm patchy refresh`, never edit managed skill copies.

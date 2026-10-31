@@ -182,6 +182,12 @@ describe("patch-repo commands", () => {
       path.join(dir, "patchy/_generated/metadata.json"),
       '{"postgres":{},"shared":{}}\n'
     );
+    // As after a rollback past the release that added it: this instance doesn't ship the skill.
+    mkdirSync(path.join(dir, ".agents/skills/patchy-later"), { recursive: true });
+    writeFileSync(
+      path.join(dir, ".agents/skills/patchy-later/SKILL.md"),
+      "A later release's skill"
+    );
     const result = await runCli(["refresh", "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -195,10 +201,12 @@ describe("patch-repo commands", () => {
           "patchy/_generated/manifest.json",
           "patchy/_generated/metadata.json"
         ]),
-        skills: coreProjectSkills,
+        skills: [...coreProjectSkills, "patchy-later"].sort(),
         fixtures: []
-      }
+      },
+      warnings: ["Removed the patchy-later skill."]
     });
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-later"))).toBe(false);
     expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
       release: CURRENT_RELEASE,
       tier: 1,

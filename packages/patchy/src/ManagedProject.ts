@@ -67,13 +67,27 @@ async function noLinks(target: string): Promise<void> {
     for (const child of await fs.readdir(target)) await noLinks(path.join(target, child));
 }
 
+/** The folder names generation can write under `.agents/skills/`; other folders are the builder's. */
+const skillName = /^patchy-[a-z0-9-]+$/;
+
 export async function presentSkills(root: string): Promise<string[]> {
   const dir = await safePath(root, ".agents/skills");
   if (!(await info(dir))) return [];
-  const names = (await fs.readdir(dir)).filter((name) => name.startsWith("patchy-"));
+  const names = (await fs.readdir(dir)).filter((name) => skillName.test(name));
   for (const name of names) await noLinks(path.join(dir, name));
   return names.sort();
 }
+
+/**
+ * The present skills a generation left out, whose folders go with it: `patchy-server` below tier
+ * 2, `patchy-members` without its declaration, or one the instance's release doesn't ship, as after
+ * a rollback past the release that added it.
+ */
+export const omittedSkills = (present: readonly string[], files: readonly ManagedFile[]) =>
+  present.filter((name) => !files.some(({ path }) => path === `.agents/skills/${name}/SKILL.md`));
+
+/** What refresh and dev start say for each skill folder they removed. */
+export const removedSkillNotice = (name: string) => `Removed the ${name} skill.`;
 
 async function treeFiles(root: string, prefix = ""): Promise<Map<string, Buffer>> {
   const files = new Map<string, Buffer>();
@@ -235,7 +249,7 @@ export class ManagedProject {
   ) {
     const names = new Set<string>();
     for (const name of removedSkills)
-      if (!/^patchy-[a-z0-9-]+$/.test(name)) throw new Error(`Invalid removed skill: ${name}`);
+      if (!skillName.test(name)) throw new Error(`Invalid removed skill: ${name}`);
     for (const file of files) {
       if (!isManagedOutputPath(file.path) || names.has(file.path))
         throw new Error(`Invalid or duplicate generated path: ${file.path}`);

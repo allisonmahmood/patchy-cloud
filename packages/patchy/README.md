@@ -690,7 +690,9 @@ Skills are sticky: refresh re-fetches every present skill and adds any the
 config implies.
 `patchy-server` is the sole tier-keyed exception, removed below tier 2.
 `patchy-members` follows the members declaration and is removed when it is absent.
-A different present skill no longer offered by the release fails refresh.
+A present skill the release doesn't ship, as after a rollback past the release
+that added it, is removed by refresh and a new dev start, which name each skill
+they remove in `warnings`.
 Edit definitions, declarations and invented fixtures; never hand-edit generated
 clients, stamps or project skills. Module additions, removals and renames need
 refresh before publishing; a stale module list is `stale_generated`.
