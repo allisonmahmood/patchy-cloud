@@ -736,6 +736,9 @@ export function htmlPage(options: {
     .list-row p { margin: 0 0 8px; }
     .list-row summary { margin: 12px 0; cursor: pointer; }
     .list-compact .list-row { padding: 4px 0; border-bottom: 0; }
+    /* list-snug: a short list inside a panel, such as a patch's guests in its Share dialog: tighter rows, ruled only between. */
+    .list-snug .list-row { padding: 12px 0; }
+    .list-snug .list-row:last-child { border-bottom: 0; }
     /* list-tree: a row's children indented under a left rule, such as the steps inside a log entry. Use with list list-compact. */
     .list-tree { margin: 8px 0 12px 6px; padding-left: 16px; border-left: 1px solid var(--line-strong); }
     .list-link { display: block; min-height: 44px; padding: 8px 10px; border: 2px solid transparent; border-radius: var(--field-radius); color: var(--ink); text-decoration: none; }

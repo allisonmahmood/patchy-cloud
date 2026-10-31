@@ -25,7 +25,7 @@ Home's shelf of other companies' patches shared with the viewer as their [guest]
 _Avoid_: shared patches, guest patches, inbox
 
 **Share dialog**:
-The modal panel over Home, All patches or a card where the owner or an admin shares a live patch, opened by **Share…** in its menu or `?share=<name>`: an email field first, suggesting people the company has shared with before; the patch's guests with Remove; who can open it, People at the company or Anyone on the internet, where going public is confirmed in place and a tier 2 patch can't; then Copy link and Done. Each form posts and comes back to the same page with the dialog open and its receipt inside; a refusal shows under the field. It is the one place who can open a patch changes in the portal.
+The modal panel over Home, All patches or a card where the owner or an admin shares a live patch, opened by **Share…** in its menu or `?share=<name>`: an email field first, suggesting people the company has shared with before; the patch's guests with Remove; who can open it, People at the company or Anyone on the internet, where going public is confirmed in place and a tier 2 patch can't; then Copy link and Done. Each form posts and comes back to the same page with the dialog open and its receipt inside, the Log tab's to Overview; a refusal shows under the field. It is the one place who can open a patch changes in the portal.
 _Avoid_: share page, sharing settings, invite
 
 **All patches**:

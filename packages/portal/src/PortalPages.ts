@@ -341,6 +341,20 @@ const tabOf: Record<PatchAction, PageTab> = {
 };
 const settingsForbidden = "Only the owner or an admin can change this patch's settings.";
 
+/**
+ * The card header's menu, Share… opening over `here`. The card already holds its other acts:
+ * Settings, and Restore while it's off.
+ */
+const cardMenu = (
+  row: Patches.ReadPatch,
+  viewer: RequireSession.Viewer["Service"],
+  publicBaseUrl: string,
+  here: string
+) => {
+  const items = openItems(row, viewer, publicBaseUrl, here, false);
+  return items.length ? rowMenu(`card-${row.patch.id}`, patchTitle(row.patch), items) : undefined;
+};
+
 /** One patch's card at `/patches/<name>` on one of its tabs. A member asking for Settings gets Overview. */
 const render = Effect.fn("PortalPages.render")(function* (
   name: string,
@@ -393,11 +407,6 @@ const render = Effect.fn("PortalPages.render")(function* (
   const here = `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`;
   const sharing = options.sharing ?? (options.readOnly ? undefined : asked(url));
   const overlay = yield* shareOverlay([selected], sharing);
-  // The card already holds its other acts: Settings, and Restore while it's off.
-  const items = openItems(selected, viewer, session.publicBaseUrl, here, false);
-  const cardMenu = items.length
-    ? rowMenu(`card-${selected.patch.id}`, patchTitle(selected.patch), items)
-    : undefined;
   return pageResponse(
     {
       title: `${patchTitle(card.patch)}${tab === "overview" ? "" : ` ${tab}`}`,
@@ -412,7 +421,7 @@ const render = Effect.fn("PortalPages.render")(function* (
         readOnly: options.readOnly,
         body,
         panel,
-        menu: options.readOnly ? undefined : cardMenu
+        menu: options.readOnly ? undefined : cardMenu(selected, viewer, session.publicBaseUrl, here)
       }),
       styles: styles + shareStyles,
       status: refused ? 403 : (options.status ?? sharing?.status ?? 200),
@@ -822,7 +831,14 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
           before,
           filter,
           choices
-        })
+        }),
+        // Share opens over Overview: the dialog's forms return only to the pages `behind` keeps.
+        menu: cardMenu(
+          selected,
+          viewer,
+          session.publicBaseUrl,
+          `/patches/${encodeURIComponent(name)}`
+        )
       }),
       styles,
       app: { viewer, section: "patches" }

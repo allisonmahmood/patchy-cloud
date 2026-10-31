@@ -3508,6 +3508,22 @@ it.layer(layer)("patch log on a socket", (it) => {
     })
   );
 
+  it.effect("offers Share in the Log tab's menu, opening over Overview", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "logged-tool");
+      const html = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.strictEqual(
+        menuItems(html, `card-${patch.patchId}`),
+        "logged-tool Open in a new tab Copy link Share…"
+      );
+      assert.strictEqual(
+        links(html).find((link) => link.text === "Share…")?.href,
+        `${cardPath(patch.name)}?share=${patch.name}`
+      );
+    })
+  );
+
   it.effect("pages by cursor, filters, and says when nothing is logged or matches", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
