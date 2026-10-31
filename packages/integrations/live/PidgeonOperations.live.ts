@@ -533,8 +533,14 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
           Effect.gen(function* () {
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
-            const customer = need(made.customer, "The customer");
             const { call } = yield* desk(store, connection, patchId);
+            // Someone the desk hasn't written to: Pidgeon refuses a new message to someone the
+            // address wrote to in the last few minutes, and the desk has answered the customer.
+            yield* inbound(connection.display.email, {
+              from: "Lena Ortiz <lena@post.example>",
+              subject: `Is my bike ready? ${Live.RUN}`,
+              text: "Hi, I dropped my Commuter off for a service on Monday. Is it ready?"
+            });
             const draft = `${Live.RUN}-policy`;
             const send = (to: string) =>
               call("pidgeon.write", "messages.send", {
@@ -544,8 +550,11 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
                 idempotencyKey: draft
               });
             yield* refusedWith(send("stranger@customer.example"), "access_denied", "not_permitted");
-            // The customer wrote first, so a reply-only address may write to them.
-            assert.deepInclude(yield* send(customer.email), { status: "sent", replayed: false });
+            // Lena wrote first, so a reply-only address may write to her.
+            assert.deepInclude(yield* send("lena@post.example"), {
+              status: "sent",
+              replayed: false
+            });
           })
       );
 
@@ -555,7 +564,6 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
           Effect.gen(function* () {
             const store = yield* SqlConnectionStore.make;
             const connection = need(made.connection, "The desk");
-            const customer = need(made.customer, "The customer");
             const { call } = yield* desk(store, connection, patchId);
             const send = (draft: string, to: ReadonlyArray<string>) =>
               call("pidgeon.write", "messages.send", {
@@ -630,7 +638,8 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
             );
             yield* Live.reconfigure(identityId, { send_approval: "none" });
             const draft = `${Live.RUN}-rejected`;
-            const recipients = [customer.email, "rejected@customer.example"];
+            // The desk is open now, so it may write to anyone it hasn't written to lately.
+            const recipients = ["offer@customer.example", "rejected@customer.example"];
             const sent = yield* send(draft, recipients);
             const again = yield* send(draft, recipients);
             assert.deepInclude(sent, { status: "sent", replayed: false });
