@@ -158,7 +158,7 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await firedNext(frame, ["L", "L", "L"]);
   });
 
-  await test.step("a scope holds back the page's hotkeys, sequences included, and the list shows them", async () => {
+  await test.step("a scope holds back the page's hotkeys, sequences included, lists them and lets go as it closes", async () => {
     await view.locator("#route").click();
     await page.keyboard.press("?");
     await expect(view.locator("#listed li")).toHaveCount(5);
@@ -173,9 +173,20 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await page.keyboard.press("g");
     await page.keyboard.press("h");
     await firedNext(frame, ["sheet G H"]);
+    // A key dispatched as the scope's list leaves the DOM lands before anything else can run, so
+    // it reaches the page only if the scope let go in the same commit that removed it.
+    await frame.evaluate(() => {
+      new MutationObserver((_, observer) => {
+        if (document.getElementById("listed")) return;
+        observer.disconnect();
+        for (const type of ["keydown", "keyup"])
+          document.dispatchEvent(
+            new KeyboardEvent(type, { key: "l", code: "KeyL", bubbles: true, cancelable: true })
+          );
+      }).observe(document.body, { childList: true, subtree: true });
+    });
     await page.keyboard.press("Escape");
     await expect(view.locator("#listed")).toHaveCount(0);
-    await page.keyboard.press("l");
     await firedNext(frame, ["L"]);
   });
 
