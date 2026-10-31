@@ -200,6 +200,15 @@ const ownedPatches = Layer.effect(
   )
 );
 
+/** People's guests are Patches' grants, which Companies cannot depend on. */
+const companyGuests = Layer.effect(
+  CompanyPage.Guests,
+  Effect.map(GuestGrants.GuestGrants, (grants) => ({
+    list: grants.companyGuests,
+    removeAll: grants.revokeAll
+  }))
+);
+
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
 const services = Layer.mergeAll(
   Artifact.layer,
@@ -407,7 +416,7 @@ const app = Layer.mergeAll(
  */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide(ownedPatches)
+    Layer.provide([ownedPatches, companyGuests])
   ),
   sweeper,
   Layer.effectContext(

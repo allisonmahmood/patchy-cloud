@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
+import type { PatchState } from "@patchy/api";
 import {
   ago,
   avatar,
@@ -13,6 +14,8 @@ import {
   escapeHtml,
   menuLink,
   menuPost,
+  patchMark,
+  patchTitle,
   rowMenu,
   searchField,
   sentenceList
@@ -28,19 +31,24 @@ interface Viewer {
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
   readonly role: Users.Role;
 }
-/** `view` reads People and `view-agent-access` reads Agent access; the rest are admins' forms. */
+/**
+ * `view` reads People and `view-agent-access` reads Agent access; the rest are admins' own: their
+ * forms, and `view-guest-removal`, the confirmation before `remove-guest`.
+ */
 export type Action =
   | { readonly kind: "view" }
   | { readonly kind: "view-agent-access" }
   | { readonly kind: "invite" }
   | { readonly kind: "agent-access" }
   | {
-      readonly kind: "revoke" | "resend" | "role";
+      readonly kind: "revoke" | "resend" | "role" | "view-guest-removal" | "remove-guest";
       readonly id: string;
     };
 
 export interface Page {
   readonly title: string;
+  /** Replaces the heading drawn from the title; a confirmation draws its own under its back link. */
+  readonly heading?: string;
   readonly body: string;
   readonly status?: number;
   readonly redirect?: string;
@@ -59,6 +67,43 @@ export const OwnedPatches = Context.Reference<
     }) => Effect.Effect<ReadonlyMap<string, number>, SqlError>)
   | undefined
 >("@patchy/companies/CompanyPage/OwnedPatches", { defaultValue: () => undefined });
+
+/** A patch shared with a guest, who shared it and when. */
+export interface GuestPatch {
+  readonly name: string;
+  readonly title: string;
+  readonly tier: number;
+  /** Its lifecycle state, or `disabled` once the operator took it down, which no one opens. */
+  readonly state: typeof PatchState.Type | "disabled";
+  /** The sharer's name. */
+  readonly sharedBy: string;
+  readonly sharedAt: Date;
+}
+
+/** Someone at another company with a patch of this company shared with them now. */
+export interface Guest {
+  readonly userId: string;
+  readonly name: string;
+  readonly email: string;
+  /** Their own company's name. */
+  readonly companyName: string;
+  readonly patches: ReadonlyArray<GuestPatch>;
+}
+
+/**
+ * The company's guests, from Patches' grants, which Companies cannot depend on: `list` by name,
+ * and `removeAll`, which ends every grant one person holds here. Left unset, People has no guests.
+ */
+export const Guests = Context.Reference<
+  | {
+      readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Guest>, SqlError>;
+      readonly removeAll: (input: {
+        readonly companyId: string;
+        readonly userId: string;
+      }) => Effect.Effect<void, SqlError>;
+    }
+  | undefined
+>("@patchy/companies/CompanyPage/Guests", { defaultValue: () => undefined });
 
 /** The pages' layout; components come from the shell. */
 export const styles = `
@@ -82,6 +127,13 @@ export const styles = `
     .company-person { display: flex; align-items: center; gap: 12px; }
     .company-actions { display: inline-flex; align-items: center; gap: 6px; }
     .agent-access-state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    /* Guests have two columns, which fit a phone without scrolling. */
+    .company-table .company-guests { min-width: 0; }
+    /* A guest's patches and Remove sit under their name, past the avatar. */
+    .company-guest > :not(summary) { margin-left: 48px; }
+    .company-guest-patches { margin-top: 0; }
+    .company-patch { display: flex; align-items: center; gap: 12px; }
+    .company-subpage { max-width: 760px; margin-inline: auto; }
     @media (max-width: 640px) {
       .company-invite { margin-left: 0; }
       .company-invite[open] { text-align: left; }
@@ -89,13 +141,14 @@ export const styles = `
     }
 `;
 
-const shows = ["all", "admins", "invited", "deactivated"] as const;
+const shows = ["all", "admins", "invited", "deactivated", "guests"] as const;
 type Show = (typeof shows)[number];
 const showLabels: Record<Show, string> = {
   all: "All",
   admins: "Admins",
   invited: "Invited",
-  deactivated: "Deactivated"
+  deactivated: "Deactivated",
+  guests: "Guests"
 };
 
 /** What a GET of the page narrows its list to. */
@@ -162,6 +215,26 @@ const time = (date: Date, label = dateLabel(date.toISOString())) =>
 const noticeHtml = (notice: Notice | undefined) =>
   notice ? `<div class="note note-warn" role="alert">${notice.message}</div>` : "";
 
+const offLabels = { retired: "Retired", deleted: "Deleted", disabled: "Unavailable" } as const;
+/** The pill naming the state a guest's patch is in once it's off. */
+const statePill = ({ state }: GuestPatch) =>
+  state === "live" ? "" : ` <span class="pill">${offLabels[state]}</span>`;
+
+/**
+ * A patch's title, opening the patch, or its card once it's off, as everywhere patches are listed.
+ * A disabled patch opens for no one, so its title is no link.
+ */
+const patchLink = (viewer: Viewer, patch: GuestPatch) => {
+  const title = escapeHtml(patchTitle(patch));
+  const name = encodeURIComponent(patch.name);
+  if (patch.state === "disabled") return `${title}${statePill(patch)}`;
+  const href =
+    patch.state === "live"
+      ? `/${encodeURIComponent(viewer.company.handle)}/${name}`
+      : `/patches/${name}`;
+  return `<a href="${escapeAttribute(href)}">${title}</a>${statePill(patch)}`;
+};
+
 const filterHref = (show: Show, query: string) => {
   const params = new URLSearchParams();
   if (show !== "all") params.set("show", show);
@@ -215,8 +288,9 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
 });
 
 /**
- * `/company`, People: everyone in the company and its open invites, narrowed by a tab and a
- * search. Admins invite from the toolbar and manage each row from its menu.
+ * `/company`, People: everyone in the company, its open invites and its guests, narrowed by a tab
+ * and a search. Admins invite from the toolbar and manage each row from its menu; a guest's row
+ * opens to the patches shared with them, and for admins, removing them from all of them.
  */
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
@@ -225,6 +299,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
   const companies = yield* Companies.Companies;
   const users = yield* (yield* Users.Users).list(viewer.company.id);
   const invites = yield* companies.listInvites(viewer.company.id);
+  const companyGuests = yield* Guests;
+  const guests = companyGuests === undefined ? [] : yield* companyGuests.list(viewer.company.id);
   const ownedPatches = yield* OwnedPatches;
   const owned =
     ownedPatches === undefined
@@ -250,7 +326,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
   );
   type Entry =
     | { readonly kind: "invite"; readonly invite: Companies.Invite }
-    | { readonly kind: "user"; readonly user: Users.User };
+    | { readonly kind: "user"; readonly user: Users.User }
+    | { readonly kind: "guest"; readonly guest: Guest };
   const people = (list: readonly Users.User[]) =>
     list.map((user): Entry => ({ kind: "user", user }));
   const lists: Record<Show, readonly Entry[]> = {
@@ -261,14 +338,21 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ],
     admins: people(active.filter((user) => user.role === "admin")),
     invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
-    deactivated: people(deactivated)
+    deactivated: people(deactivated),
+    guests: guests.map((guest): Entry => ({ kind: "guest", guest }))
   };
   const needle = query.toLowerCase();
-  const entries = lists[show].filter((entry) =>
-    entry.kind === "invite"
-      ? entry.invite.email.toLowerCase().includes(needle)
-      : `${entry.user.name}\n${entry.user.email}`.toLowerCase().includes(needle)
-  );
+  const searched = (entry: Entry) => {
+    switch (entry.kind) {
+      case "invite":
+        return entry.invite.email;
+      case "user":
+        return `${entry.user.name}\n${entry.user.email}`;
+      case "guest":
+        return `${entry.guest.name}\n${entry.guest.email}\n${entry.guest.companyName}`;
+    }
+  };
+  const entries = lists[show].filter((entry) => searched(entry).toLowerCase().includes(needle));
   // While every row is someone who joined, the column holds only dates and is named for them.
   const joinedOnly = entries.every(
     (entry) => entry.kind === "user" && entry.user.deactivatedAt === null
@@ -330,13 +414,38 @@ const render = Effect.fn("CompanyPage.render")(function* (
     return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
   };
 
+  // `#guest-<id>` opens a guest's row: browsers expand a closed details to show a fragment's target.
+  const guestRow = (guest: Guest) => {
+    const patches = guest.patches
+      .map(
+        (patch) =>
+          `<li class="list-row company-patch">${patchMark(patch.name, patch.tier)}<div>${patchLink(viewer, patch)}<br><span class="supporting-text">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></li>`
+      )
+      .join("");
+    const remove = admin
+      ? `<a class="btn btn-quiet btn-danger" href="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}">Remove from all patches…</a>`
+      : "";
+    return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${escapeHtml(guest.companyName)}</td></tr><tr class="table-expand"><td colspan="2"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
+  };
+  const row = (entry: Entry) => {
+    switch (entry.kind) {
+      case "invite":
+        return inviteRow(entry.invite);
+      case "user":
+        return userRow(entry.user);
+      case "guest":
+        return guestRow(entry.guest);
+    }
+  };
+
   const counts: Record<Show, number> = {
     all: invites.length + users.length,
     admins: lists.admins.length,
     invited: invites.length,
-    deactivated: deactivated.length
+    deactivated: deactivated.length,
+    guests: guests.length
   };
-  // Invited and Deactivated appear once there is something in them.
+  // Invited, Deactivated and Guests appear once there is something in them.
   const tabs = shows
     .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
     .map(
@@ -360,9 +469,16 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ? `<p>No one matches “${escapeHtml(query)}”.</p>`
     : show === "invited"
       ? "<p>No open invites.</p>"
-      : "<p>No one is deactivated.</p>";
+      : show === "guests"
+        ? "<p>No guests.</p>"
+        : "<p>No one is deactivated.</p>";
+  // Guests have their own company in place of a role, and nothing beside it.
+  const columns =
+    show === "guests"
+      ? '<th scope="col">Person</th><th scope="col">Company</th>'
+      : `<th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">${joinedOnly ? "Joined" : "Status"}</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}`;
   const table = entries.length
-    ? `<div class="company-table"><table class="table"><thead><tr><th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">${joinedOnly ? "Joined" : "Status"}</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}</tr></thead><tbody>${entries.map((entry) => (entry.kind === "invite" ? inviteRow(entry.invite) : userRow(entry.user))).join("")}</tbody></table></div>`
+    ? `<div class="company-table"><table class="table${show === "guests" ? " company-guests" : ""}"><thead><tr>${columns}</tr></thead><tbody>${entries.map(row).join("")}</tbody></table></div>`
     : empty;
 
   const draft = view.draft;
@@ -385,12 +501,32 @@ const refuse = (viewer: Viewer, message: string, status: number, draft?: Draft) 
   render(viewer, { notice: { message: escapeHtml(message), status }, draft });
 
 /** People again after a change, with the receipt naming it. */
-const done = (receipt: string): Page => ({
+const done = (receipt: string, redirect = "/company"): Page => ({
   title: "People",
   body: "",
-  redirect: "/company",
+  redirect,
   receipt
 });
+
+/**
+ * `/company/guests/<id>/remove`: the patches a guest would lose, for an admin to confirm removing
+ * them from all of them.
+ */
+const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
+  const name = escapeHtml(guest.name);
+  const back = escapeAttribute(filterHref("guests", ""));
+  const patches = guest.patches
+    .map(
+      (patch) =>
+        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
+    )
+    .join("");
+  return {
+    title: `Remove ${guest.name}`,
+    heading: "",
+    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
+  };
+};
 
 /** Turns agent access on or off; a refusal re-renders Agent access, which the form sat on. */
 const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer: Viewer) {
@@ -574,6 +710,25 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           502
         );
       return done(`Sent a new invite to ${result.invite.email}`);
+    }
+    if (act.kind === "view-guest-removal" || act.kind === "remove-guest") {
+      const guests = yield* Guests;
+      const guest =
+        guests === undefined
+          ? undefined
+          : (yield* guests.list(viewer.company.id)).find(({ userId }) => userId === act.id);
+      if (guests === undefined || guest === undefined)
+        return yield* render(viewer, {
+          filter: { show: "guests", query: "" },
+          notice: {
+            message: "No patch here is shared with them now.",
+            status: 404
+          }
+        });
+      if (act.kind === "view-guest-removal") return renderGuestRemoval(viewer, guest);
+      // Ends whatever they hold now, so a patch shared since the confirmation goes too.
+      yield* guests.removeAll({ companyId: viewer.company.id, userId: guest.userId });
+      return done(`Removed ${guest.name} from all patches`, filterHref("guests", ""));
     }
     const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
     const change = users.setRole({ companyId: viewer.company.id, userId: act.id, role });
