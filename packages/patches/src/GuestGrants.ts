@@ -94,12 +94,16 @@ export const unavailable = (
   return Option.none();
 };
 
-/** Whether this version admits the patch's guests: only its current version, while available. */
+/**
+ * Whether this version admits the patch's guests: only its current version, while available.
+ * `loaded` is what the caller's own read of the version said of the patch, so a publish landing
+ * after that read can't turn away a guest the read admits.
+ */
 export const admitsGuests = (
-  patch: Pick<Patch, "state" | "currentVersionId">,
-  version: Pick<PatchVersion, "id"> & Version,
+  loaded: Pick<Patch, "state"> & { readonly current: boolean },
+  version: Version,
   blocked: ReadonlySet<string>
-) => patch.currentVersionId === version.id && Option.isNone(unavailable(patch, version, blocked));
+) => loaded.current && Option.isNone(unavailable(loaded, version, blocked));
 
 /** A patch's guest: who they are and where they're from, read from their own account. */
 export class Guest extends Schema.Class<Guest>("Guest")({
@@ -138,13 +142,6 @@ class Host extends Schema.Class<Host>("Host")({
   id: Schema.String,
   handle: Schema.String,
   name: Schema.String
-}) {}
-
-/** An active grant, with what the rule reads of its patch alongside. */
-class HostRow extends Schema.Class<HostRow>("HostRow")({
-  ...Host.fields,
-  state: PatchState,
-  currentVersionId: Schema.NullOr(Schema.String)
 }) {}
 
 /** A live, company-only patch with an active grant, at its current version. */
@@ -187,13 +184,16 @@ export class GuestGrants extends Context.Service<
     readonly sharedWith: (userId: string) => Effect.Effect<ReadonlyArray<Shared>, Failure>;
     /**
      * The patch's company, while this person holds an active grant to it and guests can open this
-     * version: the doors' one question. The grant's read brings the patch's state and current
-     * version; only a grant holder's question goes on to read the version's connections.
+     * version: the doors' one question. The patch's state and whether the version is current come
+     * from the caller's read, which loaded the version; the grant and the version's connection
+     * blocks are read now, the blocks only for a grant holder and in one read.
      */
     readonly host: (input: {
       readonly patchId: string;
       readonly userId: string;
-      readonly version: Pick<PatchVersion, "id"> & Version;
+      readonly state: Patch["state"];
+      readonly current: boolean;
+      readonly version: Version;
     }) => Effect.Effect<Option.Option<Host>, Failure>;
     /**
      * The company's live, company-only patches with an active grant that guests can't open now,
@@ -273,13 +273,10 @@ export const make = Effect.gen(function* () {
   });
   const hostRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
-    Result: HostRow,
+    Result: Host,
     execute: ({ patchId, userId }) => sql`
-      SELECT c.id, c.handle, c.name, ${state} AS state,
-        p.current_version_id AS "currentVersionId"
-      FROM patch_guest_grants g
-      JOIN patches p ON p.id = g.patch_id
-      JOIN companies c ON c.id = g.company_id
+      SELECT c.id, c.handle, c.name
+      FROM patch_guest_grants g JOIN companies c ON c.id = g.company_id
       WHERE g.patch_id = ${patchId} AND g.user_id = ${userId} AND g.revoked_at IS NULL`
   });
   const sharedPatchRows = SqlSchema.findAll({
@@ -342,18 +339,21 @@ export const make = Effect.gen(function* () {
     }));
   }, Effect.catchTags(dieOnSchemaError));
   const host = Effect.fn("GuestGrants.host")(function* ({
+    state,
+    current,
     version,
     ...grant
   }: {
     readonly patchId: string;
     readonly userId: string;
-    readonly version: Pick<PatchVersion, "id"> & Version;
+    readonly state: Patch["state"];
+    readonly current: boolean;
+    readonly version: Version;
   }) {
     const found = yield* hostRow(grant);
     if (Option.isNone(found)) return Option.none();
-    const { id, handle, name } = found.value;
-    return admitsGuests(found.value, version, yield* blockedAmong([version]))
-      ? Option.some(new Host({ id, handle, name }))
+    return admitsGuests({ state, current }, version, yield* blockedAmong([version]))
+      ? found
       : Option.none();
   }, Effect.catchTags(dieOnSchemaError));
   const unavailableToGuests = Effect.fn("GuestGrants.unavailableToGuests")(function* (

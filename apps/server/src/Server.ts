@@ -166,7 +166,10 @@ const resourceChanges = Layer.effect(
   Effect.map(Wakes.Wakes, (wakes) => ResourceChanges.ResourceChanges.of({ publish: wakes.publish }))
 );
 
-/** Runtime's doors admit a patch's guests by Patches' grants, which Runtime cannot depend on. */
+/**
+ * Runtime's doors admit a patch's guests by Patches' grants, which Runtime cannot depend on.
+ * Runtime loads only live patches, so its loaded version says all the rule needs of the patch.
+ */
 const grantedGuests = Layer.effect(
   GrantedGuests.GrantedGuests,
   Effect.map(GuestGrants.GuestGrants, (grants) =>
@@ -176,7 +179,9 @@ const grantedGuests = Layer.effect(
           .host({
             patchId: loaded.patchId,
             userId,
-            version: { id: loaded.versionId, tier: loaded.manifest.tier, manifest: loaded.manifest }
+            state: "live",
+            current: loaded.current === true,
+            version: { tier: loaded.manifest.tier, manifest: loaded.manifest }
           })
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
     })

@@ -5,9 +5,10 @@ import { LoadedVersions } from "@patchy/runtime";
 import * as Patches from "./Patches.js";
 
 /**
- * A version in service as Runtime runs it, with its effective audience: what a page's call loads,
- * and what Patchy MCP's door runs an agent's call on. Whether guests may open it is
- * `GuestGrants.host`'s question, asked only of someone outside the company.
+ * A version in service as Runtime runs it, with its effective audience and whether it was current
+ * in this read: what a page's call loads, and what Patchy MCP's door runs an agent's call on.
+ * Whether guests may open it is `GuestGrants.host`'s question, asked only of someone outside the
+ * company.
  */
 export const loaded = ({
   patch,
@@ -17,18 +18,19 @@ export const loaded = ({
   readonly patch: Patches.Patch;
   readonly version: Patches.PatchVersion;
   readonly patchTier: number;
-}): LoadedVersions.LoadedVersion & { readonly patchTier: number } => ({
-  patchId: patch.id,
-  versionId: version.id,
-  companyId: patch.companyId,
-  manifest: version.manifest,
-  wireVersion: version.wireVersion,
-  patchTier,
-  scope:
-    patch.scope === "public" && patch.currentVersionId === version.id
-      ? ("public" as const)
-      : ("company" as const)
-});
+}): LoadedVersions.LoadedVersion & { readonly patchTier: number } => {
+  const current = patch.currentVersionId === version.id;
+  return {
+    patchId: patch.id,
+    versionId: version.id,
+    companyId: patch.companyId,
+    manifest: version.manifest,
+    wireVersion: version.wireVersion,
+    patchTier,
+    scope: patch.scope === "public" && current ? ("public" as const) : ("company" as const),
+    ...(current ? { current: true as const } : {})
+  };
+};
 
 /** Shares the serving door's live current/exact-version lookup and effective audience. */
 export const make = Effect.gen(function* () {
