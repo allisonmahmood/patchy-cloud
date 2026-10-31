@@ -26,7 +26,9 @@ offers start, stop, environment and **Check** actions; import them once from
 | `pnpm verify`           | `check`, then every acceptance suite CI runs except live Clerk                             | before calling a change ready to ship |
 | `pnpm verify --changed` | the same, skipping the acceptance suites when only docs, agent files or the runner changed | docs and runner changes               |
 
-`pnpm verify` mirrors CI's jobs: `postgres-concurrency`, `cli-smoke` (a
+`pnpm verify` mirrors CI's jobs: `test (bun)` (`pnpm test:bun`, the offline
+tests on Bun, the runtime production runs the server on, leaving out the files
+`vitest.bun.config.ts` names as Node-only), `postgres-concurrency`, `cli-smoke` (a
 one-second check that the packed harness reaps orphaned processes, the packed CLI
 end to end, and the packed Preact runtime), `install` (the installer and CLI on
 this machine: each platform's install line, a Node switch, an earlier install
@@ -39,7 +41,10 @@ uses this Node for both sides, so its switch changes only the npm prefix; pass
 `--node-a` and `--node-b` to switch Nodes too. It keeps
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0, 24.20.0 and 26.11.1, `cli-smoke` again on Node 26.11.1, and `clerk-live`
-on pushes to `main` and same-repository PRs.
+on pushes to `main` and same-repository PRs. The server those suites start runs on
+Bun, as production runs it; the CLI runs on Node, as people run it. CI's `image`
+job, in `server-image.yml`, builds the production image and runs it with
+`scripts/server-image-smoke.mjs`, which needs Docker, so `pnpm verify` leaves it out.
 
 On pull requests CI also runs `rollback-rehearsal`. When the PR changes a
 capability's `src/migrations.ts`, the handler descriptor schemas
@@ -59,7 +64,7 @@ CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
 `macos-15` and `windows-2025`, and every job that runs the repository's code
 to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
-`node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
+`node:24-slim` digest in `apps/server/Dockerfile`, which builds the image.
 Bun is pinned once, as the `bun: runtime:<version>` devDependency in
 `package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
 devDependency rather than `devEngines.runtime` because npm, which the packed CLI
@@ -67,7 +72,10 @@ tests run from the repository root, refuses a `devEngines.runtime` that isn't No
 Dependabot doesn't bump it, and pnpm's one-day `minimumReleaseAge` doesn't cover
 runtime downloads. To bump it, pick a release at least a day old (`gh release view
 bun-v<version> -R oven-sh/bun --json publishedAt`), change the version there and
-run `pnpm install` to rewrite the lockfile.
+run `pnpm install` to rewrite the lockfile. Production runs the same Bun, so move
+the `oven/bun:<version>-slim` runner in `apps/server/Dockerfile` with it, pinned to
+`crane digest --platform linux/amd64 oven/bun:<version>-slim`; the image build
+refuses a runner of another version, or one whose `bun` isn't the lockfile's binary.
 
 Format is `bun fmt`, which reads `prettier.config.js` and `.prettierignore` and
 checks the whole repo in a fraction of a second. The pre-commit hook is still

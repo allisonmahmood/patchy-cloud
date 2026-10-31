@@ -17,9 +17,9 @@
   "scripts": {
     "build": "effect-tsgo tsc -p tsconfig.json",
     "dev": "tsx --conditions=development watch src/start.ts",
-    "start": "node dist/start.js",
-    "exec": "node dist/exec.js",
-    "fleet": "node dist/fleet.js",
+    "start": "bun dist/start.js",
+    "exec": "bun dist/exec.js",
+    "fleet": "bun dist/fleet.js",
     "test": "vitest run",
     "docker": "docker build -f Dockerfile -t patchy-server ../.."
   },

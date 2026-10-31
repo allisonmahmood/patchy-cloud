@@ -987,7 +987,9 @@ async function startServerAttempt({ publicBaseUrl, objectDir }) {
   const readyPromise = new Promise((resolve) => {
     readyResolve = resolve;
   });
-  serverProcess = spawn(process.execPath, [serverEntry], {
+  // The server runs on production's runtime, the Bun the root package.json pins;
+  // the packed CLI stays on this Node, as it does on people's machines.
+  serverProcess = spawn(path.join(repoRoot, "node_modules/bun/bun"), [serverEntry], {
     cwd: repoRoot,
     env: serverEnv,
     detached: true,

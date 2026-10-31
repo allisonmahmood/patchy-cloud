@@ -99,6 +99,31 @@ describe("keyed operations", () => {
     })
   );
 
+  // The Node runs open these, so a rollback from Bun to Node reads what Bun hosts sealed.
+  // The Bun run opens the Node-sealed fixtures above, the other direction.
+  it.effect("opens what Bun 1.4.4 sealed", () =>
+    Effect.gen(function* () {
+      const credential = yield* cryptography.open(
+        Buffer.alloc(32, 42),
+        "MZApG5ftLCoPyXTPidqsrBanNrTtQelwKXsTNgn+j+kyrwDMpMZ4C4Ashs8uQiHGqIRxK/vWJyUPz5W2gFQ=",
+        JSON.stringify(["co_fixture", "conn_fixture", "postgres", "fixture"])
+      );
+      expect(credential).toBe('{"url":"postgres://sealed-on-bun"}');
+      const retryKey = yield* cryptography.hkdfSha256(
+        "pwr_fixture",
+        "",
+        "patchy agent connection retry",
+        32
+      );
+      const retry = yield* cryptography.open(
+        retryKey,
+        "lEmLot5M6UHgQcvLWJi5E1V/+pxFOhXJf/4dCMNkrg2bDuVcVs4a7xPCz0paQ1FSXWaDf+GXNWei4jEzk1VJIzNX9Tuv04RvgDAmVe7f",
+        "conn_fixture"
+      );
+      expect(retry).toBe('{"accessToken":"pwa_bun","refreshToken":"pwr_bun"}');
+    })
+  );
+
   it.effect("seals under a fresh nonce, and opens only under the same key and context", () =>
     Effect.gen(function* () {
       const key = Buffer.alloc(32, 7);

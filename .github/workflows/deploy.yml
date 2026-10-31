@@ -159,7 +159,7 @@ jobs:
           package_json_file: package.json
       - uses: actions/setup-node@v7
         with:
-          # Matches the digest-pinned node:24-slim image and the local recipe.
+          # Builds the image, as the Dockerfile's node:24-slim builder and the local recipe do.
           node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
@@ -246,11 +246,14 @@ jobs:
             --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
 
       # 8. Only now that the new hosts serve: promoting earlier would leave a
-      #    staged revision with no hosts if the rollout had failed.
+      #    staged revision with no hosts if the rollout had failed. The command
+      #    is the one the image was built with, so a rollback to an image on
+      #    another runtime (Node before Bun) promotes with its own.
       - name: Promote the fleet to this revision
         run: |
-          overrides=$(jq -cn --arg revision "$DEPLOYMENT_REVISION" \
-            '{containerOverrides: [{name: "host", command: ["node", "dist/fleet.js", "promote", $revision]}]}')
+          overrides=$(jq -c --arg revision "$DEPLOYMENT_REVISION" \
+            '{containerOverrides: [{name: "host", command: (.fleetCommand + ["promote", $revision])}]}' \
+            .local/server-image.tar.json)
           task=$(aws ecs run-task --cluster "$APP_ClusterName" --task-definition "$APP_HostTaskDefinitionArn" \
             --launch-type FARGATE --count 1 --started-by deploy-promote --overrides "$overrides" \
             --network-configuration "awsvpcConfiguration={subnets=[$APP_HostSubnetIds],securityGroups=[$APP_HostSecurityGroupId],assignPublicIp=ENABLED}" \

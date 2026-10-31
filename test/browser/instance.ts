@@ -302,8 +302,9 @@ export async function startInstance(clerkUserId: string): Promise<BrowserInstanc
     const origin = `http://127.0.0.1:${port}`;
     // Ignore the in-memory Vitest tier's URL; release our own reservation only at spawn.
     await serverPort.release();
+    // The server runs on production's runtime, the Bun the root package.json pins.
     const server = launch(
-      process.execPath,
+      path.join(repoRoot, "node_modules/bun/bun"),
       [path.join(repoRoot, "apps/server/dist/start.js")],
       repoRoot,
       {

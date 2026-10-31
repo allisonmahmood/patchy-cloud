@@ -208,7 +208,7 @@ export class AppStack extends Stack {
           image,
           essential: true,
           user: "0",
-          command: ["node", "dist/exec.js"],
+          command: ["bun", "dist/exec.js"],
           linuxParameters: { capabilities: { drop: execDroppedCapabilities } },
           portMappings: [{ containerPort: port.management, protocol: "tcp" }],
           stopTimeout: 120,
@@ -308,7 +308,7 @@ export class AppStack extends Stack {
       containerName: "host",
       image: ecs.ContainerImage.fromEcrRepository(base.repository, props.imageDigest),
       user: "1000",
-      command: ["node", "dist/start.js"],
+      command: ["bun", "dist/start.js"],
       stopTimeout: Duration.seconds(120),
       portMappings: [{ containerPort: port.host }, { containerPort: port.callback }],
       environment: {
