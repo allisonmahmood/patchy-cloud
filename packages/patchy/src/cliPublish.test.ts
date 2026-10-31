@@ -1088,11 +1088,99 @@ describe("patchy share", () => {
     expect(readFileSync(cachePath, "utf8")).toBe(cache);
   });
 
+  it("adds, lists and removes a patch's guests, one JSON document each", async () => {
+    const patchId = "abcdefghijkl";
+    const guest = {
+      userId: "usr_jo",
+      name: "Jo Rivera",
+      email: "jo@pine.example",
+      company: { name: "Pine Studio" },
+      grantedAt: "2026-10-30T10:00:00.000Z"
+    };
+    const address = `http://instance.test/${DEV_SEED.companyHandle}/page`;
+    const guests = new Map<string, typeof guest>();
+    const instance = await stubInstance((request, respond) => {
+      const base = `/api/patches/${patchId}/guests`;
+      if (request.method === "POST" && request.url === base) {
+        expect(request.body).toEqual({ email: guest.email });
+        guests.set(guest.userId, guest);
+        return respond(200, { ok: true, patchId, address, guest });
+      }
+      if (request.method === "GET" && request.url === base)
+        return respond(200, { ok: true, patchId, guests: [...guests.values()] });
+      if (
+        request.method === "DELETE" &&
+        request.url === `${base}/${encodeURIComponent(guest.email)}`
+      )
+        return respond(200, { ok: true, patchId, removed: guests.delete(guest.userId) });
+      respond(404, { ok: false, error: "Patch not found." });
+    });
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const share = (...args: string[]) => runCli(["share", "--patch", patchId, ...args], { env });
+
+    const added = await share("--add", guest.email, "--json");
+    expect(added).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(added.stdout)).toEqual({ ok: true, patchId, address, guest });
+    const said = await share("--add", guest.email);
+    expect(said.stdout).toContain("Shared with Jo Rivera (jo@pine.example), Pine Studio");
+    expect(said.stdout).toContain(`send them the link`);
+
+    const listed = await share("--list", "--json");
+    expect(JSON.parse(listed.stdout)).toEqual({ ok: true, patchId, guests: [guest] });
+    expect((await share("--list")).stdout).toContain(
+      "Jo Rivera (jo@pine.example), Pine Studio · usr_jo"
+    );
+
+    const removed = await share("--remove", guest.email, "--json");
+    expect(JSON.parse(removed.stdout)).toEqual({ ok: true, patchId, removed: true });
+    expect((await share("--remove", guest.email)).stdout).toContain(
+      "jo@pine.example wasn't a guest of this patch"
+    );
+    expect((await share("--list")).stdout).toContain("No guests");
+  });
+
+  it.each([
+    { status: 422, code: "not_on_patchy", error: "nobody@nowhere.example isn't on Patchy yet." },
+    {
+      status: 409,
+      code: "already_member",
+      error: "sam@northwind.example is already in this company."
+    },
+    {
+      status: 422,
+      code: "guests_unavailable",
+      error: "Guests can't open this patch.",
+      reason: { code: "connection_blocked", integration: "postgres", handle: "payroll" }
+    }
+  ])("keeps $code and its source when sharing is refused", async ({ status, ...refusal }) => {
+    const instance = await stubInstance((_, respond) => respond(status, { ok: false, ...refusal }));
+    const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
+    const args = ["share", "--patch", "abcdefghijkl", "--add", "jo@pine.example"];
+    const json = await runCli([...args, "--json"], { env });
+    expect(json.status).toBe(2);
+    expect(json.stdout).toBe("");
+    expect(JSON.parse(json.stderr)).toMatchObject({
+      ok: false,
+      kind: "rejected",
+      code: refusal.code,
+      ...("reason" in refusal ? { reason: refusal.reason } : {})
+    });
+    if (refusal.code === "guests_unavailable")
+      expect((await runCli(args, { env })).stderr).toContain(
+        "Guests can't open this patch. It uses postgres/payroll, which blocks guests."
+      );
+  });
+
   it.each([
     { args: [] },
     { args: ["--patch", "abcdefghijkl", "private"] },
-    { args: ["page.html", "public", "--patch", "abcdefghijkl"] }
-  ])("rejects invalid targets or scope locally: $args", async ({ args }) => {
+    { args: ["page.html", "public", "--patch", "abcdefghijkl"] },
+    { args: ["--patch", "abcdefghijkl", "--add", "jo@pine.example", "--list"] },
+    { args: ["--patch", "abcdefghijkl", "--add", "jo@pine.example", "--remove", "usr_jo"] },
+    { args: ["--patch", "abcdefghijkl", "--list", "public"] },
+    { args: ["--patch", "abcdefghijkl", "--remove", "usr_jo", "--share", "company"] },
+    { args: ["page.html", "--patch", "abcdefghijkl", "--list"] }
+  ])("rejects invalid targets, scopes or operations locally: $args", async ({ args }) => {
     const instance = await stubInstance((_, respond) => respond(500, {}));
     const result = await runCli(["share", ...args, "--json"], {
       env: { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" }

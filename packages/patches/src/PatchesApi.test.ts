@@ -32,6 +32,7 @@ import {
   type Identity,
   PatchyApi,
   PatchesGroup,
+  GuestRequest,
   ShareRequest,
   ForceRequest,
   DescriptionRequest,
@@ -164,7 +165,9 @@ const lifecycleEvents = (patchId: string) =>
 const layer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, GuestGrants.layer, looks, memoryStore)),
+  Layer.provideMerge(
+    Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
+  ),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
@@ -433,7 +436,9 @@ const publishConfig = (
 const publishLayer = Layer.mergeAll(PatchesApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(Fixtures.authorization),
   Layer.provideMerge(Layer.mergeAll(Content.layer, Limits.layer)),
-  Layer.provideMerge(Layer.mergeAll(Patches.layer, GuestGrants.layer, looks, memoryStore)),
+  Layer.provideMerge(
+    Layer.mergeAll(GuestGrants.layer.pipe(Layer.provideMerge(Patches.layer)), looks, memoryStore)
+  ),
   Layer.provideMerge(recordingAnalytics),
   Layer.provideMerge(Layer.mergeAll(InvocationLog.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Fixtures.database),
@@ -601,6 +606,95 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
         { name: "patch.deleted", ...envelope, properties: change },
         { name: "patch.restored", ...envelope, properties: { ...change, from: "deleted" } }
       ]);
+    })
+  );
+
+  it.effect("shares an owned patch with someone at another company, and says why it won't", () =>
+    Effect.gen(function* () {
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const nonOwner = yield* client.pipe(Effect.provide(Fixtures.as(admin)));
+      const created = yield* owner.publish({ payload: publishRequest({ html: html("Guests") }) });
+      const params = { patchId: created.patchId };
+      const companies = yield* Companies.Companies;
+      const jo = yield* companies.create({
+        handle: "guest-share",
+        name: "Pine Studio",
+        clerkUserId: "user_guest_share",
+        email: "jo@guest-share.example",
+        userName: "Jo"
+      });
+      const gone = yield* companies.create({
+        handle: "guest-gone",
+        name: "Gone Co",
+        clerkUserId: "user_guest_gone",
+        email: "lee@guest-gone.example",
+        userName: "Lee"
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${gone.user.id}`;
+      const add = (email: string, api = owner) =>
+        api.addGuest({
+          params,
+          payload: new GuestRequest({ email }),
+          responseMode: "response-only"
+        });
+
+      // A deactivated account answers as an unknown one does, so no company's state shows.
+      for (const [email, status, code] of [
+        ["nobody@nowhere.example", 422, "not_on_patchy"],
+        [gone.user.email, 422, "not_on_patchy"],
+        [admin.user.email, 409, "already_member"]
+      ] as const) {
+        const refused = yield* add(email);
+        assert.strictEqual(refused.status, status);
+        expect(yield* refused.json).toMatchObject({ ok: false, code });
+      }
+      const notOwner = yield* add(jo.user.email, nonOwner);
+      assert.strictEqual(notOwner.status, 403);
+      expect(yield* notOwner.json).toMatchObject({ code: "not_owner" });
+      assert.deepStrictEqual((yield* owner.listGuests({ params })).guests, []);
+
+      const shared = yield* owner.addGuest({
+        params,
+        payload: new GuestRequest({ email: "Jo@Guest-Share.example" })
+      });
+      assert.strictEqual(shared.address, created.publicUrl);
+      assert.deepInclude(shared.guest, {
+        userId: jo.user.id,
+        name: "Jo",
+        email: "jo@guest-share.example",
+        company: { name: "Pine Studio" }
+      });
+      // Sharing again keeps the grant as it was.
+      yield* TestClock.adjust("1 hour");
+      assert.deepStrictEqual(
+        (yield* owner.addGuest({ params, payload: new GuestRequest({ email: jo.user.email }) }))
+          .guest,
+        shared.guest
+      );
+      assert.deepStrictEqual((yield* owner.listGuests({ params })).guests, [shared.guest]);
+
+      // Removing by email ends it; again, by id, there's no one to remove.
+      const remove = (guest: string) => owner.removeGuest({ params: { ...params, guest } });
+      assert.isTrue((yield* remove(jo.user.email)).removed);
+      assert.isFalse((yield* remove(jo.user.id)).removed);
+      assert.deepStrictEqual((yield* owner.listGuests({ params })).guests, []);
+
+      // Sharing again after a removal brings them back, as of now.
+      yield* TestClock.adjust("1 hour");
+      const back = yield* owner.addGuest({
+        params,
+        payload: new GuestRequest({ email: jo.user.email })
+      });
+      assert.notStrictEqual(back.guest.grantedAt, shared.guest.grantedAt);
+      assert.deepStrictEqual((yield* owner.listGuests({ params })).guests, [back.guest]);
+
+      // A retired patch answers its state, never not found, and keeps its guests.
+      yield* owner.retire({ params, payload: new ForceRequest({}) });
+      const retired = yield* add(jo.user.email);
+      assert.strictEqual(retired.status, 409);
+      expect(yield* retired.json).toMatchObject({ code: "wrong_state", state: "retired" });
+      assert.deepStrictEqual((yield* owner.listGuests({ params })).guests, [back.guest]);
     })
   );
 
@@ -2594,12 +2688,11 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         );
       const created = yield* version();
       yield* connections.blockGuests({ ...identity, block: true });
-      const warning = GuestGrants.warning(
-        GuestGrants.Reason.cases.ConnectionBlocked.make({
-          integration: "postgres",
-          handle: "guest-warehouse"
-        })
-      );
+      const warning = GuestGrants.warning({
+        code: "connection_blocked",
+        integration: "postgres",
+        handle: "guest-warehouse"
+      });
       assert.notInclude((yield* version(created.patchId)).warnings, warning);
 
       const guest = yield* (yield* Companies.Companies).create({
@@ -2608,6 +2701,18 @@ it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
         clerkUserId: "user_guest_publish",
         email: "gina@guest-publish.example",
         userName: "Gina"
+      });
+      // Share refuses with the reason's code and source, which the caller words.
+      const refused = yield* api.addGuest({
+        params: { patchId: created.patchId },
+        payload: new GuestRequest({ email: guest.user.email }),
+        responseMode: "response-only"
+      });
+      assert.strictEqual(refused.status, 422);
+      expect(yield* refused.json).toMatchObject({
+        ok: false,
+        code: "guests_unavailable",
+        reason: { code: "connection_blocked", integration: "postgres", handle: "guest-warehouse" }
       });
       yield* (yield* GuestGrants.GuestGrants).grant({
         patchId: created.patchId,

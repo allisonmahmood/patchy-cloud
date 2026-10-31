@@ -1,3 +1,4 @@
+import { type GuestReason, guestReasonText } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import {
   ago,
@@ -15,7 +16,7 @@ import {
   rowMenu,
   searchField
 } from "@patchy/core";
-import { GuestGrants, type Patches } from "@patchy/patches";
+import type { Patches } from "@patchy/patches";
 import { firstClause, hidden, patchTitle, turnedAwayTitle } from "./render.js";
 
 /** All patches' layout; components come from the shell. */
@@ -106,7 +107,7 @@ const attentionOf = (
   names: ReadonlyMap<string, string>,
   now: number,
   failures: ReadonlyMap<string, number> | undefined,
-  turnedAway: ReadonlyMap<string, GuestGrants.Reason> | undefined
+  turnedAway: ReadonlyMap<string, GuestReason> | undefined
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
@@ -137,7 +138,7 @@ const attentionOf = (
   if (patch.state === "live" && reason !== undefined)
     return {
       title: turnedAwayTitle,
-      detail: GuestGrants.describe(reason),
+      detail: guestReasonText(reason),
       act: `<a class="btn" href="${escapeAttribute(cardPath(patch))}">View patch</a>`
     };
   return undefined;
@@ -152,14 +153,31 @@ const actor = (id: string | null, names: ReadonlyMap<string, string>) => {
 export const patchAddress = (patch: Patches.Patch) =>
   `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
 
+/** `here`, the page a menu is on, with the Share dialog for patch `name` open over it. */
+export const shareHref = (here: string, name: string) => {
+  const url = new URL(here, "http://patchy.invalid");
+  url.searchParams.set("share", name);
+  return `${url.pathname}${url.search}`;
+};
+
 /**
- * The ways to open a patch, then its card, as a row's menu starts on Home and All patches. Its
- * name already opens a live patch, so the menu offers a new tab, the link and About this patch.
+ * The ways to open a patch, Share… for one the viewer manages, then its card, as a row's menu
+ * starts on Home and All patches. Its name already opens a live patch, so the menu offers a new
+ * tab, the link and About this patch; the card's own menu is these without About. `here` is the
+ * page the menu is on, which the Share dialog opens over.
  */
-export const openItems = (patch: Patches.Patch, publicBaseUrl: string) => {
+export const openItems = (
+  row: Patches.ReadPatch,
+  viewer: Viewer,
+  publicBaseUrl: string,
+  here: string,
+  about = true
+) => {
+  const { patch } = row;
   const title = patchTitle(patch);
+  const live = patch.state === "live";
   return [
-    ...(patch.state === "live"
+    ...(live
       ? [
           `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`,
           menuCopy(
@@ -169,14 +187,22 @@ export const openItems = (patch: Patches.Patch, publicBaseUrl: string) => {
           )
         ]
       : []),
-    menuLink(cardPath(patch), "About this patch", false, title)
+    ...(live && manages(row, viewer)
+      ? [menuLink(shareHref(here, patch.name), "Share…", false, title)]
+      : []),
+    ...(about ? [menuLink(cardPath(patch), "About this patch", false, title)] : [])
   ];
 };
 
 /** Every act on a patch the viewer may perform, each going to the route that already does it. */
-const actions = (row: Patches.ReadPatch, viewer: Viewer, publicBaseUrl: string, now: number) => {
+const actions = (
+  row: Patches.ReadPatch,
+  viewer: Viewer,
+  input: { readonly publicBaseUrl: string; readonly now: number; readonly here: string }
+) => {
   const { patch } = row;
-  const items = openItems(patch, publicBaseUrl);
+  const { now } = input;
+  const items = openItems(row, viewer, input.publicBaseUrl, input.here);
   if (!manages(row, viewer)) return rowMenu(patch.id, patchTitle(patch), items);
   const title = patchTitle(patch);
   const manage = [
@@ -221,7 +247,7 @@ export const renderAllPatches = (input: {
   /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
   readonly failures?: ReadonlyMap<string, number>;
   /** Why guests can't open each patch with guests that turns them away; absent for a member. */
-  readonly turnedAway?: ReadonlyMap<string, GuestGrants.Reason>;
+  readonly turnedAway?: ReadonlyMap<string, GuestReason>;
 }): string => {
   const { viewer, now, show, query, names } = input;
   const byVisits = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
@@ -282,8 +308,9 @@ export const renderAllPatches = (input: {
   };
   const ownerCell = (row: Patches.ReadPatch) =>
     `<td><div class="portal-list-person">${avatar(row.owner.id, row.owner.name, row.owner.deactivated ? "off" : undefined)}<span>${row.owner.id === viewer.user.id ? "You" : escapeHtml(row.owner.name)}${row.owner.deactivated ? '<span class="tag">Deactivated</span>' : ""}</span></div></td>`;
+  const here = filterHref(show, query);
   const menuCell = (row: Patches.ReadPatch, extra = "") =>
-    `<td class="portal-list-actions">${extra}${actions(row, viewer, input.publicBaseUrl, now)}</td>`;
+    `<td class="portal-list-actions">${extra}${actions(row, viewer, { publicBaseUrl: input.publicBaseUrl, now, here })}</td>`;
   const time = (iso: string) =>
     `<time datetime="${escapeAttribute(iso)}">${escapeHtml(ago(iso, now))}</time>`;
 

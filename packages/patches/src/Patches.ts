@@ -880,6 +880,14 @@ export class Patches extends Context.Service<
       | Behind
       | SqlError
     >;
+    /**
+     * The patch, when `actor` may manage it: its owner, or an admin of its company. Any state;
+     * the row stays locked until the caller's transaction ends.
+     */
+    readonly manage: (
+      patchId: string,
+      actor: Actor
+    ) => Effect.Effect<Patch, PatchUnavailable | NotOwner | SqlError>;
     /** Changes a live patch's audience without creating a version. */
     readonly setScope: (
       patchId: string,
@@ -2363,6 +2371,9 @@ export const make = Effect.gen(function* () {
     ownerUserId: row.ownerUserId,
     byAdmin: actor.admin
   });
+  const manage = Effect.fn("Patches.manage")((patchId: string, actor: Actor) =>
+    manageable(patchId, actor).pipe(Effect.map(toPatch))
+  );
   const setScope = Effect.fn("Patches.setScope")(function* (
     patchId: string,
     actor: Actor,
@@ -2777,6 +2788,7 @@ export const make = Effect.gen(function* () {
     claimObjects,
     completeObject,
     record,
+    manage,
     setScope,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,

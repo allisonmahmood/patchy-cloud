@@ -65,7 +65,7 @@ export interface Instance {
   foreignRequests: string[];
   session(
     context: BrowserContext,
-    user?: "owner" | "colleague" | "expired" | "none",
+    user?: "owner" | "colleague" | "guest" | "expired" | "none",
     expiresInSeconds?: number
   ): Promise<string | null>;
   publish(
@@ -233,19 +233,26 @@ export async function startCluster(): Promise<Cluster> {
         await client.end();
       }
     };
-    // Exactly what a brand-new instance held: the server's migrations, the dev seed and the
-    // colleague. No patches, placements or name backfill.
+    // Exactly what a brand-new instance held: the server's migrations, the dev seed, the
+    // colleague and someone at another company to share with. No patches, placements or name
+    // backfill.
     await postgres.createDatabase(TEMPLATE);
     await Effect.runPromise(
       migrate(migrations).pipe(Effect.provide(layerFromUrl(Redacted.make(url(TEMPLATE)))))
     );
     await applyDevSeed(url(TEMPLATE));
-    await connect(TEMPLATE, (template) =>
-      template.query(
+    await connect(TEMPLATE, async (template) => {
+      await template.query(
         "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_colleague', 'user_colleague', $1, 'colleague@patchy.local', 'Colleague', 'member')",
         [seed.companyId]
-      )
-    );
+      );
+      await template.query(
+        "INSERT INTO companies (id, handle, name) VALUES ('cmp_pine', 'pine', 'Pine Studio')"
+      );
+      await template.query(
+        "INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES ('usr_guest', 'user_guest', 'cmp_pine', 'guest@pine.example', 'Jo Rivera', 'member')"
+      );
+    });
     const baseline = await connect("postgres", async (admin) => {
       // No test can drift a template nothing connects to; cloning still works.
       await admin.query(`ALTER DATABASE ${TEMPLATE} WITH ALLOW_CONNECTIONS false`);
@@ -760,10 +767,15 @@ export async function startInstance(options: {
           return null;
         }
         const now = Math.floor(Date.now() / 1000);
+        const person = {
+          owner: { sub: "user_dev", email: "dev@patchy.local" },
+          expired: { sub: "user_dev", email: "dev@patchy.local" },
+          colleague: { sub: "user_colleague", email: "colleague@patchy.local" },
+          guest: { sub: "user_guest", email: "guest@pine.example" }
+        }[user];
         const token = signSession({
           azp: origin,
-          sub: user === "colleague" ? "user_colleague" : "user_dev",
-          email: user === "colleague" ? "colleague@patchy.local" : "dev@patchy.local",
+          ...person,
           iat: now - 120,
           nbf: now - 120,
           exp: user === "expired" ? now - 60 : now + expiresInSeconds

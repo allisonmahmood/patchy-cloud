@@ -67,11 +67,9 @@ const lifecycleEvents = (companyId: string) =>
       : []
   );
 const services = Layer.mergeAll(
-  Patches.layer,
-  GuestGrants.layer,
+  GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
   Session.layer,
   Companies.layer,
-  Users.layer,
   InvocationLog.layer,
   MachineTokens.layer,
   Limits.layer
@@ -347,6 +345,22 @@ const receiptAfter = Effect.fn("PortalPagesTest.receiptAfter")(function* (
   const html = yield* page.text;
   return text(html.match(/<p class="note note-ok app-receipt"[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "");
 });
+/** The page a Share dialog's form lands on, with the receipt its dialog shows, once. */
+const dialogAfter = Effect.fn("PortalPagesTest.dialogAfter")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+  person: Person
+) {
+  const page = yield* request(response.headers.location!, person, undefined, {
+    cookie: `${sessionCookie(person)}; ${Cookies.toCookieHeader(response.cookies)}`
+  });
+  const html = yield* page.text;
+  const dialog =
+    html.match(/<section class="modal-panel share-dialog"[\s\S]*<\/section>/)?.[0] ?? "";
+  return {
+    html: dialog,
+    receipt: text(dialog.match(/<p class="note note-ok" role="status">([\s\S]*?)<\/p>/)?.[1] ?? "")
+  };
+});
 const text = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
@@ -482,8 +496,13 @@ it.layer(layer)("portal pages on a socket", (it) => {
           []
         );
         const tabs = links(html)
-          .filter((link) => link.href.startsWith(cardPath(patch.name)))
+          .filter((link) => link.href.startsWith(cardPath(patch.name)) && link.text !== "Share…")
           .map((link) => link.text);
+        // Share… sits in the card's menu, for those who manage the patch.
+        assert.strictEqual(
+          menuItems(html, `card-${patch.patchId}`),
+          `A useful office tool Open in a new tab Copy link${person === workspace.member ? "" : " Share…"}`
+        );
         const settings = yield* request(`${cardPath(patch.name)}/settings`, person);
         if (person === workspace.member) {
           assert.deepStrictEqual(tabs, ["Overview", "Versions 5"]);
@@ -497,13 +516,12 @@ it.layer(layer)("portal pages on a socket", (it) => {
           assert.strictEqual(settings.status, 200);
           const manage = yield* settings.text;
           const controls = forms(manage).filter((path) => path.startsWith(cardPath(patch.name)));
-          for (const action of ["description", "scope"])
-            assert.include(controls, `${cardPath(patch.name)}/${action}`);
+          // Who can open it is the Share dialog's alone.
+          assert.deepStrictEqual(controls, [`${cardPath(patch.name)}/description`]);
           for (const action of ["retire", "delete"])
             assert.isTrue(
               links(manage).some((link) => link.href === `${cardPath(patch.name)}/${action}`)
             );
-          assert.strictEqual(hidden(manage, "expectedScope"), "company");
           assert.isDefined(hidden(manage, "expectedDescriptionUpdatedAt"));
           assert.strictEqual(
             links(manage).some((link) => link.href === `${cardPath(patch.name)}/reassign`),
@@ -1104,7 +1122,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           ["tools", tool]
         ] as const) {
           const menu = menuItems(html, `${shelfName}-${patch.patchId}`);
-          assert.include(menu, "Open in a new tab Copy link About this patch", shelfName);
+          assert.include(
+            menu,
+            `Open in a new tab Copy link${shown ? " Share…" : ""} About this patch`,
+            shelfName
+          );
           assert.strictEqual(menu.includes("Settings"), shown, shelfName);
         }
         assert.isTrue(links(html).some((link) => link.href === cardPath(tool.name)));
@@ -1249,80 +1271,218 @@ it.layer(layer)("portal pages on a socket", (it) => {
     })
   );
 
-  it.effect("asks before a patch goes public, then shares it without publishing a version", () =>
-    Effect.gen(function* () {
-      const workspace = yield* company();
-      const patch = yield* publish(workspace.owner, "scope-save", { title: "Scope <save>" });
-      const before = yield* readPatch(workspace.owner, patch.patchId);
-      const scopePath = `${cardPath(patch.name)}/scope`;
-      const fields = { expectedPatchId: patch.patchId, scope: "public", expectedScope: "company" };
+  it.effect(
+    "asks in the Share dialog before a patch goes public, without publishing a version",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const patch = yield* publish(workspace.owner, "scope-save", { title: "Scope <save>" });
+        const before = yield* readPatch(workspace.owner, patch.patchId);
+        const scopePath = `${cardPath(patch.name)}/scope`;
+        const dialog = yield* (yield* request(`/patches?share=${patch.name}`, workspace.admin))
+          .text;
+        const fields: FormFields = { ...formFields(dialog, scopePath), scope: "public" };
+        assert.deepStrictEqual(fields, {
+          expectedPatchId: patch.patchId,
+          back: "/patches",
+          expectedScope: "company",
+          scope: "public"
+        });
+        // Make public is the confirmation, in the dialog, and only its answer applies.
+        assert.include(text(dialog), "Make Scope &lt;save&gt; public?");
+        assert.include(dialog, 'name="confirm" value="public">Make public</button>');
 
-      // Saving public, even posted straight at the route, only asks.
-      const asked = yield* post(scopePath, workspace.admin, fields);
-      assert.strictEqual(asked.status, 200);
-      const confirm = yield* asked.text;
-      assert.strictEqual(heading(confirm), "Make Scope &lt;save&gt; public?");
-      assert.include(text(confirm), "Anyone with the link can open it without signing in.");
-      assert.include(confirm, 'aria-label="Make Scope &lt;save&gt; public">Make public</button>');
-      assert.deepStrictEqual(formFields(confirm, scopePath), { ...fields, confirm: "public" });
-      assert.isTrue(
-        links(confirm).some(
-          (link) => link.href === `${cardPath(patch.name)}/settings` && link.text === "Cancel"
-        )
-      );
-      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
-      assert.deepStrictEqual(reported(patch.patchId), []);
+        // Saving public without it, posted straight at the route, asks again over the same page.
+        const asked = yield* post(scopePath, workspace.admin, fields);
+        assert.strictEqual(asked.status, 200);
+        const confirm = yield* asked.text;
+        assert.strictEqual(heading(confirm), "All patches");
+        assert.match(confirm, /value="public" checked/);
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+        assert.deepStrictEqual(reported(patch.patchId), []);
 
-      // A member can't answer it.
-      const refused = yield* post(scopePath, workspace.member, formFields(confirm, scopePath));
-      assert.strictEqual(refused.status, 403);
-      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+        // A member can't answer it.
+        const answer = { ...fields, confirm: "public" };
+        assert.strictEqual((yield* post(scopePath, workspace.member, answer)).status, 403);
+        assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
 
-      const response = yield* post(scopePath, workspace.admin, formFields(confirm, scopePath));
-      assert.strictEqual(response.status, 303);
-      assert.strictEqual(response.headers.location, `${cardPath(patch.name)}/settings`);
-      assert.strictEqual(
-        yield* receiptAfter(response, workspace.admin),
-        "Scope &lt;save&gt; is open to anyone on the internet"
-      );
-      const saved = yield* readPatch(workspace.owner, patch.patchId);
-      assert.strictEqual(saved.patch.scope, "public");
-      assert.deepStrictEqual(reported(patch.patchId), [
-        {
-          name: "patch.shared",
-          principalId: workspace.admin.id,
-          companyId: workspace.id,
-          properties: {
-            patchId: patch.patchId,
-            ownerUserId: workspace.owner.id,
-            byAdmin: true,
-            scope: "public",
-            previousScope: "company"
+        const response = yield* post(scopePath, workspace.admin, answer);
+        assert.strictEqual(response.status, 303);
+        assert.strictEqual(response.headers.location, `/patches?share=${patch.name}`);
+        const landed = yield* dialogAfter(response, workspace.admin);
+        assert.strictEqual(landed.receipt, "Scope &lt;save&gt; is open to anyone on the internet");
+        // While it's public, adding guests waits; there's no field for it.
+        assert.notInclude(forms(landed.html), `${cardPath(patch.name)}/add-guest`);
+        const saved = yield* readPatch(workspace.owner, patch.patchId);
+        assert.strictEqual(saved.patch.scope, "public");
+        assert.deepStrictEqual(reported(patch.patchId), [
+          {
+            name: "patch.shared",
+            principalId: workspace.admin.id,
+            companyId: workspace.id,
+            properties: {
+              patchId: patch.patchId,
+              ownerUserId: workspace.owner.id,
+              byAdmin: true,
+              scope: "public",
+              previousScope: "company"
+            }
           }
-        }
-      ]);
-      assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
-      assert.strictEqual(saved.patch.description, before.patch.description);
+        ]);
+        assert.strictEqual(saved.patch.currentVersionId, before.patch.currentVersionId);
+        assert.strictEqual(saved.patch.description, before.patch.description);
+        assert.include(
+          text(yield* (yield* request(cardPath(patch.name), workspace.member)).text),
+          "Anyone on the internet. No sign-in."
+        );
+
+        // The same answer again is stale now, and back to the company needs no step.
+        const stale = yield* post(scopePath, workspace.admin, answer);
+        assert.strictEqual(stale.status, 409);
+        assert.include(text(yield* stale.text), "This patch changed while you had this page open");
+        const back = yield* post(scopePath, workspace.owner, {
+          ...fields,
+          scope: "company",
+          expectedScope: "public"
+        });
+        assert.strictEqual(back.status, 303);
+        assert.strictEqual(
+          (yield* dialogAfter(back, workspace.owner)).receipt,
+          "Scope &lt;save&gt; is open to people at Northwind"
+        );
+        assert.strictEqual(
+          (yield* readPatch(workspace.owner, patch.patchId)).patch.scope,
+          "company"
+        );
+      })
+  );
+
+  it.effect("adds and removes guests in the Share dialog over the page it opened from", () =>
+    Effect.gen(function* () {
+      const guests = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE companies SET name = 'Pine Studio' WHERE id = ${guests.id}`;
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "site-notes", { title: "Site notes" });
+      const other = yield* publish(workspace.owner, "visit-plan");
+      const opened = `/patches?show=pages&share=${patch.name}`;
+      const addPath = `${cardPath(patch.name)}/add-guest`;
+      const dialog = yield* (yield* request(opened, workspace.owner)).text;
+      // Its forms return to the page behind it, the search kept and the dialog left out.
+      const fields = formFields(dialog, addPath);
+      assert.deepStrictEqual(fields, {
+        expectedPatchId: patch.patchId,
+        back: "/patches?show=pages"
+      });
+      assert.isTrue(
+        links(dialog).some((link) => link.href === "/patches?show=pages" && link.text === "Done")
+      );
+      // A member gets the page without it.
+      assert.notInclude(forms(yield* (yield* request(opened, workspace.member)).text), addPath);
+
+      // Refusals show under the field, over the same page, with the email kept.
+      for (const [email, status, said] of [
+        ["nobody@nowhere.example", 422, "nobody@nowhere.example isn’t on Patchy yet"],
+        [workspace.member.email, 409, `${workspace.member.email} is already at Northwind`]
+      ] as const) {
+        const refused = yield* post(addPath, workspace.owner, { ...fields, email });
+        assert.strictEqual(refused.status, status);
+        const html = yield* refused.text;
+        assert.strictEqual(heading(html), "All patches");
+        assert.include(
+          text(
+            html.match(/<div class="note note-refused field-callout"[\s\S]*?<\/div>/)?.[0] ?? ""
+          ),
+          said
+        );
+        assert.include(html, `value="${email}"`);
+        assert.include(html, 'aria-invalid="true"');
+      }
+
+      const added = yield* post(addPath, workspace.owner, {
+        ...fields,
+        email: ` ${guests.member.email} `
+      });
+      assert.strictEqual(added.status, 303);
+      assert.strictEqual(added.headers.location, opened);
+      const landed = yield* dialogAfter(added, workspace.owner);
+      assert.strictEqual(landed.receipt, `Shared Site notes with ${guests.member.name}`);
       assert.include(
-        text(yield* (yield* request(cardPath(patch.name), workspace.member)).text),
-        "Anyone on the internet. No sign-in."
+        text(landed.html),
+        `${guests.member.name} ${guests.member.email} · Pine Studio`
+      );
+      // Sharing again changes nothing.
+      assert.strictEqual(
+        (yield* post(addPath, workspace.owner, { ...fields, email: guests.member.email })).status,
+        303
+      );
+      // Another patch's dialog suggests them, as someone shared with before.
+      const suggesting = yield* (yield* request(`/?share=${other.name}`, workspace.admin)).text;
+      assert.include(
+        suggesting,
+        `<option value="${guests.member.email}">${guests.member.name}, Pine Studio</option>`
       );
 
-      // The same answer again is stale now, and back to the company needs no step.
-      const stale = yield* post(scopePath, workspace.admin, formFields(confirm, scopePath));
-      assert.strictEqual(stale.status, 409);
-      assert.include(text(yield* stale.text), "This patch changed while you had this page open");
-      const back = yield* post(scopePath, workspace.owner, {
-        expectedPatchId: patch.patchId,
-        scope: "company",
-        expectedScope: "public"
+      const removePath = `${cardPath(patch.name)}/remove-guest`;
+      const removed = yield* post(removePath, workspace.owner, {
+        ...formFields(landed.html, removePath),
+        guest: guests.member.id
       });
-      assert.strictEqual(back.status, 303);
-      assert.strictEqual(
-        yield* receiptAfter(back, workspace.owner),
-        "Scope &lt;save&gt; is open to people at Northwind"
-      );
-      assert.strictEqual((yield* readPatch(workspace.owner, patch.patchId)).patch.scope, "company");
+      assert.strictEqual(removed.status, 303);
+      const after = yield* dialogAfter(removed, workspace.owner);
+      assert.strictEqual(after.receipt, `Stopped sharing Site notes with ${guests.member.name}`);
+      assert.notInclude(forms(after.html), removePath);
+      // Removing someone who isn't a guest changes nothing and says nothing.
+      const again = yield* post(removePath, workspace.owner, {
+        ...fields,
+        guest: guests.member.id
+      });
+      assert.strictEqual(again.status, 303);
+      assert.strictEqual((yield* dialogAfter(again, workspace.owner)).receipt, "");
+      assert.deepStrictEqual(yield* (yield* GuestGrants.GuestGrants).guests(patch.patchId), []);
+    })
+  );
+
+  it.effect("lists what's shared with a guest on their Home, and removes one after asking", () =>
+    Effect.gen(function* () {
+      const guests = yield* company();
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE companies SET name = 'Harbor Works' WHERE id = ${workspace.id}`;
+      const patch = yield* publish(workspace.owner, "site-notes", { title: "Site notes" });
+      const grants = yield* GuestGrants.GuestGrants;
+      yield* grants.share({
+        patchId: patch.patchId,
+        actor: actor(workspace.owner),
+        email: guests.member.email
+      });
+      const shelf = (html: string) =>
+        text(
+          html.match(
+            /<section class="home-shelf" aria-labelledby="shared-heading">[\s\S]*?<\/section>/
+          )?.[0] ?? ""
+        );
+
+      // Home's own empty state stays, with the shelf after it; a search leaves the shelf out.
+      const home = yield* (yield* request("/", guests.member)).text;
+      assert.include(text(home), "Nothing here yet");
+      assert.include(shelf(home), "Shared with you Site notes Harbor Works");
+      assert.isTrue(links(home).some((link) => link.href === `/${workspace.handle}/${patch.name}`));
+      assert.strictEqual(shelf(yield* (yield* request("/?q=site", guests.member)).text), "");
+      // Nobody else sees it.
+      assert.strictEqual(shelf(yield* (yield* request("/", guests.owner)).text), "");
+
+      const path = `/shared/${patch.patchId}/remove`;
+      const asking = yield* (yield* request(path, guests.member)).text;
+      assert.strictEqual(heading(asking), "Remove Site notes?");
+      assert.include(text(asking), "until someone at Harbor Works shares it with you again");
+      assert.strictEqual((yield* request(path, guests.owner)).status, 404);
+
+      const removed = yield* post(path, guests.member, {});
+      assert.strictEqual(removed.status, 303);
+      assert.strictEqual(yield* receiptAfter(removed, guests.member), "Removed Site notes");
+      assert.strictEqual(shelf(yield* (yield* request("/", guests.member)).text), "");
+      assert.deepStrictEqual(yield* grants.guests(patch.patchId), []);
     })
   );
 
@@ -1343,6 +1503,16 @@ it.layer(layer)("portal pages on a socket", (it) => {
         }
       });
       const before = yield* readPatch(workspace.owner, patch.patchId);
+      // A tool's dialog never offers it, and has nothing to confirm.
+      const dialog = yield* (yield* request(
+        `${cardPath(patch.name)}?share=${patch.name}`,
+        workspace.owner
+      )).text;
+      assert.match(
+        dialog,
+        /<input class="field-radio" type="radio" name="scope" value="public" disabled>/
+      );
+      assert.notInclude(dialog, "Make public");
       const refused = yield* post(`${cardPath(patch.name)}/scope`, workspace.owner, {
         expectedPatchId: patch.patchId,
         scope: "public",
@@ -1602,7 +1772,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
         // Each form's page: its card tab, or its confirmation page.
         const formPage = {
           description: `${cardPath(original.name)}/settings`,
-          scope: `${cardPath(original.name)}/settings`,
+          scope: `${cardPath(original.name)}?share=${original.name}`,
           rollback: `${cardPath(original.name)}/versions`,
           restore: cardPath(original.name),
           retire: path,
@@ -1666,8 +1836,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
       const workspace = yield* company();
       const original = yield* publish(workspace.owner, "reused-by-alex");
       const path = `${cardPath(original.name)}/scope`;
-      const page = yield* (yield* request(`${cardPath(original.name)}/settings`, workspace.owner))
-        .text;
+      const page = yield* (yield* request(
+        `${cardPath(original.name)}?share=${original.name}`,
+        workspace.owner
+      )).text;
       const fields = { ...formFields(page, path), scope: "public" };
       yield* publish(workspace.owner, "kept-by-priya", {
         intent: "update",
@@ -2728,12 +2900,16 @@ it.layer(layer)("all patches on a socket", (it) => {
           person,
           menuItems(yield* (yield* request("/patches", person)).text, patch.patchId)
         );
-      const opening = "office-map Open in a new tab Copy link About this patch";
-      assert.strictEqual(menus.get(workspace.member), opening);
-      assert.strictEqual(menus.get(workspace.owner), `${opening} Settings Retire… Delete…`);
+      const opening = "office-map Open in a new tab Copy link";
+      const about = "About this patch";
+      assert.strictEqual(menus.get(workspace.member), `${opening} ${about}`);
+      assert.strictEqual(
+        menus.get(workspace.owner),
+        `${opening} Share… ${about} Settings Retire… Delete…`
+      );
       assert.strictEqual(
         menus.get(workspace.admin),
-        `${opening} Settings Reassign… Retire… Delete…`
+        `${opening} Share… ${about} Settings Reassign… Retire… Delete…`
       );
       // Each item says whose it is, its visible label first.
       const named = yield* (yield* request("/patches", workspace.admin)).text;
@@ -3329,6 +3505,22 @@ it.layer(layer)("patch log on a socket", (it) => {
       );
       const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
       assert.include(text(card), `${guest.name} · Guest Log v1 · notes.add (mutation) Succeeded`);
+    })
+  );
+
+  it.effect("offers Share in the Log tab's menu, opening over Overview", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patch = yield* publish(workspace.owner, "logged-tool");
+      const html = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.strictEqual(
+        menuItems(html, `card-${patch.patchId}`),
+        "logged-tool Open in a new tab Copy link Share…"
+      );
+      assert.strictEqual(
+        links(html).find((link) => link.text === "Share…")?.href,
+        `${cardPath(patch.name)}?share=${patch.name}`
+      );
     })
   );
 

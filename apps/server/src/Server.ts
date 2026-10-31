@@ -268,10 +268,9 @@ const services = Layer.mergeAll(
       MachineTokens.layer,
       AgentConnections.layer,
       ChangeKeys.layer,
-      Patches.layer,
-      GuestGrants.layer,
+      // Sharing checks who may manage the patch, and who the email is, as every patch act does.
+      GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
       Companies.layer,
-      Users.layer,
       Looks.layer,
       identity
     ).pipe(
@@ -402,11 +401,16 @@ const app = Layer.mergeAll(
   middleware
 );
 
-/** The server: serving the app, sweeping, and closing both with the scope. */
+/**
+ * The server: serving the app, sweeping, and closing both with the scope. Its runtime and guest
+ * grants are the ones a test drives besides the socket.
+ */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provide(ownedPatches)
   ),
   sweeper,
-  Layer.effectContext(Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream>())
+  Layer.effectContext(
+    Effect.context<Runtime.Runtime | RuntimeStream.RuntimeStream | GuestGrants.GuestGrants>()
+  )
 ).pipe(Layer.provide(services));

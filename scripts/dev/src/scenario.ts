@@ -32,7 +32,9 @@ export const RepoPatch = Schema.Struct({
   /** The patch's empty state offers "Load sample data"; `up` presses it as the publisher. */
   sampleData: Schema.optionalKey(Schema.Boolean),
   /** The scenario's connections it declares, as `integration/handle`: `up` skips it without them. */
-  connections: Schema.optionalKey(Schema.Array(Schema.String))
+  connections: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** People at the scenario's other companies, by key, whom `up` shares it with as the publisher. */
+  guests: Schema.optionalKey(Schema.Array(Slug))
 });
 
 /**
@@ -67,7 +69,8 @@ export type ScenarioConnection = typeof ScenarioConnection.Type;
 export const FilePatch = Schema.Struct({
   file: Schema.NonEmptyString,
   name: Slug,
-  description: Schema.NonEmptyString
+  description: Schema.NonEmptyString,
+  guests: RepoPatch.fields.guests
 });
 
 export const Scenario = Schema.Struct({
@@ -114,7 +117,7 @@ const decodeScenario = Schema.decodeUnknownEffect(Schema.fromJsonString(Scenario
 
 /**
  * The named scenario, checked: unique keys, emails and company handles, people at its companies,
- * and a publisher who is an admin of its own.
+ * a publisher who is an admin of its own, and guests from its other companies.
  */
 export const loadScenario = Effect.fn("loadScenario")(function* (worktree: string, name: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -163,6 +166,15 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
     )
   );
   for (const patch of scenario.patches) {
+    const outside = new Set(
+      scenario.people.filter((person) => person.company !== undefined).map((person) => person.key)
+    );
+    const insider = (patch.guests ?? []).find((key) => !outside.has(key));
+    if (insider !== undefined)
+      return yield* new ScenarioInvalid({
+        name,
+        problem: `${"repo" in patch ? patch.repo : patch.name} names guest ${insider}, who isn't at one of its other companies.`
+      });
     if (!("repo" in patch)) continue;
     for (const connection of patch.connections ?? [])
       if (!connections.has(connection))

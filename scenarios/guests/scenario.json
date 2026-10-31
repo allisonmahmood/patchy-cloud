@@ -17,12 +17,14 @@
     {
       "repo": "site-notes",
       "tier": 1,
-      "description": "Notes about the harbour site, which everyone who opens it reads and adds to."
+      "description": "Notes about the harbour site, which everyone who opens it reads and adds to.",
+      "guests": ["jo"]
     },
     {
       "repo": "visit-log",
       "tier": 2,
-      "description": "A log of site visits: everyone who opens it reads and adds visits; only Harbor Works clears it."
+      "description": "A log of site visits: everyone who opens it reads and adds visits; only Harbor Works clears it.",
+      "guests": ["jo"]
     }
   ]
 }

@@ -44,7 +44,7 @@ lists of validation failures; their line count is not the branching contract.
 - **Success:** exactly one stdout JSON document, with the command's shape below.
   Warnings are fields in that document, never JSON-mode stderr; install, build
   and generation progress do not leak into stdout. `status` always uses JSON.
-- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
+- **Failure:** one stderr document `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, reason?, from?, details?, retryAfterSeconds?, warnings? }`, ordinarily
   empty stdout, and the exit code for `kind`. `code` preserves exposed wire
   refusals and identifies [local repo checks](#local-repo-refusal-codes), plus
   local dev codes such as `not_additive`, `not_running` and `no_agent_tools`; not every
@@ -55,7 +55,8 @@ lists of validation failures; their line count is not the branching contract.
   `pull`'s `no_repo` (exit 2) retains the `versionNumber` with nothing to pull and
   the `owner`, who keeps one by publishing again from their repo. Publish's
   `behind` retains `baseVersion`, `latestVersion`, `publishedBy` and `publishedAt`.
-  The look's `admin_required` retains `admins`. A refusal Patchy MCP's door would
+  The look's `admin_required` retains `admins`, and sharing's `guests_unavailable`
+  retains `reason`, its own `code` with the source. A refusal Patchy MCP's door would
   give, from `dev agent`, adds the door's `from`, `details` and `retryAfterSeconds`.
   Notices discovered before a later failure remain in `warnings`; text mode
   prints them before the error.
@@ -66,7 +67,7 @@ lists of validation failures; their line count is not the branching contract.
   it on stdout. Built-ins such as help and the bare `--version` retain their own
   output, not success envelopes.
 
-`whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
+`whoami`, `publish`, `share` (with `--add`, `--remove` and `--list` too), `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look publish` and `look restore` expose their API success shapes;
 [API reference](../API.md) owns those fields. `publicUrl` on publish/share is an
 address, not a promise of anonymous access: `scope` decides who can open it.
 
@@ -630,6 +631,9 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 | `patchy publish <file> [--name <name>] [--share company\|public] [--patch <id>] [--new] [--description <text>] [--force]` | Single file, tier 1 with no `sdkImports`, empty definitions/declarations, checked as `validate` checks; never reads `patchy.json`. Omitted description preserves the cloud value. `--patch` and `--new` conflict. | Publish wire response including description, descriptionUpdatedAt and warnings.               |
 | `patchy publish [--share company\|public] [--force]`                                                                      | Repo tier 1 or 2; config name and `patchy.json` identity/description. Recover first, otherwise check release, description, generation, types, artifacts and tier. `--description` remains file-only.              | Publish response with `artifacts.html`; tier 2 adds `artifacts.server` and sorted `handlers`. |
 | `patchy share <file> <company\|public>` or `patchy share --patch <id> <company\|public>`                                  | Change sharing without a new version; exactly one file/cache or explicit-id target.                                                                                                                               | `{ ok, patchId, scope, publicUrl }`                                                           |
+| `patchy share [file] --add <email> [--patch <id>]`                                                                        | Share with someone at another company, by the email of their Patchy account; adding a guest again changes nothing, and a removed one comes back.                                                                  | `{ ok, patchId, address, guest }`                                                             |
+| `patchy share [file] --remove <email\|user-id> [--patch <id>]`                                                            | Stop sharing with one guest; `removed: false` when they weren't one.                                                                                                                                              | `{ ok, patchId, removed }`                                                                    |
+| `patchy share [file] --list [--patch <id>]`                                                                               | The patch's guests, oldest first, each `{ userId, name, email, company: { name }, grantedAt }`.                                                                                                                   | `{ ok, patchId, guests }`                                                                     |
 | `patchy retire [file] [--patch <id>] [--force]`                                                                           | Retire from live; dependants require force.                                                                                                                                                                       | `{ ok, patchId, state: "retired", retiredAt }`                                                |
 | `patchy delete [file] [--patch <id>] [--yes] [--force]`                                                                   | Delete from live or retired; confirm interactively unless `--yes`. Non-interactive without it is local exit 1. Forget file-cache entries only after success.                                                      | `{ ok, patchId, state: "deleted", deletedAt, purgeAt }`                                       |
 | `patchy restore [file] [--patch <id>] [--force]`                                                                          | Restore to live before `purgeAt`; off sources require force.                                                                                                                                                      | `{ ok, patchId, state: "live" }`                                                              |
@@ -637,6 +641,16 @@ relaxes that baseline. A standalone Vite preview does not execute capabilities.
 | `patchy describe "<text>" [--patch <id>]` or `patchy describe <file> "<text>"`                                            | Set a live or retired patch's description; normalized text and stamp rewrite `patchy.json` in repo mode.                                                                                                          | `{ ok, patchId, description, descriptionUpdatedAt }`                                          |
 | `patchy describe [file] --clear [--patch <id>]`                                                                           | Explicitly clear the description; empty and whitespace-only positionals are refused.                                                                                                                              | Same description response.                                                                    |
 | `patchy logs [--patch <id>] [--failed] [--limit <n>] [--before <cursor>]`                                                 | Read one page of a patch's log, newest first, as its owner or an admin. `--limit` outside 1 to 25 is local exit 1.                                                                                                | `{ ok, patchId, entries, next, windowEnded }`                                                 |
+
+`share` decodes its arguments into exactly one operation, a scope or one of
+`--add`, `--remove` and `--list`; any other mix is `local`, exit 1, before a
+request. `--add` refuses with `not_on_patchy` for an email with no active Patchy
+account (a deactivated one answers the same), `already_member` for someone in the
+patch's company and `guests_unavailable` with `reason` (`tier`, `shared_source`
+or `connection_blocked`, with its source) when guests can't open the current
+version; a retired or deleted patch is `wrong_state`, never 404. Each is
+`rejected`, exit 2. The portal's Share dialog makes the same checks for the
+owner or an admin; the CLI's machine tokens are the owner's alone.
 
 Inside a published repo, untargeted share, retire, delete, restore, rollback and
 describe use `patchy.json`. An unpublished repo is a local refusal. A file and

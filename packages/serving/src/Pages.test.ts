@@ -115,12 +115,10 @@ const routes = Layer.mergeAll(
 const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      Patches.layer,
-      GuestGrants.layer,
+      GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
       memoryStore,
       Session.layer,
       Companies.layer,
-      Users.layer,
       MachineTokens.layer,
       AgentConnections.layer,
       Limits.layer,

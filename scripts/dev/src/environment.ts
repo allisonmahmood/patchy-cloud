@@ -815,9 +815,10 @@ const overlay = (
   });
 
 /**
- * Publishes each scenario patch as the publisher, then loads its sample data,
- * recording each step in the manifest. Steps already recorded are skipped; a
- * repo left half-built by an earlier failure is initialized again.
+ * Publishes each scenario patch as the publisher, then loads its sample data and shares it with
+ * its guests, recording each step in the manifest. Steps already recorded are skipped, except
+ * sharing, which changes nothing the second time; a repo left half-built by an earlier failure is
+ * initialized again.
  */
 const materialize = Effect.fn("materialize")(function* (
   layout: Layout,
@@ -829,6 +830,9 @@ const materialize = Effect.fn("materialize")(function* (
   const path = yield* Path.Path;
   const env = yield* childEnv(layout);
   const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;
+  /** The people a patch is shared with, which the scenario checked are at its other companies. */
+  const guestsOf = (patch: Scenario["patches"][number]) =>
+    scenario.people.filter((person) => patch.guests?.includes(person.key) === true);
   let current = manifest;
   const record = (entry: typeof PublishedPatch.Type) =>
     Effect.gen(function* () {
@@ -975,21 +979,37 @@ const materialize = Effect.fn("materialize")(function* (
         yield* loadSampleData(manifest.apiUrl, publisher.email, entry.address);
         yield* record({ ...entry, sampled: true });
       }
-    } else if (entry === undefined) {
-      const dir = path.join(layout.workspace, "pages");
-      yield* fs.makeDirectory(dir, { recursive: true });
-      const file = path.join(dir, path.basename(patch.file));
-      yield* fs.copyFile(path.join(scenarioDir, "files", patch.file), file);
-      yield* Console.error(`  ${patch.name}: publish`);
-      const result = yield* decodePublish(
+      // Sharing again changes nothing, so a resumed `up` shares each time.
+      for (const guest of guestsOf(patch))
         yield* run(
-          `Publishing ${patch.file}`,
+          `Sharing ${patch.repo} with ${guest.name}`,
+          process.execPath,
+          [pinned, "share", "--add", guest.email, "--json"],
+          { cwd: repo, env }
+        );
+    } else {
+      const file = path.join(layout.workspace, "pages", path.basename(patch.file));
+      if (entry === undefined) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.copyFile(path.join(scenarioDir, "files", patch.file), file);
+        yield* Console.error(`  ${patch.name}: publish`);
+        const result = yield* decodePublish(
+          yield* run(
+            `Publishing ${patch.file}`,
+            "patchy",
+            ["publish", file, "--name", patch.name, "--description", patch.description, "--json"],
+            { cwd: layout.workspace, env }
+          )
+        );
+        yield* record({ key, ...result, sampled: true });
+      }
+      for (const guest of guestsOf(patch))
+        yield* run(
+          `Sharing ${patch.name} with ${guest.name}`,
           "patchy",
-          ["publish", file, "--name", patch.name, "--description", patch.description, "--json"],
+          ["share", file, "--add", guest.email, "--json"],
           { cwd: layout.workspace, env }
-        )
-      );
-      yield* record({ key, ...result, sampled: true });
+        );
     }
   }
   return current;
