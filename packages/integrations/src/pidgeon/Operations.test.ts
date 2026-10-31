@@ -789,12 +789,41 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
         [
           { ...refusal(429, "rate_limited", "Slow down."), headers: { "retry-after": "30" } },
           "threads.list",
-          { code: "source_rate_limited", details: { limit: "requests" }, retryAfter: 30 }
+          {
+            code: "source_rate_limited",
+            details: { limit: "requests", message: "Slow down." },
+            retryAfter: 30
+          }
+        ],
+        [
+          {
+            ...refusal(
+              429,
+              "recipient_cooldown",
+              "This address wrote to sam@customer.example in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
+            ),
+            headers: { "retry-after": "573" }
+          },
+          "messages.send",
+          {
+            code: "source_rate_limited",
+            error:
+              "This address wrote to a recipient of this message recently, and Pidgeon holds a new message to them for a while, so nothing was sent. Reply in that conversation, or send it again in 573 seconds.",
+            details: {
+              limit: "recipient_cooldown",
+              message:
+                "This address wrote to sam@customer.example in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
+            },
+            retryAfter: 573
+          }
         ],
         [
           refusal(402, "entitlement", "Upgrade to send more."),
           "messages.send",
-          { code: "source_rate_limited", details: { limit: "plan" } }
+          {
+            code: "source_rate_limited",
+            details: { limit: "plan", message: "Upgrade to send more." }
+          }
         ],
         [
           refusal(404, "not_found", "We couldn't find that conversation."),

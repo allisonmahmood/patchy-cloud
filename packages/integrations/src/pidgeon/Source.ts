@@ -143,9 +143,13 @@ export class IdempotencyInProgress extends Schema.TaggedError<IdempotencyInProgr
   }
 }
 
-/** Pidgeon's rate or plan limit said no (429 and 402). Nothing changed, and Patchy never retries. */
+/**
+ * Pidgeon's limits said no, and nothing changed; Patchy never retries. `requests` and
+ * `recipient_cooldown` are 429s: the account's own rate, or a new message (not a reply) to
+ * someone the address wrote to within its cooldown, which Pidgeon's message names. `plan` is 402.
+ */
 export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateLimited", {
-  limit: Schema.Literals(["requests", "plan"]),
+  limit: Schema.Literals(["requests", "recipient_cooldown", "plan"]),
   /** Pidgeon's Retry-After, which every 429 carries. */
   retryAfterSeconds: Schema.optionalKey(Schema.Int),
   details: Schema.Struct({ message: Explanation })
@@ -153,9 +157,14 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonRateL
   readonly code = "source_rate_limited" as const;
   readonly status = 429;
   override get message() {
-    return this.limit === "plan"
-      ? `Pidgeon's plan for this account doesn't allow that: ${this.details.message}`
-      : `Pidgeon is limiting this account for now. Try again ${wait(this.retryAfterSeconds)}.`;
+    switch (this.limit) {
+      case "plan":
+        return `Pidgeon's plan for this account doesn't allow that: ${this.details.message}`;
+      case "recipient_cooldown":
+        return `Pidgeon holds new messages to someone this address just wrote to: ${this.details.message}`;
+      case "requests":
+        return `Pidgeon is limiting this account for now. Try again ${wait(this.retryAfterSeconds)}.`;
+    }
   }
 }
 /** Pidgeon couldn't be reached, redirected, or answered in a way Patchy doesn't read. */
@@ -388,7 +397,7 @@ export const classify = (
     const seconds = retryAfter(headers["retry-after"]);
     return Effect.fail(
       new RateLimited({
-        limit: "requests",
+        limit: error?.code === "recipient_cooldown" ? "recipient_cooldown" : "requests",
         ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }),
         details: { message }
       })

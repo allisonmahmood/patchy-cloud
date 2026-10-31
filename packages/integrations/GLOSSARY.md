@@ -136,6 +136,10 @@ _Avoid_: queued send, scheduled send
 The sends and replies one Pidgeon connection makes per UTC day, every attempt counted durably before Pidgeon sees it. Past it, a send is refused `source_rate_limited` with `limit: "budget"` and nothing is sent.
 _Avoid_: quota, sending allowance (Pidgeon's own)
 
+**Recipient cooldown**:
+Pidgeon's window, 10 minutes by default, in which an address may send someone only a few new messages after writing to them. Past it, `messages.send` is refused `source_rate_limited` with `limit: "recipient_cooldown"` and Pidgeon's explanation naming them: nothing was sent and no draft is kept, unlike a **held send**. Replies always go.
+_Avoid_: held, throttled (the account's request rate is `limit: "requests"`)
+
 **Project slots**:
 The queries one server process lets run at once against one PostHog region and project, shared by every connection to it. A call that can't get one before its deadline is refused busy, having sent nothing.
 _Avoid_: pool (a Postgres word for reusable sessions), rate limit (PostHog's own)

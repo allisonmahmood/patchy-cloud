@@ -66,21 +66,32 @@ export class ReadOnly extends Schema.TaggedError<ReadOnly>()("PidgeonReadOnly", 
     return "This Pidgeon connection only reads: it can't reply, send or change threads. An administrator can change its access at /company/connections.";
   }
 }
-/** Pidgeon's own request rate or plan said no; nothing was done, and Patchy never retries. */
+/**
+ * Pidgeon's own limits said no: the account's request rate, its plan, or the address's cooldown
+ * on a new message to someone it just wrote to. Nothing was done, and Patchy never retries.
+ * `details.message` is Pidgeon's explanation, which names the recipient a cooldown holds.
+ */
 export class RateLimited extends Schema.TaggedError<RateLimited>()("PidgeonOperationRateLimited", {
-  limit: Schema.Literals(["requests", "plan"]),
+  limit: Source.RateLimited.fields.limit,
   retryAfterSeconds: Schema.optionalKey(Schema.Int),
   cause: Source.RateLimited
 }) {
   readonly code = "source_rate_limited" as const;
   readonly status = 429;
   get details() {
-    return { limit: this.limit };
+    return { limit: this.limit, message: this.cause.details.message };
   }
   override get message() {
-    return this.limit === "plan"
-      ? "Pidgeon's plan for this account doesn't allow that right now, so nothing was done."
-      : `Pidgeon is limiting this account for now, so nothing was done.${this.retryAfterSeconds === undefined ? "" : ` Try again in ${this.retryAfterSeconds} seconds.`}`;
+    const again =
+      this.retryAfterSeconds === undefined ? "" : ` in ${this.retryAfterSeconds} seconds`;
+    switch (this.limit) {
+      case "plan":
+        return "Pidgeon's plan for this account doesn't allow that right now, so nothing was done.";
+      case "recipient_cooldown":
+        return `This address wrote to a recipient of this message recently, and Pidgeon holds a new message to them for a while, so nothing was sent. Reply in that conversation, or send it again${again}.`;
+      case "requests":
+        return `Pidgeon is limiting this account for now, so nothing was done.${again === "" ? "" : ` Try again${again}.`}`;
+    }
   }
 }
 /** The connection made its sends and replies for the UTC day; nothing reached Pidgeon. */
