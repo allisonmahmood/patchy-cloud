@@ -469,6 +469,49 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
       );
 
       it.effect(
+        "new messages to the customer the desk just answered are held for the address's cooldown, naming her, and the held draft goes as a reply in her conversation",
+        () =>
+          Effect.gen(function* () {
+            const store = yield* SqlConnectionStore.make;
+            const connection = need(made.connection, "The desk");
+            const customer = need(made.customer, "The customer");
+            const first = need(made.firstDraft, "The first reply");
+            const { call } = yield* desk(store, connection, patchId);
+            const text = "One more thing: we trued both wheels while it was in.";
+            const send = (n: number) =>
+              call("pidgeon.write", "messages.send", {
+                to: [customer.email],
+                subject: "One more thing",
+                text,
+                idempotencyKey: `${Live.RUN}-follow-up-${n}`
+              });
+            // How many new messages go before the cooldown holds the next is Pidgeon's call: one
+            // after a reply when this was written, three in its docs. The desk sends until one is
+            // held. The customer is one of the account's own addresses, as the cooldown needs in
+            // test mode: mail to outside addresses goes nowhere and isn't counted.
+            let n = 1;
+            let result = yield* Effect.result(send(n));
+            while (result._tag === "Success" && n < 4) result = yield* Effect.result(send(++n));
+            if (result._tag === "Success")
+              return assert.fail("Pidgeon sent four new messages in a row to the customer.");
+            const held = Runtime.toFailure(result.failure);
+            assert.strictEqual(held.code, "source_rate_limited");
+            assert.strictEqual(held.details?.limit, "recipient_cooldown");
+            assert.include(String(held.details?.message), customer.email);
+            assert.isAbove(held.retryAfter ?? 0, 0);
+            // Pidgeon keeps no refusal, so the held draft's key still sends, as a reply.
+            assert.deepInclude(
+              yield* call("pidgeon.write", "messages.reply", {
+                id: first.messageId,
+                text,
+                idempotencyKey: `${Live.RUN}-follow-up-${n}`
+              }),
+              { status: "sent", replayed: false }
+            );
+          })
+      );
+
+      it.effect(
         "a lost answer replays, a draft key with other mail sends nothing, and one draft sent twice at once mails once",
         () =>
           Effect.gen(function* () {

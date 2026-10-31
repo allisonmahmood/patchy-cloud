@@ -57,7 +57,7 @@ Use the declared alias: \`ctx.connections.<alias>\` in an action; the page calls
 - A message the firewall \`held\` for a person has no subject, text or attachments; reading or answering it fails \`access_denied\` with \`details.reason\` \`"held"\` until someone releases it in Pidgeon.${
   send
     ? `
-- \`messages.reply(id, { text, cc, idempotencyKey })\` answers the message's sender in its thread; \`messages.send({ to, cc, subject, text, idempotencyKey })\` starts a conversation. Plain text only, up to 100,000 characters.
+- \`messages.reply(id, { text, cc, idempotencyKey })\` answers the message's sender in its thread; \`messages.send({ to, cc, subject, text, idempotencyKey })\` starts a conversation; to someone the address wrote to recently it fails \`source_rate_limited\` with \`details.limit\` \`"recipient_cooldown"\`: reply to their message in that conversation instead, or wait \`retryAfter\`. Plain text only, up to 100,000 characters.
 - A send's \`status\` is \`sent\`, or \`pending_approval\`: Pidgeon sent nothing and holds it as a draft for a person to approve in Pidgeon.
 - \`threads.update(id, { status })\`, \`threads.label(id, labelId)\` and \`threads.unlabel(id, labelId)\` triage.
 - \`idempotencyKey\` names one email: make it when the person starts the draft and keep it until the send succeeds. The same draft sent again within 24 hours is one email, answering \`replayed: true\`. Send only when the person asks.
@@ -68,7 +68,7 @@ Use the declared alias: \`ctx.connections.<alias>\` in an action; the page calls
 
 In \`patchy dev\`, reads are this address's real mail, read through Patchy as you.${
   send
-    ? " Replies, sends and triage are simulated: nothing is sent or changed, a send answers ids starting `dev_` with `test: true`, and `patchy dev logs` names its recipients and subject. Dev doesn't apply the send policy, approval holds or the daily budget."
+    ? " Replies, sends and triage are simulated: nothing is sent or changed, a send answers ids starting `dev_` with `test: true`, and `patchy dev logs` names its recipients and subject. Dev doesn't apply the send policy, approval holds, the recipient cooldown or the daily budget."
     : ""
 }
 

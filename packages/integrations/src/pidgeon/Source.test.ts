@@ -138,6 +138,27 @@ it.effect("names each of Pidgeon's answers as Patchy's refusal, by status and co
         (error) => assert.include(error.message, "Try again in 25 minutes.")
       ],
       [
+        // A new message to someone the address just wrote to: the address's cooldown, not the account's rate.
+        json(
+          429,
+          refusal(
+            "recipient_cooldown",
+            "This address wrote to ana@example.com in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
+          ),
+          { "retry-after": "573" }
+        ),
+        (error) =>
+          assert.deepInclude(error, {
+            _tag: "PidgeonRateLimited",
+            limit: "recipient_cooldown",
+            retryAfterSeconds: 573,
+            details: {
+              message:
+                "This address wrote to ana@example.com in the last 10 minutes. Reply in that conversation, or send a new message in 10 minutes."
+            }
+          })
+      ],
+      [
         json(500, refusal("internal", "Something went wrong.")),
         (error) => assert.deepInclude(error, { stage: "status", upstreamStatus: 500 })
       ],

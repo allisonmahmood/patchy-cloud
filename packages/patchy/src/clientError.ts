@@ -49,7 +49,16 @@ type PidgeonOperation = `pidgeon.${string}`;
 type AttioOperation = `attio.${string}`;
 /** Pidgeon's refusals that carry its own details. */
 type PidgeonDetails<C extends ErrorCode> = C extends "source_rate_limited"
-  ? { readonly limit: "requests" | "plan" | "budget" }
+  ? {
+      /**
+       * Which limit: the connection's daily send `budget`, Pidgeon's `requests` rate or `plan`,
+       * or `recipient_cooldown`, a new message to someone the address just wrote to, which a
+       * reply in their conversation isn't held by.
+       */
+      readonly limit: "budget" | "requests" | "plan" | "recipient_cooldown";
+      /** Pidgeon's own explanation, written to be shown to a person; never on `budget`. */
+      readonly message?: string;
+    }
   : C extends "access_denied"
     ? {
         /**
