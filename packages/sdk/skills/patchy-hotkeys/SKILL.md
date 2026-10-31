@@ -77,6 +77,29 @@ Wrap a dialog's content in `<HotkeyScope>`. While it is mounted, only the hotkey
 inside it fire; the page's own, sequences included, wait until it unmounts, so the page's
 `"C T"` doesn't open a second dialog behind it.
 
+Inside means registered by a component the scope renders. A hotkey registered by the
+component that renders `<HotkeyScope>` is outside it, and the scope holds it back like the
+page's. Register the dialog's own keys, such as its Escape, in a component within:
+
+```tsx
+function Dialog(props: { close: () => void }) {
+  return (
+    <HotkeyScope>
+      <DialogBody close={props.close} />
+    </HotkeyScope>
+  );
+}
+
+function DialogBody(props: { close: () => void }) {
+  useHotkey("Escape", props.close, { label: "Close" });
+  return <div role="dialog">…</div>;
+}
+```
+
+The scope already holds the page's hotkeys back, so leave them enabled while a dialog is
+open. `useHotkeyList` lists only enabled hotkeys, so a page hotkey disabled for the dialog
+also drops off a shortcuts sheet.
+
 ## Showing hotkeys
 
 - `formatHotkey("Mod+K")` is `"⌘ K"` on a Mac and `"Ctrl+K"` elsewhere.
