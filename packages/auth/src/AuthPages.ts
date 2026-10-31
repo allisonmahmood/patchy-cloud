@@ -231,6 +231,17 @@ export const layer: Layer.Layer<
         "/company/agent-access",
         errors(RequireSession.withViewer(company({ kind: "view-agent-access" })))
       );
+      yield* router.add(
+        "GET",
+        "/company/guests/:id/remove",
+        errors(
+          RequireSession.withViewer(
+            Effect.flatMap(HttpRouter.params, (params) =>
+              company({ kind: "view-guest-removal", id: params.id ?? "" })
+            )
+          )
+        )
+      );
       for (const [path, kind] of [
         ["/company/invites", "invite"],
         ["/company/agent-access", "agent-access"]
@@ -244,7 +255,8 @@ export const layer: Layer.Layer<
       for (const [path, kind] of [
         ["/company/invites/:id/revoke", "revoke"],
         ["/company/invites/:id/resend", "resend"],
-        ["/company/users/:id/role", "role"]
+        ["/company/users/:id/role", "role"],
+        ["/company/guests/:id/remove", "remove-guest"]
       ] as const) {
         yield* router.add(
           "POST",

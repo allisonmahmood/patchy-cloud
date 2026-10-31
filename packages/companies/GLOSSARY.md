@@ -17,15 +17,15 @@ One individual's Patchy account in exactly one company, carrying the member or a
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
-The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites, connection metadata and look without management actions.
+The role every user has who is not an admin. A member builds — publishes patches with no gate — and reads the company's users, roles, states, pending invites, guests, connection metadata and look without management actions.
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
+A user with the role that manages the company's invitations, roles, deactivation, reactivation, guests, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
 _Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
 
 **Guest**:
-A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory names them as a guest while they hold any of its grants, ended ones included, but shows their email only in a patch whose grant is active, and shows them active there only while their account is too; that patch's pickers and member columns offer and accept them while their grant is active. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
+A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory names them as a guest while they hold any of its grants, ended ones included, but shows their email only in a patch whose grant is active, and shows them active there only while their account is too; that patch's pickers and member columns offer and accept them while their grant is active. People's Guests tab lists them, with what they hold, while any grant is active, and an admin can end all their grants in the company there at once. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
 _Avoid_: outside person, external member, visitor, collaborator
 
 **Directory revision**:
