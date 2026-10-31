@@ -33,6 +33,7 @@ import {
   recordAddress
 } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
+import { realNode } from "./runtimes.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
 /** A step's command ran and exited non-zero; its output was printed to stderr. */
@@ -181,9 +182,9 @@ export const readManifest = Effect.fn("readManifest")(function* (layout: Layout)
 
 /**
  * Child commands get a closed env, as the server does: what a process needs to
- * run, the CLI's own state dir, and the environment's bin (its patchy and the
- * runner's Node) first on PATH. Nothing from the caller's PATCHY_* leaks in.
- * `pnpm dev transcript` runs its lines in it too.
+ * run, the CLI's own state dir, and the environment's bin (its patchy and
+ * Node) first on PATH, then that Node's own folder, for its npm. Nothing from
+ * the caller's PATCHY_* leaks in. `pnpm dev transcript` runs its lines in it too.
  */
 export const childEnv = Effect.fn("childEnv")(function* (layout: Layout) {
   const path = yield* Path.Path;
@@ -203,7 +204,9 @@ export const childEnv = Effect.fn("childEnv")(function* (layout: Layout) {
   }
   return {
     ...passed,
-    PATH: [layout.bin, path.dirname(process.execPath), settings.PATH].join(PATH_DELIMITER),
+    PATH: [layout.bin, path.dirname((yield* realNode()).execPath), settings.PATH].join(
+      PATH_DELIMITER
+    ),
     PATCHY_STATE_DIR: layout.state
   };
 });
@@ -282,7 +285,10 @@ const currentRelease = Effect.fn("currentRelease")(function* (apiUrl: string) {
   return (yield* decodeRelease(yield* response.text)).package.tarball;
 });
 
-/** The environment's own CLI, from the instance's current release; nothing is installed globally. */
+/**
+ * The environment's own CLI, from the instance's current release, and real
+ * Node beside it as `bin/node`; nothing is installed globally.
+ */
 const installCli = Effect.fn("installCli")(function* (layout: Layout, tarball: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -296,7 +302,7 @@ const installCli = Effect.fn("installCli")(function* (layout: Layout, tarball: s
   );
   for (const [name, target] of [
     ["patchy", path.join(layout.cli, "node_modules", ".bin", "patchy")],
-    ["node", process.execPath]
+    ["node", (yield* realNode()).execPath]
   ] as const) {
     const link = path.join(layout.bin, name);
     yield* fs.remove(link, { force: true });
@@ -314,7 +320,7 @@ const pnpmVersion = Effect.fn("pnpmVersion")(function* (layout: Layout) {
 
 /**
  * The agent workspace: the release's Patchy skill as a project skill, and the
- * runner's Node and pnpm pinned for mise (a newer global Node breaks the CLI).
+ * environment's Node and pnpm pinned for mise (a newer global Node breaks the CLI).
  */
 const writeWorkspace = Effect.fn("writeWorkspace")(function* (layout: Layout) {
   const fs = yield* FileSystem.FileSystem;
@@ -327,7 +333,7 @@ const writeWorkspace = Effect.fn("writeWorkspace")(function* (layout: Layout) {
   const miseFile = path.join(layout.workspace, "mise.toml");
   yield* fs.writeFileString(
     miseFile,
-    `[tools]\nnode = "${process.versions.node}"\npnpm = "${yield* pnpmVersion(layout)}"\n`
+    `[tools]\nnode = "${(yield* realNode()).version}"\npnpm = "${yield* pnpmVersion(layout)}"\n`
   );
   // Without mise there is nothing to trust; the launcher's PATH still pins Node.
   yield* run("Trusting the workspace's mise.toml", "mise", ["trust", miseFile], {
@@ -944,9 +950,10 @@ const materialize = Effect.fn("materialize")(function* (
     let entry = current.patches.find((done) => done.key === key);
     if ("repo" in patch) {
       const repo = path.join(layout.workspace, patch.repo);
-      // The repo's pinned CLI, run directly: it finds the repo's workerd for tier 2
-      // inspection, and pnpm's own output stays out of the JSON.
+      // The repo's pinned CLI, run directly on the environment's Node: it finds the
+      // repo's workerd for tier 2 inspection, and pnpm's own output stays out of the JSON.
       const pinned = path.join(repo, "node_modules", "patchy", "dist", "index.js");
+      const node = path.join(layout.bin, "node");
       if (entry === undefined) {
         yield* Console.error(`  ${patch.repo}: init, build and publish`);
         yield* fs.remove(repo, { recursive: true, force: true });
@@ -957,12 +964,12 @@ const materialize = Effect.fn("materialize")(function* (
           { cwd: layout.workspace, env }
         );
         yield* overlay(path.join(scenarioDir, "patches", patch.repo), repo);
-        yield* run(`Refreshing ${patch.repo}`, process.execPath, [pinned, "refresh", "--json"], {
+        yield* run(`Refreshing ${patch.repo}`, node, [pinned, "refresh", "--json"], {
           cwd: repo,
           env
         });
         const result = yield* decodePublish(
-          yield* run(`Publishing ${patch.repo}`, process.execPath, [pinned, "publish", "--json"], {
+          yield* run(`Publishing ${patch.repo}`, node, [pinned, "publish", "--json"], {
             cwd: repo,
             env
           })
