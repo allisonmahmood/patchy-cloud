@@ -47,6 +47,7 @@
     "@playwright/test": "^1.63.0",
     "@types/node": "^22",
     "@types/pg": "^8.23.1",
+    "bun": "runtime:1.4.4",
     "effect": "catalog:",
     "embedded-postgres": "18.4.0-beta.17",
     "esbuild": "0.28.2",
@@ -66,12 +67,5 @@
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec bun fmt --staged"
-  },
-  "devEngines": {
-    "runtime": {
-      "name": "bun",
-      "version": "1.4.4",
-      "onFail": "download"
-    }
   }
 }

@@ -60,9 +60,12 @@ CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
 to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
 `node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
-Bun is pinned once, by `devEngines.runtime` in `package.json`, and `pnpm install`
-downloads it with the lockfile's hashes. Dependabot doesn't bump it: change the
-version there and run `pnpm install` to rewrite the lockfile.
+Bun is pinned once, as the `bun: runtime:<version>` devDependency in
+`package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
+devDependency rather than `devEngines.runtime` because npm, which the packed CLI
+tests run from the repository root, refuses a `devEngines.runtime` that isn't Node.
+Dependabot doesn't bump it: change the version there and run `pnpm install` to
+rewrite the lockfile.
 
 Format is `bun fmt`, which reads `prettier.config.js` and `.prettierignore` and
 checks the whole repo in a fraction of a second. The pre-commit hook formats what
