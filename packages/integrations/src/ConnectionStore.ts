@@ -30,6 +30,8 @@ const fields = {
   description: Description,
   mode: Schema.Literal("company"),
   status: Schema.Literals(["connected", "disconnected"]),
+  /** Patches that declare it turn their guests away while it's set; an admin's choice. */
+  blockGuests: Schema.Boolean,
   credentialRevision: Schema.Int,
   metadataRevision: Schema.Int,
   lastTestedAt: Schema.NullOr(Schema.String),
@@ -222,6 +224,8 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "disconnect",
       "reconnect",
       "describe",
+      "blockGuests",
+      "blockingGuests",
       "delete",
       "resolve",
       "poolCredentials",
@@ -354,6 +358,17 @@ export class ConnectionStore extends Context.Service<
     readonly describe: (
       input: Identity & { readonly description: string }
     ) => Effect.Effect<Connection, ConnectionError>;
+    /** Blocks guests from the connection, or allows them again; it applies to their next call. */
+    readonly blockGuests: (
+      input: Identity & { readonly block: boolean }
+    ) => Effect.Effect<Connection, ConnectionError>;
+    /**
+     * Which of these connections block guests, in one read however many there are: what decides
+     * whether a patch's guests can open it. Ids name connections across companies.
+     */
+    readonly blockingGuests: (
+      ids: ReadonlyArray<string>
+    ) => Effect.Effect<ReadonlySet<string>, ConnectionStorageFailed>;
     /**
      * Returns the connection as it was before deletion; `report` runs as `connect`'s does. A key
      * Patchy minted revokes itself once the row is gone; one that couldn't is named in `keyLeft`.

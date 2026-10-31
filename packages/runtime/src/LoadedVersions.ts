@@ -13,11 +13,8 @@ export interface LoadedVersion {
   readonly manifest: typeof Manifest.Type;
   /** Effective audience: historical versions of public patches remain company-only. */
   readonly scope: typeof SharingScope.Type;
-  /**
-   * Whether the patch's guests may open it too: its current version, while guests can open the
-   * patch. Absent, only its company's members are admitted.
-   */
-  readonly admitsGuests?: true;
+  /** Set when it was the patch's current version in the read that loaded it. */
+  readonly current?: true;
   readonly wireVersion: number;
 }
 

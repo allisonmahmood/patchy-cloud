@@ -114,35 +114,6 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
 
           yield* migrate(release10);
 
-          const store = yield* SqlConnectionStore.make;
-          const kept = yield* store.get(who.companyId, connection.id);
-          assert.deepInclude(kept, {
-            integration: "postgres",
-            handle: "warehouse",
-            status: "connected",
-            credentialRevision: 1,
-            metadataRevision: 1
-          });
-          assert.deepStrictEqual(yield* store.detail(who.companyId, "postgres", "warehouse"), {
-            integration: "postgres",
-            handle: "warehouse",
-            description: "Sales warehouse",
-            status: "connected",
-            snapshot: {
-              version: 1,
-              relations: [],
-              enums: [],
-              exclusions: [],
-              revision: 1,
-              takenAt: "2026-10-01T00:00:00.000Z"
-            }
-          });
-          // The old ciphertext still decrypts, and the old declaration still guards deletion.
-          assert.strictEqual((yield* store.test(connection)).credentialRevision, 1);
-          assert.strictEqual(
-            (yield* store.delete(connection).pipe(Effect.flip)).code,
-            "connection_in_use"
-          );
           assert.deepStrictEqual(
             yield* sql`SELECT integration FROM connection_snapshots WHERE connection_id = ${connection.id}`,
             [{ integration: "postgres" }]
@@ -179,6 +150,40 @@ it.layer(Testing.emptyLayer(beforeIntegrations))(
           assert.include(
             String((yield* insertCall("call_tables", "tables.list").pipe(Effect.flip)).cause),
             "ConstraintError"
+          );
+
+          // Today's store, on today's schema, reads what the upgrades kept: a connection made
+          // before guests existed allows them.
+          yield* migrate(migrations);
+          const store = yield* SqlConnectionStore.make;
+          const kept = yield* store.get(who.companyId, connection.id);
+          assert.deepInclude(kept, {
+            integration: "postgres",
+            handle: "warehouse",
+            status: "connected",
+            blockGuests: false,
+            credentialRevision: 1,
+            metadataRevision: 1
+          });
+          assert.deepStrictEqual(yield* store.detail(who.companyId, "postgres", "warehouse"), {
+            integration: "postgres",
+            handle: "warehouse",
+            description: "Sales warehouse",
+            status: "connected",
+            snapshot: {
+              version: 1,
+              relations: [],
+              enums: [],
+              exclusions: [],
+              revision: 1,
+              takenAt: "2026-10-01T00:00:00.000Z"
+            }
+          });
+          // The old ciphertext still decrypts, and the old declaration still guards deletion.
+          assert.strictEqual((yield* store.test(connection)).credentialRevision, 1);
+          assert.strictEqual(
+            (yield* store.delete(connection).pipe(Effect.flip)).code,
+            "connection_in_use"
           );
         }).pipe(Effect.provide(services))
     );

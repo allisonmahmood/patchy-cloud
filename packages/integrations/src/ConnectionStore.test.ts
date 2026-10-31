@@ -531,6 +531,7 @@ it.effect("dev holds metadata alone and explicitly refuses every administration 
       description: "Local metadata",
       mode: "company",
       status: "connected",
+      blockGuests: false,
       display: { host: "warehouse.example", port: 5432, database: "sales", role: "reader" },
       credentialRevision: 1,
       metadataRevision: 2,

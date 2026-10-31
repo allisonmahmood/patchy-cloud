@@ -30,7 +30,8 @@ export type Target =
 export type Change =
   | { readonly kind: "connect"; readonly integration: string }
   | {
-      readonly kind: "test" | "refresh" | "reconnect" | View.Confirmation;
+      readonly kind:
+        "test" | "refresh" | "reconnect" | "block-guests" | "allow-guests" | View.Confirmation;
       readonly id: string;
     };
 
@@ -169,6 +170,8 @@ const results = {
   disconnect: "Connection disconnected. Patches cannot use it until an admin reconnects it.",
   reconnect: "Connection tested and reconnected. Its schema revision is unchanged.",
   description: "Description updated.",
+  "block-guests": "Guests blocked. Patches that use this connection turn their guests away.",
+  "allow-guests": "Guests allowed. Patches that use this connection admit their guests again.",
   delete: "Connection deleted. Its schema snapshots have been kept."
 } as const;
 const isResult = Schema.is(Schema.Literals(Object.keys(results) as Array<keyof typeof results>));
@@ -375,6 +378,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
       handle: connection.handle,
       description: connection.description,
       status: connection.status,
+      blockGuests: connection.blockGuests,
       mode: page.offer.mode,
       testedAt: connection.lastTestedAt,
       addedBy:
@@ -715,6 +719,8 @@ const act = Effect.fn("ConnectionPage.act")(function* (
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
       yield* store.describe({ ...input, description: fields.description });
+    } else if (kind === "block-guests" || kind === "allow-guests") {
+      yield* store.blockGuests({ ...input, block: kind === "block-guests" });
     } else if (kind === "delete") {
       const deleted = yield* store.delete(input, yield* reporter(viewer, "connection.deleted"));
       integration = deleted.connection.integration;

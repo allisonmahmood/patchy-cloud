@@ -504,6 +504,7 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
         description: "Local fixture",
         mode: "company",
         status: "connected",
+        blockGuests: false,
         display: { host: "local", port: 5432, database: declaration.handle, role: "fixture" },
         credentialRevision: 1,
         metadataRevision: declaration.revision,

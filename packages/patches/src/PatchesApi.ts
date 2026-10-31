@@ -82,6 +82,7 @@ import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
 import * as Content from "./Content.js";
+import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
 import * as PatchesConfig from "./PatchesConfig.js";
 
@@ -407,6 +408,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
     const invocationLog = yield* InvocationLog.InvocationLog;
     const users = yield* Users.Users;
     const connectionStore = yield* ConnectionStore.ConnectionStore;
+    const guestGrants = yield* GuestGrants.GuestGrants;
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
     const maxBundleBytes = yield* PatchesConfig.maxBundleBytes;
     const createRateLimitPerMinute = yield* PatchesConfig.patchCreateRateLimitPerMinute;
@@ -506,6 +508,37 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             )
         })
       );
+    });
+
+    /**
+     * Why the patch's guests can't open the version it publishes, when it has any: the publish
+     * still succeeds, and says so here.
+     */
+    const guestWarnings = Effect.fn("PatchesApi.guestWarnings")(function* (
+      patchId: string | null,
+      scope: PublishRequest["scope"],
+      manifest: typeof Manifest.Type,
+      company: CurrentIdentity["Service"]["company"]
+    ) {
+      if (patchId === null) return [];
+      const couldNotCheck = (error: unknown) =>
+        Effect.logWarning("Publish could not read whether guests can open the patch.", error).pipe(
+          Effect.annotateLogs({ companyId: company.id, patchId }),
+          Effect.as(["Could not check whether this patch's guests can open this version."])
+        );
+      return yield* guestGrants
+        .unavailableAfterPublish({
+          patchId,
+          companyId: company.id,
+          scope,
+          version: { tier: manifest.tier, manifest }
+        })
+        .pipe(
+          Effect.map(
+            Option.match({ onNone: () => [], onSome: (reason) => [GuestGrants.warning(reason)] })
+          ),
+          Effect.catchTags({ SqlError: couldNotCheck, ConnectionStorageFailed: couldNotCheck })
+        );
     });
 
     return handlers
@@ -682,6 +715,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           // Before the version is recorded, so the stored response a same-key retry replays has it.
           warnings.push(...(yield* lookWarnings(metadata.look, identity.company)));
           warnings.push(...(yield* agentAccessWarnings(manifest.handlers, identity.company)));
+          warnings.push(
+            ...(yield* guestWarnings(patchId, payload.scope, manifest, identity.company))
+          );
           const recorded = yield* content
             .publish({
               patchId,
