@@ -73,7 +73,8 @@ export interface GuestPatch {
   readonly name: string;
   readonly title: string;
   readonly tier: number;
-  readonly state: typeof PatchState.Type;
+  /** Its lifecycle state, or `disabled` once the operator took it down, which no one opens. */
+  readonly state: typeof PatchState.Type | "disabled";
   /** The sharer's name. */
   readonly sharedBy: string;
   readonly sharedAt: Date;
@@ -214,18 +215,24 @@ const time = (date: Date, label = dateLabel(date.toISOString())) =>
 const noticeHtml = (notice: Notice | undefined) =>
   notice ? `<div class="note note-warn" role="alert">${notice.message}</div>` : "";
 
-/** A patch's title, opening the patch, or its card once it's off, as everywhere patches are listed. */
+const offLabels = { retired: "Retired", deleted: "Deleted", disabled: "Unavailable" } as const;
+/** The pill naming the state a guest's patch is in once it's off. */
+const statePill = ({ state }: GuestPatch) =>
+  state === "live" ? "" : ` <span class="pill">${offLabels[state]}</span>`;
+
+/**
+ * A patch's title, opening the patch, or its card once it's off, as everywhere patches are listed.
+ * A disabled patch opens for no one, so its title is no link.
+ */
 const patchLink = (viewer: Viewer, patch: GuestPatch) => {
+  const title = escapeHtml(patchTitle(patch));
   const name = encodeURIComponent(patch.name);
+  if (patch.state === "disabled") return `${title}${statePill(patch)}`;
   const href =
     patch.state === "live"
       ? `/${encodeURIComponent(viewer.company.handle)}/${name}`
       : `/patches/${name}`;
-  const state =
-    patch.state === "live"
-      ? ""
-      : ` <span class="pill">${patch.state === "retired" ? "Retired" : "Deleted"}</span>`;
-  return `<a href="${escapeAttribute(href)}">${escapeHtml(patchTitle(patch))}</a>${state}`;
+  return `<a href="${escapeAttribute(href)}">${title}</a>${statePill(patch)}`;
 };
 
 const filterHref = (show: Show, query: string) => {
@@ -511,13 +518,13 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
   const patches = guest.patches
     .map(
       (patch) =>
-        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<strong>${escapeHtml(patchTitle(patch))}</strong></li>`
+        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
     )
     .join("");
   return {
     title: `Remove ${guest.name}`,
     heading: "",
-    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name} can no longer open these. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
+    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
   };
 };
 

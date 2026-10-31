@@ -629,11 +629,12 @@ manage roles, deactivation and reactivation from each row's menu; members read
 the same page without actions. A **Guests** tab, there once the company has
 any, lists everyone at another company holding a grant to one of its patches
 now, with their company; each row opens to those patches, who shared each and
-when. For admins it ends in **Remove from all patches…**, a confirmation
-listing the patches, which ends every grant the person holds in the company and
-leaves their grants elsewhere alone. Ended grants keep their records, so member
-columns still name the person, inactive, but someone whose grants have all
-ended is no longer listed. The last active admin cannot be demoted or
+when, marking one the operator has disabled as unavailable. For admins it ends
+in **Remove from all patches…**, a confirmation listing every one of those
+patches, which ends every grant the person holds in the company and leaves their
+grants elsewhere alone; a public patch stays open to anyone with the link.
+Ended grants keep their records, so member columns still name the person,
+inactive, but someone whose grants have all ended is no longer listed. The last active admin cannot be demoted or
 deactivated. Reactivation restores sign-in to the same company and data, but
 machine tokens revoked by deactivation remain revoked.
 

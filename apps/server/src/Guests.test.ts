@@ -382,6 +382,37 @@ it.layer(layer())("People's guests", (it) => {
       );
     })
   );
+
+  it.effect("keeps a guest removable while every patch shared with them is disabled", () =>
+    Effect.gen(function* () {
+      const { grants, guest, notes, board } = yield* peopleWithGuests("loch");
+      yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
+        WHERE id IN (${notes.patchId}, ${board.patchId})`;
+      const listed = yield* page(admin, "/company?show=guests");
+      const start = listed.indexOf(guest.user.email);
+      assert.isAtLeast(start, 0);
+      const row = listed.slice(start, listed.indexOf("</details>", start));
+      assert.include(row, "2 patches");
+      assert.include(row, "Unavailable");
+
+      yield* people(admin, `/company/guests/${guest.user.id}/remove`, "POST");
+      // Re-enabling them would let the guest back in had their grants survived.
+      for (const patch of [notes, board])
+        assert.deepStrictEqual(yield* grants.guests(patch.patchId), []);
+    })
+  );
+
+  it.effect("confirms every grant it ends, a disabled patch's too", () =>
+    Effect.gen(function* () {
+      const { guest, board } = yield* peopleWithGuests("fell");
+      yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
+        WHERE id = ${board.patchId}`;
+      const confirmation = yield* page(admin, `/company/guests/${guest.user.id}/remove`);
+      for (const title of ["fell notes", "fell board"]) assert.include(confirmation, title);
+      assert.include(confirmation, "Unavailable");
+      assert.include(confirmation, "Remove from 2 patches");
+    })
+  );
 });
 
 /** A tier 2 page whose guests list and add notes, and can't count them. */
