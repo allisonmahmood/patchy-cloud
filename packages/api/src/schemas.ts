@@ -94,6 +94,14 @@ export const Conflict = failure(409, {});
 export const PayloadTooLarge = failure(413, {});
 export const PublishKeyConflict = failure(409, { code: Schema.Literal("publish_key_conflict") });
 export const NameTaken = failure(409, { code: Schema.Literal("name_taken") });
+/** A publish from a copy older than the patch's newest version, and who published that one. */
+export const Behind = failure(409, {
+  code: Schema.Literal("behind"),
+  baseVersion: Schema.Int,
+  latestVersion: Schema.Int,
+  publishedBy: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  publishedAt: Schema.String
+});
 export const PatchState = Schema.Literals(["live", "retired", "deleted"]);
 export const PatchSourceState = Schema.Union([PatchState, Schema.Literal("gone")]);
 const PatchOwner = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -978,6 +986,11 @@ export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest
    * on every repo publish; a file publish has none.
    */
   repo: Schema.optionalKey(RepoSnapshot),
+  /**
+   * The version the publishing copy was pulled from or last published as. When the patch has a
+   * newer one, publish refuses with `behind`; leave it out to publish over it.
+   */
+  baseVersion: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
   force: Schema.optionalKey(Schema.Boolean),

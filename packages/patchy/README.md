@@ -1085,7 +1085,7 @@ Check an HTML file locally as publish would, without publishing: it must carry e
 patchy validate ./plan.html
 ```
 
-### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--api-url <url>]`
+### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--allow-behind] [--api-url <url>]`
 
 First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then check the file as `validate` does, and publish it with a tier 1 manifest, empty `tables`, `files` and `uses`, and no `sdkImports`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
@@ -1100,6 +1100,12 @@ stands. Repo mode refuses that flag and points at `patchy.json`.
 `--force` accepts an unshare that breaks live dependants. Without it, the instance
 returns `has_dependants` with their names and owners. Ask the person you are
 working for before forcing.
+A repo publish sends `patchy.json`'s `version` as `baseVersion`. When someone has
+published a newer version since this copy was pulled or last published, the
+instance refuses with `behind`, exit 2, naming that version, who published it and
+when. Pull it into a new folder and make the change there, or, once the person
+agrees to replace the newer work, publish with `--allow-behind`, which sends no
+`baseVersion`. `--force` does not override it; `--allow-behind` is repo-only.
 
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against
@@ -1522,7 +1528,7 @@ Every command takes these, before or after the subcommand:
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
 - `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
 
-A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, admins?, warnings? }`
+A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
 refusals retain the affected owner, patch state, dependant/source lists or reclaim
 date; `admin_required` retains the company's `admins`. Notices discovered before a later failure remain in `warnings`; success
@@ -1551,6 +1557,7 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--patch <patch-id>`: on `share`, `retire`, `delete`, `restore`, `rollback` and `describe`, name the patch instead of using the repo id or file cache. It cannot be combined with a file argument. On `logs`, read that patch's log instead of the repo's.
 - `--failed`, `--limit <n>` and `--before <cursor>`: on `logs`, keep only failed calls, set the page size (1 to 25, default 10) and continue from a previous page.
 - `--force`: on `retire`, `delete`, `restore` and `publish`, accept the reported dependant/source breakage. Ask the person you are working for first.
+- `--allow-behind`: on repo `publish`, publish over versions published since this copy was pulled or last published. Ask the person you are working for first.
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.

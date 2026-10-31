@@ -4,8 +4,8 @@
  * result is the lines agents already read and a failure follows any warnings on
  * stderr. Under `--json` a result is exactly one document on stdout and a
  * failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?,
- * sources?, purgeAt?, versionNumber?, admins?, from?, details?, retryAfterSeconds?,
- * warnings? }`
+ * sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?,
+ * publishedAt?, admins?, from?, details?, retryAfterSeconds?, warnings? }`
  * on stderr, with the other stream empty.
  * The exit code comes from the failure's kind and from nowhere else.
  */

@@ -39,6 +39,7 @@ describe("isDefinitivePublishRefusal", () => {
       [
         "publish_key_conflict",
         "name_taken",
+        "behind",
         "has_dependants",
         "patch_retired",
         "patch_deleted"

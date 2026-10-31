@@ -3798,6 +3798,70 @@ it.layer(Layer.fresh(publishLayer))("repo snapshots over machine tokens", (it) =
       })
   );
 
+  it.effect(
+    "refuses a copy behind the newest version, naming who published it, until left out",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+        const newOwner = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+        const manifest = { ...Fixtures.manifest, name: "repo-behind" };
+        const first = yield* owner.publish({
+          payload: publishRequest({ html: html("v1"), manifest })
+        });
+        const update = (api: typeof owner, baseVersion?: number, force?: boolean) =>
+          api.publish({
+            payload: publishRequest({
+              html: html("Update"),
+              manifest,
+              patchId: first.patchId,
+              ...(baseVersion === undefined ? {} : { baseVersion }),
+              ...(force === undefined ? {} : { force })
+            }),
+            responseMode: "response-only"
+          });
+        assert.strictEqual((yield* update(owner, 1)).status, 200);
+        const stored = Effect.flatMap(ContentStore.ContentStore, (store) =>
+          Stream.runCollect(store.list(`patches/${first.patchId}/`)).pipe(
+            Effect.map((objects) => objects.length)
+          )
+        );
+        const before = yield* stored;
+        for (const force of [undefined, true]) {
+          const behind = yield* update(owner, 1, force);
+          assert.strictEqual(behind.status, 409);
+          expect(yield* behind.json).toEqual({
+            ok: false,
+            code: "behind",
+            error: expect.stringMatching(
+              /^This copy is from v1, but Uploader published v2 since, at \d{4}-\d\d-\d\dT[\d:.]+Z\. Pull it into a new folder with patchy pull and make the change there, or publish again with --allow-behind to replace it\.$/
+            ),
+            baseVersion: 1,
+            latestVersion: 2,
+            publishedBy: { id: uploader.user.id, name: uploader.user.name },
+            publishedAt: expect.any(String)
+          });
+        }
+        // Refused before upload: a stale attempt stores nothing for the sweep to reclaim.
+        assert.strictEqual(yield* stored, before);
+        // Left out, it publishes over v2; a copy at the newest version publishes as usual.
+        assert.strictEqual((yield* update(owner)).status, 200);
+        assert.strictEqual((yield* update(owner, 3)).status, 200);
+
+        // After reassignment it names who published the newer version, not who owns the patch now.
+        yield* (yield* Patches.Patches).reassign(
+          first.patchId,
+          { userId: admin.user.id, admin: true },
+          reader.user.id
+        );
+        const stale = yield* update(newOwner, 3);
+        assert.strictEqual(stale.status, 409);
+        expect(yield* stale.json).toMatchObject({
+          latestVersion: 4,
+          publishedBy: { id: uploader.user.id, name: uploader.user.name }
+        });
+      })
+  );
+
   it.effect("refuses a repo that can't be written into one folder, or over its limits", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));

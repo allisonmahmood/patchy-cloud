@@ -524,6 +524,18 @@ describe("publish description and lifecycle recovery", () => {
       code: "patch_deleted",
       fields: { purgeAt: "2026-10-15T00:00:00.000Z" },
       text: "2026-10-15"
+    },
+    {
+      status: 409,
+      code: "behind",
+      fields: {
+        error: "This copy is from v6, but Sam published v8 since.",
+        baseVersion: 6,
+        latestVersion: 8,
+        publishedBy: { id: "other", name: "Sam" },
+        publishedAt: "2026-10-28T00:00:00.000Z"
+      },
+      text: "Sam published v8"
     }
   ])(
     "clears definitive $code retries without changing the repo identity",

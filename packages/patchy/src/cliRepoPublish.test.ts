@@ -120,7 +120,7 @@ describe("repo publish checks", () => {
   // repoBuild.test.ts owns what the inspector refuses and the cap; this proves Vite's output
   // reaches the check, and that `patchy init` produces a repo whose page publishes, in the company
   // look with its embedded font, keeping its repo for a colleague to pull back set up.
-  it("refuses unbundled resources before sending, then publishes the starter with its repo and pulls it back set up", async () => {
+  it("refuses unbundled resources before sending, then publishes the starter with its repo and version and pulls it back set up", async () => {
     const registry = await localPackageRegistry();
     let kept: ReadonlyArray<{ path: string; contents: string }> = [];
     const instance = await stubInstance(
@@ -218,6 +218,13 @@ describe("repo publish checks", () => {
       patch: "abcdefghijkl",
       version: 1
     });
+    // The next publish says which version this copy is from, unless told to go over newer ones.
+    const lastSent = () =>
+      decodePublishRequest(instance.requests.filter((r) => r.url === "/api/publish").at(-1)?.body);
+    expect((await runCli(["publish", "--json"], options)).status).toBe(0);
+    expect(lastSent().baseVersion).toBe(1);
+    expect((await runCli(["publish", "--allow-behind", "--json"], options)).status).toBe(0);
+    expect(lastSent().baseVersion).toBeUndefined();
 
     // A colleague pulls it into a folder where the patch builds again on today's release.
     const into = (args: ReadonlyArray<string>) =>
