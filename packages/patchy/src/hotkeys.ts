@@ -17,7 +17,7 @@ import {
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
 import { Fragment, createElement, type ComponentChildren, type JSX } from "preact";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
 import { addSheetStyles, sections } from "./hotkeySheet.js";
 
@@ -284,14 +284,16 @@ const keycaps = (hotkey: string) =>
 
 // A modal dialog: the page behind it is inert and Escape asks it to close. Its state is the
 // sheet's: the dialog closes as it unmounts, which returns focus to where it was. Chrome fires
-// the dialog's own close event late, after the next key, so nothing waits on it. It opens in a
-// passive effect, the same pass that switches its scope on, so no key lands between the two.
+// the dialog's own close event late, after the next key, so nothing waits on it. It opens and
+// closes in a layout effect, in the commits that switch its scope on and off: Preact 11 runs a
+// passive cleanup after the dialog has left the page, and a dialog closed then returns focus
+// nowhere.
 function Sheet(props: { readonly title: string; readonly onClose: () => void }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const title = useId();
   const list = useHotkeyList();
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = dialog.current;
     element?.showModal();
     return () => element?.close();
