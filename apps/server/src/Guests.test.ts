@@ -2,7 +2,8 @@
  * A patch's guest over the whole server: someone from another company opens the patch shared
  * with them and uses its own data as themselves, until the grant ends and after it's restored.
  * On tier 2 they start only the handlers marked for guests, and none while a connection the
- * patch uses blocks guests; they can be the person in its member columns.
+ * patch uses blocks guests; they can be the person in its member columns. People lists them,
+ * and an admin there removes them from all of the company's patches at once.
  */
 import { assert, it } from "@effect/vitest";
 import { build } from "esbuild";
@@ -24,6 +25,7 @@ import {
   TablePage,
   WIRE_VERSION
 } from "@patchy/api";
+import { MachineTokens } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, type Users } from "@patchy/companies";
@@ -259,6 +261,157 @@ it.layer(layer())("a patch's guest", (it) => {
         tier: 1
       });
     }).pipe(Effect.scoped)
+  );
+});
+
+/** A page at the dev company, as its admin publishes it. */
+const devPage = (title: string) =>
+  Effect.flatMap(publish(DEV_SEED.token, { html: html(title), manifest }), (response) =>
+    Effect.map(response.json, decodeCreated)
+  );
+
+/**
+ * Gina, from company `key`, holds two of the dev company's patches and one of a third company's,
+ * whose admin shared it; a member of the dev company looks on. Everyone in a browser.
+ */
+const peopleWithGuests = Effect.fn("GuestsTest.peopleWithGuests")(function* (key: string) {
+  const grants = yield* GuestGrants.GuestGrants;
+  const companies = yield* Companies.Companies;
+  const guest = yield* outsider(key);
+  const elsewhere = yield* outsider(`${key}-host`);
+  const notes = yield* devPage(`${key} notes`);
+  const board = yield* devPage(`${key} board`);
+  const { token } = yield* MachineTokens.MachineTokens.use((machines) =>
+    machines.mint({ userId: elsewhere.user.id, name: "People test" })
+  ).pipe(Effect.provide(MachineTokens.layer));
+  const theirs = decodeCreated(
+    yield* (yield* publish(token, { html: html(`${key} rota`), manifest })).json
+  );
+  for (const [patch, sharer] of [
+    [notes, DEV_SEED.userId],
+    [board, DEV_SEED.userId],
+    [theirs, elsewhere.user.id]
+  ] as const)
+    yield* grants.share({
+      patchId: patch.patchId,
+      actor: { userId: sharer, admin: true },
+      email: guest.user.email
+    });
+  const email = `${key}-member@patchy.local`;
+  const invite = yield* companies.createInvite({
+    companyId: DEV_SEED.companyId,
+    email,
+    invitedBy: DEV_SEED.userId,
+    role: "member"
+  });
+  const user = yield* companies.consumeInvite({
+    inviteId: invite.id,
+    clerkUserId: `user_${key}_member`,
+    email,
+    name: "Max"
+  });
+  const member: Person = {
+    user,
+    cookie: signedInCookies(
+      signSession({ sub: user.clerkUserId, email, name: user.name, azp: origin })
+    )
+  };
+  return { grants, guest, notes, board, theirs, member };
+});
+
+/** A People page as this person sees it, or a form posted from it. */
+const people = (person: Person, path: string, method: "GET" | "POST" = "GET") =>
+  send(
+    (method === "GET" ? HttpClientRequest.get(path) : HttpClientRequest.post(path)).pipe(
+      HttpClientRequest.setHeaders({ cookie: person.cookie, origin })
+    )
+  );
+const page = (person: Person, path: string) =>
+  Effect.flatMap(people(person, path), (response) => {
+    assert.strictEqual(response.status, 200);
+    return response.text;
+  });
+
+it.layer(layer())("People's guests", (it) => {
+  it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
+    Effect.gen(function* () {
+      const { grants, guest, notes, board, theirs, member } = yield* peopleWithGuests("fjord");
+      const removal = `/company/guests/${guest.user.id}/remove`;
+      const listed = yield* page(member, "/company?show=guests");
+      const start = listed.indexOf(guest.user.email);
+      const row = listed.slice(start, listed.indexOf("</details>", start));
+      assert.include(row, "2 patches");
+      for (const title of ["fjord notes", "fjord board"]) assert.include(row, title);
+      assert.include(row, `Shared by ${DEV_SEED.userName}`);
+      assert.notInclude(row, "fjord rota");
+      assert.notInclude(listed, removal);
+      assert.include(yield* page(admin, "/company?show=guests"), removal);
+
+      assert.strictEqual((yield* people(member, removal)).status, 403);
+      assert.strictEqual((yield* people(member, removal, "POST")).status, 403);
+      for (const patch of [notes, board, theirs])
+        assert.lengthOf(yield* grants.guests(patch.patchId), 1);
+    })
+  );
+
+  it.effect("removes a guest from all of this company's patches once an admin confirms", () =>
+    Effect.gen(function* () {
+      const { grants, guest, notes, board, theirs } = yield* peopleWithGuests("tarn");
+      const removal = `/company/guests/${guest.user.id}/remove`;
+      const confirmation = yield* page(admin, removal);
+      for (const title of ["tarn notes", "tarn board"]) assert.include(confirmation, title);
+      assert.notInclude(confirmation, "tarn rota");
+      assert.include(confirmation, "Remove from 2 patches");
+
+      // The form lands back on Guests, where they no longer are.
+      const landed = yield* people(admin, removal, "POST");
+      assert.strictEqual(landed.status, 200);
+      assert.notInclude(yield* landed.text, guest.user.email);
+      for (const patch of [notes, board])
+        assert.deepStrictEqual(yield* grants.guests(patch.patchId), []);
+      // Ended, not deleted: the person is still someone the dev company's directory names.
+      assert.deepStrictEqual(
+        yield* grants.holders({ companyId: DEV_SEED.companyId, patchId: notes.patchId }, [
+          guest.user.id
+        ]),
+        new Map([[guest.user.id, false]])
+      );
+      assert.deepStrictEqual(
+        (yield* grants.sharedWith(guest.user.id)).map((shared) => shared.patchId),
+        [theirs.patchId]
+      );
+    })
+  );
+
+  it.effect("keeps a guest removable while every patch shared with them is disabled", () =>
+    Effect.gen(function* () {
+      const { grants, guest, notes, board } = yield* peopleWithGuests("loch");
+      yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
+        WHERE id IN (${notes.patchId}, ${board.patchId})`;
+      const listed = yield* page(admin, "/company?show=guests");
+      const start = listed.indexOf(guest.user.email);
+      assert.isAtLeast(start, 0);
+      const row = listed.slice(start, listed.indexOf("</details>", start));
+      assert.include(row, "2 patches");
+      assert.include(row, "Unavailable");
+
+      yield* people(admin, `/company/guests/${guest.user.id}/remove`, "POST");
+      // Re-enabling them would let the guest back in had their grants survived.
+      for (const patch of [notes, board])
+        assert.deepStrictEqual(yield* grants.guests(patch.patchId), []);
+    })
+  );
+
+  it.effect("confirms every grant it ends, a disabled patch's too", () =>
+    Effect.gen(function* () {
+      const { guest, board } = yield* peopleWithGuests("fell");
+      yield* (yield* SqlClient.SqlClient)`UPDATE patches SET disabled_at = now()
+        WHERE id = ${board.patchId}`;
+      const confirmation = yield* page(admin, `/company/guests/${guest.user.id}/remove`);
+      for (const title of ["fell notes", "fell board"]) assert.include(confirmation, title);
+      assert.include(confirmation, "Unavailable");
+      assert.include(confirmation, "Remove from 2 patches");
+    })
   );
 });
 
