@@ -5,19 +5,19 @@
  * Patchy's own API. Pages write `"Mod+K"`, `"?"` or `"G H"` and never see TanStack Hotkeys,
  * which does the matching underneath; an upstream change is absorbed here, not in patches.
  */
+import { createHotkeyBindings, prepareHotkeyDefinitions } from "@tanstack/hotkeys/adapter";
 import {
   HotkeysProvider,
   formatForDisplay,
   getHotkeyManager,
   useDefaultHotkeysOptions,
   useHotkeyRegistrations,
-  useHotkeys as useTanStackHotkeys,
   type HotkeyChord,
   type HotkeyRegistration,
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
 import { createElement, type ComponentChildren, type JSX } from "preact";
-import { useEffect, useId, useLayoutEffect, useMemo } from "preact/hooks";
+import { useId, useLayoutEffect, useMemo, useState } from "preact/hooks";
 import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
 
 type Letter =
@@ -178,10 +178,20 @@ const checkDuplicates = () => {
   });
 };
 
+// Layout effects keep a component's hotkeys live from the commit that mounts it to the one that
+// removes it. TanStack's `useHotkeys` uses passive effects, which miss a key pressed before the
+// next paint and, on Preact 11, outlive the component until that paint. Each render updates the
+// same registrations in place, so it doesn't restart a sequence.
 function useBindings(bindings: ReadonlyArray<Checked>): void {
   const kept = permitted(bindings);
-  useTanStackHotkeys(kept.map(definition));
-  useEffect(checkDuplicates, [
+  // A `HotkeyScope` above puts its scope here.
+  const defaults = useDefaultHotkeysOptions().hotkey;
+  const [registered] = useState(createHotkeyBindings);
+  useLayoutEffect(() => {
+    registered.update(prepareHotkeyDefinitions(kept.map(definition), { defaults }));
+  });
+  useLayoutEffect(() => () => registered.destroy(), [registered]);
+  useLayoutEffect(checkDuplicates, [
     kept.map((binding) => `${binding.hotkey}\n${binding.label}\n${binding.enabled}`).join("\n\n")
   ]);
 }
