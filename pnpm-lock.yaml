@@ -663,6 +663,9 @@ importers:
       '@patchy/serving':
         specifier: workspace:*
         version: link:../serving
+      '@tanstack/hotkeys':
+        specifier: 0.19.0
+        version: 0.19.0
       '@tanstack/preact-hotkeys':
         specifier: 0.17.1
         version: 0.17.1(preact@11.1.0)

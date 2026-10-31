@@ -82,6 +82,39 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
+// O opens a panel whose Escape closes it, and N replaces it with another. `arm` sends one key the
+// moment the page's DOM next changes, before anything else can run.
+const lifecycle = `import { render, useState } from "patchy/preact";
+import { useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+const prevented: boolean[] = [];
+const arm = (key: string) => {
+  const app = document.getElementById("app")!;
+  new MutationObserver((_, observer) => {
+    observer.disconnect();
+    const down = new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true });
+    document.dispatchEvent(down);
+    document.dispatchEvent(new KeyboardEvent("keyup", { key, code: key, bubbles: true }));
+    prevented.push(down.defaultPrevented);
+  }).observe(app, { childList: true, characterData: true, subtree: true });
+};
+Object.assign(window, { fired, prevented, arm });
+
+function Panel(props: { name: string; close: () => void }) {
+  useHotkey("Escape", () => { fired.push(props.name); props.close(); });
+  return <p id="panel">{props.name}</p>;
+}
+
+function App() {
+  const [panel, setPanel] = useState<string>();
+  useHotkey("O", () => setPanel("first"));
+  useHotkey("N", () => setPanel("second"));
+  return <main>{panel && <Panel key={panel} name={panel} close={() => setPanel(undefined)} />}</main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
 /** Bundles a page's source against the built patchy package and publishes it. */
 const publish = async (instance: Instance, tsx: string) => {
   const bundle = await build({
@@ -204,7 +237,7 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     };
     // AZERTY types ? with Shift on the key in M's US position.
     await press("?", "KeyM", 188, 8);
-    // The sheet's Escape registers after it renders; the list shows it once it has.
+    // The list shows the sheet's Escape once the sheet is open.
     await expect(view.locator("#listed li")).toHaveCount(5);
     await page.keyboard.press("Escape");
     await expect(view.locator("#listed")).toHaveCount(0);
@@ -232,6 +265,52 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await mac.keyboard.press("Meta+Enter");
     await firedNext(contentFrame(mac), ["Mod+Enter"]);
     await mac.close();
+  });
+});
+
+test("a component's hotkeys are live from the commit that mounts it to the one that removes it", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, lifecycle);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const panel = page.frameLocator("#patch").locator("#panel");
+  type Lifecycle = Fired & { prevented: boolean[]; arm: (key: string) => void };
+  const arm = (key: string) =>
+    frame.evaluate((armed) => (window as unknown as Lifecycle).arm(armed), key);
+  const prevented = async (expected: boolean[]) => {
+    await expect
+      .poll(() => frame.evaluate(() => [...(window as unknown as Lifecycle).prevented]))
+      .toEqual(expected);
+    await frame.evaluate(() => (window as unknown as Lifecycle).prevented.splice(0));
+  };
+
+  await test.step("the first key after a panel mounts reaches it", async () => {
+    await arm("Escape");
+    await page.keyboard.press("o");
+    await prevented([true]);
+    await firedNext(frame, ["first"]);
+    await expect(panel).toHaveCount(0);
+  });
+
+  await test.step("the first key after a panel is removed doesn't reach it", async () => {
+    await page.keyboard.press("o");
+    await expect(panel).toHaveText("first");
+    await arm("Escape");
+    await page.keyboard.press("Escape");
+    await prevented([false]);
+    await firedNext(frame, ["first"]);
+  });
+
+  await test.step("the first key after a panel is replaced reaches only the new one", async () => {
+    await page.keyboard.press("o");
+    await expect(panel).toHaveText("first");
+    await arm("Escape");
+    await page.keyboard.press("n");
+    await prevented([true]);
+    await firedNext(frame, ["second"]);
+    await expect(panel).toHaveCount(0);
   });
 });
 
