@@ -201,6 +201,7 @@ const desk = Effect.fn("live.dev.desk")(function* (connection: Pidgeon) {
               handlers: {}
             },
             identity: owner,
+            reauthorize: Effect.succeed(owner),
             principal: { userId: owner.user.id },
             correlationId: "live-dev-call",
             deadline: now + 15_000

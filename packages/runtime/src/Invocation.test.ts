@@ -46,6 +46,7 @@ const binding: Binding.Binding["Service"] = {
   scope: "company",
   principal: { userId: viewer.user.id },
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   correlationId: "invocation-test",
   manifest: {
     manifestVersion: 1,
@@ -160,7 +161,7 @@ it.layer(services)("Invocation", (it) => {
         })
       );
       const error = yield* invocations
-        .call({ handler: "demo.query", args: { id: 1 } }, binding, Effect.succeed(viewer))
+        .call({ handler: "demo.query", args: { id: 1 } }, binding)
         .pipe(Effect.flip);
       assert.deepInclude(Runtime.toFailure(error), {
         code: "patch_paused",
@@ -169,6 +170,24 @@ it.layer(services)("Invocation", (it) => {
         limitId: "execution.breaker.kills"
       });
       assert.strictEqual(RuntimeApi.failure(error).headers["retry-after"], "137");
+    })
+  );
+
+  it.effect("sends a member's viewer to the worker as it did before guests", () =>
+    Effect.gen(function* () {
+      const sent = yield* Queue.unbounded<GuestProtocol.Invoke>();
+      const invocations = yield* makeInvocation((request) =>
+        Queue.offer(sent, request).pipe(
+          Effect.as({
+            outcome: "returned" as const,
+            reply: { ok: true as const, value: 1 },
+            guestMs: 1
+          })
+        )
+      );
+      yield* invocations.call({ handler: "demo.query", args: { id: 1 } }, binding);
+      // Bundles stored before guests decode the viewer strictly: no `guest` key, ever, for members.
+      assert.deepStrictEqual((yield* Queue.take(sent)).viewer, viewer);
     })
   );
 
@@ -219,8 +238,7 @@ it.layer(services)("Invocation", (it) => {
       const parent = yield* invocations
         .call(
           { handler: "demo.action", args: {} },
-          { ...binding, correlationId: "retained-child-action" },
-          Effect.succeed(viewer)
+          { ...binding, correlationId: "retained-child-action" }
         )
         .pipe(Effect.forkChild);
       const request = yield* Queue.take(seen);
@@ -268,11 +286,7 @@ it.layer(services)("Invocation", (it) => {
       );
       yield* events.withEvent(
         { type: "re-run" },
-        invocations.call(
-          { handler: "demo.query", args: { id: 1 } },
-          binding,
-          Effect.succeed(viewer)
-        )
+        invocations.call({ handler: "demo.query", args: { id: 1 } }, binding)
       );
       assert.include(yield* Queue.take(records), {
         taskId: "admitted-task",
@@ -298,20 +312,15 @@ it.layer(services)("Invocation", (it) => {
         (yield* events
           .withEvent(
             { type: "request" },
-            invocations.call(
-              { handler: "demo.query", args: { id: "wrong" } },
-              binding,
-              Effect.succeed(viewer)
-            )
+            invocations.call({ handler: "demo.query", args: { id: "wrong" } }, binding)
           )
           .pipe(Effect.flip)).code,
         "invalid_request"
       );
       assert.include(yield* Queue.take(records), { handler: "demo.query", kind: "query" });
       assert.strictEqual(
-        (yield* invocations
-          .call({ handler: "other.query", args: {} }, binding, Effect.succeed(viewer))
-          .pipe(Effect.flip)).code,
+        (yield* invocations.call({ handler: "other.query", args: {} }, binding).pipe(Effect.flip))
+          .code,
         "invalid_request"
       );
       assert.strictEqual(yield* Queue.size(seen), 0);
@@ -333,8 +342,7 @@ it.layer(services)("Invocation", (it) => {
         const result = yield* invocations
           .call(
             { handler: "demo.query", args: { id: 1 } },
-            { ...binding, correlationId: `correlation-${index}` },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: `correlation-${index}` }
           )
           .pipe(Effect.result);
         const request = yield* Queue.take(seen);
@@ -383,8 +391,7 @@ it.layer(services)("Invocation", (it) => {
         const error = yield* invocations
           .call(
             { handler: "demo.query", args: { id: 1 } },
-            { ...binding, correlationId: "oversized-business-error" },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: "oversized-business-error" }
           )
           .pipe(Effect.flip);
         assert.include(error, {
@@ -421,8 +428,7 @@ it.layer(services)("Invocation", (it) => {
           const failure = yield* invocations
             .call(
               { handler: "demo.query", args: { id: 1 } },
-              { ...binding, correlationId: `relay-${operations.join("-")}` },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: `relay-${operations.join("-")}` }
             )
             .pipe(Effect.flip);
           return Runtime.toFailure(failure);
@@ -454,8 +460,7 @@ it.layer(services)("Invocation", (it) => {
       const error = yield* busy
         .call(
           { handler: "demo.query", args: { id: 1 } },
-          { ...binding, correlationId: "executor-capacity" },
-          Effect.succeed(viewer)
+          { ...binding, correlationId: "executor-capacity" }
         )
         .pipe(Effect.flip);
       assert.deepInclude(Runtime.toFailure(error), {
@@ -473,8 +478,7 @@ it.layer(services)("Invocation", (it) => {
       const failure = yield* broken
         .call(
           { handler: "demo.query", args: { id: 1 } },
-          { ...binding, correlationId: "executor-defect" },
-          Effect.succeed(viewer)
+          { ...binding, correlationId: "executor-defect" }
         )
         .pipe(Effect.flip);
       assert.strictEqual(failure.code, "handler_failed");
@@ -515,8 +519,7 @@ it.layer(services)("Invocation", (it) => {
             { type: "re-run" },
             invocations.call(
               { handler: "demo.query", args: { id: 1 } },
-              { ...binding, correlationId: `rebound-${reason}` },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: `rebound-${reason}` }
             )
           ),
           { ok: true, value: 7 },
@@ -556,8 +559,7 @@ it.layer(services)("Invocation", (it) => {
             { type: "request" },
             invocations.call(
               { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
-              { ...binding, correlationId: `unrecovered-${reason}` },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: `unrecovered-${reason}` }
             )
           )
           .pipe(Effect.flip);
@@ -601,8 +603,7 @@ it.layer(services)("Invocation", (it) => {
         const failure = yield* invocations
           .call(
             { handler: "demo.query", args: { id: 1 } },
-            { ...binding, correlationId: `late-${late}` },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: `late-${late}` }
           )
           .pipe(Effect.flip);
         assert.strictEqual(failure.code, "handler_timeout", late);
@@ -646,8 +647,7 @@ it.layer(services)("Invocation", (it) => {
           const call = yield* invocations
             .call(
               { handler: "demo.query", args: { id: 1 } },
-              { ...binding, correlationId: `cold-${startMs}` },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: `cold-${startMs}` }
             )
             .pipe(
               Effect.map(() => "success"),
@@ -696,8 +696,7 @@ it.layer(services)("Invocation", (it) => {
       );
       yield* invocations.call(
         { handler: "demo.query", args: { id: 1 } },
-        { ...binding, correlationId: "page-caller" },
-        Effect.succeed(viewer)
+        { ...binding, correlationId: "page-caller" }
       );
       yield* Queue.take(seen);
       const agent = yield* Invocation.callAgent({
@@ -752,8 +751,7 @@ it.layer(services)("Invocation", (it) => {
       const parent = yield* invocations
         .call(
           { handler: "demo.action", args: {} },
-          { ...binding, correlationId: "nested-generation" },
-          Effect.succeed(viewer)
+          { ...binding, correlationId: "nested-generation" }
         )
         .pipe(Effect.forkChild);
       const request = yield* Queue.take(seen);
@@ -790,11 +788,7 @@ it.layer(services)("Invocation", (it) => {
         );
         const capabilityOf = Effect.fnUntraced(function* (handler: string) {
           const fiber = yield* invocations
-            .call(
-              { handler, args: {} },
-              { ...binding, correlationId: newInternalId("call") },
-              Effect.succeed(viewer)
-            )
+            .call({ handler, args: {} }, { ...binding, correlationId: newInternalId("call") })
             .pipe(Effect.forkChild);
           const request = yield* Queue.take(seen);
           return {
@@ -846,11 +840,7 @@ it.layer(services)("Invocation", (it) => {
         )
       );
       const call = (handler: string, from = binding) =>
-        invocations.call(
-          { handler, args: {} },
-          { ...from, correlationId: newInternalId("call") },
-          Effect.succeed(viewer)
-        );
+        invocations.call({ handler, args: {} }, { ...from, correlationId: newInternalId("call") });
       const agentCall = (tool: string, person: Invocation.AgentCall["person"] = viewer) =>
         Invocation.callAgent({
           version: binding,
@@ -872,7 +862,7 @@ it.layer(services)("Invocation", (it) => {
       assert.strictEqual(yield* refused(call("agent.lookup")), "access_denied");
       assert.strictEqual(
         yield* refused(
-          invocations.call({ handler: "agent.lookup", args: {} }, binding, Effect.succeed(viewer), {
+          invocations.call({ handler: "agent.lookup", args: {} }, binding, {
             onDependency: () => {},
             onSnapshot: () => {}
           })
@@ -943,11 +933,7 @@ it.layer(services)("Invocation", (it) => {
         )
       );
       assert.deepStrictEqual(
-        yield* invocations.call(
-          { handler: "demo.query", args: { id: 42 } },
-          binding,
-          Effect.succeed(viewer)
-        ),
+        yield* invocations.call({ handler: "demo.query", args: { id: 42 } }, binding),
         { ok: true, value: 42 }
       );
       const request = yield* Queue.take(seen);
@@ -1099,8 +1085,7 @@ it.layer(services)("Invocation", (it) => {
         const caller = yield* invocations
           .call(
             { handler: "demo.mutation", args: {}, mutationKey: yield* MutationTransaction.mint },
-            binding,
-            Effect.succeed(viewer)
+            binding
           )
           .pipe(Effect.result, Effect.forkChild);
         const request = yield* Queue.take(seen);
@@ -1152,11 +1137,7 @@ it.layer(services)("Invocation", (it) => {
         })
       );
       const parent = yield* invocations
-        .call(
-          { handler: "demo.action", args: {} },
-          { ...binding, correlationId: "nested-action" },
-          Effect.succeed(viewer)
-        )
+        .call({ handler: "demo.action", args: {} }, { ...binding, correlationId: "nested-action" })
         .pipe(Effect.exit, Effect.forkChild);
       const request = yield* Queue.take(seen);
       const capability = yield* capabilities.resolve(request.callback.capability, request);
@@ -1229,8 +1210,7 @@ it.layer(services)("Invocation", (it) => {
             { type: "request" },
             invocations.call(
               { handler, args: handler === "demo.query" ? { id: 1 } : {} },
-              { ...binding, correlationId: newInternalId("call") },
-              Effect.succeed(viewer)
+              { ...binding, correlationId: newInternalId("call") }
             )
           )
           .pipe(Effect.result, Effect.forkChild);
@@ -1279,8 +1259,7 @@ it.layer(services)("Invocation", (it) => {
           {
             ...binding,
             correlationId: newInternalId("call")
-          },
-          Effect.succeed(viewer)
+          }
         )
       );
       const first = yield* call.pipe(Effect.forkChild);
@@ -1317,8 +1296,7 @@ it.layer(services)("Invocation", (it) => {
         const page = Effect.suspend(() =>
           invocations.call(
             { handler: "demo.action", args: {} },
-            { ...binding, correlationId: newInternalId("call") },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: newInternalId("call") }
           )
         );
         const agent = Effect.suspend(() =>

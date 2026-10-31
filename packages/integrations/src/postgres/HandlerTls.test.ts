@@ -293,6 +293,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
           correlationId: "tls-handler",
           principal: { userId: viewer.user.id },
           identity: viewer,
+          reauthorize: Effect.succeed(viewer),
           manifest: {
             manifestVersion: 1,
             release: CURRENT_RELEASE,
@@ -369,8 +370,7 @@ it.layer(Layer.merge(services, Layer.effect(TlsSource, tlsPostgres)), {
         const call = Effect.suspend(() =>
           invocations.call(
             { handler: "leads.read", args: {} },
-            { ...binding, correlationId: newInternalId("call") },
-            Effect.succeed(viewer)
+            { ...binding, correlationId: newInternalId("call") }
           )
         );
         // No cached runtime connection exists: the callback must refuse the untrusted CA.

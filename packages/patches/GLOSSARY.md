@@ -29,7 +29,7 @@ Who may open a patch: `company` means signed-in colleagues in its company, and i
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:
-One person's access to one patch of another company, written by the sharer and kept when it ends, so history still names them; sharing again restores it. It admits them only while the patch is live, tier 1 and at its current version (`GuestGrants.unavailable` says why not), survives public scope and retirement, and goes with the patch's reclamation.
+One person's access to one patch of another company, written by the sharer and kept when it ends, so history still names them; sharing again restores it. It admits them only while the patch is live, tier 1 or tier 2 reading no other patch's shared table or store, and at its current version (`GuestGrants.unavailable` says why not), survives public scope and retirement, and goes with the patch's reclamation.
 _Avoid_: invitation (no acceptance step), membership, permission (a grant has none)
 
 **Openable patch**:

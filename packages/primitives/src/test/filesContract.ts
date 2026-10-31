@@ -28,7 +28,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { CompanyDatabases, Inventory, OrphanSweep } from "@patchy/company-database";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
-import { Binding, LoadedVersions } from "@patchy/runtime";
+import { Binding, LoadedVersions, Runtime } from "@patchy/runtime";
 import * as Files from "../Files.js";
 import * as Tables from "../Tables.js";
 
@@ -78,6 +78,7 @@ export const setup = Effect.fn("test.filesContract.setup")(function* (
     wireVersion: WIRE_VERSION,
     scope: "company",
     identity: null,
+    reauthorize: Effect.fail(new Runtime.AccessDenied({})),
     principal: null,
     correlationId: "files-contract"
   });
@@ -771,6 +772,11 @@ const stageOnlyContract = Effect.fn("test.filesContract.stageOnly")(function* (c
   const handlers = yield* Files.makeLocal;
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventory = yield* Inventory.Inventory;
+  const viewer = {
+    user: { id: "stage-only-viewer", name: "Viewer", email: "viewer@example.test" },
+    company: { id: companyId, handle: "company", name: "Company" },
+    admin: false
+  };
   const binding = Binding.Binding.of({
     patchId: "filestageonly",
     companyId,
@@ -778,11 +784,8 @@ const stageOnlyContract = Effect.fn("test.filesContract.stageOnly")(function* (c
     manifest: { ...manifest, tier: 2, files: {} },
     wireVersion: WIRE_VERSION,
     scope: "company",
-    identity: {
-      user: { id: "stage-only-viewer", name: "Viewer", email: "viewer@example.test" },
-      company: { id: companyId, handle: "company", name: "Company" },
-      admin: false
-    },
+    identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     principal: { userId: "stage-only-viewer" },
     correlationId: "stage-only"
   });

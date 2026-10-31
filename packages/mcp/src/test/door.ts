@@ -182,9 +182,9 @@ export const runtime = <R>(
     const context = yield* Effect.context<R>();
     const handed: Handed[] = [];
     const service = Invocation.Invocation.of({
-      call: (call, binding, recheck) =>
+      call: (call, binding) =>
         Effect.suspend(() => {
-          const one = { call, binding, recheck };
+          const one = { call, binding, recheck: binding.reauthorize };
           handed.push(one);
           return answer(one).pipe(Effect.provideContext(context));
         })

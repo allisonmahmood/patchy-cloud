@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
@@ -64,6 +63,7 @@ const binding = (
     correlationId: "attio-test",
     principal: { userId: viewer.user.id },
     identity: viewer,
+    reauthorize: Effect.succeed(viewer),
     manifest: {
       manifestVersion: 1,
       release: CURRENT_RELEASE,
@@ -870,14 +870,13 @@ it.layer(fixture)("Attio operations, offline", (it) => {
           [Reads.route("GET", "/workspace_members", members)],
           { limits: { "attio.calls.concurrent": 1 } }
         );
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-          VALUES ('usr_attio_queued', 'user_attio_queued', ${who.companyId}, 'queued@acme.example',
-            'Queued', 'member')`;
-        const queued: Viewer = {
-          ...viewer,
-          user: { id: "usr_attio_queued", name: "Queued", email: "queued@acme.example" }
-        };
+        // The door's own check of the viewer, until they're deactivated.
+        let active = true;
+        const queued = binding(crm, {
+          reauthorize: Effect.suspend(() =>
+            active ? Effect.succeed(viewer) : Effect.fail(new Runtime.AccessDenied({}))
+          )
+        });
         const isMembers = (sent: Reads.Sent) => sent.path === "/v2/workspace_members";
         const release = yield* Deferred.make<void>();
         attio.hold(isMembers, release);
@@ -891,12 +890,11 @@ it.layer(fixture)("Attio operations, offline", (it) => {
         yield* TestClock.adjust("1 second");
         assert.include(Runtime.toFailure(yield* Fiber.join(busy)), { code: "busy" });
         // A viewer deactivated while their call waits sends nothing.
-        const byQueued = yield* call(
-          "attio.listMembers",
-          {},
-          binding(crm, { identity: queued, principal: { userId: queued.user.id } })
-        ).pipe(Effect.flip, Effect.forkChild);
-        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'usr_attio_queued'`;
+        const byQueued = yield* call("attio.listMembers", {}, queued).pipe(
+          Effect.flip,
+          Effect.forkChild
+        );
+        active = false;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(running);
         assert.include(Runtime.toFailure(yield* Fiber.join(byQueued)), { code: "access_denied" });

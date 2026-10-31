@@ -324,7 +324,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
         if (viewerAuthority(request.op)) {
-          const identity = yield* capability.reauthorize;
+          const identity = yield* capability.binding.reauthorize;
           if (
             identity.company.id !== binding.companyId ||
             identity.user.id !== capability.binding.identity?.user.id

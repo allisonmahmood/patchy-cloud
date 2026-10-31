@@ -68,6 +68,7 @@ const binding: Binding.Binding["Service"] = {
   scope: "company",
   principal: { userId: viewer.user.id },
   identity: viewer,
+  reauthorize: Effect.succeed(viewer),
   correlationId: "subscription-test",
   manifest: {
     manifestVersion: 1,
@@ -457,9 +458,9 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
   const running = new Map<string, number>();
   const peaks = { company: 0, patch: new Map<string, number>() };
   const tracked = Invocation.Invocation.of({
-    call: (args, loaded, reauthorize, observation) =>
+    call: (args, loaded, observation) =>
       observation === undefined
-        ? invocations.call(args, loaded, reauthorize)
+        ? invocations.call(args, loaded)
         : Effect.sync(() => {
             running.set(loaded.patchId, (running.get(loaded.patchId) ?? 0) + 1);
             const total = [...running.values()].reduce((sum, count) => sum + count, 0);
@@ -469,7 +470,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
               Math.max(peaks.patch.get(loaded.patchId) ?? 0, running.get(loaded.patchId)!)
             );
           }).pipe(
-            Effect.andThen(invocations.call(args, loaded, reauthorize, observation)),
+            Effect.andThen(invocations.call(args, loaded, observation)),
             Effect.ensuring(
               Effect.sync(() => running.set(loaded.patchId, running.get(loaded.patchId)! - 1))
             )
@@ -525,8 +526,7 @@ const sharedReaders = Effect.fnUntraced(function* (prefix: string) {
   const mutate = Effect.fnUntraced(function* (loaded: Binding.Binding["Service"], title: string) {
     const reply = yield* invocations.call(
       { handler: "demo.mark", args: { title }, mutationKey: yield* mint },
-      { ...loaded, correlationId: newInternalId("call") },
-      Effect.succeed(viewer)
+      { ...loaded, correlationId: newInternalId("call") }
     );
     assert.deepInclude(reply, { ok: true, value: title });
   });

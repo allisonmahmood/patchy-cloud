@@ -737,7 +737,7 @@ warnings and errors off the CLI's JSON stdout.
 
 Start this repo's local runtime, detached and idempotent. Exit 0 means the
 runtime and first single-file build are healthy; output contains the local
-page URL, `colleagueUrl` for tiers 1 and 2, log path and `pnpm patchy dev stop --api-url ...` command, using the
+page URL, `colleagueUrl` and `guestUrl` for tiers 1 and 2, log path and `pnpm patchy dev stop --api-url ...` command, using the
 repo's pinned CLI. A second start joins the same daemon without a key, a
 request to the instance or a release check, so it pulls nothing from Patchy:
 JSON reports `joined: true`, where the start that created the session reports
@@ -752,7 +752,9 @@ published inventory if `patchy.json` has an id and regenerate declarations. The 
 CSP, sandbox, broker and runtime admission are reused without Clerk or the
 production runtime log store. The primary URL uses the machine token's user;
 the colleague URL has a distinct origin and a fixed non-admin viewer in the
-same company. Both mounts share local tables, files, fixtures and subscriptions.
+same company, and the guest URL another, as the patch's guest from another
+company, with no agent door. All three share local tables, files, fixtures and
+subscriptions.
 No connection keyring is loaded.
 
 `patchy dev` runs the same handler engine and callback path as production.
@@ -781,14 +783,14 @@ discarding results that cross the swap; removed handlers or incompatible argumen
 end that subscription permanently. Failed builds keep the last good binding or
 page and log the error. Config and fixture changes need `dev stop` followed by `dev`.
 
-| command      | behaviour                                                                                      | `--json` success                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `dev`        | Start, or join a healthy session with `joined: true`.                                          | `{ ok, healthy: true, joined, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }` |
-| `dev status` | Inspect; exits 1 with `not_running` unless healthy.                                            | `{ ok, healthy: true, url, colleagueUrl?, logPath, stop, pid, release, identity, warnings }`         |
-| `dev stop`   | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                               |
-| `dev logs`   | Print the dev log.                                                                             | `{ ok, log, text }`                                                                                  |
-| `dev reset`  | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                                |
-| `dev agent`  | Call the running binding's agent tools as people's agents do; see below.                       | `open_patch`'s answer, or `{ result, version }`                                                      |
+| command      | behaviour                                                                                      | `--json` success                                                                                                |
+| ------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `dev`        | Start, or join a healthy session with `joined: true`.                                          | `{ ok, healthy: true, joined, url, colleagueUrl?, guestUrl?, logPath, stop, pid, release, identity, warnings }` |
+| `dev status` | Inspect; exits 1 with `not_running` unless healthy.                                            | `{ ok, healthy: true, url, colleagueUrl?, guestUrl?, logPath, stop, pid, release, identity, warnings }`         |
+| `dev stop`   | Stop this repo and instance, keeping local data. Stale process identities are never signalled. | `{ ok, healthy: false, reset: false }`                                                                          |
+| `dev logs`   | Print the dev log.                                                                             | `{ ok, log, text }`                                                                                             |
+| `dev reset`  | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                                           |
+| `dev agent`  | Call the running binding's agent tools as people's agents do; see below.                       | `open_patch`'s answer, or `{ result, version }`                                                                 |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`

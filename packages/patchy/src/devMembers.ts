@@ -10,6 +10,13 @@ export const colleague = {
   email: "colleague@patchy.local"
 } as const;
 
+/** Someone at another company whom the local patch is shared with: its dev guest. */
+export const guest = {
+  id: "usr_dev_guest",
+  name: "Dev Guest",
+  email: "guest@elsewhere.patchy.local"
+} as const;
+
 /** Dev has two candidates and no authority changes or production directory reads. */
 export const layer = (identity: typeof Identity.Type) => {
   const rows: readonly (typeof Member.Type)[] = [

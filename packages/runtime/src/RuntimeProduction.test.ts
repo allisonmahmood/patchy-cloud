@@ -140,8 +140,8 @@ const admit = Effect.fn("RuntimeProductionTest.admit")(function* (token = signSe
     Effect.provide(StreamAdmission.layer),
     Effect.provide(CompanyAdmission.layer),
     Effect.provideService(Invocation.Invocation, {
-      call: (_args, binding, reauthorize) =>
-        Deferred.succeed(captured, { binding, reauthorize }).pipe(
+      call: (_args, binding) =>
+        Deferred.succeed(captured, { binding, reauthorize: binding.reauthorize }).pipe(
           Effect.as({ ok: true as const, value: null })
         )
     })

@@ -20,7 +20,8 @@ pnpm dev up [scenario]   # an environment: a scenario's company, people and patc
 ```
 
 Use an environment for anything with more than one person (live sync,
-assignments, admin-only rules, invitations) and for demos. Use the URL each
+assignments, admin-only rules, invitations) and for demos. `guests` adds a
+person at a second company, for anything a patch's guests see. Use the URL each
 start prints; ports can change between starts. A failed start names its log:
 read `pnpm dev logs`. A failed migration also prints which step failed and why.
 
@@ -92,6 +93,9 @@ Done when `pnpm dev status` exits 0.
   with the server name its `config.toml` holds. DEVELOPMENT's **Environments**
   has what each needs.
 - **A patch repo.** Follow DEVELOPMENT's **A patch repo against this worktree**.
+  `patchy dev` prints a Guest URL beside the Colleague one: the patch's guest
+  from another company, with `guest: true` and no agent door, which starts only
+  a tier 2 repo's `guest: true` handlers.
   A tier 2 repo's agent tools answer `pnpm patchy dev agent`, which lists them as
   an agent sees them, and `pnpm patchy dev agent <tool> '<json>' [--colleague]`,
   which calls one as a dev person, so open dev pages show its changes live.

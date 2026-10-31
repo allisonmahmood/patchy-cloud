@@ -15,6 +15,11 @@ const declaration = {
   handle: "product",
   revision: 1
 };
+const viewer = {
+  user: { id: "usr_posthog", email: "member@example.test", name: "Member" },
+  company: { id: "cmp_posthog", handle: "posthog", name: "Northwind" },
+  admin: false
+};
 const binding = Binding.Binding.of({
   companyId: "cmp_posthog",
   patchId: "posthogops01",
@@ -34,11 +39,8 @@ const binding = Binding.Binding.of({
   scope: "company",
   correlationId: "posthog-operation-test",
   principal: { userId: "usr_posthog" },
-  identity: {
-    user: { id: "usr_posthog", email: "member@example.test", name: "Member" },
-    company: { id: "cmp_posthog", handle: "posthog", name: "Northwind" },
-    admin: false
-  }
+  identity: viewer,
+  reauthorize: Effect.succeed(viewer)
 });
 const project = {
   region: "us",

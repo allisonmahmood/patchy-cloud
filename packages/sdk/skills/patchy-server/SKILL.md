@@ -10,8 +10,9 @@ Preact page, a starter `server/` module, config-bound generated builders and
 the exact `workerd` managed pin with install scripts disabled. Inside the repo,
 use `pnpm patchy`; read `patchy-loop` for changing an existing repo's tier.
 
-Run `pnpm patchy dev --json` and open `url` as the machine user and
-`colleagueUrl` as a fixed non-admin colleague. Both share disposable local data.
+Run `pnpm patchy dev --json` and open `url` as the machine user,
+`colleagueUrl` as a fixed non-admin colleague and `guestUrl` as the patch's
+guest from another company. All three share disposable local data.
 Queries, mutations, actions and subscriptions use the production handler engine
 and callback gateway. `server/` saves atomically rebind without reloading the page;
 new modules log a reminder to refresh types. Calls and nested calls in flight
@@ -73,8 +74,9 @@ must be a `query`, `mutation` or `action`; its name is `<module>.<export>`.
 Keep reusable company code in `helpers/`, outside handler discovery. Import
 builders and bound context types from `patchy/_generated/server.js`, and `t` and
 `HandlerError` from `patchy/server`.
-Each builder takes `{ description?, args, result, errors?, handler }`, and
-`action` also takes `readOnly: true`. `args` is a field map; `result` is one
+Each builder takes `{ description?, guest?, args, result, errors?, handler }`,
+and `action` also takes `readOnly: true`. `guest: true` lets the patch's guests
+start the handler; see **Guests**. `args` is a field map; `result` is one
 descriptor. The handler receives `(ctx, args)`.
 
 The generated builders bind the config's table types. A helper can accept
@@ -142,6 +144,20 @@ reads use the platform database, outside the query's company-database snapshot.
 the viewer. Server code holds no credential and has no direct network path;
 reach outside systems through declared company integrations in actions.
 Handler memory is not durable state, and handlers cannot schedule background work.
+
+### Guests
+
+A patch can be shared with people at other companies, its guests. A guest's
+page starts only the handlers marked `guest: true`, queries, mutations and
+actions alike, live queries included; any other refuses them with
+`access_denied`. The mark controls entry: what a marked action reaches through
+`ctx.run` follows the usual rules. `ctx.viewer` is the guest themselves, with
+their own user, the patch's company, `admin: false` and `guest: true`, so a
+handler checks it wherever the record or the change depends on who called.
+Agent tools never take guests. A version that declares another patch's shared
+table or store is closed to its guests. On tier 1 a guest writes all of the
+patch's own tables and files, as a colleague does, so use tier 2 with marked
+handlers when guests mustn't write everything.
 
 ### Query snapshots and live access
 

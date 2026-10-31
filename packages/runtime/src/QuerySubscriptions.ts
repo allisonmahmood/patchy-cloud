@@ -90,7 +90,6 @@ export const make = Effect.gen(function* () {
   const read = Effect.fn("QuerySubscriptions.read")(function* (input: SubscriptionReads.Input) {
     if (input.op !== "server.call") return yield* reads.read(input);
     if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
-    if (input.reauthorize === undefined) return yield* new Runtime.AccessDenied({});
     const { binding } = input;
     // Platform authority is outside the company snapshot. Fence every possible source
     // before invocation, then keep only the sources actually attempted by the guest.
@@ -105,7 +104,6 @@ export const make = Effect.gen(function* () {
     const reply = yield* invocation.value.call(
       input.args,
       { ...binding, correlationId: yield* cryptography.internalId("call") },
-      input.reauthorize,
       {
         onDependency: (key) => {
           attempted.add(key);

@@ -132,6 +132,11 @@ const declaration = {
   handle: "warehouse",
   revision: 1
 };
+const viewer = {
+  user: { id: "usr_operations", email: "member@example.test", name: "Member" },
+  company: { id: "cmp_operations", handle: "operations", name: "Operations" },
+  admin: false
+};
 const binding = Binding.Binding.of({
   companyId: "cmp_operations",
   patchId: "operations01",
@@ -148,11 +153,8 @@ const binding = Binding.Binding.of({
   scope: "company",
   correlationId: "operation-test",
   principal: { userId: "usr_operations" },
-  identity: {
-    user: { id: "usr_operations", email: "member@example.test", name: "Member" },
-    company: { id: "cmp_operations", handle: "operations", name: "Operations" },
-    admin: false
-  }
+  identity: viewer,
+  reauthorize: Effect.succeed(viewer)
 });
 const connection = {
   companyId: binding.companyId,
@@ -702,8 +704,7 @@ it.layer(shared, { timeout: 30_000 })("read-only operations over one cluster", (
           attemptId: "attempt_connection_action",
           processGeneration: 1,
           deadline: (yield* Clock.currentTimeMillis) + 60_000
-        },
-        reauthorize: Effect.succeed(binding.identity!)
+        }
       });
       const request = {
         op: "postgres.query",

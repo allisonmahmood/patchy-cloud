@@ -2,7 +2,6 @@ import {
   limitRefusal,
   type HandlerKind,
   type RuntimeFailure,
-  type RuntimeMe,
   type ServerCallReply
 } from "@patchy/api";
 import * as GuestProtocol from "@patchy/api/guest";
@@ -52,7 +51,6 @@ export interface Capability {
   readonly kind: HandlerKind;
   /** A read-only action's: the callback gate refuses its writes and nested admission its changes. */
   readonly readOnly: boolean;
-  readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
   readonly tree: TreeBudget;
   readonly counters: Counters;
   readonly logs: Array<Schema.Json>;
@@ -74,7 +72,6 @@ export interface Issue {
   readonly attempt: GuestProtocol.Attempt;
   readonly kind: HandlerKind;
   readonly readOnly: boolean;
-  readonly reauthorize: Effect.Effect<NonNullable<RuntimeMe>, RuntimeError>;
   readonly tree?: TreeBudget;
   readonly counters?: Counters;
   readonly run?: (args: unknown) => Effect.Effect<ServerCallReply, RuntimeError>;
@@ -323,7 +320,6 @@ export const make = Effect.gen(function* () {
       attempt: Object.freeze({ ...input.attempt }),
       kind: input.kind,
       readOnly: input.readOnly,
-      reauthorize: input.reauthorize,
       tree: input.tree ?? { bytes: 0 },
       snapshot: {},
       mutation: {},

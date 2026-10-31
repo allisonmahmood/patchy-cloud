@@ -111,6 +111,7 @@ export const page = Effect.fn("RuntimeTest.page")(function* (
       ...loaded.value,
       principal: { userId: viewer.user.id },
       identity: viewer,
+      reauthorize: Effect.succeed(viewer),
       correlationId: newInternalId("call")
     },
     kind: "action",
@@ -120,8 +121,7 @@ export const page = Effect.fn("RuntimeTest.page")(function* (
       attemptId: "journey",
       processGeneration: 1,
       deadline: (yield* Clock.currentTimeMillis) + 600_000
-    },
-    reauthorize: Effect.succeed(viewer)
+    }
   });
   const run = yield* FiberSet.makeRuntimePromise();
   const call: Call = (op, args) =>
@@ -200,9 +200,5 @@ export const invoker = Effect.fn("RuntimeTest.invoker")(function* (
     Effect.provideService(ServerBundles.ServerBundles, { load: () => Effect.succeed(guest) })
   );
   return (handler: string, args: Readonly<Record<string, string>> = {}) =>
-    invocations.call(
-      { handler, args },
-      { ...binding, correlationId: newInternalId("call") },
-      Effect.succeed(binding.identity!)
-    );
+    invocations.call({ handler, args }, { ...binding, correlationId: newInternalId("call") });
 });

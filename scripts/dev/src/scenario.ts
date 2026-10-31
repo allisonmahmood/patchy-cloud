@@ -18,7 +18,9 @@ export const Person = Schema.Struct({
   key: Slug,
   name: Schema.NonEmptyString,
   email: Email,
-  role: Schema.Literals(["admin", "member"])
+  role: Schema.Literals(["admin", "member"]),
+  /** One of the scenario's other companies, by handle; absent, the scenario's own. */
+  company: Schema.optionalKey(Slug)
 });
 export type Person = typeof Person.Type;
 
@@ -75,6 +77,10 @@ export const Scenario = Schema.Struct({
     /** The company's agent access starts on, turned on by the publisher, so worker agents can use its agent areas. */
     agentAccess: Schema.optionalKey(Schema.Boolean)
   }),
+  /** Other companies, whose people the company can share a patch with as its guests. */
+  companies: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }))
+  ),
   people: Schema.NonEmptyArray(Person),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
@@ -106,7 +112,10 @@ export const scenariosDir = (worktree: string) =>
 
 const decodeScenario = Schema.decodeUnknownEffect(Schema.fromJsonString(Scenario));
 
-/** The named scenario, checked: unique keys and emails, and an admin publisher. */
+/**
+ * The named scenario, checked: unique keys, emails and company handles, people at its companies,
+ * and a publisher who is an admin of its own.
+ */
 export const loadScenario = Effect.fn("loadScenario")(function* (worktree: string, name: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -131,8 +140,23 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   const emails = new Set(scenario.people.map((person) => person.email.toLowerCase()));
   if (keys.size !== scenario.people.length || emails.size !== scenario.people.length)
     return yield* new ScenarioInvalid({ name, problem: "people need unique keys and emails." });
-  if (scenario.people.find((person) => person.key === scenario.publisher)?.role !== "admin")
-    return yield* new ScenarioInvalid({ name, problem: "the publisher must be an admin." });
+  const handles = new Set([scenario.company, ...(scenario.companies ?? [])].map((c) => c.handle));
+  if (handles.size !== 1 + (scenario.companies ?? []).length)
+    return yield* new ScenarioInvalid({ name, problem: "companies need unique handles." });
+  const stranger = scenario.people.find(
+    (person) => person.company !== undefined && !handles.has(person.company)
+  );
+  if (stranger !== undefined)
+    return yield* new ScenarioInvalid({
+      name,
+      problem: `${stranger.key} is at ${stranger.company}, which isn't one of its companies.`
+    });
+  const publisher = scenario.people.find((person) => person.key === scenario.publisher);
+  if (publisher?.role !== "admin" || publisher.company !== undefined)
+    return yield* new ScenarioInvalid({
+      name,
+      problem: "the publisher must be an admin of the scenario's own company."
+    });
   const connections = new Set(
     (scenario.connections ?? []).map(
       (connection) => `${connection.integration}/${connection.handle}`
@@ -151,18 +175,22 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
 });
 
 /** Stable ids, so seeding twice updates the same rows. */
-export const ids = (scenario: Scenario, person: Person) => ({
-  userId: `usr_env_${scenario.company.handle}_${person.key}`,
-  clerkUserId: `env_${scenario.company.handle}_${person.key}`,
-  tokenId: `tok_env_${scenario.company.handle}_${person.key}`
-});
+export const ids = (scenario: Scenario, person: Person) => {
+  const handle = person.company ?? scenario.company.handle;
+  return {
+    companyId: `cmp_env_${handle}`,
+    userId: `usr_env_${handle}_${person.key}`,
+    clerkUserId: `env_${handle}_${person.key}`,
+    tokenId: `tok_env_${handle}_${person.key}`
+  };
+};
 
 /** The publisher's machine token; dev-only and loopback-only, like the seed's. */
 export const publisherToken = (scenario: Scenario) =>
   `patchy-env-${scenario.company.handle}-${scenario.publisher}`;
 
 /**
- * Seeds the scenario's company, people and publishing key into a migrated database, and turns
+ * Seeds the scenario's companies, people and publishing key into a migrated database, and turns
  * agent access on when the scenario asks. Every start seeds again; agent access is turned on
  * only while nobody has ever switched it, so a switch at Company survives restarts.
  */
@@ -172,15 +200,16 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
   const companyId = `cmp_env_${scenario.company.handle}`;
   yield* sql.withTransaction(
     Effect.gen(function* () {
-      yield* sql`
-        INSERT INTO companies (id, handle, name, created_at)
-        VALUES (${companyId}, ${scenario.company.handle}, ${scenario.company.name}, now())
-        ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
+      for (const company of [scenario.company, ...(scenario.companies ?? [])])
+        yield* sql`
+          INSERT INTO companies (id, handle, name, created_at)
+          VALUES (${`cmp_env_${company.handle}`}, ${company.handle}, ${company.name}, now())
+          ON CONFLICT (id) DO UPDATE SET handle = EXCLUDED.handle, name = EXCLUDED.name`;
       for (const person of scenario.people) {
-        const { userId, clerkUserId, tokenId } = ids(scenario, person);
+        const { companyId: home, userId, clerkUserId, tokenId } = ids(scenario, person);
         yield* sql`
           INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
-          VALUES (${userId}, ${clerkUserId}, ${companyId}, ${person.email.toLowerCase()},
+          VALUES (${userId}, ${clerkUserId}, ${home}, ${person.email.toLowerCase()},
             ${person.name}, ${person.role}, now())
           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
             role = EXCLUDED.role, deactivated_at = NULL`;

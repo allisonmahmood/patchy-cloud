@@ -427,13 +427,7 @@ export const make = Effect.gen(function* () {
       args: sub.input.args,
       binding,
       onDependency: observe,
-      dependencies: [...new Set([...sub.dependencies, ...Object.keys(sub.vector ?? {})])],
-      reauthorize: Effect.gen(function* () {
-        yield* doc.check;
-        const identity = doc.binding().identity;
-        if (identity === null) return yield* new Runtime.AccessDenied({});
-        return identity;
-      })
+      dependencies: [...new Set([...sub.dependencies, ...Object.keys(sub.vector ?? {})])]
     };
     const fence = yield* Effect.gen(function* () {
       yield* check;

@@ -406,6 +406,14 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ...loaded,
         principal,
         identity: identity.identity,
+        // The document's own check, as its reruns ask it, then the viewer it leaves bound.
+        reauthorize: Effect.suspend(() => check).pipe(
+          Effect.flatMap(() =>
+            binding.identity === null
+              ? Effect.fail(new Runtime.AccessDenied({}))
+              : Effect.succeed(binding.identity)
+          )
+        ),
         correlationId: generation
       };
       let servedTier = loaded.patchTier;
@@ -464,6 +472,25 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
           detach(key, entry.activity);
         }
       };
+      const check = Effect.gen(function* () {
+        yield* recheck;
+        const eligible = yield* find(input.versionId);
+        if (Option.isNone(eligible) || eligible.value.companyId !== identity.companyId)
+          return yield* new Runtime.AccessDenied({});
+        binding = { ...binding, ...eligible.value };
+        servedTier = eligible.value.patchTier;
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error.code === "session_refresh_required") close("reauthenticate");
+            else if (error.code === "session_expired")
+              close(error.code, { type: "session_expired" });
+            else if (error.code === "principal_changed")
+              close(error.code, { type: "principal_changed" });
+            else if (error.code === "access_denied") close(error.code, { type: "access_denied" });
+          })
+        )
+      );
       const documentSubscriptions = subscriptions.attach({
         generation,
         documentId: input.documentId,
@@ -472,25 +499,7 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         ready: () => executionReady,
         desired,
         send: (frame: RuntimeStreamFrame) => entry.send(frame),
-        check: Effect.gen(function* () {
-          yield* recheck;
-          const eligible = yield* find(input.versionId);
-          if (Option.isNone(eligible) || eligible.value.companyId !== identity.companyId)
-            return yield* new Runtime.AccessDenied({});
-          binding = { ...binding, ...eligible.value };
-          servedTier = eligible.value.patchTier;
-        }).pipe(
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              if (error.code === "session_refresh_required") close("reauthenticate");
-              else if (error.code === "session_expired")
-                close(error.code, { type: "session_expired" });
-              else if (error.code === "principal_changed")
-                close(error.code, { type: "principal_changed" });
-              else if (error.code === "access_denied") close(error.code, { type: "access_denied" });
-            })
-          )
-        ),
+        check,
         checkOperation: (op) =>
           Effect.gen(function* () {
             if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});

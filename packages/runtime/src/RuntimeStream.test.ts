@@ -1246,7 +1246,7 @@ const fleetStreams = Effect.fnUntraced(function* (
       revisions: () => Effect.succeed({})
     }),
     Effect.provideService(Invocation.Invocation, {
-      call: (_args, _binding, _reauthorize, observation) =>
+      call: (_args, _binding, observation) =>
         Effect.sync(() => {
           fleet.admissions++;
           observation?.onDependency(itemsKey);

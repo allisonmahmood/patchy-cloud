@@ -629,6 +629,7 @@ export const make = (
           ...version,
           identity,
           principal: identity === null ? null : { userId: identity.user.id },
+          reauthorize,
           correlationId: yield* cryptography.internalId("call")
         });
         const admit = Effect.gen(function* () {
@@ -732,7 +733,7 @@ export const make = (
             });
           return yield* run({
             kind: "read",
-            run: (args) => invocations.value.call(args, binding, reauthorize)
+            run: (args) => invocations.value.call(args, binding)
           }).pipe(Effect.provideService(Binding.Binding, binding));
         }
         if (operation === undefined) return yield* new InvalidRequest({});
