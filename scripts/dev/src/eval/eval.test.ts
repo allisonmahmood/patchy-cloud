@@ -18,7 +18,7 @@ import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, resolveTools } from "./sandbox.js";
 import { classify } from "./scorecard.js";
-import { steadyRise } from "./task.js";
+import { countsBeside, steadyRise } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
 const ended = { exitCode: 0, timedOut: false, seconds: 90, stderr: "" };
@@ -206,6 +206,24 @@ describe("the toolchain", () => {
       expect(by.codex).toMatchObject({
         from: `${tmp}/tools/codex/1.0`,
         link: "/opt/codex/bin/codex"
+      });
+
+      // A bin folder of someone's own beside private files is no install: the executable alone.
+      yield* tool(`${home}/work/bin/codex`);
+      yield* fs.writeFileString(`${home}/work/private`, "not for builders");
+      const own = yield* resolveTools(`${tmp}/checkout`).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              HOME: home,
+              PATH: `${home}/.local/bin:${tmp}/bins:${home}/work/bin`
+            })
+          )
+        )
+      );
+      expect(own.find((each) => each.name === "codex")).toMatchObject({
+        from: `${home}/work/bin/codex`,
+        to: "/opt/codex/codex"
       });
     }).pipe(
       Effect.scoped,
@@ -486,19 +504,32 @@ describe("what a run is", () => {
     });
   });
 
-  it("reads a count that rose by one at each step in one place, and nothing else", () => {
-    const at = (entries: Record<string, number>) => new Map(Object.entries(entries));
-    expect(steadyRise([at({ count: 0 }), at({ count: 1 }), at({ count: 2 })])).toBe(true);
-    // A no-op button while an unrelated line disappears: "0 cheers · 2 pending · 4 members", then "0 cheers · 4 members".
+  it("reads the count beside its word, and a count that rose by one at each step", () => {
+    expect(countsBeside("0 cheers · 4 members", "cheer")).toEqual([0]);
+    expect(countsBeside("CHEERS FROM THE TEAM\n12\nAnd counting.", "cheer")).toEqual([12]);
+    expect(countsBeside("Press the button to cheer.\n1,204\ncheers so far", "cheer")).toEqual([
+      1204
+    ]);
+    expect(countsBeside("Announcements\n1\n2\n3\n0 cheers", "cheer")).toEqual([0]);
+    expect(countsBeside("Ben cheered 2 minutes ago", "cheer")).toEqual([]);
+    expect(steadyRise([[0], [1], [2]])).toBe(true);
     expect(
       steadyRise([
-        at({ "P0#0": 0, "P1#0": 2, "P2#0": 4 }),
-        at({ "P0#0": 0, "P1#0": 4 }),
-        at({ "P0#0": 0, "P1#0": 4 })
+        [2026, 0],
+        [2026, 1],
+        [2026, 2]
       ])
+    ).toBe(true);
+    // A no-op button while a list beside it shrinks: the count never moves.
+    expect(
+      steadyRise(
+        ["1\n2\n3\n0 cheers", "2\n3\n0 cheers", "3\n0 cheers"].map((text) =>
+          countsBeside(text, "cheer")
+        )
+      )
     ).toBe(false);
-    expect(steadyRise([at({ count: 0 }), at({ count: 2 })])).toBe(false);
-    expect(steadyRise([at({ count: 0 })])).toBe(false);
+    expect(steadyRise([[0], [2]])).toBe(false);
+    expect(steadyRise([[0]])).toBe(false);
   });
 
   it("keeps the developer's Codex provider and turns its extras off", () => {

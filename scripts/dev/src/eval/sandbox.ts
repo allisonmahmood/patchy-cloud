@@ -199,7 +199,7 @@ const PACKAGE_DEPTH = 4;
  * Where each tool lives, resolved through PATH and symlinks to its real
  * install, and through mise's wrappers when that is what PATH holds. A tool
  * under `/usr` needs no mount. Otherwise the tool's own install is mounted,
- * the first that applies, and never a shared folder:
+ * the first that applies:
  *
  * 1. the install above its `bin` folder (Node's, with npm beside it; Codex's,
  *    with its resources);
@@ -207,13 +207,23 @@ const PACKAGE_DEPTH = 4;
  * 3. its own folder;
  * 4. the executable alone.
  *
- * The executable is then linked as `/opt/bin/<name>`, whatever it is called.
+ * A folder counts as the tool's own only when it is named for the tool or
+ * sits in a folder that is (`…/codex/0.166.0`, `…/node_modules/pnpm`,
+ * `…/claude/versions`), and never when it is shared: a `bin` folder of
+ * someone's own scripts is not an install. The executable is then linked as
+ * `/opt/bin/<name>`, whatever it is called.
  */
 export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* Config.String("HOME");
   const shared = sharedFolders(home, root, path);
+  /** Whether `folder` is `name`'s own: named for it, or inside a folder that is, and not shared. */
+  const owned = (name: string, folder: string) =>
+    !shared(folder) &&
+    [path.basename(folder), path.basename(path.dirname(folder))].some((segment) =>
+      segment.toLowerCase().startsWith(name)
+    );
   const dirs = (yield* Config.String("PATH").pipe(Config.withDefault(""))).split(":");
   /** The nearest folder above `file`, below any shared one, holding a package.json. */
   const packageOf = Effect.fn(function* (file: string) {
@@ -255,10 +265,16 @@ export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: s
       continue;
     }
     const dir = path.dirname(real);
+    const install = path.dirname(dir);
+    const pkg = yield* packageOf(real);
     const mounted =
-      path.basename(dir) === "bin" && !shared(path.dirname(dir))
-        ? path.dirname(dir)
-        : ((yield* packageOf(real)) ?? (shared(dir) ? real : dir));
+      path.basename(dir) === "bin" && owned(name, install)
+        ? install
+        : pkg !== undefined && owned(name, pkg)
+          ? pkg
+          : owned(name, dir)
+            ? dir
+            : real;
     const to = `/opt/${name}`;
     tools.push({
       name,

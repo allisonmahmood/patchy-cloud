@@ -75,38 +75,32 @@ export const UNATTENDED =
 export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
 
 /**
- * Every integer the patch's frame shows, keyed by where it is: the path of
- * elements to its text and its place in that text. Run in the page.
+ * The numbers a page shows beside `word`, in reading order: one just before
+ * it ("3 cheers", "3 total cheers") or the first within a short stretch after
+ * it ("Cheers: 3", "CHEERS FROM THE TEAM\n3"). Numbers nowhere near the word,
+ * such as a list or a member count, aren't read. `text` is visible text, as
+ * `innerText` gives it; `word` matches its plural too.
  */
-export const countsByPlace = async (frame: FrameLocator): Promise<ReadonlyMap<string, number>> =>
-  new Map(
-    await frame.locator("body").evaluate((body) => {
-      const found: Array<[string, number]> = [];
-      const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const numbers = [...(node.textContent ?? "").matchAll(/\d[\d,]*/g)];
-        if (numbers.length === 0) continue;
-        const path: Array<string> = [];
-        for (let at = node.parentElement; at !== null && at !== body; at = at.parentElement)
-          path.unshift(`${at.tagName}${[...(at.parentElement?.children ?? [])].indexOf(at)}`);
-        numbers.forEach((match, index) =>
-          found.push([`${path.join("/")}#${index}`, Number(match[0].replaceAll(",", ""))])
-        );
-      }
-      return found;
-    })
+export const countsBeside = (text: string, word: string): ReadonlyArray<number> => {
+  const name = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    String.raw`(\d[\d,]*)\s+(?:[a-z]+\s+)?${name}s?\b|\b${name}s?\b[^\d]{0,40}?(\d[\d,]*)`,
+    "gi"
   );
+  return [...text.matchAll(pattern)].map((match) =>
+    Number((match[1] ?? match[2]!).replaceAll(",", ""))
+  );
+};
 
 /**
- * Whether one number in the page went up by exactly one at each step: the
- * same place showing `n`, `n + 1`, `n + 2`… across snapshots taken after each
- * action. Numbers that didn't move, or moved because the page around them
- * changed, never line up.
+ * Whether one count went up by exactly one at each step: the same position in
+ * every snapshot reading `n`, `n + 1`, `n + 2`…, with a snapshot taken after
+ * each action. A count that didn't move never passes.
  */
-export const steadyRise = (snapshots: ReadonlyArray<ReadonlyMap<string, number>>) => {
+export const steadyRise = (snapshots: ReadonlyArray<ReadonlyArray<number>>) => {
   const [first, ...rest] = snapshots;
   if (first === undefined || rest.length === 0) return false;
-  return [...first].some(([place, value]) =>
-    rest.every((snapshot, index) => snapshot.get(place) === value + index + 1)
+  return first.some((value, index) =>
+    rest.every((snapshot, step) => snapshot[index] === value + step + 1)
   );
 };

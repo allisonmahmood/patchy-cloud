@@ -1,10 +1,10 @@
-import { countsByPlace, steadyRise, type Task } from "../task.js";
+import { countsBeside, steadyRise, type Task } from "../task.js";
 
 /**
  * The most common real first patch: a button the company presses together.
  * Ben cheers, then Cleo, and Ada, opening it fresh before and after each,
- * sees the same count go up by one each time: the count is stored and
- * shared, not the page's own.
+ * sees the cheers count beside the word go up by one each time: the count is
+ * stored and shared, not the page's own.
  */
 export default {
   id: "cheers",
@@ -24,7 +24,8 @@ export default {
     {
       name: "each cheer reaches a third colleague",
       run: async (ctx) => {
-        const adaSees = async () => countsByPlace((await ctx.open("ada")).frame);
+        const adaSees = async () =>
+          countsBeside(await (await ctx.open("ada")).frame.locator("body").innerText(), "cheer");
         const seen = [await adaSees()];
         for (const person of ["ben", "cleo"]) {
           const { page, frame } = await ctx.open(person);
@@ -39,7 +40,7 @@ export default {
           ? { ok: true }
           : {
               ok: false,
-              reason: `No number Ada sees went up by one after Ben's cheer and again after Cleo's (Ada saw ${seen.map((counts) => [...counts.values()].join(" ") || "none").join(" → ")}).`
+              reason: `No cheers count Ada sees went up by one after Ben's cheer and again after Cleo's (Ada saw ${seen.map((counts) => counts.join(" ") || "none").join(" → ")}).`
             };
       }
     }

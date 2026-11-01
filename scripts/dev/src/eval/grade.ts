@@ -212,6 +212,10 @@ const openAs = async (
     if (message.type() === "error") errors.push(message.text());
   });
   page.on("pageerror", (error) => errors.push(error.message));
+  let crashed = false;
+  page.on("crash", () => {
+    crashed = true;
+  });
   const navigated = await page.goto(address + path).then(
     (response) => ({ status: response?.status() ?? null, error: null }),
     (error: unknown) => ({
@@ -225,8 +229,10 @@ const openAs = async (
       : navigated.status !== null && navigated.status >= 400
         ? `it answered ${navigated.status}`
         : null;
-  const ready = broke === null && (await waitReady(page));
-  return { signedIn: true, context, page, errors, ready, broke } as const;
+  // A renderer crash or a wait that throws while the patch comes up is the patch's result.
+  const ready = broke === null && (await waitReady(page).catch(() => false));
+  const why = broke ?? (crashed ? "its page crashed" : null);
+  return { signedIn: true, context, page, errors, ready: ready && !crashed, broke: why } as const;
 };
 
 /**
@@ -287,7 +293,7 @@ const inBrowser = (input: {
             );
           }
           browserErrors.push(...view.errors);
-          await view.context.close();
+          await view.context.close().catch(() => undefined);
         }
         const results: Array<CheckResult> = [];
         for (const check of input.task.checks) {
@@ -314,7 +320,7 @@ const inBrowser = (input: {
           }));
           if (state.signInRefused) throw new Error("sign-in");
           const logged = views.flatMap((view) => view.errors);
-          await Promise.all(views.map((view) => view.close()));
+          await Promise.all(views.map((view) => view.close().catch(() => undefined)));
           results.push(
             !outcome.ok
               ? fail(check.name, outcome.reason)

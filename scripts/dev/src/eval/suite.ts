@@ -139,6 +139,15 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     } satisfies RunRecord;
   }
   const { identities, spec } = setUp.success;
+  // The run's own credential files, read after every tool call and at the end, as the trial
+  // reads CLI state: a token a harness refreshes, logs and replaces is still redacted.
+  const collect = Effect.gen(function* () {
+    const found = [
+      ...(yield* fileSecrets(path.join(home, ".codex", "auth.json"))),
+      ...(yield* fileSecrets(path.join(home, ".patchy", "credentials.json")))
+    ];
+    if (found.length > 0) yield* Ref.update(suite.seen, (known) => [...known, ...found]);
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
   yield* Console.error(`  ${label.padEnd(18)}  building as ${identities.publisher.email}`);
   const stream = yield* fs.open(path.join(runDir, "stream.jsonl"), { flag: "w" });
   const encoder = new TextEncoder();
@@ -148,7 +157,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     task: taskPrompt(task),
     timeout: Duration.minutes(task.minutes),
     record: (line) => Effect.ignore(stream.writeAll(encoder.encode(`${line}\n`))),
-    onStep: (step) => progress(label, step)
+    onStep: (step) => collect.pipe(Effect.andThen(progress(label, step)))
   });
   const grading = grade({
     task,
@@ -162,12 +171,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
   const first = yield* grading;
   const graded = first.infra === null ? first : yield* grading;
   yield* Effect.ignore(retireRun(scenario, run).pipe(Effect.provideContext(suite.database)));
-  // A token a harness refreshed during the run is in its copy now; the scorecard redacts it too.
-  const refreshed = [
-    ...(yield* fileSecrets(path.join(home, ".codex", "auth.json"))),
-    ...(yield* fileSecrets(path.join(home, ".patchy", "credentials.json")))
-  ];
-  yield* Ref.update(suite.seen, (known) => [...known, ...refreshed]);
+  yield* collect;
   const { outcome, detail } = classify(log, graded);
   const pass = outcome === "built" && graded.checks.every((check) => check.status === "pass");
   const record = {

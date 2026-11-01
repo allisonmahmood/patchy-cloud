@@ -472,9 +472,10 @@ against a base and judging the code are #1143.
 
 - **The sandbox.** Each builder runs in `bwrap`: the system read-only, node,
   pnpm, `claude` and `codex` read-only under `/opt` (resolved once per suite,
-  through mise's wrappers too, and recorded with their versions; each tool's
-  own install is mounted and its command linked in `/opt/bin`, and a tool in a
-  shared folder such as `~/.local/bin` is mounted alone), a private `/tmp`, and
+  through mise's wrappers too, and recorded with their versions; a tool's
+  install is mounted when its folder is named for the tool, otherwise the
+  executable alone, and each command is linked in `/opt/bin`), a private
+  `/tmp`, and
   a HOME of the run's own at `/home/builder`. Nothing else of this machine is
   mounted: no home folder, no Patchy checkout, no personal agent settings,
   skills or instructions. Inside, each harness has every permission, so a
