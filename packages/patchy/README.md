@@ -173,12 +173,14 @@ repeat rules.
 `<HotkeySheet />` is a ready-made shortcuts sheet: a `?` button where it is
 mounted, and a modal dialog that it and `?` open, listing every labelled hotkey
 under its `group` option. `title` and `hotkey` change its heading and the key
-that opens it. While it is open, its `HotkeyScope` holds the page's hotkeys
-back; Escape, its close button or a click outside closes it, and focus returns.
-It draws with `--look-*` tokens in `hotkey-*` classes, and in the page's font
-and text colour without a look. The first one mounted adds its defaults after
-the page's styles: the button's in `@layer look.patchy-hotkeys`, beneath the
-look's own rules, so it is one of the look's buttons; the sheet's in
+that opens it, and `group` the heading its own row lists under, after the page's
+hotkeys. `openHotkeySheet()` opens the mounted one from a control of the page's
+own, such as a menu item. While it is open, its `HotkeyScope` holds the page's
+hotkeys back; Escape, its close button or a click outside closes it, and focus
+returns. It draws with `--look-*` tokens in `hotkey-*` classes, and in the
+page's font and text colour without a look. The first one mounted adds its
+defaults after the page's styles: the button's in `@layer look.patchy-hotkeys`,
+beneath the look's own rules, so it is one of the look's buttons; the sheet's in
 `@layer patchy-hotkeys`, after the page's layers, which it reverts on the
 sheet's parts. It also adds a reset first in `<head>`. Element rules in the
 page's stylesheets, layered or not, don't reach the sheet. Its unlayered rules

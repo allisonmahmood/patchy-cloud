@@ -135,9 +135,10 @@ render(<App />, document.getElementById("app")!);
 `;
 
 // The ready-made sheet over a page with grouped, ungrouped and unlabelled hotkeys of its own,
-// its button in a sidebar the page can hide.
+// its button in a sidebar the page can hide and its own row in one of the page's groups. A menu
+// item of the page's opens it too.
 const sheet = `import { render } from "patchy/preact";
-import { HotkeySheet, useHotkey } from "patchy/hotkeys";
+import { HotkeySheet, openHotkeySheet, useHotkey } from "patchy/hotkeys";
 
 const fired: string[] = [];
 const log = (name: string) => () => { fired.push(name); };
@@ -151,7 +152,8 @@ function App() {
   useHotkey("Escape", log("Escape"));
   return <main>
     <button id="search">Search</button>
-    <aside id="sidebar"><HotkeySheet title="Tracker shortcuts" /></aside>
+    <button id="menu-shortcuts" onClick={() => openHotkeySheet()}>Shortcuts</button>
+    <aside id="sidebar"><HotkeySheet title="Tracker shortcuts" group="Navigation" /></aside>
   </main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -467,7 +469,7 @@ test("a conflict warning waits for every hook's update, so siblings swapping key
   ]);
 });
 
-test("the sheet opens by ? or its button, lists by group, holds the page's hotkeys and closes like a dialog", async ({
+test("the sheet opens by ? or its button, lists by group with its own row last, holds the page's hotkeys and closes like a dialog", async ({
   page,
   instance
 }) => {
@@ -495,9 +497,9 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
       ])
     );
     expect(listed).toEqual([
-      ["Navigation", ["Go home: G H", "Go to timeline: G T"]],
+      ["Navigation", ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?"]],
       ["Tasks", ["Create task: C T"]],
-      ["General", ["Show shortcuts: ?", "Next: L"]]
+      ["General", ["Next: L"]]
     ]);
   });
 
@@ -572,6 +574,16 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(view.locator("#search")).toBeFocused();
+  });
+
+  await test.step("a menu item of the page's opens it with openHotkeySheet, and focus goes back to the item", async () => {
+    const item = view.locator("#menu-shortcuts");
+    await item.click();
+    await expect(dialog).toBeVisible();
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(item).toBeFocused();
   });
 });
 

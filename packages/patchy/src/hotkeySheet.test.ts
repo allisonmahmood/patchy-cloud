@@ -36,3 +36,31 @@ it("lists hotkeys as one list without a heading when none has a group", () => {
   ];
   expect(sections(list)).toEqual([[undefined, list]]);
 });
+
+it("lists the sheet's own row after the page's hotkeys, in whichever section it sits", () => {
+  const own = { hotkey: "?", label: "Show shortcuts" };
+  expect(
+    sections(
+      [
+        { ...own, group: "Navigation" },
+        { hotkey: "C T", label: "Create task", group: "Tasks" },
+        { hotkey: "G H", label: "Go home", group: "Navigation" }
+      ],
+      own
+    )
+  ).toEqual([
+    ["Tasks", [{ hotkey: "C T", label: "Create task", group: "Tasks" }]],
+    [
+      "Navigation",
+      [
+        { hotkey: "G H", label: "Go home", group: "Navigation" },
+        { ...own, group: "Navigation" }
+      ]
+    ]
+  ]);
+  expect(
+    sections([own, { hotkey: "Mod+K", label: "Search" }, { hotkey: "J", label: "Next" }], own)
+  ).toEqual([
+    [undefined, [{ hotkey: "Mod+K", label: "Search" }, { hotkey: "J", label: "Next" }, own]]
+  ]);
+});

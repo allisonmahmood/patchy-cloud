@@ -6,14 +6,17 @@ import type { ListedHotkey } from "./hotkeys.js";
 
 /**
  * The sheet's sections: named groups in the order they are first seen, then the ungrouped under
- * General. When no hotkey has a group, one section with no name.
+ * General. When no hotkey has a group, one section with no name. The sheet's `own` row lists
+ * after the page's, wherever it sits: as a child of the page's component, it registers first.
  */
 export const sections = (
-  list: ReadonlyArray<ListedHotkey>
+  list: ReadonlyArray<ListedHotkey>,
+  own?: Pick<ListedHotkey, "hotkey" | "label">
 ): Array<[name: string | undefined, rows: ListedHotkey[]]> => {
+  const isOwn = (item: ListedHotkey) => item.hotkey === own?.hotkey && item.label === own.label;
   const groups = new Map<string, ListedHotkey[]>();
   const ungrouped: ListedHotkey[] = [];
-  for (const item of list) {
+  for (const item of [...list.filter((item) => !isOwn(item)), ...list.filter(isOwn)]) {
     if (item.group === undefined) ungrouped.push(item);
     else groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
   }
