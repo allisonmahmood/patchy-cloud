@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Config from "effect/Config";
 import * as Option from "effect/Option";
@@ -115,10 +116,13 @@ const recorded = Effect.fn("Dev.recorded")(function* (
   instance: string
 ) {
   const record = yield* io("Could not read the local dev record.", () => readRecord(stateDir));
-  if (record && (record.root !== root || record.instance !== instance))
+  // A copied repo carries the original's record; the rows and files beside it are the copy's own.
+  if (record && (record.root !== root || record.instance !== instance)) {
+    const file = path.relative(root, path.join(stateDir, "daemon.json"));
     return yield* new LocalError({
-      message: "The dev record belongs to another repo or instance. It was left untouched."
+      message: `The dev record ${file} belongs to ${record.root} on ${record.instance}, so it was left untouched. If this repo is a copy, delete ${file} and run \`patchy dev\`; local rows and files are kept.`
     });
+  }
   return record;
 });
 

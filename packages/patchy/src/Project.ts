@@ -289,13 +289,16 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
     repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
   if (syncedAt !== undefined && !DateTime.isGreaterThan(cloudAt, syncedAt))
     return { repo, warnings };
-  warnings.push(
-    `The description was changed in the portal to '${cloud.description}'; check it` +
-      (repo.description !== undefined && repo.description !== cloud.description
-        ? ` (replaced local description: '${repo.description}').`
-        : ".")
-  );
-  yield* Output.rememberWarnings(warnings);
+  // A moved stamp over the same text only needs recording.
+  if (repo.description !== cloud.description) {
+    warnings.push(
+      `The description was changed in the portal to '${cloud.description}'; check it` +
+        (repo.description === undefined
+          ? "."
+          : ` (replaced local description: '${repo.description}').`)
+    );
+    yield* Output.rememberWarnings(warnings);
+  }
   yield* recordDescription(
     cwd,
     {
