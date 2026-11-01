@@ -21,6 +21,7 @@
  * and nothing of Patchy's skill, and answer to a JSON Schema derived from the
  * same Effect schema that decodes their answer.
  */
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -180,6 +181,15 @@ const ClaudeAnswer = Schema.Struct({
 const decodeClaudeAnswer = Schema.decodeUnknownOption(Schema.fromJsonString(ClaudeAnswer));
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
+/**
+ * A judge's harness exiting non-zero, its last error line on this machine's
+ * console only: the line can name local paths, so it never reaches a record.
+ */
+const reportFailure = (judge: Builder, exitCode: number, stderr: string) =>
+  Console.error(
+    `  ${judge.id}  exited ${exitCode}: ${stderr.trim().split("\n").at(-1) ?? "(nothing on stderr)"}`
+  );
+
 /** How long a judge may take over one pass at its highest effort. */
 const PASS_TIMEOUT = "25 minutes";
 
@@ -219,6 +229,7 @@ const pass = Effect.fn("Eval.judgePass")(function* <A>(input: {
       { input: input.prompt, timeout: PASS_TIMEOUT }
     );
     if (ran.exitCode === null) return { answer: null, why: "It ran out of time." } as const;
+    if (ran.exitCode !== 0) yield* reportFailure(input.judge, ran.exitCode, ran.stderr);
     // Claude Code may print a warning line before its JSON.
     const answer = decodeClaudeAnswer(ran.stdout.slice(Math.max(0, ran.stdout.indexOf("{"))));
     const decoded = Option.flatMap(answer, (each) =>
@@ -252,6 +263,7 @@ const pass = Effect.fn("Eval.judgePass")(function* <A>(input: {
     { input: input.prompt, timeout: PASS_TIMEOUT }
   );
   if (ran.exitCode === null) return { answer: null, why: "It ran out of time." } as const;
+  if (ran.exitCode !== 0) yield* reportFailure(input.judge, ran.exitCode, ran.stderr);
   const text = yield* fs.readFileString(outFile).pipe(Effect.orElseSucceed(() => ""));
   const decoded = Option.flatMap(decodeJson(text), decode);
   return Option.isSome(decoded)
@@ -282,6 +294,26 @@ const workingRepo = Effect.fn("Eval.workingRepo")(function* (home: string) {
   return undefined;
 });
 
+/**
+ * What a blind judge mustn't read in a checkout: every skill folder, the
+ * repo's own agent folders, its git history and its local state. Each is
+ * hidden as what it is on this machine (in a linked worktree `.git` is a
+ * file), and one that isn't there is skipped.
+ */
+const HIDDEN = ["skills", "packages/sdk/skills", ".agents", ".claude", ".git", ".local"];
+
+const masksIn = Effect.fn("Eval.masksIn")(function* (checkout: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const masks: Array<{ at: string; file: boolean }> = [];
+  for (const hidden of HIDDEN) {
+    const info = yield* fs.stat(path.join(checkout, hidden)).pipe(Effect.option);
+    if (Option.isSome(info))
+      masks.push({ at: `/patchy/${hidden}`, file: info.value.type !== "Directory" });
+  }
+  return masks;
+});
+
 /** Everything one judge needs for one run. */
 export interface Judging {
   readonly judge: Builder;
@@ -299,6 +331,8 @@ export interface Judging {
   readonly template: string;
   readonly network: Network;
   readonly signIns: SignIns;
+  /** Whether to run the attribution pass; calibration scores only. */
+  readonly attribute?: boolean;
 }
 
 /** What a judge said about a run: both passes, and why either is missing. */
@@ -351,14 +385,7 @@ export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
         { from: work, to: "/work", readOnly: true },
         { from: input.checkout, to: "/patchy", readOnly: true }
       ],
-      masks: [
-        "/patchy/skills",
-        "/patchy/packages/sdk/skills",
-        "/patchy/.agents",
-        "/patchy/.claude",
-        "/patchy/.git",
-        "/patchy/.local"
-      ]
+      masks: yield* masksIn(input.checkout)
     },
     prompt: SCORING_PROMPT,
     decode: decodeVerdict,
@@ -379,7 +406,7 @@ export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
       attribution: null
     } satisfies Judged;
   const verdict = scoring.answer;
-  if (!verdict.findings.some((finding) => finding.severity !== "low"))
+  if (input.attribute === false || !verdict.findings.some((finding) => finding.severity !== "low"))
     return {
       record: record(verdict.scores, verdict.findings.length, null),
       verdict,

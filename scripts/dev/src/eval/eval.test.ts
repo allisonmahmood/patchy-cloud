@@ -2,6 +2,8 @@ import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node"
 import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import {
   FetchHttpClient,
@@ -22,6 +24,7 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
+import { Expectation, ranks } from "./calibrate.js";
 import { closed, meanScores, splits, taskBrief } from "./judges.js";
 import { classify, judging, shift } from "./scorecard.js";
 import cheers from "./tasks/cheers.js";
@@ -78,6 +81,29 @@ describe("the sandbox", () => {
     expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:3128");
     expect(env.NO_PROXY).toContain(".localhost");
     expect(env.EXTRA).toBe("1");
+  });
+
+  it("hides a folder behind an empty one and a file behind an empty file", () => {
+    const masked = bwrapArgs(
+      {
+        home: "/data/home",
+        network: { sockets: "/s", instancePort: 1, bridge: "/b.mjs", node: "/n" },
+        masks: [
+          { at: "/patchy/skills", file: false },
+          { at: "/patchy/.git", file: true }
+        ]
+      },
+      "true",
+      []
+    );
+    const at = masked.indexOf("--clearenv");
+    expect(masked.slice(at - 5, at)).toEqual([
+      "--tmpfs",
+      "/patchy/skills",
+      "--ro-bind",
+      "/dev/null",
+      "/patchy/.git"
+    ]);
   });
 
   it("reads the version out of each tool's --version line", () => {
@@ -478,6 +504,45 @@ describe("the judges", () => {
     expect(brief).toContain("What good looks like");
     for (const word of ["sonnet", "terra", "base", "head", "Claude", "Codex", "skill"])
       expect(brief.toLowerCase()).not.toContain(word.toLowerCase());
+  });
+});
+
+describe("judge calibration", () => {
+  const dir = new URL("../../eval-calibration/", import.meta.url).pathname;
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Expectation)));
+  const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+
+  it.effect("labels pairings of builds that are there, for tasks that exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const expectations = yield* decode(yield* fs.readFileString(`${dir}expectations.json`));
+      expect(expectations.length).toBeGreaterThan(0);
+      for (const each of expectations) {
+        expect(yield* fs.exists(`${dir}${each.better}/source`), each.better).toBe(true);
+        expect(yield* fs.exists(`${dir}${each.worse}/source`), each.worse).toBe(true);
+        expect(each.why.length).toBeGreaterThan(20);
+      }
+    }).pipe(Effect.provide(platform))
+  );
+
+  it("ranks a pairing by the mean of its dimensions, and not at all without both verdicts", () => {
+    const expectation = {
+      task: "cheers",
+      better: "a",
+      worse: "b",
+      on: ["platform", "correctness"] as const,
+      why: "a test pairing"
+    };
+    const at = (platform: number, correctness: number) => ({
+      fit: 3,
+      platform,
+      correctness,
+      ux: 3,
+      code: 3
+    });
+    expect(ranks(expectation, at(4, 4), at(3, 4))).toBe(true);
+    expect(ranks(expectation, at(4, 3), at(3, 4))).toBe(false);
+    expect(ranks(expectation, at(4, 4), null)).toBeNull();
   });
 });
 
