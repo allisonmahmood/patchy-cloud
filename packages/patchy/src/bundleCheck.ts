@@ -29,8 +29,11 @@ const inspectBundle = (html: string) => {
     const ast = CssTree.parse(copied ? normalized + source.slice(copied) : source, {
       context,
       parseCustomProperty: true,
-      onParseError(error) {
-        throw error;
+      // css-tree also reports each grammar it tries for a condition, such as Tailwind v4's
+      // nested `@supports (((-webkit-hyphens:none)) …)`. A null fallback means it rereads the
+      // same tokens with the next grammar, which reports again if it too fails.
+      onParseError(error, fallback: CssTree.CssNode | null) {
+        if (fallback !== null) throw error;
       }
     });
     CssTree.walk(ast, (node) => {
