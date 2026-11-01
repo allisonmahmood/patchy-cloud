@@ -83,9 +83,10 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
   letter isn't typed. Keys the browser keeps, such as Mod+T, Mod+W, Mod+N and Mod+L, never
   reach the page.
 - Hotkeys listen on the document, in the bubble phase, and one that fires stops the key's
-  propagation there: `window` listeners never see it. Listeners that already ran, such as
-  a field's own `onKeyDown`, and other document listeners still do. A field that stops a
-  key's propagation keeps every hotkey from seeing it.
+  propagation there: bubble-phase `window` listeners never see it. Listeners that already
+  ran, such as a field's own `onKeyDown` or a `window` capture listener, and other document
+  listeners still do. A field that stops a key's propagation keeps every hotkey from
+  seeing it.
 - Holding a chord fires it again with each key repeat; `repeat: false` fires it once per
   press. `repeat` only matters for a chord that can be held: a sequence fires once per
   completion.
