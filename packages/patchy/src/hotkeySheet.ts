@@ -22,14 +22,10 @@ export const sections = (
   return [...groups];
 };
 
-// The sheet's styles come in three tiers:
+// The sheet's defaults, after the page's own styles, in two layers:
 // - The `?` button's defaults sit in a layer inside the company look's, beneath the look's own
 //   rules, so a look's `button` and `button:hover` make it one of the look's buttons.
 // - The sheet's drawing sits in a layer after the look's, so it beats the look's element styles.
-// - One unlayered rule reverts the page's rules made only of element names, such as `kbd { … }`
-//   or `html body kbd { … }`, on every part. It weighs as nine element names, so any rule with a
-//   class, attribute or state outweighs it: the page's rules aimed at `hotkey-*` classes restyle
-//   the parts, and a page-wide `button:hover` still reaches the buttons.
 // On a page without a look, a token used without a fallback drops out: the parts keep the page's
 // font and text colour, the card loses its shadow, and each line falls back to a hairline.
 const styles = `@layer look.patchy-hotkeys {
@@ -247,22 +243,37 @@ const styles = `@layer look.patchy-hotkeys {
     }
   }
 }
+`;
 
-/* Outside any layer, so the page's unlayered element rules revert on every part. :is() weighs as
-   its heaviest argument, nine element names, though only html matches it. */
-:is(html, a a a a a a a a a) :where(.hotkey-opener, .hotkey-sheet-dialog, .hotkey-sheet-dialog *),
-:is(html, a a a a a a a a a) :where(.hotkey-sheet-dialog)::backdrop {
+// A rule made only of element names never reaches the sheet or its button; any rule with a class,
+// attribute or pseudo-class can, `button:hover` included. Each selector here weighs one class,
+// which outranks any number of element names, and reverts the page's unlayered rules to the
+// layers. First in `<head>`, it loses the tie to a page's own one-class rule, such as
+// `.hotkey-key { … }`, since every page stylesheet comes after it.
+const reset = `.hotkey-opener,
+.hotkey-sheet-dialog,
+.hotkey-sheet-dialog *,
+.hotkey-sheet-dialog::backdrop {
   all: revert-layer;
 }
 `;
 
+const style = (text: string) => {
+  const element = document.createElement("style");
+  element.textContent = text;
+  return element;
+};
+
 let styled = false;
 
-/** Adds the sheet's default styles to the page, once, after whatever styles it already has. */
+/**
+ * Adds the sheet's styles to the page, once: its reset first in `<head>`, before every page
+ * stylesheet, and its defaults after whatever styles the page already has, so their layers come
+ * after the page's.
+ */
 export const addSheetStyles = (): void => {
   if (styled) return;
   styled = true;
-  const style = document.createElement("style");
-  style.textContent = styles;
-  document.head.append(style);
+  document.head.prepend(style(reset));
+  document.head.append(style(styles));
 };

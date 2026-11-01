@@ -317,7 +317,11 @@ const keycaps = (hotkey: string) =>
       step > 0 && createElement("span", { class: "hotkey-then" }, "then"),
       // A symbol outside ASCII, such as ⌘, draws larger than a letter.
       ...keys.map((key) =>
-        createElement("kbd", { class: /^[^ -~]$/.test(key) ? "hotkey-symbol" : undefined }, key)
+        createElement(
+          "kbd",
+          { class: /^[^ -~]$/.test(key) ? "hotkey-key hotkey-symbol" : "hotkey-key" },
+          key
+        )
       )
     ])
   );

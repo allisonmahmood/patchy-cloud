@@ -158,7 +158,8 @@ render(<App />, document.getElementById("app")!);
 `;
 
 // The sheet on a page whose own element rules would restyle it, some long or in a media query,
-// with one rule aimed at its keycaps.
+// with a one-class rule aimed at its keycaps. All of it is in <head> before the sheet mounts, as
+// in a built page; `css` adds more after.
 // `addLook` adds a company look, as a patch's bundle carries one.
 const styled = `import { render } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
@@ -170,18 +171,19 @@ const css = (text: string) => {
 };
 css(\`
   body { font-family: Georgia, serif; color: rgb(40, 50, 60); }
+  body * { scroll-margin-bottom: 9px; }
   kbd { display: none; font-size: 4px; }
   @media (min-width: 0px) { html body kbd { display: none; font-size: 4px; } }
   button, html body main button, html body dialog button { padding: 30px; background: rgb(255, 0, 0); }
   dialog, body dialog { border: 9px solid rgb(255, 0, 0); }
-  .hotkey-keys kbd { color: rgb(1, 2, 3); }
+  .hotkey-key { color: rgb(1, 2, 3); }
 \`);
 const addLook = () => css(\`@layer look {
   :root { --look-border: rgb(0, 0, 0); --look-space: 8px; }
   button { min-height: 48px; background: rgb(0, 0, 200); }
   button:hover { background: rgb(0, 0, 100); }
 }\`);
-Object.assign(window, { addLook });
+Object.assign(window, { addLook, css });
 
 function App() {
   useHotkey("G H", () => {}, { label: "Go home" });
@@ -586,8 +588,19 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       properties
     );
 
-  await test.step("the page's kbd, button and dialog rules leave it be, however long; its rule for hotkey-keys restyles it", async () => {
+  const addCss = (text: string) =>
+    frame.evaluate(
+      (added) => (window as unknown as { css: (text: string) => void }).css(added),
+      text
+    );
+
+  await test.step("the page's element rules leave it be, however long; its one-class rule restyles it", async () => {
     await page.keyboard.press("?");
+    // Added after the sheet mounted, after its reset, and longer than any weight in element names.
+    await addCss(`
+      html body dialog div div section ul li span kbd { display: none; }
+      html body dialog div div section ul li span kbd:not(b b b b b b b b b b) { display: none; }
+    `);
     const key = dialog.locator(".hotkey-row kbd").first();
     await expect(key).toBeVisible();
     expect(await style(key, ["font-size", "color"])).toEqual({
@@ -601,6 +614,34 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       "background-color": "rgba(0, 0, 0, 0)"
     });
     expect(await style(dialog, ["border-top-width"])).toEqual({ "border-top-width": "0px" });
+    // `body *` reaches the page but no part of the sheet or its button.
+    expect(await style(view.locator("main"), ["scroll-margin-bottom"])).toEqual({
+      "scroll-margin-bottom": "9px"
+    });
+    const reached = await frame.evaluate(() =>
+      [...document.querySelectorAll(".hotkey-opener, .hotkey-sheet-dialog, .hotkey-sheet-dialog *")]
+        .filter((element) => getComputedStyle(element).scrollMarginBottom !== "0px")
+        .map((element) => element.outerHTML.slice(0, 60))
+    );
+    expect(reached).toEqual([]);
+  });
+
+  await test.step("a page's rule on each of its hotkey-* classes outweighs the reset, even added after it", async () => {
+    const names = await frame.evaluate(() => [
+      ...new Set(
+        [...document.querySelectorAll("[class*='hotkey-']")].flatMap((element) =>
+          [...element.classList].filter((name) => name.startsWith("hotkey-"))
+        )
+      )
+    ]);
+    expect(names).toEqual(expect.arrayContaining(["hotkey-opener", "hotkey-sheet", "hotkey-key"]));
+    await addCss(names.map((name) => `.${name} { scroll-margin-top: 7px; }`).join("\n"));
+    const missed = await frame.evaluate(() =>
+      [...document.querySelectorAll("[class*='hotkey-']")]
+        .filter((element) => getComputedStyle(element).scrollMarginTop !== "7px")
+        .map((element) => element.className)
+    );
+    expect(missed).toEqual([]);
   });
 
   await test.step("without a look it draws in the page's font and text colour, with a hairline and no shadow", async () => {
