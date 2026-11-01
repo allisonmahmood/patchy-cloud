@@ -90,10 +90,10 @@ try {
   output(
     JSON.stringify({
       ok: true,
-      warnings:
-        workspace !== undefined && "notice" in workspace
-          ? [...loaded.warnings, workspace.notice]
-          : loaded.warnings,
+      warnings: [
+        ...loaded.warnings,
+        ...(workspace !== undefined && "notice" in workspace ? [workspace.notice] : [])
+      ],
       sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
       agentTools: server?.agentTools ?? {}
     })

@@ -451,9 +451,10 @@ wrapper, so `pnpm-workspace.yaml` declines workerd's build script with
 `allowBuilds: { workerd: false }`: pnpm 12 fails any install, add or remove
 that ignores one. Init and refresh add the entry unless the repo already chose
 for workerd, through aliases or merge keys too, and only to plain layouts: one
-document whose block mapping starts at column 0, with no anchors, aliases,
-merge keys, `?` keys, tags or document markers, and `allowBuilds` absent, a
-block mapping or a one-line flow mapping. Any other file is left byte for byte,
+document with LF or CRLF line breaks whose block mapping starts at column 0,
+with no anchors, aliases, merge keys, `?` keys, tags or document markers, and
+`allowBuilds` absent, or a block or one-line flow mapping whose keys are all
+scalars. Any other file is left byte for byte,
 and refresh warns with the line to add: `allowBuilds: { workerd: false }`, or
 `workerd: false` under the existing `allowBuilds`. The installed release's
 generation step writes the entry and its toolchain inspection gives the

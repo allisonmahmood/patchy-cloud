@@ -52,7 +52,11 @@ it.each([
   ["a choice for one workerd version", "allowBuilds:\n  workerd@1.20260924.1: true\n"],
   ["an aliased workerd key", "pkg: &w workerd\nallowBuilds:\n  *w : true\n"],
   ["an aliased allowBuilds mapping", "base: &b\n  workerd: true\nallowBuilds: *b\n"],
-  ["a merged workerd: true", "base: &b\n  workerd: true\nallowBuilds:\n  <<: *b\n  esbuild: true\n"]
+  [
+    "a merged workerd: true",
+    "base: &b\n  workerd: true\nallowBuilds:\n  <<: *b\n  esbuild: true\n"
+  ],
+  ["a workerd choice across bare CR line breaks", "allowBuilds: {\r workerd: true\r}\r"]
 ])("keeps %s as the repo wrote it", (_, own) => {
   expect(withWorkerdBuildDeclined(own)).toEqual({ source: own });
 });
@@ -72,7 +76,19 @@ it.each([
   ["a flow mapping over lines", "allowBuilds: { # keep me\n}\n", addEntry],
   ["a tag", "allowBuilds: !!map\n  esbuild: true\n", addEntry],
   ["two documents", "a: 1\n---\nallowBuilds:\n  esbuild: true\n", addKey],
-  ["a duplicate key", "allowBuilds:\n  esbuild: true\nallowBuilds:\n  sharp: true\n", addEntry]
+  ["a duplicate key", "allowBuilds:\n  esbuild: true\nallowBuilds:\n  sharp: true\n", addEntry],
+  ["bare CR line breaks", "allowBuilds:\r  esbuild: true\r", addEntry],
+  ["allowBuilds after a comment and a bare CR", "# settings\rallowBuilds: {}\n", addEntry],
+  [
+    "a non-scalar key in a flow mapping",
+    "allowBuilds: { [esbuild]: true, sharp: true }\n",
+    addEntry
+  ],
+  [
+    "a non-scalar key in a block mapping",
+    "allowBuilds:\n  sharp: true\n  [esbuild]: true\n",
+    addEntry
+  ]
 ])("leaves a file with %s as written, and says what to add", (_, source, action) => {
   const result = withWorkerdBuildDeclined(source);
   expect(result).not.toHaveProperty("source");
