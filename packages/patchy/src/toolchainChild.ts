@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the isolated builder-toolchain process entrypoint.
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import * as Schema from "effect/Schema";
@@ -7,6 +7,7 @@ import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { runToolchain } from "./toolchain.js";
 import { buildServer } from "./serverBuild.js";
+import { withWorkerdBuildDeclined } from "./workerdBuild.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const decodeModules = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -80,10 +81,19 @@ try {
       : undefined;
   if (server !== undefined)
     await writeFile(path.join(process.argv[3]!, "server.js"), server.server);
+  // Refresh inspects after generation, which edits the files it can: every CLI relays this reply.
+  const workspace = inspect
+    ? withWorkerdBuildDeclined(
+        await readFile(path.join(process.cwd(), "pnpm-workspace.yaml"), "utf8").catch(() => "")
+      )
+    : undefined;
   output(
     JSON.stringify({
       ok: true,
-      warnings: loaded.warnings,
+      warnings: [
+        ...loaded.warnings,
+        ...(workspace !== undefined && "notice" in workspace ? [workspace.notice] : [])
+      ],
       sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
       agentTools: server?.agentTools ?? {}
     })

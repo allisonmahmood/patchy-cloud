@@ -316,6 +316,10 @@ await copyFile(
   path.join(packageDir, "node_modules/ignore/LICENSE-MIT"),
   path.join(distDir, "licenses/ignore-LICENSE")
 );
+await copyFile(
+  path.join(packageDir, "node_modules/yaml/LICENSE"),
+  path.join(distDir, "licenses/yaml-LICENSE")
+);
 // The hotkeys bundle carries TanStack Hotkeys and the TanStack Store it builds on, each with its
 // own notice; @tanstack/store's matches @tanstack/preact-store's.
 const tanstackHotkeys = await realpath(

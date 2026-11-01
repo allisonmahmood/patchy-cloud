@@ -333,8 +333,8 @@ pins and their installation on failure.
 Agent, JSON and non-terminal `init` calls require `--purpose`; purpose is never
 inferred. A company with no connections gets empty `uses` and core skills. The
 tree includes `patchy.config.ts`, `patchy.json`, the package pin and lockfile,
-app/build/typecheck sources, generated client and declaration metadata, project
-skills and fixtures. Write-once `AGENTS.md` records purpose, layout, completed
+`pnpm-workspace.yaml`, app/build/typecheck sources, generated client and
+declaration metadata, project skills and fixtures. Write-once `AGENTS.md` records purpose, layout, completed
 installation, the generated index and `patchy dev`; `CLAUDE.md` imports it.
 The starter config defines notes with `table(description, columns, options?)`;
 file stores use `files(description, options?)`. Each description is required and nonblank,
@@ -447,10 +447,23 @@ Refresh owns their updates, including adding or removing `workerd` after a tier
 change. A changed tarball URL triggers installation even when the release
 version string is unchanged. Installation disables lifecycle scripts; workerd
 is spawned from its platform package rather than its postinstall-created
-wrapper. Publish refuses a mismatched managed pin with `release_mismatch`.
+wrapper, so `pnpm-workspace.yaml` declines workerd's build script with
+`allowBuilds: { workerd: false }`: pnpm 12 fails any install, add or remove
+that ignores one. Init and refresh add the entry unless the repo already chose
+for workerd, through aliases or merge keys too, and only to plain layouts: one
+document with LF or CRLF line breaks whose block mapping starts at column 0,
+with no anchors, aliases, merge keys, `?` keys, tags or document markers, and
+`allowBuilds` absent, or a block or one-line flow mapping whose keys are all
+scalars. Any other file is left byte for byte,
+and refresh warns with the line to add: `allowBuilds: { workerd: false }`, or
+`workerd: false` under the existing `allowBuilds`. The installed release's
+generation step writes the entry and its toolchain inspection gives the
+warning, so an older CLI's refresh does both. Publish
+refuses a mismatched managed pin with `release_mismatch`.
 There is no scaffold `pnpm.overrides`.
 
-Other managed writes are the lockfile through install, `patchy/_generated/`,
+Other managed writes are the lockfile through install, the `allowBuilds`
+workerd entry in `pnpm-workspace.yaml`, `patchy/_generated/`,
 `.agents/skills/patchy-*/`, fixture stubs only when absent, and one `uses` edit
 for add/remove. Refresh removes stale generated context files. Existing
 fixtures, app code and agent instructions are preserved. Refresh changes only
