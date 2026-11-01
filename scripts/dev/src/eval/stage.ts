@@ -11,6 +11,7 @@
  * guests are shared, the sources the builder isn't meant to find are removed,
  * and each patch's version is recorded, so grading can tell a new one.
  */
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -32,6 +33,12 @@ export interface StagedPatch {
   readonly kind: "repo" | "page";
   /** Its served version once staged: a requested change has to publish a newer one. */
   readonly version: number;
+  /**
+   * When its sample data was loaded, by the runner's clock: from just before
+   * the press to just after the data settled. A sample dated relative to its
+   * loading, such as a loan due in 3 days, is dated within this window.
+   */
+  readonly sampled?: { readonly from: string; readonly to: string };
 }
 
 type ScenarioPatch = Scenario["patches"][number];
@@ -211,6 +218,7 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
   const sampled = new Set(
     scenario.patches.filter((patch) => "repo" in patch && patch.sampleData === true).map(patchKey)
   );
+  const from = DateTime.formatIso(yield* DateTime.now);
   yield* loadSamples(
     input.door,
     identities.publisher,
@@ -218,6 +226,7 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
       .filter((patch) => staged.some((each) => each.id === patch.id && sampled.has(each.key)))
       .map((patch) => patch.address)
   );
+  const window = { from, to: DateTime.formatIso(yield* DateTime.now) };
 
   for (const patch of scenario.patches)
     for (const guest of identities.guests.filter((person) => patch.guests?.includes(person.key)))
@@ -240,5 +249,5 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
   for (const patch of scenario.patches)
     if (!visible.has(patchKey(patch)))
       yield* fs.remove(path.join(workspace, sourceName(patch)), { recursive: true });
-  return staged;
+  return staged.map((patch) => (sampled.has(patch.key) ? { ...patch, sampled: window } : patch));
 });

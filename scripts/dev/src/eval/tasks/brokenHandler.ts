@@ -22,13 +22,13 @@ export const dueDay = (entry: object | undefined) => {
   });
 };
 
-/** The UTC day number of a time, such as the `Date` header Patchy answered with. */
+/** The UTC day number of a time. */
 export const dayOf = (time: string) =>
   Option.getOrUndefined(
     Option.map(DateTime.make(time), (date) => Math.floor(DateTime.toEpochMillis(date) / DAY_MS))
   );
 
-/** The sample's dated loans, and how many days from staging each is due (`server/sample.ts`). */
+/** The sample's dated loans, and how many days from loading each is due (`server/sample.ts`). */
 const STAGED = [
   ["Rode Wireless", -1],
   ["Sony FX3", 3],
@@ -38,12 +38,12 @@ const STAGED = [
 /**
  * What the board's own query says of the loans, or what's wrong with them:
  * the open-ended tripod and Ben's new loan without a due date, and the three
- * dated sample loans on the days they were staged for. Staging happened
- * today or, across midnight, yesterday (`today` is grading's UTC day), so
- * one of those has to account for all three. Inventing a date, or moving
- * the dated ones, even all together, shows.
+ * dated sample loans on the days they were staged for, counted from the day
+ * staging loaded them (`sampledOn`: that day, or both days of a load that
+ * crossed midnight). Inventing a date, or moving the dated ones even a day,
+ * even all together, shows.
  */
-export const boardProblem = (board: unknown, item: string, today: number) => {
+export const boardProblem = (board: unknown, item: string, sampledOn: ReadonlyArray<number>) => {
   const due = (words: string) => dueDay(entryWith(board, words));
   const tripod = due("tripod");
   const lent = due(item);
@@ -54,9 +54,7 @@ export const boardProblem = (board: unknown, item: string, today: number) => {
   const dated = STAGED.map(([words, offset]) => ({ day: due(words), offset }));
   if (dated.some(({ day }) => typeof day !== "number"))
     return "The dated loans lost their due dates.";
-  return [today, today - 1].some((staged) =>
-    dated.every(({ day, offset }) => day === staged + offset)
-  )
+  return sampledOn.some((loaded) => dated.every(({ day, offset }) => day === loaded + offset))
     ? null
     : "The dated loans' due dates moved from the days they were staged for.";
 };
@@ -125,12 +123,18 @@ export default {
             ok: false,
             reason: `The board's query, loans.out, refused Ada (${board.code}).`
           };
-        const today = board.at === null ? undefined : dayOf(board.at);
-        if (today === undefined)
+        const sampled = ctx.staged?.sampled;
+        const sampledOn =
+          sampled === undefined
+            ? []
+            : [...new Set([dayOf(sampled.from), dayOf(sampled.to)])].filter(
+                (day) => day !== undefined
+              );
+        if (sampledOn.length === 0)
           throw new GraderTrouble({
-            what: "Patchy's answer to the board's query carried no date."
+            what: "Staging didn't record when it loaded Kit loans' sample data."
           });
-        const problem = boardProblem(board.value, item, today);
+        const problem = boardProblem(board.value, item, sampledOn);
         return problem === null ? { ok: true } : { ok: false, reason: problem };
       }
     }

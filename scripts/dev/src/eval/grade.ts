@@ -376,6 +376,8 @@ const inBrowser = (input: {
   readonly code: string;
   /** Where checks note the refusals they provoke and assert. */
   readonly expected: Array<LoggedRefusal>;
+  /** The target as staged before the builder started; absent for a new patch. */
+  readonly staged: StagedPatch | undefined;
 }) => {
   // Where it got to, for the error: set from inside the browser code and its callbacks.
   const state = { launched: false, signInRefused: false };
@@ -443,6 +445,7 @@ const inBrowser = (input: {
             people: input.people,
             person,
             code: input.code,
+            ...(input.staged === undefined ? {} : { staged: input.staged }),
             expectRefusal: ({ person: key, ...refusal }) => {
               input.expected.push({ userId: person(key).id, ...refusal });
             },
@@ -652,7 +655,8 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     shots: input.runDir,
     agents: agents.success,
     code: (yield* Random.next).toString(36).slice(2, 8),
-    expected
+    expected,
+    staged: stagedTarget(input.task.target, input.staged)
   }).pipe(Effect.result);
   if (Result.isFailure(browsed)) return unfinished(browsed.failure.message, checks, target, source);
 

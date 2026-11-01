@@ -7,6 +7,7 @@
  */
 import * as Schema from "effect/Schema";
 import type { FrameLocator, Page } from "@playwright/test";
+import type { StagedPatch } from "./stage.js";
 
 /**
  * Patchy didn't answer a call the grader made as one of the run's people, or
@@ -100,6 +101,8 @@ export interface CheckContext {
    * target open at `path` and ready. Closed when the check ends.
    */
   readonly open: (person: string, path?: string) => Promise<Opened>;
+  /** The target as it was staged before the builder started; absent for a new patch. */
+  readonly staged?: StagedPatch;
   /** `person`'s agent, for a person the check names in its `agents`. */
   readonly agent: (person: string) => Agent;
   /**

@@ -200,8 +200,8 @@ describe("an agent's door", () => {
 });
 
 describe("the kit loans board", () => {
-  // Staged on 2026-11-01: the mic due a day before, the camera 3 days after, the laptop 10.
-  const today = dayOf("Sun, 01 Nov 2026 16:30:00 GMT")!;
+  // Sampled on 2026-11-01: the mic due a day before, the camera 3 days after, the laptop 10.
+  const loaded = dayOf("2026-11-01T16:30:00.000Z")!;
   const board = (
     tripod: string | null,
     lent: string | null,
@@ -216,27 +216,26 @@ describe("the kit loans board", () => {
   const item = "Light meter ab12";
 
   it("keeps open-ended loans open-ended and dated ones on their staged days", () => {
-    expect(boardProblem(board(null, ""), item, today)).toBeNull();
-    // Graded just past midnight, a day after staging.
-    expect(boardProblem(board(null, null), item, today + 1)).toBeNull();
-    expect(boardProblem(board("2026-11-01T00:00:00.000Z", null), item, today)).toBe(
+    expect(boardProblem(board(null, ""), item, [loaded])).toBeNull();
+    // A load that crossed midnight may have dated them from either day.
+    expect(boardProblem(board(null, null), item, [loaded - 1, loaded])).toBeNull();
+    expect(boardProblem(board("2026-11-01T00:00:00.000Z", null), item, [loaded])).toBe(
       "The tripod's open-ended loan now has a due date."
     );
-    expect(boardProblem(board(null, "2026-11-01"), item, today)).toBe(
+    expect(boardProblem(board(null, "2026-11-01"), item, [loaded])).toBe(
       "Ben's loan with no return date got a due date."
     );
-    expect(boardProblem(board(null, null).slice(0, 2), item, today)).toBe(
+    expect(boardProblem(board(null, null).slice(0, 2), item, [loaded])).toBe(
       "The open-ended tripod loan is gone from the board."
     );
   });
 
-  it("notices dated loans moved, even all together", () => {
+  it("notices dated loans moved, even a day, even all together", () => {
     const moved = "The dated loans' due dates moved from the days they were staged for.";
+    const back = ["2026-10-30", "2026-11-03", "2026-11-10"];
+    expect(boardProblem(board(null, null, back), item, [loaded])).toBe(moved);
     expect(
-      boardProblem(board(null, null, ["2026-11-01", "2026-11-04", "2026-11-11"]), item, today)
-    ).toBe(moved);
-    expect(
-      boardProblem(board(null, null, ["2027-10-31", "2027-11-04", "2027-11-11"]), item, today)
+      boardProblem(board(null, null, ["2027-10-31", "2027-11-04", "2027-11-11"]), item, [loaded])
     ).toBe(moved);
   });
 });

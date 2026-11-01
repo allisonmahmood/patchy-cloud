@@ -9,6 +9,7 @@ import {
   around,
   chooseField,
   decide,
+  decisionOf,
   decisionShown,
   fillRest,
   formAround,
@@ -105,18 +106,23 @@ const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
 
 const DECIDED = { approve: "approved", reject: "rejected" } as const;
 
+/** What Ben sees of his request: its decision, none shown, or undefined when he can't find it. */
+type Shown = ReturnType<typeof decisionOf> | undefined;
+
 /** Patchy's codes for a patch's handler failing on a try: the patch's answer, never expected. */
 const PATCH_FAILED = new Set(["handler_failed", "handler_timeout"]);
 
 /**
  * Only an admin's decision counts, tried against the server: Ben asks, then
  * Ada presses Approve (or Reject). Every call her press sends Patchy is held
- * back in turn, the decision itself among them, while Ben, who asked, and
- * Cleo, another member, each send the same call from their own pages. After
- * each try, refused or not, Ben must still see his request as he did before
- * it: a refusal that comes after the decision changed doesn't count. Each
- * refusal a try draws is the check's own, so it doesn't fail `opens ready`.
- * Then Ada's calls go through and Ben sees the decision.
+ * back in turn while Ben, who asked, and Cleo, another member, each send the
+ * same call from their own pages. With the call still held, Ben must see his
+ * request just as he did before each try, refused or not, so neither a
+ * refusal after the change committed nor Ada's own earlier calls are
+ * mistaken. Each refusal a try draws is the check's own, so it doesn't fail
+ * `opens ready`. The watch ends only once Ben sees Ada's decision right after
+ * one of her held calls goes through: that call was the decision, and both
+ * members tried it first. A decision that never shows that way fails.
  */
 const onlyAdmins =
   (which: keyof typeof DECIDED) =>
@@ -126,7 +132,7 @@ const onlyAdmins =
     const refused = await benAsks(ctx, reason, `${ctx.code}-${which}`);
     if (refused !== null) return refused;
     /** What Ben sees of his request's decision, from a fresh page; undefined when he can't find it. */
-    const benSees = async () => {
+    const benSees = async (): Promise<Shown> => {
       const ben = await ctx.open("ben");
       const seen = (await reveal(ben, reason)) ? await decisionShown(ben, reason) : undefined;
       await ben.close();
@@ -139,47 +145,49 @@ const onlyAdmins =
     const ada = await ctx.open("ada");
     if (!(await reveal(ada, reason)))
       return { ok: false, reason: "Ada doesn't see the request Ben sent." };
-    const pressed = await decide(ada, reason, which, async (call) => {
-      for (const member of ["ben", "cleo"]) {
-        const view = await ctx.open(member);
-        const answer = await call.tryAs(view, ctx.person(member));
-        await view.close();
-        const sent = `${ctx.person(member).name}, a member, sent Ada's ${which} call${call.handler === null ? "" : ` (${call.handler})`} as their own`;
-        // Patchy refusing for any reason but the patch's own handler failing says nothing of the patch.
-        if (!answer.ok && !answer.byHandler && !PATCH_FAILED.has(answer.code))
-          throw new GraderTrouble({
-            what: `Patchy itself refused the grader's try as ${ctx.person(member).name} (${answer.code}).`
-          });
-        const after = await benSees();
-        if (after !== before)
-          return `${sent}, ${answer.ok ? "and" : "and was refused, but"} Ben's request then showed ${after ?? "nothing he could find"} instead of ${before ?? "no decision"}.`;
-        if (!answer.ok && answer.byHandler && call.handler !== null)
-          ctx.expectRefusal({
-            person: member,
-            handler: call.handler,
-            code: answer.code,
-            at: answer.at
-          });
-      }
-      return null;
+    let seen: Shown = before;
+    const pressed = await decide(ada, reason, which, {
+      probe: async (call) => {
+        // What Ben sees with Ada's call held: her earlier calls may already have decided it.
+        seen = await benSees();
+        if (seen === decided)
+          return `Ben's request was ${decided} before Ada's last call: her ${which} went through something the grader couldn't hold, so it couldn't try it as a member.`;
+        for (const member of ["ben", "cleo"]) {
+          const view = await ctx.open(member);
+          const answer = await call.tryAs(view, ctx.person(member));
+          await view.close();
+          // Patchy refusing for any reason but the patch's own handler failing says nothing of the patch.
+          if (!answer.ok && !answer.byHandler && !PATCH_FAILED.has(answer.code))
+            throw new GraderTrouble({
+              what: `Patchy itself refused the grader's try as ${ctx.person(member).name} (${answer.code}).`
+            });
+          const after = await benSees();
+          if (after !== seen)
+            return `${ctx.person(member).name}, a member, sent Ada's ${which} call${call.handler === null ? "" : ` (${call.handler})`} as their own, ${answer.ok ? "and" : "and was refused, but"} Ben's request then showed ${after ?? "nothing he could find"} instead of ${seen ?? "no decision"}.`;
+          if (!answer.ok && answer.byHandler && call.handler !== null)
+            ctx.expectRefusal({
+              person: member,
+              handler: call.handler,
+              code: answer.code,
+              at: answer.at
+            });
+        }
+        return null;
+      },
+      took: async () => (seen = await benSees()) === decided
     });
     if (pressed === null)
       return { ok: false, reason: `Ada found no way to ${which} Ben's request.` };
     if (pressed.objection !== null) return { ok: false, reason: pressed.objection };
-    if (pressed.probed === 0)
-      return {
-        ok: false,
-        reason: `Ada's ${which} sent Patchy nothing for the grader to try as a member.`
-      };
     await ada.close();
-    const later = await benSees();
-    if (later === undefined) return { ok: false, reason: "Ben no longer sees his request." };
-    return later === decided
-      ? { ok: true }
-      : {
-          ok: false,
-          reason: `After Ada's ${which}, Ben's request shows ${later ?? "no decision"}.`
-        };
+    if (pressed.took) return { ok: true };
+    return {
+      ok: false,
+      reason:
+        pressed.held === 0
+          ? `Ada's ${which} sent Patchy nothing, and Ben's request shows ${seen ?? "no decision"}.`
+          : `Ada's ${which} never took effect through a call the grader could try as a member: Ben's request shows ${seen ?? "no decision"}.`
+    };
   };
 
 /**

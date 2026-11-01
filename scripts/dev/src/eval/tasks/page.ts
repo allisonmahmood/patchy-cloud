@@ -31,26 +31,33 @@ export const shows = async (view: Opened, text: string, ms = 10_000) => {
   return false;
 };
 
+/** Names a page gives its views of a list: all of it, someone's own, what waits for a decision. */
+const VIEWS =
+  /^\s*(all|everything|mine|my \w+|history|review\w*|pending|waiting|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|open|decided)\b/i;
+
 /**
- * Whether `text` shows, looking under the page's tabs and its All or Mine
- * filters as a person would when it isn't on the first one: All first. The
- * tab it showed under stays picked.
+ * Whether `text` shows, looking under the page's views as a person would
+ * when it isn't in the first one: its tabs, its toggles (`aria-pressed`,
+ * `aria-selected`, `aria-current`) and the buttons or links named for a view
+ * of the list, such as Review or Pending, All first. The view it showed
+ * under stays picked.
  */
 export const reveal = async (view: Opened, text: string) => {
   if (await shows(view, text, 3_000)) return true;
-  const tabs = [
-    ...(await view.frame.getByRole("tab").all()),
-    ...(await view.frame
-      .getByRole("button", { name: /^\s*(all|everything|mine|my \w+|history)\b/i })
-      .all())
+  const { frame } = view;
+  const controls = [
+    ...(await frame.getByRole("tab").all()),
+    ...(await frame.locator("[aria-pressed], [aria-selected], [aria-current]").all()),
+    ...(await frame.getByRole("button", { name: VIEWS }).all()),
+    ...(await frame.getByRole("link", { name: VIEWS }).all())
   ];
-  const names = await Promise.all(tabs.map((tab) => tab.innerText().catch(() => "")));
-  const order = tabs
-    .map((tab, index) => ({ tab, all: /\ball\b/i.test(names[index] ?? "") }))
+  const names = await Promise.all(controls.map((control) => control.innerText().catch(() => "")));
+  const order = controls
+    .map((control, index) => ({ control, all: /\ball\b/i.test(names[index] ?? "") }))
     .sort((a, b) => Number(b.all) - Number(a.all));
-  for (const { tab } of order) {
-    if (!(await tab.isVisible().catch(() => false))) continue;
-    await tab.click().catch(() => undefined);
+  for (const { control } of order) {
+    if (!(await control.isVisible().catch(() => false))) continue;
+    await control.click({ timeout: 2_000 }).catch(() => undefined);
     if (await shows(view, text, 2_000)) return true;
   }
   return shows(view, text, 5_000);
@@ -356,11 +363,18 @@ const DECISION_BUTTONS = {
   reject: /^\s*(reject|decline|deny)\b/i
 } as const;
 
-/** How long a press may take to send its first call, and the next once one is let through. */
-const FIRST_CALL_MS = 10_000;
-const NEXT_CALL_MS = 3_000;
+/** How long a press may take, from the click, to make its decision take effect. */
+const DECISION_MS = 60_000;
 /** The most calls one press may send before the grader stops holding them. */
-const MAX_CALLS = 8;
+const MAX_CALLS = 12;
+
+/** How a check follows a decision's calls: trying each first, and telling when it took. */
+export interface DecisionWatch {
+  /** Tries a held call as others first; an objection fails the check, leaving the call held. */
+  readonly probe: (call: HeldCall) => Promise<string | null>;
+  /** Whether the decision has taken effect, asked after each held call has been answered. */
+  readonly took: () => Promise<boolean>;
+}
 
 /**
  * Decides on the request holding `text` the way a person would: fills in
@@ -369,18 +383,22 @@ const MAX_CALLS = 8;
  * answers every dialog the press opens, filling in any words it wants. A
  * part holding more than one such button isn't the request's own.
  *
- * With `probe`, every call the press sends Patchy, other than plain reads,
- * is held back in turn and handed to `probe` before it goes through, so the
- * check tries each, the decision itself among them, as someone else first:
- * a query the page asks before its decision doesn't stand in for it.
- * Answers how many calls were probed and `probe`'s first objection, which
- * leaves that call held; null when there was nothing to press.
+ * With `watch`, every call the press sends Patchy, other than plain reads,
+ * is held back in turn and handed to `watch.probe` before it goes through,
+ * however long the page waits between calls, until a call's answer makes
+ * the decision take effect: that call was the decision, and it was tried
+ * first. A query the page asks first doesn't stand in for it, and a quiet
+ * spell doesn't end the watch. `took` is false when the decision didn't take
+ * effect through a held call within a minute of the press, so the check
+ * can't say the decision itself was tried. Answers how many calls were held,
+ * whether the decision took, and the first objection, which leaves its call
+ * held; null when there was nothing to press.
  */
 export const decide = async (
   view: Opened,
   text: string,
   which: keyof typeof DECISION_BUTTONS,
-  probe?: (call: HeldCall) => Promise<string | null>
+  watch?: DecisionWatch
 ) => {
   const { frame, page } = view;
   const name = DECISION_BUTTONS[which];
@@ -400,7 +418,7 @@ export const decide = async (
   // A person deciding writes why where the request asks, such as a note a rejection needs.
   await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
   const held: Array<Route> = [];
-  if (probe !== undefined)
+  if (watch !== undefined)
     await page.route("**/api/runtime/call", async (route) => {
       const call = decodeCall(route.request().postData() ?? "");
       if (Option.isSome(call) && !READS.has(call.value.op)) held.push(route);
@@ -423,29 +441,37 @@ export const decide = async (
   await button.click();
   await page.waitForTimeout(1_000);
   await answerDialog();
-  if (probe === undefined) {
+  if (watch === undefined) {
     await page.waitForTimeout(2_000);
-    return { probed: 0, objection: null };
+    return { held: 0, took: true, objection: null };
   }
-  let probed = 0;
-  for (let wait = FIRST_CALL_MS; probed < MAX_CALLS; wait = NEXT_CALL_MS) {
-    for (let waited = 0; held.length === 0 && waited < wait; waited += POLL_MS) {
-      await page.waitForTimeout(POLL_MS);
-      await answerDialog();
-    }
+  let count = 0;
+  let took = false;
+  // Measured in waits, since the probes between them take time of their own.
+  for (let waited = 0; !took && count < MAX_CALLS && waited < DECISION_MS;) {
     const route = held.shift();
-    if (route === undefined) break;
+    if (route === undefined) {
+      await page.waitForTimeout(POLL_MS);
+      waited += POLL_MS;
+      await answerDialog();
+      continue;
+    }
+    count++;
     const call = holding(view, route);
-    const objection = call === undefined ? null : await probe(call);
-    probed++;
-    if (objection !== null) return { probed, objection };
+    const objection = call === undefined ? null : await watch.probe(call);
+    if (objection !== null) return { held: count, took: false, objection };
     await route.continue();
-    await page.waitForTimeout(1_000);
+    // Its answer, so the decision it makes has happened before `took` looks.
+    await route
+      .request()
+      .response()
+      .catch(() => null);
     await answerDialog();
+    took = await watch.took();
   }
   await page.unroute("**/api/runtime/call");
-  await page.waitForTimeout(2_000);
-  return { probed, objection: null };
+  await page.waitForTimeout(1_000);
+  return { held: count, took, objection: null };
 };
 
 /** Whether a response is a file Patchy served a page: its bytes, not a refusal. */
