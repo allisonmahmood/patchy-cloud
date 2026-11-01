@@ -34,6 +34,7 @@ import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, readToolchain } from "./sandbox.js";
 import { classify, RunRecord, Scorecard, scorecardMarkdown, scorecardRun } from "./scorecard.js";
+import { stage } from "./stage.js";
 import { type Task, taskPrompt } from "./task.js";
 
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(RunRecord, { space: 2 }));
@@ -108,7 +109,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     side: "head" as const,
     commit: suite.commit.sha
   };
-  const { scenario } = yield* loadScenario(suite.root, task.scenario);
+  const { scenario, dir: scenarioDir } = yield* loadScenario(suite.root, task.scenario);
   const setUp = yield* Effect.gen(function* () {
     const identities = yield* seedRun(scenario, run).pipe(Effect.provideContext(suite.database));
     const spec = yield* prepareHome({
@@ -120,7 +121,9 @@ const runOne = Effect.fn("Eval.runOne")(function* (
       builder,
       signIns: suite.signIns
     });
-    return { identities, spec };
+    const door = { apiUrl: suite.apiUrl, key: suite.doorKey };
+    const staged = yield* stage({ task, scenario, scenarioDir, spec, identities, door });
+    return { identities, spec, staged };
   }).pipe(Effect.result);
   if (setUp._tag === "Failure") {
     yield* Console.error(`  ${label.padEnd(18)}  setup failed: ${setUp.failure.message}`);
@@ -137,7 +140,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
       screenshots: []
     } satisfies RunRecord;
   }
-  const { identities, spec } = setUp.success;
+  const { identities, spec, staged } = setUp.success;
   // The run's own credential files, read after every tool call and at the end, as the trial
   // reads CLI state: a token a harness refreshes, logs and replaces is still redacted.
   const collect = Effect.gen(function* () {
@@ -164,8 +167,10 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     runDir,
     people: identities.people,
     publisher: identities.publisher,
-    door: { apiUrl: suite.apiUrl, key: suite.doorKey }
-  });
+    door: { apiUrl: suite.apiUrl, key: suite.doorKey },
+    staged,
+    secrets: suite.seen
+  }).pipe(Effect.provideContext(suite.database));
   // The grader's own trouble gets one more try before the run counts as infrastructure.
   const first = yield* grading;
   const graded = first.infra === null ? first : yield* grading;
