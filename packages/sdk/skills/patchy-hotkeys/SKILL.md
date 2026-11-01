@@ -71,7 +71,8 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 - While the viewer types in a text field, single keys, Shift chords and Alt chords wait; Mod
   chords and Escape fire. A text field is a text `<input>` or `<textarea>` that isn't
   read-only, a `<select>`, a contenteditable element, or an element with `role="textbox"` or
-  `role="searchbox"`. Checkboxes, radios and ranges aren't text fields: single keys fire
+  `role="searchbox"`. A read-only input isn't a text field, but it keeps its arrow keys for
+  moving the caret. Checkboxes, radios and ranges aren't text fields: single keys fire
   there, and the control keeps Space and the arrow keys. A focused button keeps Enter and
   Space, and a focused link keeps Enter.
 - `whileTyping: true` fires in text fields and on a focused control's own keys, so a button's
