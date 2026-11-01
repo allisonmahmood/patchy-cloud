@@ -157,16 +157,18 @@ useHotkey("Mod+K", openSearch, { label: "Search", whileTyping: true, repeat: fal
 ```
 
 A hotkey is a chord such as `"Mod+K"`, `"?"` or `"Alt+ArrowUp"`, or a sequence
-of chords separated by spaces, such as `"G H"`. `Mod` is ⌘ on a Mac and Ctrl
-elsewhere; modifiers come in the order Mod, Alt, Shift. A string that isn't a
-hotkey fails typecheck, naming the step to fix and what to write; `Chord` types
-hotkeys built from data. Patchy keeps `"Mod+Shift+K"`: the types refuse it, and
-one cast past them is skipped with a console warning. Two enabled hotkeys with
-the same keys in one scope both fire, and the console warns once naming both.
-While a `<HotkeyScope>` is mounted, only the hotkeys registered by components
-it renders fire; the component that renders it is outside it.
+of chords separated by single spaces, such as `"G H"`. A symbol is the character
+it types, any ASCII one, so `"+"` and `"Mod++"` are chords. `Mod` is ⌘ on a Mac
+and Ctrl elsewhere; modifiers come in the order Mod, Alt, Shift. A string that
+isn't a hotkey fails typecheck, naming the step to fix and what to write;
+`Chord` types hotkeys built from data. Patchy keeps `"Mod+Shift+K"`: the types
+refuse it, and one cast past them is skipped with a console warning. Two enabled
+hotkeys with the same keys in one scope both fire, and the console warns once
+naming both. While a `<HotkeyScope>` is mounted, only the hotkeys registered by
+components it renders fire; the component that renders it is outside it.
 `formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer.
-The `patchy-hotkeys` project skill states the typing, layout and repeat rules.
+The `patchy-hotkeys` project skill states the typing, composition, layout and
+repeat rules.
 
 `<HotkeySheet />` is a ready-made shortcuts sheet: a `?` button where it is
 mounted, and a modal dialog that it and `?` open, listing every labelled hotkey

@@ -6,6 +6,11 @@ it("accepts chords, sequences, data-built chords and a sheet against the publish
 const run = () => {};
 useHotkey("Mod+K", run);
 useHotkey("?", run);
+useHotkey("+", run);
+useHotkey("Mod++", run);
+useHotkey("G +", run);
+const shifted: Chord[] = ["~", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", "|", ":", '"', "<", ">", "?"];
+for (const hotkey of shifted) useHotkey(hotkey, run);
 useHotkey("G H", run, { label: "Go home", group: "Navigation" });
 useHotkey("Alt+ArrowUp", run);
 const digits: Chord[] = ["1", "2"];
@@ -28,7 +33,11 @@ it("refuses each string that isn't a hotkey, saying what to write instead", () =
     "Mod+Shift+K": "'Mod+Shift+K' is kept by Patchy for its own shortcuts: choose another chord",
     "Mod+Shift+k": "'Mod+Shift+k' is kept by Patchy for its own shortcuts: choose another chord",
     "G Mod+Shift+K": "'Mod+Shift+K' is kept by Patchy for its own shortcuts: choose another chord",
-    "Ctrl+Shift+K": "'Mod+Shift+K' is kept by Patchy for its own shortcuts: choose another chord"
+    "Ctrl+Shift+K": "'Mod+Shift+K' is kept by Patchy for its own shortcuts: choose another chord",
+    "Ctrl++": "'Ctrl++' isn't a chord: write 'Mod++', which is ⌘ on a Mac and Ctrl elsewhere",
+    "Mod+":
+      "'Mod+' isn't a chord: write keys like 'Mod+K', 'Escape', '?' or 'G H', modifiers in the order Mod, Alt, Shift",
+    "G  H": "'G  H' isn't a hotkey: separate its steps with one space, as in 'G H'"
   };
   const source = [
     'import { useHotkey } from "patchy/hotkeys";',

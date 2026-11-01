@@ -6,8 +6,9 @@ import type { Instance } from "./instance.js";
 
 // packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings'
 // words. These pages prove what only a browser shows: real key events reaching patchy/hotkeys in
-// the published frame, in fields, controls, a scope, other layouts and on a Mac, the conflict
-// warning waiting until every hook's update has landed, and the sheet behaving as a dialog.
+// the published frame, in fields, controls, a scope, an input method's composition, other layouts
+// and on a Mac, a held key across a remount, the conflict warning waiting until every hook's
+// update has landed, and the sheet behaving as a dialog.
 test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
@@ -17,7 +18,13 @@ import { HotkeyScope, formatHotkey, useHotkey, useHotkeyList } from "patchy/hotk
 const client = createClient({ tables: {}, files: {} });
 const fired: string[] = [];
 const log = (name: string) => () => { fired.push(name); };
-Object.assign(window, { fired });
+// Keys that reach the window while an input method composes, and whether anything prevented them.
+// Safari's keydown that commits a composition comes after compositionend, with keyCode 229.
+const composing: string[] = [];
+window.addEventListener("keydown", (event) => {
+  if (event.isComposing || event.keyCode === 229) composing.push(\`\${event.key} \${event.defaultPrevented ? "prevented" : "untouched"}\`);
+});
+Object.assign(window, { fired, composing });
 
 function Shortcuts(props: { close: () => void }) {
   useHotkey("Escape", props.close, { label: "Close shortcuts" });
@@ -40,6 +47,9 @@ function App() {
   useHotkey("Mod+=", log("Mod+="));
   useHotkey("Mod+/", log("Mod+/"));
   useHotkey("Mod+Shift+/", log("Mod+Shift+/"));
+  useHotkey("+", log("+"));
+  useHotkey("Mod++", log("Mod++"));
+  useHotkey("Escape", log("Escape"));
   return <main>
     <p id="route">{route}</p>
     <p id="mod-k">{formatHotkey("Mod+K")}</p>
@@ -106,11 +116,20 @@ function Panel(props: { name: string; close: () => void }) {
   return <p id="panel">{props.name}</p>;
 }
 
+function Record(props: { id: number; approve: () => void }) {
+  useHotkey("A", () => { fired.push(\`approve \${props.id}\`); props.approve(); }, { repeat: false });
+  return <p id="record">{props.id}</p>;
+}
+
 function App() {
   const [panel, setPanel] = useState<string>();
+  const [record, setRecord] = useState(1);
   useHotkey("O", () => setPanel("first"));
   useHotkey("N", () => setPanel("second"));
-  return <main>{panel && <Panel key={panel} name={panel} close={() => setPanel(undefined)} />}</main>;
+  return <main>
+    {panel && <Panel key={panel} name={panel} close={() => setPanel(undefined)} />}
+    <Record key={record} id={record} approve={() => setRecord(record + 1)} />
+  </main>;
 }
 render(<App />, document.getElementById("app")!);
 `;
@@ -270,6 +289,36 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     // Ctrl+Shift on the US / key types ?, a shifted ASCII symbol, so the key's position counts.
     await press("?", "Slash", 191, 2 | 8);
     await firedNext(frame, ["J", "Mod+=", "Mod+Shift+/"]);
+    // + from US Shift+=, the numpad and German's own + key, then Ctrl on the numpad's.
+    await press("+", "Equal", 187, 8);
+    await press("+", "NumpadAdd", 107, 0);
+    await press("+", "BracketRight", 187, 0);
+    await press("+", "NumpadAdd", 107, 2);
+    await firedNext(frame, ["+", "+", "+", "Mod++"]);
+  });
+
+  await test.step("no hotkey fires on a key an input method is composing, and the page gets the key untouched", async () => {
+    const cdp = await context.newCDPSession(page);
+    const press = async (key: string, keyCode: number, modifiers: number) => {
+      const event = { key, code: key, windowsVirtualKeyCode: keyCode, modifiers };
+      await cdp.send("Input.dispatchKeyEvent", { ...event, type: "rawKeyDown" });
+      await cdp.send("Input.dispatchKeyEvent", { ...event, type: "keyUp" });
+    };
+    await view.locator("#text").fill("");
+    await view.locator("#text").focus();
+    await cdp.send("Input.imeSetComposition", { text: "か", selectionStart: 1, selectionEnd: 1 });
+    // Escape and Mod chords fire in a text field, so only the composition holds them back.
+    await press("Escape", 27, 0);
+    await press("Enter", 13, 2);
+    await cdp.send("Input.insertText", { text: "か" });
+    await expect(view.locator("#text")).toHaveValue("か");
+    // Safari's committing Enter, after the composition ended.
+    await press("Enter", 229, 2);
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["Escape"]);
+    expect(
+      await frame.evaluate(() => (window as unknown as { composing: string[] }).composing)
+    ).toEqual(["Escape untouched", "Enter untouched", "Enter untouched"]);
   });
 
   await test.step("formatHotkey shows Ctrl here and ⌘ on a Mac, where Mod is ⌘", async () => {
@@ -333,6 +382,19 @@ test("a component's hotkeys are live from the commit that mounts it to the one t
     await prevented([true]);
     await firedNext(frame, ["second"]);
     await expect(panel).toHaveCount(0);
+  });
+
+  await test.step("repeat: false fires once per press, though the hotkey remounts while it is held", async () => {
+    const record = page.frameLocator("#patch").locator("#record");
+    await page.keyboard.down("a");
+    await expect(record).toHaveText("2");
+    // Each further down is a key repeat, as holding A sends.
+    await page.keyboard.down("a");
+    await page.keyboard.down("a");
+    await page.keyboard.up("a");
+    await page.keyboard.press("a");
+    await expect(record).toHaveText("3");
+    await firedNext(frame, ["approve 1", "approve 2"]);
   });
 });
 

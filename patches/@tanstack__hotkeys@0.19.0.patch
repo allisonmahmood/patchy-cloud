@@ -1,0 +1,23 @@
+diff --git a/dist/_keyboard-event.js b/dist/_keyboard-event.js
+--- a/dist/_keyboard-event.js
++++ b/dist/_keyboard-event.js
+@@ -22,6 +22,6 @@
+ 		meta: Boolean(event.metaKey),
+ 		altGraph: altGraph && !controlAlt,
+ 		location: event.location,
+-		isComposing: Boolean(event.isComposing) || key === "Process" || key === "Unidentified"
++		isComposing: Boolean(event.isComposing) || event.keyCode === 229 || key === "Process" || key === "Unidentified"
+ 	};
+ }
+diff --git a/dist/_match.js b/dist/_match.js
+--- a/dist/_match.js
++++ b/dist/_match.js
+@@ -11,7 +11,7 @@
+ 		matched: false,
+ 		score: 0
+ 	};
+-	if (normalized.isComposing && (parsed.code !== void 0 || isPrintableKey(parsed.key))) return noMatch;
++	if (normalized.isComposing) return noMatch;
+ 	if (normalized.altGraph && (parsed.ctrl || parsed.alt)) return noMatch;
+ 	if (normalized.altGraph && !altGraphTypedCharacter(normalized)) return noMatch;
+ 	if (parsed.code !== void 0) {
