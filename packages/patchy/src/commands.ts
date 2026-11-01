@@ -46,6 +46,7 @@ import {
   PatchGuests,
   PublishMetadata,
   PublishRequest,
+  repoLimits,
   CompanyLook,
   LookNote,
   LookPublished,
@@ -560,6 +561,66 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
+/** File-mode options, which a repo publish and its dry run refuse before any work. */
+const refuseFileOptions = Effect.fn("refuseFileOptions")(function* (options: {
+  readonly name: Option.Option<string>;
+  readonly patch: Option.Option<string>;
+  readonly description: Option.Option<string>;
+  readonly new: boolean;
+}) {
+  if (Option.isSome(options.description))
+    return yield* new LocalError({
+      message:
+        "Repo descriptions live in patchy.json. Edit its description field instead of passing --description."
+    });
+  if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
+    return yield* new LocalError({
+      message:
+        "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
+    });
+});
+
+/**
+ * `publish --dry-run`: the checks and build a repo publish runs before sending, then what its
+ * version would keep. It sends nothing and leaves a pending publish for the next real one.
+ */
+const dryRunPublish = Effect.fn("dryRunPublish")(function* (
+  repo: string,
+  token: Redacted.Redacted,
+  pending: boolean
+) {
+  const instance = yield* Instance.Instance;
+  yield* Output.notice(
+    `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
+  );
+  const { snapshot, warnings: checked } = yield* prepareRepoPublish(repo, token);
+  const warnings = pending
+    ? [
+        ...checked,
+        "A publish is pending: the next `patchy publish` recovers it instead of publishing this repo as it is now."
+      ]
+    : checked;
+  yield* Output.report(
+    {
+      ok: true,
+      dryRun: true,
+      repo: {
+        files: snapshot.files.length,
+        bytes: snapshot.bytes,
+        limits: repoLimits,
+        entries: snapshot.entries
+      },
+      warnings
+    },
+    [
+      "Dry run passed publish's local checks. Nothing was sent.",
+      `Repo: ${snapshot.files.length} files, ${RepoSnapshot.formatBytes(snapshot.bytes)}, of the ${repoLimits.files} files and ${RepoSnapshot.formatBytes(repoLimits.bytes)} a version keeps:`,
+      ...snapshot.entries.map((entry) => `  ${RepoSnapshot.formatEntry(entry)}`)
+    ]
+  );
+  for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
+});
+
 const publish = Command.make(
   "publish",
   {
@@ -590,6 +651,12 @@ const publish = Command.make(
     new: Flag.Boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
+    ),
+    dryRun: Flag.Boolean("dry-run").pipe(
+      Flag.withDescription(
+        "Run this repo's publish checks and build, and list what its version would keep, without sending it"
+      ),
+      Flag.withDefault(false)
     )
   },
   (options) =>
@@ -600,8 +667,17 @@ const publish = Command.make(
         const cryptography = yield* Cryptography.Cryptography;
         const cwd = yield* Cwd;
         const repo = Option.isNone(options.file) ? cwd : undefined;
+        if (options.dryRun && repo === undefined)
+          return yield* new LocalError({
+            message:
+              "--dry-run is for repo publishing; `patchy validate <file>` checks an HTML file without publishing it."
+          });
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
+        if (options.dryRun && repo !== undefined) {
+          yield* refuseFileOptions(options);
+          return yield* dryRunPublish(repo, apiToken, Option.isSome(pending));
+        }
         const client = yield* Api.client(apiToken);
         const identity = yield* client
           .me()
@@ -613,16 +689,7 @@ const publish = Command.make(
         }
 
         if (repo !== undefined) {
-          if (Option.isSome(options.description))
-            return yield* new LocalError({
-              message:
-                "Repo descriptions live in patchy.json. Edit its description field instead of passing --description."
-            });
-          if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
-            return yield* new LocalError({
-              message:
-                "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
-            });
+          yield* refuseFileOptions(options);
           const project = yield* Project.readRepo(repo);
           // A repo last published before patchy.json kept a version can't say what it's behind.
           if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
@@ -633,13 +700,10 @@ const publish = Command.make(
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const {
-            manifest,
-            html,
-            server,
-            repo: snapshot,
-            warnings
-          } = yield* prepareRepoPublish(repo, apiToken);
+          const { manifest, html, server, snapshot, warnings } = yield* prepareRepoPublish(
+            repo,
+            apiToken
+          );
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
@@ -648,7 +712,7 @@ const publish = Command.make(
               manifest,
               html,
               ...(server === undefined ? {} : { server }),
-              repo: snapshot,
+              repo: snapshot.files,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               // Left out, publish goes over whatever was published since this copy's version. A
               // first publish has none, and a bound repo without one was refused above.

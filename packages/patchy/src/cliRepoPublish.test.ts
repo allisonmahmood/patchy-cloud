@@ -112,6 +112,56 @@ describe("repo publish checks", () => {
     expect(JSON.parse(readFileSync(repoFile, "utf8"))).toMatchObject({ version: 3 });
   });
 
+  // repoSnapshot.test.ts owns what is kept and the warnings; this proves a dry run checks and
+  // reports it without sending, and leaves a pending publish for the next real one.
+  it("lists what a repo's version would keep without sending it, even with a publish pending", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return disconnect();
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const notes = "Kept, tracked or not.";
+    writeFileSync(path.join(dir, "notes.md"), notes);
+    const sent = () => instance.requests.filter((request) => request.url === "/api/publish");
+
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    const report = JSON.parse(dry.stdout);
+    expect(report).toMatchObject({
+      ok: true,
+      dryRun: true,
+      repo: { limits: { files: 2000, bytes: 10 * 1024 * 1024 } },
+      warnings: []
+    });
+    expect(report.repo.entries).toContainEqual({
+      path: "notes.md",
+      files: 1,
+      bytes: Buffer.byteLength(notes)
+    });
+    expect(
+      report.repo.entries.reduce(
+        (total: number, entry: { files: number }) => total + entry.files,
+        0
+      )
+    ).toBe(report.repo.files);
+    expect(sent()).toEqual([]);
+    expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+
+    expect((await runCli(["publish", "--json"], options)).status).toBe(3);
+    const pending = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(pending, pending.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(pending.stdout).warnings).toEqual([
+      expect.stringContaining("the next `patchy publish` recovers it")
+    ]);
+    expect(sent()).toHaveLength(1);
+
+    const file = await runCli(["publish", "index.html", "--dry-run", "--json"], options);
+    expect(file).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(file.stderr).error).toContain("patchy validate <file>");
+  });
+
   // Tier 0 is now tier 1: a repo still configured at tier 0 is refused before it builds, generates
   // or sends anything, and init no longer makes one.
   it("refuses a tier 0 repo by publish and dev before building, and init at tier 0", async () => {

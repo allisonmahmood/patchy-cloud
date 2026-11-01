@@ -1136,7 +1136,7 @@ Check an HTML file locally as publish would, without publishing: it must carry e
 patchy validate ./plan.html
 ```
 
-### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--allow-behind] [--api-url <url>]`
+### `patchy publish [file] [--name <name>] [--share company|public] [--patch <patch-id>] [--new] [--description <text>] [--force] [--allow-behind] [--dry-run] [--api-url <url>]`
 
 First recover the pending publish in this mode's instance-scoped attempt directory. Otherwise check the executing CLI release against `GET /api/release`; a different release is `release_mismatch`, exit 1, naming the instance's install line, since rerunning the installer is how a global CLI upgrades. Then check the file as `validate` does, and publish it with a tier 1 manifest, empty `tables`, `files` and `uses`, and no `sdkImports`. File mode never reads `patchy.json`. On success it prints the address, patch ID, tier, version number, provisioned and unused resources, and sharing scope. The JSON response includes `name`, `address`, `scope: "company" | "public"`, `tier`, `schemaRevision`, `provisioned`, `unused` and `warnings`. `publicUrl` equals `address`; the scope, not that field name, controls who may read it.
 
@@ -1234,12 +1234,23 @@ sensitivity differs between systems, a file either reading ignores stays out.
 `.gitignore` files themselves are always kept, so a pulled copy keeps the same
 files at its next publish, and executable files stay executable. Anyone in the company who can open the patch can pull it, so keep
 secrets out of the repo. More than 2,000 files or 10 MiB is `too_large`, exit 1,
-naming the largest top-level entries to add to `.gitignore`; a `.gitignore` that
+naming the top-level entries using most of either limit, to add to `.gitignore`;
+past 80% of either limit, publish warns, naming them the same way. A `.gitignore` that
 leaves out `package.json`, `patchy.json`, `patchy.config.ts`, `index.html` or
 `vite.config.ts`, or paths that differ only by case or Unicode form, are
 `invalid_manifest`. Symlinks are left out with a warning. The packing happens
 before the build, and the JSON success adds `artifacts.repo: { files, bytes }`
 and a `Repo:` line in text.
+
+`patchy publish --dry-run` runs a repo publish's local checks and build, then
+lists what its version would keep, and sends nothing: the snapshot's files and
+bytes against its limits, and every top-level entry with its files and bytes,
+those using most of either limit first. JSON is `{ ok: true, dryRun: true, repo:
+{ files, bytes, limits: { bytes, files }, entries: [{ path, files, bytes }] },
+warnings }`, a folder's `path` ending in `/`. A pending publish stays for the
+next publish to recover, and `warnings` says so. The instance decides `--share`,
+`--force` and `--allow-behind`, so a dry run ignores them. With a file it is
+local, exit 1; `patchy validate` checks a file.
 
 The complete request, owner and local notices are persisted in an atomically
 selected attempt directory before sending; recovery retains those notices.
@@ -1655,6 +1666,7 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--failed`, `--limit <n>` and `--before <cursor>`: on `logs`, keep only failed calls, set the page size (1 to 25, default 10) and continue from a previous page.
 - `--force`: on `retire`, `delete`, `restore` and `publish`, accept the reported dependant/source breakage. Ask the person you are working for first.
 - `--allow-behind`: on repo `publish`, publish over versions published since this copy was pulled or last published. Ask the person you are working for first.
+- `--dry-run`: on repo `publish`, run its local checks and build and list what the version would keep, without sending it.
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.

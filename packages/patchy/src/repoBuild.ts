@@ -111,7 +111,10 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   return release.toolchain;
 });
 
-/** Recovery belongs to the caller and must finish before this starts any fresh work. */
+/**
+ * Every local check and build a repo publish runs before sending, which `publish --dry-run` stops
+ * after. Recovery belongs to the caller and must finish before this starts any fresh work.
+ */
 export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   cwd: string,
   token: Redacted.Redacted
@@ -255,7 +258,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   if (handlers !== undefined && Object.keys(handlers).length === 0)
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
   yield* validateRepoBundle(cwd, manifest, built.html);
-  return { manifest, html: built.html, server: built.server, repo: snapshot.files, warnings };
+  return { manifest, html: built.html, server: built.server, snapshot, warnings };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */
