@@ -128,40 +128,88 @@ export const formatBytes = (bytes: number): string =>
       ? `${(bytes / 1024).toFixed(1)} KiB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
-/** The largest top-level files and folders, which is where an agent starts trimming. */
-const largest = (files: Walked["files"]): string => {
-  const totals = new Map<string, number>();
+/** A top-level file, or folder ending in `/`, of a snapshot, with the files and bytes it holds. */
+export interface Entry {
+  readonly path: string;
+  readonly files: number;
+  readonly bytes: number;
+}
+
+/** How much of the nearer limit a snapshot, or one of its entries, uses. */
+const share = ({ files, bytes }: Pick<Entry, "files" | "bytes">) =>
+  Math.max(files / repoLimits.files, bytes / repoLimits.bytes);
+
+/** Past this share of either limit, publish warns before the repo reaches it. */
+const warnShare = 0.8;
+
+/**
+ * The snapshot's top-level files and folders, the ones using most of either limit first, then the
+ * larger: where an agent starts trimming.
+ */
+const entries = (files: Walked["files"]): ReadonlyArray<Entry> => {
+  const totals = new Map<string, { files: number; bytes: number }>();
   for (const file of files) {
     const [first, ...rest] = file.path.split("/");
     const entry = rest.length === 0 ? first! : `${first}/`;
-    totals.set(entry, (totals.get(entry) ?? 0) + file.bytes);
+    const total = totals.get(entry) ?? { files: 0, bytes: 0 };
+    totals.set(entry, { files: total.files + 1, bytes: total.bytes + file.bytes });
   }
   return [...totals]
-    .sort(([, left], [, right]) => right - left)
-    .slice(0, 5)
-    .map(([entry, bytes]) => `${entry} ${formatBytes(bytes)}`)
-    .join(", ");
+    .map(([path, total]) => ({ path, ...total }))
+    .sort((left, right) => share(right) - share(left) || right.bytes - left.bytes);
 };
 
-/**
- * Packs the repo at `root` into the snapshot its next version keeps, sorted by path. Refuses a
- * repo over the snapshot limits, one that leaves out a file the build needs, and paths that
- * would collide in one folder; skipped links come back as a warning.
- */
-export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
-  const walked = yield* Effect.tryPromise({
-    try: () => walk(root),
-    catch: (cause) =>
-      new LocalError({ message: "Could not read the repo to keep it with the version.", cause })
+/** An entry as a person reads it; a folder says how many files it holds. */
+export const formatEntry = (entry: Entry): string =>
+  entry.path.endsWith("/")
+    ? `${entry.path} ${entry.files} ${entry.files === 1 ? "file" : "files"}, ${formatBytes(entry.bytes)}`
+    : `${entry.path} ${formatBytes(entry.bytes)}`;
+
+const largest = (list: ReadonlyArray<Entry>) => list.slice(0, 5).map(formatEntry).join("; ");
+
+const limitsText = `${formatBytes(repoLimits.bytes)} and ${repoLimits.files} files`;
+
+const measure = (files: Walked["files"]) => {
+  const bytes = files.reduce((total, file) => total + file.bytes, 0);
+  return { bytes, listed: entries(files), size: `${formatBytes(bytes)} in ${files.length} files` };
+};
+
+const overLimits = (files: Walked["files"]) =>
+  files.length > repoLimits.files || measure(files).bytes > repoLimits.bytes;
+
+const tooLarge = (files: Walked["files"]) => {
+  const { listed, size } = measure(files);
+  return new LocalError({
+    message: `The repo is ${size}; a version keeps at most ${limitsText}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore, then publish again.`,
+    code: "too_large"
   });
+};
+
+const readFailure = (cause: unknown) =>
+  new LocalError({ message: "Could not read the repo to keep it with the version.", cause });
+
+const utf8 = new TextEncoder();
+
+/**
+ * What a snapshot of `root` keeps, sorted by path, and what it warns of, from the files' sizes
+ * alone. `patchyJson`, when given, is patchy.json as the description sync would leave it. Refuses a
+ * repo over the snapshot limits, one that leaves out a file the build needs, and paths that would
+ * collide in one folder; a repo near the limits and skipped links come back as warnings.
+ */
+const inspect = Effect.fn("RepoSnapshot.inspect")(function* (root: string, patchyJson?: string) {
+  const walked = yield* Effect.tryPromise({ try: () => walk(root), catch: readFailure });
   if (walked.unnamed.length > 0)
     return yield* new LocalError({
       message: `A version can't keep ${walked.unnamed.join(", ")}: rename it without backslashes or control characters, or add it to .gitignore.`,
       code: "invalid_manifest"
     });
-  const sorted = [...walked.files].sort((left, right) =>
-    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
-  );
+  const sorted = walked.files
+    .map((file) =>
+      file.path === "patchy.json" && patchyJson !== undefined
+        ? { ...file, bytes: utf8.encode(patchyJson).length }
+        : file
+    )
+    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   const kept = new Set(sorted.map((file) => file.path));
   for (const file of needed) {
     if (kept.has(file)) continue;
@@ -177,18 +225,32 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
         code: "invalid_manifest"
       });
   }
-  const bytes = sorted.reduce((total, file) => total + file.bytes, 0);
-  if (sorted.length > repoLimits.files || bytes > repoLimits.bytes)
-    return yield* new LocalError({
-      message: `The repo is ${formatBytes(bytes)} in ${sorted.length} files; a version keeps at most ${formatBytes(repoLimits.bytes)} and ${repoLimits.files} files. Largest: ${largest(sorted)}. Add what the patch doesn't need to .gitignore, then publish again.`,
-      code: "too_large"
-    });
+  if (overLimits(sorted)) return yield* tooLarge(sorted);
   const problem = repoTreeProblem(sorted.map((file) => file.path));
   if (problem !== undefined)
     return yield* new LocalError({
       message: `The repo can't be kept with the version: ${problem} Rename one of them.`,
       code: "invalid_manifest"
     });
+  const { bytes, listed, size } = measure(sorted);
+  const warnings: string[] = [];
+  if (share({ files: sorted.length, bytes }) >= warnShare)
+    warnings.push(
+      `The repo is ${size}, near the most a version keeps: ${limitsText}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore before it gets there.`
+    );
+  if (walked.links.length > 0)
+    warnings.push(
+      `Symlinks aren't kept with the version, so a pull won't have ${walked.links.join(", ")}.`
+    );
+  return { sorted, bytes, entries: listed, warnings };
+});
+
+/**
+ * Packs the repo at `root` into the snapshot its next version keeps, sorted by path, with its
+ * size, top-level entries and warnings, refusing what `inspect` refuses.
+ */
+export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
+  const { sorted, bytes, entries, warnings } = yield* inspect(root);
   const files: ReadonlyArray<RepoFile> = yield* Effect.forEach(sorted, (file) =>
     Effect.tryPromise({
       try: async () => ({
@@ -199,14 +261,18 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
       catch: (cause) => new LocalError({ message: `Could not read ${file.path}.`, cause })
     })
   );
-  return {
-    files,
-    bytes,
-    warnings:
-      walked.links.length === 0
-        ? []
-        : [
-            `Symlinks aren't kept with the version, so a pull won't have ${walked.links.join(", ")}.`
-          ]
-  };
+  return { files, bytes, entries, warnings };
+});
+
+/**
+ * The snapshot a repo publish of `root` would keep, for `publish --dry-run`: its file count, size,
+ * entries and warnings, measured without reading or writing a file, refusing what `pack` refuses.
+ * `patchyJson` is patchy.json as the description sync would leave it.
+ */
+export const survey = Effect.fn("RepoSnapshot.survey")(function* (
+  root: string,
+  patchyJson?: string
+) {
+  const { sorted, bytes, entries, warnings } = yield* inspect(root, patchyJson);
+  return { files: sorted.length, bytes, entries, warnings };
 });

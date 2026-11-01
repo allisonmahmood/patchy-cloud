@@ -8,6 +8,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Api from "./Api.js";
 import * as Instance from "./Instance.js";
+import * as Output from "./Output.js";
 import { checkBundle } from "./bundleCheck.js";
 import { LocalError, ReleaseMismatch } from "./CliError.js";
 import { configFailure, executeConfig } from "./executeConfig.js";
@@ -145,11 +146,16 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   // Packed before the build, so an oversized repo is refused before any of the slow work.
   const snapshot = yield* RepoSnapshot.pack(cwd);
+  // Remembered as found, so a later failure still reports them.
+  yield* Output.rememberWarnings(snapshot.warnings);
   warnings.push(...snapshot.warnings);
   const serverModules = configured.tier === 2 ? yield* discoverServerModules(cwd) : undefined;
   const agentFiles = configured.tier === 2 ? yield* discoverAgentFiles(cwd) : [];
   const skipped = yield* agentTypecheckWarning(cwd, agentFiles);
-  if (skipped !== undefined) warnings.push(skipped);
+  if (skipped !== undefined) {
+    yield* Output.rememberWarnings([skipped]);
+    warnings.push(skipped);
+  }
   if (serverModules !== undefined)
     yield* fs.readFileString(path.join(cwd, "package.json")).pipe(
       Effect.flatMap((source) => Effect.try(() => decodeServerPackage(source))),
@@ -255,7 +261,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   if (handlers !== undefined && Object.keys(handlers).length === 0)
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
   yield* validateRepoBundle(cwd, manifest, built.html);
-  return { manifest, html: built.html, server: built.server, repo: snapshot.files, warnings };
+  return { manifest, html: built.html, server: built.server, snapshot, warnings };
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */

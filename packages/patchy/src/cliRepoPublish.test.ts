@@ -1,15 +1,18 @@
 // Repo publish checks: bound targets, the tier 0 refusal and bundled resources.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CURRENT_RELEASE } from "@patchy/api";
+import { sha256 } from "../../../test/crypto.js";
+import { CURRENT_RELEASE, MANIFEST_VERSION, repoLimits } from "@patchy/api";
 import {
   decodePublishRequest,
   embeddedFontLook,
   generateProjectResponse,
+  identity,
   localPackageRegistry,
   packageDir,
   projectHandler,
+  projectSource,
   projectTree,
   publish,
   publishTree,
@@ -17,6 +20,7 @@ import {
   runCli,
   stubInstance,
   tempDir,
+  treeBytes,
   validHtml
 } from "./test/cli.js";
 
@@ -74,8 +78,9 @@ describe("repo publish checks", () => {
   });
 
   // A repo bound before patchy.json kept a version can't be checked for newer work, so it goes over
-  // what is live only when told to, once; that publish records the version the next one sends.
-  it("refuses a bound repo with no version until --allow-behind, which records one", async () => {
+  // what is live only when told to, once; that publish records the version the next one sends. A
+  // dry run refuses it the same way, so a dry run that passes means publish won't refuse it locally.
+  it("refuses a bound repo with no version, dry run too, until --allow-behind, which records one", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/publish")
         return respond(200, { ...publish(200, "abcdefghijkl", 3), tier: 1 });
@@ -98,6 +103,12 @@ describe("repo publish checks", () => {
     expect(failure).toMatchObject({ ok: false, kind: "local", code: "unknown_base_version" });
     expect(failure.error).toContain("patchy pull abcdefghijkl");
     expect(failure.error).toContain("--allow-behind");
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(dry.stderr)).toEqual(failure);
+    const dryAllowed = await runCli(["publish", "--dry-run", "--allow-behind", "--json"], options);
+    expect(dryAllowed, dryAllowed.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(dryAllowed.stdout)).toMatchObject({ ok: true, dryRun: true });
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     expect(readFileSync(repoFile, "utf8")).toBe(legacy);
     expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
@@ -110,6 +121,277 @@ describe("repo publish checks", () => {
     expect(sent).toMatchObject({ patchId: "abcdefghijkl" });
     expect(sent.baseVersion).toBeUndefined();
     expect(JSON.parse(readFileSync(repoFile, "utf8"))).toMatchObject({ version: 3 });
+  });
+
+  // repoSnapshot.test.ts owns what is kept and the warnings; this proves a dry run checks and
+  // reports it without sending, and leaves a pending publish for the next real one.
+  it("lists what a repo's version would keep without sending it, even with a publish pending", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish") return disconnect();
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const notes = "Kept, tracked or not.";
+    writeFileSync(path.join(dir, "notes.md"), notes);
+    const sent = () => instance.requests.filter((request) => request.url === "/api/publish");
+
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    const report = JSON.parse(dry.stdout);
+    expect(report).toMatchObject({
+      ok: true,
+      dryRun: true,
+      note: "Checks the repo snapshot and version without building or sending; publish still runs the build.",
+      repo: { limits: { files: 2000, bytes: 10 * 1024 * 1024 } },
+      warnings: []
+    });
+    expect(report.repo.entries).toContainEqual({
+      path: "notes.md",
+      files: 1,
+      bytes: Buffer.byteLength(notes)
+    });
+    expect(
+      report.repo.entries.reduce(
+        (total: number, entry: { files: number }) => total + entry.files,
+        0
+      )
+    ).toBe(report.repo.files);
+    expect(sent()).toEqual([]);
+    expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+
+    expect((await runCli(["publish", "--json"], options)).status).toBe(3);
+    const pending = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(pending, pending.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(pending.stdout).warnings).toEqual([
+      expect.stringContaining("the next `patchy publish` recovers it")
+    ]);
+    expect(sent()).toHaveLength(1);
+
+    const file = await runCli(["publish", "index.html", "--dry-run", "--json"], options);
+    expect(file).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(file.stderr).error).toContain("patchy validate <file>");
+  });
+
+  // A dry run measures patchy.json as the portal's newer description would leave it, and writes
+  // nothing: neither that description nor anything else lands in the repo.
+  it("leaves patchy.json and every other file in the repo as they were after a dry run", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, {
+          ...projectSource,
+          description: "New portal text",
+          descriptionUpdatedAt: "2026-09-17T00:00:00.000Z"
+        });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const repoFile = path.join(dir, "patchy.json");
+    const local = JSON.stringify({
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      version: 1,
+      description: "Local edit",
+      descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+    });
+    writeFileSync(repoFile, local);
+    const before = treeBytes(dir);
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(readFileSync(repoFile, "utf8")).toBe(local);
+    expect(treeBytes(dir)).toEqual(before);
+  });
+
+  /**
+   * A bound repo at the snapshot limit, give or take `over` bytes, with `description` in its
+   * patchy.json, as the description sync writes it; `portal` then changes the portal's
+   * description to one newer than it.
+   */
+  const repoAtLimit = async (description: string, over: number) => {
+    let cloud = { description, descriptionUpdatedAt: null as string | null };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, { ...projectSource, ...cloud });
+      if (request.url === "/api/publish") {
+        const kept = decodePublishRequest(request.body).repo ?? [];
+        const bytes = kept.reduce(
+          (total, file) => total + Buffer.from(file.contents, "base64").length,
+          0
+        );
+        return respond(200, {
+          ...publish(200, "abcdefghijkl", 2),
+          tier: 1,
+          artifacts: {
+            ...publish(200, "abcdefghijkl", 2).artifacts,
+            repo: { files: kept.length, bytes }
+          }
+        });
+      }
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const repo = {
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      version: 1,
+      description,
+      descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+    };
+    writeFileSync(path.join(dir, "patchy.json"), `${JSON.stringify(repo, null, 2)}\n`);
+    const dryRun = () => runCli(["publish", "--dry-run", "--json"], options);
+    const measured = await dryRun();
+    expect(measured, measured.stderr).toMatchObject({ status: 0 });
+    const filler = repoLimits.bytes - JSON.parse(measured.stdout).repo.bytes + over;
+    writeFileSync(path.join(dir, "filler.bin"), Buffer.alloc(filler));
+    const portal = (text: string) => {
+      cloud = { description: text, descriptionUpdatedAt: "2026-09-17T00:00:00.000Z" };
+    };
+    return { instance, options, dryRun, portal };
+  };
+
+  // The size check counts patchy.json as publish would keep it, after the description sync.
+  it("refuses a dry run as publish does when a longer portal description takes the repo past the limit", async () => {
+    const { instance, options, dryRun, portal } = await repoAtLimit("Synthetic notes", 0);
+    const full = await dryRun();
+    expect(full, full.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(full.stdout).repo.bytes).toBe(repoLimits.bytes);
+    portal("Synthetic notes, with a longer description written in the portal since");
+    const dry = await dryRun();
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    const real = await runCli(["publish", "--json"], options);
+    expect(real).toMatchObject({ status: 1, stdout: "" });
+    // The whole document matches, the portal's notice included.
+    expect(JSON.parse(dry.stderr)).toEqual(JSON.parse(real.stderr));
+    expect(JSON.parse(dry.stderr)).toMatchObject({
+      kind: "local",
+      code: "too_large",
+      warnings: [expect.stringContaining("changed in the portal")]
+    });
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+  });
+
+  it("passes a dry run as publish does when a shorter portal description brings the repo under the limit", async () => {
+    const { options, dryRun, portal } = await repoAtLimit(
+      "Synthetic notes, with a longer description written in this repo first",
+      1
+    );
+    const over = await dryRun();
+    expect(over).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(over.stderr)).toMatchObject({ code: "too_large" });
+    portal("Synthetic notes");
+    const dry = await dryRun();
+    expect(dry, dry.stderr).toMatchObject({ status: 0 });
+    const real = await runCli(["publish", "--json"], options);
+    expect(real, real.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(real.stdout).artifacts.repo).toEqual({
+      files: JSON.parse(dry.stdout).repo.files,
+      bytes: JSON.parse(dry.stdout).repo.bytes
+    });
+  });
+
+  /** An attempt an older CLI saved for a tier 0 publish, which only a real publish clears. */
+  const tierZeroAttempt = (dir: string, instanceUrl: string) => {
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instanceUrl), "attempt");
+    mkdirSync(attemptPath, { recursive: true });
+    const file = path.join(attemptPath, `${sha256("tier-zero-attempt")}.json`);
+    const attempt = JSON.stringify({
+      ownerUserId: identity.user.id,
+      target: { mode: "repo" },
+      request: {
+        publishKey: "tier-zero-attempt",
+        html: validHtml,
+        metadata: {},
+        manifest: {
+          release: CURRENT_RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 0,
+          name: "cli-project",
+          tables: {},
+          files: {},
+          uses: {}
+        }
+      }
+    });
+    writeFileSync(file, attempt);
+    return { file, attempt };
+  };
+
+  // The pending notice is remembered as soon as the attempt is found, so a refusal carries it.
+  it("keeps the pending notice when a dry run is refused for size or a failed portal read", async () => {
+    let gone = false;
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (gone && request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(404, { ok: false, error: "Patch not found." });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        version: 1,
+        description: "Synthetic notes"
+      })
+    );
+    tierZeroAttempt(dir, instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const pending = expect.stringContaining("A publish is pending");
+
+    const filler = path.join(dir, "filler.bin");
+    writeFileSync(filler, Buffer.alloc(repoLimits.bytes + 1));
+    const large = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(large).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(large.stderr)).toMatchObject({ code: "too_large", warnings: [pending] });
+
+    rmSync(filler);
+    gone = true;
+    const unread = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(unread).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(unread.stderr)).toMatchObject({
+      kind: "rejected",
+      error: expect.stringContaining("Patch is unavailable for update"),
+      warnings: [pending]
+    });
+  });
+
+  // State.test.ts owns how publish clears an older CLI's tier 0 attempt; a dry run only reports it.
+  it("leaves an older CLI's tier 0 attempt in place after a dry run", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const { file, attempt } = tierZeroAttempt(dir, instance.url);
+
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(dry.stdout).warnings).toEqual([
+      expect.stringContaining("A publish is pending")
+    ]);
+    expect(readFileSync(file, "utf8")).toBe(attempt);
+  });
+
+  // Notices found before a failure are kept, the snapshot's own warnings too.
+  it("keeps the near-limit warning when the typecheck fails", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    mkdirSync(path.join(dir, "assets"));
+    writeFileSync(path.join(dir, "assets/video.bin"), Buffer.alloc(8.5 * 1024 * 1024));
+    writeFileSync(path.join(dir, "src/main.ts"), "const title: string = 42;");
+    const failed = await runCli(["publish", "--json"], options);
+    expect(failed).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(failed.stderr)).toMatchObject({
+      kind: "local",
+      error: expect.stringContaining("Typecheck"),
+      warnings: [expect.stringContaining("near the most a version keeps")]
+    });
   });
 
   // Tier 0 is now tier 1: a repo still configured at tier 0 is refused before it builds, generates

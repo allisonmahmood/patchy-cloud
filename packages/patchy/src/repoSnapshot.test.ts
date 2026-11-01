@@ -134,9 +134,47 @@ it.layer(NodeServices.layer)("repo snapshot packing", (it) => {
       const refused = yield* pack(root).pipe(Effect.flip);
       assert.strictEqual(refused.code, "too_large");
       expect(refused.message).toMatch(
-        /^The repo is 10\.0 MiB in 6 files; a version keeps at most 10\.0 MiB and 2000 files\. Largest: research\/ 10\.0 MiB, /
+        /^The repo is 10\.0 MiB in 6 files; a version keeps at most 10\.0 MiB and 2000 files\. Largest: research\/ 1 file, 10\.0 MiB; /
       );
       expect(refused.message).toContain("Add what the patch doesn't need to .gitignore");
+    }).pipe(Effect.scoped)
+  );
+
+  // Either limit can be the near one: many small files rank above a few larger ones.
+  it.effect("warns near either limit, listing first the entries that use most of it", () =>
+    Effect.gen(function* () {
+      const heavy = yield* pack(
+        yield* repo({ "assets/video.bin": "x".repeat(8.5 * 1024 * 1024), "src/App.tsx": "app" })
+      );
+      assert.deepStrictEqual(heavy.entries[0], {
+        path: "assets/",
+        files: 1,
+        bytes: 8.5 * 1024 * 1024
+      });
+      // One file each uses the same share of the file limit, so the larger comes first.
+      assert.deepStrictEqual(
+        heavy.entries.map((entry) => entry.path),
+        ["assets/", "src/", "package.json", "patchy.json", "index.html", "patchy.config.ts"]
+      );
+      expect(heavy.warnings).toEqual([
+        expect.stringMatching(
+          /^The repo is 8\.5 MiB in 6 files, near the most a version keeps: 10\.0 MiB and 2000 files\. Largest: assets\/ 1 file, 8\.5 MiB; /
+        )
+      ]);
+      const screens = Object.fromEntries(
+        Array.from({ length: 1650 }, (_, index) => [`qa/screen-${index}.png`, "png"])
+      );
+      const many = yield* pack(
+        yield* repo({ ...screens, "fixtures/rows.json": "x".repeat(1024 * 1024) })
+      );
+      assert.deepStrictEqual(
+        many.entries.slice(0, 2).map((entry) => entry.path),
+        ["qa/", "fixtures/"]
+      );
+      expect(many.warnings).toEqual([
+        expect.stringContaining("in 1655 files, near the most a version keeps")
+      ]);
+      expect(many.warnings[0]).toContain("Largest: qa/ 1650 files, 4.8 KiB; fixtures/");
     }).pipe(Effect.scoped)
   );
 });

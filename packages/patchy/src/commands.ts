@@ -46,6 +46,7 @@ import {
   PatchGuests,
   PublishMetadata,
   PublishRequest,
+  repoLimits,
   CompanyLook,
   LookNote,
   LookPublished,
@@ -560,6 +561,93 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
+/**
+ * What a repo publish and its dry run refuse before any work: file-mode options, and a bound repo
+ * with no recorded version unless `--allow-behind`. Returns the repo's `patchy.json`.
+ */
+const checkRepoPublish = Effect.fn("checkRepoPublish")(function* (
+  repo: string,
+  options: {
+    readonly name: Option.Option<string>;
+    readonly patch: Option.Option<string>;
+    readonly description: Option.Option<string>;
+    readonly new: boolean;
+    readonly allowBehind: boolean;
+  }
+) {
+  if (Option.isSome(options.description))
+    return yield* new LocalError({
+      message:
+        "Repo descriptions live in patchy.json. Edit its description field instead of passing --description."
+    });
+  if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
+    return yield* new LocalError({
+      message:
+        "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
+    });
+  const project = yield* Project.readRepo(repo);
+  // A repo last published before patchy.json kept a version can't say what it's behind.
+  if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
+    return yield* new LocalError({
+      code: "unknown_base_version",
+      message: `Unknown base version: patchy.json names patch ${project.patch} but no version, so publish can't tell whether anyone published since this copy. Pull a fresh copy into a new folder with \`patchy pull ${project.patch}\` and make the change there, or, once the person you are working for agrees to replace whatever is live, publish with --allow-behind; that publish records the version.`
+    });
+  return project;
+});
+
+/** What `publish --dry-run` checks, said wherever it reports. */
+const dryRunScope =
+  "Checks the repo snapshot and version without building or sending; publish still runs the build.";
+
+/**
+ * `publish --dry-run`: the refusals a repo publish makes before any work, then the snapshot it
+ * would keep, with patchy.json measured as the description sync would leave it. It builds, sends
+ * and writes nothing, and leaves a pending publish for the next real one. Each notice is
+ * remembered as found, so a later refusal still carries it.
+ */
+const dryRunPublish = Effect.fn("dryRunPublish")(function* (
+  repo: string,
+  options: Parameters<typeof checkRepoPublish>[1]
+) {
+  const instance = yield* Instance.Instance;
+  const state = yield* State.State;
+  // Only looked at: reading an attempt can clear one that can't be sent again.
+  const pending: ReadonlyArray<string> = (yield* state.hasPendingPublish(instance.apiUrl, repo))
+    ? [
+        "A publish is pending: the next `patchy publish` recovers it instead of publishing this repo as it is now."
+      ]
+    : [];
+  yield* Output.rememberWarnings(pending);
+  const token = yield* requiredToken();
+  yield* checkRepoPublish(repo, options);
+  yield* Output.notice(
+    `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
+  );
+  const synced = yield* Project.previewDescriptionSync(repo, token);
+  const snapshot = yield* RepoSnapshot.survey(repo, synced.text);
+  const warnings = [...pending, ...synced.warnings, ...snapshot.warnings];
+  yield* Output.report(
+    {
+      ok: true,
+      dryRun: true,
+      note: dryRunScope,
+      repo: {
+        files: snapshot.files,
+        bytes: snapshot.bytes,
+        limits: repoLimits,
+        entries: snapshot.entries
+      },
+      warnings
+    },
+    [
+      `Dry run: ${dryRunScope}`,
+      `Repo: ${snapshot.files} files, ${RepoSnapshot.formatBytes(snapshot.bytes)}, of the ${repoLimits.files} files and ${RepoSnapshot.formatBytes(repoLimits.bytes)} a version keeps:`,
+      ...snapshot.entries.map((entry) => `  ${RepoSnapshot.formatEntry(entry)}`)
+    ]
+  );
+  for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
+});
+
 const publish = Command.make(
   "publish",
   {
@@ -590,6 +678,12 @@ const publish = Command.make(
     new: Flag.Boolean("new").pipe(
       Flag.withDescription("Always create a new patch"),
       Flag.withDefault(false)
+    ),
+    dryRun: Flag.Boolean("dry-run").pipe(
+      Flag.withDescription(
+        "Check the repo snapshot and version without building or sending, and list what the version would keep; publish still runs the build"
+      ),
+      Flag.withDefault(false)
     )
   },
   (options) =>
@@ -600,6 +694,12 @@ const publish = Command.make(
         const cryptography = yield* Cryptography.Cryptography;
         const cwd = yield* Cwd;
         const repo = Option.isNone(options.file) ? cwd : undefined;
+        if (options.dryRun && repo === undefined)
+          return yield* new LocalError({
+            message:
+              "--dry-run is for repo publishing; `patchy validate <file>` checks an HTML file without publishing it."
+          });
+        if (options.dryRun && repo !== undefined) return yield* dryRunPublish(repo, options);
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
         const client = yield* Api.client(apiToken);
@@ -613,33 +713,14 @@ const publish = Command.make(
         }
 
         if (repo !== undefined) {
-          if (Option.isSome(options.description))
-            return yield* new LocalError({
-              message:
-                "Repo descriptions live in patchy.json. Edit its description field instead of passing --description."
-            });
-          if (options.new || Option.isSome(options.patch) || Option.isSome(options.name))
-            return yield* new LocalError({
-              message:
-                "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
-            });
-          const project = yield* Project.readRepo(repo);
-          // A repo last published before patchy.json kept a version can't say what it's behind.
-          if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
-            return yield* new LocalError({
-              code: "unknown_base_version",
-              message: `Unknown base version: patchy.json names patch ${project.patch} but no version, so publish can't tell whether anyone published since this copy. Pull a fresh copy into a new folder with \`patchy pull ${project.patch}\` and make the change there, or, once the person you are working for agrees to replace whatever is live, publish with --allow-behind; that publish records the version.`
-            });
+          const project = yield* checkRepoPublish(repo, options);
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
-          const {
-            manifest,
-            html,
-            server,
-            repo: snapshot,
-            warnings
-          } = yield* prepareRepoPublish(repo, apiToken);
+          const { manifest, html, server, snapshot, warnings } = yield* prepareRepoPublish(
+            repo,
+            apiToken
+          );
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
@@ -648,7 +729,7 @@ const publish = Command.make(
               manifest,
               html,
               ...(server === undefined ? {} : { server }),
-              repo: snapshot,
+              repo: snapshot.files,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
               // Left out, publish goes over whatever was published since this copy's version. A
               // first publish has none, and a bound repo without one was refused above.
