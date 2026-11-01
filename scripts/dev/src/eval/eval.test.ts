@@ -1,12 +1,18 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
+import { realNode } from "../runtimes.js";
 import { loadScenario } from "../scenario.js";
 import { makeClaudeTally, makeCodexTally, refusalsIn, unwrapShell } from "./builders.js";
 import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js";
@@ -77,6 +83,107 @@ describe("the sandbox", () => {
     expect(versionOf("12.9.1\n")).toBe("12.9.1");
     expect(versionOf("no version here")).toBeUndefined();
   });
+});
+
+describe("the sandbox's bridge", () => {
+  /** Marks its stdout non-blocking, as a builder's own Node-based tools can, then writes 1 MiB. */
+  const writer = [
+    "import fcntl, os, sys",
+    "fcntl.fcntl(1, fcntl.F_SETFL, fcntl.fcntl(1, fcntl.F_GETFL) | os.O_NONBLOCK)",
+    "view = memoryview(b'x' * 1048576)",
+    "try:",
+    "    while view: view = view[os.write(1, view):]",
+    "except BlockingIOError: sys.exit(101)"
+  ].join("\n");
+
+  /**
+   * Runs `command args` in a sandbox and returns how many bytes of stdout arrive
+   * and how it exited, the runner reading only after `lateBy` and then one chunk
+   * per `perChunk`. Skips the test where bubblewrap can't start a sandbox (CI
+   * runners) or there's no real Node for the bridge (under `bun --bun`, `node` is Bun).
+   */
+  const sandboxed = (
+    ctx: { readonly skip: (note: string) => never },
+    command: string,
+    args: ReadonlyArray<string>,
+    reading: { readonly lateBy: Duration.Input; readonly perChunk: Duration.Input }
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const sandboxes = yield* spawner
+        .spawn(ChildProcess.make("bwrap", ["--unshare-net", "--ro-bind", "/", "/", "true"]))
+        .pipe(
+          Effect.flatMap((probe) => probe.exitCode),
+          Effect.map((code) => Number(code) === 0),
+          Effect.orElseSucceed(() => false)
+        );
+      const node = yield* realNode().pipe(Effect.option);
+      if (!sandboxes || Option.isNone(node))
+        return ctx.skip("no bubblewrap sandbox or real Node here");
+      const network = yield* openNetwork({
+        instancePort: 47_001,
+        allow: [],
+        node: node.value.execPath
+      });
+      const home = yield* fs.makeTempDirectoryScoped();
+      const handle = yield* spawner.spawn(
+        ChildProcess.make("bwrap", [...bwrapArgs({ home, network }, command, args)], {
+          env: { PATH: "/usr/bin:/bin" },
+          extendEnv: false,
+          stdin: "ignore"
+        })
+      );
+      yield* Effect.sleep(reading.lateBy);
+      const [bytes, exitCode] = yield* Effect.all(
+        [
+          handle.stdout.pipe(
+            Stream.tap(() => Effect.sleep(reading.perChunk)),
+            Stream.runFold(
+              () => 0,
+              (sum, chunk) => sum + chunk.length
+            )
+          ),
+          handle.exitCode
+        ],
+        { concurrency: "unbounded" }
+      );
+      return { bytes, exitCode: Number(exitCode) };
+    });
+
+  it.live(
+    "hands on everything a builder writes, however late the runner reads",
+    (ctx) =>
+      Effect.gen(function* () {
+        // The runner is busy elsewhere: nothing reads the builder's output for a while.
+        const ran = yield* sandboxed(ctx, "/usr/bin/python3", ["-I", "-c", writer], {
+          lateBy: "1500 millis",
+          perChunk: "0 millis"
+        });
+        expect(ran).toEqual({ bytes: 1_048_576, exitCode: 0 });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    30_000
+  );
+
+  it.live(
+    "ends when the builder does, whatever it left running keeps writing",
+    (ctx) =>
+      Effect.gen(function* () {
+        const ran = yield* sandboxed(
+          ctx,
+          "/usr/bin/sh",
+          [
+            "-c",
+            // The logger writes a backlog, says so, then keeps writing; the builder exits once it has.
+            "(head -c 262144 /dev/zero; touch /tmp/ready; while :; do head -c 65536 /dev/zero; sleep 0.025; done) & until [ -e /tmp/ready ]; do sleep 0.01; done"
+          ],
+          { lateBy: "0 millis", perChunk: "100 millis" }
+        ).pipe(Effect.timeout("20 seconds"));
+        expect(ran.exitCode).toBe(0);
+        expect(ran.bytes).toBeGreaterThanOrEqual(262_144);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    30_000
+  );
 });
 
 describe("the sandbox's proxy", () => {
@@ -364,6 +471,25 @@ describe("what a run is", () => {
         .outcome
     ).toBe("infra");
     expect(classify(log({ ending: "no-answer", steps: [] }), graded(false)).outcome).toBe("infra");
+    expect(
+      classify(
+        log({
+          ending: "failed",
+          detail:
+            "It exited 101 without a result: failed printing to stdout: Resource temporarily unavailable (os error 11)"
+        }),
+        graded(false)
+      ).outcome
+    ).toBe("infra");
+    expect(
+      classify(
+        log({
+          ending: "failed",
+          detail: "Failed to start the generated server: too many threads (os error 11)"
+        }),
+        graded(false)
+      ).outcome
+    ).toBe("gave-up");
     expect(classify(log(), graded(true, "The patch's log couldn't be read.")).outcome).toBe(
       "infra"
     );
