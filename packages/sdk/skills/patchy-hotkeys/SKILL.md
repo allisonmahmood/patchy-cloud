@@ -136,8 +136,9 @@ outside it closes it, and focus goes back to where it was.
   `group` prop puts it in one of the page's groups, `<HotkeySheet group="Navigation" />`, so
   grouped keys don't leave it a General column of its own.
 - `openHotkeySheet()` opens the mounted sheet from a control of the page's own, such as a menu
-  item. Focus moves into the sheet and goes back to that control when it closes, as with the
-  `?` button.
+  item. Focus moves into the sheet and goes back to where it was when it closes, as with the
+  `?` button. A menu that closes on selection takes its item away, so focus the menu's
+  trigger before calling it, and focus returns there.
 - With the company look, the `?` button is one of the look's buttons, square. Without a look,
   the sheet and button take the page's font and text colour.
 - Element rules in the page's stylesheets, layered or not, don't reach the sheet. Its unlayered
