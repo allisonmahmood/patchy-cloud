@@ -489,12 +489,14 @@ The current repair command is
 If a shared config resolves a separate installation, update it there too.
 Refresh reports required upgrades as text notices and JSON `warnings`, but
 never changes these builder-owned keys. It remains usable while the Vite config
-is incomplete. TypeScript is a publish gate too: publish reads the version in the
+is incomplete. The release refresh installs runs these checks, TypeScript's
+included, in its own toolchain child, whose reply every release's refresh relays,
+so a repo refreshed by an older pinned CLI is warned by the release it moves to. TypeScript is a publish gate too: publish reads the version in the
 repo's `node_modules/typescript`, the compiler it runs, and refuses one outside
 `typescript.accepted` (TypeScript 7) with `toolchain_unsupported` before syncing the
 description or running config, Vite or the typecheck. The refusal names the upgrade
-command and where the Oxlint move is described, since typescript-eslint can't run beside
-TypeScript 7. Dev and refresh only warn: an existing TypeScript 6 repo keeps running
+command and the `patchy-loop` skill, which lists the accepted ranges and the Oxlint move,
+since typescript-eslint can't run beside TypeScript 7. Dev and refresh only warn: an existing TypeScript 6 repo keeps running
 locally, and published patches are untouched. Declaration packages stay scaffold metadata.
 The scaffold's Oxlint package and `.oxlintrc.json` are builder-owned lint defaults,
 not loaded by dev or publish and not additional release compatibility gates. Hook lint

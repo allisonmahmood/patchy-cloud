@@ -235,11 +235,25 @@ says so in `warnings` without failing.
 - Retire and delete from live refuse with `has_dependants`; restore with unavailable sources refuses with `sources_off`. Relay the list and ask the person you are working for before forcing. `--force` accepts breakage, including an unshare at publish; `--yes` only confirms deletion. Delete keeps everything for 30 days until `purgeAt`, retire indefinitely. Rollback changes only the live served version, not data, sharing, description or name.
 - `pnpm patchy logs [--failed]` prints a page of the published patch's log, newest first, for its owner and admins; `patchy-server` says how to debug from it. Continue with `--before <next>`.
 - `pnpm patchy dev status`, `stop`, `logs` and `reset` inspect or control this repo and instance only. `reset` stops and wipes disposable local state without changing published resources; start again afterwards to fetch the published inventory. `--foreground` stays attached and streams logs; interrupting a session it started stops it. On `release_mismatch`, run `pnpm patchy refresh`; an existing session is not killed by an upgrade.
-- Dev and publish refuse unsupported loaded Vite or single-file plugin versions with local `toolchain_unsupported`, exit 1. Run the upgrade command in the error and retry. `refresh` only warns; those dependencies belong to you and are never rewritten by refresh.
 
 Managed generation files are exactly the `patchy` pin and tier 2's `workerd` pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture stubs, the lockfile through installation and one `uses` edit for add/remove. Refresh owns pin changes and the generated server module list, and removes stale generated context files. Adding, deleting or renaming a server module requires refresh; publish refuses a stale list with `stale_generated`. Description sync separately updates `patchy.json`; pulled text remains there if a later step fails, with its notice in the failure. Never manually edit `_generated/`, the managed skills or revision stamps. The CLI writes `manifest.json` from local config execution; the instance returns finished files and resolved declaration stamps, never executable config. `AGENTS.md`, `CLAUDE.md`, application source and existing fixtures remain yours after initialization.
 
 Commit config, `patchy.json` with its description and sync stamp, generated output, skills, fixtures and lockfile. Keep personal credentials outside the repo. `.patchy/`, `node_modules/` and `dist/` are ignored. Deleting `.patchy/` destroys local rows and files; it is not an innocuous cache cleanup.
+
+## Toolchain
+
+TypeScript, Vite, `vite-plugin-singlefile` and `@types/node` belong to the repo; refresh never rewrites them. This release accepts:
+
+| Package                  | Accepted   | Tested against |
+| ------------------------ | ---------- | -------------- |
+| `typescript`             | `^7.0.2`   | 7.0.2          |
+| `vite`                   | `^8.3.0`   | 8.3.4          |
+| `vite-plugin-singlefile` | `^2.3.3`   | 2.3.4          |
+| `@types/node`            | `^22.19.0` | 22.20.5        |
+
+Publish refuses an installed TypeScript, Vite or single-file plugin outside its range with local `toolchain_unsupported`, exit 1. Dev refuses Vite and the plugin but runs TypeScript 6 with a warning; refresh only warns, naming each upgrade. Run the command in the message, then retry. `@types/node` isn't checked; new repos start on its range.
+
+typescript-eslint can't run beside TypeScript 7, so a repo that lints with ESLint moves to Oxlint, which new repos use. Run `pnpm remove eslint typescript-eslint eslint-plugin-react-hooks` and `pnpm add --save-dev 'oxlint@^1.90.0'`, set the `lint` script to `oxlint`, delete `eslint.config.js`, and write the `.oxlintrc.json` in `../patchy-preact/SKILL.md`, keeping any rules of the repo's own. Publish doesn't check the linter.
 
 ## Data boundary
 

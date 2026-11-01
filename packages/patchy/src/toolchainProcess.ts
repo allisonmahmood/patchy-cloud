@@ -6,10 +6,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import satisfies from "semver/functions/satisfies.js";
 import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { processResult } from "./processResult.js";
+import { typescriptManifest, typescriptNotice } from "./typescriptNotice.js";
 import type { GuestAliases } from "./serverBuild.js";
 
 const decodeResult = Schema.decodeUnknownSync(
@@ -40,29 +40,16 @@ const encodeAliases = Schema.encodeSync(
     })
   )
 );
-const decodeVersion = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ version: Schema.String }))
-);
 
-/**
- * Why this release won't publish the repo's TypeScript, or nothing when it will. Publish runs the
- * repo's own `node_modules/typescript`; without one, publish's typecheck reports that instead.
- * Patches moved to TypeScript 7, beside which typescript-eslint can't run, hence the lint step.
- */
+/** Why this release won't publish the repo's TypeScript, or nothing when it will. */
 export const typescriptRefusal = Effect.fn("typescriptRefusal")(function* (
   cwd: string,
   versions: typeof ReleaseToolchain.Type
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const manifest = yield* fs
-    .readFileString(path.join(cwd, "node_modules/typescript/package.json"))
-    .pipe(Effect.option);
-  if (Option.isNone(manifest)) return undefined;
-  const version = Option.getOrUndefined(decodeVersion(manifest.value))?.version;
-  const { accepted, testedAgainst } = versions.typescript;
-  if (version !== undefined && satisfies(version, accepted)) return undefined;
-  return `This repo has TypeScript ${version ?? "of an unknown version"}; this release publishes only TypeScript ${accepted} (tested against ${testedAgainst}). Run: pnpm add --save-dev 'typescript@${accepted}'. typescript-eslint doesn't run beside TypeScript 7: if the lint script runs ESLint, move it to Oxlint as .agents/skills/patchy-preact/SKILL.md says.`;
+  const manifest = yield* fs.readFileString(path.join(cwd, typescriptManifest)).pipe(Effect.option);
+  return typescriptNotice(Option.getOrUndefined(manifest), versions);
 });
 
 // The bundled child in a release; its source when this CLI runs from the workspace.
@@ -73,7 +60,9 @@ const ownChild = fileURLToPath(
 /**
  * Run the builder toolchain in its own process, by default the child beside this CLI.
  * A caller may pass another release's `toolchainChild.js`, such as one it just installed.
- * The argv and the stdout reply are a private protocol across releases.
+ * The argv and the stdout reply are a private protocol across releases: every release's refresh
+ * relays an inspection's `warnings`, so a release speaks through them to an older CLI refreshing
+ * into it.
  */
 export const runToolchain = Effect.fn("runToolchain")(function* (
   cwd: string,

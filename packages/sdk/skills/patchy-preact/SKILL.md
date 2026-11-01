@@ -163,11 +163,8 @@ Lint checks hook usage and supported imports; fix failures in source rather
 than disabling the rules.
 
 The scaffold lints with Oxlint: `oxlint` in `devDependencies`, a `lint` script
-of `oxlint`, and this `.oxlintrc.json`. Patches publish on TypeScript 7, and a
-repo still on ESLint with typescript-eslint, which can't run beside TypeScript
-7, moves to it: remove `eslint`, `typescript-eslint` and
-`eslint-plugin-react-hooks`, delete `eslint.config.js`, and keep any rules of
-the repo's own in `.oxlintrc.json`.
+of `oxlint`, and this `.oxlintrc.json`. A repo still on ESLint moves to it as
+Toolchain in `../patchy-loop/SKILL.md` says.
 
 ```json
 {

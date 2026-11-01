@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { activateStarter, starterFiles, writeInitialGeneration } from "./initProject.js";
+import toolchain from "./toolchain.json" with { type: "json" };
 
 const directories: string[] = [];
 async function temporaryDirectory() {
@@ -221,14 +222,9 @@ it("refuses generated output through a symbolic link", async () => {
   expect(await readdir(outside)).toEqual([]);
 });
 
-it("documents the scaffold's lint config in the skill a TypeScript 7 refusal points at", async () => {
-  const skill = await readFile(
-    new URL("../../sdk/skills/patchy-preact/SKILL.md", import.meta.url),
-    "utf8"
-  );
-  const documented = /```json\n([\s\S]*?)\n```/.exec(
-    skill.slice(skill.indexOf("The scaffold lints with Oxlint"))
-  )?.[1];
+it("states the release's toolchain and the scaffold's lint in the skills a TypeScript 7 refusal points at", async () => {
+  const skill = (name: string) =>
+    readFile(new URL(`../../sdk/skills/${name}/SKILL.md`, import.meta.url), "utf8");
   const files = starterFiles({
     instance: "http://127.0.0.1:1",
     name: "notes",
@@ -236,5 +232,28 @@ it("documents the scaffold's lint config in the skill a TypeScript 7 refusal poi
     purpose: "Synthetic notes",
     tarball: "http://127.0.0.1:1/patchy.tgz"
   });
+  const loop = await skill("patchy-loop");
+  const section = loop.slice(loop.indexOf("## Toolchain"), loop.indexOf("## Data boundary"));
+  const rows = section
+    .split("\n")
+    .filter((line) => line.startsWith("| `"))
+    .map((line) => line.split("|").map((cell) => cell.trim()));
+  expect(rows.sort()).toEqual(
+    Object.entries(toolchain)
+      .map(([name, { accepted, testedAgainst }]) => [
+        "",
+        `\`${name}\``,
+        `\`${accepted}\``,
+        testedAgainst,
+        ""
+      ])
+      .sort()
+  );
+  const { devDependencies } = JSON.parse(files["package.json"]!);
+  expect(section).toContain(`pnpm add --save-dev 'oxlint@${devDependencies.oxlint}'`);
+  const preact = await skill("patchy-preact");
+  const documented = /```json\n([\s\S]*?)\n```/.exec(
+    preact.slice(preact.indexOf("The scaffold lints with Oxlint"))
+  )?.[1];
   expect(JSON.parse(documented ?? "null")).toEqual(JSON.parse(files[".oxlintrc.json"]!));
 });
