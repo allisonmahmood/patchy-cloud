@@ -13,7 +13,7 @@
  */
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { FrameLocator, Locator, Route } from "@playwright/test";
+import type { ElementHandle, FrameLocator, Locator, Route } from "@playwright/test";
 import { GraderTrouble, type Opened, type RunPerson } from "../task.js";
 
 const POLL_MS = 500;
@@ -44,25 +44,36 @@ export const viewName = (name: string) =>
     .toLowerCase();
 
 /**
- * What a list's views are called, a whole name each: all of it, someone's
- * own, a team's, a status, a queue. Buttons and links are tried only when
- * named like this, so an action such as "Open request", "Withdraw request",
- * "Supprimer" or a trash icon never is.
+ * Names that are views of a list and nothing else, a whole name each: all
+ * of it, someone's own, a team's, an inbox or queue. Pressed wherever they
+ * appear.
  */
-export const VIEW_LEXICON =
-  /^(all|all \p{L}+|everything|everyone|mine|my \p{L}+( \p{L}+)?|team|team \p{L}+|open|pending|waiting|in review|review|reviews|to review|to approve|needs? (my )?(approval|review)|awaiting( my)? (approval|review)|approvals|approved|rejected|declined|decided|paid|done|closed|completed|archived|history|queue|inbox|requests|submitted|sent|received|active|recent)$/u;
+export const VIEW_NOUNS =
+  /^(all|all \p{L}+|everything|everyone|mine|my \p{L}+( \p{L}+)?|team|team \p{L}+|inbox|queue|history|requests|approvals|recent)$/u;
+
+/**
+ * Statuses, a whole name each. Alone, a button so named can be an action,
+ * such as Paid for "mark as paid", Done for "finish" or Review for "start a
+ * review"; one is pressed only where it is plainly a filter (`inFilterBar`).
+ */
+export const VIEW_STATUSES =
+  /^(open|pending|waiting|in review|review|reviews|to review|to approve|needs? (my )?(approval|review)|awaiting( my)? (approval|review)|approved|rejected|declined|decided|paid|done|closed|completed|archived|submitted|sent|received|active)$/u;
 
 /**
  * Whether a name says to do something rather than which view to show: it
  * holds a verb that changes data, or leads with a verb and names its object,
- * as "Open request" or "New request" do.
+ * as "Open request" or "New request" do. Read with its asides too, so "Review
+ * (submit)" can't hide its action in parentheses.
  */
 export const actionShaped = (name: string) =>
-  /\b(approve|reject|decline|deny|accept|withdraw|delete|remove|trash|archive|discard|clear|reset|submit|send|save|create|new|add|lend|give|thank|react|like|favou?rite|star|pin|follow|watch|subscribe|mute|bookmark|flag|vote|pay|mark|assign|move|transfer|publish|share|invite|upload|import|load|cancel|confirm|undo|restore|return|back|sign out|log out|leave|join|edit|rename|update|duplicate|copy|close|dismiss)\b/u.test(
-    name
-  ) ||
-  /^(open|new|add|create|view|show|start|request|upload|download|export|print|compose|write|ask|apply|book|schedule|report|record|log) \p{L}/u.test(
-    name
+  [name.toLowerCase(), viewName(name)].some(
+    (words) =>
+      /\b(approve|reject|decline|deny|accept|withdraw|delete|remove|trash|archive|discard|clear|reset|submit|send|save|create|new|add|lend|give|thank|react|like|favou?rite|star|pin|follow|watch|subscribe|mute|bookmark|flag|vote|pay|mark|assign|move|transfer|publish|share|invite|upload|import|load|cancel|confirm|undo|restore|return|back|sign out|log out|leave|join|edit|rename|update|duplicate|copy|close|dismiss)\b/u.test(
+        words
+      ) ||
+      /^(open|new|add|create|view|show|start|request|upload|download|export|print|compose|write|ask|apply|book|schedule|report|record|log) \p{L}/u.test(
+        words
+      )
   );
 
 /** A control a search for a view might press, as found on the page. */
@@ -72,30 +83,48 @@ export interface Control {
   readonly tab: boolean;
   /** It carries `aria-selected` or `aria-current`: a selection or a place, as views are. */
   readonly selection: boolean;
-  /** It carries `aria-pressed`: a toggle, which is as often an action as a view. */
-  readonly toggle: boolean;
   /** A button that would submit the form it belongs to. */
   readonly submitsForm: boolean;
   readonly shown: boolean;
+  /**
+   * The names of the other controls grouped with it: under the same parent,
+   * or in the same tablist, radio group, toolbar or `nav`.
+   */
+  readonly peers: ReadonlyArray<string>;
 }
 
 /** The most views a search for one tries. */
 const MAX_TRIES = 20;
 
+/** Whether a name is a view's, a noun or a status, and not an action's. */
+const viewNamed = (name: string) => {
+  const words = viewName(name);
+  return (VIEW_NOUNS.test(words) || VIEW_STATUSES.test(words)) && !actionShaped(name);
+};
+
 /**
- * Whether a control is a view by its role or state, and so safe to press: a
- * tab; a selection or a place whose name isn't action-shaped; or a toggle,
- * button or link whose whole name is a view's (`VIEW_LEXICON`). Never a
- * hidden control, nor one that submits a form. Anything else could change
- * data, so a search for a view never presses it, even if that means not
- * finding a list only an unusual control shows.
+ * Whether a control sits in a filter bar: grouped with another control named
+ * for a view, and with nothing named for an action, as a row of a request's
+ * buttons would be.
+ */
+export const inFilterBar = (control: Control) =>
+  control.peers.some(viewNamed) && !control.peers.some(actionShaped);
+
+/**
+ * Whether a control is a view by its role or state, and so safe to press:
+ * a tab; a selection or a place whose name isn't action-shaped; a control
+ * named for a view noun; or one named for a status that is plainly a filter.
+ * Never a hidden control, nor one that submits a form. Anything else could
+ * change data, so a search for a view never presses it, even if that means
+ * not finding a list only an unusual control shows.
  */
 export const isViewControl = (control: Control) => {
   if (!control.shown || control.submitsForm) return false;
   if (control.tab) return true;
-  const name = viewName(control.name);
-  if (name === "" || actionShaped(name)) return false;
-  return control.selection || VIEW_LEXICON.test(name);
+  const words = viewName(control.name);
+  if (words === "" || actionShaped(control.name)) return false;
+  if (control.selection || VIEW_NOUNS.test(words)) return true;
+  return VIEW_STATUSES.test(words) && inFilterBar(control);
 };
 
 /** Which controls to try, by index: the views among them, All first, at most `MAX_TRIES`. */
@@ -114,25 +143,49 @@ export const viewCandidates = (controls: ReadonlyArray<Control>) =>
 const CONTROLS =
   'button, a[href], [role="tab"], [role="button"], [role="link"], [aria-pressed], [aria-selected], [aria-current]';
 
-/** Every control on the patch's page with what a search for a view reads of it. */
-const controlsOf = (view: Opened) =>
-  view.frame.locator(CONTROLS).evaluateAll((all) =>
-    all.map((element) => ({
-      name: (
-        element.getAttribute("aria-label") ??
-        element.getAttribute("title") ??
-        (element instanceof HTMLElement ? element.innerText : (element.textContent ?? ""))
-      ).trim(),
-      tab: element.getAttribute("role") === "tab",
-      selection: element.hasAttribute("aria-selected") || element.hasAttribute("aria-current"),
-      toggle: element.hasAttribute("aria-pressed"),
-      submitsForm:
-        element instanceof HTMLButtonElement && element.form !== null && element.type === "submit",
-      shown:
-        element.getClientRects().length > 0 &&
-        (element instanceof HTMLElement ? getComputedStyle(element).visibility !== "hidden" : true)
-    }))
+/**
+ * What a search for a view reads of one control, in the page: its name, its
+ * role and state, whether it's shown, and the names of the controls grouped
+ * with it. Run in the page, so it stays self-contained.
+ */
+const readControl = (element: Element, selector: string): Control => {
+  const nameOf = (each: Element) =>
+    (
+      each.getAttribute("aria-label") ??
+      each.getAttribute("title") ??
+      (each instanceof HTMLElement ? each.innerText : (each.textContent ?? ""))
+    ).trim();
+  const group = element.closest('[role="tablist"], [role="radiogroup"], [role="toolbar"], nav');
+  const peers = [...element.ownerDocument.querySelectorAll(selector)].filter(
+    (other) =>
+      other !== element &&
+      (other.parentElement === element.parentElement || (group !== null && group.contains(other)))
   );
+  return {
+    name: nameOf(element),
+    tab: element.getAttribute("role") === "tab",
+    selection: element.hasAttribute("aria-selected") || element.hasAttribute("aria-current"),
+    submitsForm:
+      element instanceof HTMLButtonElement && element.form !== null && element.type === "submit",
+    shown:
+      element.isConnected &&
+      element.getClientRects().length > 0 &&
+      (element instanceof HTMLElement ? getComputedStyle(element).visibility !== "hidden" : true),
+    peers: peers.map(nameOf)
+  };
+};
+
+/** Every control on the patch's page, each with the handle to its very element and what it reads. */
+const controlsOf = async (view: Opened) => {
+  const handles = await view.frame.locator(CONTROLS).elementHandles();
+  const read = await Promise.all(
+    handles.map((handle) => handle.evaluate(readControl, CONTROLS).catch(() => undefined))
+  );
+  return handles.flatMap((handle, index) => {
+    const control = read[index];
+    return control === undefined ? [] : [{ handle, control }];
+  });
+};
 
 const SETTLE_MS = 500;
 const SETTLE_CAP_MS = 10_000;
@@ -168,42 +221,76 @@ export interface ViewMemo {
 /** A control's name as its identity: as shown, spaces collapsed, so "Tab 2" isn't "Tab 3". */
 const named = (name: string) => name.replace(/\s+/g, " ").trim();
 
+/** The whole names a dialog's own dismissal goes by; nothing with more words, such as "Cancel request". */
+export const DISMISSAL = /^\s*(close|cancel|dismiss|×|✕)\s*$/i;
+
 /**
- * Presses the view control named `name`, or failing that one whose view name
- * reads the same, as "Pending 2" does after "Pending 3"; whether it pressed
- * one that is still a view once pressed.
+ * Closes a dialog a view's press opened anyway: Escape, then the dialog's own
+ * dismissal, a control whose whole name is Close, Cancel, Dismiss or ×.
+ * Nothing else is pressed, so a dialog that offers only more actions stays
+ * open; whether it closed.
  */
-const pressView = async (view: Opened, name: string) => {
-  const controls = await controlsOf(view);
-  const views = controls.map(isViewControl);
-  const exact = controls.findIndex((control, i) => views[i] && named(control.name) === name);
-  const index =
-    exact !== -1
-      ? exact
-      : controls.findIndex((control, i) => views[i] && viewName(control.name) === viewName(name));
-  if (index === -1) return false;
+const dismiss = async (view: Opened, before: number) => {
+  const dialogs = view.frame.getByRole("dialog");
+  await view.page.keyboard.press("Escape");
+  await settle(view);
+  if ((await dialogs.count()) <= before) return true;
+  const own = dialogs
+    .last()
+    .locator('button, [role="button"]')
+    .filter({ hasText: DISMISSAL })
+    .or(dialogs.last().locator('[aria-label="Close" i]'));
+  for (const handle of await own.elementHandles()) {
+    const name = await handle
+      .evaluate((element) =>
+        element instanceof Element
+          ? (element.getAttribute("aria-label") ?? element.textContent ?? "").trim()
+          : ""
+      )
+      .catch(() => "");
+    if (!DISMISSAL.test(name)) continue;
+    await handle.click({ timeout: 2_000 }).catch(() => undefined);
+    await settle(view);
+    if ((await dialogs.count()) <= before) return true;
+  }
+  return false;
+};
+
+/**
+ * Presses one vetted control, by its very element: just before the click it
+ * must still be in the page and still read as the view it was vetted as, and
+ * a click that can't reach that element is abandoned, never redirected to
+ * whatever has taken its place. A press that opens a dialog is undone and
+ * isn't the view; "stuck" when that dialog couldn't be closed safely.
+ */
+const press = async (
+  view: Opened,
+  chosen: { readonly handle: ElementHandle; readonly control: Control }
+): Promise<"pressed" | "skipped" | "stuck"> => {
+  const now = await chosen.handle.evaluate(readControl, CONTROLS).catch(() => undefined);
+  if (now === undefined || !isViewControl(now) || named(now.name) !== named(chosen.control.name))
+    return "skipped";
   const dialogs = view.frame.getByRole("dialog");
   const before = await dialogs.count();
-  await view.frame
-    .locator(CONTROLS)
-    .nth(index)
-    .click({ timeout: 2_000 })
-    .catch(() => undefined);
+  const clicked = await chosen.handle.click({ timeout: 2_000 }).then(
+    () => true,
+    () => false
+  );
   await settle(view);
-  // A view that opens a dialog after all is closed again, and isn't the view.
-  if ((await dialogs.count()) > before) {
-    await view.page.keyboard.press("Escape");
-    await settle(view);
-    if ((await dialogs.count()) > before)
-      await dialogs
-        .last()
-        .getByRole("button", { name: /close|cancel|dismiss|^\s*[×✕x]\s*$/i })
-        .first()
-        .click({ timeout: 2_000 })
-        .catch(() => undefined);
-    return false;
-  }
-  return true;
+  if ((await dialogs.count()) > before) return (await dismiss(view, before)) ? "skipped" : "stuck";
+  return clicked ? "pressed" : "skipped";
+};
+
+/**
+ * The view control to press for `name`: the one so named, or failing that
+ * one whose view name reads the same, as "Pending 2" does after "Pending 3".
+ */
+const viewFor = async (view: Opened, name: string) => {
+  const controls = (await controlsOf(view)).filter(({ control }) => isViewControl(control));
+  return (
+    controls.find(({ control }) => named(control.name) === name) ??
+    controls.find(({ control }) => viewName(control.name) === viewName(name))
+  );
 };
 
 /**
@@ -212,29 +299,31 @@ const pressView = async (view: Opened, name: string) => {
  * their role or state (`isViewControl`), All first, one at a time, from
  * wherever the last left the page. It presses nothing else, so it can miss
  * a list only an unusual control shows; that's a visible failure, never a
- * changed request. With `memo`, a view it found the text under before is
- * pressed first, one click, and the view it finds is remembered.
+ * changed request. A dialog it can't close safely ends the search. With
+ * `memo`, a view it found the text under before is pressed first, one
+ * click, and the view it finds is remembered.
  */
 export const reveal = async (view: Opened, text: string, memo?: ViewMemo) => {
   await settle(view);
   if (await shows(view, text, 1_000)) return true;
-  if (
-    memo?.via !== undefined &&
-    (await pressView(view, memo.via)) &&
-    (await shows(view, text, 1_000))
-  )
-    return true;
+  if (memo?.via !== undefined) {
+    const remembered = await viewFor(view, memo.via);
+    const pressed = remembered === undefined ? "skipped" : await press(view, remembered);
+    if (pressed === "stuck") return false;
+    if (pressed === "pressed" && (await shows(view, text, 1_000))) return true;
+  }
   const tried = new Set<string>();
   for (let tries = 0; tries < MAX_TRIES; tries++) {
     const controls = await controlsOf(view);
-    const next = viewCandidates(controls)
-      .map((index) => named(controls[index]!.name))
-      .find((name) => !tried.has(name));
+    const next = viewCandidates(controls.map(({ control }) => control))
+      .map((index) => controls[index]!)
+      .find(({ control }) => !tried.has(named(control.name)));
     if (next === undefined) break;
-    tried.add(next);
-    if (!(await pressView(view, next))) continue;
-    if (await shows(view, text, 1_000)) {
-      if (memo !== undefined) memo.via = next;
+    tried.add(named(next.control.name));
+    const pressed = await press(view, next);
+    if (pressed === "stuck") return false;
+    if (pressed === "pressed" && (await shows(view, text, 1_000))) {
+      if (memo !== undefined) memo.via = named(next.control.name);
       return true;
     }
   }

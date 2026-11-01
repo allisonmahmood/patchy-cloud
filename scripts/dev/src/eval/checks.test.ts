@@ -6,6 +6,7 @@ import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
 import { GIVE, LIST } from "./tasks/kudosAgents.js";
 import {
   type Control,
+  DISMISSAL,
   decisionOf,
   isFileResponse,
   viewCandidates,
@@ -263,9 +264,9 @@ describe("a search for a page's other views", () => {
     name,
     tab: false,
     selection: false,
-    toggle: false,
     submitsForm: false,
     shown: true,
+    peers: [],
     ...more
   });
   const picked = (controls: ReadonlyArray<Control>) =>
@@ -276,34 +277,41 @@ describe("a search for a page's other views", () => {
     expect(viewName("  Needs my approval  4 ")).toBe("needs my approval");
   });
 
-  it("presses only views by role or state: tabs, places, and controls named for a view", () => {
+  it("presses tabs, places and view nouns wherever they are", () => {
     expect(
       picked([
         control("Team requests"),
-        control("Open", { toggle: true }),
         control("Needs my approval", { tab: true }),
         control("Dashboard", { selection: true }),
-        control("Review", { toggle: true }),
-        control("Approved"),
+        control("My requests"),
         control("All")
       ])
-    ).toEqual([
-      "All",
-      "Team requests",
+    ).toEqual(["All", "Team requests", "Needs my approval", "Dashboard", "My requests"]);
+  });
+
+  it("presses a status only where it is plainly a filter", () => {
+    // Sonnet's Review toggle beside My requests, and an Open filter beside Closed.
+    expect(picked([control("Review", { peers: ["My requests"] })])).toEqual(["Review"]);
+    expect(picked([control("Open", { peers: ["Closed"] })])).toEqual(["Open"]);
+    expect(picked([control("Paid", { peers: ["All", "Pending"] })])).toEqual(["Paid"]);
+    expect(picked([control("Approved", { selection: true })])).toEqual(["Approved"]);
+  });
+
+  it("never presses a lone status, which can be an action", () => {
+    expect(picked([control("Paid"), control("Done"), control("Review")])).toEqual([]);
+    // Beside an action, a status is part of a request's buttons, not a filter bar.
+    expect(picked([control("Paid", { peers: ["Done", "Reject"] })])).toEqual([]);
+  });
+
+  it("finds a typeless Open or Team requests button outside a form, but not a form's submit", () => {
+    expect(picked([control("Open", { peers: ["Closed"] }), control("Team requests")])).toEqual([
       "Open",
-      "Needs my approval",
-      "Dashboard",
-      "Review",
-      "Approved"
+      "Team requests"
     ]);
+    expect(picked([control("Open", { peers: ["Closed"], submitsForm: true })])).toEqual([]);
   });
 
-  it("finds a plain Open or Team requests button outside a form, but not a form's submit", () => {
-    expect(picked([control("Open"), control("Team requests")])).toEqual(["Open", "Team requests"]);
-    expect(picked([control("Open", { submitsForm: true })])).toEqual([]);
-  });
-
-  it("never presses an action, whatever language or icon it's in", () => {
+  it("never presses an action, whatever language, icon or aside it's in", () => {
     expect(
       picked([
         control("Withdraw request"),
@@ -311,8 +319,8 @@ describe("a search for a page's other views", () => {
         control("Trash"),
         control("Approve all"),
         control("Open request"),
-        control("New request", { toggle: true }),
-        control("Like", { toggle: true }),
+        control("New request"),
+        control("Review (submit)", { peers: ["My requests"] }),
         control("Delete", { selection: true }),
         control("Export CSV"),
         control("👏 3")
@@ -324,7 +332,14 @@ describe("a search for a page's other views", () => {
     const hidden = Array.from({ length: 25 }, (_, index) =>
       control(`All ${index}`, { shown: false })
     );
-    expect(picked([...hidden, control("Review")])).toEqual(["Review"]);
+    expect(picked([...hidden, control("Review", { peers: ["My requests"] })])).toEqual(["Review"]);
+  });
+
+  it("closes a dialog only through its own dismissal, a whole name each", () => {
+    for (const name of ["Close", "Cancel", "Dismiss", "×", " close "])
+      expect(DISMISSAL.test(name), name).toBe(true);
+    for (const name of ["Cancel request", "OK", "Close request", "Confirm", "Delete"])
+      expect(DISMISSAL.test(name), name).toBe(false);
   });
 });
 
