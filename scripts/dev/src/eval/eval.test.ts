@@ -117,21 +117,24 @@ describe("the sandbox's proxy", () => {
 
   it.effect("closes even with a connection a sandbox left open", () =>
     Effect.gen(function* () {
-      const left = yield* Effect.scoped(
+      // A client that connects and never sends a request or closes. Its close is listened for
+      // before the network goes, so the wait can't miss it.
+      const client = yield* Effect.scoped(
         Effect.gen(function* () {
           const network = yield* openNetwork({ instancePort: 1, allow: [], node: "/usr/bin/node" });
-          // A client that connects and never sends a request or closes.
-          return yield* Effect.promise(
+          const socket = yield* Effect.promise(
             () =>
               new Promise<net.Socket>((resolve) => {
-                const socket = net.connect(`${network.sockets}/proxy.sock`, () => resolve(socket));
+                const opened = net.connect(`${network.sockets}/proxy.sock`, () => resolve(opened));
               })
           );
+          const closed = new Promise<void>((resolve) => socket.on("close", () => resolve()));
+          return { socket, closed };
         })
       ).pipe(Effect.timeout("5 seconds"));
-      expect(left.destroyed || left.readableEnded).toBe(true);
-      left.destroy();
-    }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+      yield* Effect.addFinalizer(() => Effect.sync(() => client.socket.destroy()));
+      yield* Effect.promise(() => client.closed).pipe(Effect.timeout("5 seconds"));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
   );
 
   it.effect("lets only the provider's exact endpoint through, and outlives a bad port", () =>

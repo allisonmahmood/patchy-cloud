@@ -123,6 +123,8 @@ const proxyConnection = (allow: ReadonlySet<string>) => (inside: net.Socket) => 
     const rest = Buffer.from(head.slice(end + 4), "latin1");
     void vet(host, port, allow)
       .then((vetted) => {
+        // The sandbox's side may have closed while the name resolved, the network with it.
+        if (inside.destroyed) return;
         if ("refused" in vetted) return refuse("403 Forbidden");
         const outside = net.connect(port, vetted.address);
         // The far side goes with the sandbox's side, whichever way that ends.
