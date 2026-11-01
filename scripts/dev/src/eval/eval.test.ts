@@ -1,8 +1,15 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import {
+  FetchHttpClient,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse
+} from "effect/http";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
@@ -15,7 +22,8 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
-import { classify } from "./scorecard.js";
+import { checkDoor, pinnedTo } from "./suite.js";
+import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
@@ -76,6 +84,16 @@ describe("the sandbox", () => {
     expect(versionOf("codex-cli 0.166.0")).toBe("0.166.0");
     expect(versionOf("12.9.1\n")).toBe("12.9.1");
     expect(versionOf("no version here")).toBeUndefined();
+  });
+
+  it("pins base to what head installed, `latest` included", () => {
+    expect(
+      pinnedTo({ node: "24.20.0", pnpm: "11.2.0", claude: "latest", codex: "0.166.0" }, [
+        { name: "node", version: "24.20.0" },
+        { name: "pnpm", version: "11.2.0" },
+        { name: "claude", version: "2.1.316" }
+      ])
+    ).toEqual({ node: "24.20.0", pnpm: "11.2.0", claude: "2.1.316", codex: "0.166.0" });
   });
 });
 
@@ -150,6 +168,56 @@ describe("the sandbox's proxy", () => {
       expect(yield* connect(`127.0.0.1:${port + 1}`)).toBe("HTTP/1.1 403 Forbidden");
       expect(yield* connect(`localhost:${port}`)).toBe("HTTP/1.1 403 Forbidden");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+});
+
+describe("a side's personas door", () => {
+  /** A door on a free port that knows only `known`: `signIn` answers signing them in, 403 the rest. */
+  const door = (known: string, signIn: HttpServerResponse.HttpServerResponse) =>
+    HttpRouter.serve(
+      HttpRouter.use((router) =>
+        router.add(
+          "GET",
+          "/dev/sign-in",
+          Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+            request.url.includes(`as=${encodeURIComponent(known)}`)
+              ? signIn
+              : HttpServerResponse.empty({ status: 403 })
+          )
+        )
+      ),
+      { disableLogger: true, disableListenLog: true }
+    ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+
+  /** Checks the door on this test's server, serving `people`, through a plain fetch client, as the suite does. */
+  const check = (people: ReadonlyArray<{ readonly email: string }>) =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP listener");
+      const side = {
+        served: { apiUrl: `http://127.0.0.1:${server.address.port}`, people },
+        commit: { sha: "abc1234" }
+      };
+      return yield* checkDoor("head", side).pipe(Effect.provide(FetchHttpClient.layer));
+    });
+
+  it.effect(
+    "is open when it signs its own people in without the key, wherever the redirect ends",
+    () =>
+      Effect.gen(function* () {
+        const open = yield* Effect.flip(check([{ email: "ada@older.example" }]));
+        expect(open._tag).toBe("DoorOpen");
+      }).pipe(
+        Effect.provide(
+          door("ada@older.example", HttpServerResponse.redirect("/dev/sign-in", { status: 303 }))
+        )
+      )
+  );
+
+  it.effect("is keyed when every request without the key is refused", () =>
+    check([{ email: "ada@older.example" }]).pipe(
+      Effect.provide(door("ada@older.example", HttpServerResponse.empty({ status: 403 })))
+    )
   );
 });
 
@@ -367,6 +435,15 @@ describe("what a run is", () => {
     expect(classify(log(), graded(true, "The patch's log couldn't be read.")).outcome).toBe(
       "infra"
     );
+  });
+
+  it("shows a figure as base → head with its change", () => {
+    const tenths = (value: number) => value.toFixed(1);
+    expect(shift(2.1, 1.8, tenths)).toBe("2.1 → 1.8 (−0.3)");
+    expect(shift(1, 3, tenths)).toBe("1.0 → 3.0 (+2.0)");
+    expect(shift(4, 4, tenths)).toBe("4.0 → 4.0");
+    expect(shift(null, 4, tenths)).toBe("– → 4.0");
+    expect(shift(null, null, tenths)).toBe("–");
   });
 
   it("grades the most recently published live patch", () => {

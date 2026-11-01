@@ -97,7 +97,10 @@ export const scorecardRun = (record: RunRecord): ScorecardRun => ({
 
 export const Scorecard = Schema.Struct({
   suite: Schema.String,
+  /** `HEAD`'s commit. */
   commit: Schema.String,
+  /** The base's commit, or null when the suite ran `HEAD` alone. */
+  base: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   toolchain: Schema.Array(ToolVersion),
   runs: Schema.Array(ScorecardRun)
@@ -145,6 +148,28 @@ const mark = (status: CheckResult["status"]) =>
   status === "pass" ? "✓" : status === "fail" ? "✗" : "–";
 
 /** The scorecard as Markdown: what ran, then each builder against each task, then every run. */
+/** A base → head cell: both values, and the change when both exist. */
+export const shift = (
+  base: number | null,
+  head: number | null,
+  show: (value: number) => string
+) => {
+  if (base === null && head === null) return "–";
+  const change =
+    base === null || head === null || head === base
+      ? ""
+      : ` (${head > base ? "+" : "−"}${show(Math.abs(head - base))})`;
+  return `${base === null ? "–" : show(base)} → ${head === null ? "–" : show(head)}${change}`;
+};
+
+const tenths = (value: number) => value.toFixed(1);
+const whole = (value: number) => value.toFixed(0);
+const thousands = (value: number) => `${Math.round(value / 1000)}k`;
+
+/**
+ * The scorecard as Markdown: what ran, then each builder against each task
+ * (with a base, each figure as base → head and its change), then every run.
+ */
 export const scorecardMarkdown = (card: Scorecard) => {
   const builders = [...new Set(card.runs.map((run) => run.builder))];
   const tasks = [...new Set(card.runs.map((run) => run.task))];
@@ -152,21 +177,47 @@ export const scorecardMarkdown = (card: Scorecard) => {
     const run = card.runs.find((each) => each.builder === builder)!;
     return `\`${builder}\` is ${run.model} at ${run.effort}`;
   });
+  const where =
+    card.base === null
+      ? `At \`${card.commit.slice(0, 7)}\`.`
+      : `Head \`${card.commit.slice(0, 7)}\` against base \`${card.base.slice(0, 7)}\`.`;
   const lines = [
     `### Eval \`${card.suite}\``,
     "",
-    `At \`${card.commit.slice(0, 7)}\`. ${models.join("; ")}. Tools: ${card.toolchain.map((tool) => `${tool.name} ${tool.version}`).join(", ")}.`,
-    "",
-    "| Task | Builder | Runs | Built | Passed | Minutes | Turns | Input | Output | Failed cmds | Off-skill | Refusals |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    `${where} ${models.join("; ")}. Tools: ${card.toolchain.map((tool) => `${tool.name} ${tool.version}`).join(", ")}.`,
+    ""
   ];
-  for (const task of tasks)
-    for (const builder of builders) {
-      const s = summarize(card.runs.filter((run) => run.task === task && run.builder === builder));
-      lines.push(
-        `| ${task} | ${builder} | ${s.runs}${s.infra > 0 ? ` (+${s.infra} infra)` : ""} | ${s.built} | ${s.passed} | ${fmt(s.minutes, 1)} | ${fmt(s.turns)} | ${kilo(s.input)} | ${kilo(s.output)} | ${fmt(s.failed)} | ${fmt(s.offSkill)} | ${s.refusals.join(", ") || "–"} |`
-      );
-    }
+  const of = (task: string, builder: string, side: "base" | "head") =>
+    summarize(
+      card.runs.filter((run) => run.task === task && run.builder === builder && run.side === side)
+    );
+  if (card.base === null) {
+    lines.push(
+      "| Task | Builder | Runs | Built | Passed | Minutes | Turns | Input | Output | Failed cmds | Off-skill | Refusals |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    );
+    for (const task of tasks)
+      for (const builder of builders) {
+        const s = of(task, builder, "head");
+        lines.push(
+          `| ${task} | ${builder} | ${s.runs}${s.infra > 0 ? ` (+${s.infra} infra)` : ""} | ${s.built} | ${s.passed} | ${fmt(s.minutes, 1)} | ${fmt(s.turns)} | ${kilo(s.input)} | ${kilo(s.output)} | ${fmt(s.failed)} | ${fmt(s.offSkill)} | ${s.refusals.join(", ") || "–"} |`
+        );
+      }
+  } else {
+    lines.push(
+      "| Task | Builder | Passed | Minutes | Turns | Input | Failed cmds | Off-skill |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    );
+    for (const task of tasks)
+      for (const builder of builders) {
+        const b = of(task, builder, "base");
+        const h = of(task, builder, "head");
+        const infra = b.infra + h.infra > 0 ? ` (+${b.infra + h.infra} infra)` : "";
+        lines.push(
+          `| ${task} | ${builder} | ${b.passed}/${b.runs} → ${h.passed}/${h.runs}${infra} | ${shift(b.minutes, h.minutes, tenths)} | ${shift(b.turns, h.turns, whole)} | ${shift(b.input, h.input, thousands)} | ${shift(b.failed, h.failed, whole)} | ${shift(b.offSkill, h.offSkill, whole)} |`
+        );
+      }
+  }
   lines.push(
     "",
     "Medians, without infrastructure failures. Few runs are a pilot, not a measurement.",
@@ -183,7 +234,7 @@ export const scorecardMarkdown = (card: Scorecard) => {
       .replaceAll("|", "\\|")
       .slice(0, 240);
     lines.push(
-      `| ${run.task}/${run.builder}/${run.repeat} | ${run.outcome}${run.pass ? " ✓" : ""} | ${run.checks.map((check) => mark(check.status)).join("")} | ${fmt(run.log === null ? null : run.log.seconds / 60, 1)} | ${notes} |`
+      `| ${card.base === null ? "" : `${run.side}:`}${run.task}/${run.builder}/${run.repeat} | ${run.outcome}${run.pass ? " ✓" : ""} | ${run.checks.map((check) => mark(check.status)).join("")} | ${fmt(run.log === null ? null : run.log.seconds / 60, 1)} | ${notes} |`
     );
   }
   return lines.join("\n");
