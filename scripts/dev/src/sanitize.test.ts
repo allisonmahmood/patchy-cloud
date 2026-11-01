@@ -74,6 +74,37 @@ describe("redactText", () => {
     assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
   });
 
+  it.effect("redacts a secret in a JSON document's keys as well as its values", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({
+        stateDirs: [],
+        envs: [],
+        identities: ["s3cret-value"]
+      });
+      const redacted = yield* sanitizer.redactJson({
+        refusals: { "s3cret-value": 1, stale_generated: 2 }
+      });
+      assert.deepStrictEqual(redacted, { refusals: { "[redacted]": 1, stale_generated: 2 } });
+      // Keys that redact alike, or meet a placeholder already there, keep every entry.
+      const collided = yield* sanitizer.redactJson({
+        "[redacted]": 1,
+        "pp_AbC123-_xyzDEF456": 2,
+        "pp_ZyX987-_abcGHI654": 3
+      });
+      assert.deepStrictEqual(collided, { "[redacted]": 1, "[redacted] 2": 2, "[redacted] 3": 3 });
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
+
+  it("redacts what is shaped like a provider's access token or API key, and nothing like it", () => {
+    const text =
+      "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U and key sk-ant-api03-abcdefghijklmnop-QRSTUV";
+    const found = redactText(new Map(), text);
+    assert.strictEqual(found.text, "token [redacted] and key [redacted]");
+    assert.deepStrictEqual([...found.matched], ["credential"]);
+    const kept = "eyJ alone, a sk-short key, task-ant-heap";
+    assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
+  });
+
   it("finds every match before replacing, so a short value can't break up a token, and twice is once", () => {
     const secrets = new Map([
       ["p", "cli-state" as const],

@@ -13,6 +13,7 @@
  *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
  *   pnpm dev transcript <script>         CLI lines run before and after, compared
  *   pnpm dev trial "<task>"              a fresh agent tries a task before and after
+ *   pnpm dev eval --only-head            builders take the eval suite in sandboxes, graded
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -110,6 +111,9 @@ import {
   trialKey,
   trialMarkdown
 } from "./trial.js";
+import { BUILDER_IDS } from "./eval/builders.js";
+import { runSuite } from "./eval/suite.js";
+import { TASKS } from "./eval/tasks/index.js";
 
 class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerBuildFailed", {
   exitCode: Schema.Number
@@ -1702,6 +1706,116 @@ const CliSurface = Layer.mergeAll(
   })
 );
 
+class EvalNeedsHead extends Schema.TaggedError<EvalNeedsHead>()("EvalNeedsHead", {}) {
+  override get message() {
+    return "Comparing against a base isn't built yet (#1143). Pass --only-head to run the suite at HEAD.";
+  }
+}
+
+class UnknownEvalChoice extends Schema.TaggedError<UnknownEvalChoice>()("UnknownEvalChoice", {
+  flag: Schema.String,
+  given: Schema.String,
+  known: Schema.Array(Schema.String)
+}) {
+  override get message() {
+    return `--${this.flag} has no "${this.given}". Choose from: ${this.known.join(", ")}.`;
+  }
+}
+
+/** A comma-separated flag's choices, each one known; all of `known` when omitted. */
+const choices = <A extends string>(
+  flag: string,
+  given: Option.Option<string>,
+  known: ReadonlyArray<A>
+) =>
+  Option.match(given, {
+    onNone: () => Effect.succeed(known),
+    onSome: (list) =>
+      Effect.forEach(
+        list
+          .split(",")
+          .map((each) => each.trim())
+          .filter((each) => each !== ""),
+        (each) =>
+          (known as ReadonlyArray<string>).includes(each)
+            ? Effect.succeed(each as A)
+            : Effect.fail(new UnknownEvalChoice({ flag, given: each, known }))
+      )
+  });
+
+const evalCommand = Command.make(
+  "eval",
+  {
+    onlyHead: Flag.Boolean("only-head").pipe(
+      Flag.withDescription("Run the suite at HEAD alone; comparing against a base comes later"),
+      Flag.withDefault(false)
+    ),
+    tasks: Flag.String("tasks").pipe(
+      Flag.withDescription("Comma-separated task ids; every task that isn't held out when omitted"),
+      Flag.optional
+    ),
+    builders: Flag.String("builders").pipe(
+      Flag.withDescription(
+        `Comma-separated builders: ${BUILDER_IDS.join(", ")} (all when omitted)`
+      ),
+      Flag.optional
+    ),
+    repeats: Flag.Int("repeats").pipe(
+      Flag.withDescription("How many times each builder takes each task"),
+      Flag.withDefault(3)
+    ),
+    concurrency: Flag.Int("concurrency").pipe(
+      Flag.withDescription("Builds at once"),
+      Flag.withDefault(4)
+    ),
+    json: Flag.Boolean("json").pipe(
+      Flag.withDescription("Print the scorecard as JSON"),
+      Flag.withDefault(false)
+    )
+  },
+  Effect.fn(function* ({ onlyHead, tasks, builders, repeats, concurrency, json }) {
+    const root = yield* worktree;
+    if (!onlyHead) return yield* new EvalNeedsHead();
+    if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10)
+      return yield* new InvalidBudget({ flag: "repeats", given: repeats, max: 10 });
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 12)
+      return yield* new InvalidBudget({ flag: "concurrency", given: concurrency, max: 12 });
+    const picked = Option.isNone(tasks)
+      ? TASKS.filter((task) => !task.heldOut)
+      : yield* Effect.map(
+          choices(
+            "tasks",
+            tasks,
+            TASKS.map((task) => task.id)
+          ),
+          (ids) => TASKS.filter((task) => ids.includes(task.id))
+        );
+    const pickedBuilders = yield* choices("builders", builders, BUILDER_IDS);
+    const commits = yield* resolveCommits(root, { base: Option.none(), baseBranch: Option.none() });
+    if (commits.dirty)
+      yield* Console.error(
+        `Uncommitted changes aren't included: the suite runs ${commits.after.sha.slice(0, 7)}.`
+      );
+    const {
+      dir,
+      markdown,
+      json: card
+    } = yield* runSuite({
+      root,
+      commit: commits.after,
+      tasks: picked,
+      builders: pickedBuilders,
+      repeats,
+      concurrency
+    });
+    yield* Console.log(json ? card : ["", markdown, "", `Runs and scorecard: ${dir}`].join("\n"));
+  }, userFacing)
+).pipe(
+  Command.withDescription(
+    "Give the eval suite's tasks to sandboxed builders on an evidence instance, grade what they publish, and write a scorecard"
+  )
+);
+
 dev.pipe(
   Command.withSubcommands([
     status,
@@ -1716,6 +1830,7 @@ dev.pipe(
     film,
     transcript,
     trial,
+    evalCommand,
     down,
     superviseCommand
   ]),

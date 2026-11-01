@@ -186,6 +186,7 @@ workspace's `mise.toml` pins its version.
 | `pnpm dev film <person> <flow>`               | A Playwright flow recorded before and after, as captioned mp4s side by side, for a PR.             |
 | `pnpm dev transcript <script>`                | CLI lines run before and after as the scenario's signed-in CLI, compared line by line, for a PR.   |
 | `pnpm dev trial "<task>"`                     | A fresh agent tries a task before and after, as the scenario's publisher, logged for a PR.         |
+| `pnpm dev eval --only-head`                   | Sandboxed builders take the eval suite's tasks; what they publish is graded into a scorecard.      |
 | `pnpm dev down`                               | Stop everything the instance or environment started and delete what it made.                       |
 
 `pnpm --silent dev … --json` keeps pnpm's echo out of the JSON. One
@@ -212,7 +213,9 @@ only in development on a loopback origin, and the server then listens on
 (`Sec-Fetch-Site: cross-site` or `same-site`) is refused, so a page can't
 change who you are mid-consent. Opening the URL yourself, `curl`, and
 `pnpm dev open`, `shot`, `film` and `compare` send `none` or no header and
-keep working.
+keep working. An instance whose `.local/dev/personas.env` also holds
+`PATCHY_DEV_PERSONAS_KEY`, as `pnpm dev eval`'s does, opens `/dev/sign-in`
+only with `key=<it>` and otherwise answers 403 without naming anyone.
 
 `pnpm patchy` runs the CLI from source and finds this worktree's
 `.local/dev/env` from any directory beneath it. A command uses
@@ -454,6 +457,81 @@ a result publishes nothing and fails the command.
 A cold run takes under a minute on `team` and about two on `brightline`, plus
 a trial's model runs. The `patchy-dev-loop` skill says how to write a flow and
 a script; the `pr-evidence` skill covers what each command shows.
+
+### Measuring how agents build: `pnpm dev eval`
+
+`pnpm dev eval` measures how well agents build on Patchy from what we hand
+them: the global skill, the project skills, the `AGENTS.md` template and the
+CLI's help and errors. A fixed suite of tasks, each a request in a person's
+words, goes to each **builder** a number of times, and what the builder
+publishes is graded. The builders are deliberately not the most capable
+settings: Claude Code with Sonnet 5.5 at `--effort high` (`sonnet`) and Codex
+with GPT-6.1 Terra at `model_reasoning_effort=high` (`terra`), each in its
+real CLI, headless. For now it runs `HEAD` alone (`--only-head`); comparing
+against a base and judging the code are #1143.
+
+- **The sandbox.** Each builder runs in `bwrap`: the system read-only, a
+  private `/tmp`, and a HOME of the run's own at `/home/builder`. Nothing else
+  of this machine is mounted: no home folder, no Patchy checkout, no tool
+  installs, no personal agent settings, skills or instructions. Inside, each
+  harness has every permission, so a failure measures Patchy rather than a
+  permission prompt.
+- **The network.** The sandbox has a network of its own with only loopback,
+  so nothing on this machine's network is reachable: not the instance's
+  Postgres, not other worktrees' instances, not the LAN. A bridge in the
+  sandbox serves two Unix sockets on loopback: the instance's port, and a
+  proxy (`HTTPS_PROXY`) to the public internet that refuses loopback, private,
+  shared and link-local addresses. Your Codex model provider's endpoint, its
+  host and port, when you use one, is the one private address it lets through.
+- **The instance.** One evidence instance at `HEAD`, on `team`, whose personas
+  door is keyed: only the grader can sign anyone in, so builders verify through
+  `patchy dev`'s own viewers, as builders can in production.
+- **A builder's HOME.** A template per suite, set up as a person sets up:
+  Node from its release tarball, pnpm, Claude Code and Codex from npm (pinned
+  to the versions this machine has, `latest` for one it lacks, and recorded),
+  the instance's `install.mjs` (which runs `patchy setup`, so the skill is
+  where each harness looks), and a tier 1 and a tier 2 `patchy init` to warm
+  its pnpm store. Each run gets a copy-on-write copy, logged in as its own
+  publisher.
+- **A run's identities.** Each run seeds its task's scenario again, every
+  company handle suffixed with the run's id and every email plus-addressed with
+  it, so runs share the instance without seeing each other's patches or
+  colliding on names. Its people are deactivated once it is graded.
+- **The unattended line.** Every task ends with the same sentence telling the
+  builder nobody will answer questions. A run that ends on a question without
+  publishing is `asked`.
+- **Grading** reads what was published, not the builder's folder: the most
+  recently published patch in the run's company has to be served, its
+  published source (pulled into the run's HOME) has to pass `pnpm typecheck`,
+  a colleague has to see it render with no console errors or failed calls
+  during grading, and the task's own checks run as the run's people. Desktop
+  and phone screenshots are kept.
+- **Outcomes.** `built`, `asked`, `gave-up`, `timed-out`, or `infra` when setup
+  or the model provider failed: retried once, and never counted against a
+  builder. A run passes when it built and every check passed.
+
+Flags: `--tasks` (comma-separated ids; every task that isn't held out by
+default), `--builders` (`sonnet,terra`), `--repeats` (3), `--concurrency` (4),
+`--json`. Tasks are modules under `scripts/dev/src/eval/tasks/`, listed in its
+`index.ts`; `task.ts` says what one holds. Everything lands in
+`.local/evals/<suite>/`: per run its raw stream, its HOME (the working folder
+and the published source), screenshots and `run.json`, then `scorecard.md` and
+`scorecard.json`. The raw streams, homes and `run.json` (the builder's
+commands and answer) stay on this machine; the scorecard carries outcomes,
+checks, metrics and a summary of each log, redacted.
+
+Prerequisites: bubblewrap; Claude Code and Codex signed in on this machine
+(their installs here only set the versions builders get); Playwright's
+Chromium. Setting up the template downloads Node and the npm packages through
+the sandbox's proxy, a minute or two per suite. Claude Code builders sign in with
+`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`,
+from the environment or `~/.config/patchy-cloud/dev.env`; without either, its
+credentials file is mounted read-only, which lasts as long as its current
+access token. Codex builders get a fresh `~/.codex/config.toml` with your model
+provider, when you use one, or a copy of your `auth.json` per run, so a builder
+can never write to your own login. The suite holds the
+evidence lock, so no `compare`, `film`, `transcript` or `trial` runs beside it.
+Each run is a model run: a cheers build takes about two minutes.
 
 ### Signing in with Clerk
 

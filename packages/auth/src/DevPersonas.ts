@@ -23,7 +23,10 @@ import { pageResponse, returnPath, withCookies } from "./page.js";
  * listens on loopback only, so neither a stray secret nor a LAN neighbour can
  * sign in. `/dev/sign-in?as=<email>&return=<path>` signs in, unless the
  * browser says another site sent it there; `/dev/sign-in` lists the active
- * people to pick from.
+ * people to pick from. With `PATCHY_DEV_PERSONAS_KEY` set, as on an instance
+ * `pnpm dev eval` grades, the door opens only with `key=<it>`: the builders
+ * under test meet a closed door, as a headless browser meets Clerk in
+ * production, and never see the instance's other people.
  */
 
 export class DevPersonasOutsideDevelopment extends Schema.TaggedError<DevPersonasOutsideDevelopment>()(
@@ -52,6 +55,8 @@ export const enabled = Config.option(Config.Redacted("PATCHY_DEV_PERSONAS_SECRET
 /** No default for NODE_ENV: personas need an explicit development or test process. */
 export const config = Config.all({
   secret: Config.Redacted("PATCHY_DEV_PERSONAS_SECRET"),
+  /** When set, `/dev/sign-in` answers only requests carrying it as `key`. */
+  key: Config.option(Config.Redacted("PATCHY_DEV_PERSONAS_KEY")),
   publicUrl: Session.publicUrlConfig,
   environment: Config.String("NODE_ENV")
 });
@@ -65,7 +70,7 @@ const encodeClaims = Schema.encodeSync(Claims);
 
 /** Settings checked once, plus the cookie codec both the Session and the route use. */
 const persona = Effect.gen(function* () {
-  const { secret, publicUrl, environment } = yield* config;
+  const { secret, key, publicUrl, environment } = yield* config;
   if (environment !== "development" && environment !== "test")
     return yield* new DevPersonasOutsideDevelopment({ environment });
   if (!Session.isLoopback(publicUrl))
@@ -75,6 +80,7 @@ const persona = Effect.gen(function* () {
   const attributes = `Path=/; HttpOnly; SameSite=Lax${publicUrl.protocol === "https:" ? "; Secure" : ""}`;
   return {
     publicUrl,
+    key,
     seal: Effect.fnUntraced(function* (claims: typeof Session.SessionClaims.Type) {
       const payload = Buffer.from(encodeClaims(claims)).toString("base64url");
       const signature = Buffer.from(yield* mac(payload)).toString("base64url");
@@ -125,9 +131,16 @@ const Person = Schema.Struct({
   company: Schema.String
 });
 
-const picker = (people: ReadonlyArray<typeof Person.Type>, target: string, notice?: string) => {
+/** `key` is the door's, when it has one: every link and the form carry it on. */
+const picker = (
+  people: ReadonlyArray<typeof Person.Type>,
+  target: string,
+  key: string | undefined,
+  notice?: string
+) => {
+  const keyed = key === undefined ? "" : `&key=${encodeURIComponent(key)}`;
   const link = (email: string) =>
-    `/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent(target)}`;
+    `/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent(target)}${keyed}`;
   const groups = new Map<string, Array<typeof Person.Type>>();
   for (const person of people)
     groups.set(person.company, [...(groups.get(person.company) ?? []), person]);
@@ -145,18 +158,37 @@ const picker = (people: ReadonlyArray<typeof Person.Type>, target: string, notic
   return pageResponse({
     title: "Sign in as someone",
     status: notice === undefined ? 200 : 400,
-    body: `<p>This is a local environment. Pick a person, or sign in as any email to accept an invitation.</p>${notice === undefined ? "" : `<p class="field-error">${escapeHtml(notice)}</p>`}${lists}<form method="get" action="/dev/sign-in"><label class="field-label" for="as">Email</label><input class="field" id="as" name="as" type="email" required autocomplete="off"><input type="hidden" name="return" value="${escapeAttribute(target)}"><div class="actions"><button class="btn btn-primary" type="submit">Sign in</button></div></form>`
+    body: `<p>This is a local environment. Pick a person, or sign in as any email to accept an invitation.</p>${notice === undefined ? "" : `<p class="field-error">${escapeHtml(notice)}</p>`}${lists}<form method="get" action="/dev/sign-in"><label class="field-label" for="as">Email</label><input class="field" id="as" name="as" type="email" required autocomplete="off"><input type="hidden" name="return" value="${escapeAttribute(target)}">${key === undefined ? "" : `<input type="hidden" name="key" value="${escapeAttribute(key)}">`}<div class="actions"><button class="btn btn-primary" type="submit">Sign in</button></div></form>`
   });
 };
 
-/** `GET /dev/sign-in`: the picker, or with `as`, a cookie for that email and a redirect back. */
+/** The answer to a request without the door's key: nothing about who is on the instance. */
+const closed = () =>
+  pageResponse({
+    title: "Sign-in is closed",
+    status: 403,
+    body: "<p>This instance signs people in only for the tools that set it up.</p>"
+  });
+
+/**
+ * `GET /dev/sign-in`: the picker, or with `as`, a cookie for that email and a redirect back.
+ * With a door key configured, either answers only a request that carries it.
+ */
 const signIn = Effect.fn("DevPersonas.signIn")(function* (
   publicUrl: URL,
-  seal: (claims: typeof Session.SessionClaims.Type) => Effect.Effect<string>
+  seal: (claims: typeof Session.SessionClaims.Type) => Effect.Effect<string>,
+  key: Option.Option<Redacted.Redacted>
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const cryptography = yield* Cryptography.Cryptography;
   const url = new URL(request.url, publicUrl);
+  const doorKey = Option.map(key, Redacted.value);
+  if (Option.isSome(doorKey)) {
+    const given = new TextEncoder().encode(url.searchParams.get("key") ?? "");
+    if (!(yield* cryptography.equal(given, new TextEncoder().encode(doorKey.value))))
+      return closed();
+  }
+  const keyed = Option.getOrUndefined(doorKey);
   const target = returnPath(url.searchParams.get("return"), publicUrl.origin) ?? "/";
   const as = url.searchParams.get("as")?.trim().toLowerCase();
   const sql = yield* SqlClient.SqlClient;
@@ -166,7 +198,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
       WHERE u.deactivated_at IS NULL ORDER BY c.name, u.role, u.name`,
     Schema.decodeUnknownEffect(Schema.Array(Person))
   );
-  if (as === undefined || as === "") return picker(yield* people, target);
+  if (as === undefined || as === "") return picker(yield* people, target, keyed);
   // Another site may not change who you are, mid-consent included. The dev tools that switch
   // persona open this URL directly, so their browsers send `none` or no header at all.
   const from = request.headers["sec-fetch-site"];
@@ -174,13 +206,18 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
     return pageResponse({
       title: "Sign in from this instance",
       status: 403,
-      body: `<p>Another site asked to sign you in as someone else, so nothing changed. To switch, open <a href="${escapeAttribute(`/dev/sign-in?return=${encodeURIComponent(target)}`)}">the people on this instance</a> and pick one.</p>`
+      body: `<p>Another site asked to sign you in as someone else, so nothing changed. To switch, open <a href="${escapeAttribute(`/dev/sign-in?return=${encodeURIComponent(target)}${keyed === undefined ? "" : `&key=${encodeURIComponent(keyed)}`}`)}">the people on this instance</a> and pick one.</p>`
     });
   if (!/^[^@\s]+@[^@\s]+$/.test(as))
-    return picker(yield* people, target, `${as} is not an email address.`);
+    return picker(yield* people, target, keyed, `${as} is not an email address.`);
   const user = yield* (yield* Users.Users).findByEmail(as);
   if (user?.deactivatedAt)
-    return picker(yield* people, target, `${as} is deactivated; reactivate them from /company.`);
+    return picker(
+      yield* people,
+      target,
+      keyed,
+      `${as} is deactivated; reactivate them from /company.`
+    );
   const now = yield* Clock.currentTimeMillis;
   // A new email gets a stable stand-in Clerk id, so accepting an invitation creates its user.
   const claims = {
@@ -201,7 +238,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
 
 /** The sign-in page; registered only alongside `layer`. Settings are checked once, on the way up. */
 export const routes = Layer.unwrap(
-  Effect.map(persona, ({ publicUrl, seal }) =>
-    HttpRouter.use((router) => router.add("GET", "/dev/sign-in", signIn(publicUrl, seal)))
+  Effect.map(persona, ({ publicUrl, seal, key }) =>
+    HttpRouter.use((router) => router.add("GET", "/dev/sign-in", signIn(publicUrl, seal, key)))
   )
 );

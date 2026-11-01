@@ -36,6 +36,7 @@ export const SECRET_SOURCES = [
   "cli-state",
   "machine-token",
   "login-code",
+  "credential",
   "email",
   "variable",
   "identity"
@@ -46,6 +47,12 @@ export type SecretSource = (typeof SECRET_SOURCES)[number];
 export const REDACTED = "[redacted]";
 
 const MACHINE_TOKEN = /\bpp_[A-Za-z0-9_-]{8,}/g;
+/**
+ * A model provider's credential: a JWT-shaped access token, or an `sk-…` API
+ * key. A backstop for a token a harness created and dropped between two reads.
+ */
+const CREDENTIAL =
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9_-]{20,}/g;
 /** The user code `patchy login` prints, from the alphabet in `packages/auth/src/DeviceLogins.ts`. */
 const LOGIN_CODE = /\b[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g;
 /**
@@ -124,6 +131,7 @@ const forms = (value: string) => [
 const SHAPES: ReadonlyArray<readonly [RegExp, SecretSource, (match: string) => boolean]> = [
   [MACHINE_TOKEN, "machine-token", () => true],
   [LOGIN_CODE, "login-code", () => true],
+  [CREDENTIAL, "credential", () => true],
   [EMAIL, "email", (address) => !EXAMPLE_DOMAIN.test(domainOf(address))]
 ];
 
@@ -192,10 +200,22 @@ const redactJson = (
     return result.text;
   }
   if (Array.isArray(value)) return value.map((item) => redactJson(secrets, item, matched));
-  if (typeof value === "object" && value !== null)
+  // Keys too: a dictionary built from what a command printed can hold a secret in its keys.
+  // Two keys can redact alike, or match one already there, so a taken name gets a number:
+  // every entry survives, never overwritten.
+  if (typeof value === "object" && value !== null) {
+    const taken = new Set<string>();
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, redactJson(secrets, item, matched)])
+      Object.entries(value).map(([key, item]) => {
+        const redacted = redactText(secrets, key);
+        for (const source of redacted.matched) matched.add(source);
+        let name = redacted.text;
+        for (let n = 2; taken.has(name); n++) name = `${redacted.text} ${n}`;
+        taken.add(name);
+        return [name, redactJson(secrets, item, matched)];
+      })
     );
+  }
   return value;
 };
 
@@ -223,6 +243,7 @@ const SOURCE_NAMES: Record<SecretSource, string> = {
   "cli-state": "tokens and login codes from each side's CLI state",
   "machine-token": "strings shaped like machine tokens (`pp_…`)",
   "login-code": "strings shaped like login codes",
+  credential: "strings shaped like API keys and access tokens",
   email: "email addresses outside the scenarios' example domains",
   variable: "secret-named variables the runner passed",
   identity: "the accounts the run acts as"
@@ -231,7 +252,7 @@ const SOURCE_NAMES: Record<SecretSource, string> = {
 /** The sentence a section carries about what was redacted. */
 export const redactionLine = (matched: ReadonlyArray<SecretSource>) =>
   matched.length === 0
-    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token and login-code shapes, email addresses outside the scenarios' example domains, secret-named variables, and any accounts the run acts as)."
+    ? "Nothing in it matched a collected secret (each side's CLI state, machine-token, login-code, API-key and access-token shapes, email addresses outside the scenarios' example domains, secret-named variables, and any accounts the run acts as)."
     : `Redacted before writing: ${matched.map((source) => SOURCE_NAMES[source]).join("; ")}.`;
 
 /**
