@@ -31,60 +31,120 @@ export const shows = async (view: Opened, text: string, ms = 10_000) => {
   return false;
 };
 
-/**
- * Names a page gives its views of a list: all of it, someone's own, what
- * waits for a decision. Never an action's, such as Open request or New
- * request, which open something rather than switch the view.
- */
+/** Names a page gives its views of a list, tried first: all of it, someone's own, what waits, what's decided. */
 export const VIEW_NAMES =
-  /^\s*(all|everything|mine|my \w+|history|review\w*|pending|waiting|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|decided)\b/i;
+  /^\s*(all|everything|mine|my \w+|team \w+|history|review\w*|pending|waiting|open|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|decided|approved|rejected|declined|paid|done|closed|completed)\b/i;
 
 /**
- * Closes a dialog a speculative click opened, past the `before` the page had:
- * Escape, then its own close or cancel button if it's still open.
+ * Names of controls that change data, which a search for a view never
+ * presses: deciding, deleting, sending, making something new, signing out.
+ * Whole verbs only, so a status view such as Approved, Rejected, Paid or
+ * Shared with me stays in. A control left in by mistake costs a reload; one
+ * that changes data costs the run its state, so this is the list that has to
+ * be complete.
  */
-const dismissDialogs = async (view: Opened, before: number) => {
-  const dialogs = view.frame.getByRole("dialog");
-  if ((await dialogs.count()) <= before) return;
-  await view.page.keyboard.press("Escape");
-  await view.page.waitForTimeout(POLL_MS);
-  if ((await dialogs.count()) <= before) return;
-  await dialogs
-    .last()
-    .getByRole("button", { name: /close|cancel|dismiss|^\s*[×✕x]\s*$/i })
-    .first()
-    .click({ timeout: 2_000 })
-    .catch(() => undefined);
-  await view.page.waitForTimeout(POLL_MS);
+export const CHANGES_DATA =
+  /\b(approve|reject|decline|deny|accept|delete|remove|archive|discard|clear|reset|submit|send|save|create|new|add|lend|give|thank|react|like|vote|pay|mark|assign|move|transfer|publish|share|invite|upload|import|load|cancel|confirm|undo|restore|return|back|sign out|log out|leave|join|edit|rename|update|duplicate|copy|close|dismiss)\b/i;
+
+/** A control a search for a view might press, as found on the starting view. */
+export interface Control {
+  /** Its accessible name: its label, its title, or its text. */
+  readonly name: string;
+  readonly tab: boolean;
+  /** A form's submit button, which sends whatever the form holds. */
+  readonly submit: boolean;
+}
+
+/** The most controls a search for a view tries, each from a fresh start. */
+const MAX_TRIES = 20;
+
+/**
+ * Which controls to try, by index, in order: every tab, button and link but
+ * those that change data, a form's submit button, and icons whose name says
+ * nothing; tabs and controls named for a view first, All before the rest,
+ * then the others as they come; at most `MAX_TRIES`.
+ */
+export const viewCandidates = (controls: ReadonlyArray<Control>) =>
+  controls
+    .map((control, index) => ({ control, index }))
+    .filter(
+      ({ control }) =>
+        !control.submit && /\p{L}/u.test(control.name) && !CHANGES_DATA.test(control.name)
+    )
+    .map(({ control, index }) => ({
+      index,
+      rank: /^\s*all\b/i.test(control.name)
+        ? 0
+        : control.tab || VIEW_NAMES.test(control.name)
+          ? 1
+          : 2
+    }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .slice(0, MAX_TRIES)
+    .map(({ index }) => index);
+
+const CONTROLS = 'button, a[href], [role="tab"], [role="button"], [role="link"]';
+
+/** Every control on the patch's page as a person sees it: visible, with its name. */
+const controlsOf = (view: Opened) =>
+  view.frame.locator(CONTROLS).evaluateAll((all) =>
+    all.map((element) => ({
+      name: (
+        element.getAttribute("aria-label") ??
+        element.getAttribute("title") ??
+        (element instanceof HTMLElement ? element.innerText : (element.textContent ?? ""))
+      ).trim(),
+      tab: element.getAttribute("role") === "tab",
+      submit: element instanceof HTMLButtonElement && element.type === "submit",
+      shown: element.getClientRects().length > 0
+    }))
+  );
+
+/** Back to where the search started: the same address, loaded afresh, until the patch shows something. */
+const restart = async (view: Opened, address: string) => {
+  await view.page.goto(address).catch(() => undefined);
+  for (let waited = 0; waited < 30_000; waited += POLL_MS) {
+    const text = await view.frame
+      .locator("body")
+      .innerText({ timeout: POLL_MS })
+      .catch(() => "");
+    if (text.trim() !== "") return;
+    await view.page.waitForTimeout(POLL_MS);
+  }
 };
 
 /**
  * Whether `text` shows, looking under the page's other views of the list as
- * a person would when it isn't in the first one: its tabs, and the buttons
- * and links named for a view (`VIEW_NAMES`), such as Review or Pending, All
- * first. A click that opens a dialog instead is undone before the next. The
- * view it showed under stays picked.
+ * a person would when it isn't in the first one. It tries the controls
+ * `viewCandidates` picks from the starting view, one at a time, each from a
+ * fresh load of the starting address, so a click that opens a dialog,
+ * navigates or changes a filter can't affect the next; it never presses one
+ * that changes data. It stops at the first under which `text` shows, and
+ * leaves the page there; failing all, it leaves the page as it started.
  */
 export const reveal = async (view: Opened, text: string) => {
   if (await shows(view, text, 3_000)) return true;
-  const { frame } = view;
-  const controls = [
-    ...(await frame.getByRole("tab").all()),
-    ...(await frame.getByRole("button", { name: VIEW_NAMES }).all()),
-    ...(await frame.getByRole("link", { name: VIEW_NAMES }).all())
-  ];
-  const names = await Promise.all(controls.map((control) => control.innerText().catch(() => "")));
-  const order = controls
-    .map((control, index) => ({ control, all: /\ball\b/i.test(names[index] ?? "") }))
-    .sort((a, b) => Number(b.all) - Number(a.all));
-  for (const { control } of order) {
-    if (!(await control.isVisible().catch(() => false))) continue;
-    const dialogs = await frame.getByRole("dialog").count();
-    await control.click({ timeout: 2_000 }).catch(() => undefined);
+  const address = view.page.url();
+  const found = await controlsOf(view);
+  const tries = viewCandidates(found.map(({ name, tab, submit }) => ({ name, tab, submit })));
+  let fresh = true;
+  for (const index of tries) {
+    const wanted = found[index];
+    if (wanted === undefined || !wanted.shown) continue;
+    if (!fresh) await restart(view, address);
+    fresh = false;
+    // Only the control the search chose: after a reload, the same place must hold the same name.
+    const now = (await controlsOf(view))[index];
+    if (now?.name !== wanted.name) continue;
+    await view.frame
+      .locator(CONTROLS)
+      .nth(index)
+      .click({ timeout: 2_000 })
+      .catch(() => undefined);
     if (await shows(view, text, 2_000)) return true;
-    await dismissDialogs(view, dialogs);
   }
-  return shows(view, text, 5_000);
+  if (!fresh) await restart(view, address);
+  return shows(view, text, 2_000);
 };
 
 /** Everything the patch's frame shows, as visible text. */

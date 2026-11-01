@@ -4,7 +4,7 @@ import { type AgentTool, isGraderTrouble, type JsonSchema, type RunPerson } from
 import { BrowserGradingFailed, gradingStep } from "./grade.js";
 import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
 import { GIVE, LIST } from "./tasks/kudosAgents.js";
-import { decisionOf, isFileResponse, VIEW_NAMES } from "./tasks/page.js";
+import { type Control, decisionOf, isFileResponse, viewCandidates } from "./tasks/page.js";
 import { receipt } from "./tasks/spendApprovals.js";
 
 const priya: RunPerson = {
@@ -252,13 +252,49 @@ describe("a receipt", () => {
   });
 });
 
-describe("a page's views", () => {
-  it("are switched by controls named for a view, never by an action that opens something", () => {
-    for (const name of ["All", "Review", "Review (admin)", "My requests", "Pending", "Approvals"])
-      expect(VIEW_NAMES.test(name), name).toBe(true);
-    // An action's own button, and a toggle that opens a form, aren't views of the list.
-    for (const name of ["Open request", "New request", "Approve", "Reject", "Export CSV"])
-      expect(VIEW_NAMES.test(name), name).toBe(false);
+describe("a search for a page's other views", () => {
+  const control = (name: string, more: Partial<Control> = {}): Control => ({
+    name,
+    tab: false,
+    submit: false,
+    ...more
+  });
+  const picked = (controls: ReadonlyArray<Control>) =>
+    viewCandidates(controls).map((index) => controls[index]!.name);
+
+  it("tries any tab, button or link, views first, All before them", () => {
+    expect(
+      picked([
+        control("Export CSV"),
+        control("Team requests"),
+        control("Open"),
+        control("Mine", { tab: true }),
+        control("Approved"),
+        control("All")
+      ])
+    ).toEqual(["All", "Team requests", "Open", "Mine", "Approved", "Export CSV"]);
+  });
+
+  it("never presses what changes data, a form's submit, or an icon whose name says nothing", () => {
+    expect(
+      picked([
+        control("Approve all"),
+        control("New request"),
+        control("Load sample data"),
+        control("Reject"),
+        control("Sign out"),
+        control("Send", { submit: true }),
+        control("Go", { submit: true }),
+        control("👏 3"),
+        control("Open request"),
+        control("Review")
+      ])
+    ).toEqual(["Open request", "Review"]);
+  });
+
+  it("stops at twenty tries", () => {
+    const many = Array.from({ length: 30 }, (_, index) => control(`View ${index}`));
+    expect(viewCandidates(many)).toHaveLength(20);
   });
 });
 
