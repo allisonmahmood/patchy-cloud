@@ -75,7 +75,7 @@ import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { requireCurrentCli } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
-import { prepareRepoPublish } from "./repoBuild.js";
+import { prepareRepoDryRun, prepareRepoPublish } from "./repoBuild.js";
 import * as RepoSnapshot from "./repoSnapshot.js";
 import { publishLookStamp, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
@@ -596,8 +596,9 @@ const checkRepoPublish = Effect.fn("checkRepoPublish")(function* (
 });
 
 /**
- * `publish --dry-run`: the checks and build a repo publish runs before sending, then what its
- * version would keep. It sends nothing and leaves a pending publish for the next real one.
+ * `publish --dry-run`: the checks and build a repo publish runs before sending, in a copy of the
+ * repo, then what its version would keep. It sends and changes nothing, and leaves a pending
+ * publish for the next real one.
  */
 const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   repo: string,
@@ -608,9 +609,7 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   yield* Output.notice(
     `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
   );
-  const { snapshot, warnings: checked } = yield* prepareRepoPublish(repo, token, {
-    dryRun: true
-  });
+  const { snapshot, warnings: checked } = yield* prepareRepoDryRun(repo, token);
   const warnings = pending
     ? [
         ...checked,
@@ -630,7 +629,7 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
       warnings
     },
     [
-      "Dry run passed publish's local checks. Nothing was sent.",
+      "Dry run passed publish's local checks. Nothing was sent or changed.",
       `Repo: ${snapshot.files.length} files, ${RepoSnapshot.formatBytes(snapshot.bytes)}, of the ${repoLimits.files} files and ${RepoSnapshot.formatBytes(repoLimits.bytes)} a version keeps:`,
       ...snapshot.entries.map((entry) => `  ${RepoSnapshot.formatEntry(entry)}`)
     ]

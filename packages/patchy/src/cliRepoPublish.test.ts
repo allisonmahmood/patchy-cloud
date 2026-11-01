@@ -1,5 +1,5 @@
 // Repo publish checks: bound targets, the tier 0 refusal and bundled resources.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { sha256 } from "../../../test/crypto.js";
@@ -20,6 +20,7 @@ import {
   runCli,
   stubInstance,
   tempDir,
+  treeBytes,
   validHtml
 } from "./test/cli.js";
 
@@ -172,10 +173,10 @@ describe("repo publish checks", () => {
     expect(JSON.parse(file.stderr).error).toContain("patchy validate <file>");
   });
 
-  // A dry run checks what publish would send, the portal's newer description included, but
-  // writes nothing: patchy.json keeps its text and stamp, and the generated manifest, the baseline
-  // the next publish's reminders compare against, stays as refresh left it.
-  it("leaves patchy.json and the generated manifest untouched after a dry run", async () => {
+  // A dry run prepares in a copy of the repo, so the repo is as it was whether the dry run passes
+  // or fails: the portal's newer description isn't written into patchy.json, the generated
+  // manifest the next publish's reminders compare against isn't regenerated, and the copy is gone.
+  it("leaves every file in the repo as it was after a dry run, passing or failing", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/patches/abcdefghijkl?state=all")
         return respond(200, {
@@ -186,11 +187,15 @@ describe("repo publish checks", () => {
       projectHandler(request, respond, disconnect);
     });
     const dir = publishTree(instance.url);
-    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const tmp = tempDir();
+    const options = {
+      cwd: dir,
+      stateDir: tempDir(),
+      env: { PATCHY_API_TOKEN: "pp_owner", TMPDIR: tmp }
+    };
     expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const repoFile = path.join(dir, "patchy.json");
     writeFileSync(
-      repoFile,
+      path.join(dir, "patchy.json"),
       JSON.stringify({
         instance: instance.url,
         patch: "abcdefghijkl",
@@ -207,16 +212,99 @@ describe("repo publish checks", () => {
         "title: t.text(), extra: t.text().optional()"
       )
     );
-    const manifest = path.join(dir, "patchy/_generated/manifest.json");
-    const before = [readFileSync(repoFile, "utf8"), readFileSync(manifest, "utf8")];
+    // The build reads what the snapshot leaves out, here a generated source .gitignore excludes.
+    writeFileSync(
+      path.join(dir, ".gitignore"),
+      `${readFileSync(path.join(dir, ".gitignore"), "utf8")}src/generated.ts\n`
+    );
+    writeFileSync(path.join(dir, "src/generated.ts"), 'export const stamp = "kept out";\n');
+    const entry = path.join(dir, "src/main.tsx");
+    writeFileSync(
+      entry,
+      `import { stamp } from "./generated";\nconsole.log(stamp);\n${readFileSync(entry, "utf8")}`
+    );
+    const notices = [
+      expect.stringContaining("New portal text"),
+      expect.stringContaining("Table `notes` changed since its last generation")
+    ];
 
+    const before = treeBytes(dir);
+    const passed = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(passed, passed.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(passed.stdout)).toMatchObject({ warnings: notices });
+    expect(
+      JSON.parse(passed.stdout).repo.entries.find((item: { path: string }) => item.path === "src/")
+    ).toMatchObject({ files: 3 });
+    expect(treeBytes(dir)).toEqual(before);
+
+    writeFileSync(path.join(dir, "src/main.ts"), "const title: string = 42;");
+    const broken = treeBytes(dir);
+    const failed = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(failed).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(failed.stderr)).toMatchObject({
+      error: expect.stringContaining("Typecheck"),
+      warnings: notices
+    });
+    expect(treeBytes(dir)).toEqual(broken);
+    expect(readdirSync(tmp).filter((name) => name.startsWith("patchy-dry-run-"))).toEqual([]);
+  });
+
+  // The size check sees patchy.json as publish would keep it, after the description sync.
+  it("refuses a dry run as publish does when the synced description takes the repo past the limit", async () => {
+    let cloud = { description: "Synthetic notes", descriptionUpdatedAt: null as string | null };
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, { ...projectSource, ...cloud });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        version: 1,
+        description: "Synthetic notes",
+        descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+      })
+    );
+    const dryRun = () => runCli(["publish", "--dry-run", "--json"], options);
+    const measured = await dryRun();
+    expect(measured, measured.stderr).toMatchObject({ status: 0 });
+    const limit = 10 * 1024 * 1024;
+    writeFileSync(
+      path.join(dir, "filler.bin"),
+      Buffer.alloc(limit - JSON.parse(measured.stdout).repo.bytes)
+    );
+    const full = await dryRun();
+    expect(full, full.stderr).toMatchObject({ status: 0 });
+    expect(JSON.parse(full.stdout).repo.bytes).toBe(limit);
+
+    cloud = {
+      description: "A longer description, written in the portal since",
+      descriptionUpdatedAt: "2026-09-17T00:00:00.000Z"
+    };
+    const dry = await dryRun();
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    const real = await runCli(["publish", "--json"], options);
+    expect(real).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(dry.stderr)).toMatchObject({ code: "too_large" });
+    expect(JSON.parse(dry.stderr).error).toBe(JSON.parse(real.stderr).error);
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+  });
+
+  it("leaves no generated manifest behind when the repo had none", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const manifest = path.join(dir, "patchy/_generated/manifest.json");
+    rmSync(manifest);
     const dry = await runCli(["publish", "--dry-run", "--json"], options);
     expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
-    expect(JSON.parse(dry.stdout).warnings).toEqual([
-      expect.stringContaining("publish replaces local description: 'Local edit'"),
-      expect.stringContaining("Table `notes` changed since its last generation")
-    ]);
-    expect([readFileSync(repoFile, "utf8"), readFileSync(manifest, "utf8")]).toEqual(before);
+    expect(existsSync(manifest)).toBe(false);
   });
 
   // State.test.ts owns how publish clears an older CLI's tier 0 attempt; a dry run only reports it.

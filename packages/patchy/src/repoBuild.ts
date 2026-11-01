@@ -3,7 +3,6 @@ import { workerdVersion } from "@patchy/api/guest";
 import * as Inspection from "@patchy/execution/inspection";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -114,15 +113,14 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
 });
 
 /**
- * Every local check and build a repo publish runs before sending. `dryRun`, for
- * `publish --dry-run`, writes nothing to the repo: the portal's newer description stays in memory
- * and the generated manifest goes back as it was. Recovery belongs to the caller and must finish
- * before this starts any fresh work.
+ * Every local check and build a repo publish runs before sending. The snapshot keeps `repo`'s
+ * files as `cwd` holds them, so a dry run can prepare in a copy of the repo. Recovery belongs to
+ * the caller and must finish before this starts any fresh work.
  */
 export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   cwd: string,
   token: Redacted.Redacted,
-  { dryRun = false }: { readonly dryRun?: boolean } = {}
+  { repo: root = cwd }: { readonly repo?: string } = {}
 ) {
   const toolchain = yield* checkRepoRelease(cwd, token);
   // Before any fresh work, so a refused repo's description and config stay untouched.
@@ -131,10 +129,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     return yield* new LocalError({ message: typescript, code: "toolchain_unsupported" });
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, {
-    publishing: true,
-    record: !dryRun
-  });
+  const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
   if (repo.description === undefined)
     return yield* new LocalError({
       message: "patchy.json must contain a nonempty description before publishing.",
@@ -155,7 +150,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   });
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   // Packed before the build, so an oversized repo is refused before any of the slow work.
-  const snapshot = yield* RepoSnapshot.pack(cwd);
+  const snapshot = yield* RepoSnapshot.pack(root, cwd);
   // Remembered as found, so a later failure still reports them.
   yield* Output.rememberWarnings(snapshot.warnings);
   warnings.push(...snapshot.warnings);
@@ -185,11 +180,6 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     catch: (cause) =>
       new LocalError({ message: "Could not resolve the managed manifest path.", cause })
   });
-  // A dry run builds and typechecks against the fresh manifest, as publish does, then puts back
-  // what was there, so it leaves the repo as it found it, the next publish's reminders included.
-  const previous = dryRun
-    ? yield* fs.readFileString(destination).pipe(Effect.option)
-    : Option.none<string>();
   yield* fs.writeFileString(destination, `${encodeManifest(configured)}\n`).pipe(
     Effect.mapError(
       (cause) =>
@@ -199,67 +189,58 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
         })
     )
   );
-  const built = yield* Effect.gen(function* () {
-    const bundle = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
-        const { sdkImports, agentTools } = yield* runToolchain(cwd, {
-          build: output,
-          toolchain,
-          ...(serverModules === undefined
-            ? {}
-            : {
-                server: {
-                  modules: serverModules,
-                  agentFiles,
-                  aliases: guestAliases(configured.uses)
-                }
-              })
-        });
-        const entries = yield* fs.readDirectory(output, { recursive: true });
-        const files: string[] = [];
-        for (const entry of entries) {
-          const info = yield* fs.stat(path.join(output, entry));
-          if (info.type !== "Directory") files.push(entry);
-        }
-        const expected = serverModules === undefined ? ["index.html"] : ["index.html", "server.js"];
-        if (files.length !== expected.length || expected.some((file) => !files.includes(file)))
-          return yield* new LocalError({
-            message: `Vite must emit only ${expected.join(" and ")}; found ${files.length ? files.join(", ") : "no output"}. Inline every page asset with vite-plugin-singlefile; remove public files, sourcemaps and extra entrypoints.`
-          });
-        return {
-          html: yield* fs.readFileString(path.join(output, "index.html")),
-          ...(serverModules === undefined
-            ? {}
-            : { server: yield* fs.readFileString(path.join(output, "server.js")) }),
-          sdkImports,
-          agentTools
-        };
-      })
-    ).pipe(
-      Effect.mapError((cause) =>
-        isLocalError(cause)
-          ? cause
-          : new LocalError({ message: "Could not read the Vite build output.", cause })
-      )
-    );
-    const typecheck = yield* processResult(cwd, process.execPath, [
-      path.join(cwd, "node_modules/typescript/bin/tsc"),
-      "--noEmit"
-    ]);
-    if (typecheck.code !== 0)
-      return yield* new LocalError({
-        message: `Typecheck failed. Run \`pnpm exec tsc --noEmit\` and fix the errors before publishing.${configured.tier === 1 || configured.tier === 2 ? " `.agents/skills/patchy-preact/SKILL.md` says where Preact's types live." : ""}`,
-        cause: typecheck
+  const built = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const output = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-publish-" });
+      const { sdkImports, agentTools } = yield* runToolchain(cwd, {
+        build: output,
+        toolchain,
+        ...(serverModules === undefined
+          ? {}
+          : {
+              server: {
+                modules: serverModules,
+                agentFiles,
+                aliases: guestAliases(configured.uses)
+              }
+            })
       });
-    return bundle;
-  }).pipe(
-    Effect.ensuring(
-      Option.isSome(previous)
-        ? fs.writeFileString(destination, previous.value).pipe(Effect.ignore)
-        : Effect.void
+      const entries = yield* fs.readDirectory(output, { recursive: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const info = yield* fs.stat(path.join(output, entry));
+        if (info.type !== "Directory") files.push(entry);
+      }
+      const expected = serverModules === undefined ? ["index.html"] : ["index.html", "server.js"];
+      if (files.length !== expected.length || expected.some((file) => !files.includes(file)))
+        return yield* new LocalError({
+          message: `Vite must emit only ${expected.join(" and ")}; found ${files.length ? files.join(", ") : "no output"}. Inline every page asset with vite-plugin-singlefile; remove public files, sourcemaps and extra entrypoints.`
+        });
+      return {
+        html: yield* fs.readFileString(path.join(output, "index.html")),
+        ...(serverModules === undefined
+          ? {}
+          : { server: yield* fs.readFileString(path.join(output, "server.js")) }),
+        sdkImports,
+        agentTools
+      };
+    })
+  ).pipe(
+    Effect.mapError((cause) =>
+      isLocalError(cause)
+        ? cause
+        : new LocalError({ message: "Could not read the Vite build output.", cause })
     )
   );
+  const typecheck = yield* processResult(cwd, process.execPath, [
+    path.join(cwd, "node_modules/typescript/bin/tsc"),
+    "--noEmit"
+  ]);
+  if (typecheck.code !== 0)
+    return yield* new LocalError({
+      message: `Typecheck failed. Run \`pnpm exec tsc --noEmit\` and fix the errors before publishing.${configured.tier === 1 || configured.tier === 2 ? " `.agents/skills/patchy-preact/SKILL.md` says where Preact's types live." : ""}`,
+      cause: typecheck
+    });
   const handlers =
     built.server === undefined
       ? undefined
@@ -286,6 +267,23 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
   yield* validateRepoBundle(cwd, manifest, built.html);
   return { manifest, html: built.html, server: built.server, snapshot, warnings };
+});
+
+/**
+ * `publish --dry-run`'s preparation: a repo publish's, run in a scratch copy of the repo that is
+ * removed afterwards, so the description sync and the generated manifest change only the copy.
+ * A repo too large to copy is refused first, as publish refuses it before building.
+ */
+export const prepareRepoDryRun = Effect.fn("prepareRepoDryRun")(function* (
+  repo: string,
+  token: Redacted.Redacted
+) {
+  const kept = yield* RepoSnapshot.scan(repo);
+  return yield* Effect.scoped(
+    Effect.flatMap(RepoSnapshot.mirror(repo, kept), (copy) =>
+      prepareRepoPublish(copy, token, { repo })
+    )
+  );
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */

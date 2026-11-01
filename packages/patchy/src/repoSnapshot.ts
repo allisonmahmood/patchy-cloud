@@ -8,6 +8,7 @@
  * local state. The server checks the same limits and paths again (`@patchy/api`'s `repo.ts`).
  */
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as Effect from "effect/Effect";
 import ignore from "ignore";
@@ -73,7 +74,8 @@ interface Walked {
   readonly unnamed: ReadonlyArray<string>;
 }
 
-const walk = async (root: string): Promise<Walked> => {
+/** Walks `root` for what a snapshot keeps; sizes and modes come from `from`, where it is read. */
+const walk = async (root: string, from = root): Promise<Walked> => {
   const files: Array<{ path: string; bytes: number; executable: boolean }> = [];
   const links: string[] = [];
   const unnamed: string[] = [];
@@ -111,7 +113,7 @@ const walk = async (root: string): Promise<Walked> => {
       else if (!entry.isFile()) continue;
       else if (!isRepoPath(relative)) unnamed.push(relative);
       else {
-        const stat = await fs.lstat(path.join(root, relative));
+        const stat = await fs.lstat(path.join(from, relative));
         files.push({ path: relative, bytes: stat.size, executable: (stat.mode & 0o111) !== 0 });
       }
     }
@@ -167,17 +169,103 @@ export const formatEntry = (entry: Entry): string =>
 
 const largest = (list: ReadonlyArray<Entry>) => list.slice(0, 5).map(formatEntry).join("; ");
 
+const limitsText = `${formatBytes(repoLimits.bytes)} and ${repoLimits.files} files`;
+
+const measure = (files: Walked["files"]) => {
+  const bytes = files.reduce((total, file) => total + file.bytes, 0);
+  return { bytes, listed: entries(files), size: `${formatBytes(bytes)} in ${files.length} files` };
+};
+
+const overLimits = (files: Walked["files"]) =>
+  files.length > repoLimits.files || measure(files).bytes > repoLimits.bytes;
+
+const tooLarge = (files: Walked["files"]) => {
+  const { listed, size } = measure(files);
+  return new LocalError({
+    message: `The repo is ${size}; a version keeps at most ${limitsText}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore, then publish again.`,
+    code: "too_large"
+  });
+};
+
+const readFailure = (cause: unknown) =>
+  new LocalError({ message: "Could not read the repo to keep it with the version.", cause });
+
 /**
- * Packs the repo at `root` into the snapshot its next version keeps, sorted by path, with its
+ * The paths a snapshot of `root` keeps, found as `pack` finds them, for a dry run to copy. It
+ * refuses a repo publish would refuse whatever its description sync wrote: patchy.json is the one
+ * kept file that sync rewrites, so a repo over the limits without it is over them anyway.
+ */
+export const scan = Effect.fn("RepoSnapshot.scan")(function* (root: string) {
+  const walked = yield* Effect.tryPromise({ try: () => walk(root), catch: readFailure });
+  if (overLimits(walked.files.filter((file) => file.path !== "patchy.json")))
+    return yield* tooLarge(walked.files);
+  return walked.files.map((file) => file.path);
+});
+
+/** What a dry run's copy holds whole: preparation writes the first, and refuses links in both others. */
+const copiedWhole = ["patchy/_generated", "server", "agent"];
+
+/**
+ * Fills `copy` from `root`: the `kept` files and `copiedWhole` as copies, and a link back to
+ * `root` for everything else, so a build in `copy` reads what it would read in `root`.
+ */
+const fill = async (root: string, copy: string, kept: ReadonlySet<string>) => {
+  const above = new Set<string>();
+  for (const file of [...kept, ...copiedWhole])
+    for (let folder = path.posix.dirname(file); folder !== "."; folder = path.posix.dirname(folder))
+      above.add(folder);
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(path.join(root, directory), { withFileTypes: true })) {
+      const relative = directory === "" ? entry.name : `${directory}/${entry.name}`;
+      const from = path.join(root, relative);
+      const to = path.join(copy, relative);
+      if (copiedWhole.includes(relative))
+        await fs.cp(from, to, { recursive: true, verbatimSymlinks: true });
+      else if (kept.has(relative)) await fs.copyFile(from, to);
+      else if (entry.isDirectory() && above.has(relative)) {
+        await fs.mkdir(to);
+        await visit(relative);
+      } else await fs.symlink(from, to);
+    }
+  };
+  await visit("");
+};
+
+/**
+ * A scratch copy of the repo at `root` under the OS temp folder, removed when the scope closes,
+ * for `publish --dry-run` to prepare in: writes land in the copy, and links leave the repo alone.
+ */
+export const mirror = Effect.fn("RepoSnapshot.mirror")(function* (
+  root: string,
+  kept: ReadonlyArray<string>
+) {
+  const copy = yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => fs.mkdtemp(path.join(os.tmpdir(), "patchy-dry-run-")),
+      catch: (cause) =>
+        new LocalError({ message: "Could not make a folder for the dry run.", cause })
+    }),
+    // A copy left in the temp folder is only clutter, so removing it never fails the dry run.
+    (folder) =>
+      Effect.tryPromise(() => fs.rm(folder, { recursive: true, force: true })).pipe(Effect.ignore)
+  );
+  yield* Effect.tryPromise({
+    try: () => fill(root, copy, new Set(kept)),
+    catch: (cause) => new LocalError({ message: "Could not copy the repo for the dry run.", cause })
+  });
+  return copy;
+});
+
+/**
+ * Packs the repo at `root`, read from `from`, into the snapshot its next version keeps, sorted by path, with its
  * size and top-level entries. Refuses a repo over the snapshot limits, one that leaves out a file
  * the build needs, and paths that would collide in one folder; a repo near the limits and skipped
  * links come back as warnings.
  */
-export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
+export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string, from = root) {
   const walked = yield* Effect.tryPromise({
-    try: () => walk(root),
-    catch: (cause) =>
-      new LocalError({ message: "Could not read the repo to keep it with the version.", cause })
+    try: () => walk(root, from),
+    catch: readFailure
   });
   if (walked.unnamed.length > 0)
     return yield* new LocalError({
@@ -202,15 +290,8 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
         code: "invalid_manifest"
       });
   }
-  const bytes = sorted.reduce((total, file) => total + file.bytes, 0);
-  const listed = entries(sorted);
-  const size = `${formatBytes(bytes)} in ${sorted.length} files`;
-  const limits = `${formatBytes(repoLimits.bytes)} and ${repoLimits.files} files`;
-  if (sorted.length > repoLimits.files || bytes > repoLimits.bytes)
-    return yield* new LocalError({
-      message: `The repo is ${size}; a version keeps at most ${limits}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore, then publish again.`,
-      code: "too_large"
-    });
+  if (overLimits(sorted)) return yield* tooLarge(sorted);
+  const { bytes, listed, size } = measure(sorted);
   const problem = repoTreeProblem(sorted.map((file) => file.path));
   if (problem !== undefined)
     return yield* new LocalError({
@@ -221,7 +302,7 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
     Effect.tryPromise({
       try: async () => ({
         path: file.path,
-        contents: (await fs.readFile(path.join(root, file.path))).toString("base64"),
+        contents: (await fs.readFile(path.join(from, file.path))).toString("base64"),
         ...(file.executable ? { executable: true as const } : {})
       }),
       catch: (cause) => new LocalError({ message: `Could not read ${file.path}.`, cause })
@@ -230,7 +311,7 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
   const warnings: string[] = [];
   if (share({ files: sorted.length, bytes }) >= warnShare)
     warnings.push(
-      `The repo is ${size}, near the most a version keeps: ${limits}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore before it gets there.`
+      `The repo is ${size}, near the most a version keeps: ${limitsText}. Largest: ${largest(listed)}. Add what the patch doesn't need to .gitignore before it gets there.`
     );
   if (walked.links.length > 0)
     warnings.push(
