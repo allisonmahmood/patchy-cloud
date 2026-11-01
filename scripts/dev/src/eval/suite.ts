@@ -31,8 +31,8 @@ import { checkBrowser, grade } from "./grade.js";
 import { fileSecrets, prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
-import { checkSandbox, resolveTools, type Tool } from "./sandbox.js";
-import { classify, RunRecord, Scorecard, scorecardMarkdown } from "./scorecard.js";
+import { checkSandbox, readToolchain } from "./sandbox.js";
+import { classify, RunRecord, Scorecard, scorecardMarkdown, scorecardRun } from "./scorecard.js";
 import { type Task, taskPrompt } from "./task.js";
 
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(RunRecord, { space: 2 }));
@@ -57,7 +57,6 @@ interface Suite {
   readonly database: Context.Context<SqlClient.SqlClient>;
   readonly doorKey: string;
   readonly template: string;
-  readonly tools: ReadonlyArray<Tool>;
   readonly network: Network;
   readonly signIns: SignIns;
   /** Secrets read from runs' own credential files after they ended, refreshed tokens included. */
@@ -115,7 +114,6 @@ const runOne = Effect.fn("Eval.runOne")(function* (
       template: suite.template,
       home,
       apiUrl: suite.apiUrl,
-      tools: suite.tools,
       network: suite.network,
       token: identities.token,
       builder,
@@ -215,7 +213,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   yield* checkSandbox(input.root);
   yield* checkBrowser;
   const builders = input.builders.map((id) => BUILDERS[id]);
-  const tools = yield* resolveTools(input.root);
+  const toolchain = yield* readToolchain(input.root);
   const signIns = yield* readSignIns(builders);
   const startedAt = DateTime.formatIso(yield* DateTime.now);
   const suiteId = `${startedAt.replace(/[-:]/g, "").replace(/\..*$/, "")}-${input.commit.sha.slice(0, 7)}`;
@@ -226,7 +224,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   const { scenario: sideScenario } = yield* loadScenario(input.root, SIDE_SCENARIO);
   const doorKey = randomId(32);
   const seen = yield* Ref.make<ReadonlyArray<string>>([]);
-  const runs = yield* Effect.scoped(
+  const { installed, records } = yield* Effect.scoped(
     Effect.gen(function* () {
       const sides = yield* evidence({
         root: input.root,
@@ -244,11 +242,12 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       });
       const template = path.join(dir, "homes", "head");
       yield* Console.error("  head    setting up a builder's home");
-      yield* prepareTemplate({
+      const installed = yield* prepareTemplate({
         dir: template,
         apiUrl: side.served.apiUrl,
-        tools,
         network,
+        toolchain,
+        builders,
         token: publisherToken(sideScenario)
       });
       const suite: Suite = {
@@ -259,7 +258,6 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
         database: yield* Layer.build(sideSql(yield* sideDatabase(side.clone))),
         doorKey,
         template,
-        tools,
         network,
         signIns,
         seen
@@ -272,12 +270,19 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       yield* Console.error(
         `Running ${planned.length} build${planned.length === 1 ? "" : "s"}, ${input.concurrency} at a time`
       );
-      return yield* Effect.forEach(planned, (each) => runWithRetry(suite, each), {
+      const records = yield* Effect.forEach(planned, (each) => runWithRetry(suite, each), {
         concurrency: input.concurrency
       });
+      return { installed, records };
     })
   );
-  const card: Scorecard = { suite: suiteId, commit: input.commit.sha, startedAt, tools, runs };
+  const card: Scorecard = {
+    suite: suiteId,
+    commit: input.commit.sha,
+    startedAt,
+    toolchain: installed,
+    runs: records.map(scorecardRun)
+  };
   const sanitizer = yield* makeSanitizer({
     stateDirs: [],
     envs: [signIns.claude.env],

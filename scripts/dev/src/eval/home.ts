@@ -1,12 +1,14 @@
 /**
  * A builder's HOME: a real user who has already set up. Each side gets one
- * template, made in the sandbox the way a person sets up: the instance's
- * `install.mjs`, which installs the CLI and runs `patchy setup`, putting the
- * global skill where each harness finds it (`~/.claude/skills`,
- * `~/.agents/skills`). The template also warms its pnpm store with a tier 1
- * and a tier 2 `patchy init`, as a person who has built a patch before would
- * have. Each run then gets a copy of its side's template, logged in as its own
- * publisher, with its harness's sign-in. None of it is timed.
+ * template, made in the sandbox the way a person sets up: their own toolchain
+ * (Node's release tarball, then pnpm, Claude Code and Codex from npm, at the
+ * versions this machine has), then the instance's `install.mjs`, which
+ * installs the CLI and runs `patchy setup`, putting the global skill where
+ * each harness finds it (`~/.claude/skills`, `~/.agents/skills`). The template
+ * also warms its pnpm store with a tier 1 and a tier 2 `patchy init`, as a
+ * person who has built a patch before would have. Each run then gets a copy of
+ * its side's template, logged in as its own publisher, with its harness's
+ * sign-in. None of it is timed, and none of this machine's own installs is used.
  */
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -19,7 +21,14 @@ import { stepOutput } from "../steps.js";
 import type { Builder } from "./builders.js";
 import { secretsInJson } from "../sanitize.js";
 import { endpoint, type Network } from "./network.js";
-import { type Bind, HOME, runSandboxed, type SandboxSpec, type Tool } from "./sandbox.js";
+import {
+  type Bind,
+  HOME,
+  runSandboxed,
+  type SandboxSpec,
+  type Toolchain,
+  versionOf
+} from "./sandbox.js";
 
 export class SetupFailed extends Schema.TaggedError<SetupFailed>()("SetupFailed", {
   step: Schema.String,
@@ -211,24 +220,71 @@ const setupStep = Effect.fn("Eval.setupStep")(function* (
   return ran.stdout;
 });
 
+/** npm's package for each harness's command. */
+const HARNESS_PACKAGES = {
+  "claude-code": ["claude", "@anthropic-ai/claude-code"],
+  codex: ["codex", "@openai/codex"]
+} as const;
+
+/** One installed tool and the version it reports, for the record. */
+export const ToolVersion = Schema.Struct({ name: Schema.String, version: Schema.String });
+export type ToolVersion = typeof ToolVersion.Type;
+
 /**
- * A side's template HOME, set up as a person sets up: the instance's
- * installer, then a tier 1 and a tier 2 `patchy init` in the sandbox's own
- * `/tmp` to warm the package store, signed in with the side's scenario
- * publisher. The login is removed afterwards; each run logs in as its own.
+ * A side's template HOME, set up as a person sets up: Node from its release
+ * tarball into `~/.local/node`, pnpm and the suite's harnesses from npm into
+ * `~/.local`, the instance's installer, then a tier 1 and a tier 2 `patchy
+ * init` in the sandbox's own `/tmp` to warm the package store, signed in with
+ * the side's scenario publisher. The login is removed afterwards; each run
+ * logs in as its own. Returns what was installed, each tool's own version.
  */
 export const prepareTemplate = Effect.fn("Eval.prepareTemplate")(function* (input: {
   readonly dir: string;
   readonly apiUrl: string;
-  readonly tools: ReadonlyArray<Tool>;
   readonly network: Network;
+  readonly toolchain: Toolchain;
+  readonly builders: ReadonlyArray<Builder>;
   /** A machine token on the side's instance, for the warming `init`s. */
   readonly token: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(input.dir, { recursive: true });
-  const spec: SandboxSpec = { home: input.dir, tools: input.tools, network: input.network };
+  const spec: SandboxSpec = { home: input.dir, network: input.network };
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  yield* setupStep("Installing Node", spec, "bash", [
+    "-c",
+    'set -e; mkdir -p ~/.local; curl -fsSL "https://nodejs.org/dist/v$1/node-v$1-linux-$2.tar.xz" | tar -xJ -C ~/.local; mv ~/.local/node-v$1-linux-$2 ~/.local/node',
+    "install",
+    input.toolchain.node,
+    arch
+  ]);
+  const harnesses = [...new Set(input.builders.map((builder) => builder.harness))];
+  const packages = [
+    `pnpm@${input.toolchain.pnpm}`,
+    ...harnesses.map((harness) => {
+      const [command, pkg] = HARNESS_PACKAGES[harness];
+      return `${pkg}@${input.toolchain[command]}`;
+    })
+  ];
+  yield* setupStep("Installing pnpm and the harnesses", spec, "npm", [
+    "install",
+    "--global",
+    "--prefix",
+    `${HOME}/.local`,
+    "--no-fund",
+    "--no-audit",
+    ...packages
+  ]);
+  const installed: Array<ToolVersion> = [];
+  for (const name of [
+    "node",
+    "pnpm",
+    ...harnesses.map((harness) => HARNESS_PACKAGES[harness][0])
+  ]) {
+    const line = yield* setupStep(`Reading ${name}'s version`, spec, name, ["--version"]);
+    installed.push({ name, version: versionOf(line) ?? line.trim() });
+  }
   yield* setupStep("Installing patchy from the instance", spec, "bash", [
     "-c",
     'curl -fsSL "$1/install.mjs" -o /tmp/install.mjs && node /tmp/install.mjs',
@@ -253,6 +309,7 @@ export const prepareTemplate = Effect.fn("Eval.prepareTemplate")(function* (inpu
       "--json"
     ]);
   yield* fs.remove(path.join(input.dir, ".patchy", "credentials.json"), { force: true });
+  return installed;
 });
 
 /**
@@ -263,7 +320,6 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
   readonly template: string;
   readonly home: string;
   readonly apiUrl: string;
-  readonly tools: ReadonlyArray<Tool>;
   readonly network: Network;
   readonly token: string;
   readonly builder: Builder;
@@ -280,7 +336,7 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
       prefix: "cp"
     }
   );
-  const base: SandboxSpec = { home: input.home, tools: input.tools, network: input.network };
+  const base: SandboxSpec = { home: input.home, network: input.network };
   yield* setupStep(
     "Logging the run's publisher in",
     base,

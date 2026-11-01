@@ -1,10 +1,11 @@
 /**
  * The sandbox `pnpm dev eval` runs builders and their setup in: `bwrap` with
- * the system read-only, the toolchain read-only under `/opt`, a private `/tmp`
- * and a HOME of the run's own at `/home/builder`. Nothing else of this machine
- * is mounted: no home folder, no Patchy checkout, no personal agent settings,
- * skills or instructions, so what a builder knows about Patchy is what a real
- * user's agent would find. The network is the sandbox's own: loopback only,
+ * the system read-only, a private `/tmp` and a HOME of the run's own at
+ * `/home/builder`, which holds its own toolchain, installed there the way a
+ * person installs one (`home.ts`). Nothing else of this machine is mounted:
+ * no home folder, no Patchy checkout, no tool installs, no personal agent
+ * settings, skills or instructions, so what a builder knows about Patchy is
+ * what a real user's agent would find. The network is the sandbox's own: loopback only,
  * where the bridge (`bridge.mjs`, run ahead of every command) serves the
  * instance's port and a proxy to the public internet (`network.ts`), so nothing
  * on this machine's network, its databases included, is reachable.
@@ -12,16 +13,13 @@
  * Inside, builders run with every permission their harness has: the sandbox is
  * the boundary, so a failure measures Patchy rather than a permission prompt.
  */
-import * as Config from "effect/Config";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { stepOutput } from "../steps.js";
+import { spawnStep, stepOutput } from "../steps.js";
 import { type Network, PROXY_PORT } from "./network.js";
 
 export class NoSandbox extends Schema.TaggedError<NoSandbox>()("NoSandbox", {}) {
@@ -30,37 +28,25 @@ export class NoSandbox extends Schema.TaggedError<NoSandbox>()("NoSandbox", {}) 
   }
 }
 
-export class ToolMissing extends Schema.TaggedError<ToolMissing>()("ToolMissing", {
-  tool: Schema.String
-}) {
-  override get message() {
-    return `\`pnpm dev eval\` needs \`${this.tool}\` on PATH, and it isn't there.`;
-  }
-}
-
 /** The HOME every sandbox sees; the run's folder on this machine is mounted here. */
 export const HOME = "/home/builder";
 
-/** The tools a sandbox mounts. Git, a browser and the rest of the system come from `/usr`. */
-export const TOOL_NAMES = ["node", "pnpm", "claude", "codex"] as const;
-
-/** One tool as the sandbox mounts it, resolved once per suite so every run gets the same build. */
-export const Tool = Schema.Struct({
-  name: Schema.String,
-  /** What this machine mounts, its install or the executable alone; null when it is already under `/usr`. */
-  from: Schema.NullOr(Schema.String),
-  /** Where it is mounted inside the sandbox. */
-  to: Schema.NullOr(Schema.String),
-  /** The executable inside the sandbox, linked as `/opt/bin/<name>`, whatever its own file is called. */
-  link: Schema.NullOr(Schema.String),
-  /** An extra PATH entry, for a tool whose install holds commands of its own: Node's npm and npx. */
-  path: Schema.NullOr(Schema.String),
-  /** The first line of `<tool> --version`, for the record. */
-  version: Schema.String
+/**
+ * The versions a suite's builders get, pinned to this machine's own so a run
+ * here behaves as the developer's tools do; `latest` for a tool it lacks.
+ */
+export const Toolchain = Schema.Struct({
+  node: Schema.String,
+  pnpm: Schema.String,
+  claude: Schema.String,
+  codex: Schema.String
 });
-export type Tool = typeof Tool.Type;
+export type Toolchain = typeof Toolchain.Type;
 
-/** A folder to mount besides the toolchain and HOME. */
+/** The version in a tool's `--version` line: `v24.20.0`, `2.1.316 (Claude Code)`, `codex-cli 0.166.0`. */
+export const versionOf = (line: string) => /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/.exec(line)?.[1];
+
+/** A file or folder to mount besides HOME. */
 export interface Bind {
   readonly from: string;
   readonly to: string;
@@ -70,7 +56,6 @@ export interface Bind {
 export interface SandboxSpec {
   /** The run's HOME on this machine. */
   readonly home: string;
-  readonly tools: ReadonlyArray<Tool>;
   readonly network: Network;
   /** Variables beyond the sandbox's own HOME, PATH, TMPDIR, USER, LANG and TERM. */
   readonly env?: Readonly<Record<string, string>>;
@@ -79,14 +64,8 @@ export interface SandboxSpec {
   readonly cwd?: string;
 }
 
-/** The PATH inside: the user's own bin (where the Patchy installer puts `patchy`), the tools, the system. */
-export const sandboxPath = (tools: ReadonlyArray<Tool>) =>
-  [
-    `${HOME}/.local/bin`,
-    "/opt/bin",
-    ...tools.flatMap((tool) => (tool.path === null ? [] : [tool.path])),
-    "/usr/bin"
-  ].join(":");
+/** The PATH inside: the user's own bin (npm's global tools, `patchy`), their Node, the system. */
+export const SANDBOX_PATH = `${HOME}/.local/bin:${HOME}/.local/node/bin:/usr/bin`;
 
 const PROXY = `http://127.0.0.1:${PROXY_PORT}`;
 const LOCAL = "localhost,127.0.0.1,::1,.localhost";
@@ -106,10 +85,11 @@ const PROXY_ENV = {
 
 /**
  * `bwrap`'s arguments for running `command args` in the sandbox. Pure, so what
- * a builder can reach is tested rather than trusted: the system read-only,
- * each tool under `/opt`, a private `/tmp` and `/dev/shm`, HOME read-write, a
- * network of its own with the runner's two sockets, and nothing of this
- * machine's own HOME. The command runs behind the bridge.
+ * a builder can reach is tested rather than trusted: the system read-only, a
+ * private `/tmp` and `/dev/shm`, HOME read-write, a network of its own with
+ * the runner's two sockets, and nothing of this machine's own HOME. The
+ * command runs behind the bridge, on the runner's own `node` binary, mounted
+ * alone: the sandbox's toolchain may not be installed yet.
  */
 export const bwrapArgs = (
   spec: SandboxSpec,
@@ -131,12 +111,9 @@ export const bwrapArgs = (
   // systemd-resolved hosts point /etc/resolv.conf here.
   ...["--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve"],
   ...["--tmpfs", "/home", "--bind", spec.home, HOME],
-  ...spec.tools.flatMap((tool) => [
-    ...(tool.from === null || tool.to === null ? [] : ["--ro-bind", tool.from, tool.to]),
-    ...(tool.link === null ? [] : ["--symlink", tool.link, `/opt/bin/${tool.name}`])
-  ]),
   ...["--ro-bind", spec.network.sockets, "/run/eval"],
   ...["--ro-bind", spec.network.bridge, "/opt/eval/bridge.mjs"],
+  ...["--ro-bind", spec.network.node, "/opt/eval/node"],
   ...(spec.binds ?? []).flatMap((bind) => [
     bind.readOnly ? "--ro-bind" : "--bind",
     bind.from,
@@ -149,13 +126,13 @@ export const bwrapArgs = (
     LANG: "C.UTF-8",
     TERM: "dumb",
     TMPDIR: "/tmp",
-    PATH: sandboxPath(spec.tools),
+    PATH: SANDBOX_PATH,
     ...PROXY_ENV,
     ...spec.env
   }).flatMap(([name, value]) => ["--setenv", name, value]),
   ...["--chdir", spec.cwd ?? HOME],
   "--",
-  "node",
+  "/opt/eval/node",
   "/opt/eval/bridge.mjs",
   String(spec.network.instancePort),
   "--",
@@ -172,123 +149,25 @@ export const checkSandbox = Effect.fn("Sandbox.check")(function* (root: string) 
 });
 
 /**
- * Folders that are never mounted whole, because they hold more than one
- * tool's install: personal state, shared bins, and anything around this
- * checkout or the dev runner's environments.
+ * The versions to install in builders' homes: this runner's Node, and the
+ * developer's pnpm, Claude Code and Codex as their `--version` says, or
+ * `latest` for one this machine doesn't have.
  */
-const sharedFolders = (home: string, root: string, path: Path.Path) => {
-  const personal = [".local", ".local/bin", ".local/share", "bin", ".config", ".cache"].map((dir) =>
-    path.join(home, dir)
-  );
-  return (folder: string) => {
-    const covers = (inner: string) => inner === folder || inner.startsWith(`${folder}${path.sep}`);
-    return (
-      personal.includes(folder) ||
-      covers(home) ||
-      covers(root) ||
-      covers(path.join(home, ".local", "share", "patchy-dev")) ||
-      folder === "/usr/local/bin"
-    );
-  };
-};
-
-/** How far up from an executable to look for the npm package it belongs to. */
-const PACKAGE_DEPTH = 4;
-
-/**
- * Where each tool lives, resolved through PATH and symlinks to its real
- * install, and through mise's wrappers when that is what PATH holds. A tool
- * under `/usr` needs no mount. Otherwise the tool's own install is mounted,
- * the first that applies:
- *
- * 1. the install above its `bin` folder (Node's, with npm beside it; Codex's,
- *    with its resources);
- * 2. the npm package it is part of, so a launcher finds its files;
- * 3. its own folder;
- * 4. the executable alone.
- *
- * A folder counts as the tool's own only when it is named for the tool or
- * sits in a folder that is (`…/codex/0.166.0`, `…/node_modules/pnpm`,
- * `…/claude/versions`), and never when it is shared: a `bin` folder of
- * someone's own scripts is not an install. The executable is then linked as
- * `/opt/bin/<name>`, whatever it is called.
- */
-export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const home = yield* Config.String("HOME");
-  const shared = sharedFolders(home, root, path);
-  /** Whether `folder` is `name`'s own: named for it, or inside a folder that is, and not shared. */
-  const owned = (name: string, folder: string) =>
-    !shared(folder) &&
-    [path.basename(folder), path.basename(path.dirname(folder))].some((segment) =>
-      segment.toLowerCase().startsWith(name)
-    );
-  const dirs = (yield* Config.String("PATH").pipe(Config.withDefault(""))).split(":");
-  /** The nearest folder above `file`, below any shared one, holding a package.json. */
-  const packageOf = Effect.fn(function* (file: string) {
-    let dir = path.dirname(file);
-    for (
-      let depth = 0;
-      depth < PACKAGE_DEPTH && !shared(dir) && dir !== path.dirname(dir);
-      depth++
-    ) {
-      if (yield* fs.exists(path.join(dir, "package.json"))) return dir;
-      dir = path.dirname(dir);
-    }
-    return undefined;
-  });
-  const tools: Array<Tool> = [];
-  for (const name of TOOL_NAMES) {
-    let found: string | undefined;
-    for (const dir of dirs) {
-      const candidate = path.join(dir, name);
-      if (dir !== "" && (yield* fs.exists(candidate))) {
-        found = candidate;
-        break;
-      }
-    }
-    if (found === undefined) return yield* new ToolMissing({ tool: name });
-    let real = yield* fs.realPath(found);
-    if (path.basename(real) === "mise")
-      real = yield* fs.realPath(
-        yield* stepOutput(`Finding ${name}`, "mise", ["which", name], { cwd: root, prefix: "mise" })
-      );
-    const version = (yield* stepOutput(`Reading ${name}'s version`, real, ["--version"], {
+export const readToolchain = Effect.fn("Sandbox.readToolchain")(function* (root: string) {
+  const read = (command: string) =>
+    spawnStep(`Reading ${command}'s version`, command, ["--version"], {
       cwd: root,
-      prefix: name
-    }))
-      .split("\n")[0]!
-      .trim();
-    if (real.startsWith("/usr/")) {
-      tools.push({ name, from: null, to: null, link: null, path: null, version });
-      continue;
-    }
-    const dir = path.dirname(real);
-    const install = path.dirname(dir);
-    const pkg = yield* packageOf(real);
-    const mounted =
-      path.basename(dir) === "bin" && owned(name, install)
-        ? install
-        : pkg !== undefined && owned(name, pkg)
-          ? pkg
-          : owned(name, dir)
-            ? dir
-            : real;
-    const to = `/opt/${name}`;
-    tools.push({
-      name,
-      from: mounted,
-      to: mounted === real ? `${to}/${path.basename(real)}` : to,
-      link:
-        mounted === real
-          ? `${to}/${path.basename(real)}`
-          : path.join(to, path.relative(mounted, real)),
-      path: name === "node" && mounted !== real ? `${to}/bin` : null,
-      version
-    });
-  }
-  return tools;
+      prefix: command
+    }).pipe(
+      Effect.map(({ stdout, exitCode }) => (exitCode === 0 ? versionOf(stdout) : undefined)),
+      Effect.orElseSucceed(() => undefined)
+    );
+  return {
+    node: process.versions.node,
+    pnpm: (yield* read("pnpm")) ?? "latest",
+    claude: (yield* read("claude")) ?? "latest",
+    codex: (yield* read("codex")) ?? "latest"
+  } satisfies Toolchain;
 });
 
 /** How a sandboxed command ended. */

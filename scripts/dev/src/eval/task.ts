@@ -29,6 +29,8 @@ export interface Opened {
   readonly page: Page;
   /** The patch's own frame. */
   readonly frame: FrameLocator;
+  /** Closes this person's browser, as they would close the tab; the check closes any left open. */
+  readonly close: () => Promise<void>;
 }
 
 export interface CheckContext {
@@ -75,17 +77,18 @@ export const UNATTENDED =
 export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
 
 /**
- * The numbers a page shows beside `word`, in reading order: one just before
- * it ("3 cheers", "3 total cheers") or the first within a short stretch after
- * it ("Cheers: 3", "CHEERS FROM THE TEAM\n3"). Numbers nowhere near the word,
- * such as a list or a member count, aren't read. `text` is visible text, as
+ * The numbers a page shows as a count of `word`, in reading order: one just
+ * before it, decoration allowed between ("3 cheers", "3 total cheers",
+ * "3 🎉\ncheers"), or the first within a short stretch after it ("Cheers: 3",
+ * "CHEERS FROM THE TEAM\n3") unless a word on its own line labels it as
+ * something else ("Cheers\n3 people here"). `text` is visible text, as
  * `innerText` gives it; `word` matches its plural too.
  */
 export const countsBeside = (text: string, word: string): ReadonlyArray<number> => {
   const name = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
-    String.raw`(\d[\d,]*)\s+(?:[a-z]+\s+)?${name}s?\b|\b${name}s?\b[^\d]{0,40}?(\d[\d,]*)`,
-    "gi"
+    String.raw`(\d[\d,]*)[^\p{L}\d]{1,8}(?:\p{L}+[ \t]+)?${name}s?\b|\b${name}s?\b[^\d]{0,40}?(\d[\d,]*)(?![\d,]*[ \t]*\p{L})`,
+    "giu"
   );
   return [...text.matchAll(pattern)].map((match) =>
     Number((match[1] ?? match[2]!).replaceAll(",", ""))
@@ -93,14 +96,19 @@ export const countsBeside = (text: string, word: string): ReadonlyArray<number> 
 };
 
 /**
- * Whether one count went up by exactly one at each step: the same position in
- * every snapshot reading `n`, `n + 1`, `n + 2`…, with a snapshot taken after
- * each action. A count that didn't move never passes.
+ * Whether one count moved exactly as `steps` says across `snapshots`: the
+ * same position reading the first snapshot's value plus `steps[k]` in the
+ * k-th. With a step of 0 after a visit that changed nothing, a counter of
+ * visits or people present can't pass for the count.
  */
-export const steadyRise = (snapshots: ReadonlyArray<ReadonlyArray<number>>) => {
-  const [first, ...rest] = snapshots;
-  if (first === undefined || rest.length === 0) return false;
+export const countFollows = (
+  snapshots: ReadonlyArray<ReadonlyArray<number>>,
+  steps: ReadonlyArray<number>
+) => {
+  const [first] = snapshots;
+  if (first === undefined || snapshots.length !== steps.length || snapshots.length < 2)
+    return false;
   return first.some((value, index) =>
-    rest.every((snapshot, step) => snapshot[index] === value + step + 1)
+    snapshots.every((snapshot, k) => snapshot[index] === value + steps[k]!)
   );
 };

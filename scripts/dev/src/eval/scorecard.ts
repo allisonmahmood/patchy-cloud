@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import { BuilderLog } from "./builders.js";
 import { CheckResult, type Graded, TargetRecord } from "./grade.js";
 import { Metrics } from "./metrics.js";
-import { Tool } from "./sandbox.js";
+import { ToolVersion } from "./home.js";
 
 export const Outcome = Schema.Literals(["built", "asked", "gave-up", "timed-out", "infra"]);
 export type Outcome = typeof Outcome.Type;
@@ -61,12 +61,46 @@ export const classify = (
   return { outcome: lastLine.trim().endsWith("?") ? "asked" : "gave-up", detail: null };
 };
 
+/** How a builder's run went, without anything it wrote: no commands, errors or answer. */
+export const LogSummary = Schema.Struct({
+  ending: BuilderLog.fields.ending,
+  seconds: BuilderLog.fields.seconds,
+  turns: BuilderLog.fields.turns,
+  usage: BuilderLog.fields.usage,
+  costUsd: BuilderLog.fields.costUsd,
+  model: BuilderLog.fields.model
+});
+
+/**
+ * A run as the scorecard carries it: outcome, checks, metrics and a summary
+ * of its log. The builder's own text (its commands, their errors, its answer)
+ * stays in the run's `run.json` on this machine, so nothing a builder printed
+ * reaches a scorecard a PR can carry.
+ */
+export const ScorecardRun = Schema.Struct({ ...RunRecord.fields, log: Schema.NullOr(LogSummary) });
+export type ScorecardRun = typeof ScorecardRun.Type;
+
+export const scorecardRun = (record: RunRecord): ScorecardRun => ({
+  ...record,
+  log:
+    record.log === null
+      ? null
+      : {
+          ending: record.log.ending,
+          seconds: record.log.seconds,
+          turns: record.log.turns,
+          usage: record.log.usage,
+          costUsd: record.log.costUsd,
+          model: record.log.model
+        }
+});
+
 export const Scorecard = Schema.Struct({
   suite: Schema.String,
   commit: Schema.String,
   startedAt: Schema.String,
-  tools: Schema.Array(Tool),
-  runs: Schema.Array(RunRecord)
+  toolchain: Schema.Array(ToolVersion),
+  runs: Schema.Array(ScorecardRun)
 });
 export type Scorecard = typeof Scorecard.Type;
 
@@ -81,7 +115,7 @@ const fmt = (value: number | null, digits = 0) => (value === null ? "–" : valu
 const kilo = (value: number | null) => (value === null ? "–" : `${Math.round(value / 1000)}k`);
 
 /** One builder's runs of one task, without infrastructure failures. */
-export const summarize = (runs: ReadonlyArray<RunRecord>) => {
+export const summarize = (runs: ReadonlyArray<ScorecardRun>) => {
   const counted = runs.filter((run) => run.outcome !== "infra");
   const logs = counted.flatMap((run) => (run.log === null ? [] : [run.log]));
   const metrics = counted.flatMap((run) => (run.metrics === null ? [] : [run.metrics]));
@@ -121,7 +155,7 @@ export const scorecardMarkdown = (card: Scorecard) => {
   const lines = [
     `### Eval \`${card.suite}\``,
     "",
-    `At \`${card.commit.slice(0, 7)}\`. ${models.join("; ")}. Tools: ${card.tools.map((tool) => `${tool.name} ${tool.version}`).join(", ")}.`,
+    `At \`${card.commit.slice(0, 7)}\`. ${models.join("; ")}. Tools: ${card.toolchain.map((tool) => `${tool.name} ${tool.version}`).join(", ")}.`,
     "",
     "| Task | Builder | Runs | Built | Passed | Minutes | Turns | Input | Output | Failed cmds | Off-skill | Refusals |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"

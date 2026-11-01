@@ -74,6 +74,16 @@ describe("redactText", () => {
     assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
   });
 
+  it("redacts what is shaped like a provider's access token or API key, and nothing like it", () => {
+    const text =
+      "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U and key sk-ant-api03-abcdefghijklmnop-QRSTUV";
+    const found = redactText(new Map(), text);
+    assert.strictEqual(found.text, "token [redacted] and key [redacted]");
+    assert.deepStrictEqual([...found.matched], ["credential"]);
+    const kept = "eyJ alone, a sk-short key, task-ant-heap";
+    assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
+  });
+
   it("finds every match before replacing, so a short value can't break up a token, and twice is once", () => {
     const secrets = new Map([
       ["p", "cli-state" as const],

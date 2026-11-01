@@ -253,8 +253,8 @@ patchy whoami
 `pnpm dev eval --only-head [--tasks cheers] [--builders sonnet,terra] [--repeats 3]`
 gives the eval suite's tasks to sandboxed builders on an evidence instance at
 `HEAD` and grades what they publish: Sonnet 5.5 high in Claude Code and GPT-6.1
-Terra high in Codex, each in `bwrap` with a HOME of its own and nothing of this
-machine's. Use it to tell whether a change to skill text, the `AGENTS.md`
-template or CLI messages helps builders. It needs bubblewrap, both CLIs signed
-in and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
+Terra high in Codex, each in `bwrap` with a HOME and toolchain of its own and
+nothing of this machine's. Use it to tell whether a change to skill text, the `AGENTS.md`
+template or CLI messages helps builders. It needs bubblewrap, both harnesses signed
+in on this machine and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
 the rest. Results land in `.local/evals/<suite>/`, `scorecard.md` first.

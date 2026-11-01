@@ -37,6 +37,8 @@ export interface Network {
   readonly instancePort: number;
   /** The bridge script, mounted at `/opt/eval/bridge.mjs`. */
   readonly bridge: string;
+  /** The runner's own `node` binary, a single self-contained file, mounted at `/opt/eval/node` to run the bridge. */
+  readonly node: string;
 }
 
 /** The port the bridge serves the proxy on inside every sandbox. */
@@ -198,6 +200,7 @@ export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   return {
     sockets: dir,
     instancePort: input.instancePort,
-    bridge: new URL("./bridge.mjs", import.meta.url).pathname
+    bridge: new URL("./bridge.mjs", import.meta.url).pathname,
+    node: process.execPath
   } satisfies Network;
 });

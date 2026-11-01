@@ -311,7 +311,11 @@ const inBrowser = (input: {
               views.push({ close: () => view.context.close(), errors: view.errors });
               if (view.broke !== null) throw new Error(`For ${person.name}, ${view.broke}.`);
               if (!view.ready) throw new Error(`The patch never showed ${person.name} anything.`);
-              return { page: view.page, frame: view.page.frameLocator("iframe").first() };
+              return {
+                page: view.page,
+                frame: view.page.frameLocator("iframe").first(),
+                close: () => view.context.close().catch(() => undefined)
+              };
             }
           };
           const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => ({

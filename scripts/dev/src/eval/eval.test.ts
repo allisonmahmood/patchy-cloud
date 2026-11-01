@@ -1,9 +1,7 @@
-import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
@@ -16,9 +14,9 @@ import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
-import { bwrapArgs, HOME, resolveTools } from "./sandbox.js";
+import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
 import { classify } from "./scorecard.js";
-import { countsBeside, steadyRise } from "./task.js";
+import { countFollows, countsBeside } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
 const ended = { exitCode: 0, timedOut: false, seconds: 90, stderr: "" };
@@ -28,26 +26,12 @@ describe("the sandbox", () => {
   const args = bwrapArgs(
     {
       home: "/data/evals/run/home",
-      tools: [
-        {
-          name: "node",
-          from: "/data/mise/node/24",
-          to: "/opt/node",
-          link: "/opt/node/bin/node",
-          path: "/opt/node/bin",
-          version: "v24"
-        },
-        {
-          name: "claude",
-          from: "/data/claude/versions/2.1",
-          to: "/opt/claude/2.1",
-          link: "/opt/claude/2.1",
-          path: null,
-          version: "2.1"
-        },
-        { name: "git", from: null, to: null, link: null, path: null, version: "git 2" }
-      ],
-      network: { sockets: "/data/evals/sockets", instancePort: 31337, bridge: "/repo/bridge.mjs" },
+      network: {
+        sockets: "/data/evals/sockets",
+        instancePort: 31337,
+        bridge: "/repo/bridge.mjs",
+        node: "/data/node/bin/node"
+      },
       env: { EXTRA: "1" }
     },
     "claude",
@@ -56,19 +40,14 @@ describe("the sandbox", () => {
   const pairs = (flag: string) =>
     args.flatMap((arg, i) => (arg === flag ? [[args[i + 1], args[i + 2]]] : []));
 
-  it("mounts the run's home, the tools and the network's sockets, and nothing else of this machine's", () => {
+  it("mounts the run's home, the network's sockets and the bridge, and nothing else of this machine's", () => {
     expect(pairs("--bind")).toEqual([["/data/evals/run/home", HOME]]);
     expect(pairs("--ro-bind")).toEqual([
       ["/usr", "/usr"],
       ["/etc", "/etc"],
-      ["/data/mise/node/24", "/opt/node"],
-      ["/data/claude/versions/2.1", "/opt/claude/2.1"],
       ["/data/evals/sockets", "/run/eval"],
-      ["/repo/bridge.mjs", "/opt/eval/bridge.mjs"]
-    ]);
-    expect(pairs("--symlink").filter(([, at]) => at!.startsWith("/opt/bin"))).toEqual([
-      ["/opt/node/bin/node", "/opt/bin/node"],
-      ["/opt/claude/2.1", "/opt/bin/claude"]
+      ["/repo/bridge.mjs", "/opt/eval/bridge.mjs"],
+      ["/data/node/bin/node", "/opt/eval/node"]
     ]);
     expect(args).toContain("--clearenv");
   });
@@ -77,7 +56,7 @@ describe("the sandbox", () => {
     expect(args).toContain("--unshare-net");
     expect(args.slice(args.indexOf("--chdir") + 2)).toEqual([
       "--",
-      "node",
+      "/opt/eval/node",
       "/opt/eval/bridge.mjs",
       "31337",
       "--",
@@ -85,10 +64,18 @@ describe("the sandbox", () => {
       "-p"
     ]);
     const env = Object.fromEntries(pairs("--setenv"));
-    expect(env.PATH).toBe(`${HOME}/.local/bin:/opt/bin:/opt/node/bin:/usr/bin`);
+    expect(env.PATH).toBe(`${HOME}/.local/bin:${HOME}/.local/node/bin:/usr/bin`);
     expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:3128");
     expect(env.NO_PROXY).toContain(".localhost");
     expect(env.EXTRA).toBe("1");
+  });
+
+  it("reads the version out of each tool's --version line", () => {
+    expect(versionOf("v24.20.0")).toBe("24.20.0");
+    expect(versionOf("2.1.316 (Claude Code)")).toBe("2.1.316");
+    expect(versionOf("codex-cli 0.166.0")).toBe("0.166.0");
+    expect(versionOf("12.9.1\n")).toBe("12.9.1");
+    expect(versionOf("no version here")).toBeUndefined();
   });
 });
 
@@ -159,76 +146,6 @@ describe("the sandbox's proxy", () => {
       expect(yield* connect(`127.0.0.1:${port + 1}`)).toBe("HTTP/1.1 403 Forbidden");
       expect(yield* connect(`localhost:${port}`)).toBe("HTTP/1.1 403 Forbidden");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
-  );
-});
-
-describe("the toolchain", () => {
-  it.effect("mounts each tool's own install, never a shared folder, and links its command", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tmp = yield* fs.makeTempDirectoryScoped();
-      const tool = (file: string) =>
-        fs
-          .makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true })
-          .pipe(Effect.andThen(fs.writeFileString(file, "#!/bin/sh\necho v1\n", { mode: 0o755 })));
-      const home = `${tmp}/home`;
-      yield* tool(`${home}/.local/bin/node`);
-      yield* tool(`${tmp}/pkgs/claude-code/cli.js`);
-      yield* fs.writeFileString(`${tmp}/pkgs/claude-code/package.json`, "{}");
-      yield* tool(`${tmp}/pkgs/pnpm/bin/pnpm.cjs`);
-      yield* tool(`${tmp}/tools/codex/1.0/bin/codex`);
-      yield* fs.makeDirectory(`${tmp}/bins`);
-      yield* fs.makeDirectory(`${tmp}/checkout`);
-      yield* fs.symlink(`${tmp}/pkgs/claude-code/cli.js`, `${tmp}/bins/claude`);
-      yield* fs.symlink(`${tmp}/pkgs/pnpm/bin/pnpm.cjs`, `${tmp}/bins/pnpm`);
-      const tools = yield* resolveTools(`${tmp}/checkout`).pipe(
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              HOME: home,
-              PATH: `${home}/.local/bin:${tmp}/bins:${tmp}/tools/codex/1.0/bin`
-            })
-          )
-        )
-      );
-      const by = Object.fromEntries(tools.map((each) => [each.name, each]));
-      expect(by.node).toMatchObject({
-        from: `${home}/.local/bin/node`,
-        to: "/opt/node/node",
-        link: "/opt/node/node",
-        path: null
-      });
-      expect(by.claude).toMatchObject({
-        from: `${tmp}/pkgs/claude-code`,
-        link: "/opt/claude/cli.js"
-      });
-      expect(by.pnpm).toMatchObject({ from: `${tmp}/pkgs/pnpm`, link: "/opt/pnpm/bin/pnpm.cjs" });
-      expect(by.codex).toMatchObject({
-        from: `${tmp}/tools/codex/1.0`,
-        link: "/opt/codex/bin/codex"
-      });
-
-      // A bin folder of someone's own beside private files is no install: the executable alone.
-      yield* tool(`${home}/work/bin/codex`);
-      yield* fs.writeFileString(`${home}/work/private`, "not for builders");
-      const own = yield* resolveTools(`${tmp}/checkout`).pipe(
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              HOME: home,
-              PATH: `${home}/.local/bin:${tmp}/bins:${home}/work/bin`
-            })
-          )
-        )
-      );
-      expect(own.find((each) => each.name === "codex")).toMatchObject({
-        from: `${home}/work/bin/codex`,
-        to: "/opt/codex/codex"
-      });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeServices.layer))
-    )
   );
 });
 
@@ -504,32 +421,57 @@ describe("what a run is", () => {
     });
   });
 
-  it("reads the count beside its word, and a count that rose by one at each step", () => {
+  it("reads the count beside its word, decoration and all, and nothing labelled otherwise", () => {
     expect(countsBeside("0 cheers · 4 members", "cheer")).toEqual([0]);
     expect(countsBeside("CHEERS FROM THE TEAM\n12\nAnd counting.", "cheer")).toEqual([12]);
     expect(countsBeside("Press the button to cheer.\n1,204\ncheers so far", "cheer")).toEqual([
       1204
     ]);
+    expect(countsBeside("0 🎉\ncheers", "cheer")).toEqual([0]);
+    expect(countsBeside("Launch cheers\n3 people here\n0 cheers", "cheer")).toEqual([0]);
     expect(countsBeside("Announcements\n1\n2\n3\n0 cheers", "cheer")).toEqual([0]);
     expect(countsBeside("Ben cheered 2 minutes ago", "cheer")).toEqual([]);
-    expect(steadyRise([[0], [1], [2]])).toBe(true);
+  });
+
+  it("passes a count that held for a visit and rose with each cheer, and no visit counter", () => {
+    const steps = [0, 0, 1, 2];
+    expect(countFollows([[0], [0], [1], [2]], steps)).toBe(true);
     expect(
-      steadyRise([
-        [2026, 0],
-        [2026, 1],
-        [2026, 2]
-      ])
+      countFollows(
+        [
+          [2026, 0],
+          [2026, 0],
+          [2026, 1],
+          [2026, 2]
+        ],
+        steps
+      )
     ).toBe(true);
-    // A no-op button while a list beside it shrinks: the count never moves.
+    // A visitors counter beside an unchanged count: it moves on the visit, so it can't pass.
     expect(
-      steadyRise(
-        ["1\n2\n3\n0 cheers", "2\n3\n0 cheers", "3\n0 cheers"].map((text) =>
-          countsBeside(text, "cheer")
-        )
+      countFollows(
+        [
+          [1, 0],
+          [2, 0],
+          [2, 0],
+          [3, 0]
+        ],
+        steps
       )
     ).toBe(false);
-    expect(steadyRise([[0], [2]])).toBe(false);
-    expect(steadyRise([[0]])).toBe(false);
+    expect(
+      countFollows(
+        [
+          [1, 0],
+          [2, 0],
+          [3, 0],
+          [4, 0]
+        ],
+        steps
+      )
+    ).toBe(false);
+    expect(countFollows([[0], [0], [2], [2]], steps)).toBe(false);
+    expect(countFollows([[0]], [0])).toBe(false);
   });
 
   it("keeps the developer's Codex provider and turns its extras off", () => {
