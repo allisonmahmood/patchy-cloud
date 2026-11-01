@@ -19,9 +19,10 @@ const client = createClient({ tables: {}, files: {} });
 const fired: string[] = [];
 const log = (name: string) => () => { fired.push(name); };
 // Keys that reach the window while an input method composes, and whether anything prevented them.
+// Safari's keydown that commits a composition comes after compositionend, with keyCode 229.
 const composing: string[] = [];
 window.addEventListener("keydown", (event) => {
-  if (event.isComposing) composing.push(\`\${event.key} \${event.defaultPrevented ? "prevented" : "untouched"}\`);
+  if (event.isComposing || event.keyCode === 229) composing.push(\`\${event.key} \${event.defaultPrevented ? "prevented" : "untouched"}\`);
 });
 Object.assign(window, { fired, composing });
 
@@ -311,11 +312,13 @@ test("patchy/hotkeys fires in the published frame across fields, scopes, layouts
     await press("Enter", 13, 2);
     await cdp.send("Input.insertText", { text: "か" });
     await expect(view.locator("#text")).toHaveValue("か");
+    // Safari's committing Enter, after the composition ended.
+    await press("Enter", 229, 2);
     await page.keyboard.press("Escape");
     await firedNext(frame, ["Escape"]);
     expect(
       await frame.evaluate(() => (window as unknown as { composing: string[] }).composing)
-    ).toEqual(["Escape untouched", "Enter untouched"]);
+    ).toEqual(["Escape untouched", "Enter untouched", "Enter untouched"]);
   });
 
   await test.step("formatHotkey shows Ctrl here and ⌘ on a Mac, where Mod is ⌘", async () => {

@@ -1,3 +1,14 @@
+diff --git a/dist/_keyboard-event.js b/dist/_keyboard-event.js
+--- a/dist/_keyboard-event.js
++++ b/dist/_keyboard-event.js
+@@ -22,6 +22,6 @@
+ 		meta: Boolean(event.metaKey),
+ 		altGraph: altGraph && !controlAlt,
+ 		location: event.location,
+-		isComposing: Boolean(event.isComposing) || key === "Process" || key === "Unidentified"
++		isComposing: Boolean(event.isComposing) || event.keyCode === 229 || key === "Process" || key === "Unidentified"
+ 	};
+ }
 diff --git a/dist/_match.js b/dist/_match.js
 --- a/dist/_match.js
 +++ b/dist/_match.js
