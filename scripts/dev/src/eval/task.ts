@@ -9,6 +9,8 @@ import type { FrameLocator, Page } from "@playwright/test";
 
 /** One of the run's people: the scenario's, under the run's own email and company. */
 export interface RunPerson {
+  /** Their user id, which is also their id in the member directory. */
+  readonly id: string;
   readonly key: string;
   readonly name: string;
   readonly email: string;
@@ -33,14 +35,54 @@ export interface Opened {
   readonly close: () => Promise<void>;
 }
 
+/** One of the target's agent tools, as `open_patch` shows it. */
+export interface AgentTool {
+  readonly name: string;
+  readonly kind: "read" | "change";
+  readonly description: string;
+  /** Its arguments, as JSON Schema. */
+  readonly args: JsonSchema;
+}
+
+/** The parts of JSON Schema `open_patch` describes arguments with. */
+export interface JsonSchema {
+  readonly type?: string;
+  readonly description?: string;
+  readonly enum?: ReadonlyArray<string>;
+  readonly properties?: Readonly<Record<string, JsonSchema>>;
+  readonly required?: ReadonlyArray<string>;
+  readonly items?: JsonSchema;
+  readonly anyOf?: ReadonlyArray<JsonSchema>;
+  readonly minimum?: number;
+  readonly maximum?: number;
+}
+
+/** What a tool call answered: its result, or the refusal a person's agent would read. */
+export type AgentCall =
+  | { readonly ok: true; readonly result: unknown }
+  | { readonly ok: false; readonly code: string; readonly message: string };
+
+/** A person's own agent on the target, through Patchy MCP, as a worker agent reaches it. */
+export interface Agent {
+  readonly tools: () => Promise<ReadonlyArray<AgentTool>>;
+  /** Runs one of its tools: a read through `read_patch`, a change through `change_patch` with a fresh key. */
+  readonly call: (tool: AgentTool, args: Readonly<Record<string, unknown>>) => Promise<AgentCall>;
+}
+
 export interface CheckContext {
   readonly target: Target;
   readonly people: ReadonlyArray<RunPerson>;
+  /** The run's person with this key; the check fails when there is none. */
+  readonly person: (key: string) => RunPerson;
+  /** A short code new to this grading, for words a check writes, so nothing already there can pass for them. */
+  readonly code: string;
   /**
    * A fresh browser signed in as `person` (a key such as `ben`), with the
    * target open at `path` and ready. Closed when the check ends.
    */
   readonly open: (person: string, path?: string) => Promise<Opened>;
+  /** `person`'s agent, for a person the check names in its `agents`. */
+  readonly agent: (person: string) => Agent;
 }
 
 export type CheckOutcome =
@@ -49,8 +91,18 @@ export type CheckOutcome =
 /** A task's own check: narrow and role- or text-based, so it survives different UIs. */
 export interface TaskCheck {
   readonly name: string;
+  /** The people whose agents it acts as; grading gives each an agent connection first. */
+  readonly agents?: ReadonlyArray<string>;
   readonly run: (ctx: CheckContext) => Promise<CheckOutcome>;
 }
+
+/**
+ * What a run should leave published: a new repo patch, a new single-file
+ * page, or a new version of one of the scenario's patches (by its `repo`, or
+ * a file patch's `name`), which the run's publisher has published before the
+ * builder starts.
+ */
+export type TaskTarget = { readonly create: "repo" | "page" } | { readonly existing: string };
 
 export interface Task {
   readonly id: string;
@@ -58,8 +110,14 @@ export interface Task {
   readonly scenario: string;
   /** The request, as a person would make it. The runner adds the same unattended line to every task. */
   readonly words: string;
-  /** What the run should leave published: a new repo patch or a new single-file page. */
-  readonly target: { readonly create: "repo" | "page" };
+  readonly target: TaskTarget;
+  /**
+   * The scenario's patches (a `repo`, or a file patch's `name`) whose source
+   * the builder finds in `~/Patchy`, as the person who built them would; the
+   * rest are published but not on its machine. By default an existing
+   * target's own, and none for a new patch.
+   */
+  readonly visible?: ReadonlyArray<string>;
   /** The tier a correct answer must have, when only one is; omitted, the judges weigh the choice. */
   readonly tier?: 1 | 2;
   readonly minutes: number;
@@ -69,6 +127,10 @@ export interface Task {
   readonly rubric: string;
   readonly checks: ReadonlyArray<TaskCheck>;
 }
+
+/** The scenario patches whose source a task's builder finds on its machine. */
+export const visibleRepos = (task: Pick<Task, "target" | "visible">): ReadonlyArray<string> =>
+  task.visible ?? ("existing" in task.target ? [task.target.existing] : []);
 
 /** Appended to every task: the run is unattended, and asking instead of building is classified, not waited on. */
 export const UNATTENDED =

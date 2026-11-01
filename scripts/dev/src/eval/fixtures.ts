@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { layerFromUrl } from "@patchy/sql";
 import { readPlan } from "../state.js";
-import { ids, publisherToken, type Scenario, seedScenario } from "../scenario.js";
+import { ids, type Person, publisherToken, type Scenario, seedScenario } from "../scenario.js";
 import type { RunPerson } from "./task.js";
 
 export class SideNotRunning extends Schema.TaggedError<SideNotRunning>()("SideNotRunning", {
@@ -66,8 +66,10 @@ export const namespaceScenario = (scenario: Scenario, run: string): Scenario => 
 /** A run's identities as the grader and the record see them. */
 export interface RunIdentities {
   readonly company: { readonly name: string; readonly handle: string };
-  /** The run's people at its own company; people at its other companies are guests. */
+  /** The run's people at its own company. */
   readonly people: ReadonlyArray<RunPerson>;
+  /** The run's people at its other companies, whom a scenario patch may be shared with. */
+  readonly guests: ReadonlyArray<RunPerson>;
   readonly publisher: RunPerson;
   /** The publisher's machine token, for the run's CLI. Dev-only and loopback-only, like the seed's. */
   readonly token: string;
@@ -88,12 +90,18 @@ export const sideSql = (databaseUrl: string) => layerFromUrl(Redacted.make(datab
 export const seedRun = Effect.fn("Eval.seedRun")(function* (scenario: Scenario, run: string) {
   const namespaced = namespaceScenario(scenario, run);
   yield* seedScenario(namespaced);
-  const people = namespaced.people
-    .filter((person) => person.company === undefined)
-    .map(({ key, name, email, role }) => ({ key, name, email, role }));
+  const runPerson = (person: Person): RunPerson => ({
+    id: ids(namespaced, person).userId,
+    key: person.key,
+    name: person.name,
+    email: person.email,
+    role: person.role
+  });
+  const people = namespaced.people.filter((person) => person.company === undefined).map(runPerson);
   return {
     company: { name: namespaced.company.name, handle: namespaced.company.handle },
     people,
+    guests: namespaced.people.filter((person) => person.company !== undefined).map(runPerson),
     publisher: people.find((person) => person.key === namespaced.publisher)!,
     token: publisherToken(namespaced)
   } satisfies RunIdentities;

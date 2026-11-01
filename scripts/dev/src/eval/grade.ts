@@ -3,26 +3,41 @@
  * they look at what was published, not at the builder's working folder.
  *
  * - The target is the patch the run left published in its own company: for a
- *   `create` task, the most recently published one.
- * - `published`: it has a served version.
+ *   `create` task, the most recently published one the run didn't stage; for
+ *   an `existing` one, the staged patch it names.
+ * - `published`: it has a served version, newer than the staged one for an
+ *   existing target, at the task's tier when only one is right.
  * - `typechecks`: its published source, pulled into the run's HOME, passes
  *   `pnpm typecheck`.
  * - `opens ready`: a colleague opens it through the instance's keyed personas
  *   door and its frame renders content; console errors, and failed calls the
- *   patch's log records during grading against that version, fail it. Desktop
+ *   patch's log records during grading against that version (crashes and
+ *   timeouts, not a handler's declared refusals), fail it. Desktop
  *   and phone screenshots are kept for the judges.
- * - The task's own checks, each with fresh browsers as the run's people.
+ * - The task's own checks, each with fresh browsers as the run's people, and
+ *   as their agents through Patchy MCP for the people a check names.
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { Browser, Page } from "@playwright/test";
+import { doorAgent, mintAgents } from "./agent.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
-import type { CheckContext, CheckOutcome, RunPerson, Target, Task } from "./task.js";
+import type { StagedPatch } from "./stage.js";
+import type {
+  Agent,
+  CheckContext,
+  CheckOutcome,
+  RunPerson,
+  Target,
+  Task,
+  TaskTarget
+} from "./task.js";
 
 /**
  * The grader's own browser failed: it couldn't start, the instance wouldn't
@@ -78,7 +93,8 @@ export const Graded = Schema.Struct({
 });
 export type Graded = typeof Graded.Type;
 
-const Listed = Schema.Struct({
+/** `patchy list --json`: the run's company's patches. */
+export const Listed = Schema.Struct({
   patches: Schema.Array(
     Schema.Struct({
       id: Schema.String,
@@ -91,7 +107,7 @@ const Listed = Schema.Struct({
     })
   )
 });
-const decodeListed = Schema.decodeUnknownOption(Schema.fromJsonString(Listed));
+export const decodeListed = Schema.decodeUnknownOption(Schema.fromJsonString(Listed));
 
 const LogPage = Schema.Struct({
   entries: Schema.Array(
@@ -106,24 +122,43 @@ const LogPage = Schema.Struct({
 });
 const decodeLogPage = Schema.decodeUnknownOption(Schema.fromJsonString(LogPage));
 
-/** The patch the run left published: the most recently published live patch in its company. */
-export const pickTarget = (listed: typeof Listed.Type): Target | null => {
-  const served = listed.patches
-    .filter(
-      (patch) =>
-        patch.state === "live" && patch.currentVersion !== null && patch.publishedAt !== null
-    )
-    .sort((a, b) => b.publishedAt!.localeCompare(a.publishedAt!));
-  const latest = served[0];
-  return latest === undefined
-    ? null
-    : {
-        id: latest.id,
-        name: latest.name,
-        address: latest.address,
-        tier: latest.tier,
-        version: latest.currentVersion!
-      };
+const served = (patch: (typeof Listed.Type)["patches"][number]): Target | null =>
+  patch.state === "live" && patch.currentVersion !== null && patch.publishedAt !== null
+    ? {
+        id: patch.id,
+        name: patch.name,
+        address: patch.address,
+        tier: patch.tier,
+        version: patch.currentVersion
+      }
+    : null;
+
+/** The staged patch an existing target names; none for a new patch. */
+export const stagedTarget = (target: TaskTarget, staged: ReadonlyArray<StagedPatch>) =>
+  "existing" in target ? staged.find((patch) => patch.key === target.existing) : undefined;
+
+/**
+ * The patch a run is graded on, while it is live and served: for a new patch,
+ * the most recently published one in the run's company that it didn't stage;
+ * for an existing one, the staged patch the task names, whatever its version.
+ */
+export const pickTarget = (
+  listed: typeof Listed.Type,
+  target: TaskTarget = { create: "repo" },
+  staged: ReadonlyArray<StagedPatch> = []
+): Target | null => {
+  if ("existing" in target) {
+    const named = stagedTarget(target, staged);
+    const found = listed.patches.find((patch) => patch.id === named?.id);
+    return found === undefined ? null : served(found);
+  }
+  const fixtures = new Set(staged.map((patch) => patch.id));
+  const latest = listed.patches
+    .filter((patch) => !fixtures.has(patch.id))
+    .sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""))
+    .map(served)
+    .find((patch) => patch !== null);
+  return latest ?? null;
 };
 
 const pass = (name: string, detail: string | null = null): CheckResult => ({
@@ -137,6 +172,32 @@ const skipped = (name: string, detail: string): CheckResult => ({
   status: "skipped",
   detail
 });
+
+/**
+ * `published` for a served target. It fails when an existing patch has no
+ * version newer than the one staged before the builder started, and then
+ * nothing new is there to check (`fresh` is false); or when it is at a tier
+ * the task rules out, which still leaves it to check.
+ */
+export const publishedCheck = (
+  task: Pick<Task, "target" | "tier">,
+  target: Target,
+  staged: ReadonlyArray<StagedPatch>
+): { readonly check: CheckResult; readonly fresh: boolean } => {
+  const before = stagedTarget(task.target, staged);
+  const said = `${target.name} v${target.version}, tier ${target.tier}`;
+  if (before !== undefined && target.version <= before.version)
+    return {
+      check: fail("published", `${said}: no newer version than the one staged before the build.`),
+      fresh: false
+    };
+  if (task.tier !== undefined && target.tier !== task.tier)
+    return {
+      check: fail("published", `${said}, where this task needs tier ${task.tier}.`),
+      fresh: true
+    };
+  return { check: pass("published", said), fresh: true };
+};
 
 const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
 
@@ -170,7 +231,8 @@ const waitReady = async (page: Page) => {
   return false;
 };
 
-interface Door {
+/** The instance's keyed personas door, which only the grader can open. */
+export interface Door {
   readonly apiUrl: string;
   readonly key: string;
 }
@@ -186,7 +248,7 @@ const VIEWPORTS = {
  * the redirect, so a page that answers an error or breaks is the patch's
  * result, and only a refused sign-in is the grader's trouble.
  */
-const openAs = async (
+export const openAs = async (
   browser: Browser,
   door: Door,
   person: RunPerson,
@@ -247,14 +309,19 @@ const inBrowser = (input: {
   readonly colleague: RunPerson;
   readonly door: Door;
   readonly shots: string;
+  /** Agent tokens, by person key, for the people checks act as through Patchy MCP. */
+  readonly agents: ReadonlyMap<string, string>;
+  readonly code: string;
 }) => {
   // Where it got to, for the error: set from inside the browser code and its callbacks.
   const state = { launched: false, signInRefused: false };
   return Effect.tryPromise({
     try: async () => {
-      const { chromium } = await import("@playwright/test");
+      const { chromium, request } = await import("@playwright/test");
       const browser = await chromium.launch();
       state.launched = true;
+      // Agents reach the door over plain HTTP, as any worker agent does.
+      const api = input.agents.size === 0 ? undefined : await request.newContext();
       try {
         /** `openAs`, where the instance refusing to sign someone in is the grader's trouble. */
         const signedIn = async (
@@ -297,25 +364,51 @@ const inBrowser = (input: {
         }
         const results: Array<CheckResult> = [];
         for (const check of input.task.checks) {
+          const agents = new Map<string, Agent>();
           const views: Array<{
             readonly close: () => Promise<void>;
             readonly errors: ReadonlyArray<string>;
           }> = [];
+          const person = (key: string) => {
+            const found = input.people.find((p) => p.key === key);
+            if (found === undefined) throw new Error(`The run has no person ${key}.`);
+            return found;
+          };
           const ctx: CheckContext = {
             target: input.target,
             people: input.people,
+            person,
+            code: input.code,
             open: async (key, path) => {
-              const person = input.people.find((p) => p.key === key);
-              if (person === undefined) throw new Error(`The run has no person ${key}.`);
-              const view = await signedIn(person, path);
+              const who = person(key);
+              const view = await signedIn(who, path);
               views.push({ close: () => view.context.close(), errors: view.errors });
-              if (view.broke !== null) throw new Error(`For ${person.name}, ${view.broke}.`);
-              if (!view.ready) throw new Error(`The patch never showed ${person.name} anything.`);
+              if (view.broke !== null) throw new Error(`For ${who.name}, ${view.broke}.`);
+              if (!view.ready) throw new Error(`The patch never showed ${who.name} anything.`);
               return {
                 page: view.page,
                 frame: view.page.frameLocator("iframe").first(),
                 close: () => view.context.close().catch(() => undefined)
               };
+            },
+            agent: (key) => {
+              const known = agents.get(key);
+              if (known !== undefined) return known;
+              const token = input.agents.get(key);
+              if (api === undefined || token === undefined || !(check.agents ?? []).includes(key))
+                throw new Error(
+                  `The check acts as ${key}'s agent without naming them in its agents.`
+                );
+              // Change keys are new to the person's agent across the whole grading.
+              const agent = doorAgent({
+                request: api,
+                apiUrl: input.door.apiUrl,
+                token,
+                patch: input.target.id,
+                keys: `${input.code}-${results.length}-${key}`
+              });
+              agents.set(key, agent);
+              return agent;
             }
           };
           const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => ({
@@ -335,6 +428,7 @@ const inBrowser = (input: {
         }
         return { unready, browserErrors, results, screenshots };
       } finally {
+        await api?.dispose();
         await browser.close();
       }
     },
@@ -363,6 +457,8 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   readonly people: ReadonlyArray<RunPerson>;
   readonly publisher: RunPerson;
   readonly door: Door;
+  /** The scenario's patches, as published before the builder started. */
+  readonly staged: ReadonlyArray<StagedPatch>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -391,25 +487,38 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   const decoded = decodeListed(listed.stdout);
   if (listed.exitCode !== 0 || Option.isNone(decoded))
     return unfinished("`patchy list` didn't answer.", [], null, null);
-  const target = pickTarget(decoded.value);
-  if (target === null)
+  const target = pickTarget(decoded.value, input.task.target, input.staged);
+  const published =
+    target === null
+      ? {
+          check: fail(
+            "published",
+            "existing" in input.task.target
+              ? `${input.task.target.existing} isn't served any more.`
+              : "Nothing new is published in the run's company."
+          ),
+          fresh: false
+        }
+      : publishedCheck(input.task, target, input.staged);
+  if (target === null || !published.fresh)
     return {
-      target: null,
+      target,
       checks: [
-        fail("published", "Nothing is published in the run's company."),
-        ...names.slice(1).map((name) => skipped(name, "Nothing to check."))
+        published.check,
+        ...names.slice(1).map((name) => skipped(name, "Nothing new to check."))
       ],
       infra: null,
       source: null,
       screenshots: []
     } satisfies Graded;
-  const checks: Array<CheckResult> = [
-    pass("published", `${target.name} v${target.version}, tier ${target.tier}`)
-  ];
+  const checks: Array<CheckResult> = [published.check];
 
   let source: string | null = null;
-  if (input.task.target.create === "page")
-    checks.push(skipped("typechecks", "A single-file page has no repo."));
+  const page =
+    "create" in input.task.target
+      ? input.task.target.create === "page"
+      : stagedTarget(input.task.target, input.staged)?.kind === "page";
+  if (page) checks.push(skipped("typechecks", "A single-file page has no repo."));
   else {
     // `patchy pull` makes the folder, not its parent, and refuses one that isn't empty: a
     // retried grading starts from a fresh one.
@@ -442,6 +551,12 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
 
   const colleague =
     input.people.find((person) => person.key !== input.publisher.key) ?? input.publisher;
+  const acting = new Set(input.task.checks.flatMap((check) => check.agents ?? []));
+  const agents = yield* mintAgents(
+    input.door.apiUrl,
+    input.people.filter((person) => acting.has(person.key))
+  ).pipe(Effect.result);
+  if (Result.isFailure(agents)) return unfinished(agents.failure.message, checks, target, source);
   const gradingFrom = DateTime.formatIso(yield* DateTime.now);
   const browsed = yield* inBrowser({
     task: input.task,
@@ -449,11 +564,14 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     people: input.people,
     colleague,
     door: input.door,
-    shots: input.runDir
+    shots: input.runDir,
+    agents: agents.success,
+    code: (yield* Random.next).toString(36).slice(2, 8)
   }).pipe(Effect.result);
   if (Result.isFailure(browsed)) return unfinished(browsed.failure.message, checks, target, source);
 
-  // Failed calls during grading, against the graded version; a tier 1 patch has no log.
+  // Failed calls during grading, against the graded version; a tier 1 patch has no log. A
+  // declared refusal is the patch's own answer, such as a control step's, not a failure.
   const failures: Array<string> = [];
   if (target.tier === 2) {
     const logged = yield* runSandboxed(
@@ -466,7 +584,11 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     if (logged.exitCode !== 0 || Option.isNone(page))
       return unfinished("The patch's log couldn't be read.", checks, target, source);
     for (const entry of page.value.entries)
-      if (entry.startedAt >= gradingFrom && entry.version === target.version)
+      if (
+        entry.startedAt >= gradingFrom &&
+        entry.version === target.version &&
+        entry.outcome !== "handler_error"
+      )
         failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
   }
   const { unready, browserErrors, results, screenshots } = browsed.success;

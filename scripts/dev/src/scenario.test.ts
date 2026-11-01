@@ -20,7 +20,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon", "attio", "guests"]) {
+      for (const name of ["team", "brightline", "pidgeon", "attio", "guests", "kit-room"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -50,7 +50,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
-      expect(error.message).toContain("brightline, guests, pidgeon, team");
+      expect(error.message).toContain("brightline, guests, kit-room, pidgeon, team");
     })
   );
 

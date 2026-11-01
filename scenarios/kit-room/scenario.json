@@ -1,0 +1,17 @@
+{
+  "company": { "name": "Kestrel Films", "handle": "kestrel" },
+  "people": [
+    { "key": "ada", "name": "Ada Park", "email": "ada@kestrel.example", "role": "admin" },
+    { "key": "ben", "name": "Ben Ortiz", "email": "ben@kestrel.example", "role": "member" },
+    { "key": "cleo", "name": "Cleo Shah", "email": "cleo@kestrel.example", "role": "member" }
+  ],
+  "publisher": "ada",
+  "patches": [
+    {
+      "repo": "kit-loans",
+      "tier": 2,
+      "description": "Who has the studio's cameras, mics and laptops, and when each is due back.",
+      "sampleData": true
+    }
+  ]
+}
