@@ -60,8 +60,20 @@ CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
 to an exact Node patch. Bump the patches by hand in every workflow under
 `.github/workflows/` that pins one, like the server image: Node 24 moves with the
 `node:24-slim` digest in `apps/server/Dockerfile`, which production runs.
+Bun is pinned once, as the `bun: runtime:<version>` devDependency in
+`package.json`, and `pnpm install` downloads it with the lockfile's hashes. It is a
+devDependency rather than `devEngines.runtime` because npm, which the packed CLI
+tests run from the repository root, refuses a `devEngines.runtime` that isn't Node.
+Dependabot doesn't bump it, and pnpm's one-day `minimumReleaseAge` doesn't cover
+runtime downloads. To bump it, pick a release at least a day old (`gh release view
+bun-v<version> -R oven-sh/bun --json publishedAt`), change the version there and
+run `pnpm install` to rewrite the lockfile.
 
-Format caches its results, so a repeat run rechecks only the files that changed.
+Format is `bun fmt`, which reads `prettier.config.js` and `.prettierignore` and
+checks the whole repo in a fraction of a second. The pre-commit hook is still
+`pnpm exec lint-staged`, now running `bun fmt` on what you stage: every worktree of
+a clone shares one `.git/hooks`, so the hook's text stays the same across branches
+from before and after the switch.
 Lint is Oxlint, with its type-aware rules run by `oxlint-tsgolint`; it keeps no
 cache and checks the whole repo in seconds.
 
