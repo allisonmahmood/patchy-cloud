@@ -10,6 +10,7 @@
 import * as Schema from "effect/Schema";
 import { BuilderLog } from "./builders.js";
 import { CheckResult, type Graded, TargetRecord } from "./grade.js";
+import { type Dimension, DIMENSIONS, JudgeRecord, meanScores, splits } from "./judges.js";
 import { Metrics } from "./metrics.js";
 import { ToolVersion } from "./home.js";
 
@@ -25,6 +26,8 @@ export const RunRecord = Schema.Struct({
   repeat: Schema.Int,
   side: Schema.Literals(["head", "base"]),
   commit: Schema.String,
+  /** The run's folder, inside the suite's. */
+  dir: Schema.String,
   outcome: Outcome,
   pass: Schema.Boolean,
   /** Why it is `infra`, or what the harness said went wrong. */
@@ -35,7 +38,9 @@ export const RunRecord = Schema.Struct({
   log: Schema.NullOr(BuilderLog),
   /** Inside the run's folder. */
   source: Schema.NullOr(Schema.String),
-  screenshots: Schema.Array(Schema.String)
+  screenshots: Schema.Array(Schema.String),
+  /** Each judge's scores; empty until judged, and for a run with nothing to judge. */
+  judges: Schema.Array(JudgeRecord)
 });
 export type RunRecord = typeof RunRecord.Type;
 
@@ -137,6 +142,7 @@ export const summarize = (runs: ReadonlyArray<ScorecardRun>) => {
     output: median(logs.flatMap((log) => (log.usage.output === null ? [] : [log.usage.output]))),
     failed: median(metrics.map((each) => each.failedCommands)),
     offSkill: median(metrics.map((each) => each.offSkillLookups)),
+    ...judging(counted),
     refusals: Object.entries(refusals)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
@@ -144,10 +150,27 @@ export const summarize = (runs: ReadonlyArray<ScorecardRun>) => {
   };
 };
 
+/**
+ * What the judges said across runs: each dimension's mean over every judge's
+ * scores, their overall mean, and how many runs had judges 2 or more apart.
+ */
+export const judging = (runs: ReadonlyArray<Pick<ScorecardRun, "judges">>) => {
+  const dimensions = meanScores(
+    runs.flatMap((run) => run.judges.flatMap((each) => (each.scores === null ? [] : [each.scores])))
+  );
+  return {
+    dimensions,
+    judged:
+      dimensions === null
+        ? null
+        : DIMENSIONS.reduce((sum, dimension) => sum + dimensions[dimension], 0) / DIMENSIONS.length,
+    split: runs.filter((run) => splits(run.judges).length > 0).length
+  };
+};
+
 const mark = (status: CheckResult["status"]) =>
   status === "pass" ? "✓" : status === "fail" ? "✗" : "–";
 
-/** The scorecard as Markdown: what ran, then each builder against each task, then every run. */
 /** A base → head cell: both values, and the change when both exist. */
 export const shift = (
   base: number | null,
@@ -193,20 +216,20 @@ export const scorecardMarkdown = (card: Scorecard) => {
     );
   if (card.base === null) {
     lines.push(
-      "| Task | Builder | Runs | Built | Passed | Minutes | Turns | Input | Output | Failed cmds | Off-skill | Refusals |",
-      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+      "| Task | Builder | Runs | Built | Passed | Judged | Minutes | Turns | Input | Output | Failed cmds | Off-skill | Refusals |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     );
     for (const task of tasks)
       for (const builder of builders) {
         const s = of(task, builder, "head");
         lines.push(
-          `| ${task} | ${builder} | ${s.runs}${s.infra > 0 ? ` (+${s.infra} infra)` : ""} | ${s.built} | ${s.passed} | ${fmt(s.minutes, 1)} | ${fmt(s.turns)} | ${kilo(s.input)} | ${kilo(s.output)} | ${fmt(s.failed)} | ${fmt(s.offSkill)} | ${s.refusals.join(", ") || "–"} |`
+          `| ${task} | ${builder} | ${s.runs}${s.infra > 0 ? ` (+${s.infra} infra)` : ""} | ${s.built} | ${s.passed} | ${fmt(s.judged, 1)}${s.split > 0 ? ` (${s.split} split)` : ""} | ${fmt(s.minutes, 1)} | ${fmt(s.turns)} | ${kilo(s.input)} | ${kilo(s.output)} | ${fmt(s.failed)} | ${fmt(s.offSkill)} | ${s.refusals.join(", ") || "–"} |`
         );
       }
   } else {
     lines.push(
-      "| Task | Builder | Passed | Minutes | Turns | Input | Failed cmds | Off-skill |",
-      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+      "| Task | Builder | Passed | Judged | Minutes | Turns | Input | Failed cmds | Off-skill |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     );
     for (const task of tasks)
       for (const builder of builders) {
@@ -214,15 +237,41 @@ export const scorecardMarkdown = (card: Scorecard) => {
         const h = of(task, builder, "head");
         const infra = b.infra + h.infra > 0 ? ` (+${b.infra + h.infra} infra)` : "";
         lines.push(
-          `| ${task} | ${builder} | ${b.passed}/${b.runs} → ${h.passed}/${h.runs}${infra} | ${shift(b.minutes, h.minutes, tenths)} | ${shift(b.turns, h.turns, whole)} | ${shift(b.input, h.input, thousands)} | ${shift(b.failed, h.failed, whole)} | ${shift(b.offSkill, h.offSkill, whole)} |`
+          `| ${task} | ${builder} | ${b.passed}/${b.runs} → ${h.passed}/${h.runs}${infra} | ${shift(b.judged, h.judged, tenths)}${b.split + h.split > 0 ? ` (${b.split + h.split} split)` : ""} | ${shift(b.minutes, h.minutes, tenths)} | ${shift(b.turns, h.turns, whole)} | ${shift(b.input, h.input, thousands)} | ${shift(b.failed, h.failed, whole)} | ${shift(b.offSkill, h.offSkill, whole)} |`
         );
       }
   }
   lines.push(
     "",
-    "Medians, without infrastructure failures. Few runs are a pilot, not a measurement.",
+    "Medians, without infrastructure failures; judged is the judges' mean score out of 5, and a split is a run its judges scored 2 or more apart on a dimension. Few runs are a pilot, not a measurement.",
     ""
   );
+  if (card.runs.some((run) => run.judges.some((each) => each.scores !== null))) {
+    const named: Record<Dimension, string> = {
+      fit: "Fit",
+      platform: "Platform",
+      correctness: "Correctness",
+      ux: "UX",
+      code: "Code"
+    };
+    lines.push(
+      `| Task | Builder | ${DIMENSIONS.map((dimension) => named[dimension]).join(" | ")} |`,
+      `| --- | --- | ${DIMENSIONS.map(() => "---").join(" | ")} |`
+    );
+    for (const task of tasks)
+      for (const builder of builders) {
+        const h = of(task, builder, "head").dimensions;
+        const b = card.base === null ? null : of(task, builder, "base").dimensions;
+        lines.push(
+          `| ${task} | ${builder} | ${DIMENSIONS.map((dimension) =>
+            card.base === null
+              ? fmt(h?.[dimension] ?? null, 1)
+              : shift(b?.[dimension] ?? null, h?.[dimension] ?? null, tenths)
+          ).join(" | ")} |`
+        );
+      }
+    lines.push("");
+  }
   lines.push("| Run | Outcome | Checks | Minutes | Notes |", "| --- | --- | --- | --- | --- |");
   for (const run of card.runs) {
     const failedChecks = run.checks.filter((check) => check.status === "fail");

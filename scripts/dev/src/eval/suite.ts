@@ -32,12 +32,14 @@ import { retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
 import { checkBrowser, grade } from "./grade.js";
 import {
   fileSecrets,
+  installToolchain,
   prepareHome,
   prepareTemplate,
   readSignIns,
   type SignIns,
   type ToolVersion
 } from "./home.js";
+import { DIMENSIONS, judge, JUDGE_IDS, JUDGES } from "./judges.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, readToolchain, type Toolchain } from "./sandbox.js";
@@ -45,6 +47,7 @@ import { classify, RunRecord, Scorecard, scorecardMarkdown, scorecardRun } from 
 import { type Task, taskPrompt } from "./task.js";
 
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(RunRecord, { space: 2 }));
+const printVerdicts = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 const encodeScorecard = Schema.encodeSync(Scorecard);
 const printJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 
@@ -76,6 +79,8 @@ interface SideContext {
   /** The side's template HOME: its release's CLI and global skill. */
   readonly template: string;
   readonly network: Network;
+  /** The side's checkout, where judges read Patchy's own code. */
+  readonly clone: string;
 }
 
 interface Planned {
@@ -121,7 +126,9 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     effort: builder.effort,
     repeat,
     side: side.name,
-    commit: side.commit.sha
+    commit: side.commit.sha,
+    dir: path.relative(suite.dir, runDir),
+    judges: []
   };
   const { scenario } = yield* loadScenario(suite.root, task.scenario);
   const setUp = yield* Effect.gen(function* () {
@@ -344,9 +351,86 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
     apiUrl: input.side.served.apiUrl,
     database,
     template,
-    network
+    network,
+    clone: input.side.clone
   };
   return { context, installed };
+});
+
+/**
+ * Both judges on every run that left something published, after all the
+ * builds, so judging never shares a builder's timed window. Each run's
+ * verdicts and attributions are written beside it (`judges/<judge>.json`), its
+ * record gains the scores, and its `run.json` is written again.
+ */
+const judgeAll = Effect.fn("Eval.judgeAll")(function* (input: {
+  readonly dir: string;
+  readonly records: ReadonlyArray<RunRecord>;
+  readonly tasks: ReadonlyArray<Task>;
+  readonly sides: ReadonlyArray<SideContext>;
+  readonly toolchain: Toolchain;
+  readonly signIns: SignIns;
+  readonly concurrency: number;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const judged = input.records.filter(
+    (record) => record.target !== null && record.outcome !== "infra"
+  );
+  if (judged.length === 0) return input.records;
+  const network = input.sides[0]!.network;
+  const template = path.join(input.dir, "homes", "judges");
+  yield* fs.makeDirectory(template, { recursive: true });
+  yield* Console.error("  judges  setting up the judges' home");
+  yield* installToolchain({ home: template, network }, input.toolchain, ["claude-code", "codex"]);
+  yield* Console.error(
+    `Judging ${judged.length} run${judged.length === 1 ? "" : "s"} with ${JUDGE_IDS.join(" and ")}, ${input.concurrency} at a time`
+  );
+  const pairs = judged.flatMap((record) => JUDGE_IDS.map((id) => ({ record, judge: JUDGES[id] })));
+  const results = yield* Effect.forEach(
+    pairs,
+    ({ record, judge: who }) =>
+      Effect.gen(function* () {
+        const runDir = path.join(input.dir, record.dir);
+        const side = input.sides.find((each) => each.name === record.side)!;
+        const result = yield* judge({
+          judge: who,
+          task: input.tasks.find((task) => task.id === record.task)!,
+          runDir,
+          source: record.source,
+          screenshots: record.screenshots,
+          checks: record.checks,
+          log: record.log,
+          checkout: side.clone,
+          template,
+          network,
+          signIns: input.signIns
+        });
+        yield* fs.makeDirectory(path.join(runDir, "judges"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(runDir, "judges", `${who.id}.json`),
+          printVerdicts({ verdict: result.verdict, attribution: result.attribution })
+        );
+        const scores = result.record.scores;
+        yield* Console.error(
+          `  ${`${who.id} ${record.side}:${record.task}/${record.builder}/${record.repeat}`.padEnd(30)}  ${
+            scores === null
+              ? `no verdict: ${result.record.infra}`
+              : DIMENSIONS.map((dimension) => `${dimension} ${scores[dimension]}`).join(", ")
+          }`
+        );
+        return { run: record.run, record: result.record };
+      }),
+    { concurrency: input.concurrency }
+  );
+  const updated = input.records.map((record) => ({
+    ...record,
+    judges: results.filter((each) => each.run === record.run).map((each) => each.record)
+  }));
+  for (const record of updated)
+    if (record.judges.length > 0)
+      yield* fs.writeFileString(path.join(input.dir, record.dir, "run.json"), encodeRecord(record));
+  return updated;
 });
 
 /**
@@ -363,6 +447,8 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   readonly builders: ReadonlyArray<BuilderId>;
   readonly repeats: number;
   readonly concurrency: number;
+  /** Whether the judges review each run after the builds. */
+  readonly judge: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -370,7 +456,9 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   yield* checkBrowser;
   const builders = input.builders.map((id) => BUILDERS[id]);
   const toolchain = yield* readToolchain(input.root);
-  const signIns = yield* readSignIns(builders);
+  const signIns = yield* readSignIns(
+    input.judge ? [...builders, ...JUDGE_IDS.map((id) => JUDGES[id])] : builders
+  );
   const startedAt = DateTime.formatIso(yield* DateTime.now);
   const suiteId = `${startedAt.replace(/[-:]/g, "").replace(/\..*$/, "")}-${input.head.sha.slice(0, 7)}`;
   const dir = path.join(input.root, ".local", "evals", suiteId);
@@ -446,7 +534,18 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       const records = yield* Effect.forEach(planned, (each) => runWithRetry(suite, each), {
         concurrency: input.concurrency
       });
-      return { installed: head.installed, records };
+      const judged = input.judge
+        ? yield* judgeAll({
+            dir,
+            records,
+            tasks: input.tasks,
+            sides: sideList,
+            toolchain: pinnedTo(toolchain, head.installed),
+            signIns,
+            concurrency: input.concurrency
+          })
+        : records;
+      return { installed: head.installed, records: judged };
     })
   );
   const card: Scorecard = {

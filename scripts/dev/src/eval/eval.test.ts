@@ -22,8 +22,10 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
+import { closed, meanScores, splits, taskBrief } from "./judges.js";
+import { classify, judging, shift } from "./scorecard.js";
+import cheers from "./tasks/cheers.js";
 import { checkDoor, pinnedTo } from "./suite.js";
-import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
@@ -391,6 +393,91 @@ describe("the harness logs", () => {
     ).toEqual(["unrecognized", "unrecognized"]);
     expect(unwrapShell(`/usr/bin/bash -lc 'echo '\\''hi'\\'''`)).toBe("echo 'hi'");
     expect(unwrapShell('/usr/bin/bash -lc "cat \\"a b\\""')).toBe('cat "a b"');
+  });
+});
+
+describe("the judges", () => {
+  const scores = (fit: number, platform = fit, correctness = fit, ux = fit, code = fit) => ({
+    fit,
+    platform,
+    correctness,
+    ux,
+    code
+  });
+  const record = (value: ReturnType<typeof scores> | null) => ({
+    judge: "j",
+    model: "m",
+    effort: "xhigh",
+    scores: value,
+    findings: 0,
+    infra: value === null ? "It ran out of time." : null
+  });
+
+  it("closes every object in a harness's schema, nested ones too", () => {
+    expect(
+      closed({
+        type: "object",
+        properties: {
+          type: { type: "string" },
+          items: {
+            type: "array",
+            items: { type: "object", properties: { a: { type: "integer" } } }
+          }
+        },
+        additionalProperties: true
+      })
+    ).toEqual({
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { a: { type: "integer" } },
+            additionalProperties: false
+          }
+        }
+      },
+      additionalProperties: false
+    });
+  });
+
+  it("averages each dimension and flags judges 2 or more apart", () => {
+    expect(meanScores([scores(4), scores(2, 4)])).toEqual({
+      fit: 3,
+      platform: 4,
+      correctness: 3,
+      ux: 3,
+      code: 3
+    });
+    expect(meanScores([])).toBeNull();
+    expect(splits([record(scores(5, 4)), record(scores(3, 4))])).toEqual([
+      "fit",
+      "correctness",
+      "ux",
+      "code"
+    ]);
+    expect(splits([record(scores(4)), record(null)])).toEqual([]);
+  });
+
+  it("sums up a group's judging, ignoring a judge with no verdict", () => {
+    const summary = judging([
+      { judges: [record(scores(4)), record(scores(2))] },
+      { judges: [record(scores(5)), record(null)] },
+      { judges: [] }
+    ]);
+    expect(summary.judged).toBeCloseTo(11 / 3);
+    expect(summary.split).toBe(1);
+    expect(judging([{ judges: [] }]).judged).toBeNull();
+  });
+
+  it("briefs the scoring pass with the request and rubric, and nothing about the run", () => {
+    const brief = taskBrief(cheers);
+    expect(brief).toContain(cheers.words);
+    expect(brief).toContain("What good looks like");
+    for (const word of ["sonnet", "terra", "base", "head", "Claude", "Codex", "skill"])
+      expect(brief.toLowerCase()).not.toContain(word.toLowerCase());
   });
 });
 

@@ -61,6 +61,8 @@ export interface SandboxSpec {
   /** Variables beyond the sandbox's own HOME, PATH, TMPDIR, USER, LANG and TERM. */
   readonly env?: Readonly<Record<string, string>>;
   readonly binds?: ReadonlyArray<Bind>;
+  /** Paths inside a bind to hide behind an empty folder, such as a checkout's skills for a blind judge. */
+  readonly masks?: ReadonlyArray<string>;
   /** Where the command starts, inside the sandbox; HOME when omitted. */
   readonly cwd?: string;
 }
@@ -120,6 +122,7 @@ export const bwrapArgs = (
     bind.from,
     bind.to
   ]),
+  ...(spec.masks ?? []).flatMap((mask) => ["--tmpfs", mask]),
   "--clearenv",
   ...Object.entries({
     HOME,
