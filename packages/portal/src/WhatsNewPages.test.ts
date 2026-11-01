@@ -130,7 +130,8 @@ describe("the changelog", () => {
     date,
     through: String(id).repeat(40).slice(0, 40),
     changes: [{ kind: "Fixed", title, detail: `${title} works again.`, prs: [id] }],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   });
   // Two releases went out on the 7th, one on the 6th.
   const releases = [
@@ -155,7 +156,7 @@ describe("the changelog", () => {
     assert.strictEqual(tinted(1), 2);
   });
 
-  it("publishes only New and Improved changes, without PRs, through or releases left empty", () => {
+  it("publishes only New and Improved changes, without PRs, through, patch changes or releases left empty", () => {
     const change = (kind: WhatsNew.ChangeKind, title: string): WhatsNew.Change => ({
       kind,
       title,
@@ -163,6 +164,7 @@ describe("the changelog", () => {
       prs: [1]
     });
     const behindTheScenes = ["Quieter logs."];
+    const patchChanges = ["A stricter type."];
     assert.deepStrictEqual(
       WhatsNewPages.publicReleases([
         {
@@ -170,7 +172,8 @@ describe("the changelog", () => {
           date: "2026-10-08",
           through: "2".repeat(40),
           changes: [change("Fixed", "Mended")],
-          behindTheScenes
+          behindTheScenes,
+          patchChanges
         },
         {
           id: 1,
@@ -181,7 +184,8 @@ describe("the changelog", () => {
             change("Fixed", "Mended"),
             change("Improved", "Faster")
           ],
-          behindTheScenes
+          behindTheScenes,
+          patchChanges
         }
       ]),
       [
