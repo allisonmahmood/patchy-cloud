@@ -25,7 +25,8 @@ Talk through edge cases and product behaviour with the person before building.
 
 Tier 1 is the default. It reaches only its own patch: its tables and files, the
 viewer and routing, with live sync and sequential operations. Use tier 2 for
-enforced rules, atomic multi-row writes or server-side work, and for anything
+enforced rules, atomic writes (several rows at once, or a value such as a total
+that several people change at once) or server-side work, and for anything
 outside the patch: company connections, other patches' shared tables and stores,
 and the member directory with its member columns. Below tier 2, `uses` declares
 nothing: refresh, dev and publish refuse a declaration with `tier_mismatch`.
