@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CURRENT_RELEASE } from "@patchy/api";
+import { patchChangesBetween } from "@patchy/core/whatsNew";
 import { workerdVersion } from "@patchy/api/guest";
 import {
   coreProjectSkills,
@@ -363,6 +364,28 @@ describe("patch-repo commands", () => {
       expect.objectContaining({ id: "core.preact", runs: "Page", limits: expect.any(String) })
     ]);
     expect(readFileSync(app, "utf8")).toBe(source);
+  });
+
+  it("lists what the releases a refresh crosses change for an existing patch, then nothing", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    mkdirSync(path.join(dir, "patchy/_generated"), { recursive: true });
+    // The repo's last generation, as release 29 wrote it.
+    writeFileSync(
+      path.join(dir, "patchy/_generated/index.json"),
+      JSON.stringify({ release: "0.29.0" })
+    );
+    const crossed = patchChangesBetween(29, Number(CURRENT_RELEASE.split(".")[1])).map(
+      ({ release, change }) => `Changed in 0.${release}.0: ${change}`
+    );
+    expect(crossed.length).toBeGreaterThan(1);
+    const upgrade = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(upgrade, upgrade.stderr).toMatchObject({ status: 0 });
+    const { warnings } = JSON.parse(upgrade.stdout);
+    expect(warnings.filter((line: string) => line.startsWith("Changed in "))).toEqual(crossed);
+    const repeated = await runCli(["refresh"], { cwd: dir, env });
+    expect(repeated, repeated.stderr).toMatchObject({ status: 0 });
+    expect(repeated.stdout).not.toContain("Changed in ");
   });
 
   it("adds the sole connected Postgres declaration without overwriting fixtures", async () => {
@@ -890,7 +913,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
 
   // The refreshing CLI checks nothing itself: an older release's pinned CLI that relays the
   // installed release's toolchain reply, as every release's refresh does, hears the same warnings.
-  it("warns with the newly installed release's toolchain check, TypeScript included, whichever CLI refreshes from an older release", async () => {
+  it("warns with the newly installed release's checks, TypeScript and crossed releases included, whichever CLI refreshes from an older release", async () => {
     const required = {
       ...toolchain,
       vite: { testedAgainst: "99.0.0", accepted: "^99.0.0" },
@@ -938,6 +961,11 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
           env: { PATH: process.env.PATH, HOME: store, ...pnpm }
         }
       );
+      mkdirSync(path.join(dir, "patchy/_generated"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "patchy/_generated/index.json"),
+        JSON.stringify({ release: "0.21.0" })
+      );
       // pnpm names the installed CLI's real folder after the previous pin; refresh replaces it.
       const result = await runCli(["refresh", "--json"], {
         cwd: dir,
@@ -959,7 +987,8 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
         expect.stringContaining(`Loaded vite ${toolchain.vite.testedAgainst} is unsupported`),
         expect.stringContaining(
           `This repo has TypeScript ${toolchain.typescript.testedAgainst}; this release publishes only TypeScript ^99.0.0`
-        )
+        ),
+        expect.stringMatching(/^Changed in 0\.22\.0: /)
       ])
     });
     expect(await refreshed("workspace")).toEqual(installed);

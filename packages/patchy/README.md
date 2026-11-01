@@ -745,6 +745,11 @@ including where each runs and its limits. Entries have
 catalogue in `patchy/_generated/index.json` and renders it into `patchy-loop`,
 grouped Core, Primitives, Integrations and Helpers. An older repo without this
 inventory receives the current catalogue once; repeating refresh returns `[]`.
+A refresh that moves the repo across releases also lists, in `warnings`, each
+change those releases record as able to make an existing patch build or behave
+differently, oldest first, as `Changed in <version>: …`. The release refresh
+installs lists them from its What's new releases, comparing the repo's last
+generation, so a refresh run by an older pinned CLI lists them too.
 The `patchy-preact` project skill is included on tiers 1 and 2.
 
 ### Builder-owned toolchain

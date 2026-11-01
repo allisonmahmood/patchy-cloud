@@ -370,6 +370,11 @@ names each capability, where it runs and its limits. The inventory lives in
 render "What the SDK gives you" in `patchy-loop`. An older repo without an
 inventory receives the catalogue once; an unchanged refresh returns `[]`.
 Neither capability announcements nor refresh rewrite `src/`, `server/` or `helpers/`.
+A refresh that crosses releases adds a `warnings` line, `Changed in <version>: …`,
+for each change those releases record as able to make an existing patch build or
+behave differently, oldest first. The installed release's toolchain child writes
+them from the release the repo's last generation names, so an older pinned CLI's
+refresh relays them; a refresh within one release lists none.
 
 `patchy.json` is `{ instance, patch?, description, descriptionSyncedAt? }`.
 `init --purpose` writes its normalized purpose as `description`, with at most

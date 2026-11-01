@@ -23,6 +23,12 @@
  * - No PR numbers, file paths, jargon, hype, or "bug fixes and improvements". Announce only
  *   what this deploy makes available: nothing behind a flag or waiting on infrastructure.
  * - New and Improved changes reach the website too, so they must read well to anyone.
+ *
+ * `patchChanges` is read by the agent whose refresh moves a patch repo across this release: each
+ * way the release can make a patch built before it build or behave differently, such as a
+ * stricter type, a new kind of row or a changed error, and what to check. Write for that agent,
+ * naming the API. Refresh announces new capabilities already; leave them out. Most releases have
+ * none.
  */
 
 /** New: they could not do it before. Improved: it works better. Fixed: it was broken. */
@@ -47,6 +53,8 @@ export interface Release {
   readonly through: string;
   readonly changes: ReadonlyArray<Change>;
   readonly behindTheScenes: ReadonlyArray<string>;
+  /** How it can change a patch built before it, for the agent refreshing that patch's repo. */
+  readonly patchChanges: ReadonlyArray<string>;
 }
 
 /** Newest first. */
@@ -58,7 +66,8 @@ export const releases: ReadonlyArray<Release> = [
     changes: [],
     behindTheScenes: [
       "Patchy's servers moved to a faster JavaScript runtime, Bun, so each one uses less memory and handles more requests."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 33,
@@ -73,7 +82,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1098, 1107]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 32,
@@ -104,6 +114,9 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Refreshing a patch repo and starting a local preview keep working when the repo holds a skill this release doesn't ship, so a rollback can't break them."
+    ],
+    patchChanges: [
+      "A Pidgeon send held by the recipient cooldown, a new message to someone the address wrote to recently, fails with source_rate_limited and details.limit recipient_cooldown: nothing was sent, and sending again soon is held too, so reply in the conversation instead."
     ]
   },
   {
@@ -133,7 +146,10 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1112]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: [
+      "The member directory includes the patch's guests, people at another company it's shared with: list, search, get, pickers and member columns can return them, with guest: true and never admin. Code that counts every member as company staff should check guest, and a handler result schema that lists a member's fields needs guest too."
+    ]
   },
   {
     id: 30,
@@ -148,7 +164,10 @@ export const releases: ReadonlyArray<Release> = [
         prs: [975]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: [
+      "Pages build on Preact 11, whose types are stricter, so publish's typecheck can fail where it passed before. Attribute and event types such as HTMLAttributes, TargetedEvent and CSSProperties come from patchy/preact, no longer from its JSX namespace."
+    ]
   },
   {
     id: 29,
@@ -170,7 +189,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1004]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 28,
@@ -179,7 +199,8 @@ export const releases: ReadonlyArray<Release> = [
     changes: [],
     behindTheScenes: [
       "Patchy can now keep the files of the repo each version was published from, the groundwork for pulling a patch back down to work on it."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 27,
@@ -194,7 +215,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1073]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 26,
@@ -203,7 +225,8 @@ export const releases: ReadonlyArray<Release> = [
     changes: [],
     behindTheScenes: [
       "Older pages published from a single HTML file now run the same way as new ones, so Patchy has one kind of page instead of two."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 25,
@@ -225,7 +248,10 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1045]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: [
+      "Tier 0 is gone: a repo still at tier 0 is refused until patchy.config.ts says tier: 1 and refresh runs."
+    ]
   },
   {
     id: 24,
@@ -247,7 +273,10 @@ export const releases: ReadonlyArray<Release> = [
         prs: [1044]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: [
+      "A tier 1 page reaches only its own tables and files. Company connections, other patches' shared tables and stores, the member directory and member columns are tier 2's, reached from server handlers; refresh, dev and publish refuse a tier 1 repo that declares any of them with tier_mismatch."
+    ]
   },
   {
     id: 23,
@@ -264,7 +293,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy can now run patches for more companies at the same time, so a busy day is less likely to leave anyone waiting for a free server."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 22,
@@ -282,6 +312,9 @@ export const releases: ReadonlyArray<Release> = [
     behindTheScenes: [
       "Patchy itself now builds with TypeScript 7 and Oxlint, so its own checks run several times faster.",
       "Encryption, signing and ids all go through one place in Patchy now, with tests proving everything already stored still opens."
+    ],
+    patchChanges: [
+      "Publish needs TypeScript 7: it refuses a repo whose installed TypeScript is outside the release's range. typescript-eslint can't run beside TypeScript 7, so a lint script on ESLint moves to Oxlint, as Toolchain in .agents/skills/patchy-loop/SKILL.md says."
     ]
   },
   {
@@ -299,7 +332,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy refuses an Attio key that can change anything, and stops using a connected key if it later gains that power."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 20,
@@ -323,7 +357,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy keeps only a key for the one connected email address, never your Pidgeon admin key."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 19,
@@ -375,7 +410,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Agents' instructions and Patchy's docs use the new page names, and send people to Agent access when an admin needs to turn it on."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 18,
@@ -413,7 +449,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy now notices the first time someone opens a colleague's tool, so we can tell whether new people find something useful in their first week."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 17,
@@ -467,7 +504,8 @@ export const releases: ReadonlyArray<Release> = [
       "Agents' calls to a tool have limits of their own, and a tool's server that only an agent is using rests a minute after its last call.",
       "The New and Improved changes in this list are now public, so patchyhq.com can show them too.",
       "We updated the libraries Patchy is built on to their latest fixes."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 16,
@@ -486,7 +524,8 @@ export const releases: ReadonlyArray<Release> = [
       "Patchy keeps two more company addresses, mcp and oauth, for its own use.",
       "Patchy already understands, and enforces, tools' parts that only read and parts made for agents, so going back to this version stays safe once tools start using them.",
       "Patchy's own logs record how long a tool's server takes to start."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 15,
@@ -510,7 +549,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "A tool left open but unused no longer keeps its server running all the time. After a while the server rests, and it starts again when you next use the tool."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 14,
@@ -576,7 +616,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy's own logs record more about how tools keep their live data up to date, to find what's still slow."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 13,
@@ -650,7 +691,8 @@ export const releases: ReadonlyArray<Release> = [
     behindTheScenes: [
       "Patchy checks static pages and tools' database requests more strictly, and logs a malformed request instead of failing it silently.",
       "Patchy's own usage numbers now count every publish, sharing change and restore, and keep less of what a tool imports."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 12,
@@ -695,7 +737,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Patchy checks uploaded pages and logos within strict limits, so one unusual upload can't slow Patchy down for everyone."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 11,
@@ -740,7 +783,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Each version of Patchy now skips kinds of connection it doesn't know, so going back to an earlier version stays safe."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 10,
@@ -778,7 +822,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Connections to your company's data now record what kind of service each one reaches."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 9,
@@ -795,7 +840,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "The machines that run your tools' server code keep up their routine upkeep when the database is slow to answer, instead of stopping early and trying again later."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 8,
@@ -840,7 +886,8 @@ export const releases: ReadonlyArray<Release> = [
     ],
     behindTheScenes: [
       "Your agent no longer keeps a personal style file on your computer; the company look replaces it."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 7,
@@ -858,7 +905,8 @@ export const releases: ReadonlyArray<Release> = [
     behindTheScenes: [
       "We updated the libraries Patchy is built on to their latest fixes.",
       "We now build Patchy with the newest version of its package manager."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 6,
@@ -873,7 +921,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [571]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 5,
@@ -888,7 +937,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [559]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 4,
@@ -903,7 +953,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [555]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 3,
@@ -918,7 +969,8 @@ export const releases: ReadonlyArray<Release> = [
         prs: [553]
       }
     ],
-    behindTheScenes: []
+    behindTheScenes: [],
+    patchChanges: []
   },
   {
     id: 2,
@@ -928,19 +980,31 @@ export const releases: ReadonlyArray<Release> = [
     behindTheScenes: [
       "We now record key moments, like creating a company, inviting a colleague or retiring a patch, so we can see where people get stuck. They identify people by id, never by name or email address.",
       "The patchy command now tells us its version, which command ran and which coding agent ran it, so we can fix problems faster."
-    ]
+    ],
+    patchChanges: []
   },
   {
     id: 1,
     date: "2026-10-05",
     through: "48153dc8ba948d6903f735be1f5598b6386e6e60",
     changes: [],
-    behindTheScenes: ["Patchy Cloud’s first release went live on its own production servers."]
+    behindTheScenes: ["Patchy Cloud’s first release went live on its own production servers."],
+    patchChanges: []
   }
 ];
 
 /** The newest release's id: a new member starts here, caught up. */
 export const latestRelease = releases[0]?.id ?? 0;
+
+/**
+ * What a refresh from release `from` to release `to` can change for a patch, oldest first, each
+ * with the release that brought it. Nothing when `to` isn't after `from`.
+ */
+export const patchChangesBetween = (from: number, to: number) =>
+  releases
+    .filter((release) => release.id > from && release.id <= to)
+    .reverse()
+    .flatMap((release) => release.patchChanges.map((change) => ({ release: release.id, change })));
 
 /** Every change released after `seen`, newest first. */
 export const changesSince = (seen: number): ReadonlyArray<Change> =>

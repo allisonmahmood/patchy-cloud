@@ -121,6 +121,7 @@
                   "!@patchy/api/csv-config",
                   "!@patchy/core",
                   "!@patchy/core/look",
+                  "!@patchy/core/whatsNew",
                   "!@patchy/execution/inspection"
                 ],
                 "message": "The CLI may depend only on @patchy/api, engine-neutral contract modules, @patchy/core and isolated execution/inspection."
