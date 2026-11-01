@@ -1,40 +1,56 @@
-import type { Opened, Task } from "../task.js";
-import { approve, decisionShown, emptyField, fillRest, formAround, reveal } from "./page.js";
+import type { CheckContext, CheckOutcome, Opened, Task } from "../task.js";
+import {
+  around,
+  chooseField,
+  decide,
+  decisionShown,
+  fillRest,
+  formAround,
+  reveal,
+  servesFile
+} from "./page.js";
 
 /** A 1×1 PNG: the receipt a person attaches. */
-const RECEIPT = Buffer.from(
+const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
   "base64"
 );
+
+/** A receipt of its own: the PNG with `marker` after its end, which image readers ignore. */
+const receipt = (marker: string) => Buffer.concat([PNG, Buffer.from(`\n${marker}\n`)]);
 
 const AMOUNT = /amount|cost|how much|total|price|\$/i;
 const REASON = /reason|description|purpose|what|details|note|title|why|memo|justification|for\b/i;
 
 /**
  * Asks for money the way a person would: opens the form if one waits behind a
- * button, types an amount and the reason, attaches the receipt, fills
- * anything else the form requires and sends it. The reason the request
- * couldn't be made, or null once it was sent.
+ * button, types an amount and the reason, attaches a receipt holding
+ * `marker`, fills anything else the form holds and sends it. The reason the
+ * request couldn't be made, or null once it was sent.
  */
-const ask = async (view: Opened, reason: string, receipt: string) => {
+const ask = async (view: Opened, reason: string, marker: string) => {
   const { frame, page } = view;
-  let amount = await emptyField(frame, AMOUNT);
+  let amount = await chooseField(frame, AMOUNT);
   if (amount === undefined) {
     const opener = frame.getByRole("button", { name: /new|request|submit|add|create|\+/i });
     if ((await opener.count()) === 0) return "found no amount to fill in or button to start one";
     await opener.first().click();
     await page.waitForTimeout(1_000);
-    amount = await emptyField(frame, AMOUNT);
+    amount = await chooseField(frame, AMOUNT);
   }
   if (amount === undefined) return "found no amount to fill in";
   await amount.fill("42");
-  const words = await emptyField(frame, REASON);
+  const words = await chooseField(frame, REASON);
   if (words === undefined) return "found no field for the reason";
   await words.fill(reason);
   const file = frame.locator('input[type="file"]');
   if ((await file.count()) === 0) return "found no way to attach a receipt";
-  await file.first().setInputFiles({ name: receipt, mimeType: "image/png", buffer: RECEIPT });
-  const form = await formAround(frame, amount);
+  await file.first().setInputFiles({
+    name: `receipt-${marker}.png`,
+    mimeType: "image/png",
+    buffer: receipt(marker)
+  });
+  const form = await formAround(frame);
   if (form === undefined) return "found no button to send the request";
   await fillRest(form.scope);
   await form.send.click();
@@ -42,52 +58,111 @@ const ask = async (view: Opened, reason: string, receipt: string) => {
   return null;
 };
 
-/**
- * Whether the request holding `reason` shows its receipt: the file's name,
- * or a link, button or image that says receipt, attachment or file, in the
- * part of the page around the request but short of the form a receipt is
- * attached in. Looked for in the list, then in whatever opens on a click.
- */
-const showsReceipt = async (view: Opened, reason: string, receipt: string) => {
-  const look = () =>
-    view.frame.locator("body").evaluate(
-      (body, { reason, receipt }) => {
-        if ((body.textContent ?? "").includes(receipt)) return true;
-        const said = /receipt|attachment|download|view file|open file/i;
-        const names = (part: Element) =>
-          [
-            part.textContent,
-            part.getAttribute("aria-label"),
-            part.getAttribute("alt"),
-            part.getAttribute("title")
-          ].some((words) => said.test(words ?? ""));
-        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-          if (!(node.textContent ?? "").includes(reason)) continue;
-          for (let part = node.parentElement; part !== null && part !== body;) {
-            if (part.querySelector('input[type="file"]') !== null) break;
-            if (
-              [...part.querySelectorAll("a, button, [role=link], [role=button], img")].some(names)
-            )
-              return true;
-            part = part.parentElement;
-          }
-        }
-        return false;
-      },
-      { reason, receipt }
-    );
-  if (await look()) return true;
-  await view.frame.getByText(reason).first().click();
-  await view.page.waitForTimeout(1_000);
-  return look();
+/** Ben asks for money with a receipt; the check's failure when he couldn't. */
+const benAsks = async (ctx: CheckContext, reason: string, marker: string) => {
+  const ben = await ctx.open("ben");
+  const refused = await ask(ben, reason, marker);
+  await ben.close();
+  return refused === null ? null : ({ ok: false, reason: `Ben ${refused}.` } as const);
 };
 
+const RECEIPT_CONTROL = /receipt|attachment|download|view file|open file|\.png/i;
+
 /**
- * Spend requests with a rule the page can't keep alone: only admins decide.
- * Ben asks with a receipt and Ada sees both. Then Ben, and Cleo, another
- * member, each try to approve a request of Ben's, which must leave it
- * undecided, before Ada approves it and Ben sees the decision.
+ * Whether Ada can open the receipt of the request holding `reason`: a file
+ * Patchy serves her holds its marker once she opens the request and presses
+ * what says receipt in it. A saved file name, or a button with nothing
+ * behind it, serves nothing.
+ */
+const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
+  servesFile(ada, marker, async () => {
+    // From a fresh load, so a preview the page fetches as it renders is seen too.
+    await ada.page.reload();
+    if (!(await reveal(ada, reason))) return;
+    await ada.frame.getByText(reason).first().click();
+    await ada.page.waitForTimeout(2_000);
+    for (const role of ["link", "button"] as const) {
+      const controls = ada.frame.getByRole(role, { name: RECEIPT_CONTROL });
+      for (const control of await around(ada.frame, reason, { has: controls })
+        .getByRole(role, { name: RECEIPT_CONTROL })
+        .all())
+        if (await control.isVisible().catch(() => false)) {
+          await control.click({ timeout: 5_000 }).catch(() => undefined);
+          await ada.page.waitForTimeout(2_000);
+        }
+    }
+  });
+
+const DECIDED = { approve: "approved", reject: "rejected" } as const;
+
+/**
+ * Only an admin's decision counts, tried against the server: Ben asks, Ada
+ * presses Approve (or Reject), and the change her page sends is held back
+ * while Ben, who asked, and Cleo, another member, each send the same change
+ * from their own pages. Each must be refused by the patch, or leave the
+ * request undecided. Then Ada's goes through and Ben sees the decision.
+ */
+const onlyAdmins =
+  (which: keyof typeof DECIDED) =>
+  async (ctx: CheckContext): Promise<CheckOutcome> => {
+    const decided = DECIDED[which];
+    const reason = `${which === "approve" ? "Client lunch with Harbor" : "Standing desk"} ${ctx.code}`;
+    const refused = await benAsks(ctx, reason, `${ctx.code}-${which}`);
+    if (refused !== null) return refused;
+    const ada = await ctx.open("ada");
+    if (!(await reveal(ada, reason)))
+      return { ok: false, reason: "Ada doesn't see the request Ben sent." };
+    const pressed = await decide(ada, reason, which, true);
+    if (pressed === null)
+      return { ok: false, reason: `Ada found no way to ${which} Ben's request.` };
+    if (pressed.held === undefined)
+      return {
+        ok: false,
+        reason: `Ada's ${which} sent Patchy no change for the grader to try as a member.`
+      };
+    for (const member of ["ben", "cleo"]) {
+      const view = await ctx.open(member);
+      const answer = await pressed.held.tryAs(view, ctx.person(member));
+      await view.close();
+      if (!answer.ok && !answer.byHandler)
+        return {
+          ok: false,
+          reason: `Patchy itself refused the grader's try as ${ctx.person(member).name} (${answer.code}), so it can't tell what the patch allows.`
+        };
+      if (!answer.ok) {
+        if (pressed.held.handler !== null) ctx.expectRefusal(member, pressed.held.handler);
+        continue;
+      }
+      // Taken: a handler may still change nothing for someone who isn't an admin.
+      const after = await ctx.open("ben");
+      const seen = (await reveal(after, reason)) ? await decisionShown(after, reason) : null;
+      await after.close();
+      if (seen === decided)
+        return {
+          ok: false,
+          reason: `Patchy let ${ctx.person(member).name}, a member, ${which} Ben's request.`
+        };
+    }
+    await pressed.held.release();
+    await ada.close();
+    const later = await ctx.open("ben");
+    if (!(await reveal(later, reason)))
+      return { ok: false, reason: "Ben no longer sees his request." };
+    const seen = await decisionShown(later, reason);
+    return seen === decided
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: `After Ada's ${which}, Ben's request shows ${seen ?? "no decision"}.`
+        };
+  };
+
+/**
+ * Spend requests with rules the page can't keep alone: only admins decide,
+ * and a receipt is a file the patch keeps. Ben asks with a receipt and Ada
+ * opens it. Then, for an approval and for a rejection on requests of their
+ * own, members' tries are sent to the server before Ada's decision goes
+ * through and Ben sees it.
  */
 export default {
   id: "spend-approvals",
@@ -107,66 +182,21 @@ export default {
   ].join("\n"),
   checks: [
     {
-      name: "Ben asks with a receipt, and Ada sees the request and its receipt",
+      name: "Ben asks with a receipt, and Ada opens it",
       run: async (ctx) => {
         const reason = `Team offsite snacks ${ctx.code}`;
-        const receipt = `receipt-${ctx.code}.png`;
-        const ben = await ctx.open("ben");
-        const refused = await ask(ben, reason, receipt);
-        await ben.close();
-        if (refused !== null) return { ok: false, reason: `Ben ${refused}.` };
+        const marker = `${ctx.code}-receipt`;
+        const refused = await benAsks(ctx, reason, marker);
+        if (refused !== null) return refused;
         const ada = await ctx.open("ada");
         if (!(await reveal(ada, reason)))
           return { ok: false, reason: "Ada doesn't see the request Ben sent." };
-        return (await showsReceipt(ada, reason, receipt))
+        return (await adaOpensReceipt(ada, reason, marker))
           ? { ok: true }
-          : { ok: false, reason: "Ada sees Ben's request but nothing of its receipt." };
+          : { ok: false, reason: "Ada sees Ben's request but can't open the receipt he attached." };
       }
     },
-    {
-      name: "only an admin's approval counts, and Ben sees it",
-      run: async (ctx) => {
-        const reason = `Client lunch with Harbor ${ctx.code}`;
-        const ben = await ctx.open("ben");
-        const refused = await ask(ben, reason, `lunch-${ctx.code}.png`);
-        await ben.close();
-        if (refused !== null) return { ok: false, reason: `Ben ${refused}.` };
-        for (const member of ["ben", "cleo"]) {
-          const view = await ctx.open(member);
-          // A member who can't find Ben's request can't approve it either.
-          if (await reveal(view, reason)) await approve(view, reason);
-          await view.close();
-          const after = await ctx.open("ben");
-          if (!(await reveal(after, reason)))
-            return {
-              ok: false,
-              reason: `Ben can't find his request after ${ctx.person(member).name} tried to approve it.`
-            };
-          const seen = await decisionShown(after, reason);
-          await after.close();
-          if (seen === "approved")
-            return {
-              ok: false,
-              reason: `${ctx.person(member).name}, a member, could approve Ben's request.`
-            };
-        }
-        const ada = await ctx.open("ada");
-        if (!(await reveal(ada, reason)))
-          return { ok: false, reason: "Ada doesn't see the request Ben sent." };
-        if (!(await approve(ada, reason)))
-          return { ok: false, reason: "Ada found no Approve for Ben's request." };
-        await ada.close();
-        const later = await ctx.open("ben");
-        if (!(await reveal(later, reason)))
-          return { ok: false, reason: "Ben no longer sees his request." };
-        const seen = await decisionShown(later, reason);
-        return seen === "approved"
-          ? { ok: true }
-          : {
-              ok: false,
-              reason: `After Ada approved it, Ben's request shows ${seen ?? "no decision"}.`
-            };
-      }
-    }
+    { name: "only an admin's approval counts, and Ben sees it", run: onlyAdmins("approve") },
+    { name: "only an admin's rejection counts, and Ben sees it", run: onlyAdmins("reject") }
   ]
 } satisfies Task;

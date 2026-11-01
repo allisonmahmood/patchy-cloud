@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vitest";
 import { loadScenario, type Scenario } from "../scenario.js";
-import { pickTarget, publishedCheck } from "./grade.js";
+import { GRADER_AGENT } from "./agent.js";
+import { failedCalls, pickTarget, publishedCheck } from "./grade.js";
 import { patchKey, recordStaged, sourceName, type StagedPatch } from "./stage.js";
 import { visibleRepos } from "./task.js";
 import { TASKS } from "./tasks/index.js";
@@ -113,6 +114,42 @@ describe("the graded target", () => {
       staged
     );
     expect(newer).toMatchObject({ fresh: true, check: { status: "pass" } });
+  });
+
+  it("counts every failed call but the refusals a check expected", () => {
+    const entry = (handler: string, outcome: string, viewer: string, more = {}) => ({
+      startedAt: "2026-11-01T10:00:05Z",
+      version: 2,
+      handler,
+      outcome,
+      code: outcome === "handler_error" ? "not_admin" : null,
+      viewer: { id: viewer },
+      agent: null,
+      ...more
+    });
+    const failed = failedCalls(
+      [
+        entry("requests.approve", "handler_error", "usr_cleo"),
+        entry("requests.approve", "handler_error", "usr_ada"),
+        entry("totals.summary", "handler_error", "usr_ben"),
+        entry("kudos.giveKudos", "handler_error", "usr_jordan", {
+          agent: { name: GRADER_AGENT }
+        }),
+        entry("requests.list", "failure", "usr_ben"),
+        entry("requests.list", "failure", "usr_ben", { version: 1 }),
+        entry("requests.list", "failure", "usr_ben", { startedAt: "2026-11-01T09:59:00Z" })
+      ],
+      {
+        from: "2026-11-01T10:00:00Z",
+        version: 2,
+        expected: [{ person: "usr_cleo", handler: "requests.approve" }]
+      }
+    );
+    expect(failed).toEqual([
+      "requests.approve: not_admin",
+      "totals.summary: not_admin",
+      "requests.list: failure"
+    ]);
   });
 
   it("fails a target at a tier the task rules out, and still checks it", () => {

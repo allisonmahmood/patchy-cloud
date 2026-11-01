@@ -26,19 +26,28 @@ export class NoAgentConnection extends Schema.TaggedError<NoAgentConnection>()(
   }
 }
 
-/** Mints an agent connection for each person, by key, with a year-long token. */
+/** The client name the grader's agent connections carry, which a patch's log shows as "via". */
+export const GRADER_AGENT = "Eval grader";
+
+/**
+ * Mints an agent connection for each person, by key, with a year-long token.
+ * Each token goes to `keep` as soon as it exists, so the sanitizer redacts it
+ * even when a later mint fails.
+ */
 export const mintAgents = Effect.fn("Eval.mintAgents")(function* (
   apiUrl: string,
-  people: ReadonlyArray<RunPerson>
+  people: ReadonlyArray<RunPerson>,
+  keep: (token: string) => Effect.Effect<void>
 ) {
   const tokens = new Map<string, string>();
   for (const person of people) {
     const minted = yield* mintDevAgentConnection({
       email: person.email,
-      clientName: "Eval grader",
+      clientName: GRADER_AGENT,
       // No document names a minted client, so its id is the instance's own address for it.
       clientId: `${apiUrl}/dev/mcp-token`
     }).pipe(Effect.mapError((cause) => new NoAgentConnection({ person: person.name, cause })));
+    yield* keep(minted.token);
     tokens.set(person.key, minted.token);
   }
   return tokens;
@@ -86,12 +95,14 @@ const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(ToolCallAnsw
 
 /**
  * A person's agent on one patch, over `request`. A refusal comes back as the
- * call's answer; only the door itself answering anything but 200 throws.
+ * call's answer; the door not answering, or answering anything but 200, throws.
  * Each change gets a key of its own under `keys`, which must be new to the
- * person's agent.
+ * person's agent. A thrown error's message never carries the request, whose
+ * bearer is the person's token: Playwright's own message, kept only as its
+ * `cause`, can.
  */
 export const doorAgent = (input: {
-  readonly request: APIRequestContext;
+  readonly request: Pick<APIRequestContext, "post">;
   readonly apiUrl: string;
   readonly token: string;
   readonly patch: string;
@@ -100,22 +111,33 @@ export const doorAgent = (input: {
   const { request, apiUrl, token, patch } = input;
   let changes = 0;
   const call = async (name: string, args: Readonly<Record<string, unknown>>) => {
-    const response = await request.post(`${apiUrl}/mcp`, {
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/json, text/event-stream",
-        "mcp-protocol-version": "2025-06-18"
-      },
-      data: {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name, arguments: { patch, ...args } }
-      }
-    });
+    const response = await request
+      .post(`${apiUrl}/mcp`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2025-06-18"
+        },
+        data: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: { patch, ...args } }
+        }
+      })
+      .catch((cause: unknown) => {
+        throw new Error(`Patchy MCP didn't answer ${name}.`, { cause });
+      });
     if (response.status() !== 200)
       throw new Error(`Patchy MCP answered ${name} with HTTP ${response.status()}.`);
-    return decodeAnswer(await response.text()).result.structuredContent;
+    const text = await response.text().catch((cause: unknown) => {
+      throw new Error(`Patchy MCP's answer to ${name} didn't arrive whole.`, { cause });
+    });
+    try {
+      return decodeAnswer(text).result.structuredContent;
+    } catch (cause) {
+      throw new Error(`Patchy MCP's answer to ${name} isn't one the grader reads.`, { cause });
+    }
   };
   return {
     tools: async () => {
@@ -138,24 +160,37 @@ export const doorAgent = (input: {
   };
 };
 
+/** What a check looks for in a tool: what it is about, what it does, and names that rule it out. */
+export interface ToolWords {
+  readonly about: RegExp;
+  readonly does: RegExp;
+  readonly not?: RegExp;
+}
+
 /**
- * The tool of `kind` that `words` pick, most telling first: for each, a tool
- * whose name matches it, then one whose description does. Failing all, the
- * only tool of that kind.
+ * The tool of `kind` that best means what `words` say. What it is about
+ * counts most, in its name and then its description, before what it does, so
+ * a tool named for kudos outranks one named only for listing; a name `not`
+ * matches ranks below any that doesn't. Ties keep `open_patch`'s order.
+ * Failing any tool that means it, the only tool of that kind.
  */
 export const findTool = (
   tools: ReadonlyArray<AgentTool>,
   kind: AgentTool["kind"],
-  words: ReadonlyArray<RegExp>
+  words: ToolWords
 ): AgentTool | undefined => {
   const ofKind = tools.filter((tool) => tool.kind === kind);
-  for (const said of words) {
-    const found =
-      ofKind.find((tool) => said.test(tool.name)) ??
-      ofKind.find((tool) => said.test(tool.description));
-    if (found !== undefined) return found;
-  }
-  return ofKind.length === 1 ? ofKind[0] : undefined;
+  const score = (tool: AgentTool) =>
+    (words.about.test(tool.name) ? 4 : 0) +
+    (words.about.test(tool.description) ? 2 : 0) +
+    (words.does.test(tool.name) ? 2 : 0) +
+    (words.does.test(tool.description) ? 1 : 0) -
+    (words.not?.test(tool.name) === true ? 5 : 0);
+  const [best] = ofKind
+    .map((tool) => ({ tool, score: score(tool) }))
+    .filter((each) => each.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return best?.tool ?? (ofKind.length === 1 ? ofKind[0] : undefined);
 };
 
 /** What a check means to say in a call: who it is about, and its words. */
@@ -164,8 +199,10 @@ export interface Meaning {
   readonly text?: string;
 }
 
-const PERSON =
+const PERSON_NAME =
   /recipient|colleague|person|people|member|user|teammate|employee|assignee|who|^to$|^to[A-Z_]|^for$/i;
+const PERSON_SAID =
+  /recipient|colleague|teammate|employee|assignee|\bperson\b|\bmember\b|\buser\b/i;
 const TEXT = /message|note|reason|text|body|comment|why|description|thanks|content|shout/i;
 const MANY = /limit|count|max|size|take|first|last|per.?page|^n$/i;
 
@@ -174,18 +211,43 @@ const nullable = (schema: JsonSchema) =>
 const valueOf = (schema: JsonSchema): JsonSchema =>
   schema.anyOf?.find((option) => option.type !== "null") ?? schema;
 
+type Role = "person" | "text" | "plain";
+
+/**
+ * What a field is for: inside an object about a person, the person; else
+ * what its name says, words before a person, then what its description says
+ * when its name says neither.
+ */
+const roleOf = (field: string, schema: JsonSchema, inPerson: boolean): Role => {
+  const said = schema.description ?? "";
+  return inPerson
+    ? "person"
+    : TEXT.test(field)
+      ? "text"
+      : PERSON_NAME.test(field)
+        ? "person"
+        : PERSON_SAID.test(said)
+          ? "person"
+          : TEXT.test(said)
+            ? "text"
+            : "plain";
+};
+
 /**
  * The ways a field about a person can name them, the one its words ask for
  * first: an email, a name, or otherwise the member id the directory knows.
+ * Inside an object about a person, a field named for one of them takes only it.
  */
-const namings = (field: string, schema: JsonSchema, person: RunPerson) => {
+const namings = (field: string, schema: JsonSchema, person: RunPerson, inPerson: boolean) => {
+  if (inPerson && /e-?mail/i.test(field)) return [person.email];
+  if (inPerson && /name/i.test(field)) return [person.name];
+  if (inPerson && /id$/i.test(field)) return [person.id];
   const words = `${field} ${schema.description ?? ""}`;
-  const order = /e-?mail/i.test(words)
+  return /e-?mail/i.test(words)
     ? [person.email, person.name, person.id]
     : /name/i.test(field) || /\bname\b/i.test(schema.description ?? "")
       ? [person.name, person.email, person.id]
       : [person.id, person.email, person.name];
-  return order;
 };
 
 /**
@@ -209,7 +271,7 @@ const plain = (field: string, schema: JsonSchema, meaning: Meaning): unknown => 
     case "array":
       return [];
     case "object":
-      return value.properties === undefined ? {} : (argsFor(value, meaning)[0] ?? {});
+      return {};
     case "string":
       return meaning.text ?? "";
     default:
@@ -217,38 +279,55 @@ const plain = (field: string, schema: JsonSchema, meaning: Meaning): unknown => 
   }
 };
 
+/** The values a field can take, and whether the check means anything by it. */
+const fillField = (
+  field: string,
+  schema: JsonSchema,
+  meaning: Meaning,
+  inPerson: boolean
+): { readonly values: ReadonlyArray<unknown>; readonly meant: boolean } => {
+  const value = valueOf(schema);
+  const role = roleOf(field, schema, inPerson);
+  if (value.type === "object" && value.properties !== undefined)
+    return fillObject(value, meaning, role === "person");
+  if (value.type === "string" && value.enum === undefined) {
+    if (role === "person" && meaning.person !== undefined)
+      return { values: namings(field, schema, meaning.person, inPerson), meant: true };
+    if (role === "text" && meaning.text !== undefined)
+      return { values: [meaning.text], meant: true };
+  }
+  return { values: [plain(field, schema, meaning)], meant: false };
+};
+
+const fillObject = (
+  schema: JsonSchema,
+  meaning: Meaning,
+  inPerson: boolean
+): { readonly values: ReadonlyArray<Record<string, unknown>>; readonly meant: boolean } => {
+  const required = new Set(schema.required ?? []);
+  let values: ReadonlyArray<Record<string, unknown>> = [{}];
+  let meant = false;
+  for (const [field, property] of Object.entries(schema.properties ?? {})) {
+    const filled = fillField(field, property, meaning, inPerson);
+    if (!filled.meant && !required.has(field)) continue;
+    meant ||= filled.meant;
+    values = filled.values.flatMap((each) => values.map((args) => ({ ...args, [field]: each })));
+  }
+  return { values, meant };
+};
+
 /**
  * Arguments for a tool, from its schema and what the check means: a field
- * about a person names `meaning.person`, a field of words says
- * `meaning.text`, and any other required field gets a plain value. Optional
- * fields are left out unless the check means something for them. A person
- * can be named three ways, so this answers each, the field's own words first;
- * a check tries them in order until one isn't refused.
+ * about a person names `meaning.person`, by its name or, when that says
+ * nothing, its description, and so does every field of an object about a
+ * person; a field of words says `meaning.text`; any other required field gets
+ * a plain value. Optional fields are left out unless the check means
+ * something for them. A person can be named three ways, so this answers each,
+ * the field's own words first; a check tries them in order until one isn't
+ * refused.
  */
-export const argsFor = (
-  schema: JsonSchema,
-  meaning: Meaning
-): ReadonlyArray<Record<string, unknown>> => {
-  const required = new Set(schema.required ?? []);
-  let candidates: Array<Record<string, unknown>> = [{}];
-  for (const [field, property] of Object.entries(schema.properties ?? {})) {
-    const value = valueOf(property);
-    const words = `${field} ${property.description ?? ""}`;
-    const text = value.type === "string" && value.enum === undefined;
-    if (meaning.person !== undefined && text && PERSON.test(field)) {
-      const person = meaning.person;
-      candidates = namings(field, property, person).flatMap((name) =>
-        candidates.map((args) => ({ ...args, [field]: name }))
-      );
-    } else if (meaning.text !== undefined && text && TEXT.test(words)) {
-      candidates = candidates.map((args) => ({ ...args, [field]: meaning.text }));
-    } else if (required.has(field)) {
-      const filled = plain(field, property, meaning);
-      candidates = candidates.map((args) => ({ ...args, [field]: filled }));
-    }
-  }
-  return candidates;
-};
+export const argsFor = (schema: JsonSchema, meaning: Meaning) =>
+  fillObject(schema, meaning, false).values;
 
 /**
  * The innermost object in a tool's result holding `text` in one of its own

@@ -11,8 +11,8 @@
  *   `pnpm typecheck`.
  * - `opens ready`: a colleague opens it through the instance's keyed personas
  *   door and its frame renders content; console errors, and failed calls the
- *   patch's log records during grading against that version (crashes and
- *   timeouts, not a handler's declared refusals), fail it. Desktop
+ *   patch's log records during grading against that version (`failedCalls`:
+ *   any but the refusals a check expected), fail it. Desktop
  *   and phone screenshots are kept for the judges.
  * - The task's own checks, each with fresh browsers as the run's people, and
  *   as their agents through Patchy MCP for the people a check names.
@@ -23,10 +23,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { Browser, Page } from "@playwright/test";
-import { doorAgent, mintAgents } from "./agent.js";
+import { doorAgent, GRADER_AGENT, mintAgents } from "./agent.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { StagedPatch } from "./stage.js";
 import type {
@@ -109,18 +110,55 @@ export const Listed = Schema.Struct({
 });
 export const decodeListed = Schema.decodeUnknownOption(Schema.fromJsonString(Listed));
 
-const LogPage = Schema.Struct({
-  entries: Schema.Array(
-    Schema.Struct({
-      startedAt: Schema.String,
-      version: Schema.NullOr(Schema.Int),
-      handler: Schema.String,
-      outcome: Schema.String,
-      code: Schema.NullOr(Schema.String)
-    })
-  )
+const LogEntry = Schema.Struct({
+  startedAt: Schema.String,
+  version: Schema.NullOr(Schema.Int),
+  handler: Schema.String,
+  outcome: Schema.String,
+  code: Schema.NullOr(Schema.String),
+  viewer: Schema.Struct({ id: Schema.String }),
+  agent: Schema.optionalKey(Schema.NullOr(Schema.Struct({ name: Schema.String })))
 });
+const LogPage = Schema.Struct({ entries: Schema.Array(LogEntry) });
 const decodeLogPage = Schema.decodeUnknownOption(Schema.fromJsonString(LogPage));
+
+/**
+ * The calls a patch's log records during grading, against the graded
+ * version, that count as failed: crashes and timeouts, and declared refusals
+ * except the ones a check expected. Those are a check's own control steps,
+ * by person and handler, and the grader's agent's calls, whose every answer
+ * its check reads itself. A refusal while a page just loads still counts.
+ */
+export const failedCalls = (
+  entries: ReadonlyArray<typeof LogEntry.Type>,
+  grading: {
+    readonly from: string;
+    readonly version: number;
+    readonly expected: ReadonlyArray<ExpectedRefusal>;
+  }
+) =>
+  entries
+    .filter(
+      (entry) =>
+        entry.startedAt >= grading.from &&
+        entry.version === grading.version &&
+        entry.outcome !== "success" &&
+        !(
+          entry.outcome === "handler_error" &&
+          (entry.agent?.name === GRADER_AGENT ||
+            grading.expected.some(
+              (expected) =>
+                expected.person === entry.viewer.id && expected.handler === entry.handler
+            ))
+        )
+    )
+    .map((entry) => `${entry.handler}: ${entry.code ?? entry.outcome}`);
+
+/** A refusal a check provoked and asserted: by whom (their user id), in which handler. */
+export interface ExpectedRefusal {
+  readonly person: string;
+  readonly handler: string;
+}
 
 const served = (patch: (typeof Listed.Type)["patches"][number]): Target | null =>
   patch.state === "live" && patch.currentVersion !== null && patch.publishedAt !== null
@@ -312,6 +350,8 @@ const inBrowser = (input: {
   /** Agent tokens, by person key, for the people checks act as through Patchy MCP. */
   readonly agents: ReadonlyMap<string, string>;
   readonly code: string;
+  /** Where checks note the refusals they provoke and assert. */
+  readonly expected: Array<ExpectedRefusal>;
 }) => {
   // Where it got to, for the error: set from inside the browser code and its callbacks.
   const state = { launched: false, signInRefused: false };
@@ -379,6 +419,9 @@ const inBrowser = (input: {
             people: input.people,
             person,
             code: input.code,
+            expectRefusal: (key, handler) => {
+              input.expected.push({ person: person(key).id, handler });
+            },
             open: async (key, path) => {
               const who = person(key);
               const view = await signedIn(who, path);
@@ -459,6 +502,8 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   readonly door: Door;
   /** The scenario's patches, as published before the builder started. */
   readonly staged: ReadonlyArray<StagedPatch>;
+  /** Where credentials grading makes go, for the scorecard's sanitizer. */
+  readonly secrets: Ref.Ref<ReadonlyArray<string>>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -554,10 +599,12 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   const acting = new Set(input.task.checks.flatMap((check) => check.agents ?? []));
   const agents = yield* mintAgents(
     input.door.apiUrl,
-    input.people.filter((person) => acting.has(person.key))
+    input.people.filter((person) => acting.has(person.key)),
+    (token) => Ref.update(input.secrets, (known) => [...known, token])
   ).pipe(Effect.result);
   if (Result.isFailure(agents)) return unfinished(agents.failure.message, checks, target, source);
   const gradingFrom = DateTime.formatIso(yield* DateTime.now);
+  const expected: Array<ExpectedRefusal> = [];
   const browsed = yield* inBrowser({
     task: input.task,
     target,
@@ -566,13 +613,13 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     door: input.door,
     shots: input.runDir,
     agents: agents.success,
-    code: (yield* Random.next).toString(36).slice(2, 8)
+    code: (yield* Random.next).toString(36).slice(2, 8),
+    expected
   }).pipe(Effect.result);
   if (Result.isFailure(browsed)) return unfinished(browsed.failure.message, checks, target, source);
 
-  // Failed calls during grading, against the graded version; a tier 1 patch has no log. A
-  // declared refusal is the patch's own answer, such as a control step's, not a failure.
-  const failures: Array<string> = [];
+  // Failed calls during grading, against the graded version; a tier 1 patch has no log.
+  let failures: ReadonlyArray<string> = [];
   if (target.tier === 2) {
     const logged = yield* runSandboxed(
       input.spec,
@@ -583,13 +630,11 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     const page = decodeLogPage(logged.stdout);
     if (logged.exitCode !== 0 || Option.isNone(page))
       return unfinished("The patch's log couldn't be read.", checks, target, source);
-    for (const entry of page.value.entries)
-      if (
-        entry.startedAt >= gradingFrom &&
-        entry.version === target.version &&
-        entry.outcome !== "handler_error"
-      )
-        failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
+    failures = failedCalls(page.value.entries, {
+      from: gradingFrom,
+      version: target.version,
+      expected
+    });
   }
   const { unready, browserErrors, results, screenshots } = browsed.success;
   const problems = [

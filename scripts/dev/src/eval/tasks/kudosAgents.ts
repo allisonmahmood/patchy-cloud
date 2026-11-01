@@ -1,19 +1,18 @@
-import { argsFor, entryWith, findTool, mentions } from "../agent.js";
+import { argsFor, entryWith, findTool, mentions, type ToolWords } from "../agent.js";
 import type { Agent, AgentCall, AgentTool, CheckContext, RunPerson, Task } from "../task.js";
 import { around, shows } from "./page.js";
 
-/** Most telling first: a tool named for giving or listing kudos, then for giving or listing, then kudos. */
-export const GIVE = [
-  /(give|send|thank|shout|praise)\w*kudo|kudo\w*(give|send)/i,
-  /^(give|send|thank|shout|praise)/i,
-  /kudo/i,
-  /add|create/i
-];
-export const LIST = [
-  /(list|recent|wall|feed)\w*kudo|kudo\w*(list|recent|wall|feed)/i,
-  /^(list|recent|wall|feed)/i,
-  /kudo/i
-];
+/** The tools to give and to list kudos: kudos first, then the verb; never reactions, nor a people lookup to list. */
+export const GIVE: ToolWords = {
+  about: /kudo/i,
+  does: /give|send|thank|shout|praise|add|create/i,
+  not: /react|emoji/i
+};
+export const LIST: ToolWords = {
+  about: /kudo/i,
+  does: /list|recent|wall|feed|get|read|all/i,
+  not: /react|emoji|people|person|colleague|member|user|director/i
+};
 
 /**
  * Gives `to` a kudo saying `words` through `give`, naming them each way its

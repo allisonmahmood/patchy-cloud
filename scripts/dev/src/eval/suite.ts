@@ -168,7 +168,8 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     people: identities.people,
     publisher: identities.publisher,
     door: { apiUrl: suite.apiUrl, key: suite.doorKey },
-    staged
+    staged,
+    secrets: suite.seen
   }).pipe(Effect.provideContext(suite.database));
   // The grader's own trouble gets one more try before the run counts as infrastructure.
   const first = yield* grading;

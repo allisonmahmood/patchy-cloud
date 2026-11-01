@@ -83,6 +83,12 @@ export interface CheckContext {
   readonly open: (person: string, path?: string) => Promise<Opened>;
   /** `person`'s agent, for a person the check names in its `agents`. */
   readonly agent: (person: string) => Agent;
+  /**
+   * Notes a refusal the check provoked and asserts itself, such as a member
+   * trying an admin's decision: `person`'s declared refusals in `handler` then
+   * don't fail `opens ready`. Any other refusal during grading does.
+   */
+  readonly expectRefusal: (person: string, handler: string) => void;
 }
 
 export type CheckOutcome =
