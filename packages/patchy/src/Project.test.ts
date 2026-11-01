@@ -96,6 +96,24 @@ it.layer(NodeServices.layer)("Project.syncDescription", (it) => {
     })
   );
 
+  it.effect("records a newer stamp over the same text without a notice", () =>
+    Effect.gen(function* () {
+      const { repo, warnings, saved } = yield* sync(
+        { description: "Same text", descriptionSyncedAt: stamp(14) },
+        { description: "Same text", descriptionUpdatedAt: stamp(15) }
+      );
+      assert.deepStrictEqual(warnings, []);
+      assert.deepStrictEqual(saved, {
+        instance: apiUrl,
+        patch: patchId,
+        description: "Same text",
+        descriptionSyncedAt: stamp(15),
+        custom: { keep: true }
+      });
+      assert.strictEqual(repo.descriptionSyncedAt, stamp(15));
+    })
+  );
+
   it.effect("keeps a local edit while the cloud stamp is the same, older or absent", () =>
     Effect.gen(function* () {
       for (const descriptionUpdatedAt of [stamp(15), stamp(14), null]) {

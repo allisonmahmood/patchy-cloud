@@ -150,7 +150,7 @@ descriptions live in `patchy.config.ts`.
 At refresh, new dev starts and fresh publish, a newer cloud description stamp
 pulls that text into `patchy.json`, recording `descriptionSyncedAt`. Relay the
 "The description was changed in the portal to '…'; check it" notice and check
-the text; it quotes replaced local text when different. A local edit leaves
+the text; it quotes the replaced local text. A local edit leaves
 the stamp unchanged. Publish sends the pulled text and records the returned stamp.
 Repo publish requires a nonempty description of at most 500 normalized Unicode
 code points. Use `pnpm patchy describe "<text>"` to update both cloud and repo
