@@ -201,14 +201,21 @@ const redactJson = (
   }
   if (Array.isArray(value)) return value.map((item) => redactJson(secrets, item, matched));
   // Keys too: a dictionary built from what a command printed can hold a secret in its keys.
-  if (typeof value === "object" && value !== null)
+  // Two keys can redact alike, or match one already there, so a taken name gets a number:
+  // every entry survives, never overwritten.
+  if (typeof value === "object" && value !== null) {
+    const taken = new Set<string>();
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => {
         const redacted = redactText(secrets, key);
         for (const source of redacted.matched) matched.add(source);
-        return [redacted.text, redactJson(secrets, item, matched)];
+        let name = redacted.text;
+        for (let n = 2; taken.has(name); n++) name = `${redacted.text} ${n}`;
+        taken.add(name);
+        return [name, redactJson(secrets, item, matched)];
       })
     );
+  }
   return value;
 };
 

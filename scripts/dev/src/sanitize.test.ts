@@ -85,6 +85,13 @@ describe("redactText", () => {
         refusals: { "s3cret-value": 1, stale_generated: 2 }
       });
       assert.deepStrictEqual(redacted, { refusals: { "[redacted]": 1, stale_generated: 2 } });
+      // Keys that redact alike, or meet a placeholder already there, keep every entry.
+      const collided = yield* sanitizer.redactJson({
+        "[redacted]": 1,
+        "pp_AbC123-_xyzDEF456": 2,
+        "pp_ZyX987-_abcGHI654": 3
+      });
+      assert.deepStrictEqual(collided, { "[redacted]": 1, "[redacted] 2": 2, "[redacted] 3": 3 });
     }).pipe(Effect.provide(NodeServices.layer))
   );
 
