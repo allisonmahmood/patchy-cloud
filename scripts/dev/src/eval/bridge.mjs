@@ -4,9 +4,14 @@
 // loopback at the instance's port, IPv4 and IPv6 (`*.localhost` resolves to both),
 // and at 3128 for the proxy, and joins each connection to the matching Unix socket
 // the runner mounted at /run/eval: the instance, or the proxy that allows only the
-// public internet. Then it runs the command, stdio and all, and exits as it exits.
+// public internet. Then it runs the command and exits as it exits. The command
+// writes its output to files rather than the runner's pipes, and this hands each
+// on as it grows: a builder's own tools can make an inherited pipe non-blocking,
+// and a write that finds it full then kills the builder (`failed printing to
+// stdout`, os error 11); a file is never full.
 // Plain JavaScript on purpose: it runs on the sandbox's Node before anything else.
 import { spawn } from "node:child_process";
+import { closeSync, openSync, readSync, unlinkSync } from "node:fs";
 import net from "node:net";
 
 const [, , port, separator, command, ...args] = process.argv;
@@ -39,10 +44,46 @@ const servers = await Promise.all([
 ]);
 for (const server of servers) server.unref();
 
-const child = spawn(command, args, { stdio: "inherit" });
+/**
+ * One of the command's output streams: a file in the sandbox's private /tmp,
+ * unlinked once open so nothing else finds it, that the command writes to and
+ * this reads as it grows and hands on to `to`.
+ */
+const relay = (name, to) => {
+  const path = `/tmp/.eval-${name}-${process.pid}`;
+  const write = openSync(path, "w");
+  const read = openSync(path, "r");
+  unlinkSync(path);
+  const buffer = Buffer.alloc(1 << 16);
+  const drain = () => {
+    for (let n = readSync(read, buffer); n > 0; n = readSync(read, buffer))
+      to.write(Buffer.from(buffer.subarray(0, n)));
+  };
+  const timer = setInterval(drain, 25);
+  return {
+    fd: write,
+    finish: () => {
+      clearInterval(timer);
+      drain();
+    }
+  };
+};
+
+const stdout = relay("stdout", process.stdout);
+const stderr = relay("stderr", process.stderr);
+const child = spawn(command, args, { stdio: ["inherit", stdout.fd, stderr.fd] });
+closeSync(stdout.fd);
+closeSync(stderr.fd);
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => child.kill(signal));
 child.on("error", (error) => {
   process.stderr.write(`bridge: ${command}: ${error.message}\n`);
   process.exit(127);
 });
-child.on("exit", (code, signal) => process.exit(code ?? (signal === null ? 1 : 128)));
+// Exiting ends everything the command left running, as the sandbox's first
+// process; first, whatever it wrote last is handed on.
+child.on("exit", (code, signal) => {
+  stdout.finish();
+  stderr.finish();
+  const status = code ?? (signal === null ? 1 : 128);
+  process.stdout.write("", () => process.stderr.write("", () => process.exit(status)));
+});

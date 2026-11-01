@@ -39,9 +39,12 @@ export const RunRecord = Schema.Struct({
 });
 export type RunRecord = typeof RunRecord.Type;
 
-/** Provider and transport failures: the run never got a fair go, so it is infrastructure. */
+/**
+ * Provider and transport failures, and a harness that couldn't write its own
+ * output: the run never got a fair go, so it is infrastructure.
+ */
 const PROVIDER =
-  /rate.?limit|overloaded|\b5\d\d\b|\b429\b|\b401\b|unauthori[sz]ed|authenticat|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|stream disconnected|network error|API Error|credit balance|quota/i;
+  /rate.?limit|overloaded|\b5\d\d\b|\b429\b|\b401\b|unauthori[sz]ed|authenticat|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|stream disconnected|network error|API Error|credit balance|quota|failed printing to std(?:out|err)|os error 11\b/i;
 
 export const classify = (
   log: BuilderLog,
