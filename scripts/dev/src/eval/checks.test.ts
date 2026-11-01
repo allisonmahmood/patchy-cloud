@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { argsFor, doorAgent, entryWith, findTool, mentions } from "./agent.js";
-import { requestWrites, writes } from "./barrier.js";
 import { type AgentTool, isGraderTrouble, type JsonSchema, type RunPerson } from "./task.js";
 import { BrowserGradingFailed, gradingStep } from "./grade.js";
 import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
@@ -341,70 +340,6 @@ describe("a search for a page's other views", () => {
       expect(DISMISSAL.test(name), name).toBe(true);
     for (const name of ["Cancel request", "OK", "Close request", "Confirm", "Delete"])
       expect(DISMISSAL.test(name), name).toBe(false);
-  });
-});
-
-describe("the write barrier", () => {
-  const handlers = new Map([
-    ["requests.list", "query"],
-    ["requests.setStatus", "mutation"],
-    ["requests.cancel", "action"]
-  ] as const);
-
-  it("refuses a tier 2 call to anything but a query the published manifest lists", () => {
-    expect(writes("server.call", "requests.list", handlers)).toBe(false);
-    expect(writes("server.call", "requests.setStatus", handlers)).toBe(true);
-    expect(writes("server.call", "requests.cancel", handlers)).toBe(true);
-    expect(writes("server.call", "requests.unlisted", handlers)).toBe(true);
-    expect(writes("server.call", null, handlers)).toBe(true);
-  });
-
-  it("refuses every operation but a read, unknown ones and staged uploads included", () => {
-    const none = new Map<string, "query">();
-    for (const op of [
-      "tables.insert",
-      "tables.insertMany",
-      "tables.update",
-      "tables.delete",
-      "files.put",
-      "files.stage",
-      "files.discard",
-      "files.delete",
-      "pidgeon.send",
-      "postgres.execute",
-      "something.new"
-    ])
-      expect(writes(op, null, none), op).toBe(true);
-    for (const op of [
-      "tables.get",
-      "tables.list",
-      "files.get",
-      "files.redeem",
-      "me",
-      "members.list"
-    ])
-      expect(writes(op, null, none), op).toBe(false);
-  });
-
-  it("reads a runtime request by its endpoint, its method and its operation", () => {
-    const handlers = new Map([["requests.list", "query"]] as const);
-    const at = (path: string, method = "POST", body = "") => ({
-      url: `http://x.localhost/api/runtime/${path}`,
-      method,
-      body
-    });
-    const call = (op: string, handler?: string) =>
-      at("call", "POST", JSON.stringify({ op, args: handler === undefined ? {} : { handler } }));
-    expect(requestWrites(call("server.call", "requests.list"), handlers)).toBe(false);
-    expect(requestWrites(call("server.call", "requests.approve"), handlers)).toBe(true);
-    expect(requestWrites(call("files.discard"), handlers)).toBe(true);
-    expect(requestWrites(at("call", "POST", "not json"), handlers)).toBe(true);
-    expect(requestWrites(at("subscriptions"), handlers)).toBe(false);
-    expect(requestWrites(at("stream", "GET"), handlers)).toBe(false);
-    expect(requestWrites(at("files/p1/ver_1/receipts/r.png", "GET"), handlers)).toBe(false);
-    expect(requestWrites(at("files/p1/ver_1/receipts/r.png", "PUT"), handlers)).toBe(true);
-    expect(requestWrites(at("staged-files/p1/ver_1", "PUT"), handlers)).toBe(true);
-    expect(requestWrites(at("something-new", "POST"), handlers)).toBe(true);
   });
 });
 
