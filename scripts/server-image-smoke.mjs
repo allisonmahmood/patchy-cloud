@@ -1,5 +1,5 @@
 // The built server image, run as production runs it: on Bun, hosts as uid 1000 and the
-// exec supervisor as root. CI's `image` job runs this after building the image; it needs
+// exec supervisor as root. CI's `server-image` job runs this after building the image; it needs
 // Docker, openssl and `pnpm install`. The tier 1 and tier 2 journeys run on the same Bun in
 // the browser, cli-smoke and tier2-smoke jobs; this checks what only the image shows:
 //
