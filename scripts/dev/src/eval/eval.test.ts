@@ -172,11 +172,15 @@ describe("the sandbox's bridge", () => {
         const ran = yield* sandboxed(
           ctx,
           "/usr/bin/sh",
-          ["-c", "(while :; do head -c 65536 /dev/zero; sleep 0.025; done) & sleep 0.15"],
+          [
+            "-c",
+            // The logger writes a backlog, says so, then keeps writing; the builder exits once it has.
+            "(head -c 262144 /dev/zero; touch /tmp/ready; while :; do head -c 65536 /dev/zero; sleep 0.025; done) & until [ -e /tmp/ready ]; do sleep 0.01; done"
+          ],
           { lateBy: "0 millis", perChunk: "100 millis" }
         ).pipe(Effect.timeout("20 seconds"));
         expect(ran.exitCode).toBe(0);
-        expect(ran.bytes).toBeGreaterThan(0);
+        expect(ran.bytes).toBeGreaterThanOrEqual(262_144);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     30_000
   );
