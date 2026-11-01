@@ -16,7 +16,8 @@ Import components, hooks and signals from `patchy/preact`. Never import `react`,
 instance with compat already loaded, including through its JSX runtimes.
 Keep `jsx: "react-jsx"` and `jsxImportSource: "patchy/preact"` in tsconfig and
 `oxc.jsx.importSource: "patchy/preact"` in Vite. `react-jsx` is the compiler
-setting, not a React dependency.
+setting, not a React dependency. Keyboard shortcuts come from `patchy/hotkeys`;
+read `../patchy-hotkeys/SKILL.md` for them.
 
 In the tier 1 and tier 2 Preact scaffolds, `src/main.tsx` mounts `src/App.tsx` into
 the empty HTML root. Import the generated client by relative path, for example from `src/App.tsx`:

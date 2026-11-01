@@ -24,6 +24,9 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
   on a Mac and Ctrl elsewhere, and is how a chord writes either. Modifiers come in the
   order Mod, Alt, Shift. A letter matches either case and never implies Shift: `"g"` and
   `"G"` are the same key.
+- A chord's modifiers match exactly: an extra one held stops it. `"ArrowLeft"` doesn't fire
+  with Shift or Alt held, and `"J"` doesn't fire on Shift+J. The Shift a symbol takes to
+  type, as for `"?"`, isn't extra.
 - Patchy keeps `"Mod+Shift+K"` for its own shortcuts. The type checker refuses it, and one
   that arrives through a cast is skipped with a console warning.
 - A sequence is chords separated by single spaces: `"G H"`, `"C T"`. Each step must follow
@@ -31,6 +34,8 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
   a sequence, so `"G"` beside `"G H"` fires on every `G H`.
 - The type checker refuses a string that isn't a hotkey, naming the step to fix and what to
   write. A hotkey built from data needs the `Chord` type: `const keys: Chord[] = ["1", "2"]`.
+  A table of bindings is `HotkeyBinding<Chord>[]`. `Chord` is one chord, so a table with
+  sequences names them: `HotkeyBinding<Chord | "G H" | "G T">[]`.
 - `useHotkeys([{ hotkey, run, label }, …])` registers a list in one call, for lists that
   change length.
 - Two enabled hotkeys with the same keys in one scope both fire, and the console warns once,
@@ -58,11 +63,16 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 
 ## When it fires
 
-- While the component that registered it is mounted and `enabled` isn't false.
+- While the component that registered it is mounted and `enabled` isn't false. A disabled
+  hotkey also leaves `useHotkeyList` and the sheet, so tying `enabled` to a button's state
+  makes its row come and go. To keep it listed, check the condition in `run` instead.
 - Patchy focuses the page when it opens. If the viewer clicks Patchy's own bar or a download
   card, keys go there until they click back into the page.
 - While the viewer types in a text field, single keys, Shift chords and Alt chords wait; Mod
-  chords and Escape fire. Checkboxes, radios and ranges aren't text fields: single keys fire
+  chords and Escape fire. A text field is a text `<input>` or `<textarea>` that isn't
+  read-only, a `<select>`, a contenteditable element, or an element with `role="textbox"` or
+  `role="searchbox"`. A read-only input isn't a text field, but it keeps its arrow keys for
+  moving the caret. Checkboxes, radios and ranges aren't text fields: single keys fire
   there, and the control keeps Space and the arrow keys. A focused button keeps Enter and
   Space, and a focused link keeps Enter.
 - `whileTyping: true` fires in text fields and on a focused control's own keys, so a button's
@@ -73,6 +83,11 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 - A hotkey that fires stops the browser's own action for those keys, so a `whileTyping: true`
   letter isn't typed. Keys the browser keeps, such as Mod+T, Mod+W, Mod+N and Mod+L, never
   reach the page.
+- Hotkeys listen on the document, in the bubble phase, and one that fires stops the key's
+  propagation there: bubble-phase `window` listeners never see it. Listeners that already
+  ran, such as a field's own `onKeyDown` or a `window` capture listener, and other document
+  listeners still do. A field that stops a key's propagation keeps every hotkey from
+  seeing it.
 - Holding a chord fires it again with each key repeat; `repeat: false` fires it once per
   press. `repeat` only matters for a chord that can be held: a sequence fires once per
   completion.
@@ -118,6 +133,44 @@ nowhere.
 The scope already holds the page's hotkeys back, so leave them enabled while a dialog is
 open. `useHotkeyList` lists only enabled hotkeys, so a page hotkey disabled for the dialog
 also drops off a shortcuts sheet.
+
+A held hotkey doesn't block its keys, so the browser acts on them: with a dialog open,
+Ctrl+K reaches the browser's address bar. A hotkey registered inside the scope keeps its
+keys from the browser.
+
+### Native `<dialog>`
+
+A `<dialog>` opened with `showModal()` closes itself on Escape and fires `cancel`. A live
+Escape hotkey prevents that: it takes the key, the dialog gets no `cancel` and stays open.
+Wrap the dialog in a `HotkeyScope`, so the page's own Escape is held back, and close it one
+way:
+
+- Register no Escape inside, and close from `onCancel`, as `HotkeySheet` does.
+- Or register Escape inside, and close from its `run`.
+
+```tsx
+function Dialog(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return (
+    <HotkeyScope>
+      <dialog ref={dialog} aria-label="New task" onCancel={props.close}>
+        <button type="button" onClick={props.close}>
+          Close
+        </button>
+      </dialog>
+    </HotkeyScope>
+  );
+}
+```
+
+The open state is the parent's: the dialog opens as it mounts and closes as it unmounts,
+which returns focus to where it was. Opening and closing in a layout effect keeps focus
+returning; a passive effect's cleanup runs after the dialog has left the page.
 
 ## The shortcuts sheet
 

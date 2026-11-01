@@ -10,7 +10,7 @@ afterEach(() => {
 const on = (platform: string) => vi.stubGlobal("navigator", { platform, userAgent: "" });
 
 it("accepts chords, sequences, data-built chords and a sheet against the published types", () => {
-  const source = `import { HotkeySheet, useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
+  const source = `import { HotkeySheet, useHotkey, useHotkeys, type Chord, type HotkeyBinding } from "patchy/hotkeys";
 const run = () => {};
 useHotkey("Mod+K", run);
 useHotkey("?", run);
@@ -24,6 +24,8 @@ useHotkey("Alt+ArrowUp", run);
 const digits: Chord[] = ["1", "2"];
 useHotkeys(digits.map((hotkey) => ({ hotkey, run })));
 for (const hotkey of digits) useHotkey(hotkey, run);
+const table: HotkeyBinding<Chord | "G H">[] = [{ hotkey: "Mod+K", run }, { hotkey: "G H", run }];
+useHotkeys(table);
 HotkeySheet({});
 HotkeySheet({ title: "Tracker shortcuts", hotkey: "Mod+/" });
 `;
