@@ -13,9 +13,7 @@ import {
   decisionShown,
   fillRest,
   formAround,
-  observe,
   reveal,
-  sent,
   servesFile,
   type ViewMemo
 } from "./page.js";
@@ -44,31 +42,36 @@ const REASON = /reason|description|purpose|what|details|note|title|why|memo|just
  */
 const ask = async (view: Opened, reason: string, marker: string, memo: ViewMemo) => {
   const { frame, page } = view;
-  let amount = await chooseField(frame, AMOUNT);
-  if (amount === undefined) {
-    const opener = frame.getByRole("button", { name: /new|request|submit|add|create|\+/i });
-    if ((await opener.count()) === 0) return "found no amount to fill in or button to start one";
-    await opener.first().click();
-    await page.waitForTimeout(1_000);
-    amount = await chooseField(frame, AMOUNT);
-  }
-  if (amount === undefined) return "found no amount to fill in";
-  await amount.fill("42");
-  const words = await chooseField(frame, REASON);
-  if (words === undefined) return "found no field for the reason";
-  await words.fill(reason);
-  const file = frame.locator('input[type="file"]');
-  if ((await file.count()) === 0) return "found no way to attach a receipt";
-  await file.first().setInputFiles({
-    name: "receipt.png",
-    mimeType: "image/png",
-    buffer: receipt(marker)
+  // Asking is deliberate, from opening the form to sending it: its writes reach Patchy, and
+  // the barrier is up again only once they've been answered.
+  const refused = await view.barrier.deliberately(async () => {
+    let amount = await chooseField(frame, AMOUNT);
+    if (amount === undefined) {
+      const opener = frame.getByRole("button", { name: /new|request|submit|add|create|\+/i });
+      if ((await opener.count()) === 0) return "found no amount to fill in or button to start one";
+      await opener.first().click();
+      await page.waitForTimeout(1_000);
+      amount = await chooseField(frame, AMOUNT);
+    }
+    if (amount === undefined) return "found no amount to fill in";
+    await amount.fill("42");
+    const words = await chooseField(frame, REASON);
+    if (words === undefined) return "found no field for the reason";
+    await words.fill(reason);
+    const file = frame.locator('input[type="file"]');
+    if ((await file.count()) === 0) return "found no way to attach a receipt";
+    await file.first().setInputFiles({
+      name: "receipt.png",
+      mimeType: "image/png",
+      buffer: receipt(marker)
+    });
+    const form = await formAround(frame);
+    if (form === undefined) return "found no button to send the request";
+    await fillRest(form.scope);
+    await form.send.click();
+    return null;
   });
-  const form = await formAround(frame);
-  if (form === undefined) return "found no button to send the request";
-  await fillRest(form.scope);
-  // Sending is deliberate: its writes reach Patchy before anything only looks again.
-  await sent(view, () => form.send.click());
+  if (refused !== null) return refused;
   // Whoever asked sees their request; one that never shows up wasn't sent, whatever the page did.
   return (await reveal(view, reason, memo))
     ? null
@@ -96,21 +99,19 @@ const adaOpensReceipt = async (ada: Opened, reason: string, marker: string, memo
     // From a fresh load, so a preview the page fetches as it renders is seen too.
     await ada.page.reload();
     if (!(await reveal(ada, reason, memo))) return;
-    // Opening the request and its receipt only looks: a "Remove receipt" can't write.
-    await observe(ada, async () => {
-      await ada.frame.getByText(reason).first().click();
-      await ada.page.waitForTimeout(2_000);
-      for (const role of ["link", "button"] as const) {
-        const controls = ada.frame.getByRole(role, { name: RECEIPT_CONTROL });
-        for (const control of await around(ada.frame, reason, { has: controls })
-          .getByRole(role, { name: RECEIPT_CONTROL })
-          .all())
-          if (await control.isVisible().catch(() => false)) {
-            await control.click({ timeout: 5_000 }).catch(() => undefined);
-            await ada.page.waitForTimeout(2_000);
-          }
-      }
-    });
+    // Opening the request and its receipt only looks, behind the barrier: a "Remove receipt" can't write.
+    await ada.frame.getByText(reason).first().click();
+    await ada.page.waitForTimeout(2_000);
+    for (const role of ["link", "button"] as const) {
+      const controls = ada.frame.getByRole(role, { name: RECEIPT_CONTROL });
+      for (const control of await around(ada.frame, reason, { has: controls })
+        .getByRole(role, { name: RECEIPT_CONTROL })
+        .all())
+        if (await control.isVisible().catch(() => false)) {
+          await control.click({ timeout: 5_000 }).catch(() => undefined);
+          await ada.page.waitForTimeout(2_000);
+        }
+    }
   });
 
 const DECIDED = { approve: "approved", reject: "rejected" } as const;

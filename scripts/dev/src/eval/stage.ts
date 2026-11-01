@@ -113,7 +113,8 @@ const loadSamples = (door: Door, person: RunPerson, addresses: ReadonlyArray<str
       const browser = await chromium.launch();
       try {
         for (const address of addresses) {
-          const opened = await openAs(browser, door, person, address);
+          // Setup writes on purpose: no barrier.
+          const opened = await openAs(browser, door, person, address, undefined);
           if (!opened.signedIn) throw new Error("the instance wouldn't sign the publisher in");
           try {
             if (opened.broke !== null) throw new Error(opened.broke);

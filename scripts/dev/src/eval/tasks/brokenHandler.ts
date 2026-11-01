@@ -95,12 +95,14 @@ export default {
         const who = ben.frame.getByLabel(/who/i).first();
         if ((await field.count()) === 0 || (await who.count()) === 0)
           return { ok: false, reason: "Ben found no form to lend kit with." };
-        const envelope = await envelopeOf(ben, async () => {
-          await field.fill(item);
-          await who.selectOption({ label: ctx.person("cleo").name });
-          await ben.frame.getByRole("button", { name: /lend/i }).first().click();
-          await ben.page.waitForTimeout(2_000);
-        });
+        // Lending is deliberate: it reaches Patchy, and the barrier is up again once it's answered.
+        const envelope = await ben.barrier.deliberately(() =>
+          envelopeOf(ben, async () => {
+            await field.fill(item);
+            await who.selectOption({ label: ctx.person("cleo").name });
+            await ben.frame.getByRole("button", { name: /lend/i }).first().click();
+          })
+        );
         await ben.close();
         const ada = await ctx.open("ada");
         if (!(await shows(ada, item)))

@@ -14,7 +14,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ElementHandle, FrameLocator, Locator, Route } from "@playwright/test";
-import { GraderTrouble, type HandlerKind, type Opened, type RunPerson } from "../task.js";
+import { GraderTrouble, type Opened, type RunPerson } from "../task.js";
 
 const POLL_MS = 500;
 
@@ -298,47 +298,46 @@ const viewFor = async (view: Opened, name: string) => {
  * view toggles, found as a person would look: the controls that are views by
  * their role or state (`isViewControl`), All first, one at a time, from
  * wherever the last left the page. It can miss a list only an unusual
- * control shows; that's a visible failure. The whole search runs behind a
- * write barrier (`observe`), so whatever a control's name says or turns
- * into, no press of it changes data: a press that tries to write is refused,
- * isn't counted as a view, and the search moves on. A dialog it can't close
+ * control shows; that's a visible failure. It only looks, behind the page's
+ * write barrier, so whatever a control's name says or turns into, no press
+ * of it changes data: a press that tries to write is refused, isn't counted
+ * as a view, and the search moves on. A dialog it can't close
  * through its own dismissal ends the search. With `memo`, a view it found
  * the text under before is pressed first, one click, and the view it finds
  * is remembered.
  */
-export const reveal = async (view: Opened, text: string, memo?: ViewMemo) =>
-  observe(view, async (refused) => {
-    /** A press, and "wrote" when it tried to write: refused, and not a view to count. */
-    const tryView = async (chosen: Parameters<typeof press>[1]) => {
-      const before = refused();
-      const pressed = await press(view, chosen);
-      return refused() > before ? ("wrote" as const) : pressed;
-    };
-    await settle(view);
-    if (await shows(view, text, 1_000)) return true;
-    if (memo?.via !== undefined) {
-      const remembered = await viewFor(view, memo.via);
-      const pressed = remembered === undefined ? "skipped" : await tryView(remembered);
-      if (pressed === "stuck") return false;
-      if (pressed === "pressed" && (await shows(view, text, 1_000))) return true;
+export const reveal = async (view: Opened, text: string, memo?: ViewMemo) => {
+  /** A press, and "wrote" when it tried to write: refused, and not a view to count. */
+  const tryView = async (chosen: Parameters<typeof press>[1]) => {
+    const before = view.barrier.refused();
+    const pressed = await press(view, chosen);
+    return view.barrier.refused() > before ? ("wrote" as const) : pressed;
+  };
+  await settle(view);
+  if (await shows(view, text, 1_000)) return true;
+  if (memo?.via !== undefined) {
+    const remembered = await viewFor(view, memo.via);
+    const pressed = remembered === undefined ? "skipped" : await tryView(remembered);
+    if (pressed === "stuck") return false;
+    if (pressed === "pressed" && (await shows(view, text, 1_000))) return true;
+  }
+  const tried = new Set<string>();
+  for (let tries = 0; tries < MAX_TRIES; tries++) {
+    const controls = await controlsOf(view);
+    const next = viewCandidates(controls.map(({ control }) => control))
+      .map((index) => controls[index]!)
+      .find(({ control }) => !tried.has(named(control.name)));
+    if (next === undefined) break;
+    tried.add(named(next.control.name));
+    const pressed = await tryView(next);
+    if (pressed === "stuck") return false;
+    if (pressed === "pressed" && (await shows(view, text, 1_000))) {
+      if (memo !== undefined) memo.via = named(next.control.name);
+      return true;
     }
-    const tried = new Set<string>();
-    for (let tries = 0; tries < MAX_TRIES; tries++) {
-      const controls = await controlsOf(view);
-      const next = viewCandidates(controls.map(({ control }) => control))
-        .map((index) => controls[index]!)
-        .find(({ control }) => !tried.has(named(control.name)));
-      if (next === undefined) break;
-      tried.add(named(next.control.name));
-      const pressed = await tryView(next);
-      if (pressed === "stuck") return false;
-      if (pressed === "pressed" && (await shows(view, text, 1_000))) {
-        if (memo !== undefined) memo.via = named(next.control.name);
-        return true;
-      }
-    }
-    return false;
-  });
+  }
+  return false;
+};
 
 /** Everything the patch's frame shows, as visible text. */
 export const visibleText = (view: Opened) => view.frame.locator("body").innerText();
@@ -502,117 +501,6 @@ const RuntimeReply = Schema.Struct({
   code: Schema.optionalKey(Schema.String)
 });
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(RuntimeReply));
-
-const SENT_CAP_MS = 30_000;
-
-/**
- * Runs `act`, a deliberate press such as sending a form, then waits until
- * every call it sent Patchy has been answered (and nothing new for half a
- * second; at most 30 s), so a write barrier raised afterwards can't catch
- * the press's own writes.
- */
-export const sent = async (view: Opened, act: () => Promise<void>) => {
-  const pending = new Set<unknown>();
-  const counts = (request: { url: () => string; method: () => string }) =>
-    request.url().includes("/api/runtime/") && request.method() !== "GET";
-  const started = (request: { url: () => string; method: () => string }) => {
-    if (counts(request)) pending.add(request);
-  };
-  const ended = (request: unknown) => {
-    pending.delete(request);
-  };
-  view.page.on("request", started);
-  view.page.on("requestfinished", ended);
-  view.page.on("requestfailed", ended);
-  try {
-    await act();
-    for (let waited = 0, quiet = 0; waited < SENT_CAP_MS && quiet < 500; waited += 100) {
-      await view.page.waitForTimeout(100);
-      quiet = pending.size === 0 ? quiet + 100 : 0;
-    }
-  } finally {
-    view.page.off("request", started);
-    view.page.off("requestfinished", ended);
-    view.page.off("requestfailed", ended);
-  }
-};
-
-/** The runtime operations that write a patch's tables or files, uploads included. */
-const WRITE_OPS = new Set([
-  "tables.insert",
-  "tables.insertMany",
-  "tables.update",
-  "tables.delete",
-  "files.put",
-  "files.stage",
-  "files.delete"
-]);
-
-/**
- * Whether a call a page sends would change data: a table or file write, or a
- * server call to a handler its published manifest doesn't list as a query,
- * including one it doesn't list at all.
- */
-export const writes = (
-  op: string,
-  handler: string | null,
-  handlers: ReadonlyMap<string, HandlerKind>
-) =>
-  op === "server.call" ? handler === null || handlers.get(handler) !== "query" : WRITE_OPS.has(op);
-
-const REFUSAL = JSON.stringify({
-  ok: false,
-  source: "patchy",
-  code: "access_denied",
-  error: "The grader refused a write while it was only looking."
-});
-
-/**
- * Runs `look` behind a write barrier, so whatever it presses can't change
- * data: every write the page attempts meanwhile (`writes`, or sending a file)
- * is refused before it reaches Patchy, and what the page logs after a
- * refusal is excused, since the grader caused it. Reads go through, and so
- * does nothing the grader can't read: the barrier fails closed. `look` gets
- * the count of refusals so far, to tell which of its presses tried a write.
- */
-export const observe = async <T>(view: Opened, look: (refused: () => number) => Promise<T>) => {
-  let refused = 0;
-  const refuse = async (route: Route) => {
-    refused++;
-    view.excuse(true);
-    await route
-      .fulfill({ status: 403, contentType: "application/json", body: REFUSAL })
-      .catch(() => undefined);
-  };
-  const calls = async (route: Route) => {
-    const call = decodeCall(route.request().postData() ?? "");
-    if (Option.isNone(call)) return refuse(route);
-    const { op, args } = call.value;
-    const handler =
-      op === "server.call"
-        ? Option.getOrNull(Option.map(decodeServerArgs(args), (each) => each.handler))
-        : null;
-    if (writes(op, handler, view.handlers)) return refuse(route);
-    await route.fallback();
-  };
-  const files = async (route: Route) =>
-    route.request().method() === "GET" ? route.fallback() : refuse(route);
-  await view.page.route("**/api/runtime/call", calls);
-  await view.page.route("**/api/runtime/files/**", files);
-  await view.page.route("**/api/runtime/staged-files/**", files);
-  try {
-    return await look(() => refused);
-  } finally {
-    await view.page.unroute("**/api/runtime/call", calls);
-    await view.page.unroute("**/api/runtime/files/**", files);
-    await view.page.unroute("**/api/runtime/staged-files/**", files);
-    if (refused > 0) {
-      // What the page logs of the last refusal can come a moment later.
-      await view.page.waitForTimeout(500);
-      view.excuse(false);
-    }
-  }
-};
 
 /** Where and how a page reaches Patchy: enough to call it again as anyone signed in. */
 export interface Envelope {
@@ -801,82 +689,96 @@ export const decide = async (
     const buttons = part.getByRole("button", { name });
     return (await part.count()) > 0 && (await buttons.count()) === 1 ? buttons : undefined;
   };
-  // Finding the button, and writing why, only look: nothing may write until the decision itself.
-  const button = await observe(view, async () => {
-    let found = await own();
-    if (found === undefined) {
-      await frame.getByText(text).first().click();
-      await page.waitForTimeout(1_000);
-      found = await own();
-    }
-    if (found === undefined || !(await found.isVisible()) || !(await found.isEnabled()))
-      return undefined;
-    // A person deciding writes why where the request asks, such as a note a rejection needs.
-    await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
-    return found;
-  });
-  if (button === undefined) return null;
-  const held: Array<{ readonly route: Route; readonly at: number }> = [];
-  if (watch !== undefined)
-    await page.route("**/api/runtime/call", async (route) => {
+  // Finding the button, and writing why, only look, behind the barrier: nothing writes before the decision.
+  let button = await own();
+  if (button === undefined) {
+    await frame.getByText(text).first().click();
+    await page.waitForTimeout(1_000);
+    button = await own();
+  }
+  if (button === undefined || !(await button.isVisible()) || !(await button.isEnabled()))
+    return null;
+  // A person deciding writes why where the request asks, such as a note a rejection needs.
+  await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
+  const pressing = button;
+  // The decision is deliberate: the barrier is down for the press and its calls, and up again after.
+  return view.barrier.deliberately(async () => {
+    const held: Array<{ readonly route: Route; readonly at: number }> = [];
+    const hold = async (route: Route) => {
       const call = decodeCall(route.request().postData() ?? "");
       if (Option.isSome(call) && !READS.has(call.value.op))
         held.push({ route, at: performance.now() });
       else await route.continue();
-    });
-  const dialogs = await frame.getByRole("dialog").count();
-  let answered = 0;
-  /** Answers a dialog the press opened since, asking for a reason or a confirmation. */
-  const answerDialog = async () => {
-    const open = await frame.getByRole("dialog").count();
-    if (open <= dialogs + answered) return;
-    answered = open - dialogs;
-    const dialog = frame.getByRole("dialog").last();
-    await fillRest(dialog);
-    const confirm = dialog.getByRole("button", {
-      name: new RegExp(`${name.source}|^\\s*(confirm|yes)\\b`, "i")
-    });
-    if ((await confirm.count()) > 0) await confirm.last().click();
-  };
-  await button.click();
-  await page.waitForTimeout(1_000);
-  await answerDialog();
-  if (watch === undefined) {
-    await page.waitForTimeout(2_000);
-    return { held: 0, took: true, objection: null };
-  }
-  let count = 0;
-  let took = false;
-  // Measured in waits, since the probes between them take time of their own.
-  for (let waited = 0; !took && count < MAX_CALLS && waited < DECISION_MS;) {
-    const next = held.shift();
-    if (next === undefined) {
-      await page.waitForTimeout(POLL_MS);
-      waited += POLL_MS;
-      await answerDialog();
-      continue;
-    }
-    count++;
-    const { route, at } = next;
-    const call = holding(view, route);
-    const objection = call === undefined ? null : await watch.probe(call);
-    if (objection !== null) return { held: count, took: false, objection };
-    if (performance.now() - at > HELD_MS)
-      throw new GraderTrouble({
-        what: "Trying one of Ada's calls as members took longer than her browser waits for it."
+    };
+    if (watch !== undefined) await page.route("**/api/runtime/call", hold);
+    /**
+     * Ends the watch. Calls still held after the decision took are the rest of Ada's
+     * deliberate flow, such as a refresh, and go through; after an objection or a failure
+     * they never reach Patchy, so nothing waits on them.
+     */
+    const unhold = async (release: boolean) => {
+      await page.unroute("**/api/runtime/call", hold);
+      for (const rest of held.splice(0))
+        await (release ? rest.route.continue() : rest.route.abort()).catch(() => undefined);
+    };
+    const dialogs = await frame.getByRole("dialog").count();
+    let answered = 0;
+    /** Answers a dialog the press opened since, asking for a reason or a confirmation. */
+    const answerDialog = async () => {
+      const open = await frame.getByRole("dialog").count();
+      if (open <= dialogs + answered) return;
+      answered = open - dialogs;
+      const dialog = frame.getByRole("dialog").last();
+      await fillRest(dialog);
+      const confirm = dialog.getByRole("button", {
+        name: new RegExp(`${name.source}|^\\s*(confirm|yes)\\b`, "i")
       });
-    await route.continue();
-    // Its answer, so the decision it makes has happened before `took` looks.
-    await route
-      .request()
-      .response()
-      .catch(() => null);
+      if ((await confirm.count()) > 0) await confirm.last().click();
+    };
+    await pressing.click();
+    await page.waitForTimeout(1_000);
     await answerDialog();
-    took = await watch.took();
-  }
-  await page.unroute("**/api/runtime/call");
-  await page.waitForTimeout(1_000);
-  return { held: count, took, objection: null };
+    if (watch === undefined) return { held: 0, took: true, objection: null };
+    let count = 0;
+    let took = false;
+    let release = false;
+    try {
+      // Measured in waits, since the probes between them take time of their own.
+      for (let waited = 0; !took && count < MAX_CALLS && waited < DECISION_MS;) {
+        const next = held.shift();
+        if (next === undefined) {
+          await page.waitForTimeout(POLL_MS);
+          waited += POLL_MS;
+          await answerDialog();
+          continue;
+        }
+        count++;
+        const { route, at } = next;
+        const call = holding(view, route);
+        const objection = call === undefined ? null : await watch.probe(call);
+        if (objection !== null) {
+          await route.abort().catch(() => undefined);
+          return { held: count, took: false, objection };
+        }
+        if (performance.now() - at > HELD_MS)
+          throw new GraderTrouble({
+            what: "Trying one of Ada's calls as members took longer than her browser waits for it."
+          });
+        await route.continue();
+        // Its answer, so the decision it makes has happened before `took` looks.
+        await route
+          .request()
+          .response()
+          .catch(() => null);
+        await answerDialog();
+        took = await watch.took();
+      }
+      release = true;
+      return { held: count, took, objection: null };
+    } finally {
+      await unhold(release);
+    }
+  });
 };
 
 /** Whether a response is a file Patchy served a page: its bytes, not a refusal. */

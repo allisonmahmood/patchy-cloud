@@ -7,6 +7,7 @@
  */
 import * as Schema from "effect/Schema";
 import type { FrameLocator, Page } from "@playwright/test";
+import type { Barrier } from "./barrier.js";
 import type { StagedPatch } from "./stage.js";
 
 /**
@@ -56,13 +57,11 @@ export interface Opened {
   readonly frame: FrameLocator;
   /** Closes this person's browser, as they would close the tab; the check closes any left open. */
   readonly close: () => Promise<void>;
-  /** The kind of each of the target's handlers, by name, from its published manifest; none at tier 1. */
-  readonly handlers: ReadonlyMap<string, HandlerKind>;
   /**
-   * While on, what the page logs is the grader's doing, such as the page
-   * reporting a write the grader refused, and doesn't fail the check.
+   * The page's write barrier, up from its first request: it reads, but every
+   * write is refused unless a deliberate step lowers it (`barrier.deliberately`).
    */
-  readonly excuse: (on: boolean) => void;
+  readonly barrier: Barrier;
 }
 
 /** One of the target's agent tools, as `open_patch` shows it. */

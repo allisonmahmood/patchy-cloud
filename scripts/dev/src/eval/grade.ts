@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { Browser, Page } from "@playwright/test";
 import { doorAgent, GRADER_AGENT, mintAgents } from "./agent.js";
+import { noBarrier, raiseBarrier, watchErrors } from "./barrier.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { StagedPatch } from "./stage.js";
 import {
@@ -317,6 +318,8 @@ export const openAs = async (
   door: Door,
   person: RunPerson,
   address: string,
+  /** The target's handler kinds, for its write barrier; none for setup, which writes on purpose. */
+  handlers: ReadonlyMap<string, HandlerKind> | undefined,
   path = "",
   viewport: { readonly width: number; readonly height: number } = VIEWPORTS.desktop
 ) => {
@@ -333,16 +336,9 @@ export const openAs = async (
     return { signedIn: false } as const;
   }
   const page = await context.newPage();
-  const errors: Array<string> = [];
-  // What the page logs while the grader has caused it, such as a write it refused, isn't the page's.
-  const quiet = { on: false };
-  page.on("console", (message) => {
-    if (quiet.on) return;
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("pageerror", (error) => {
-    if (!quiet.on) errors.push(error.message);
-  });
+  // Up before the first request: opening, mount effects and reloads only read.
+  const barrier = handlers === undefined ? noBarrier : await raiseBarrier(page, handlers);
+  const errors = watchErrors(page, barrier);
   let crashed = false;
   page.on("crash", () => {
     crashed = true;
@@ -368,9 +364,7 @@ export const openAs = async (
     context,
     page,
     errors,
-    excuse: (on: boolean) => {
-      quiet.on = on;
-    },
+    barrier,
     ready: ready && !crashed,
     broke: why
   } as const;
@@ -419,6 +413,7 @@ const inBrowser = (input: {
             input.door,
             person,
             input.target.address,
+            input.handlers,
             path,
             viewport
           );
@@ -478,8 +473,7 @@ const inBrowser = (input: {
                 page: view.page,
                 frame: view.page.frameLocator("iframe").first(),
                 close: () => view.context.close().catch(() => undefined),
-                handlers: input.handlers,
-                excuse: view.excuse
+                barrier: view.barrier
               };
             },
             agent: (key) => {
