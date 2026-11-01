@@ -112,15 +112,10 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   return release.toolchain;
 });
 
-/**
- * Every local check and build a repo publish runs before sending. The snapshot keeps `repo`'s
- * files as `cwd` holds them, so a dry run can prepare in a copy of the repo. Recovery belongs to
- * the caller and must finish before this starts any fresh work.
- */
+/** Recovery belongs to the caller and must finish before this starts any fresh work. */
 export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   cwd: string,
-  token: Redacted.Redacted,
-  { repo: root = cwd }: { readonly repo?: string } = {}
+  token: Redacted.Redacted
 ) {
   const toolchain = yield* checkRepoRelease(cwd, token);
   // Before any fresh work, so a refused repo's description and config stay untouched.
@@ -150,7 +145,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   });
   const warnings = [...syncWarnings, ...(yield* primitiveReminders(cwd, configured))];
   // Packed before the build, so an oversized repo is refused before any of the slow work.
-  const snapshot = yield* RepoSnapshot.pack(root, cwd);
+  const snapshot = yield* RepoSnapshot.pack(cwd);
   // Remembered as found, so a later failure still reports them.
   yield* Output.rememberWarnings(snapshot.warnings);
   warnings.push(...snapshot.warnings);
@@ -267,23 +262,6 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     warnings.push("Tier 2 has no handlers. Add query, mutation or action exports under server/.");
   yield* validateRepoBundle(cwd, manifest, built.html);
   return { manifest, html: built.html, server: built.server, snapshot, warnings };
-});
-
-/**
- * `publish --dry-run`'s preparation: a repo publish's, run in a scratch copy of the repo that is
- * removed afterwards, so the description sync and the generated manifest change only the copy.
- * A repo too large to copy is refused first, as publish refuses it before building.
- */
-export const prepareRepoDryRun = Effect.fn("prepareRepoDryRun")(function* (
-  repo: string,
-  token: Redacted.Redacted
-) {
-  const kept = yield* RepoSnapshot.scan(repo);
-  return yield* Effect.scoped(
-    Effect.flatMap(RepoSnapshot.mirror(repo, kept), (copy) =>
-      prepareRepoPublish(copy, token, { repo })
-    )
-  );
 });
 
 /** Publish and watched dev builds enforce the same artifact and tier contract. */

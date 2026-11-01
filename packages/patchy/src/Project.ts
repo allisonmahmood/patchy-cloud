@@ -316,6 +316,52 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
 });
 
 /**
+ * patchy.json as a repo publish's description sync would leave it, for `publish --dry-run` to
+ * measure: read as `syncDescription` reads it, refused as it refuses a gone patch, and written
+ * nowhere. None when the sync would leave the file as it is. Keep it in step with
+ * `syncDescription`, whose writes it leaves out.
+ */
+export const syncedRepoText = Effect.fn("Project.syncedRepoText")(function* (
+  cwd: string,
+  token: Redacted.Redacted
+) {
+  const repo = yield* readRepo(cwd);
+  if (repo.patch === undefined) return Option.none<string>();
+  const client = yield* Api.client(token);
+  const cloud = yield* client
+    .detail({ params: { patchRef: repo.patch }, query: { state: "all" } })
+    .pipe(
+      Effect.catch((error) => {
+        if (Api.isRefusal(error) && error.error === "Patch not found.")
+          return new RejectedError({
+            refusal: {
+              ok: false,
+              error:
+                "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+            },
+            cause: error
+          });
+        return Api.classify(error, "Could not read the patch description.");
+      })
+    );
+  if (cloud.descriptionUpdatedAt === null) return Option.none<string>();
+  const syncedAt =
+    repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
+  if (
+    syncedAt !== undefined &&
+    !DateTime.isGreaterThan(DateTime.makeUnsafe(cloud.descriptionUpdatedAt), syncedAt)
+  )
+    return Option.none<string>();
+  return Option.some(
+    json({
+      ...repo,
+      description: cloud.description,
+      descriptionSyncedAt: cloud.descriptionUpdatedAt
+    })
+  );
+});
+
+/**
  * Reapply a returned patch id and version only while the repo retains its original instance
  * binding.
  */

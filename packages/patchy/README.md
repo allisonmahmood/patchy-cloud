@@ -1242,24 +1242,21 @@ leaves out `package.json`, `patchy.json`, `patchy.config.ts`, `index.html` or
 before the build, and the JSON success adds `artifacts.repo: { files, bytes }`
 and a `Repo:` line in text.
 
-`patchy publish --dry-run` runs a repo publish's local checks and build, then
-lists what its version would keep, and sends nothing: the snapshot's files and
-bytes against its limits, and every top-level entry with its files and bytes,
-those using most of either limit first. JSON is `{ ok: true, dryRun: true, repo:
-{ files, bytes, limits: { bytes, files }, entries: [{ path, files, bytes }] },
-warnings }`, a folder's `path` ending in `/`. It prepares in a scratch copy of
-the repo under the OS temp folder, removed when it ends: the snapshot's files,
-`patchy/_generated/`, `server/` and `agent/` are copied, and everything else,
-`node_modules`, `.env` files and ignored files included, links back to the repo,
-so the build reads what publish's would and nothing in the repo changes. Its
-warnings are publish's, so a description changed in the portal is reported as
-replacing the local one, in the copy only. A repo over the limits whatever its
-description is refused before copying. A pending publish stays as it is for the
-next publish to recover, and `warnings` says so. It refuses what repo publish
-refuses locally, `unknown_base_version` included unless `--allow-behind` is
-passed. The instance decides `--share`, `--force` and `behind`, so a dry run
-can't check those. With a file it is local, exit 1; `patchy validate` checks a
-file.
+`patchy publish --dry-run` checks the repo snapshot and version without building
+or sending; publish still runs the build. It makes the refusals a repo publish
+makes before any work, `unknown_base_version` included unless `--allow-behind`
+is passed, then measures the snapshot with publish's exclusions and limits:
+`patchy.json` counts as the description sync would leave it, read from the
+portal as publish reads it and written nowhere. It reports the snapshot's files
+and bytes against its limits, every top-level entry with its files and bytes,
+those using most of either limit first, and the near-limit warning, or refuses
+with the `too_large` document publish gives. JSON is `{ ok: true, dryRun: true,
+note, repo: { files, bytes, limits: { bytes, files }, entries: [{ path, files,
+bytes }] }, warnings }`, `note` saying what it checked and a folder's `path`
+ending in `/`. It writes nothing. A pending publish stays as it is for the next
+publish to recover, and `warnings` says so. The build, typecheck and the
+instance's own checks, such as `behind` and `has_dependants`, happen only at
+publish. With a file it is local, exit 1; `patchy validate` checks a file.
 
 The complete request, owner and local notices are persisted in an atomically
 selected attempt directory before sending; recovery retains those notices.
@@ -1675,7 +1672,7 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--failed`, `--limit <n>` and `--before <cursor>`: on `logs`, keep only failed calls, set the page size (1 to 25, default 10) and continue from a previous page.
 - `--force`: on `retire`, `delete`, `restore` and `publish`, accept the reported dependant/source breakage. Ask the person you are working for first.
 - `--allow-behind`: on repo `publish`, publish over versions published since this copy was pulled or last published. Ask the person you are working for first.
-- `--dry-run`: on repo `publish`, run its local checks and build and list what the version would keep, without sending it.
+- `--dry-run`: on repo `publish`, check the repo snapshot and version without building or sending, and list what the version would keep; publish still runs the build.
 - `--yes`: on `delete`, confirm deletion without an interactive prompt. Required for agent, JSON and non-terminal calls; it does not imply `--force`.
 - `--clear`: on `describe`, remove the description instead of supplying text.
 - `--description <text>`: on file-mode `publish`, set the description. Repo mode refuses the flag and points at `patchy.json`.

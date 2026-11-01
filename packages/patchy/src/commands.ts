@@ -75,7 +75,7 @@ import { RELEASE, MANIFEST_VERSION } from "./release.js";
 import { requireCurrentCli } from "./ReleaseCheck.js";
 import * as Project from "./Project.js";
 import * as Setup from "./Setup.js";
-import { prepareRepoDryRun, prepareRepoPublish } from "./repoBuild.js";
+import { prepareRepoPublish } from "./repoBuild.js";
 import * as RepoSnapshot from "./repoSnapshot.js";
 import { publishLookStamp, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
@@ -595,10 +595,14 @@ const checkRepoPublish = Effect.fn("checkRepoPublish")(function* (
   return project;
 });
 
+/** What `publish --dry-run` checks, said wherever it reports. */
+const dryRunScope =
+  "Checks the repo snapshot and version without building or sending; publish still runs the build.";
+
 /**
- * `publish --dry-run`: the checks and build a repo publish runs before sending, in a copy of the
- * repo, then what its version would keep. It sends and changes nothing, and leaves a pending
- * publish for the next real one.
+ * `publish --dry-run`, after the refusals publish makes first: the snapshot a repo publish would
+ * keep, with patchy.json measured as the description sync would leave it. It builds, sends and
+ * writes nothing, and leaves a pending publish for the next real one.
  */
 const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   repo: string,
@@ -609,19 +613,21 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   yield* Output.notice(
     `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
   );
-  const { snapshot, warnings: checked } = yield* prepareRepoDryRun(repo, token);
+  const synced = yield* Project.syncedRepoText(repo, token);
+  const snapshot = yield* RepoSnapshot.survey(repo, Option.getOrUndefined(synced));
   const warnings = pending
     ? [
-        ...checked,
+        ...snapshot.warnings,
         "A publish is pending: the next `patchy publish` recovers it instead of publishing this repo as it is now."
       ]
-    : checked;
+    : snapshot.warnings;
   yield* Output.report(
     {
       ok: true,
       dryRun: true,
+      note: dryRunScope,
       repo: {
-        files: snapshot.files.length,
+        files: snapshot.files,
         bytes: snapshot.bytes,
         limits: repoLimits,
         entries: snapshot.entries
@@ -629,8 +635,8 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
       warnings
     },
     [
-      "Dry run passed publish's local checks. Nothing was sent or changed.",
-      `Repo: ${snapshot.files.length} files, ${RepoSnapshot.formatBytes(snapshot.bytes)}, of the ${repoLimits.files} files and ${RepoSnapshot.formatBytes(repoLimits.bytes)} a version keeps:`,
+      `Dry run: ${dryRunScope}`,
+      `Repo: ${snapshot.files} files, ${RepoSnapshot.formatBytes(snapshot.bytes)}, of the ${repoLimits.files} files and ${RepoSnapshot.formatBytes(repoLimits.bytes)} a version keeps:`,
       ...snapshot.entries.map((entry) => `  ${RepoSnapshot.formatEntry(entry)}`)
     ]
   );
@@ -670,7 +676,7 @@ const publish = Command.make(
     ),
     dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription(
-        "Run this repo's publish checks and build, and list what its version would keep, without sending it"
+        "Check the repo snapshot and version without building or sending, and list what the version would keep; publish still runs the build"
       ),
       Flag.withDefault(false)
     )

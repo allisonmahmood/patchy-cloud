@@ -8,7 +8,6 @@
  * local state. The server checks the same limits and paths again (`@patchy/api`'s `repo.ts`).
  */
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import * as Effect from "effect/Effect";
 import ignore from "ignore";
@@ -74,8 +73,7 @@ interface Walked {
   readonly unnamed: ReadonlyArray<string>;
 }
 
-/** Walks `root` for what a snapshot keeps; sizes and modes come from `from`, where it is read. */
-const walk = async (root: string, from = root): Promise<Walked> => {
+const walk = async (root: string): Promise<Walked> => {
   const files: Array<{ path: string; bytes: number; executable: boolean }> = [];
   const links: string[] = [];
   const unnamed: string[] = [];
@@ -113,7 +111,7 @@ const walk = async (root: string, from = root): Promise<Walked> => {
       else if (!entry.isFile()) continue;
       else if (!isRepoPath(relative)) unnamed.push(relative);
       else {
-        const stat = await fs.lstat(path.join(from, relative));
+        const stat = await fs.lstat(path.join(root, relative));
         files.push({ path: relative, bytes: stat.size, executable: (stat.mode & 0o111) !== 0 });
       }
     }
@@ -190,91 +188,28 @@ const tooLarge = (files: Walked["files"]) => {
 const readFailure = (cause: unknown) =>
   new LocalError({ message: "Could not read the repo to keep it with the version.", cause });
 
+const utf8 = new TextEncoder();
+
 /**
- * The paths a snapshot of `root` keeps, found as `pack` finds them, for a dry run to copy. It
- * refuses a repo publish would refuse whatever its description sync wrote: patchy.json is the one
- * kept file that sync rewrites, so a repo over the limits without it is over them anyway.
+ * What a snapshot of `root` keeps, sorted by path, and what it warns of, from the files' sizes
+ * alone. `patchyJson`, when given, is patchy.json as the description sync would leave it. Refuses a
+ * repo over the snapshot limits, one that leaves out a file the build needs, and paths that would
+ * collide in one folder; a repo near the limits and skipped links come back as warnings.
  */
-export const scan = Effect.fn("RepoSnapshot.scan")(function* (root: string) {
+const inspect = Effect.fn("RepoSnapshot.inspect")(function* (root: string, patchyJson?: string) {
   const walked = yield* Effect.tryPromise({ try: () => walk(root), catch: readFailure });
-  if (overLimits(walked.files.filter((file) => file.path !== "patchy.json")))
-    return yield* tooLarge(walked.files);
-  return walked.files.map((file) => file.path);
-});
-
-/** What a dry run's copy holds whole: preparation writes the first, and refuses links in both others. */
-const copiedWhole = ["patchy/_generated", "server", "agent"];
-
-/**
- * Fills `copy` from `root`: the `kept` files and `copiedWhole` as copies, and a link back to
- * `root` for everything else, so a build in `copy` reads what it would read in `root`.
- */
-const fill = async (root: string, copy: string, kept: ReadonlySet<string>) => {
-  const above = new Set<string>();
-  for (const file of [...kept, ...copiedWhole])
-    for (let folder = path.posix.dirname(file); folder !== "."; folder = path.posix.dirname(folder))
-      above.add(folder);
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await fs.readdir(path.join(root, directory), { withFileTypes: true })) {
-      const relative = directory === "" ? entry.name : `${directory}/${entry.name}`;
-      const from = path.join(root, relative);
-      const to = path.join(copy, relative);
-      if (copiedWhole.includes(relative))
-        await fs.cp(from, to, { recursive: true, verbatimSymlinks: true });
-      else if (kept.has(relative)) await fs.copyFile(from, to);
-      else if (entry.isDirectory() && above.has(relative)) {
-        await fs.mkdir(to);
-        await visit(relative);
-      } else await fs.symlink(from, to);
-    }
-  };
-  await visit("");
-};
-
-/**
- * A scratch copy of the repo at `root` under the OS temp folder, removed when the scope closes,
- * for `publish --dry-run` to prepare in: writes land in the copy, and links leave the repo alone.
- */
-export const mirror = Effect.fn("RepoSnapshot.mirror")(function* (
-  root: string,
-  kept: ReadonlyArray<string>
-) {
-  const copy = yield* Effect.acquireRelease(
-    Effect.tryPromise({
-      try: () => fs.mkdtemp(path.join(os.tmpdir(), "patchy-dry-run-")),
-      catch: (cause) =>
-        new LocalError({ message: "Could not make a folder for the dry run.", cause })
-    }),
-    // A copy left in the temp folder is only clutter, so removing it never fails the dry run.
-    (folder) =>
-      Effect.tryPromise(() => fs.rm(folder, { recursive: true, force: true })).pipe(Effect.ignore)
-  );
-  yield* Effect.tryPromise({
-    try: () => fill(root, copy, new Set(kept)),
-    catch: (cause) => new LocalError({ message: "Could not copy the repo for the dry run.", cause })
-  });
-  return copy;
-});
-
-/**
- * Packs the repo at `root`, read from `from`, into the snapshot its next version keeps, sorted by path, with its
- * size and top-level entries. Refuses a repo over the snapshot limits, one that leaves out a file
- * the build needs, and paths that would collide in one folder; a repo near the limits and skipped
- * links come back as warnings.
- */
-export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string, from = root) {
-  const walked = yield* Effect.tryPromise({
-    try: () => walk(root, from),
-    catch: readFailure
-  });
   if (walked.unnamed.length > 0)
     return yield* new LocalError({
       message: `A version can't keep ${walked.unnamed.join(", ")}: rename it without backslashes or control characters, or add it to .gitignore.`,
       code: "invalid_manifest"
     });
-  const sorted = [...walked.files].sort((left, right) =>
-    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
-  );
+  const sorted = walked.files
+    .map((file) =>
+      file.path === "patchy.json" && patchyJson !== undefined
+        ? { ...file, bytes: utf8.encode(patchyJson).length }
+        : file
+    )
+    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   const kept = new Set(sorted.map((file) => file.path));
   for (const file of needed) {
     if (kept.has(file)) continue;
@@ -291,23 +226,13 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string, from
       });
   }
   if (overLimits(sorted)) return yield* tooLarge(sorted);
-  const { bytes, listed, size } = measure(sorted);
   const problem = repoTreeProblem(sorted.map((file) => file.path));
   if (problem !== undefined)
     return yield* new LocalError({
       message: `The repo can't be kept with the version: ${problem} Rename one of them.`,
       code: "invalid_manifest"
     });
-  const files: ReadonlyArray<RepoFile> = yield* Effect.forEach(sorted, (file) =>
-    Effect.tryPromise({
-      try: async () => ({
-        path: file.path,
-        contents: (await fs.readFile(path.join(from, file.path))).toString("base64"),
-        ...(file.executable ? { executable: true as const } : {})
-      }),
-      catch: (cause) => new LocalError({ message: `Could not read ${file.path}.`, cause })
-    })
-  );
+  const { bytes, listed, size } = measure(sorted);
   const warnings: string[] = [];
   if (share({ files: sorted.length, bytes }) >= warnShare)
     warnings.push(
@@ -317,5 +242,37 @@ export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string, from
     warnings.push(
       `Symlinks aren't kept with the version, so a pull won't have ${walked.links.join(", ")}.`
     );
-  return { files, bytes, entries: listed, warnings };
+  return { sorted, bytes, entries: listed, warnings };
+});
+
+/**
+ * Packs the repo at `root` into the snapshot its next version keeps, sorted by path, with its
+ * size, top-level entries and warnings, refusing what `inspect` refuses.
+ */
+export const pack = Effect.fn("RepoSnapshot.pack")(function* (root: string) {
+  const { sorted, bytes, entries, warnings } = yield* inspect(root);
+  const files: ReadonlyArray<RepoFile> = yield* Effect.forEach(sorted, (file) =>
+    Effect.tryPromise({
+      try: async () => ({
+        path: file.path,
+        contents: (await fs.readFile(path.join(root, file.path))).toString("base64"),
+        ...(file.executable ? { executable: true as const } : {})
+      }),
+      catch: (cause) => new LocalError({ message: `Could not read ${file.path}.`, cause })
+    })
+  );
+  return { files, bytes, entries, warnings };
+});
+
+/**
+ * The snapshot a repo publish of `root` would keep, for `publish --dry-run`: its file count, size,
+ * entries and warnings, measured without reading or writing a file, refusing what `pack` refuses.
+ * `patchyJson` is patchy.json as the description sync would leave it.
+ */
+export const survey = Effect.fn("RepoSnapshot.survey")(function* (
+  root: string,
+  patchyJson?: string
+) {
+  const { sorted, bytes, entries, warnings } = yield* inspect(root, patchyJson);
+  return { files: sorted.length, bytes, entries, warnings };
 });
