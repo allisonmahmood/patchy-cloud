@@ -74,8 +74,9 @@ describe("repo publish checks", () => {
   });
 
   // A repo bound before patchy.json kept a version can't be checked for newer work, so it goes over
-  // what is live only when told to, once; that publish records the version the next one sends.
-  it("refuses a bound repo with no version until --allow-behind, which records one", async () => {
+  // what is live only when told to, once; that publish records the version the next one sends. A
+  // dry run refuses it the same way, so a dry run that passes means publish won't refuse it locally.
+  it("refuses a bound repo with no version, dry run too, until --allow-behind, which records one", async () => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url === "/api/publish")
         return respond(200, { ...publish(200, "abcdefghijkl", 3), tier: 1 });
@@ -98,6 +99,12 @@ describe("repo publish checks", () => {
     expect(failure).toMatchObject({ ok: false, kind: "local", code: "unknown_base_version" });
     expect(failure.error).toContain("patchy pull abcdefghijkl");
     expect(failure.error).toContain("--allow-behind");
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(dry.stderr)).toEqual(failure);
+    const dryAllowed = await runCli(["publish", "--dry-run", "--allow-behind", "--json"], options);
+    expect(dryAllowed, dryAllowed.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(dryAllowed.stdout)).toMatchObject({ ok: true, dryRun: true });
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
     expect(readFileSync(repoFile, "utf8")).toBe(legacy);
     expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);

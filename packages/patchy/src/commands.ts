@@ -561,13 +561,20 @@ const sendPublish = Effect.fn("sendPublish")(function* (
   for (const warning of allWarnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
-/** File-mode options, which a repo publish and its dry run refuse before any work. */
-const refuseFileOptions = Effect.fn("refuseFileOptions")(function* (options: {
-  readonly name: Option.Option<string>;
-  readonly patch: Option.Option<string>;
-  readonly description: Option.Option<string>;
-  readonly new: boolean;
-}) {
+/**
+ * What a repo publish and its dry run refuse before any work: file-mode options, and a bound repo
+ * with no recorded version unless `--allow-behind`. Returns the repo's `patchy.json`.
+ */
+const checkRepoPublish = Effect.fn("checkRepoPublish")(function* (
+  repo: string,
+  options: {
+    readonly name: Option.Option<string>;
+    readonly patch: Option.Option<string>;
+    readonly description: Option.Option<string>;
+    readonly new: boolean;
+    readonly allowBehind: boolean;
+  }
+) {
   if (Option.isSome(options.description))
     return yield* new LocalError({
       message:
@@ -578,6 +585,14 @@ const refuseFileOptions = Effect.fn("refuseFileOptions")(function* (options: {
       message:
         "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
     });
+  const project = yield* Project.readRepo(repo);
+  // A repo last published before patchy.json kept a version can't say what it's behind.
+  if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
+    return yield* new LocalError({
+      code: "unknown_base_version",
+      message: `Unknown base version: patchy.json names patch ${project.patch} but no version, so publish can't tell whether anyone published since this copy. Pull a fresh copy into a new folder with \`patchy pull ${project.patch}\` and make the change there, or, once the person you are working for agrees to replace whatever is live, publish with --allow-behind; that publish records the version.`
+    });
+  return project;
 });
 
 /**
@@ -675,7 +690,7 @@ const publish = Command.make(
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
         if (options.dryRun && repo !== undefined) {
-          yield* refuseFileOptions(options);
+          yield* checkRepoPublish(repo, options);
           return yield* dryRunPublish(repo, apiToken, Option.isSome(pending));
         }
         const client = yield* Api.client(apiToken);
@@ -689,14 +704,7 @@ const publish = Command.make(
         }
 
         if (repo !== undefined) {
-          yield* refuseFileOptions(options);
-          const project = yield* Project.readRepo(repo);
-          // A repo last published before patchy.json kept a version can't say what it's behind.
-          if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
-            return yield* new LocalError({
-              code: "unknown_base_version",
-              message: `Unknown base version: patchy.json names patch ${project.patch} but no version, so publish can't tell whether anyone published since this copy. Pull a fresh copy into a new folder with \`patchy pull ${project.patch}\` and make the change there, or, once the person you are working for agrees to replace whatever is live, publish with --allow-behind; that publish records the version.`
-            });
+          const project = yield* checkRepoPublish(repo, options);
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );

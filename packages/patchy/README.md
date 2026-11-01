@@ -1248,9 +1248,11 @@ bytes against its limits, and every top-level entry with its files and bytes,
 those using most of either limit first. JSON is `{ ok: true, dryRun: true, repo:
 { files, bytes, limits: { bytes, files }, entries: [{ path, files, bytes }] },
 warnings }`, a folder's `path` ending in `/`. A pending publish stays for the
-next publish to recover, and `warnings` says so. The instance decides `--share`,
-`--force` and `--allow-behind`, so a dry run ignores them. With a file it is
-local, exit 1; `patchy validate` checks a file.
+next publish to recover, and `warnings` says so. It refuses what repo publish
+refuses locally, `unknown_base_version` included unless `--allow-behind` is
+passed. The instance decides `--share`, `--force` and `behind`, so a dry run
+can't check those. With a file it is local, exit 1; `patchy validate` checks a
+file.
 
 The complete request, owner and local notices are persisted in an atomically
 selected attempt directory before sending; recovery retains those notices.
