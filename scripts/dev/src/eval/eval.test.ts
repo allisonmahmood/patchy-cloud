@@ -2,7 +2,6 @@ import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
@@ -107,8 +106,7 @@ describe("the sandbox's proxy", () => {
 
   it.effect("refuses a CONNECT to this machine's loopback", () =>
     Effect.gen(function* () {
-      const dir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
-      const network = yield* openNetwork({ dir, instancePort: 1, allow: [] });
+      const network = yield* openNetwork({ instancePort: 1, allow: [] });
       const reply = yield* Effect.promise(
         () =>
           new Promise<string>((resolve) => {

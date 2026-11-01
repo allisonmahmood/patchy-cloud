@@ -24,7 +24,7 @@ export class DoorFailed extends Schema.TaggedError<DoorFailed>()("DoorFailed", {
   cause: Schema.Defect()
 }) {
   override get message() {
-    return `The sandbox's ${this.door} socket couldn't open.`;
+    return `The sandbox's ${this.door} socket couldn't open: ${this.cause instanceof Error ? this.cause.message : String(this.cause)}`;
   }
 }
 
@@ -155,27 +155,27 @@ const listen = (door: string, file: string, handle: (socket: net.Socket) => void
   );
 
 /**
- * Opens the instance and proxy sockets in `dir` for the rest of the scope.
- * `allow` names private hosts the proxy may reach, such as a model provider
- * on the developer's own network.
+ * Opens the instance and proxy sockets for the rest of the scope, in a temp
+ * folder of their own: a Unix socket's path has to fit in about 100 bytes,
+ * which a suite folder inside a worktree doesn't. `allow` names private hosts
+ * the proxy may reach, such as a model provider on the developer's own network.
  */
 export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
-  readonly dir: string;
   readonly instancePort: number;
   readonly allow: ReadonlyArray<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fs.makeDirectory(input.dir, { recursive: true });
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-eval-" });
   const allow = new Set(input.allow.map((host) => host.toLowerCase()));
   yield* listen(
     "instance",
-    path.join(input.dir, "instance.sock"),
+    path.join(dir, "instance.sock"),
     instanceConnection(input.instancePort)
   );
-  yield* listen("proxy", path.join(input.dir, "proxy.sock"), proxyConnection(allow));
+  yield* listen("proxy", path.join(dir, "proxy.sock"), proxyConnection(allow));
   return {
-    sockets: input.dir,
+    sockets: dir,
     instancePort: input.instancePort,
     bridge: new URL("./bridge.mjs", import.meta.url).pathname
   } satisfies Network;

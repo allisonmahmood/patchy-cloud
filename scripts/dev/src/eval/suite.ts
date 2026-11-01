@@ -225,7 +225,6 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       });
       const side = sides.after;
       const network = yield* openNetwork({
-        dir: path.join(dir, "sockets"),
         instancePort: Number(new URL(side.served.apiUrl).port),
         allow: signIns.privateHosts
       });
