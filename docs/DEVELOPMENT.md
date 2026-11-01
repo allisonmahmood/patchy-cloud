@@ -42,7 +42,7 @@ uses this Node for both sides, so its switch changes only the npm prefix; pass
 going after a failure and prints a summary. CI also runs `pnpm test` on Node
 22.22.0, 24.20.0 and 26.11.1, `cli-smoke` again on Node 26.11.1, and `clerk-live`
 on pushes to `main` and same-repository PRs. The server those suites start runs on
-Bun, as production runs it; the CLI runs on Node, as people run it. CI's `image`
+Bun, as production runs it; the CLI runs on Node, as people run it. CI's `server-image`
 job, in `server-image.yml`, builds the production image and runs it with
 `scripts/server-image-smoke.mjs`, which needs Docker, so `pnpm verify` leaves it out.
 
