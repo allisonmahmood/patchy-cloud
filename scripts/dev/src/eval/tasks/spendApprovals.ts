@@ -1,3 +1,4 @@
+import type { Request } from "@playwright/test";
 import {
   type CheckContext,
   type CheckOutcome,
@@ -42,36 +43,48 @@ const REASON = /reason|description|purpose|what|details|note|title|why|memo|just
  */
 const ask = async (view: Opened, reason: string, marker: string, memo: ViewMemo) => {
   const { frame, page } = view;
+  // What the page sends Patchy from the press on, to tell a request that never left from one that hid.
+  let pressed = false;
+  let sent = 0;
+  const count = (request: Request) => {
+    if (pressed && request.url().includes("/api/runtime/") && request.method() !== "GET") sent++;
+  };
+  page.on("request", count);
   // Asking is deliberate, from opening the form to sending it: its writes reach Patchy, and
   // the barrier is up again only once they've been answered.
-  const refused = await view.barrier.deliberately(async () => {
-    let amount = await chooseField(frame, AMOUNT);
-    if (amount === undefined) {
-      const opener = frame.getByRole("button", { name: /new|request|submit|add|create|\+/i });
-      if ((await opener.count()) === 0) return "found no amount to fill in or button to start one";
-      await opener.first().click();
-      await page.waitForTimeout(1_000);
-      amount = await chooseField(frame, AMOUNT);
-    }
-    if (amount === undefined) return "found no amount to fill in";
-    await amount.fill("42");
-    const words = await chooseField(frame, REASON);
-    if (words === undefined) return "found no field for the reason";
-    await words.fill(reason);
-    const file = frame.locator('input[type="file"]');
-    if ((await file.count()) === 0) return "found no way to attach a receipt";
-    await file.first().setInputFiles({
-      name: "receipt.png",
-      mimeType: "image/png",
-      buffer: receipt(marker)
-    });
-    const form = await formAround(frame);
-    if (form === undefined) return "found no button to send the request";
-    await fillRest(form.scope);
-    await form.send.click();
-    return null;
-  });
+  const refused = await view.barrier
+    .deliberately(async () => {
+      let amount = await chooseField(frame, AMOUNT);
+      if (amount === undefined) {
+        const opener = frame.getByRole("button", { name: /new|request|submit|add|create|\+/i });
+        if ((await opener.count()) === 0)
+          return "found no amount to fill in or button to start one";
+        await opener.first().click();
+        await page.waitForTimeout(1_000);
+        amount = await chooseField(frame, AMOUNT);
+      }
+      if (amount === undefined) return "found no amount to fill in";
+      await amount.fill("42");
+      const words = await chooseField(frame, REASON);
+      if (words === undefined) return "found no field for the reason";
+      await words.fill(reason);
+      const file = frame.locator('input[type="file"]');
+      if ((await file.count()) === 0) return "found no way to attach a receipt";
+      await file.first().setInputFiles({
+        name: "receipt.png",
+        mimeType: "image/png",
+        buffer: receipt(marker)
+      });
+      const form = await formAround(frame);
+      if (form === undefined) return "found no button to send the request";
+      await fillRest(form.scope);
+      pressed = true;
+      await form.send.click();
+      return null;
+    })
+    .finally(() => page.off("request", count));
   if (refused !== null) return refused;
+  if (sent === 0) return "pressed send, but the page sent Patchy nothing";
   // Whoever asked sees their request; one that never shows up wasn't sent, whatever the page did.
   return (await reveal(view, reason, memo))
     ? null

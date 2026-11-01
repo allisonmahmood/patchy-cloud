@@ -570,7 +570,10 @@ export const callAs = async (
       };
 };
 
-/** The envelope of the first runtime call `view` sends while `act` runs, or none. */
+/** How long a press may take to send its first runtime call. */
+const FIRST_CALL_MS = 10_000;
+
+/** The envelope of the first runtime call `view` sends once `act` has run, waiting for it a while; or none. */
 export const envelopeOf = async (view: Opened, act: () => Promise<void>) => {
   let seen: Envelope | undefined;
   const watch = (request: { url: () => string; postData: () => string | null }) => {
@@ -580,9 +583,14 @@ export const envelopeOf = async (view: Opened, act: () => Promise<void>) => {
       seen = { url: request.url(), origin: new URL(view.page.url()).origin, ...call.value };
   };
   view.page.on("request", watch);
-  await act();
-  view.page.off("request", watch);
-  return seen;
+  try {
+    await act();
+    for (let waited = 0; seen === undefined && waited < FIRST_CALL_MS; waited += POLL_MS)
+      await view.page.waitForTimeout(POLL_MS);
+    return seen;
+  } finally {
+    view.page.off("request", watch);
+  }
 };
 
 /**

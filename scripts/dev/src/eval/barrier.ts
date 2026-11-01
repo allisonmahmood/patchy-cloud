@@ -207,7 +207,9 @@ export const raiseBarrier = async (
       lowered = true;
       try {
         const value = await act();
+        // The quiet window starts after the step too, so a write it sends a moment late still counts.
         const from = performance.now();
+        last = Math.max(last, from);
         for (;;) {
           if (pending.size === 0 && performance.now() - last >= QUIET_MS) break;
           if (performance.now() - from > DELIBERATE_MS)
