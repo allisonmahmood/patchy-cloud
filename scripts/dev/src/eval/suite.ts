@@ -21,7 +21,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { evidence, type Commit, type Side } from "../evidence.js";
 import { realNode } from "../runtimes.js";
@@ -232,29 +232,38 @@ export class DoorOpen extends Schema.TaggedError<DoorOpen>()("DoorOpen", {
   }
 }
 
-/** Requests a keyed door must refuse: its picker, and signing someone in directly without the key or with a wrong one. */
-const DOOR_PROBES = [
-  "/dev/sign-in",
-  "/dev/sign-in?as=door-probe%40patchy.local&return=%2F",
-  "/dev/sign-in?as=door-probe%40patchy.local&return=%2F&key=wrong"
-];
-
 /**
  * Whether a side's personas door refuses every request without the eval's
- * key, as every eval instance's must: the picker, and a direct sign-in with no
- * key or a wrong one. An open door signs any email in and redirects, so
- * anything but 403 is open.
+ * key, as every eval instance's must: the picker, and signing one of the
+ * side's own people in with no key or a wrong one. Each probe's own answer
+ * must be 403, redirects not followed: an open door answers a sign-in with a
+ * cookie and a redirect, wherever that redirect would end.
  */
-const checkDoor = Effect.fn("Eval.checkDoor")(function* (name: "base" | "head", side: Side) {
-  for (const probe of DOOR_PROBES) {
-    const status = yield* HttpClient.get(`${side.served.apiUrl}${probe}`).pipe(
+export const checkDoor = Effect.fn("Eval.checkDoor")(function* (
+  name: "base" | "head",
+  side: { readonly served: { readonly apiUrl: string }; readonly commit: { readonly sha: string } },
+  person: string
+) {
+  const as = `as=${encodeURIComponent(person)}&return=%2F`;
+  for (const probe of ["", `?${as}`, `?${as}&key=wrong`]) {
+    const status = yield* HttpClient.get(`${side.served.apiUrl}/dev/sign-in${probe}`).pipe(
       Effect.map((response) => response.status),
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
       Effect.timeout("10 seconds"),
       Effect.orElseSucceed(() => 0)
     );
     if (status !== 403) return yield* new DoorOpen({ side: name, commit: side.commit.sha });
   }
 });
+
+export class WarmUpFailed extends Schema.TaggedError<WarmUpFailed>()("WarmUpFailed", {
+  side: Schema.String,
+  detail: Schema.NullOr(Schema.String)
+}) {
+  override get message() {
+    return `The ${this.side} side's warm-up build couldn't run, twice${this.detail === null ? "" : ` (${this.detail})`}, so its measured runs would start cold against a warm side.`;
+  }
+}
 
 export class ToolchainMismatch extends Schema.TaggedError<ToolchainMismatch>()(
   "ToolchainMismatch",
@@ -378,8 +387,9 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       if (sides.before.status === "unavailable")
         return yield* new BaseUnavailable({ reason: sides.before.reason });
       // Both doors before any setup: a side that would show builders other runs' people never runs.
-      yield* checkDoor("head", sides.after);
-      if (sides.before.status === "served") yield* checkDoor("base", sides.before.side);
+      const person = sideScenario.people[0].email;
+      yield* checkDoor("head", sides.after, person);
+      if (sides.before.status === "served") yield* checkDoor("base", sides.before.side, person);
       const common = { dir, builders, signIns, scenario: sideScenario };
       const head = yield* setUpSide({ ...common, toolchain, name: "head", side: sides.after });
       // Base installs exactly what head did, `latest` included, and must end up with the same.
@@ -412,13 +422,18 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
               planned.push({ task, builder, repeat, side });
       // One uncounted build per side first, repeat 0, so neither side's measured runs pay
       // its instance's cold start; it lands in `runs/` but not in the scorecard.
+      const sideList = base === null ? [head.context] : [head.context, base];
       yield* Console.error("Warming each side up with one uncounted build");
-      yield* Effect.forEach(
-        base === null ? [head.context] : [head.context, base],
+      const warmUps = yield* Effect.forEach(
+        sideList,
         (side) =>
           runWithRetry(suite, { task: input.tasks[0]!, builder: builders[0]!, repeat: 0, side }),
-        { concurrency: "unbounded", discard: true }
+        { concurrency: "unbounded" }
       );
+      // A warm-up that never ran leaves its side cold; any builder outcome warmed it.
+      const cold = warmUps.find((record) => record.outcome === "infra");
+      if (cold !== undefined)
+        return yield* new WarmUpFailed({ side: cold.side, detail: cold.detail });
       yield* Console.error(
         `Running ${planned.length} build${planned.length === 1 ? "" : "s"}, ${input.concurrency} at a time`
       );

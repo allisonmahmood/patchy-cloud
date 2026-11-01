@@ -1,8 +1,15 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import {
+  FetchHttpClient,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse
+} from "effect/http";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
@@ -15,7 +22,7 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
-import { pinnedTo } from "./suite.js";
+import { checkDoor, pinnedTo } from "./suite.js";
 import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
@@ -161,6 +168,47 @@ describe("the sandbox's proxy", () => {
       expect(yield* connect(`127.0.0.1:${port + 1}`)).toBe("HTTP/1.1 403 Forbidden");
       expect(yield* connect(`localhost:${port}`)).toBe("HTTP/1.1 403 Forbidden");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+});
+
+describe("a side's personas door", () => {
+  /** A door on a free port: `signIn` answers a sign-in that names someone, 403 the rest. */
+  const door = (signIn: HttpServerResponse.HttpServerResponse) =>
+    HttpRouter.serve(
+      HttpRouter.use((router) =>
+        router.add(
+          "GET",
+          "/dev/sign-in",
+          Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+            request.url.includes("as=") ? signIn : HttpServerResponse.empty({ status: 403 })
+          )
+        )
+      ),
+      { disableLogger: true, disableListenLog: true }
+    ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+
+  /** Checks the door on this test's server through a plain fetch client, as the suite does. */
+  const check = Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP listener");
+    const side = {
+      served: { apiUrl: `http://127.0.0.1:${server.address.port}` },
+      commit: { sha: "abc1234" }
+    };
+    return yield* checkDoor("head", side, "ada@example.com").pipe(
+      Effect.provide(FetchHttpClient.layer)
+    );
+  });
+
+  it.effect("is open when a sign-in without the key redirects, wherever the redirect ends", () =>
+    Effect.gen(function* () {
+      const open = yield* Effect.flip(check);
+      expect(open._tag).toBe("DoorOpen");
+    }).pipe(Effect.provide(door(HttpServerResponse.redirect("/dev/sign-in", { status: 303 }))))
+  );
+
+  it.effect("is keyed when every request without the key is refused", () =>
+    check.pipe(Effect.provide(door(HttpServerResponse.empty({ status: 403 }))))
   );
 });
 

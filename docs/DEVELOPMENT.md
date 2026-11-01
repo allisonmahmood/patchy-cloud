@@ -489,10 +489,11 @@ code is #1143.
   own network, builder home and database, whose personas door is keyed: only
   the grader can sign anyone in, so builders verify through `patchy dev`'s own
   viewers, as builders can in production. Both sides must come up, and a side
-  whose door signs anyone in without the key, or with a wrong one (a commit
-  from before the keyed door), stops the suite before any setup. Each side
-  first builds one uncounted run, repeat 0, so neither side's measured runs pay
-  its cold start; it is kept in `runs/` and left out of the scorecard. Runs
+  whose door signs one of its people in without the key, or with a wrong one
+  (a commit from before the keyed door), stops the suite before any setup.
+  Each side first builds one uncounted run, repeat 0, so neither side's
+  measured runs pay its cold start; it is kept in `runs/` and left out of the
+  scorecard, and a warm-up that couldn't run, twice, stops the suite. Runs
   alternate sides, and which side goes first alternates by repeat. Tasks,
   fixtures and checks come from this checkout for both sides, so they're
   graded alike.
