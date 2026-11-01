@@ -64,3 +64,23 @@ it("lists the sheet's own row after the page's hotkeys, in whichever section it 
     [undefined, [{ hotkey: "Mod+K", label: "Search" }, { hotkey: "J", label: "Next" }, own]]
   ]);
 });
+
+it("knows its own row when the registration writes its hotkey differently, as `J` for `j`", () => {
+  expect(
+    sections(
+      [
+        { hotkey: "J", label: "Show shortcuts", group: "Navigation" },
+        { hotkey: "G H", label: "Go home", group: "Navigation" }
+      ],
+      { hotkey: "j", label: "Show shortcuts" }
+    )
+  ).toEqual([
+    [
+      "Navigation",
+      [
+        { hotkey: "G H", label: "Go home", group: "Navigation" },
+        { hotkey: "J", label: "Show shortcuts", group: "Navigation" }
+      ]
+    ]
+  ]);
+});

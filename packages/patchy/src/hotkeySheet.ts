@@ -2,7 +2,15 @@
  * What `HotkeySheet` draws from: its sections and its default styles. Internal: `hotkeys.ts`
  * exports the component.
  */
+import { normalizeHotkey } from "@tanstack/preact-hotkeys";
+import { steps } from "./hotkeyRules.js";
 import type { ListedHotkey } from "./hotkeys.js";
+
+// A hotkey as its registration lists it: `"j"` is `"J"`, a sequence's steps joined by spaces.
+const canonical = (hotkey: string): string =>
+  steps(hotkey)
+    .map((step) => normalizeHotkey(step))
+    .join(" ");
 
 /**
  * The sheet's sections: named groups in the order they are first seen, then the ungrouped under
@@ -13,7 +21,10 @@ export const sections = (
   list: ReadonlyArray<ListedHotkey>,
   own?: Pick<ListedHotkey, "hotkey" | "label">
 ): Array<[name: string | undefined, rows: ListedHotkey[]]> => {
-  const isOwn = (item: ListedHotkey) => item.hotkey === own?.hotkey && item.label === own.label;
+  const isOwn = (item: ListedHotkey) =>
+    own !== undefined &&
+    item.label === own.label &&
+    canonical(item.hotkey) === canonical(own.hotkey);
   const groups = new Map<string, ListedHotkey[]>();
   const ungrouped: ListedHotkey[] = [];
   for (const item of [...list.filter((item) => !isOwn(item)), ...list.filter(isOwn)]) {
