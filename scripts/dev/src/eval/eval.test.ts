@@ -22,7 +22,7 @@ import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js"
 import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
-import { isPublic, openNetwork } from "./network.js";
+import { among, isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
 import { Expectation, ranks } from "./calibrate.js";
 import { closed, copySource, masksIn, meanScores, splits, taskBrief } from "./judges.js";
@@ -153,6 +153,39 @@ describe("the sandbox's proxy", () => {
           new Promise<string>((resolve) => {
             const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
               socket.write("CONNECT 127.0.0.1:5432 HTTP/1.1\r\nHost: 127.0.0.1:5432\r\n\r\n")
+            );
+            socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
+          })
+      );
+      expect(reply).toBe("HTTP/1.1 403 Forbidden");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+  it("narrows a judge's network to its providers' hosts, by name", () => {
+    const only = ["anthropic.com", "openai.com"];
+    expect(among("api.anthropic.com", only)).toBe(true);
+    expect(among("openai.com", only)).toBe(true);
+    expect(among("raw.githubusercontent.com", only)).toBe(false);
+    expect(among("anthropic.com.example.org", only)).toBe(false);
+    expect(among("160.79.104.10", only)).toBe(false);
+    expect(among("raw.githubusercontent.com", undefined)).toBe(true);
+  });
+
+  it.effect("refuses a judge's CONNECT to the public repo before looking it up", () =>
+    Effect.gen(function* () {
+      const network = yield* openNetwork({
+        instancePort: 1,
+        allow: [],
+        only: ["anthropic.com"],
+        node: "/usr/bin/node"
+      });
+      const reply = yield* Effect.promise(
+        () =>
+          new Promise<string>((resolve) => {
+            const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
+              socket.write(
+                "CONNECT raw.githubusercontent.com:443 HTTP/1.1\r\nHost: raw.githubusercontent.com:443\r\n\r\n"
+              )
             );
             socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
           })
@@ -513,6 +546,8 @@ describe("the judges", () => {
         "scenarios/acme/patches/kudos/src/App.tsx",
         "scripts/dev/eval-calibration/expectations.json",
         "node_modules/patchy/SKILL.md",
+        "node_modules/.cache/turbo/abc.tar.zst",
+        ".turbo/cache/abc.tar.zst",
         "AGENTS.md",
         ".git"
       ];
@@ -520,10 +555,14 @@ describe("the judges", () => {
         yield* fs.makeDirectory(`${checkout}/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
         yield* fs.writeFileString(`${checkout}/${file}`, "");
       }
+      // A tracked link, as this repo's CLAUDE.md is: bwrap can't mount over it, so its target is hidden.
+      yield* fs.symlink("AGENTS.md", `${checkout}/CLAUDE.md`);
       const masks = yield* masksIn(checkout);
       expect([...masks].sort((a, b) => a.at.localeCompare(b.at))).toEqual([
         { at: "/patchy/.git", file: true },
+        { at: "/patchy/.turbo", file: false },
         { at: "/patchy/AGENTS.md", file: true },
+        { at: "/patchy/node_modules/.cache", file: false },
         { at: "/patchy/packages/patchy/artifacts", file: false },
         { at: "/patchy/packages/sdk/skills", file: false },
         { at: "/patchy/scenarios/acme/patches/kudos/AGENTS.md", file: true },
@@ -550,6 +589,7 @@ describe("the judges", () => {
         yield* fs.makeDirectory(`${dir}/from/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
         yield* fs.writeFileString(`${dir}/from/${file}`, text);
       }
+      yield* fs.symlink("AGENTS.md", `${dir}/from/CLAUDE.md`);
       yield* copySource(`${dir}/from`, `${dir}/to`, instance);
       expect((yield* fs.readDirectory(`${dir}/to`, { recursive: true })).sort()).toEqual([
         "package.json",

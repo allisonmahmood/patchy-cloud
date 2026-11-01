@@ -32,7 +32,6 @@ import { randomId, retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.
 import { checkBrowser, grade } from "./grade.js";
 import {
   fileSecrets,
-  installToolchain,
   prepareHome,
   prepareTemplate,
   readSignIns,
@@ -45,8 +44,8 @@ import {
   JUDGE_IDS,
   type JudgeRecord,
   JUDGES,
-  NO_INSTANCE,
-  noVerdict
+  noVerdict,
+  prepareJudges
 } from "./judges.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
@@ -381,25 +380,20 @@ const judgeAll = Effect.fn("Eval.judgeAll")(function* (input: {
     (record) => record.target !== null && record.outcome !== "infra"
   );
   if (judged.length === 0) return input.records;
-  const network = yield* openNetwork({
-    node: (yield* realNode()).execPath,
-    instancePort: NO_INSTANCE,
-    allow: input.signIns.privateEndpoints
-  });
   const template = path.join(input.dir, "homes", "judges");
   const staging = path.join(input.dir, "judging");
   yield* Console.error("  judges  setting up the judges' home");
-  const ready = yield* Effect.gen(function* () {
-    yield* fs.makeDirectory(template, { recursive: true });
-    yield* installToolchain({ home: template, network }, input.toolchain, ["claude-code", "codex"]);
+  const network = yield* prepareJudges({
+    template,
+    toolchain: input.toolchain,
+    signIns: input.signIns
   }).pipe(
-    Effect.as(true),
     Effect.catch((error) =>
-      Console.error(`  judges  couldn't set up their home: ${String(error)}`).pipe(Effect.as(false))
+      Console.error(`  judges  couldn't set up their home: ${String(error)}`).pipe(Effect.as(null))
     )
   );
   const pairs = judged.flatMap((record) => JUDGE_IDS.map((id) => ({ record, judge: JUDGES[id] })));
-  if (!ready)
+  if (network === null)
     return withJudges(
       input.records,
       pairs.map(({ record, judge: who }) => ({

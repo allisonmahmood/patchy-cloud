@@ -14,18 +14,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { realNode } from "../runtimes.js";
-import { installToolchain, readSignIns } from "./home.js";
+import { readSignIns } from "./home.js";
 import {
   type Dimension,
   DIMENSIONS,
   judge,
   JUDGE_IDS,
   JUDGES,
-  NO_INSTANCE,
+  prepareJudges,
   type Scores
 } from "./judges.js";
-import { openNetwork } from "./network.js";
 import { checkSandbox, readToolchain } from "./sandbox.js";
 import { TASKS } from "./tasks/index.js";
 
@@ -85,15 +83,9 @@ export const runCalibration = Effect.fn("Eval.runCalibration")(function* (root: 
   yield* fs.makeDirectory(dir, { recursive: true });
   const scores = yield* Effect.scoped(
     Effect.gen(function* () {
-      const network = yield* openNetwork({
-        node: (yield* realNode()).execPath,
-        instancePort: NO_INSTANCE,
-        allow: signIns.privateEndpoints
-      });
       const template = path.join(dir, "homes", "judges");
-      yield* fs.makeDirectory(template, { recursive: true });
       yield* Console.error("  judges  setting up the judges' home");
-      yield* installToolchain({ home: template, network }, toolchain, ["claude-code", "codex"]);
+      const network = yield* prepareJudges({ template, toolchain, signIns });
       // Each build's folder once, before any judge reads it: both judges of a build share it.
       const shotsOf = new Map<string, ReadonlyArray<string>>();
       for (const build of builds) {

@@ -524,12 +524,13 @@ builds, two judges review what each run published.
   builder. A run passes when it built and every check passed.
 - **Judges.** Opus 5.5 at `xhigh` in Claude Code and GPT-6.1 Sol at `xhigh` in
   Codex review every run that published, in the same sandbox, on a network
-  that reaches no instance. The scoring pass is blind: the task's words and
+  that reaches their model providers and nothing else, with their harnesses'
+  web tools off: no instance, and not the public repo that holds the skills. The scoring pass is blind: the task's words and
   rubric, the published source without its agent instructions and with its
   instance renamed, the screenshots, the check results, and this checkout for
   how Patchy works, the same for both sides, with every skill folder, release
-  archive and agent file masked wherever it is, its git history, local state
-  and the calibration labels too. It is staged under an anonymous name, so no
+  archive, build cache and agent file masked wherever it is, its git history,
+  local state and the calibration labels too. It is staged under an anonymous name, so no
   path says the side or the builder. Each judge scores fit, platform,
   correctness, UX and code from 1 to 5, with findings. For findings of medium
   severity or worse, an attribution pass reads the skills the builder had and
