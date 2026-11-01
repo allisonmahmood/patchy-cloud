@@ -134,8 +134,12 @@ const checkCss = (css: string): string[] => {
   const ast = CssTree.parse(css, {
     positions: true,
     parseCustomProperty: true,
-    onParseError: (error) => {
-      errors.push(`${at(error.line)} could not be parsed: ${error.message.replace(/\.?$/, ".")}`);
+    // css-tree also reports each grammar it tries for a condition, such as
+    // `@supports ((display:grid))`. A null fallback means it rereads the same tokens with the
+    // next grammar, which reports again if it too fails.
+    onParseError: (error, fallback: CssTree.CssNode | null) => {
+      if (fallback !== null)
+        errors.push(`${at(error.line)} could not be parsed: ${error.message.replace(/\.?$/, ".")}`);
     }
   });
 
