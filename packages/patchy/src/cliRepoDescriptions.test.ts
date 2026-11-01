@@ -47,6 +47,7 @@ describe("repo description sync and change notices", () => {
       JSON.stringify({
         instance: instance.url,
         patch: "abcdefghijkl",
+        version: 1,
         description: "Local edit",
         descriptionSyncedAt: "2026-09-15T00:00:00.000Z",
         authorField: 7
@@ -152,6 +153,7 @@ describe("repo description sync and change notices", () => {
       JSON.stringify({
         instance: instance.url,
         patch: "abcdefghijkl",
+        version: 1,
         description: "Synthetic notes"
       })
     );
@@ -220,6 +222,7 @@ describe("repo description sync and change notices", () => {
       JSON.stringify({
         instance: instance.url,
         patch: "abcdefghijkl",
+        version: 1,
         description: "Synthetic notes"
       })
     );
