@@ -13,7 +13,7 @@
 // Plain JavaScript on purpose: it runs on the sandbox's Node before anything else.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { closeSync, openSync, readSync, unlinkSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -51,7 +51,9 @@ for (const server of servers) server.unref();
  * One of the command's output streams: a file in HOME, unlinked once open so
  * nothing else finds it, that the command writes to and this reads as it grows
  * and hands on to `to`, never faster than `to` drains. `finish`, once the
- * command has exited, hands on the rest and resolves.
+ * command has exited, hands on what the file held at that moment and resolves:
+ * a process the command left running may keep writing, and must not keep the
+ * sandbox alive. A runner that stops reading ends the relay, never the bridge.
  */
 const relay = (name, to) => {
   const path = `${process.env.HOME ?? "/tmp"}/.eval-${name}-${process.pid}`;
@@ -59,21 +61,24 @@ const relay = (name, to) => {
   const read = openSync(path, "r");
   unlinkSync(path);
   const buffer = Buffer.alloc(1 << 16);
-  let exited = false;
+  let handed = 0;
+  let end = Infinity;
   const handedOn = (async () => {
-    for (;;) {
-      const n = readSync(read, buffer);
+    while (handed < end) {
+      const n = readSync(read, buffer, 0, Math.min(buffer.length, end - handed), null);
       if (n > 0) {
+        handed += n;
         if (!to.write(Buffer.from(buffer.subarray(0, n)))) await once(to, "drain");
-      } else if (exited) break;
+      } else if (end !== Infinity) break;
       else await sleep(25);
     }
     await new Promise((resolve) => to.write("", resolve));
   })();
+  handedOn.catch(() => {});
   return {
     fd: write,
     finish: () => {
-      exited = true;
+      end = fstatSync(read).size;
       return handedOn;
     }
   };
