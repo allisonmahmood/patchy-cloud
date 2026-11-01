@@ -38,7 +38,7 @@ import {
   treeBytes
 } from "./test/cli.js";
 import { ManagedProject, ProjectLocked } from "./ManagedProject.js";
-import { withWorkerdBuildDeclined } from "./packagePin.js";
+import { withWorkerdBuildDeclined } from "./workerdBuild.js";
 import toolchain from "./toolchain.json" with { type: "json" };
 import { lookRevision, readLookFixture } from "../../../test/look-fixtures.js";
 
@@ -222,9 +222,23 @@ describe("patch-repo commands", () => {
     });
     expect(existsSync(path.join(dir, "patchy/_generated/metadata.json"))).toBe(false);
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
-    expect(readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8")).toBe(
-      withWorkerdBuildDeclined("minimumReleaseAge: 1440\n")
+    expect(withWorkerdBuildDeclined("minimumReleaseAge: 1440\n")).toEqual({
+      source: readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8")
+    });
+  });
+
+  // workerdBuild.test.ts owns which layouts are edited; this proves the notice reaches refresh.
+  it("leaves a pnpm-workspace.yaml it can't safely edit as written, and says what to add", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const workspace = "allowBuilds: { # keep me\n}\n";
+    writeFileSync(path.join(dir, "pnpm-workspace.yaml"), workspace);
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout).warnings).toContainEqual(
+      expect.stringContaining("Add `workerd: false` under `allowBuilds` in pnpm-workspace.yaml")
     );
+    expect(readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8")).toBe(workspace);
   });
 
   it("swaps in the company's current look at each refresh and leaves an existing styled page alone", async () => {

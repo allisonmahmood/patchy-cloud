@@ -48,12 +48,8 @@ import { processResult } from "./processResult.js";
 import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain, typescriptRefusal } from "./toolchainProcess.js";
-import {
-  installFailureReason,
-  releaseFromPin,
-  withTarballIntegrity,
-  withWorkerdBuildDeclined
-} from "./packagePin.js";
+import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
+import { withWorkerdBuildDeclined } from "./workerdBuild.js";
 import { discoverServerModules } from "./serverModules.js";
 
 const repoSchema = Schema.Struct({
@@ -393,7 +389,10 @@ const recordIntegrity = Effect.fn("Project.recordIntegrity")(function* (
     yield* replaceFile(cwd, "pnpm-lock.yaml", recorded, "Could not write pnpm-lock.yaml.");
 });
 
-/** Decline workerd's build script, which pnpm 12 otherwise fails every install, add and remove on. */
+/**
+ * Decline workerd's build script, which pnpm 12 otherwise fails every install, add and remove on.
+ * A file this leaves as written gets its notice from refresh's toolchain inspection.
+ */
 const declineWorkerdBuild = Effect.fn("Project.declineWorkerdBuild")(function* (cwd: string) {
   const fs = yield* FileSystem.FileSystem;
   const file = yield* localIO("Resolve pnpm-workspace.yaml", () =>
@@ -406,11 +405,11 @@ const declineWorkerdBuild = Effect.fn("Project.declineWorkerdBuild")(function* (
     )
   );
   const declined = withWorkerdBuildDeclined(source);
-  if (declined !== source)
+  if ("source" in declined && declined.source !== source)
     yield* replaceFile(
       cwd,
       "pnpm-workspace.yaml",
-      declined,
+      declined.source,
       "Could not write pnpm-workspace.yaml."
     );
 });

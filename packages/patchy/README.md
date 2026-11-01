@@ -703,10 +703,15 @@ locks a tarball already in its store without an integrity and later refuses that
 entry, so init and refresh write the release's integrity from `GET /api/release`
 into the `patchy` entry. pnpm 12 fails `install`, `add` and `remove` when it
 ignores a build script, and Patchy runs workerd's platform binary directly, so
-init and refresh add `workerd: false` under `allowBuilds`, block or flow, unless
-it already names workerd. The entry is spliced in, so every other line is the
-repo's, and a file pnpm would refuse is left alone. The installed release writes
-it, so an older CLI's refresh adds it too. A failed install relays pnpm's reason:
+init and refresh add `workerd: false` under `allowBuilds` in
+`pnpm-workspace.yaml`, unless the repo already chose for workerd, through
+aliases or merge keys too. They edit only plain layouts: one document whose
+block mapping starts at column 0, with no anchors, aliases, merge keys, `?`
+keys, tags or document markers, and `allowBuilds` absent, a block mapping or a
+one-line flow mapping. Any other file is left byte for byte, and refresh warns
+with the line to add: `allowBuilds: { workerd: false }`, or `workerd: false`
+under the existing `allowBuilds`. The installed release does both, so an older
+CLI's refresh does too. A failed install relays pnpm's reason:
 pnpm 11's first `ERR_PNPM_` line, or pnpm 12's error code and causes.
 Refresh alone updates the pins and generated server module list after init;
 dev and publish do not repair them. It removes stale generated context files.
