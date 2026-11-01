@@ -139,6 +139,12 @@ back to where it was.
 
 - `formatHotkey("Mod+K")` is `"⌘ K"` on a Mac and `"Ctrl+K"` elsewhere.
 - `hotkeyKeys("G H")` returns each step's keys, `[["G"], ["H"]]`, for drawing keycaps.
+- A Mac shows Enter, Space, Backspace and Delete as ↵ ␣ ⌫ ⌦. Elsewhere they are words:
+  `formatHotkey("Mod+Enter")` is `"⌘ ↵"` on a Mac and `"Ctrl+Enter"` elsewhere.
+- Both take a hotkey, checked like `useHotkey`'s, or modifiers alone, such as `"Mod"` or
+  `"Mod+Shift"`, for a hint like "⌘ scroll". A value typed as plain `string`, such as a
+  `useHotkeyList` row's `hotkey`, isn't checked. A template such as `` `Mod+${n}` `` is
+  checked like a literal, so type the pieces as `Chord` or `Key`.
 - `useHotkeyList()` returns `{ hotkey, label, group }` for every labelled, enabled hotkey that
   is mounted, including those a `HotkeyScope` holds back. Hotkeys of a dialog that isn't open
   aren't mounted, so they aren't listed.

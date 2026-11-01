@@ -8,6 +8,7 @@
 import { createHotkeyBindings, prepareHotkeyDefinitions } from "@tanstack/hotkeys/adapter";
 import {
   HotkeysProvider,
+  detectPlatform,
   formatForDisplay,
   getHotkeyManager,
   useDefaultHotkeysOptions,
@@ -142,6 +143,13 @@ type Problem<S extends string> = S extends `${string}  ${string}` | ` ${string}`
  * such as `"G H"`. A string that isn't one becomes an error naming the step to fix.
  */
 export type Hotkey<S extends string> = [Problem<S>] extends [never] ? S : Problem<S>;
+
+// Modifiers alone, for a hint such as "⌘ scroll".
+type Modifiers = "Mod" | "Alt" | "Shift" | "Mod+Alt" | "Mod+Shift" | "Alt+Shift" | "Mod+Alt+Shift";
+
+// What the display helpers take: a hotkey, modifiers alone, or a string that isn't a literal,
+// such as a `useHotkeyList` row's. A literal that is none of these names the step to fix.
+type Shown<S extends string> = string extends S ? S : S extends Modifiers ? S : Hotkey<S>;
 
 export interface HotkeyOptions {
   /** What the hotkey does, in the viewer's words. Labelled hotkeys appear in `useHotkeyList`. */
@@ -281,12 +289,30 @@ export function HotkeyScope(props: { readonly children: ComponentChildren }): JS
   return createElement(HotkeysProvider, { defaultOptions, children: props.children });
 }
 
-/** How the viewer's keyboard writes a hotkey: `"⌘ K"` on a Mac, `"Ctrl+K"` elsewhere, `"G H"`. */
-export const formatHotkey = (hotkey: string): string => formatForDisplay(toTanStack(hotkey));
+// Their symbols, ↵ ␣ ⌫ ⌦, are a Mac's; elsewhere these keys read as words, as in "Ctrl+Enter".
+const words = { Enter: "Enter", Space: "Space", Backspace: "Backspace", Delete: "Delete" };
+
+const display = () => {
+  const platform = detectPlatform();
+  return platform === "mac" ? { platform } : { platform, keyLabels: words };
+};
+
+/**
+ * How the viewer's keyboard writes a hotkey: `"⌘ K"` on a Mac, `"Ctrl+K"` elsewhere, `"G H"`.
+ * Modifiers alone, such as `"Mod"`, are written too, for a hint like "⌘ scroll".
+ */
+export function formatHotkey<const S extends string>(hotkey: Shown<S>): string {
+  return formatForDisplay(toTanStack(hotkey), display());
+}
 
 /** The keys of each step, for drawing keycaps: `"Mod+K"` is `[["⌘", "K"]]` on a Mac. */
-export const hotkeyKeys = (hotkey: string): ReadonlyArray<ReadonlyArray<string>> =>
-  steps(hotkey).map((step) => formatForDisplay(step as HotkeyChord, { parts: true }));
+export function hotkeyKeys<const S extends string>(
+  hotkey: Shown<S>
+): ReadonlyArray<ReadonlyArray<string>> {
+  return steps(hotkey).map((step) =>
+    formatForDisplay(step as HotkeyChord, { ...display(), parts: true })
+  );
+}
 
 export interface ListedHotkey {
   readonly hotkey: string;
