@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { evidence, type Commit } from "../evidence.js";
+import { realNode } from "../runtimes.js";
 import { makeSanitizer } from "../sanitize.js";
 import { loadScenario, publisherToken } from "../scenario.js";
 import { type Builder, BUILDERS, type BuilderId, runBuilder, type Step } from "./builders.js";
@@ -237,6 +238,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       });
       const side = sides.after;
       const network = yield* openNetwork({
+        node: (yield* realNode()).execPath,
         instancePort: Number(new URL(side.served.apiUrl).port),
         allow: signIns.privateEndpoints
       });

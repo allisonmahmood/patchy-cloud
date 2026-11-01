@@ -101,7 +101,7 @@ describe("the sandbox's proxy", () => {
 
   it.effect("refuses a CONNECT to this machine's loopback", () =>
     Effect.gen(function* () {
-      const network = yield* openNetwork({ instancePort: 1, allow: [] });
+      const network = yield* openNetwork({ instancePort: 1, allow: [], node: "/usr/bin/node" });
       const reply = yield* Effect.promise(
         () =>
           new Promise<string>((resolve) => {
@@ -129,7 +129,11 @@ describe("the sandbox's proxy", () => {
           Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve())))
       );
       const port = (listener.address() as net.AddressInfo).port;
-      const network = yield* openNetwork({ instancePort: 1, allow: [`127.0.0.1:${port}`] });
+      const network = yield* openNetwork({
+        instancePort: 1,
+        allow: [`127.0.0.1:${port}`],
+        node: "/usr/bin/node"
+      });
       const connect = (target: string) =>
         Effect.promise(
           () =>

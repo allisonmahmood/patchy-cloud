@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { realNode } from "../runtimes.js";
 import { spawnStep, stepOutput } from "../steps.js";
 import { type Network, PROXY_PORT } from "./network.js";
 
@@ -88,7 +89,7 @@ const PROXY_ENV = {
  * a builder can reach is tested rather than trusted: the system read-only, a
  * private `/tmp` and `/dev/shm`, HOME read-write, a network of its own with
  * the runner's two sockets, and nothing of this machine's own HOME. The
- * command runs behind the bridge, on the runner's own `node` binary, mounted
+ * command runs behind the bridge, on this machine's Node binary, mounted
  * alone: the sandbox's toolchain may not be installed yet.
  */
 export const bwrapArgs = (
@@ -149,9 +150,9 @@ export const checkSandbox = Effect.fn("Sandbox.check")(function* (root: string) 
 });
 
 /**
- * The versions to install in builders' homes: this runner's Node, and the
- * developer's pnpm, Claude Code and Codex as their `--version` says, or
- * `latest` for one this machine doesn't have.
+ * The versions to install in builders' homes: the developer's Node (the real
+ * one on PATH, not the Bun this runner runs on), pnpm, Claude Code and Codex
+ * as their `--version` says, or `latest` for one this machine doesn't have.
  */
 export const readToolchain = Effect.fn("Sandbox.readToolchain")(function* (root: string) {
   const read = (command: string) =>
@@ -163,7 +164,7 @@ export const readToolchain = Effect.fn("Sandbox.readToolchain")(function* (root:
       Effect.orElseSucceed(() => undefined)
     );
   return {
-    node: process.versions.node,
+    node: (yield* realNode()).version,
     pnpm: (yield* read("pnpm")) ?? "latest",
     claude: (yield* read("claude")) ?? "latest",
     codex: (yield* read("codex")) ?? "latest"

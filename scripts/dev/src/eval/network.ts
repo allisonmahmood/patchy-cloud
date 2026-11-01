@@ -37,7 +37,7 @@ export interface Network {
   readonly instancePort: number;
   /** The bridge script, mounted at `/opt/eval/bridge.mjs`. */
   readonly bridge: string;
-  /** The runner's own `node` binary, a single self-contained file, mounted at `/opt/eval/node` to run the bridge. */
+  /** Real Node's binary, a single self-contained file, mounted at `/opt/eval/node` to run the bridge. */
   readonly node: string;
 }
 
@@ -186,6 +186,8 @@ const listen = (door: string, file: string, handle: (socket: net.Socket) => void
 export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   readonly instancePort: number;
   readonly allow: ReadonlyArray<string>;
+  /** Real Node's binary, never Bun's: the runner itself runs on Bun. */
+  readonly node: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -201,6 +203,6 @@ export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
     sockets: dir,
     instancePort: input.instancePort,
     bridge: new URL("./bridge.mjs", import.meta.url).pathname,
-    node: process.execPath
+    node: input.node
   } satisfies Network;
 });
