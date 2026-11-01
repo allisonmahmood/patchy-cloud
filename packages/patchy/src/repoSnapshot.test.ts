@@ -151,6 +151,11 @@ it.layer(NodeServices.layer)("repo snapshot packing", (it) => {
         files: 1,
         bytes: 8.5 * 1024 * 1024
       });
+      // One file each uses the same share of the file limit, so the larger comes first.
+      assert.deepStrictEqual(
+        heavy.entries.map((entry) => entry.path),
+        ["assets/", "src/", "package.json", "patchy.json", "index.html", "patchy.config.ts"]
+      );
       expect(heavy.warnings).toEqual([
         expect.stringMatching(
           /^The repo is 8\.5 MiB in 6 files, near the most a version keeps: 10\.0 MiB and 2000 files\. Largest: assets\/ 1 file, 8\.5 MiB; /

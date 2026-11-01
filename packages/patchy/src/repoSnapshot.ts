@@ -143,8 +143,8 @@ const share = ({ files, bytes }: Pick<Entry, "files" | "bytes">) =>
 const warnShare = 0.8;
 
 /**
- * The snapshot's top-level files and folders, the ones using most of either limit first: where
- * an agent starts trimming.
+ * The snapshot's top-level files and folders, the ones using most of either limit first, then the
+ * larger: where an agent starts trimming.
  */
 const entries = (files: Walked["files"]): ReadonlyArray<Entry> => {
   const totals = new Map<string, { files: number; bytes: number }>();
@@ -156,7 +156,7 @@ const entries = (files: Walked["files"]): ReadonlyArray<Entry> => {
   }
   return [...totals]
     .map(([path, total]) => ({ path, ...total }))
-    .sort((left, right) => share(right) - share(left));
+    .sort((left, right) => share(right) - share(left) || right.bytes - left.bytes);
 };
 
 /** An entry as a person reads it; a folder says how many files it holds. */
