@@ -1,4 +1,10 @@
-import type { CheckContext, CheckOutcome, Opened, Task } from "../task.js";
+import {
+  type CheckContext,
+  type CheckOutcome,
+  GraderTrouble,
+  type Opened,
+  type Task
+} from "../task.js";
 import {
   around,
   chooseField,
@@ -16,8 +22,12 @@ const PNG = Buffer.from(
   "base64"
 );
 
-/** A receipt of its own: the PNG with `marker` after its end, which image readers ignore. */
-const receipt = (marker: string) => Buffer.concat([PNG, Buffer.from(`\n${marker}\n`)]);
+/**
+ * A receipt of its own: the PNG with `marker` after its end, which image
+ * readers ignore. Its file name doesn't carry the marker, so only these
+ * bytes, served whole, can prove the upload was kept.
+ */
+export const receipt = (marker: string) => Buffer.concat([PNG, Buffer.from(`\n${marker}\n`)]);
 
 const AMOUNT = /amount|cost|how much|total|price|\$/i;
 const REASON = /reason|description|purpose|what|details|note|title|why|memo|justification|for\b/i;
@@ -26,7 +36,7 @@ const REASON = /reason|description|purpose|what|details|note|title|why|memo|just
  * Asks for money the way a person would: opens the form if one waits behind a
  * button, types an amount and the reason, attaches a receipt holding
  * `marker`, fills anything else the form holds and sends it. The reason the
- * request couldn't be made, or null once it was sent.
+ * request couldn't be made, or null once it shows up among his requests.
  */
 const ask = async (view: Opened, reason: string, marker: string) => {
   const { frame, page } = view;
@@ -46,7 +56,7 @@ const ask = async (view: Opened, reason: string, marker: string) => {
   const file = frame.locator('input[type="file"]');
   if ((await file.count()) === 0) return "found no way to attach a receipt";
   await file.first().setInputFiles({
-    name: `receipt-${marker}.png`,
+    name: "receipt.png",
     mimeType: "image/png",
     buffer: receipt(marker)
   });
@@ -54,8 +64,8 @@ const ask = async (view: Opened, reason: string, marker: string) => {
   if (form === undefined) return "found no button to send the request";
   await fillRest(form.scope);
   await form.send.click();
-  await reveal(view, reason);
-  return null;
+  // Whoever asked sees their request; one that never shows up wasn't sent, whatever the page did.
+  return (await reveal(view, reason)) ? null : "sent the request, but it never showed up for him";
 };
 
 /** Ben asks for money with a receipt; the check's failure when he couldn't. */
@@ -69,13 +79,13 @@ const benAsks = async (ctx: CheckContext, reason: string, marker: string) => {
 const RECEIPT_CONTROL = /receipt|attachment|download|view file|open file|\.png/i;
 
 /**
- * Whether Ada can open the receipt of the request holding `reason`: a file
- * Patchy serves her holds its marker once she opens the request and presses
- * what says receipt in it. A saved file name, or a button with nothing
- * behind it, serves nothing.
+ * Whether Ada can open the receipt of the request holding `reason`: Patchy
+ * serves her a file with exactly the receipt's bytes once she opens the
+ * request and presses what says receipt in it. A saved file name, a button
+ * with nothing behind it, or a file holding anything else serves nothing.
  */
 const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
-  servesFile(ada, marker, async () => {
+  servesFile(ada, receipt(marker), async () => {
     // From a fresh load, so a preview the page fetches as it renders is seen too.
     await ada.page.reload();
     if (!(await reveal(ada, reason))) return;
@@ -95,12 +105,18 @@ const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
 
 const DECIDED = { approve: "approved", reject: "rejected" } as const;
 
+/** Patchy's codes for a patch's handler failing on a try: the patch's answer, never expected. */
+const PATCH_FAILED = new Set(["handler_failed", "handler_timeout"]);
+
 /**
- * Only an admin's decision counts, tried against the server: Ben asks, Ada
- * presses Approve (or Reject), and the change her page sends is held back
- * while Ben, who asked, and Cleo, another member, each send the same change
- * from their own pages. Each must be refused by the patch, or leave the
- * request undecided. Then Ada's goes through and Ben sees the decision.
+ * Only an admin's decision counts, tried against the server: Ben asks, then
+ * Ada presses Approve (or Reject). Every call her press sends Patchy is held
+ * back in turn, the decision itself among them, while Ben, who asked, and
+ * Cleo, another member, each send the same call from their own pages. After
+ * each try, refused or not, Ben must still see his request as he did before
+ * it: a refusal that comes after the decision changed doesn't count. Each
+ * refusal a try draws is the check's own, so it doesn't fail `opens ready`.
+ * Then Ada's calls go through and Ben sees the decision.
  */
 const onlyAdmins =
   (which: keyof typeof DECIDED) =>
@@ -109,51 +125,60 @@ const onlyAdmins =
     const reason = `${which === "approve" ? "Client lunch with Harbor" : "Standing desk"} ${ctx.code}`;
     const refused = await benAsks(ctx, reason, `${ctx.code}-${which}`);
     if (refused !== null) return refused;
+    /** What Ben sees of his request's decision, from a fresh page; undefined when he can't find it. */
+    const benSees = async () => {
+      const ben = await ctx.open("ben");
+      const seen = (await reveal(ben, reason)) ? await decisionShown(ben, reason) : undefined;
+      await ben.close();
+      return seen;
+    };
+    const before = await benSees();
+    if (before === undefined) return { ok: false, reason: "Ben can't find the request he sent." };
+    if (before === "approved" || before === "rejected")
+      return { ok: false, reason: `Ben's request shows ${before} before anyone decided it.` };
     const ada = await ctx.open("ada");
     if (!(await reveal(ada, reason)))
       return { ok: false, reason: "Ada doesn't see the request Ben sent." };
-    const pressed = await decide(ada, reason, which, true);
+    const pressed = await decide(ada, reason, which, async (call) => {
+      for (const member of ["ben", "cleo"]) {
+        const view = await ctx.open(member);
+        const answer = await call.tryAs(view, ctx.person(member));
+        await view.close();
+        const sent = `${ctx.person(member).name}, a member, sent Ada's ${which} call${call.handler === null ? "" : ` (${call.handler})`} as their own`;
+        // Patchy refusing for any reason but the patch's own handler failing says nothing of the patch.
+        if (!answer.ok && !answer.byHandler && !PATCH_FAILED.has(answer.code))
+          throw new GraderTrouble({
+            what: `Patchy itself refused the grader's try as ${ctx.person(member).name} (${answer.code}).`
+          });
+        const after = await benSees();
+        if (after !== before)
+          return `${sent}, ${answer.ok ? "and" : "and was refused, but"} Ben's request then showed ${after ?? "nothing he could find"} instead of ${before ?? "no decision"}.`;
+        if (!answer.ok && answer.byHandler && call.handler !== null)
+          ctx.expectRefusal({
+            person: member,
+            handler: call.handler,
+            code: answer.code,
+            at: answer.at
+          });
+      }
+      return null;
+    });
     if (pressed === null)
       return { ok: false, reason: `Ada found no way to ${which} Ben's request.` };
-    if (pressed.held === undefined)
+    if (pressed.objection !== null) return { ok: false, reason: pressed.objection };
+    if (pressed.probed === 0)
       return {
         ok: false,
-        reason: `Ada's ${which} sent Patchy no change for the grader to try as a member.`
+        reason: `Ada's ${which} sent Patchy nothing for the grader to try as a member.`
       };
-    for (const member of ["ben", "cleo"]) {
-      const view = await ctx.open(member);
-      const answer = await pressed.held.tryAs(view, ctx.person(member));
-      await view.close();
-      if (!answer.ok && !answer.byHandler)
-        return {
-          ok: false,
-          reason: `Patchy itself refused the grader's try as ${ctx.person(member).name} (${answer.code}), so it can't tell what the patch allows.`
-        };
-      if (!answer.ok) {
-        if (pressed.held.handler !== null) ctx.expectRefusal(member, pressed.held.handler);
-        continue;
-      }
-      // Taken: a handler may still change nothing for someone who isn't an admin.
-      const after = await ctx.open("ben");
-      const seen = (await reveal(after, reason)) ? await decisionShown(after, reason) : null;
-      await after.close();
-      if (seen === decided)
-        return {
-          ok: false,
-          reason: `Patchy let ${ctx.person(member).name}, a member, ${which} Ben's request.`
-        };
-    }
-    await pressed.held.release();
     await ada.close();
-    const later = await ctx.open("ben");
-    if (!(await reveal(later, reason)))
-      return { ok: false, reason: "Ben no longer sees his request." };
-    const seen = await decisionShown(later, reason);
-    return seen === decided
+    const later = await benSees();
+    if (later === undefined) return { ok: false, reason: "Ben no longer sees his request." };
+    return later === decided
       ? { ok: true }
       : {
           ok: false,
-          reason: `After Ada's ${which}, Ben's request shows ${seen ?? "no decision"}.`
+          reason: `After Ada's ${which}, Ben's request shows ${later ?? "no decision"}.`
         };
   };
 

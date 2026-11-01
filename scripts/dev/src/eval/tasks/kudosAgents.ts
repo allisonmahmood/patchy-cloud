@@ -2,14 +2,17 @@ import { argsFor, entryWith, findTool, mentions, type ToolWords } from "../agent
 import type { Agent, AgentCall, AgentTool, CheckContext, RunPerson, Task } from "../task.js";
 import { around, shows } from "./page.js";
 
+/** What kudos go by: kudos, appreciation, thanks, shout-outs, praise. */
+const KUDOS = /kudo|appreciation|thanks|shout.?out|praise/i;
+
 /** The tools to give and to list kudos: kudos first, then the verb; never reactions, nor a people lookup to list. */
 export const GIVE: ToolWords = {
-  about: /kudo/i,
+  about: KUDOS,
   does: /give|send|thank|shout|praise|add|create/i,
   not: /react|emoji/i
 };
 export const LIST: ToolWords = {
-  about: /kudo/i,
+  about: KUDOS,
   does: /list|recent|wall|feed|get|read|all/i,
   not: /react|emoji|people|person|colleague|member|user|director/i
 };

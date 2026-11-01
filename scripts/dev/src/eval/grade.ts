@@ -30,32 +30,38 @@ import type { Browser, Page } from "@playwright/test";
 import { doorAgent, GRADER_AGENT, mintAgents } from "./agent.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { StagedPatch } from "./stage.js";
-import type {
-  Agent,
-  CheckContext,
-  CheckOutcome,
-  RunPerson,
-  Target,
-  Task,
-  TaskTarget
+import {
+  type Agent,
+  type CheckContext,
+  type CheckOutcome,
+  type ExpectedRefusal,
+  isGraderTrouble,
+  type RunPerson,
+  type Target,
+  type Task,
+  type TaskTarget
 } from "./task.js";
 
 /**
  * The grader's own browser failed: it couldn't start, the instance wouldn't
  * sign anyone in, or it stopped somewhere grading doesn't attribute to the
  * patch. The grader's trouble, not the builder's, so it is an infrastructure
- * outcome. The message names the step only, never an address.
+ * outcome. The message names the step, and for a call the grader made as
+ * one of the run's people, its `GraderTrouble`'s message, which is safe;
+ * never an address or what failed underneath.
  */
 export class BrowserGradingFailed extends Schema.TaggedError<BrowserGradingFailed>()(
   "BrowserGradingFailed",
-  { step: Schema.Literals(["launch", "sign-in", "browse"]), cause: Schema.Defect() }
+  { step: Schema.Literals(["launch", "sign-in", "browse", "call"]), cause: Schema.Defect() }
 ) {
   override get message() {
     return this.step === "launch"
       ? "The grader's browser couldn't start."
       : this.step === "sign-in"
         ? "The instance wouldn't sign the grader's people in."
-        : "The grader's browser stopped partway.";
+        : this.step === "call"
+          ? `A call the grader made as one of the run's people failed: ${isGraderTrouble(this.cause) ? this.cause.message : "Patchy didn't answer it."}`
+          : "The grader's browser stopped partway.";
   }
 }
 
@@ -122,43 +128,61 @@ const LogEntry = Schema.Struct({
 const LogPage = Schema.Struct({ entries: Schema.Array(LogEntry) });
 const decodeLogPage = Schema.decodeUnknownOption(Schema.fromJsonString(LogPage));
 
+/** An expected refusal as the log names its person: by their user id. */
+export type LoggedRefusal = Omit<ExpectedRefusal, "person"> & { readonly userId: string };
+
+/** How far apart the log's start of a call and Patchy's answer to it may be. */
+const SAME_CALL_MS = 15_000;
+
+const epochMs = (time: string) =>
+  Option.getOrUndefined(Option.map(DateTime.make(time), DateTime.toEpochMillis));
+
 /**
  * The calls a patch's log records during grading, against the graded
- * version, that count as failed: crashes and timeouts, and declared refusals
- * except the ones a check expected. Those are a check's own control steps,
- * by person and handler, and the grader's agent's calls, whose every answer
- * its check reads itself. A refusal while a page just loads still counts.
+ * version, that count as failed: crashes and timeouts, and declared
+ * refusals, except the grader's agent's, whose every answer its check reads
+ * itself, and the ones a check expected. Each expected refusal excuses one
+ * entry: the same person's refusal in the same handler with the same code,
+ * started within moments of Patchy's answer to the check. Any other
+ * refusal, even another of the same kind, still counts.
  */
 export const failedCalls = (
   entries: ReadonlyArray<typeof LogEntry.Type>,
   grading: {
     readonly from: string;
     readonly version: number;
-    readonly expected: ReadonlyArray<ExpectedRefusal>;
+    readonly expected: ReadonlyArray<LoggedRefusal>;
   }
-) =>
-  entries
+) => {
+  const unspent = [...grading.expected];
+  const excused = (entry: typeof LogEntry.Type) => {
+    if (entry.outcome !== "handler_error") return false;
+    if (entry.agent?.name === GRADER_AGENT) return true;
+    const started = epochMs(entry.startedAt);
+    const index = unspent.findIndex((expected) => {
+      const answered = expected.at === null ? undefined : epochMs(expected.at);
+      return (
+        expected.userId === entry.viewer.id &&
+        expected.handler === entry.handler &&
+        expected.code === entry.code &&
+        (answered === undefined ||
+          (started !== undefined && Math.abs(answered - started) <= SAME_CALL_MS))
+      );
+    });
+    if (index === -1) return false;
+    unspent.splice(index, 1);
+    return true;
+  };
+  return entries
     .filter(
       (entry) =>
         entry.startedAt >= grading.from &&
         entry.version === grading.version &&
         entry.outcome !== "success" &&
-        !(
-          entry.outcome === "handler_error" &&
-          (entry.agent?.name === GRADER_AGENT ||
-            grading.expected.some(
-              (expected) =>
-                expected.person === entry.viewer.id && expected.handler === entry.handler
-            ))
-        )
+        !excused(entry)
     )
     .map((entry) => `${entry.handler}: ${entry.code ?? entry.outcome}`);
-
-/** A refusal a check provoked and asserted: by whom (their user id), in which handler. */
-export interface ExpectedRefusal {
-  readonly person: string;
-  readonly handler: string;
-}
+};
 
 const served = (patch: (typeof Listed.Type)["patches"][number]): Target | null =>
   patch.state === "live" && patch.currentVersion !== null && patch.publishedAt !== null
@@ -351,7 +375,7 @@ const inBrowser = (input: {
   readonly agents: ReadonlyMap<string, string>;
   readonly code: string;
   /** Where checks note the refusals they provoke and assert. */
-  readonly expected: Array<ExpectedRefusal>;
+  readonly expected: Array<LoggedRefusal>;
 }) => {
   // Where it got to, for the error: set from inside the browser code and its callbacks.
   const state = { launched: false, signInRefused: false };
@@ -419,8 +443,8 @@ const inBrowser = (input: {
             people: input.people,
             person,
             code: input.code,
-            expectRefusal: (key, handler) => {
-              input.expected.push({ person: person(key).id, handler });
+            expectRefusal: ({ person: key, ...refusal }) => {
+              input.expected.push({ userId: person(key).id, ...refusal });
             },
             open: async (key, path) => {
               const who = person(key);
@@ -454,10 +478,11 @@ const inBrowser = (input: {
               return agent;
             }
           };
-          const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => ({
-            ok: false,
-            reason: error instanceof Error ? error.message : String(error)
-          }));
+          // The grader's own trouble ends grading as infrastructure; anything else is the check's.
+          const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => {
+            if (isGraderTrouble(error)) throw error;
+            return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+          });
           if (state.signInRefused) throw new Error("sign-in");
           const logged = views.flatMap((view) => view.errors);
           await Promise.all(views.map((view) => view.close().catch(() => undefined)));
@@ -477,11 +502,24 @@ const inBrowser = (input: {
     },
     catch: (cause) =>
       new BrowserGradingFailed({
-        step: state.signInRefused ? "sign-in" : state.launched ? "browse" : "launch",
+        step: gradingStep(cause, state),
         cause
       })
   });
 };
+
+/** Where the grader's own browser or calls failed, for `BrowserGradingFailed`. */
+export const gradingStep = (
+  cause: unknown,
+  state: { readonly launched: boolean; readonly signInRefused: boolean }
+) =>
+  isGraderTrouble(cause)
+    ? "call"
+    : state.signInRefused
+      ? "sign-in"
+      : state.launched
+        ? "browse"
+        : "launch";
 
 /** Fails before any build starts when the grader's browser can't launch. */
 export const checkBrowser = Effect.tryPromise({
@@ -604,7 +642,7 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   ).pipe(Effect.result);
   if (Result.isFailure(agents)) return unfinished(agents.failure.message, checks, target, source);
   const gradingFrom = DateTime.formatIso(yield* DateTime.now);
-  const expected: Array<ExpectedRefusal> = [];
+  const expected: Array<LoggedRefusal> = [];
   const browsed = yield* inBrowser({
     task: input.task,
     target,

@@ -116,38 +116,54 @@ describe("the graded target", () => {
     expect(newer).toMatchObject({ fresh: true, check: { status: "pass" } });
   });
 
-  it("counts every failed call but the refusals a check expected", () => {
-    const entry = (handler: string, outcome: string, viewer: string, more = {}) => ({
-      startedAt: "2026-11-01T10:00:05Z",
+  it("excuses each refusal a check expected once, and no other", () => {
+    const entry = (
+      handler: string,
+      code: string | null,
+      viewer: string,
+      startedAt: string,
+      more = {}
+    ) => ({
+      startedAt,
       version: 2,
       handler,
-      outcome,
-      code: outcome === "handler_error" ? "not_admin" : null,
+      outcome: code === null ? "failure" : "handler_error",
+      code,
       viewer: { id: viewer },
       agent: null,
       ...more
     });
+    const at = "Sun, 01 Nov 2026 10:00:10 GMT";
     const failed = failedCalls(
       [
-        entry("requests.approve", "handler_error", "usr_cleo"),
-        entry("requests.approve", "handler_error", "usr_ada"),
-        entry("totals.summary", "handler_error", "usr_ben"),
-        entry("kudos.giveKudos", "handler_error", "usr_jordan", {
+        // The member's try, refused as the check expected.
+        entry("requests.run", "not_admin", "usr_cleo", "2026-11-01T10:00:09.500Z"),
+        // A second refusal of the same kind, which nothing expected.
+        entry("requests.run", "not_admin", "usr_cleo", "2026-11-01T10:00:09.800Z"),
+        // The same handler refusing the page's own totals call.
+        entry("requests.run", "unavailable", "usr_cleo", "2026-11-01T10:00:09.900Z"),
+        // The same refusal long after the try.
+        entry("requests.run", "not_admin", "usr_ben", "2026-11-01T10:05:00Z"),
+        entry("kudos.giveKudos", "self", "usr_jordan", "2026-11-01T10:01:00Z", {
           agent: { name: GRADER_AGENT }
         }),
-        entry("requests.list", "failure", "usr_ben"),
-        entry("requests.list", "failure", "usr_ben", { version: 1 }),
-        entry("requests.list", "failure", "usr_ben", { startedAt: "2026-11-01T09:59:00Z" })
+        entry("requests.list", null, "usr_ben", "2026-11-01T10:01:00Z"),
+        entry("requests.list", null, "usr_ben", "2026-11-01T10:01:00Z", { version: 1 }),
+        entry("requests.list", null, "usr_ben", "2026-11-01T09:59:00Z")
       ],
       {
         from: "2026-11-01T10:00:00Z",
         version: 2,
-        expected: [{ person: "usr_cleo", handler: "requests.approve" }]
+        expected: [
+          { userId: "usr_cleo", handler: "requests.run", code: "not_admin", at },
+          { userId: "usr_ben", handler: "requests.run", code: "not_admin", at }
+        ]
       }
     );
     expect(failed).toEqual([
-      "requests.approve: not_admin",
-      "totals.summary: not_admin",
+      "requests.run: not_admin",
+      "requests.run: unavailable",
+      "requests.run: not_admin",
       "requests.list: failure"
     ]);
   });

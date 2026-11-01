@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { argsFor, doorAgent, entryWith, findTool, mentions } from "./agent.js";
-import type { AgentTool, JsonSchema, RunPerson } from "./task.js";
-import { boardProblem } from "./tasks/brokenHandler.js";
+import { type AgentTool, isGraderTrouble, type JsonSchema, type RunPerson } from "./task.js";
+import { BrowserGradingFailed, gradingStep } from "./grade.js";
+import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
 import { GIVE, LIST } from "./tasks/kudosAgents.js";
-import { decisionOf } from "./tasks/page.js";
+import { decisionOf, isFileResponse } from "./tasks/page.js";
+import { receipt } from "./tasks/spendApprovals.js";
 
 const priya: RunPerson = {
   id: "usr_env_brightline-ab12cd_priya",
@@ -141,6 +143,20 @@ describe("an agent's tools and answers", () => {
     );
   });
 
+  it("prefers any list over a people lookup, however well the lookup's words score", () => {
+    const tools = [
+      tool("giveKudos", "change", "Thank a colleague."),
+      tool("listKudosPeople", "read", "List all active colleagues you can give kudos to."),
+      tool(
+        "wall",
+        "read",
+        "Read recent messages of appreciation with the sender and recipient, newest first."
+      )
+    ];
+    expect(findTool(tools, "read", LIST)?.name).toBe("wall");
+    expect(findTool(tools.slice(0, 2), "read", LIST)?.name).toBe("listKudosPeople");
+  });
+
   it("finds the entry holding words, however the list around it is shaped", () => {
     const entry = { id: "k2", recipient: { name: "Priya Shah" }, message: "Thanks ab12" };
     expect(entryWith({ kudos: [{ id: "k1", message: "Other" }, entry], next: null }, "ab12")).toBe(
@@ -171,35 +187,69 @@ describe("an agent's door", () => {
       () => undefined,
       (error: unknown) => error
     );
-    expect(thrown).toBeInstanceOf(Error);
-    expect(String((thrown as Error).message)).not.toContain(token);
-    expect(String((thrown as Error).cause)).toContain(token);
+    expect(isGraderTrouble(thrown)).toBe(true);
+    if (!isGraderTrouble(thrown)) return;
+    expect(thrown.message).not.toContain(token);
+    expect(String(thrown.cause)).toContain(token);
+    // Grading ends as infrastructure, and says only the safe part.
+    expect(gradingStep(thrown, { launched: true, signInRefused: false })).toBe("call");
+    const failed = new BrowserGradingFailed({ step: "call", cause: thrown });
+    expect(failed.message).toContain("Patchy MCP didn't answer open_patch.");
+    expect(failed.message).not.toContain(token);
   });
 });
 
 describe("the kit loans board", () => {
-  const board = (tripod: string | null, lent: string | null, mic = "2026-10-31") => [
-    { item: "Sony FX3 camera body", due: "2026-11-04" },
-    { item: "Rode Wireless GO II mic kit", due: mic },
+  // Staged on 2026-11-01: the mic due a day before, the camera 3 days after, the laptop 10.
+  const today = dayOf("Sun, 01 Nov 2026 16:30:00 GMT")!;
+  const board = (
+    tripod: string | null,
+    lent: string | null,
+    dated = ["2026-10-31", "2026-11-04", "2026-11-11"]
+  ) => [
+    { item: "Sony FX3 camera body", due: dated[1] },
+    { item: "Rode Wireless GO II mic kit", due: dated[0] },
     { item: "Manfrotto tripod", due: tripod },
-    { item: "Loaner MacBook Pro 14", due: "2026-11-11" },
+    { item: "Loaner MacBook Pro 14", due: dated[2] },
     { item: "Light meter ab12", due: lent }
   ];
+  const item = "Light meter ab12";
 
-  it("keeps open-ended loans open-ended and dated ones where they were", () => {
-    expect(boardProblem(board(null, ""), "Light meter ab12")).toBeNull();
-    expect(boardProblem(board("2026-11-01T00:00:00.000Z", null), "Light meter ab12")).toBe(
+  it("keeps open-ended loans open-ended and dated ones on their staged days", () => {
+    expect(boardProblem(board(null, ""), item, today)).toBeNull();
+    // Graded just past midnight, a day after staging.
+    expect(boardProblem(board(null, null), item, today + 1)).toBeNull();
+    expect(boardProblem(board("2026-11-01T00:00:00.000Z", null), item, today)).toBe(
       "The tripod's open-ended loan now has a due date."
     );
-    expect(boardProblem(board(null, "2026-11-01"), "Light meter ab12")).toBe(
+    expect(boardProblem(board(null, "2026-11-01"), item, today)).toBe(
       "Ben's loan with no return date got a due date."
     );
-    expect(boardProblem(board(null, null, "2026-11-01"), "Light meter ab12")).toBe(
-      "The dated loans' due dates moved."
-    );
-    expect(boardProblem(board(null, null).slice(0, 2), "Light meter ab12")).toBe(
+    expect(boardProblem(board(null, null).slice(0, 2), item, today)).toBe(
       "The open-ended tripod loan is gone from the board."
     );
+  });
+
+  it("notices dated loans moved, even all together", () => {
+    const moved = "The dated loans' due dates moved from the days they were staged for.";
+    expect(
+      boardProblem(board(null, null, ["2026-11-01", "2026-11-04", "2026-11-11"]), item, today)
+    ).toBe(moved);
+    expect(
+      boardProblem(board(null, null, ["2027-10-31", "2027-11-04", "2027-11-11"]), item, today)
+    ).toBe(moved);
+  });
+});
+
+describe("a receipt", () => {
+  it("counts only as its exact bytes, served as a file", () => {
+    const bytes = receipt("ab12-receipt");
+    expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    expect(Buffer.from("receipt.png").equals(bytes)).toBe(false);
+    expect(Buffer.from(bytes).equals(bytes)).toBe(true);
+    expect(isFileResponse("http://x/api/runtime/files/p1/ver_1/receipts/r.png", true)).toBe(true);
+    expect(isFileResponse("http://x/api/runtime/files/p1/ver_1/receipts/r.png", false)).toBe(false);
+    expect(isFileResponse("http://x/api/runtime/call", true)).toBe(false);
   });
 });
 

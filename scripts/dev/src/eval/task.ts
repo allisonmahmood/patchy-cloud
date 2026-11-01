@@ -5,7 +5,26 @@
  * each, and come from the runner's own checkout for every side, so a base and
  * a head are graded by the same suite.
  */
+import * as Schema from "effect/Schema";
 import type { FrameLocator, Page } from "@playwright/test";
+
+/**
+ * Patchy didn't answer a call the grader made as one of the run's people, or
+ * answered it in a way that says nothing about the patch: the grader's
+ * trouble, so grading ends as infrastructure and is tried again rather than
+ * charged to the builder. Its message is safe for the scorecard; whatever
+ * failed underneath, which can carry a credential, stays its `cause`.
+ */
+export class GraderTrouble extends Schema.TaggedError<GraderTrouble>()("GraderTrouble", {
+  what: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect())
+}) {
+  override get message() {
+    return this.what;
+  }
+}
+
+export const isGraderTrouble = Schema.is(GraderTrouble);
 
 /** One of the run's people: the scenario's, under the run's own email and company. */
 export interface RunPerson {
@@ -84,11 +103,21 @@ export interface CheckContext {
   /** `person`'s agent, for a person the check names in its `agents`. */
   readonly agent: (person: string) => Agent;
   /**
-   * Notes a refusal the check provoked and asserts itself, such as a member
-   * trying an admin's decision: `person`'s declared refusals in `handler` then
-   * don't fail `opens ready`. Any other refusal during grading does.
+   * Notes one refusal the check provoked and asserts itself, such as a
+   * member trying an admin's decision: `person`'s refusal in `handler` with
+   * `code`, around `at` (the time Patchy answered, as its `Date` header gave
+   * it). That one log entry then doesn't fail `opens ready`; any other
+   * refusal during grading does.
    */
-  readonly expectRefusal: (person: string, handler: string) => void;
+  readonly expectRefusal: (refusal: ExpectedRefusal) => void;
+}
+
+/** A refusal a check provoked: by whom (a person's key), where, with what code, and when. */
+export interface ExpectedRefusal {
+  readonly person: string;
+  readonly handler: string;
+  readonly code: string;
+  readonly at: string | null;
 }
 
 export type CheckOutcome =

@@ -14,7 +14,14 @@ import * as Schema from "effect/Schema";
 import type { APIRequestContext } from "@playwright/test";
 import { AgentConnections } from "@patchy/auth";
 import { mintDevAgentConnection } from "@patchy/auth/seed";
-import type { Agent, AgentCall, AgentTool, JsonSchema, RunPerson } from "./task.js";
+import {
+  type Agent,
+  type AgentCall,
+  type AgentTool,
+  GraderTrouble,
+  type JsonSchema,
+  type RunPerson
+} from "./task.js";
 
 /** The grader couldn't give a person's agent a connection: its trouble, not the builder's. */
 export class NoAgentConnection extends Schema.TaggedError<NoAgentConnection>()(
@@ -95,7 +102,8 @@ const decodeAnswer = Schema.decodeUnknownSync(Schema.fromJsonString(ToolCallAnsw
 
 /**
  * A person's agent on one patch, over `request`. A refusal comes back as the
- * call's answer; the door not answering, or answering anything but 200, throws.
+ * call's answer; the door not answering, or answering anything but 200,
+ * throws `GraderTrouble`, which grading counts as its own infrastructure.
  * Each change gets a key of its own under `keys`, which must be new to the
  * person's agent. A thrown error's message never carries the request, whose
  * bearer is the person's token: Playwright's own message, kept only as its
@@ -126,17 +134,25 @@ export const doorAgent = (input: {
         }
       })
       .catch((cause: unknown) => {
-        throw new Error(`Patchy MCP didn't answer ${name}.`, { cause });
+        throw new GraderTrouble({ what: `Patchy MCP didn't answer ${name}.`, cause });
       });
     if (response.status() !== 200)
-      throw new Error(`Patchy MCP answered ${name} with HTTP ${response.status()}.`);
+      throw new GraderTrouble({
+        what: `Patchy MCP answered ${name} with HTTP ${response.status()}.`
+      });
     const text = await response.text().catch((cause: unknown) => {
-      throw new Error(`Patchy MCP's answer to ${name} didn't arrive whole.`, { cause });
+      throw new GraderTrouble({
+        what: `Patchy MCP's answer to ${name} didn't arrive whole.`,
+        cause
+      });
     });
     try {
       return decodeAnswer(text).result.structuredContent;
     } catch (cause) {
-      throw new Error(`Patchy MCP's answer to ${name} isn't one the grader reads.`, { cause });
+      throw new GraderTrouble({
+        what: `Patchy MCP's answer to ${name} isn't one the grader reads.`,
+        cause
+      });
     }
   };
   return {
@@ -168,11 +184,13 @@ export interface ToolWords {
 }
 
 /**
- * The tool of `kind` that best means what `words` say. What it is about
- * counts most, in its name and then its description, before what it does, so
- * a tool named for kudos outranks one named only for listing; a name `not`
- * matches ranks below any that doesn't. Ties keep `open_patch`'s order.
- * Failing any tool that means it, the only tool of that kind.
+ * The tool of `kind` that best means what `words` say. A tool whose name
+ * `not` matches, such as a people lookup, comes after every tool whose name
+ * doesn't, however well it scores. Within each, what a tool is about counts
+ * most, in its name and then its description, before what it does, so a tool
+ * named for kudos outranks one named only for listing. Ties keep
+ * `open_patch`'s order. Failing any tool that means it, the only tool of that
+ * kind.
  */
 export const findTool = (
   tools: ReadonlyArray<AgentTool>,
@@ -184,12 +202,11 @@ export const findTool = (
     (words.about.test(tool.name) ? 4 : 0) +
     (words.about.test(tool.description) ? 2 : 0) +
     (words.does.test(tool.name) ? 2 : 0) +
-    (words.does.test(tool.description) ? 1 : 0) -
-    (words.not?.test(tool.name) === true ? 5 : 0);
+    (words.does.test(tool.description) ? 1 : 0);
   const [best] = ofKind
-    .map((tool) => ({ tool, score: score(tool) }))
+    .map((tool) => ({ tool, score: score(tool), ruledOut: words.not?.test(tool.name) === true }))
     .filter((each) => each.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => Number(a.ruledOut) - Number(b.ruledOut) || b.score - a.score);
   return best?.tool ?? (ofKind.length === 1 ? ofKind[0] : undefined);
 };
 
