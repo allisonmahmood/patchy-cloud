@@ -7,8 +7,8 @@ import type { Instance } from "./instance.js";
 // packages/patchy/src/hotkeys.test.ts and hotkeyRules.test.ts own the types and the warnings'
 // words. These pages prove what only a browser shows: real key events reaching patchy/hotkeys in
 // the published frame, in fields, controls, a scope, an input method's composition, other layouts
-// and on a Mac, a held key across a remount, the conflict warning waiting until every hook's
-// update has landed, and the sheet behaving as a dialog.
+// and on a Mac, a held key across a remount, a re-render's new run, the conflict warning waiting
+// until every hook's update has landed, and the sheet behaving as a dialog.
 test.skip(({ browserName }) => browserName !== "chromium", "The SDK targets Chromium desktop.");
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const source = `import { render, useEffect, useState } from "patchy/preact";
@@ -92,8 +92,9 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-// O opens a panel whose Escape closes it, and N replaces it with another. `arm` sends one key the
-// moment the page's DOM next changes, before anything else can run.
+// O opens a panel whose Escape closes it, and N replaces it with another. I counts, with a `run`
+// that is new each render. `arm` sends one key the moment the page's DOM next changes, before
+// anything else can run.
 const lifecycle = `import { render, useState } from "patchy/preact";
 import { useHotkey } from "patchy/hotkeys";
 
@@ -121,6 +122,12 @@ function Record(props: { id: number; approve: () => void }) {
   return <p id="record">{props.id}</p>;
 }
 
+function Counter() {
+  const [count, setCount] = useState(0);
+  useHotkey("I", () => { fired.push(\`count \${count}\`); setCount(count + 1); });
+  return <p id="count">{count}</p>;
+}
+
 function App() {
   const [panel, setPanel] = useState<string>();
   const [record, setRecord] = useState(1);
@@ -129,6 +136,7 @@ function App() {
   return <main>
     {panel && <Panel key={panel} name={panel} close={() => setPanel(undefined)} />}
     <Record key={record} id={record} approve={() => setRecord(record + 1)} />
+    <Counter />
   </main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -395,6 +403,15 @@ test("a component's hotkeys are live from the commit that mounts it to the one t
     await page.keyboard.press("a");
     await expect(record).toHaveText("3");
     await firedNext(frame, ["approve 1", "approve 2"]);
+  });
+
+  await test.step("a hotkey runs its last render's run, though nothing else about it changed", async () => {
+    const count = page.frameLocator("#patch").locator("#count");
+    for (const expected of ["1", "2", "3"]) {
+      await page.keyboard.press("i");
+      await expect(count).toHaveText(expected);
+    }
+    await firedNext(frame, ["count 0", "count 1", "count 2"]);
   });
 });
 

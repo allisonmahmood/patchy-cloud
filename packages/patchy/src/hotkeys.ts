@@ -179,14 +179,18 @@ const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> =>
   return split.length === 1 ? split[0]! : split;
 };
 
-const definition = (binding: Checked): UseHotkeyDefinition => ({
+// What a binding registers. Its callback runs `current()`, the binding as last rendered, so a
+// render that changes only `run` or `repeat` leaves the registration as it is. `shape` names
+// every field read here besides those two.
+const definition = (binding: Checked, current: () => Checked): UseHotkeyDefinition => ({
   hotkey: toTanStack(binding.hotkey),
   // TanStack has already kept each repeat of a held key from the page. Whether this keydown is
   // one is the event's to say: TanStack's `requireReset` is per registration, and a component
   // that remounts while the key is held registers afresh.
   callback: (event) => {
-    if (binding.repeat === false && event.repeat) return;
-    binding.run(event);
+    const { run, repeat } = current();
+    if (repeat === false && event.repeat) return;
+    run(event);
   },
   options: {
     enabled: binding.enabled ?? true,
@@ -196,6 +200,19 @@ const definition = (binding: Checked): UseHotkeyDefinition => ({
     ...(binding.label === undefined ? {} : { meta: { name: binding.label, group: binding.group } })
   }
 });
+
+// Everything `definition` registers apart from the callback. While it holds, so does each
+// registration.
+const shape = (bindings: ReadonlyArray<Checked>): string =>
+  JSON.stringify(
+    bindings.map(({ hotkey, label, group, enabled, whileTyping }) => [
+      hotkey,
+      label,
+      group,
+      enabled,
+      whileTyping
+    ])
+  );
 
 // A TanStack registration, or its view, as the duplicate check and `useHotkeyList` read it.
 const mounted = ({ hotkey, options }: Pick<HotkeyRegistration, "hotkey" | "options">): Mounted => ({
@@ -223,20 +240,29 @@ const checkDuplicates = () => {
 
 // Layout effects keep a component's hotkeys live from the commit that mounts it to the one that
 // removes it. TanStack's `useHotkeys` uses passive effects, which miss a key pressed before the
-// next paint and, on Preact 11, outlive the component until that paint. Each render updates the
-// same registrations in place, so it doesn't restart a sequence.
+// next paint and, on Preact 11, outlive the component until that paint. A render that changes a
+// binding's shape updates the same registrations in place, so it doesn't restart a sequence; one
+// that doesn't, such as a whiteboard's on each collaborator's move, leaves them alone, since
+// TanStack parses every hotkey again on each update.
 function useBindings(bindings: ReadonlyArray<Checked>): void {
   const kept = permitted(bindings);
   // A `HotkeyScope` above puts its scope here.
   const defaults = useDefaultHotkeysOptions().hotkey;
   const [registered] = useState(createHotkeyBindings);
+  const latest = useRef(kept);
   useLayoutEffect(() => {
-    registered.update(prepareHotkeyDefinitions(kept.map(definition), { defaults }));
+    latest.current = kept;
   });
+  useLayoutEffect(() => {
+    registered.update(
+      prepareHotkeyDefinitions(
+        kept.map((binding, index) => definition(binding, () => latest.current[index]!)),
+        { defaults }
+      )
+    );
+    checkDuplicates();
+  }, [shape(kept), defaults?.scope]);
   useLayoutEffect(() => () => registered.destroy(), [registered]);
-  useLayoutEffect(checkDuplicates, [
-    kept.map((binding) => `${binding.hotkey}\n${binding.label}\n${binding.enabled}`).join("\n\n")
-  ]);
 }
 
 /**
