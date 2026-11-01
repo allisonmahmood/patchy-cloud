@@ -16,7 +16,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { realNode } from "../runtimes.js";
 import { installToolchain, readSignIns } from "./home.js";
-import { type Dimension, DIMENSIONS, judge, JUDGE_IDS, JUDGES, type Scores } from "./judges.js";
+import {
+  type Dimension,
+  DIMENSIONS,
+  judge,
+  JUDGE_IDS,
+  JUDGES,
+  NO_INSTANCE,
+  type Scores
+} from "./judges.js";
 import { openNetwork } from "./network.js";
 import { checkSandbox, readToolchain } from "./sandbox.js";
 import { TASKS } from "./tasks/index.js";
@@ -57,9 +65,6 @@ export const ranks = (
   better === null || worse === null
     ? null
     : over(better, expectation.on) > over(worse, expectation.on);
-
-/** An unused high port: the judges never reach an instance, but the bridge listens on one. */
-const NO_INSTANCE = 47_000;
 
 export const runCalibration = Effect.fn("Eval.runCalibration")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -118,6 +123,8 @@ export const runCalibration = Effect.fn("Eval.runCalibration")(function* (root: 
               judge: who,
               task: TASKS.find((each) => each.id === task)!,
               runDir: path.join(dir, build),
+              staging: path.join(dir, "judging"),
+              instance: null,
               source: "source",
               screenshots: shotsOf.get(build) ?? [],
               checks: [],

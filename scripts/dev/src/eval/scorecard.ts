@@ -152,14 +152,17 @@ export const summarize = (runs: ReadonlyArray<ScorecardRun>) => {
 
 /**
  * What the judges said across runs: each dimension's mean over every judge's
- * scores, their overall mean, and how many runs had judges 2 or more apart.
+ * scores, their overall mean, how many verdicts that is out of how many were
+ * asked for, and how many runs had judges 2 or more apart.
  */
 export const judging = (runs: ReadonlyArray<Pick<ScorecardRun, "judges">>) => {
-  const dimensions = meanScores(
-    runs.flatMap((run) => run.judges.flatMap((each) => (each.scores === null ? [] : [each.scores])))
-  );
+  const asked = runs.flatMap((run) => run.judges);
+  const scored = asked.flatMap((each) => (each.scores === null ? [] : [each.scores]));
+  const dimensions = meanScores(scored);
   return {
     dimensions,
+    verdicts: scored.length,
+    asked: asked.length,
     judged:
       dimensions === null
         ? null
@@ -255,29 +258,45 @@ export const scorecardMarkdown = (card: Scorecard) => {
       code: "Code"
     };
     lines.push(
-      `| Task | Builder | ${DIMENSIONS.map((dimension) => named[dimension]).join(" | ")} |`,
-      `| --- | --- | ${DIMENSIONS.map(() => "---").join(" | ")} |`
+      `| Task | Builder | Verdicts | ${DIMENSIONS.map((dimension) => named[dimension]).join(" | ")} |`,
+      `| --- | --- | --- | ${DIMENSIONS.map(() => "---").join(" | ")} |`
     );
     for (const task of tasks)
       for (const builder of builders) {
-        const h = of(task, builder, "head").dimensions;
-        const b = card.base === null ? null : of(task, builder, "base").dimensions;
+        const h = of(task, builder, "head");
+        const b = card.base === null ? null : of(task, builder, "base");
+        const verdicts = (side: typeof h) => `${side.verdicts}/${side.asked}`;
         lines.push(
-          `| ${task} | ${builder} | ${DIMENSIONS.map((dimension) =>
-            card.base === null
-              ? fmt(h?.[dimension] ?? null, 1)
-              : shift(b?.[dimension] ?? null, h?.[dimension] ?? null, tenths)
+          `| ${task} | ${builder} | ${b === null ? verdicts(h) : `${verdicts(b)} → ${verdicts(h)}`} | ${DIMENSIONS.map(
+            (dimension) =>
+              b === null
+                ? fmt(h.dimensions?.[dimension] ?? null, 1)
+                : shift(
+                    b.dimensions?.[dimension] ?? null,
+                    h.dimensions?.[dimension] ?? null,
+                    tenths
+                  )
           ).join(" | ")} |`
         );
       }
-    lines.push("");
+    lines.push(
+      "",
+      "Verdicts are the judges' verdicts out of those asked for; a run's notes say why one is missing.",
+      ""
+    );
   }
   lines.push("| Run | Outcome | Checks | Minutes | Notes |", "| --- | --- | --- | --- | --- |");
   for (const run of card.runs) {
     const failedChecks = run.checks.filter((check) => check.status === "fail");
     const notes = [
       ...(run.detail === null ? [] : [run.detail]),
-      ...failedChecks.map((check) => `${check.name}: ${check.detail ?? ""}`)
+      ...failedChecks.map((check) => `${check.name}: ${check.detail ?? ""}`),
+      ...run.judges.flatMap((each) => [
+        ...(each.infra === null ? [] : [`${each.judge}: no verdict, ${each.infra}`]),
+        ...(each.attributionInfra === null
+          ? []
+          : [`${each.judge}: no attribution, ${each.attributionInfra}`])
+      ])
     ]
       .join("; ")
       .replaceAll("|", "\\|")

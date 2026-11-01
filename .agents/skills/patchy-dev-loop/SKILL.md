@@ -250,12 +250,15 @@ patchy whoami
 
 ## Measuring how agents build
 
-`pnpm dev eval [--base <ref> | --only-head] [--tasks cheers] [--builders sonnet,terra] [--repeats 3]`
+`pnpm dev eval [--base <ref> | --only-head] [--tasks cheers] [--builders sonnet,terra] [--repeats 3] [--no-judge]`
 gives the eval suite's tasks to sandboxed builders on evidence instances at the
 base and `HEAD` (or `HEAD` alone), grades what they publish and shows each
 figure as base → head: Sonnet 5.5 high in Claude Code and GPT-6.1
 Terra high in Codex, each in `bwrap` with a HOME and toolchain of its own and
-nothing of this machine's. Use it to tell whether a change to skill text, the `AGENTS.md`
-template or CLI messages helps builders. It needs bubblewrap, both harnesses signed
+nothing of this machine's. Then Opus 5.5 and GPT-6.1 Sol, both at `xhigh`,
+score each published run blind and say which skill text plausibly led to its
+problems. Use it to tell whether a change to skill text, the `AGENTS.md`
+template or CLI messages helps builders. `--calibrate` checks the judges
+against labelled builds after a change to their prompts or rubrics. It needs bubblewrap, both harnesses signed
 in on this machine and Playwright's Chromium; DEVELOPMENT's **Measuring how agents build** has
 the rest. Results land in `.local/evals/<suite>/`, `scorecard.md` first.

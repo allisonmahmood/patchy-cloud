@@ -1,4 +1,4 @@
-import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpServer, NodePath, NodeServices } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -25,7 +25,7 @@ import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
 import { Expectation, ranks } from "./calibrate.js";
-import { closed, meanScores, splits, taskBrief } from "./judges.js";
+import { closed, copySource, masksIn, meanScores, splits, taskBrief } from "./judges.js";
 import { classify, judging, shift } from "./scorecard.js";
 import cheers from "./tasks/cheers.js";
 import { checkDoor, pinnedTo } from "./suite.js";
@@ -436,7 +436,8 @@ describe("the judges", () => {
     effort: "xhigh",
     scores: value,
     findings: 0,
-    infra: value === null ? "It ran out of time." : null
+    infra: value === null ? "It ran out of time." : null,
+    attributionInfra: null
   });
 
   it("closes every object in a harness's schema, nested ones too", () => {
@@ -494,9 +495,74 @@ describe("the judges", () => {
       { judges: [] }
     ]);
     expect(summary.judged).toBeCloseTo(11 / 3);
+    expect([summary.verdicts, summary.asked]).toEqual([3, 4]);
     expect(summary.split).toBe(1);
     expect(judging([{ judges: [] }]).judged).toBeNull();
   });
+
+  it.effect("hides every copy of what builders are told in a checkout, wherever it is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const checkout = yield* fs.makeTempDirectoryScoped();
+      const files = [
+        "skills/patchy/SKILL.md",
+        "packages/sdk/skills/patchy-tables/SKILL.md",
+        "packages/patchy/artifacts/patchy-1.0.0.tgz",
+        "packages/patchy/src/skillLock.ts",
+        "scenarios/acme/patches/kudos/AGENTS.md",
+        "scenarios/acme/patches/kudos/src/App.tsx",
+        "scripts/dev/eval-calibration/expectations.json",
+        "node_modules/patchy/SKILL.md",
+        "AGENTS.md",
+        ".git"
+      ];
+      for (const file of files) {
+        yield* fs.makeDirectory(`${checkout}/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
+        yield* fs.writeFileString(`${checkout}/${file}`, "");
+      }
+      const masks = yield* masksIn(checkout);
+      expect([...masks].sort((a, b) => a.at.localeCompare(b.at))).toEqual([
+        { at: "/patchy/.git", file: true },
+        { at: "/patchy/AGENTS.md", file: true },
+        { at: "/patchy/packages/patchy/artifacts", file: false },
+        { at: "/patchy/packages/sdk/skills", file: false },
+        { at: "/patchy/scenarios/acme/patches/kudos/AGENTS.md", file: true },
+        { at: "/patchy/scripts/dev/eval-calibration", file: false },
+        { at: "/patchy/skills", file: false }
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+  it.effect("copies a published source without its instructions or its side's instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const instance = "http://after-6trhq6.localhost:37212";
+      const files: Record<string, string> = {
+        "patchy.json": `{ "instance": "${instance}" }`,
+        "package.json": `{ "patchy": "${instance}/sdk/patchy-1.0.0.tgz" }`,
+        "AGENTS.md": "told",
+        ".agents/skills/patchy-tables/SKILL.md": "told",
+        "src/App.tsx": "export const App = () => null;",
+        "node_modules/patchy/index.js": ""
+      };
+      for (const [file, text] of Object.entries(files)) {
+        yield* fs.makeDirectory(`${dir}/from/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
+        yield* fs.writeFileString(`${dir}/from/${file}`, text);
+      }
+      yield* copySource(`${dir}/from`, `${dir}/to`, instance);
+      expect((yield* fs.readDirectory(`${dir}/to`, { recursive: true })).sort()).toEqual([
+        "package.json",
+        "patchy.json",
+        "src",
+        "src/App.tsx"
+      ]);
+      expect(yield* fs.readFileString(`${dir}/to/patchy.json`)).toBe(
+        '{ "instance": "http://patchy.localhost" }'
+      );
+      expect(yield* fs.readFileString(`${dir}/to/package.json`)).not.toContain("after-");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  );
 
   it("briefs the scoring pass with the request and rubric, and nothing about the run", () => {
     const brief = taskBrief(cheers);

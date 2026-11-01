@@ -28,7 +28,7 @@ import { realNode } from "../runtimes.js";
 import { makeSanitizer } from "../sanitize.js";
 import { loadScenario, type Scenario } from "../scenario.js";
 import { type Builder, BUILDERS, type BuilderId, runBuilder, type Step } from "./builders.js";
-import { retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
+import { randomId, retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
 import { checkBrowser, grade } from "./grade.js";
 import {
   fileSecrets,
@@ -39,7 +39,15 @@ import {
   type SignIns,
   type ToolVersion
 } from "./home.js";
-import { DIMENSIONS, judge, JUDGE_IDS, JUDGES } from "./judges.js";
+import {
+  DIMENSIONS,
+  judge,
+  JUDGE_IDS,
+  type JudgeRecord,
+  JUDGES,
+  NO_INSTANCE,
+  noVerdict
+} from "./judges.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, readToolchain, type Toolchain } from "./sandbox.js";
@@ -50,12 +58,6 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(RunRecord, { space:
 const printVerdicts = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 const encodeScorecard = Schema.encodeSync(Scorecard);
 const printJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
-
-const randomId = (length: number) =>
-  Array.from(
-    crypto.getRandomValues(new Uint8Array(length)),
-    (byte) => "abcdefghijklmnopqrstuvwxyz0123456789"[byte % 36]
-  ).join("");
 
 /** The scenario every side comes up on; each run seeds its own task's scenario beside it. */
 const SIDE_SCENARIO = "team";
@@ -79,8 +81,6 @@ interface SideContext {
   /** The side's template HOME: its release's CLI and global skill. */
   readonly template: string;
   readonly network: Network;
-  /** The side's checkout, where judges read Patchy's own code. */
-  readonly clone: string;
 }
 
 interface Planned {
@@ -351,8 +351,7 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
     apiUrl: input.side.served.apiUrl,
     database,
     template,
-    network,
-    clone: input.side.clone
+    network
   };
   return { context, installed };
 });
@@ -361,9 +360,13 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
  * Both judges on every run that left something published, after all the
  * builds, so judging never shares a builder's timed window. Each run's
  * verdicts and attributions are written beside it (`judges/<judge>.json`), its
- * record gains the scores, and its `run.json` is written again.
+ * record gains the scores, and its `run.json` is written again. Judges read
+ * this checkout for both sides, on a network of their own that reaches no
+ * instance. A judge that can't run leaves a record saying why; the suite's
+ * builds and scorecard never depend on it.
  */
 const judgeAll = Effect.fn("Eval.judgeAll")(function* (input: {
+  readonly root: string;
   readonly dir: string;
   readonly records: ReadonlyArray<RunRecord>;
   readonly tasks: ReadonlyArray<Task>;
@@ -378,38 +381,63 @@ const judgeAll = Effect.fn("Eval.judgeAll")(function* (input: {
     (record) => record.target !== null && record.outcome !== "infra"
   );
   if (judged.length === 0) return input.records;
-  const network = input.sides[0]!.network;
+  const network = yield* openNetwork({
+    node: (yield* realNode()).execPath,
+    instancePort: NO_INSTANCE,
+    allow: input.signIns.privateEndpoints
+  });
   const template = path.join(input.dir, "homes", "judges");
-  yield* fs.makeDirectory(template, { recursive: true });
+  const staging = path.join(input.dir, "judging");
   yield* Console.error("  judges  setting up the judges' home");
-  yield* installToolchain({ home: template, network }, input.toolchain, ["claude-code", "codex"]);
+  const ready = yield* Effect.gen(function* () {
+    yield* fs.makeDirectory(template, { recursive: true });
+    yield* installToolchain({ home: template, network }, input.toolchain, ["claude-code", "codex"]);
+  }).pipe(
+    Effect.as(true),
+    Effect.catch((error) =>
+      Console.error(`  judges  couldn't set up their home: ${String(error)}`).pipe(Effect.as(false))
+    )
+  );
+  const pairs = judged.flatMap((record) => JUDGE_IDS.map((id) => ({ record, judge: JUDGES[id] })));
+  if (!ready)
+    return withJudges(
+      input.records,
+      pairs.map(({ record, judge: who }) => ({
+        run: record.run,
+        record: noVerdict(who, "The judges' home couldn't be set up.")
+      }))
+    );
   yield* Console.error(
     `Judging ${judged.length} run${judged.length === 1 ? "" : "s"} with ${JUDGE_IDS.join(" and ")}, ${input.concurrency} at a time`
   );
-  const pairs = judged.flatMap((record) => JUDGE_IDS.map((id) => ({ record, judge: JUDGES[id] })));
   const results = yield* Effect.forEach(
     pairs,
     ({ record, judge: who }) =>
       Effect.gen(function* () {
         const runDir = path.join(input.dir, record.dir);
-        const side = input.sides.find((each) => each.name === record.side)!;
         const result = yield* judge({
           judge: who,
           task: input.tasks.find((task) => task.id === record.task)!,
           runDir,
+          staging,
+          instance: input.sides.find((each) => each.name === record.side)?.apiUrl ?? null,
           source: record.source,
           screenshots: record.screenshots,
           checks: record.checks,
           log: record.log,
-          checkout: side.clone,
+          checkout: input.root,
           template,
           network,
           signIns: input.signIns
         });
-        yield* fs.makeDirectory(path.join(runDir, "judges"), { recursive: true });
-        yield* fs.writeFileString(
-          path.join(runDir, "judges", `${who.id}.json`),
-          printVerdicts({ verdict: result.verdict, attribution: result.attribution })
+        yield* Effect.ignore(
+          Effect.gen(function* () {
+            yield* fs.makeDirectory(path.join(runDir, "judges"), { recursive: true });
+            yield* fs.writeFileString(
+              path.join(runDir, "judges", `${who.id}.json`),
+              printVerdicts({ verdict: result.verdict, attribution: result.attribution })
+            );
+          })
         );
         const scores = result.record.scores;
         yield* Console.error(
@@ -423,15 +451,24 @@ const judgeAll = Effect.fn("Eval.judgeAll")(function* (input: {
       }),
     { concurrency: input.concurrency }
   );
-  const updated = input.records.map((record) => ({
+  const updated = withJudges(input.records, results);
+  for (const record of updated)
+    if (record.judges.length > 0)
+      yield* fs
+        .writeFileString(path.join(input.dir, record.dir, "run.json"), encodeRecord(record))
+        .pipe(Effect.ignore);
+  return updated;
+});
+
+/** Each record with the judges' records for its run. */
+const withJudges = (
+  records: ReadonlyArray<RunRecord>,
+  results: ReadonlyArray<{ readonly run: string; readonly record: JudgeRecord }>
+): ReadonlyArray<RunRecord> =>
+  records.map((record) => ({
     ...record,
     judges: results.filter((each) => each.run === record.run).map((each) => each.record)
   }));
-  for (const record of updated)
-    if (record.judges.length > 0)
-      yield* fs.writeFileString(path.join(input.dir, record.dir, "run.json"), encodeRecord(record));
-  return updated;
-});
 
 /**
  * Runs the suite on each side, `base` then `head`, or `head` alone when `base`
@@ -536,6 +573,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       });
       const judged = input.judge
         ? yield* judgeAll({
+            root: input.root,
             dir,
             records,
             tasks: input.tasks,

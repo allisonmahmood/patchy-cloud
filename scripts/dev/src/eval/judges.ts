@@ -9,17 +9,22 @@
  *
  * 1. **Scoring, blind.** A judge sees the task's words and rubric, the
  *    published source, the screenshots and the check results, and Patchy's
- *    own code for how the platform really works, with every skill folder and
- *    the git history masked. It never sees the skills the builder had, which
- *    side or builder the run came from, or what the builder said.
+ *    own code for how the platform really works: this checkout, the same for
+ *    both sides, with every copy of what builders are told masked. It never
+ *    sees the skills the builder had, which side or builder the run came
+ *    from, or what the builder said: its workspace is staged under an
+ *    anonymous name, the source's agent instructions are removed and the
+ *    instance it came from is renamed.
  * 2. **Attribution, a hypothesis.** For findings of medium severity or worse,
  *    a second pass shows the judge the builder's skills and log and asks
  *    which instruction plausibly led there, or what was missing. It feeds the
  *    clusters an edit works from, never a score.
  *
  * Judges run in the same sandbox as builders, on a HOME with the toolchain
- * and nothing of Patchy's skill, and answer to a JSON Schema derived from the
- * same Effect schema that decodes their answer.
+ * and nothing of Patchy's skill, on a network that reaches no instance, and
+ * answer to a JSON Schema derived from the same Effect schema that decodes
+ * their answer. A pass that gives no answer is tried once more; a judge that
+ * still can't answer leaves a record saying why, never a failed suite.
  */
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -28,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { stepOutput } from "../steps.js";
+import { randomId } from "./fixtures.js";
 import type { Builder, BuilderLog } from "./builders.js";
 import { type SignIns, signInHarness } from "./home.js";
 import type { Network } from "./network.js";
@@ -40,6 +46,12 @@ export const JUDGES = {
 } as const satisfies Record<string, Builder>;
 export type JudgeId = keyof typeof JUDGES;
 export const JUDGE_IDS = Object.keys(JUDGES) as ReadonlyArray<JudgeId>;
+
+/**
+ * The instance port judges' networks bridge: an unused high one, since judges
+ * read what was published and never reach an instance.
+ */
+export const NO_INSTANCE = 47_000;
 
 /** What a judge scores, each from 1 to 5. */
 export const DIMENSIONS = ["fit", "platform", "correctness", "ux", "code"] as const;
@@ -98,7 +110,9 @@ export const JudgeRecord = Schema.Struct({
   scores: Schema.NullOr(Scores),
   findings: Schema.Int,
   /** Why the judge gave no verdict: its harness or provider failed, or its answer didn't decode. */
-  infra: Schema.NullOr(Schema.String)
+  infra: Schema.NullOr(Schema.String),
+  /** Why the attribution pass gave nothing when it ran; null when it answered or wasn't needed. */
+  attributionInfra: Schema.NullOr(Schema.String)
 });
 export type JudgeRecord = typeof JudgeRecord.Type;
 
@@ -198,13 +212,15 @@ const PASS_TIMEOUT = "25 minutes";
  * to `jsonSchema`, decoded by `schema`. A failure is the judge's trouble,
  * never the builder's: it comes back as a reason, not a verdict.
  */
-const pass = Effect.fn("Eval.judgePass")(function* <A>(input: {
+interface PassInput<A> {
   readonly judge: Builder;
   readonly spec: SandboxSpec;
   readonly prompt: string;
   readonly decode: (answer: unknown) => Option.Option<A>;
   readonly jsonSchema: unknown;
-}) {
+}
+
+const passOnce = Effect.fn("Eval.judgePass")(function* <A>(input: PassInput<A>) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const decode = input.decode;
@@ -271,8 +287,40 @@ const pass = Effect.fn("Eval.judgePass")(function* <A>(input: {
     : ({ answer: null, why: "Its answer didn't decode." } as const);
 });
 
-/** Copies a folder, its dependencies left behind, for a judge to read. */
-const copySource = Effect.fn("Eval.copySource")(function* (from: string, to: string) {
+/** A pass, tried once more when it gave no answer: a timeout or an answer that didn't decode often passes. */
+const pass = <A>(input: PassInput<A>) =>
+  passOnce(input).pipe(
+    Effect.flatMap((first) => (first.answer === null ? passOnce(input) : Effect.succeed(first)))
+  );
+
+/** Files that carry what builders are told, wherever they are. */
+const TOLD_FILES = new Set(["SKILL.md", "AGENTS.md", "CLAUDE.md"]);
+/** Folders a repo's agents read their instructions from. */
+const AGENT_FOLDERS = new Set([".agents", ".claude", ".codex"]);
+/** The host a judge sees in place of the instance a run published to. */
+const UNNAMED_HOST = "patchy.localhost";
+
+/**
+ * `text` with a side's instance renamed: an instance's host names its side
+ * (`after-…`), and a published repo records it in `patchy.json`, its
+ * `package.json` and its lockfile.
+ */
+const unnamed = (text: string, instance: string | null) => {
+  if (instance === null) return text;
+  const url = new URL(instance);
+  return text.replaceAll(url.host, UNNAMED_HOST).replaceAll(url.hostname, UNNAMED_HOST);
+};
+
+/**
+ * Copies the published source for a blind judge: its dependencies and
+ * generated state left behind, the agent instructions and skills it was
+ * built from removed, and the instance it came from renamed.
+ */
+export const copySource = Effect.fn("Eval.copySource")(function* (
+  from: string,
+  to: string,
+  instance: string | null
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* stepOutput("Copying the published source", "cp", ["-a", "--reflink=auto", from, to], {
@@ -281,6 +329,23 @@ const copySource = Effect.fn("Eval.copySource")(function* (from: string, to: str
   });
   for (const generated of ["node_modules", ".patchy"])
     yield* fs.remove(path.join(to, generated), { recursive: true, force: true });
+  const pending = [to];
+  while (pending.length > 0) {
+    const folder = pending.pop()!;
+    for (const name of yield* fs.readDirectory(folder)) {
+      const at = path.join(folder, name);
+      const info = yield* fs.stat(at);
+      if (info.type === "Directory") {
+        if (AGENT_FOLDERS.has(name)) yield* fs.remove(at, { recursive: true });
+        else pending.push(at);
+      } else if (TOLD_FILES.has(name)) yield* fs.remove(at);
+      else if (info.type === "File") {
+        const text = yield* fs.readFileString(at).pipe(Effect.orElseSucceed(() => ""));
+        const renamed = unnamed(text, instance);
+        if (renamed !== text) yield* fs.writeFileString(at, renamed);
+      }
+    }
+  }
 });
 
 /** The repo the builder worked in: the first folder under its HOME holding a `patchy.json`. */
@@ -294,15 +359,19 @@ const workingRepo = Effect.fn("Eval.workingRepo")(function* (home: string) {
   return undefined;
 });
 
-/**
- * What a blind judge mustn't read in a checkout: every skill folder, the
- * repo's own agent folders, its git history and its local state. Each is
- * hidden as what it is on this machine (in a linked worktree `.git` is a
- * file), and one that isn't there is skipped.
- */
-const HIDDEN = ["skills", "packages/sdk/skills", ".agents", ".claude", ".git", ".local"];
+/** Hidden whole in a checkout: its git history, its local state and the judges' own labelled answers. */
+const HIDDEN = [".git", ".local", "scripts/dev/eval-calibration"];
+/** Folders that carry what builders are told, wherever they are: skills, their release archives, agent folders. */
+const TOLD_FOLDERS = new Set(["skills", "artifacts", ...AGENT_FOLDERS]);
 
-const masksIn = Effect.fn("Eval.masksIn")(function* (checkout: string) {
+/**
+ * What a blind judge mustn't read in a checkout: the paths in `HIDDEN`, and
+ * every folder and file anywhere in it that carries what builders are told,
+ * build outputs included, so a new copy is hidden without anyone listing it.
+ * Each is hidden as what it is on this machine (in a linked worktree `.git`
+ * is a file). Dependencies aren't walked: they link back into the checkout.
+ */
+export const masksIn = Effect.fn("Eval.masksIn")(function* (checkout: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const masks: Array<{ at: string; file: boolean }> = [];
@@ -311,6 +380,20 @@ const masksIn = Effect.fn("Eval.masksIn")(function* (checkout: string) {
     if (Option.isSome(info))
       masks.push({ at: `/patchy/${hidden}`, file: info.value.type !== "Directory" });
   }
+  const pending = [""];
+  while (pending.length > 0) {
+    const folder = pending.pop()!;
+    for (const name of yield* fs.readDirectory(path.join(checkout, folder))) {
+      const at = folder === "" ? name : `${folder}/${name}`;
+      if (name === "node_modules" || HIDDEN.includes(at)) continue;
+      const info = yield* fs.stat(path.join(checkout, at)).pipe(Effect.option);
+      if (Option.isNone(info)) continue;
+      const isFolder = info.value.type === "Directory";
+      if (isFolder ? TOLD_FOLDERS.has(name) : TOLD_FILES.has(name))
+        masks.push({ at: `/patchy/${at}`, file: !isFolder });
+      else if (isFolder) pending.push(at);
+    }
+  }
   return masks;
 });
 
@@ -318,14 +401,18 @@ const masksIn = Effect.fn("Eval.masksIn")(function* (checkout: string) {
 export interface Judging {
   readonly judge: Builder;
   readonly task: Task;
-  /** The run's folder on this machine. */
+  /** The run's folder on this machine, read from; never mounted, since its name says the side and builder. */
   readonly runDir: string;
+  /** Where judging is staged, each pass under an anonymous name; emptied after. */
+  readonly staging: string;
+  /** The instance the run published to, renamed wherever the judge would read it; null when there was none. */
+  readonly instance: string | null;
   /** The published source inside the run's folder, when the target is a repo. */
   readonly source: string | null;
   readonly screenshots: ReadonlyArray<string>;
   readonly checks: unknown;
   readonly log: BuilderLog | null;
-  /** The checkout of the run's side, for Patchy's own code, its skills and history masked. */
+  /** This checkout, for Patchy's own code, the same for both sides; what builders are told is masked. */
   readonly checkout: string;
   /** The judges' template HOME: the toolchain, no Patchy skill. */
   readonly template: string;
@@ -342,16 +429,26 @@ export interface Judged {
   readonly attribution: Attribution | null;
 }
 
+/** A judge's record when it gave no verdict, and why. */
+export const noVerdict = (judge: Builder, why: string): JudgeRecord => ({
+  judge: judge.id,
+  model: judge.model,
+  effort: judge.effort,
+  scores: null,
+  findings: 0,
+  infra: why,
+  attributionInfra: null
+});
+
 /**
- * Both passes by one judge on one run. The scoring pass reads a blind
- * workspace; the attribution pass, only when the verdict has findings of
- * medium severity or worse, reads another with the builder's skills and log.
+ * Both passes by one judge on one run, staged in `dir`. The scoring pass
+ * reads a blind workspace; the attribution pass, only when the verdict has
+ * findings of medium severity or worse, reads another with the builder's
+ * skills and log.
  */
-export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
+const judgeIn = Effect.fn("Eval.judgeIn")(function* (input: Judging, dir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dir = path.join(input.runDir, "judging", input.judge.id);
-  yield* fs.remove(dir, { recursive: true, force: true });
   const home = path.join(dir, "home");
   yield* fs.makeDirectory(dir, { recursive: true });
   yield* stepOutput(
@@ -370,11 +467,18 @@ export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
   const work = path.join(dir, "work");
   yield* fs.makeDirectory(work, { recursive: true });
   yield* fs.writeFileString(path.join(work, "TASK.md"), taskBrief(input.task));
-  yield* fs.writeFileString(path.join(work, "checks.json"), printJson(input.checks));
+  yield* fs.writeFileString(
+    path.join(work, "checks.json"),
+    unnamed(printJson(input.checks), input.instance)
+  );
   for (const shot of input.screenshots)
     yield* fs.copyFile(path.join(input.runDir, shot), path.join(work, path.basename(shot)));
   if (input.source !== null)
-    yield* copySource(path.join(input.runDir, input.source), path.join(work, "source"));
+    yield* copySource(
+      path.join(input.runDir, input.source),
+      path.join(work, "source"),
+      input.instance
+    );
   const scoring = yield* pass({
     judge: input.judge,
     spec: {
@@ -391,27 +495,22 @@ export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
     decode: decodeVerdict,
     jsonSchema: VERDICT_SCHEMA
   });
-  const record = (scores: Scores | null, findings: number, infra: string | null): JudgeRecord => ({
-    judge: input.judge.id,
-    model: input.judge.model,
-    effort: input.judge.effort,
-    scores,
-    findings,
-    infra
-  });
   if (scoring.answer === null)
     return {
-      record: record(null, 0, scoring.why),
+      record: noVerdict(input.judge, scoring.why),
       verdict: null,
       attribution: null
     } satisfies Judged;
   const verdict = scoring.answer;
+  const record = (attributionInfra: string | null): JudgeRecord => ({
+    ...noVerdict(input.judge, ""),
+    scores: verdict.scores,
+    findings: verdict.findings.length,
+    infra: null,
+    attributionInfra
+  });
   if (input.attribute === false || !verdict.findings.some((finding) => finding.severity !== "low"))
-    return {
-      record: record(verdict.scores, verdict.findings.length, null),
-      verdict,
-      attribution: null
-    } satisfies Judged;
+    return { record: record(null), verdict, attribution: null } satisfies Judged;
 
   // The attribution workspace: the findings, what the builder did, and what it was told.
   const attributing = path.join(dir, "attribution");
@@ -470,10 +569,33 @@ export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
     jsonSchema: ATTRIBUTION_SCHEMA
   });
   return {
-    record: record(verdict.scores, verdict.findings.length, null),
+    record: record(attribution.why),
     verdict,
     attribution: attribution.answer
   } satisfies Judged;
+});
+
+/**
+ * Both passes by one judge on one run, staged under an anonymous name and
+ * cleaned up after. Never fails: a judge whose sandbox couldn't be set up or
+ * run gives no verdict and says so, its detail on this machine's console only.
+ */
+export const judge = Effect.fn("Eval.judge")(function* (input: Judging) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(input.staging, randomId(12));
+  return yield* judgeIn(input, dir).pipe(
+    Effect.ensuring(Effect.ignore(fs.remove(dir, { recursive: true, force: true }))),
+    Effect.catch((error) =>
+      Console.error(`  ${input.judge.id}  couldn't judge: ${String(error)}`).pipe(
+        Effect.as({
+          record: noVerdict(input.judge, "Its sandbox couldn't be set up or run."),
+          verdict: null,
+          attribution: null
+        } satisfies Judged)
+      )
+    )
+  );
 });
 
 /** The mean of each dimension over the scores given; null when there are none. */
