@@ -157,9 +157,10 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-// The sheet on a page whose own element rules would restyle it, some long, in a media query or in
-// a preflight layer like Tailwind's, with a one-class rule aimed at its keycaps. All of it is in
-// <head> before the sheet mounts, as in a built page; `css` adds more after, or prepends it.
+// The sheet on a right-to-left page whose own element rules would restyle it, some long, in a
+// media query or in a preflight layer like Tailwind's, with a one-class rule aimed at its keycaps.
+// All of it is in <head> before the sheet mounts, as in a built page; `css` adds more after, or
+// prepends it.
 // `addLook` adds a company look, as a patch's bundle carries one.
 const styled = `import { render } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
@@ -175,12 +176,12 @@ css(\`
     kbd { opacity: 0; font-family: monospace; }
     button { text-transform: uppercase; border: 0 solid; }
   }
-  body { font-family: Georgia, serif; color: rgb(40, 50, 60); }
+  body { font-family: Georgia, serif; color: rgb(40, 50, 60); direction: rtl; }
   body * { scroll-margin-bottom: 9px; }
-  kbd { display: none; font-size: 4px; direction: rtl; unicode-bidi: bidi-override; }
+  kbd { display: none; font-size: 4px; direction: ltr; unicode-bidi: bidi-override; }
   @media (min-width: 0px) { html body kbd { display: none; font-size: 4px; } }
   button, html body main button, html body dialog button { padding: 30px; background: rgb(255, 0, 0); }
-  dialog, body dialog { border: 9px solid rgb(255, 0, 0); }
+  dialog, body dialog { border: 9px solid rgb(255, 0, 0); direction: ltr; unicode-bidi: bidi-override; }
   .hotkey-key { color: rgb(1, 2, 3); }
 \`);
 const addLook = () => css(\`@layer look {
@@ -628,7 +629,7 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       color: "rgb(1, 2, 3)",
       opacity: "1",
       "font-family": "Georgia, serif",
-      direction: "ltr",
+      direction: "rtl",
       "unicode-bidi": "normal",
       "padding-left": "23px"
     });
@@ -643,7 +644,12 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       "background-color": "rgba(0, 0, 0, 0)",
       "text-transform": "none"
     });
-    expect(await style(dialog, ["border-top-width"])).toEqual({ "border-top-width": "0px" });
+    // The page is right to left; its rules that turn the dialog or a keycap left to right don't hold.
+    expect(await style(dialog, ["border-top-width", "direction", "unicode-bidi"])).toEqual({
+      "border-top-width": "0px",
+      direction: "rtl",
+      "unicode-bidi": "normal"
+    });
     // `body *` reaches the page but no part of the sheet or its button.
     expect(await style(view.locator("main"), ["scroll-margin-bottom"])).toEqual({
       "scroll-margin-bottom": "9px"

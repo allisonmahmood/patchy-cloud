@@ -268,13 +268,14 @@ const styles = `@layer look.patchy-hotkeys {
 // so a page's own one-class rule, such as `.hotkey-key { … }`, comes after it and wins the tie. A
 // stylesheet prepended later is moved behind it when the sheet next opens; a page that replaces
 // `<head>` wholesale drops it until the sheet next opens. `all` leaves out `direction` and
-// `unicode-bidi`, so the parts inside take their direction from the sheet's container instead.
+// `unicode-bidi`, so the sheet and its parts take their direction from the page instead.
 const reset = `.hotkey-opener,
 .hotkey-sheet-dialog,
 .hotkey-sheet-dialog *,
 .hotkey-sheet-dialog::backdrop {
   all: revert-layer;
 }
+.hotkey-sheet-dialog,
 .hotkey-sheet-dialog * {
   direction: inherit;
   unicode-bidi: normal;
