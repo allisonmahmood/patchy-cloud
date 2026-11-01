@@ -4,7 +4,13 @@ import { type AgentTool, isGraderTrouble, type JsonSchema, type RunPerson } from
 import { BrowserGradingFailed, gradingStep } from "./grade.js";
 import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
 import { GIVE, LIST } from "./tasks/kudosAgents.js";
-import { type Control, decisionOf, isFileResponse, viewCandidates } from "./tasks/page.js";
+import {
+  type Control,
+  decisionOf,
+  isFileResponse,
+  viewCandidates,
+  viewName
+} from "./tasks/page.js";
 import { receipt } from "./tasks/spendApprovals.js";
 
 const priya: RunPerson = {
@@ -256,45 +262,69 @@ describe("a search for a page's other views", () => {
   const control = (name: string, more: Partial<Control> = {}): Control => ({
     name,
     tab: false,
-    submit: false,
+    selection: false,
+    toggle: false,
+    submitsForm: false,
+    shown: true,
     ...more
   });
   const picked = (controls: ReadonlyArray<Control>) =>
     viewCandidates(controls).map((index) => controls[index]!.name);
 
-  it("tries any tab, button or link, views first, All before them", () => {
+  it("reads a view's name without its counts, badges or asides", () => {
+    expect(viewName("Review (admin) 3")).toBe("review");
+    expect(viewName("  Needs my approval  4 ")).toBe("needs my approval");
+  });
+
+  it("presses only views by role or state: tabs, places, and controls named for a view", () => {
     expect(
       picked([
-        control("Export CSV"),
         control("Team requests"),
-        control("Open"),
-        control("Mine", { tab: true }),
+        control("Open", { toggle: true }),
+        control("Needs my approval", { tab: true }),
+        control("Dashboard", { selection: true }),
+        control("Review", { toggle: true }),
         control("Approved"),
         control("All")
       ])
-    ).toEqual(["All", "Team requests", "Open", "Mine", "Approved", "Export CSV"]);
+    ).toEqual([
+      "All",
+      "Team requests",
+      "Open",
+      "Needs my approval",
+      "Dashboard",
+      "Review",
+      "Approved"
+    ]);
   });
 
-  it("never presses what changes data, a form's submit, or an icon whose name says nothing", () => {
+  it("finds a plain Open or Team requests button outside a form, but not a form's submit", () => {
+    expect(picked([control("Open"), control("Team requests")])).toEqual(["Open", "Team requests"]);
+    expect(picked([control("Open", { submitsForm: true })])).toEqual([]);
+  });
+
+  it("never presses an action, whatever language or icon it's in", () => {
     expect(
       picked([
+        control("Withdraw request"),
+        control("Supprimer"),
+        control("Trash"),
         control("Approve all"),
-        control("New request"),
-        control("Load sample data"),
-        control("Reject"),
-        control("Sign out"),
-        control("Send", { submit: true }),
-        control("Go", { submit: true }),
-        control("👏 3"),
         control("Open request"),
-        control("Review")
+        control("New request", { toggle: true }),
+        control("Like", { toggle: true }),
+        control("Delete", { selection: true }),
+        control("Export CSV"),
+        control("👏 3")
       ])
-    ).toEqual(["Open request", "Review"]);
+    ).toEqual([]);
   });
 
-  it("stops at twenty tries", () => {
-    const many = Array.from({ length: 30 }, (_, index) => control(`View ${index}`));
-    expect(viewCandidates(many)).toHaveLength(20);
+  it("leaves hidden controls out before counting to twenty", () => {
+    const hidden = Array.from({ length: 25 }, (_, index) =>
+      control(`All ${index}`, { shown: false })
+    );
+    expect(picked([...hidden, control("Review")])).toEqual(["Review"]);
   });
 });
 

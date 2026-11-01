@@ -31,61 +31,90 @@ export const shows = async (view: Opened, text: string, ms = 10_000) => {
   return false;
 };
 
-/** Names a page gives its views of a list, tried first: all of it, someone's own, what waits, what's decided. */
-export const VIEW_NAMES =
-  /^\s*(all|everything|mine|my \w+|team \w+|history|review\w*|pending|waiting|open|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|decided|approved|rejected|declined|paid|done|closed|completed)\b/i;
+/**
+ * A control's name as a view's: without counts, badges, parentheticals or
+ * punctuation, lowercased, so "Review (admin) 3" reads as "review".
+ */
+export const viewName = (name: string) =>
+  name
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[^\p{L}' ]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 
 /**
- * Names of controls that change data, which a search for a view never
- * presses: deciding, deleting, sending, making something new, signing out.
- * Whole verbs only, so a status view such as Approved, Rejected, Paid or
- * Shared with me stays in. A control left in by mistake costs a reload; one
- * that changes data costs the run its state, so this is the list that has to
- * be complete.
+ * What a list's views are called, a whole name each: all of it, someone's
+ * own, a team's, a status, a queue. Buttons and links are tried only when
+ * named like this, so an action such as "Open request", "Withdraw request",
+ * "Supprimer" or a trash icon never is.
  */
-export const CHANGES_DATA =
-  /\b(approve|reject|decline|deny|accept|delete|remove|archive|discard|clear|reset|submit|send|save|create|new|add|lend|give|thank|react|like|vote|pay|mark|assign|move|transfer|publish|share|invite|upload|import|load|cancel|confirm|undo|restore|return|back|sign out|log out|leave|join|edit|rename|update|duplicate|copy|close|dismiss)\b/i;
+export const VIEW_LEXICON =
+  /^(all|all \p{L}+|everything|everyone|mine|my \p{L}+( \p{L}+)?|team|team \p{L}+|open|pending|waiting|in review|review|reviews|to review|to approve|needs? (my )?(approval|review)|awaiting( my)? (approval|review)|approvals|approved|rejected|declined|decided|paid|done|closed|completed|archived|history|queue|inbox|requests|submitted|sent|received|active|recent)$/u;
 
-/** A control a search for a view might press, as found on the starting view. */
+/**
+ * Whether a name says to do something rather than which view to show: it
+ * holds a verb that changes data, or leads with a verb and names its object,
+ * as "Open request" or "New request" do.
+ */
+export const actionShaped = (name: string) =>
+  /\b(approve|reject|decline|deny|accept|withdraw|delete|remove|trash|archive|discard|clear|reset|submit|send|save|create|new|add|lend|give|thank|react|like|favou?rite|star|pin|follow|watch|subscribe|mute|bookmark|flag|vote|pay|mark|assign|move|transfer|publish|share|invite|upload|import|load|cancel|confirm|undo|restore|return|back|sign out|log out|leave|join|edit|rename|update|duplicate|copy|close|dismiss)\b/u.test(
+    name
+  ) ||
+  /^(open|new|add|create|view|show|start|request|upload|download|export|print|compose|write|ask|apply|book|schedule|report|record|log) \p{L}/u.test(
+    name
+  );
+
+/** A control a search for a view might press, as found on the page. */
 export interface Control {
   /** Its accessible name: its label, its title, or its text. */
   readonly name: string;
   readonly tab: boolean;
-  /** A form's submit button, which sends whatever the form holds. */
-  readonly submit: boolean;
+  /** It carries `aria-selected` or `aria-current`: a selection or a place, as views are. */
+  readonly selection: boolean;
+  /** It carries `aria-pressed`: a toggle, which is as often an action as a view. */
+  readonly toggle: boolean;
+  /** A button that would submit the form it belongs to. */
+  readonly submitsForm: boolean;
+  readonly shown: boolean;
 }
 
-/** The most controls a search for a view tries, each from a fresh start. */
+/** The most views a search for one tries. */
 const MAX_TRIES = 20;
 
 /**
- * Which controls to try, by index, in order: every tab, button and link but
- * those that change data, a form's submit button, and icons whose name says
- * nothing; tabs and controls named for a view first, All before the rest,
- * then the others as they come; at most `MAX_TRIES`.
+ * Whether a control is a view by its role or state, and so safe to press: a
+ * tab; a selection or a place whose name isn't action-shaped; or a toggle,
+ * button or link whose whole name is a view's (`VIEW_LEXICON`). Never a
+ * hidden control, nor one that submits a form. Anything else could change
+ * data, so a search for a view never presses it, even if that means not
+ * finding a list only an unusual control shows.
  */
+export const isViewControl = (control: Control) => {
+  if (!control.shown || control.submitsForm) return false;
+  if (control.tab) return true;
+  const name = viewName(control.name);
+  if (name === "" || actionShaped(name)) return false;
+  return control.selection || VIEW_LEXICON.test(name);
+};
+
+/** Which controls to try, by index: the views among them, All first, at most `MAX_TRIES`. */
 export const viewCandidates = (controls: ReadonlyArray<Control>) =>
   controls
     .map((control, index) => ({ control, index }))
-    .filter(
-      ({ control }) =>
-        !control.submit && /\p{L}/u.test(control.name) && !CHANGES_DATA.test(control.name)
+    .filter(({ control }) => isViewControl(control))
+    .sort(
+      (a, b) =>
+        Number(!/^all\b/.test(viewName(a.control.name))) -
+          Number(!/^all\b/.test(viewName(b.control.name))) || a.index - b.index
     )
-    .map(({ control, index }) => ({
-      index,
-      rank: /^\s*all\b/i.test(control.name)
-        ? 0
-        : control.tab || VIEW_NAMES.test(control.name)
-          ? 1
-          : 2
-    }))
-    .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .slice(0, MAX_TRIES)
     .map(({ index }) => index);
 
-const CONTROLS = 'button, a[href], [role="tab"], [role="button"], [role="link"]';
+const CONTROLS =
+  'button, a[href], [role="tab"], [role="button"], [role="link"], [aria-pressed], [aria-selected], [aria-current]';
 
-/** Every control on the patch's page as a person sees it: visible, with its name. */
+/** Every control on the patch's page with what a search for a view reads of it. */
 const controlsOf = (view: Opened) =>
   view.frame.locator(CONTROLS).evaluateAll((all) =>
     all.map((element) => ({
@@ -95,56 +124,121 @@ const controlsOf = (view: Opened) =>
         (element instanceof HTMLElement ? element.innerText : (element.textContent ?? ""))
       ).trim(),
       tab: element.getAttribute("role") === "tab",
-      submit: element instanceof HTMLButtonElement && element.type === "submit",
-      shown: element.getClientRects().length > 0
+      selection: element.hasAttribute("aria-selected") || element.hasAttribute("aria-current"),
+      toggle: element.hasAttribute("aria-pressed"),
+      submitsForm:
+        element instanceof HTMLButtonElement && element.form !== null && element.type === "submit",
+      shown:
+        element.getClientRects().length > 0 &&
+        (element instanceof HTMLElement ? getComputedStyle(element).visibility !== "hidden" : true)
     }))
   );
 
-/** Back to where the search started: the same address, loaded afresh, until the patch shows something. */
-const restart = async (view: Opened, address: string) => {
-  await view.page.goto(address).catch(() => undefined);
-  for (let waited = 0; waited < 30_000; waited += POLL_MS) {
-    const text = await view.frame
+const SETTLE_MS = 500;
+const SETTLE_CAP_MS = 10_000;
+const SETTLE_POLL_MS = 100;
+
+/**
+ * Waits for the page to settle, as a person waits for it to finish loading:
+ * no "Loading" in its text, and nothing changing for half a second; at most
+ * ten seconds.
+ */
+export const settle = async (view: Opened) => {
+  let last = "";
+  for (let waited = 0, still = 0; waited < SETTLE_CAP_MS; waited += SETTLE_POLL_MS) {
+    const now = await view.frame
       .locator("body")
-      .innerText({ timeout: POLL_MS })
+      .evaluate(
+        (body) =>
+          `${body.querySelectorAll("*").length}|${body instanceof HTMLElement ? body.innerText : body.textContent}`
+      )
       .catch(() => "");
-    if (text.trim() !== "") return;
-    await view.page.waitForTimeout(POLL_MS);
+    still = now === last && !/\bloading\b/i.test(now) ? still + SETTLE_POLL_MS : 0;
+    if (still >= SETTLE_MS) return;
+    last = now;
+    await view.page.waitForTimeout(SETTLE_POLL_MS);
   }
 };
 
+/** The view a search found a request under, by its control's name, to go straight back to. */
+export interface ViewMemo {
+  via?: string;
+}
+
+/** A control's name as its identity: as shown, spaces collapsed, so "Tab 2" isn't "Tab 3". */
+const named = (name: string) => name.replace(/\s+/g, " ").trim();
+
 /**
- * Whether `text` shows, looking under the page's other views of the list as
- * a person would when it isn't in the first one. It tries the controls
- * `viewCandidates` picks from the starting view, one at a time, each from a
- * fresh load of the starting address, so a click that opens a dialog,
- * navigates or changes a filter can't affect the next; it never presses one
- * that changes data. It stops at the first under which `text` shows, and
- * leaves the page there; failing all, it leaves the page as it started.
+ * Presses the view control named `name`, or failing that one whose view name
+ * reads the same, as "Pending 2" does after "Pending 3"; whether it pressed
+ * one that is still a view once pressed.
  */
-export const reveal = async (view: Opened, text: string) => {
-  if (await shows(view, text, 3_000)) return true;
-  const address = view.page.url();
-  const found = await controlsOf(view);
-  const tries = viewCandidates(found.map(({ name, tab, submit }) => ({ name, tab, submit })));
-  let fresh = true;
-  for (const index of tries) {
-    const wanted = found[index];
-    if (wanted === undefined || !wanted.shown) continue;
-    if (!fresh) await restart(view, address);
-    fresh = false;
-    // Only the control the search chose: after a reload, the same place must hold the same name.
-    const now = (await controlsOf(view))[index];
-    if (now?.name !== wanted.name) continue;
-    await view.frame
-      .locator(CONTROLS)
-      .nth(index)
-      .click({ timeout: 2_000 })
-      .catch(() => undefined);
-    if (await shows(view, text, 2_000)) return true;
+const pressView = async (view: Opened, name: string) => {
+  const controls = await controlsOf(view);
+  const views = controls.map(isViewControl);
+  const exact = controls.findIndex((control, i) => views[i] && named(control.name) === name);
+  const index =
+    exact !== -1
+      ? exact
+      : controls.findIndex((control, i) => views[i] && viewName(control.name) === viewName(name));
+  if (index === -1) return false;
+  const dialogs = view.frame.getByRole("dialog");
+  const before = await dialogs.count();
+  await view.frame
+    .locator(CONTROLS)
+    .nth(index)
+    .click({ timeout: 2_000 })
+    .catch(() => undefined);
+  await settle(view);
+  // A view that opens a dialog after all is closed again, and isn't the view.
+  if ((await dialogs.count()) > before) {
+    await view.page.keyboard.press("Escape");
+    await settle(view);
+    if ((await dialogs.count()) > before)
+      await dialogs
+        .last()
+        .getByRole("button", { name: /close|cancel|dismiss|^\s*[×✕x]\s*$/i })
+        .first()
+        .click({ timeout: 2_000 })
+        .catch(() => undefined);
+    return false;
   }
-  if (!fresh) await restart(view, address);
-  return shows(view, text, 2_000);
+  return true;
+};
+
+/**
+ * Whether `text` shows, on the starting view or behind the page's tabs and
+ * view toggles, found as a person would look: the controls that are views by
+ * their role or state (`isViewControl`), All first, one at a time, from
+ * wherever the last left the page. It presses nothing else, so it can miss
+ * a list only an unusual control shows; that's a visible failure, never a
+ * changed request. With `memo`, a view it found the text under before is
+ * pressed first, one click, and the view it finds is remembered.
+ */
+export const reveal = async (view: Opened, text: string, memo?: ViewMemo) => {
+  await settle(view);
+  if (await shows(view, text, 1_000)) return true;
+  if (
+    memo?.via !== undefined &&
+    (await pressView(view, memo.via)) &&
+    (await shows(view, text, 1_000))
+  )
+    return true;
+  const tried = new Set<string>();
+  for (let tries = 0; tries < MAX_TRIES; tries++) {
+    const controls = await controlsOf(view);
+    const next = viewCandidates(controls)
+      .map((index) => named(controls[index]!.name))
+      .find((name) => !tried.has(name));
+    if (next === undefined) break;
+    tried.add(next);
+    if (!(await pressView(view, next))) continue;
+    if (await shows(view, text, 1_000)) {
+      if (memo !== undefined) memo.via = next;
+      return true;
+    }
+  }
+  return false;
 };
 
 /** Everything the patch's frame shows, as visible text. */
@@ -451,6 +545,12 @@ const DECISION_BUTTONS = {
 const DECISION_MS = 60_000;
 /** The most calls one press may send before the grader stops holding them. */
 const MAX_CALLS = 12;
+/**
+ * How long a call may stay held while the check tries it. The shell gives a
+ * server call 110 s (`serverReplyTimeoutMs`) before giving up on it, so past
+ * this its release would come too late to count.
+ */
+const HELD_MS = 90_000;
 
 /** How a check follows a decision's calls: trying each first, and telling when it took. */
 export interface DecisionWatch {
@@ -501,11 +601,12 @@ export const decide = async (
     return null;
   // A person deciding writes why where the request asks, such as a note a rejection needs.
   await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
-  const held: Array<Route> = [];
+  const held: Array<{ readonly route: Route; readonly at: number }> = [];
   if (watch !== undefined)
     await page.route("**/api/runtime/call", async (route) => {
       const call = decodeCall(route.request().postData() ?? "");
-      if (Option.isSome(call) && !READS.has(call.value.op)) held.push(route);
+      if (Option.isSome(call) && !READS.has(call.value.op))
+        held.push({ route, at: performance.now() });
       else await route.continue();
     });
   const dialogs = await frame.getByRole("dialog").count();
@@ -533,17 +634,22 @@ export const decide = async (
   let took = false;
   // Measured in waits, since the probes between them take time of their own.
   for (let waited = 0; !took && count < MAX_CALLS && waited < DECISION_MS;) {
-    const route = held.shift();
-    if (route === undefined) {
+    const next = held.shift();
+    if (next === undefined) {
       await page.waitForTimeout(POLL_MS);
       waited += POLL_MS;
       await answerDialog();
       continue;
     }
     count++;
+    const { route, at } = next;
     const call = holding(view, route);
     const objection = call === undefined ? null : await watch.probe(call);
     if (objection !== null) return { held: count, took: false, objection };
+    if (performance.now() - at > HELD_MS)
+      throw new GraderTrouble({
+        what: "Trying one of Ada's calls as members took longer than her browser waits for it."
+      });
     await route.continue();
     // Its answer, so the decision it makes has happened before `took` looks.
     await route

@@ -14,7 +14,8 @@ import {
   fillRest,
   formAround,
   reveal,
-  servesFile
+  servesFile,
+  type ViewMemo
 } from "./page.js";
 
 /** A 1×1 PNG: the receipt a person attaches. */
@@ -39,7 +40,7 @@ const REASON = /reason|description|purpose|what|details|note|title|why|memo|just
  * `marker`, fills anything else the form holds and sends it. The reason the
  * request couldn't be made, or null once it shows up among his requests.
  */
-const ask = async (view: Opened, reason: string, marker: string) => {
+const ask = async (view: Opened, reason: string, marker: string, memo: ViewMemo) => {
   const { frame, page } = view;
   let amount = await chooseField(frame, AMOUNT);
   if (amount === undefined) {
@@ -66,13 +67,15 @@ const ask = async (view: Opened, reason: string, marker: string) => {
   await fillRest(form.scope);
   await form.send.click();
   // Whoever asked sees their request; one that never shows up wasn't sent, whatever the page did.
-  return (await reveal(view, reason)) ? null : "sent the request, but it never showed up for him";
+  return (await reveal(view, reason, memo))
+    ? null
+    : "sent the request, but it never showed up for him on his starting view or behind its tabs and view toggles";
 };
 
 /** Ben asks for money with a receipt; the check's failure when he couldn't. */
-const benAsks = async (ctx: CheckContext, reason: string, marker: string) => {
+const benAsks = async (ctx: CheckContext, reason: string, marker: string, memo: ViewMemo) => {
   const ben = await ctx.open("ben");
-  const refused = await ask(ben, reason, marker);
+  const refused = await ask(ben, reason, marker, memo);
   await ben.close();
   return refused === null ? null : ({ ok: false, reason: `Ben ${refused}.` } as const);
 };
@@ -85,11 +88,11 @@ const RECEIPT_CONTROL = /receipt|attachment|download|view file|open file|\.png/i
  * request and presses what says receipt in it. A saved file name, a button
  * with nothing behind it, or a file holding anything else serves nothing.
  */
-const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
+const adaOpensReceipt = async (ada: Opened, reason: string, marker: string, memo: ViewMemo) =>
   servesFile(ada, receipt(marker), async () => {
     // From a fresh load, so a preview the page fetches as it renders is seen too.
     await ada.page.reload();
-    if (!(await reveal(ada, reason))) return;
+    if (!(await reveal(ada, reason, memo))) return;
     await ada.frame.getByText(reason).first().click();
     await ada.page.waitForTimeout(2_000);
     for (const role of ["link", "button"] as const) {
@@ -105,6 +108,9 @@ const adaOpensReceipt = async (ada: Opened, reason: string, marker: string) =>
   });
 
 const DECIDED = { approve: "approved", reject: "rejected" } as const;
+
+const ADA_MISSES =
+  "Ada doesn't see the request Ben sent on her starting view or behind its tabs and view toggles.";
 
 /** What Ben sees of his request: its decision, none shown, or undefined when he can't find it. */
 type Shown = ReturnType<typeof decisionOf> | undefined;
@@ -129,22 +135,32 @@ const onlyAdmins =
   async (ctx: CheckContext): Promise<CheckOutcome> => {
     const decided = DECIDED[which];
     const reason = `${which === "approve" ? "Client lunch with Harbor" : "Standing desk"} ${ctx.code}`;
-    const refused = await benAsks(ctx, reason, `${ctx.code}-${which}`);
+    // The views each found the request under, so later looks are one click, inside the
+    // time a held call of Ada's has before her browser gives up on it.
+    const benWay: ViewMemo = {};
+    const adaWay: ViewMemo = {};
+    const refused = await benAsks(ctx, reason, `${ctx.code}-${which}`, benWay);
     if (refused !== null) return refused;
     /** What Ben sees of his request's decision, from a fresh page; undefined when he can't find it. */
     const benSees = async (): Promise<Shown> => {
       const ben = await ctx.open("ben");
-      const seen = (await reveal(ben, reason)) ? await decisionShown(ben, reason) : undefined;
+      const seen = (await reveal(ben, reason, benWay))
+        ? await decisionShown(ben, reason)
+        : undefined;
       await ben.close();
       return seen;
     };
     const before = await benSees();
-    if (before === undefined) return { ok: false, reason: "Ben can't find the request he sent." };
+    if (before === undefined)
+      return {
+        ok: false,
+        reason:
+          "Ben can't find the request he sent on his starting view or behind its tabs and view toggles."
+      };
     if (before === "approved" || before === "rejected")
       return { ok: false, reason: `Ben's request shows ${before} before anyone decided it.` };
     const ada = await ctx.open("ada");
-    if (!(await reveal(ada, reason)))
-      return { ok: false, reason: "Ada doesn't see the request Ben sent." };
+    if (!(await reveal(ada, reason, adaWay))) return { ok: false, reason: ADA_MISSES };
     let seen: Shown = before;
     const pressed = await decide(ada, reason, which, {
       probe: async (call) => {
@@ -219,12 +235,12 @@ export default {
       run: async (ctx) => {
         const reason = `Team offsite snacks ${ctx.code}`;
         const marker = `${ctx.code}-receipt`;
-        const refused = await benAsks(ctx, reason, marker);
+        const refused = await benAsks(ctx, reason, marker, {});
         if (refused !== null) return refused;
         const ada = await ctx.open("ada");
-        if (!(await reveal(ada, reason)))
-          return { ok: false, reason: "Ada doesn't see the request Ben sent." };
-        return (await adaOpensReceipt(ada, reason, marker))
+        const adaWay: ViewMemo = {};
+        if (!(await reveal(ada, reason, adaWay))) return { ok: false, reason: ADA_MISSES };
+        return (await adaOpensReceipt(ada, reason, marker, adaWay))
           ? { ok: true }
           : { ok: false, reason: "Ada sees Ben's request but can't open the receipt he attached." };
       }
