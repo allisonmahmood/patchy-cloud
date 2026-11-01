@@ -13,6 +13,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Api from "./Api.js";
 import * as Preparation from "./devPreparation.js";
 import * as Instance from "./Instance.js";
+import * as Project from "./Project.js";
 import { MANIFEST_VERSION, RELEASE } from "./release.js";
 import { lookRevision } from "../../../test/look-fixtures.js";
 
@@ -93,6 +94,25 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
 });
 
 const currentIndex = { release: RELEASE, manifestVersion: MANIFEST_VERSION, uses: [], skills: [] };
+const contacts = {
+  kind: "sharedTable",
+  patchId: "abcdefghijkl",
+  table: "contacts",
+  id: "abcdefghijkl/contacts",
+  revision: 3
+} as const;
+const contactsIndex = {
+  ...currentIndex,
+  uses: [{ alias: "contacts", id: contacts.id, revision: 3, declaration: contacts }]
+};
+/** Metadata for the `contacts` shared table, overriding its declaration's fields. */
+const shared = (declaration: typeof contacts | { revision: number }) => ({
+  postgres: {},
+  posthog: {},
+  pidgeon: {},
+  attio: {},
+  shared: { contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} } }
+});
 
 it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
   it.effect(
@@ -159,30 +179,20 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
     "stamps declarations from the generated index and checks them against its metadata",
     () =>
       Effect.gen(function* () {
-        const contacts = {
-          kind: "sharedTable",
-          patchId: "abcdefghijkl",
-          table: "contacts",
-          id: "abcdefghijkl/contacts",
-          revision: 3
-        } as const;
-        const index = {
-          ...currentIndex,
-          uses: [{ alias: "contacts", id: contacts.id, revision: 3, declaration: contacts }]
-        };
         const uses = '{ contacts: sharedTable("abcdefghijkl", "contacts") }';
-        const shared = (declaration: typeof contacts | { revision: number }) => ({
-          postgres: {},
-          posthog: {},
-          pidgeon: {},
-          attio: {},
-          shared: {
-            contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} }
-          }
+        const { prepare } = yield* harness({
+          index: contactsIndex,
+          tier: 2,
+          uses,
+          metadata: shared(contacts)
         });
-        const { prepare } = yield* harness({ index, tier: 2, uses, metadata: shared(contacts) });
         assert.deepStrictEqual((yield* prepare).manifest.uses, { contacts });
-        const stale = yield* harness({ index, tier: 2, uses, metadata: shared({ revision: 4 }) });
+        const stale = yield* harness({
+          index: contactsIndex,
+          tier: 2,
+          uses,
+          metadata: shared({ revision: 4 })
+        });
         const exit = yield* Effect.exit(stale.prepare);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit))
@@ -190,6 +200,27 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
             Option.getOrUndefined(Exit.findErrorOption(exit))?.message,
             "Generation returned inconsistent metadata for contacts."
           );
+      }),
+    { timeout: 30_000 }
+  );
+  it.effect(
+    "writes the manifest file refresh and publish write, with uses in config order",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, prepare } = yield* harness({
+          index: contactsIndex,
+          tier: 2,
+          uses: '{ contacts: sharedTable("abcdefghijkl", "contacts"), members: members() }',
+          metadata: shared(contacts)
+        });
+        const prepared = yield* prepare;
+        assert.deepStrictEqual(Object.keys(prepared.manifest.uses), ["contacts", "members"]);
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, "patchy/_generated/manifest.json")),
+          Project.manifestFile(prepared.manifest)
+        );
       }),
     { timeout: 30_000 }
   );

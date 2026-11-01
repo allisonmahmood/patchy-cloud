@@ -174,6 +174,8 @@ describe("repo publish checks", () => {
       installed: true
     });
     const options = { cwd: dir, stateDir: tempDir(), env };
+    const manifestPath = path.join(dir, "patchy/_generated/manifest.json");
+    const initManifest = readFileSync(manifestPath, "utf8");
     const entry = path.join(dir, "index.html");
     const starter = readFileSync(entry, "utf8");
     writeFileSync(
@@ -197,6 +199,8 @@ describe("repo publish checks", () => {
       instance.requests.find((request) => request.url === "/api/publish")?.body
     );
     expect(sent.manifest.tier).toBe(1);
+    // Publish writes the manifest file byte for byte as init and refresh do.
+    expect(readFileSync(manifestPath, "utf8")).toBe(initManifest);
     expect(sent.html).toContain(embeddedFontLook.font);
     expect(sent.html).toMatch(/main\{[^}]*max-width:960px/);
 
