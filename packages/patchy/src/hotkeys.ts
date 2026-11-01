@@ -332,7 +332,11 @@ const keycaps = (hotkey: string) =>
 // closes in a layout effect, in the commits that switch its scope on and off: Preact 11 runs a
 // passive cleanup after the dialog has left the page, and a dialog closed then returns focus
 // nowhere.
-function Sheet(props: { readonly title: string; readonly onClose: () => void }): JSX.Element {
+function Sheet(props: {
+  readonly title: string;
+  readonly own: Pick<ListedHotkey, "hotkey" | "label">;
+  readonly onClose: () => void;
+}): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const title = useId();
@@ -385,7 +389,7 @@ function Sheet(props: { readonly title: string; readonly onClose: () => void }):
       createElement(
         "div",
         { class: "hotkey-groups" },
-        sections(list).map(([name, rows]) =>
+        sections(list, props.own).map(([name, rows]) =>
           createElement(
             "section",
             { class: "hotkey-group", key: name },
@@ -414,6 +418,21 @@ export interface HotkeySheetProps<S extends string> {
   readonly title?: string;
   /** The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"`. */
   readonly hotkey?: Hotkey<S>;
+  /** The heading its "Show shortcuts" row lists under, after the page's hotkeys either way. */
+  readonly group?: string;
+}
+
+// The mounted sheet's way to open, for `openHotkeySheet`.
+let openMounted: (() => void) | undefined;
+
+/**
+ * Opens the mounted `HotkeySheet` from a control of the page's own, such as a menu item. Focus
+ * moves into the sheet and goes back to where it was when it closes, as with its `?` button.
+ */
+export function openHotkeySheet(): void {
+  if (openMounted) openMounted();
+  // oxlint-disable-next-line no-console -- the warning is for the builder, in the page's console.
+  else console.warn("patchy/hotkeys: openHotkeySheet() found no <HotkeySheet /> mounted to open.");
 }
 
 /**
@@ -426,15 +445,23 @@ export interface HotkeySheetProps<S extends string> {
  *
  * ```tsx
  * <HotkeySheet />
- * <HotkeySheet title="Tracker shortcuts" hotkey="Mod+/" />
+ * <HotkeySheet title="Tracker shortcuts" hotkey="Mod+/" group="Help" />
  * ```
  */
 export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProps<S>): JSX.Element {
   const title = props.title ?? "Keyboard shortcuts";
   const [open, setOpen] = useState(false);
+  const own = { hotkey: props.hotkey ?? "?", label: "Show shortcuts" };
   useLayoutEffect(addSheetStyles, []);
+  useLayoutEffect(() => {
+    const show = () => setOpen(true);
+    openMounted = show;
+    return () => {
+      if (openMounted === show) openMounted = undefined;
+    };
+  }, []);
   // Registered outside the sheet's scope: it fires while the sheet is closed and lists with the page's.
-  useBindings([{ hotkey: props.hotkey ?? "?", run: () => setOpen(true), label: "Show shortcuts" }]);
+  useBindings([{ ...own, group: props.group, run: () => setOpen(true) }]);
   return createElement(
     Fragment,
     null,
@@ -454,7 +481,7 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
     open &&
       createPortal(
         createElement(HotkeyScope, {
-          children: createElement(Sheet, { title, onClose: () => setOpen(false) })
+          children: createElement(Sheet, { title, own, onClose: () => setOpen(false) })
         }),
         document.body
       )
