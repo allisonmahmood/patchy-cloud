@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
+import {
+  installFailureReason,
+  releaseFromPin,
+  withTarballIntegrity,
+  withWorkerdBuildDeclined
+} from "./packagePin.js";
 
 const digest = "a".repeat(64);
 
@@ -126,4 +131,30 @@ it("reads causes only from pnpm 12's narrated report", () => {
   expect(installFailureReason(legacy)).toBe(
     'ERR_PNPM_BAD Tarball "https://registry.example/p.tgz" is bad'
   );
+});
+
+// packed-tier2-e2e.mjs proves pnpm 12 then installs a scaffolded tier 2 repo.
+it("declines workerd's build script and keeps the repo's own build choices and settings", () => {
+  const declined = withWorkerdBuildDeclined("");
+  expect(declined).toMatch(/^allowBuilds:\n {2}workerd: false\n$/m);
+  expect(withWorkerdBuildDeclined(declined)).toBe(declined);
+  for (const [source, expected] of [
+    ["minimumReleaseAge: 1440\n", `minimumReleaseAge: 1440\n${declined}`],
+    ["minimumReleaseAge: 1440", `minimumReleaseAge: 1440\n${declined}`],
+    [
+      "allowBuilds:\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n",
+      "allowBuilds:\n    workerd: false\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n"
+    ],
+    [
+      "allowBuilds: # chosen\nminimumReleaseAge: 1440\n",
+      "allowBuilds: # chosen\n  workerd: false\nminimumReleaseAge: 1440\n"
+    ]
+  ] as const)
+    expect(withWorkerdBuildDeclined(source)).toBe(expected);
+  for (const own of [
+    "allowBuilds:\n  esbuild: true\n  workerd: true\n",
+    "allowBuilds:\n  # build it\n  'workerd': true\n",
+    "allowBuilds: { workerd: true }\n"
+  ])
+    expect(withWorkerdBuildDeclined(own)).toBe(own);
 });

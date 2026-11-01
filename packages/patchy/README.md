@@ -697,11 +697,16 @@ step fails. Text mode prints those notices before the error.
 
 Managed generation writes are exactly the `patchy` package pin and tier 2's
 `workerd` pin, `patchy/_generated/`, `.agents/skills/patchy-*/`, missing fixture
-stubs, the lockfile through install, and one `uses` edit for add/remove. pnpm 11
+stubs, the lockfile through install, the `workerd` entry under `allowBuilds` in
+`pnpm-workspace.yaml`, and one `uses` edit for add/remove. pnpm 11
 locks a tarball already in its store without an integrity and later refuses that
 entry, so init and refresh write the release's integrity from `GET /api/release`
-into the `patchy` entry. A failed install relays pnpm's reason: pnpm 11's first
-`ERR_PNPM_` line, or pnpm 12's error code and causes.
+into the `patchy` entry. pnpm 12 fails `install`, `add` and `remove` when it
+ignores a build script, and Patchy runs workerd's platform binary directly, so
+init and refresh add `workerd: false` under `allowBuilds` unless it already
+names workerd; every other line is the repo's. The installed release writes it,
+so an older CLI's refresh adds it too. A failed install relays pnpm's reason:
+pnpm 11's first `ERR_PNPM_` line, or pnpm 12's error code and causes.
 Refresh alone updates the pins and generated server module list after init;
 dev and publish do not repair them. It removes stale generated context files.
 The CLI writes `manifest.json` from local config execution; the server never

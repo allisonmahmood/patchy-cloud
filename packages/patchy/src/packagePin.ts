@@ -36,6 +36,30 @@ export function withTarballIntegrity(lockfile: string, tarball: string, integrit
     .join("\n");
 }
 
+const workerdBuild =
+  "# Patchy runs workerd's binary itself; its install script is not needed.\nallowBuilds:\n  workerd: false\n";
+
+/**
+ * A repo's pnpm-workspace.yaml with workerd's build script declined, keeping every other line.
+ * pnpm 12 fails `install`, `add` and `remove` when it ignores a build script, and Patchy runs
+ * workerd's platform binary directly. A block `allowBuilds` gains the entry unless it already
+ * names workerd; a flow-style one is the repo's own and is left alone.
+ */
+export function withWorkerdBuildDeclined(source: string): string {
+  const lines = source.split("\n");
+  const key = lines.findIndex((line) => /^allowBuilds\s*:/.test(line));
+  if (key === -1)
+    return `${source}${source === "" || source.endsWith("\n") ? "" : "\n"}${workerdBuild}`;
+  if (!/^allowBuilds\s*:\s*(#.*)?$/.test(lines[key]!)) return source;
+  const after = lines.slice(key + 1);
+  const end = after.findIndex((line) => line !== "" && !/^[\s#]/.test(line));
+  const entries = end === -1 ? after : after.slice(0, end);
+  if (entries.some((line) => /^\s+(workerd|"workerd"|'workerd')\s*:/.test(line))) return source;
+  const indent = entries.find((line) => /^\s+[^\s#]/.test(line))?.match(/^\s+/)?.[0] ?? "  ";
+  lines.splice(key + 1, 0, `${indent}workerd: false`);
+  return lines.join("\n");
+}
+
 /**
  * Control characters go; URLs lose credentials, queries and fragments, which can carry a token. A
  * URL runs to the next ASCII whitespace, so quotes or other spaces inside one cannot end it early.

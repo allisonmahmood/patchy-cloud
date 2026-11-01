@@ -48,7 +48,12 @@ import { processResult } from "./processResult.js";
 import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
 import { runToolchain, typescriptRefusal } from "./toolchainProcess.js";
-import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
+import {
+  installFailureReason,
+  releaseFromPin,
+  withTarballIntegrity,
+  withWorkerdBuildDeclined
+} from "./packagePin.js";
 import { discoverServerModules } from "./serverModules.js";
 
 const repoSchema = Schema.Struct({
@@ -388,6 +393,28 @@ const recordIntegrity = Effect.fn("Project.recordIntegrity")(function* (
     yield* replaceFile(cwd, "pnpm-lock.yaml", recorded, "Could not write pnpm-lock.yaml.");
 });
 
+/** Decline workerd's build script, which pnpm 12 otherwise fails every install, add and remove on. */
+const declineWorkerdBuild = Effect.fn("Project.declineWorkerdBuild")(function* (cwd: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const file = yield* localIO("Resolve pnpm-workspace.yaml", () =>
+    safePath(cwd, "pnpm-workspace.yaml")
+  );
+  const source = yield* fs.exists(file).pipe(
+    Effect.flatMap((exists) => (exists ? fs.readFileString(file) : Effect.succeed(""))),
+    Effect.mapError(
+      (cause) => new LocalError({ message: "Could not read pnpm-workspace.yaml.", cause })
+    )
+  );
+  const declined = withWorkerdBuildDeclined(source);
+  if (declined !== source)
+    yield* replaceFile(
+      cwd,
+      "pnpm-workspace.yaml",
+      declined,
+      "Could not write pnpm-workspace.yaml."
+    );
+});
+
 /**
  * A failure relays why pnpm failed; a success leaves the patchy pin verifiable. `NO_GRAPHICS` makes
  * pnpm 12 print its causes one per line instead of wrapped; pnpm 11 ignores it.
@@ -612,6 +639,8 @@ export const generate = Effect.fn("Project.generate")(function* (
       return yield* new LocalError({ message: `Generation returned no stamp for ${alias}.` });
     uses[alias] = { ...declaration, id: stamp.id, revision: stamp.revision };
   }
+  // Here in the installed release, so init and an older CLI's refresh write it too.
+  yield* declineWorkerdBuild(cwd);
   yield* Output.report(
     {
       generated,
