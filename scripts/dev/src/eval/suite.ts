@@ -26,11 +26,18 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { evidence, type Commit, type Side } from "../evidence.js";
 import { realNode } from "../runtimes.js";
 import { makeSanitizer } from "../sanitize.js";
-import { loadScenario, publisherToken } from "../scenario.js";
+import { loadScenario, type Scenario } from "../scenario.js";
 import { type Builder, BUILDERS, type BuilderId, runBuilder, type Step } from "./builders.js";
 import { retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
 import { checkBrowser, grade } from "./grade.js";
-import { fileSecrets, prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
+import {
+  fileSecrets,
+  prepareHome,
+  prepareTemplate,
+  readSignIns,
+  type SignIns,
+  type ToolVersion
+} from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, readToolchain, type Toolchain } from "./sandbox.js";
@@ -225,15 +232,59 @@ export class DoorOpen extends Schema.TaggedError<DoorOpen>()("DoorOpen", {
   }
 }
 
-/** Whether a side's personas door refuses a request without the key, as every eval instance's must. */
+/** Requests a keyed door must refuse: its picker, and signing someone in directly without the key or with a wrong one. */
+const DOOR_PROBES = [
+  "/dev/sign-in",
+  "/dev/sign-in?as=door-probe%40patchy.local&return=%2F",
+  "/dev/sign-in?as=door-probe%40patchy.local&return=%2F&key=wrong"
+];
+
+/**
+ * Whether a side's personas door refuses every request without the eval's
+ * key, as every eval instance's must: the picker, and a direct sign-in with no
+ * key or a wrong one. An open door signs any email in and redirects, so
+ * anything but 403 is open.
+ */
 const checkDoor = Effect.fn("Eval.checkDoor")(function* (name: "base" | "head", side: Side) {
-  const status = yield* HttpClient.get(`${side.served.apiUrl}/dev/sign-in`).pipe(
-    Effect.map((response) => response.status),
-    Effect.timeout("10 seconds"),
-    Effect.orElseSucceed(() => 0)
-  );
-  if (status !== 403) return yield* new DoorOpen({ side: name, commit: side.commit.sha });
+  for (const probe of DOOR_PROBES) {
+    const status = yield* HttpClient.get(`${side.served.apiUrl}${probe}`).pipe(
+      Effect.map((response) => response.status),
+      Effect.timeout("10 seconds"),
+      Effect.orElseSucceed(() => 0)
+    );
+    if (status !== 403) return yield* new DoorOpen({ side: name, commit: side.commit.sha });
+  }
 });
+
+export class ToolchainMismatch extends Schema.TaggedError<ToolchainMismatch>()(
+  "ToolchainMismatch",
+  { head: Schema.String, base: Schema.String }
+) {
+  override get message() {
+    return `The two sides' builders would run different tools (head: ${this.head}; base: ${this.base}), so the comparison wouldn't be fair.`;
+  }
+}
+
+const toolList = (installed: ReadonlyArray<ToolVersion>) =>
+  [...installed]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((tool) => `${tool.name} ${tool.version}`)
+    .join(", ");
+
+/** The toolchain as head installed it: every `latest` replaced by the version it resolved to. */
+export const pinnedTo = (
+  toolchain: Toolchain,
+  installed: ReadonlyArray<ToolVersion>
+): Toolchain => {
+  const version = (name: keyof Toolchain) =>
+    installed.find((tool) => tool.name === name)?.version ?? toolchain[name];
+  return {
+    node: version("node"),
+    pnpm: version("pnpm"),
+    claude: version("claude"),
+    codex: version("codex")
+  };
+};
 
 /**
  * A side, up and ready for runs: its network, its template HOME (its own
@@ -246,9 +297,15 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
   readonly toolchain: Toolchain;
   readonly builders: ReadonlyArray<Builder>;
   readonly signIns: SignIns;
-  readonly token: string;
+  /** This checkout's scenario every side comes up on, frozen across sides. */
+  readonly scenario: Scenario;
 }) {
   const path = yield* Path.Path;
+  const database = yield* Layer.build(sideSql(yield* sideDatabase(input.side.clone)));
+  // The template is warmed as an identity of the eval's own, seeded from this checkout's
+  // scenario, so a side whose own scenario differs still accepts it; retired afterwards.
+  const bootRun = randomId(6);
+  const boot = yield* seedRun(input.scenario, bootRun).pipe(Effect.provideContext(database));
   const network = yield* openNetwork({
     node: (yield* realNode()).execPath,
     instancePort: Number(new URL(input.side.served.apiUrl).port),
@@ -262,13 +319,14 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
     network,
     toolchain: input.toolchain,
     builders: input.builders,
-    token: input.token
+    token: boot.token
   });
+  yield* retireRun(input.scenario, bootRun).pipe(Effect.provideContext(database));
   const context: SideContext = {
     name: input.name,
     commit: input.side.commit,
     apiUrl: input.side.served.apiUrl,
-    database: yield* Layer.build(sideSql(yield* sideDatabase(input.side.clone))),
+    database,
     template,
     network
   };
@@ -322,12 +380,24 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       // Both doors before any setup: a side that would show builders other runs' people never runs.
       yield* checkDoor("head", sides.after);
       if (sides.before.status === "served") yield* checkDoor("base", sides.before.side);
-      const common = { dir, toolchain, builders, signIns, token: publisherToken(sideScenario) };
-      const head = yield* setUpSide({ ...common, name: "head", side: sides.after });
-      const base =
-        sides.before.status === "served"
-          ? (yield* setUpSide({ ...common, name: "base", side: sides.before.side })).context
-          : null;
+      const common = { dir, builders, signIns, scenario: sideScenario };
+      const head = yield* setUpSide({ ...common, toolchain, name: "head", side: sides.after });
+      // Base installs exactly what head did, `latest` included, and must end up with the same.
+      let base: SideContext | null = null;
+      if (sides.before.status === "served") {
+        const set = yield* setUpSide({
+          ...common,
+          toolchain: pinnedTo(toolchain, head.installed),
+          name: "base",
+          side: sides.before.side
+        });
+        if (toolList(set.installed) !== toolList(head.installed))
+          return yield* new ToolchainMismatch({
+            head: toolList(head.installed),
+            base: toolList(set.installed)
+          });
+        base = set.context;
+      }
       const suite: Suite = { root: input.root, dir, doorKey, signIns, seen };
       // Repeats outermost, so an interrupted suite has every task and builder at least once.
       const planned: Array<Planned> = [];
@@ -340,6 +410,15 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
                 ? [base, head.context]
                 : [head.context, base])
               planned.push({ task, builder, repeat, side });
+      // One uncounted build per side first, repeat 0, so neither side's measured runs pay
+      // its instance's cold start; it lands in `runs/` but not in the scorecard.
+      yield* Console.error("Warming each side up with one uncounted build");
+      yield* Effect.forEach(
+        base === null ? [head.context] : [head.context, base],
+        (side) =>
+          runWithRetry(suite, { task: input.tasks[0]!, builder: builders[0]!, repeat: 0, side }),
+        { concurrency: "unbounded", discard: true }
+      );
       yield* Console.error(
         `Running ${planned.length} build${planned.length === 1 ? "" : "s"}, ${input.concurrency} at a time`
       );

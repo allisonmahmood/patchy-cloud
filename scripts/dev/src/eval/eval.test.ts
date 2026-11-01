@@ -15,6 +15,7 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
+import { pinnedTo } from "./suite.js";
 import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
@@ -76,6 +77,16 @@ describe("the sandbox", () => {
     expect(versionOf("codex-cli 0.166.0")).toBe("0.166.0");
     expect(versionOf("12.9.1\n")).toBe("12.9.1");
     expect(versionOf("no version here")).toBeUndefined();
+  });
+
+  it("pins base to what head installed, `latest` included", () => {
+    expect(
+      pinnedTo({ node: "24.20.0", pnpm: "11.2.0", claude: "latest", codex: "0.166.0" }, [
+        { name: "node", version: "24.20.0" },
+        { name: "pnpm", version: "11.2.0" },
+        { name: "claude", version: "2.1.316" }
+      ])
+    ).toEqual({ node: "24.20.0", pnpm: "11.2.0", claude: "2.1.316", codex: "0.166.0" });
   });
 });
 

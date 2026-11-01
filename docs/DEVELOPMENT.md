@@ -489,17 +489,22 @@ code is #1143.
   own network, builder home and database, whose personas door is keyed: only
   the grader can sign anyone in, so builders verify through `patchy dev`'s own
   viewers, as builders can in production. Both sides must come up, and a side
-  whose door answers without the key (a commit from before the keyed door)
-  stops the suite before any setup. Runs alternate sides, and which side goes
-  first alternates by repeat. Tasks, fixtures and checks come from this
-  checkout for both sides, so they're graded alike.
-- **A builder's HOME.** A template per suite, set up as a person sets up:
+  whose door signs anyone in without the key, or with a wrong one (a commit
+  from before the keyed door), stops the suite before any setup. Each side
+  first builds one uncounted run, repeat 0, so neither side's measured runs pay
+  its cold start; it is kept in `runs/` and left out of the scorecard. Runs
+  alternate sides, and which side goes first alternates by repeat. Tasks,
+  fixtures and checks come from this checkout for both sides, so they're
+  graded alike.
+- **A builder's HOME.** A template per side, set up as a person sets up:
   Node from its release tarball, pnpm, Claude Code and Codex from npm (pinned
   to the versions this machine has, `latest` for one it lacks, and recorded),
   the instance's `install.mjs` (which runs `patchy setup`, so the skill is
   where each harness looks), and a tier 1 and a tier 2 `patchy init` to warm
-  its pnpm store. Each run gets a copy-on-write copy, logged in as its own
-  publisher.
+  its pnpm store, published by an identity seeded from this checkout's `team`
+  and retired afterwards. Base installs exactly the versions head did, and a
+  difference stops the suite. Each run gets a copy-on-write copy, logged in as
+  its own publisher.
 - **A run's identities.** Each run seeds its task's scenario again, every
   company handle suffixed with the run's id and every email plus-addressed with
   it, so runs share the instance without seeing each other's patches or
