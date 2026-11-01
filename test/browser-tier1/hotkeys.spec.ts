@@ -134,7 +134,8 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-// The ready-made sheet over a page with grouped, ungrouped and unlabelled hotkeys of its own.
+// The ready-made sheet over a page with grouped, ungrouped and unlabelled hotkeys of its own,
+// its button in a sidebar the page can hide.
 const sheet = `import { render } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
 
@@ -150,7 +151,7 @@ function App() {
   useHotkey("Escape", log("Escape"));
   return <main>
     <button id="search">Search</button>
-    <HotkeySheet title="Tracker shortcuts" />
+    <aside id="sidebar"><HotkeySheet title="Tracker shortcuts" /></aside>
   </main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -515,5 +516,20 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await firedNext(frame, []);
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
+  });
+
+  await test.step("with its button in a hidden sidebar, ? opens it in view, and focus goes back", async () => {
+    await frame.evaluate(() => {
+      document.getElementById("sidebar")!.hidden = true;
+    });
+    await expect(opener).toBeHidden();
+    await view.locator("#search").focus();
+    await page.keyboard.press("?");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".hotkey-row").first()).toBeVisible();
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(view.locator("#search")).toBeFocused();
   });
 });
