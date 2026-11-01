@@ -623,6 +623,13 @@ const publish = Command.make(
               message:
                 "Repo publishing uses name from patchy.config.ts and patch from patchy.json. --name, --patch and --new are file-mode options."
             });
+          const project = yield* Project.readRepo(repo);
+          // A repo last published before patchy.json kept a version can't say what it's behind.
+          if (project.patch !== undefined && project.version === undefined && !options.allowBehind)
+            return yield* new LocalError({
+              code: "unknown_base_version",
+              message: `Unknown base version: patchy.json names patch ${project.patch} but no version, so publish can't tell whether anyone published since this copy. Pull a fresh copy into a new folder with \`patchy pull ${project.patch}\` and make the change there, or, once the person you are working for agrees to replace whatever is live, publish with --allow-behind; that publish records the version.`
+            });
           yield* Output.notice(
             `Publishing to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
           );
@@ -633,7 +640,6 @@ const publish = Command.make(
             repo: snapshot,
             warnings
           } = yield* prepareRepoPublish(repo, apiToken);
-          const project = yield* Project.readRepo(repo);
           const attempt = new State.PendingPublish({
             ownerUserId: identity.user.id,
             target: { mode: "repo" },
@@ -644,7 +650,8 @@ const publish = Command.make(
               ...(server === undefined ? {} : { server }),
               repo: snapshot,
               ...(project.patch === undefined ? {} : { patchId: project.patch }),
-              // Left out, publish goes over whatever was published since this copy's version.
+              // Left out, publish goes over whatever was published since this copy's version. A
+              // first publish has none, and a bound repo without one was refused above.
               ...(project.version === undefined || options.allowBehind
                 ? {}
                 : { baseVersion: project.version }),

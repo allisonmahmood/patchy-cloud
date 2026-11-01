@@ -73,6 +73,45 @@ describe("repo publish checks", () => {
     expect(failure.error).not.toContain("install.mjs");
   });
 
+  // A repo bound before patchy.json kept a version can't be checked for newer work, so it goes over
+  // what is live only when told to, once; that publish records the version the next one sends.
+  it("refuses a bound repo with no version until --allow-behind, which records one", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/publish")
+        return respond(200, { ...publish(200, "abcdefghijkl", 3), tier: 1 });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const repoFile = path.join(dir, "patchy.json");
+    const legacy = JSON.stringify({
+      instance: instance.url,
+      patch: "abcdefghijkl",
+      description: "Synthetic notes"
+    });
+    writeFileSync(repoFile, legacy);
+
+    const refused = await runCli(["publish", "--json"], options);
+    expect(refused).toMatchObject({ status: 1, stdout: "" });
+    const failure = JSON.parse(refused.stderr);
+    expect(failure).toMatchObject({ ok: false, kind: "local", code: "unknown_base_version" });
+    expect(failure.error).toContain("patchy pull abcdefghijkl");
+    expect(failure.error).toContain("--allow-behind");
+    expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
+    expect(readFileSync(repoFile, "utf8")).toBe(legacy);
+    expect(existsSync(path.join(dir, ".patchy/publish"))).toBe(false);
+
+    const allowed = await runCli(["publish", "--allow-behind", "--json"], options);
+    expect(allowed, allowed.stderr).toMatchObject({ status: 0, stderr: "" });
+    const sent = decodePublishRequest(
+      instance.requests.find((request) => request.url === "/api/publish")?.body
+    );
+    expect(sent).toMatchObject({ patchId: "abcdefghijkl" });
+    expect(sent.baseVersion).toBeUndefined();
+    expect(JSON.parse(readFileSync(repoFile, "utf8"))).toMatchObject({ version: 3 });
+  });
+
   // Tier 0 is now tier 1: a repo still configured at tier 0 is refused before it builds, generates
   // or sends anything, and init no longer makes one.
   it("refuses a tier 0 repo by publish and dev before building, and init at tier 0", async () => {

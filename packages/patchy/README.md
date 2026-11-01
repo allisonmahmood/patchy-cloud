@@ -1157,6 +1157,13 @@ instance refuses with `behind`, exit 2, naming that version, who published it an
 when. Pull it into a new folder and make the change there, or, once the person
 agrees to replace the newer work, publish with `--allow-behind`, which sends no
 `baseVersion`. `--force` does not override it; `--allow-behind` is repo-only.
+A repo bound to a patch with no `version` in `patchy.json`, last published before
+the CLI recorded one, can't be checked, so publish refuses it locally with
+`unknown_base_version`, exit 1, before building or sending anything. Pull a fresh
+copy with `patchy pull <patch>`, or publish with `--allow-behind` once the person
+agrees to replace whatever is live. That publish records a version, so only a
+legacy repo's first publish since this check needs the flag. A repo's first
+publish, before it names a patch, sends no `baseVersion` and needs no flag.
 
 Repo publish first recovers `.patchy/publish/<instance-hash>/attempt/<key-hash>.json`.
 Otherwise it checks the exact pin, executing CLI and installed runtime against

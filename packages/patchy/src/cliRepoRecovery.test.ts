@@ -168,6 +168,7 @@ describe("repo publish recovery", () => {
       JSON.stringify({
         instance: instance.url,
         patch: response.patchId,
+        version: 1,
         description: "Synthetic notes",
         authorField: 8
       })
