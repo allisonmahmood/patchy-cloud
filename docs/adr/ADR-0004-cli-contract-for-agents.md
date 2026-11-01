@@ -503,8 +503,9 @@ dependency array.
 
 Dev and publish check reachable page imports before bundling can remove them.
 The page entries are `patchy/preact`, its `jsx-runtime` and `jsx-dev-runtime`,
-`patchy/csv`, and the relative generated client. `patchy/csv` ships CSV parsing
-and stringification for both page and server code. Generated clients use
+`patchy/csv`, `patchy/hotkeys`, and the relative generated client. `patchy/csv` ships
+CSV parsing and stringification for both page and server code; `patchy/hotkeys`
+ships keyboard shortcuts for pages only. Generated clients use
 `patchy/client` internally. Tooling imports in config files and type-only imports are not page
 dependencies. A bare package import fails with `import_refused` even if aliased
 to a local file, or unused after tree shaking.

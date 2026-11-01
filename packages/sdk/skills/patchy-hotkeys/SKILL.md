@@ -1,0 +1,122 @@
+---
+name: patchy-hotkeys
+description: Add keyboard shortcuts to a Patchy page, such as Mod+K or G then H sequences, a shortcuts sheet or dialog-only keys; show a hotkey's keys; diagnose a hotkey that doesn't fire.
+---
+
+# Hotkeys
+
+Read `../patchy-preact/SKILL.md` first. `patchy/hotkeys` gives tier 1 and 2 Preact pages
+keyboard shortcuts. It is Patchy's API, and every shortcut registers through it: it
+handles typing in fields, dialogs, keyboard layouts and ⌘ versus Ctrl.
+
+```tsx
+import { useHotkey } from "patchy/hotkeys";
+import { patchy } from "../patchy/_generated/client.js";
+
+useHotkey("G H", () => patchy.route.set("/"), { label: "Go home" });
+useHotkey("Mod+K", openSearch, { label: "Search" });
+useHotkey("Escape", closePanel, { enabled: panelOpen });
+```
+
+## Writing a hotkey
+
+- A chord is keys joined by `+`: `"Mod+K"`, `"?"`, `"Escape"`, `"Alt+ArrowUp"`. `Mod` is ⌘
+  on a Mac and Ctrl elsewhere, and is how a chord writes either. Modifiers come in the
+  order Mod, Alt, Shift. A letter matches either case and never implies Shift: `"g"` and
+  `"G"` are the same key.
+- Patchy keeps `"Mod+Shift+K"` for its own shortcuts. The type checker refuses it, and one
+  that arrives through a cast is skipped with a console warning.
+- A sequence is chords separated by single spaces: `"G H"`, `"C T"`. Each step must follow
+  the last within a second. A single-key hotkey fires on its own press even when it starts
+  a sequence, so `"G"` beside `"G H"` fires on every `G H`.
+- The type checker refuses a string that isn't a hotkey, naming the step to fix and what to
+  write. A hotkey built from data needs the `Chord` type: `const keys: Chord[] = ["1", "2"]`.
+- `useHotkeys([{ hotkey, run, label }, …])` registers a list in one call, for lists that
+  change length.
+- Two enabled hotkeys with the same keys in one scope both fire, and the console warns once,
+  naming both labels.
+
+## Keyboard layouts
+
+- Write a symbol as the character it types: `"?"`, not `"Shift+/"`. A letter or a bare
+  symbol matches the character the viewer's layout types, so `"?"` fires wherever they type
+  `?`, and it displays as they see it.
+- A key falls back to its US position when what it typed can't name a shortcut:
+  - a non-Latin letter or symbol, or a dead key: the Russian key in J's place fires `"J"`,
+    and ⌥- on a Mac, which types `–`, fires `"Alt+-"`;
+  - anything on the digit row: AZERTY's `&` key fires `"1"` and `"Mod+1"`;
+  - an ASCII symbol typed with Shift: Ctrl+Shift+/ on a US keyboard types `?` and fires
+    `"Mod+Shift+/"`;
+  - a non-ASCII Latin letter typed with Alt, or with Mod on a punctuation key: ⌥A on a Mac
+    types `å` and fires `"Alt+A"`, and German ⌘Ü fires `"Mod+["`.
+- Anything else matches only what it typed: a named key, a letter A–Z, an ASCII symbol
+  typed without Shift, or German `ü` on its own. So an unshifted symbol with Mod fires only
+  on layouts that type it on that key: AZERTY's ⌘= fires `"Mod+="`, never `"Mod+/"` from
+  the key in `/`'s US position.
+
+## When it fires
+
+- While the component that registered it is mounted and `enabled` isn't false.
+- Patchy focuses the page when it opens. If the viewer clicks Patchy's own bar or a download
+  card, keys go there until they click back into the page.
+- While the viewer types in a text field, single keys and Shift chords wait; Mod chords and
+  Escape fire. `whileTyping: true` or `false` overrides either way. Checkboxes, radios and
+  ranges aren't text fields: single keys fire there, and the control keeps Space and the
+  arrow keys.
+- A focused button keeps Enter and Space, and a focused link keeps Enter.
+- A hotkey that fires stops the browser's own action for those keys, so a `whileTyping: true`
+  letter isn't typed. Keys the browser keeps, such as Mod+T, Mod+W, Mod+N and Mod+L, never
+  reach the page.
+- Holding a chord fires it again with each key repeat; `repeat: false` fires it once per
+  press. `repeat` only matters for a chord that can be held: a sequence fires once per
+  completion.
+
+## Dialogs and scopes
+
+Wrap a dialog's content in `<HotkeyScope>`. While it is mounted, only the hotkeys registered
+inside it fire; the page's own, sequences included, wait until it unmounts, so the page's
+`"C T"` doesn't open a second dialog behind it.
+
+Inside means registered by a component the scope renders. A hotkey registered by the
+component that renders `<HotkeyScope>` is outside it, and the scope holds it back like the
+page's. Register the dialog's own keys, such as its Escape, in a component within:
+
+```tsx
+import { useLayoutEffect, useRef } from "patchy/preact";
+import { HotkeyScope, useHotkey } from "patchy/hotkeys";
+
+function Dialog(props: { close: () => void }) {
+  return (
+    <HotkeyScope>
+      <DialogBody close={props.close} />
+    </HotkeyScope>
+  );
+}
+
+function DialogBody(props: { close: () => void }) {
+  const title = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => title.current?.focus(), []);
+  useHotkey("Escape", props.close, { label: "Close" });
+  return (
+    <div role="dialog" aria-label="New task">
+      <input ref={title} aria-label="Title" />
+    </div>
+  );
+}
+```
+
+A dialog opened by a hotkey moves focus into itself from code, as above. A patch's page runs
+in a cross-origin frame, where browsers ignore `autofocus`, so typing would otherwise go
+nowhere.
+
+The scope already holds the page's hotkeys back, so leave them enabled while a dialog is
+open. `useHotkeyList` lists only enabled hotkeys, so a page hotkey disabled for the dialog
+also drops off a shortcuts sheet.
+
+## Showing hotkeys
+
+- `formatHotkey("Mod+K")` is `"⌘ K"` on a Mac and `"Ctrl+K"` elsewhere.
+- `hotkeyKeys("G H")` returns each step's keys, `[["G"], ["H"]]`, for drawing keycaps.
+- `useHotkeyList()` returns `{ hotkey, label }` for every labelled, enabled hotkey that is
+  mounted, including those a `HotkeyScope` holds back, for a shortcuts sheet behind `"?"`.
+  Hotkeys of a dialog that isn't open aren't mounted, so they aren't listed.

@@ -37,8 +37,9 @@ without a login, and a saved login takes precedence over that seed.
 
 Public subpaths are explicit: `patchy/config` and `patchy/dev` for tooling,
 `patchy/client` for the generated browser client, `patchy/server` for handler
-contracts, `patchy/preact`, `patchy/preact/jsx-runtime` and
-`patchy/preact/jsx-dev-runtime` for pages, and `patchy/csv` for both graphs.
+contracts, `patchy/preact`, `patchy/preact/jsx-runtime`,
+`patchy/preact/jsx-dev-runtime` and `patchy/hotkeys` for pages, and `patchy/csv`
+for both graphs.
 Package exports are not all page entry points.
 
 ### Bundled UI runtime
@@ -77,8 +78,9 @@ Reconnect catches up to durable revision fences without replaying writes; the
 shell's reconnecting pill stays visible until catch-up completes.
 
 Dev and publish check the page graph, not `package.json`. Runtime imports may
-use `patchy/preact`, its two JSX runtimes, `patchy/csv` and the relative generated
-client. `patchy/csv` is a shipped Helper on both page and server graphs.
+use `patchy/preact`, its two JSX runtimes, `patchy/csv`, `patchy/hotkeys` and the
+relative generated client. `patchy/csv` is a shipped Helper on both page and server
+graphs; `patchy/hotkeys` is a page-only Helper.
 The generated client uses `patchy/client` internally and re-exports
 `isPatchyError` for pages.
 Tooling and type-only imports do not enter the page graph. An off-SDK import,
@@ -140,6 +142,31 @@ default: text starting with `=`, `+`, `-`, `@`, a tab or a CR receives a
 leading `'`; numbers are untouched. This is not lossless, because parsing
 that output retains the apostrophe. `{ formulaProtection: false }` preserves
 the original text instead of adding this protection.
+
+### Keyboard shortcuts
+
+`patchy/hotkeys` gives tier 1 and 2 Preact pages keyboard shortcuts. It is
+Patchy's API over TanStack Hotkeys, which is bundled into the entry at an exact
+version with Preact external; none of TanStack's names or types are exported.
+
+```tsx
+import { HotkeyScope, formatHotkey, useHotkey, useHotkeyList } from "patchy/hotkeys";
+
+useHotkey("G H", () => patchy.route.set("/"), { label: "Go home" });
+useHotkey("Mod+K", openSearch, { label: "Search", whileTyping: true, repeat: false });
+```
+
+A hotkey is a chord such as `"Mod+K"`, `"?"` or `"Alt+ArrowUp"`, or a sequence
+of chords separated by spaces, such as `"G H"`. `Mod` is ⌘ on a Mac and Ctrl
+elsewhere; modifiers come in the order Mod, Alt, Shift. A string that isn't a
+hotkey fails typecheck, naming the step to fix and what to write; `Chord` types
+hotkeys built from data. Patchy keeps `"Mod+Shift+K"`: the types refuse it, and
+one cast past them is skipped with a console warning. Two enabled hotkeys with
+the same keys in one scope both fire, and the console warns once naming both.
+While a `<HotkeyScope>` is mounted, only the hotkeys registered by components
+it renders fire; the component that renders it is outside it.
+`formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer.
+The `patchy-hotkeys` project skill states the typing, layout and repeat rules.
 
 ### Generated downloads and printing
 

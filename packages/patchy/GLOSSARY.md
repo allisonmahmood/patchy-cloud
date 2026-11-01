@@ -148,6 +148,13 @@ such as `patchy/csv` for CSV text. A helper update reaches stored code after ref
 rebuild and publish.
 _Avoid_: utility, plugin, extension
 
+**Hotkey**:
+A keyboard shortcut a page registers through `patchy/hotkeys`: one chord such as
+`Mod+K`, where Mod is ⌘ on a Mac and Ctrl elsewhere, or a sequence of chords such as
+`G H`. It fires while its component is mounted; while a `HotkeyScope` is mounted, only
+the hotkeys inside it fire. Patchy keeps `Mod+Shift+K` for its own shortcuts.
+_Avoid_: keybinding, shortcut key, accelerator
+
 **Company code**:
 Code a builder writes or copies into a patch instead of importing from the SDK.
 The company maintains it; it still obeys the sandbox and bundle limits.
