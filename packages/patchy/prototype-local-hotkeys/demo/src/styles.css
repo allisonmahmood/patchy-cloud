@@ -1,0 +1,193 @@
+/* Layout first; colours and fonts come from the look's tokens. */
+main {
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: calc(var(--look-space, 8px) * 4);
+  display: grid;
+  gap: calc(var(--look-space, 8px) * 2);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--look-space, 8px) * 2);
+}
+.bar h1 {
+  margin: 0;
+}
+.bar output {
+  flex: 1;
+  color: var(--look-muted, GrayText);
+}
+
+.switches {
+  display: grid;
+  gap: var(--look-space, 8px);
+  padding: calc(var(--look-space, 8px) * 1.5);
+  border: 1px dashed var(--look-border, CanvasText);
+  border-radius: var(--look-radius, 8px);
+  font-size: 0.85rem;
+}
+.choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--look-space, 8px) * 0.75);
+}
+.choice span {
+  min-width: 13rem;
+  color: var(--look-muted, GrayText);
+}
+/* The look draws every button as a primary one; choices show which one is on. */
+.choice button,
+.priority button,
+.assignee,
+.dialog-foot button:not(.primary) {
+  min-height: 0;
+  padding: 2px 10px;
+  border: 1px solid var(--look-border, CanvasText);
+  background: var(--look-surface, Canvas);
+  color: var(--look-fg, CanvasText);
+  font-size: inherit;
+  font-weight: normal;
+}
+.choice button[aria-pressed="true"],
+.priority button[aria-pressed="true"] {
+  background: var(--look-accent, Highlight);
+  color: var(--look-accent-fg, HighlightText);
+}
+
+.quick-add,
+.dialog input,
+.dialog textarea,
+.rename {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+}
+
+.tasks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--look-border, CanvasText);
+  border-radius: var(--look-radius, 8px);
+}
+.tasks:focus-visible {
+  outline: 2px solid var(--look-accent, Highlight);
+  outline-offset: 2px;
+}
+.task {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--look-space, 8px) * 1.5);
+  padding: var(--look-space, 8px) calc(var(--look-space, 8px) * 1.5);
+}
+.task + .task {
+  border-top: 1px solid color-mix(in srgb, var(--look-border, CanvasText) 25%, transparent);
+}
+.task.selected {
+  background: color-mix(in srgb, var(--look-accent, Highlight) 14%, transparent);
+}
+.tasks:focus-within .task.active {
+  box-shadow: inset 3px 0 0 var(--look-accent, Highlight);
+}
+.task.done .title {
+  text-decoration: line-through;
+  color: var(--look-muted, GrayText);
+}
+.task .check {
+  width: 1.2em;
+  text-align: center;
+}
+.task .title,
+.task .rename {
+  flex: 1;
+}
+.task .meta {
+  color: var(--look-muted, GrayText);
+  font-size: 0.85rem;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: 10vh;
+  background: color-mix(in srgb, var(--look-bg, Canvas) 70%, transparent);
+}
+.dialog {
+  box-sizing: border-box;
+  width: min(92vw, 560px);
+  display: grid;
+  gap: calc(var(--look-space, 8px) * 1.5);
+  padding: calc(var(--look-space, 8px) * 2.5);
+  border: 2px solid var(--look-border, CanvasText);
+  border-radius: var(--look-radius, 8px);
+  background: var(--look-surface, Canvas);
+}
+.dialog:focus-visible {
+  outline: 2px solid var(--look-accent, Highlight);
+}
+.dialog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--look-space, 8px);
+}
+.dialog-head h2 {
+  margin: 0;
+}
+.hint {
+  color: var(--look-muted, GrayText);
+  font-size: 0.85rem;
+}
+.fields {
+  display: grid;
+  gap: var(--look-space, 8px);
+}
+.props {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--look-space, 8px);
+  align-items: center;
+}
+.priority {
+  display: flex;
+  gap: 4px;
+}
+.due {
+  position: relative;
+  padding: 2px 10px;
+  border: 1px solid var(--look-border, CanvasText);
+  border-radius: var(--look-radius, 8px);
+  cursor: pointer;
+}
+.due-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--look-border, CanvasText);
+  border-radius: var(--look-radius, 8px);
+  background: var(--look-surface, Canvas);
+  white-space: nowrap;
+}
+.due-list li {
+  padding: 2px 8px;
+}
+.due-list li[aria-selected="true"] {
+  background: var(--look-accent, Highlight);
+  color: var(--look-accent-fg, HighlightText);
+}
+.dialog-foot {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--look-space, 8px);
+}
