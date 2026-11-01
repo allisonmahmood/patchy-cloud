@@ -1,5 +1,13 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { typecheck } from "../../../test/typescript.js";
+import { formatHotkey, hotkeyKeys } from "./hotkeys.js";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+// TanStack reads the platform from the navigator each time it formats.
+const on = (platform: string) => vi.stubGlobal("navigator", { platform, userAgent: "" });
 
 it("accepts chords, sequences, data-built chords and a sheet against the published types", () => {
   const source = `import { HotkeySheet, useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
@@ -64,5 +72,45 @@ HotkeySheet({ hotkey: "Ctrl+/" });
   );
   expect(lines).toEqual([
     `consumer.ts(2,15): error TS2322: Type '"Ctrl+/"' is not assignable to type '"'Ctrl+/' isn't a chord: write 'Mod+/', which is ⌘ on a Mac and Ctrl elsewhere"'.`
+  ]);
+});
+
+it("shows Enter, Space, Backspace and Delete as words off a Mac, and as symbols on one", () => {
+  for (const platform of ["Win32", "Linux x86_64"]) {
+    on(platform);
+    expect(formatHotkey("Mod+Enter")).toBe("Ctrl+Enter");
+    expect(formatHotkey("Mod")).toBe("Ctrl");
+    expect(hotkeyKeys("Space Shift+Backspace Delete")).toEqual([
+      ["Space"],
+      ["Shift", "Backspace"],
+      ["Delete"]
+    ]);
+  }
+  on("MacIntel");
+  expect(formatHotkey("Mod+Enter")).toBe("⌘ ↵");
+  expect(formatHotkey("Mod")).toBe("⌘");
+  expect(hotkeyKeys("Space Shift+Backspace Delete")).toEqual([["␣"], ["⇧", "⌫"], ["⌦"]]);
+});
+
+it("checks what formatHotkey and hotkeyKeys show, allowing modifiers alone and listed hotkeys", () => {
+  const source = `import { formatHotkey, hotkeyKeys, useHotkeyList, type Chord } from "patchy/hotkeys";
+formatHotkey("Mod+K");
+formatHotkey("G H");
+formatHotkey("Mod");
+formatHotkey("Mod+Shift");
+hotkeyKeys("Mod+Alt+Shift");
+hotkeyKeys("Alt+ArrowUp ?");
+const digits: Chord[] = ["1", "2"];
+for (const hotkey of digits) formatHotkey(hotkey);
+for (const { hotkey } of useHotkeyList()) hotkeyKeys(hotkey);
+formatHotkey("Mod+Entr");
+hotkeyKeys("Ctrl+K");
+`;
+  const lines = typecheck({ "consumer.ts": source }).map((line) =>
+    line.slice(line.indexOf("consumer.ts"))
+  );
+  expect(lines).toEqual([
+    `consumer.ts(11,14): error TS2345: Argument of type '"Mod+Entr"' is not assignable to parameter of type '"'Mod+Entr' isn't a chord: write keys like 'Mod+K', 'Escape', '?' or 'G H', modifiers in the order Mod, Alt, Shift"'.`,
+    `consumer.ts(12,12): error TS2345: Argument of type '"Ctrl+K"' is not assignable to parameter of type '"'Ctrl+K' isn't a chord: write 'Mod+K', which is ⌘ on a Mac and Ctrl elsewhere"'.`
   ]);
 });
