@@ -74,6 +74,17 @@ export const UNATTENDED =
 
 export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
 
+/**
+ * Whether a count shown in `before` went up by `by` in `after`: some number
+ * there is now `by` higher, and the old value shows fewer times than it did.
+ * Text that didn't change never passes, however its numbers line up.
+ */
+export const rose = (before: ReadonlyArray<number>, after: ReadonlyArray<number>, by: number) => {
+  const times = (list: ReadonlyArray<number>, n: number) =>
+    list.filter((each) => each === n).length;
+  return before.some((n) => after.includes(n + by) && times(after, n) < times(before, n));
+};
+
 /** Every integer in a stretch of visible text, for checks that read a count. */
 export const integersIn = (text: string): ReadonlyArray<number> =>
   [...text.matchAll(/\d[\d,]*/g)].map((match) => Number(match[0].replaceAll(",", "")));

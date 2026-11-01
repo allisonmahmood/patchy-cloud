@@ -1,9 +1,9 @@
-import { integersIn, type Task } from "../task.js";
+import { integersIn, rose, type Task } from "../task.js";
 
 /**
- * The most common real first patch: a button the company presses together. A
- * colleague cheers, and another colleague opening it fresh sees the count go
- * up by one, so the count is shared and stored, not the page's own.
+ * The most common real first patch: a button the company presses together.
+ * Two colleagues cheer, and a third, opening it fresh, sees the count up by
+ * two: the count is stored and shared, not the page's own.
  */
 export default {
   id: "cheers",
@@ -21,22 +21,25 @@ export default {
   ].join("\n"),
   checks: [
     {
-      name: "a cheer reaches a colleague",
+      name: "two cheers reach a third colleague",
       run: async (ctx) => {
-        const before = await ctx.open("ben");
-        const seen = integersIn(await before.frame.locator("body").innerText());
-        const button = before.frame.getByRole("button", { name: /cheer/i }).first();
-        if ((await button.count()) === 0)
-          return { ok: false, reason: "Ben found no button named for cheering." };
-        await button.click();
-        await before.page.waitForTimeout(1_500);
-        const after = await ctx.open("cleo");
-        const now = integersIn(await after.frame.locator("body").innerText());
-        return seen.some((count) => now.includes(count + 1))
+        const shown = async (person: string) =>
+          integersIn(await (await ctx.open(person)).frame.locator("body").innerText());
+        const before = await shown("ada");
+        for (const person of ["ben", "cleo"]) {
+          const { page, frame } = await ctx.open(person);
+          const button = frame.getByRole("button", { name: /cheer/i }).first();
+          if ((await button.count()) === 0)
+            return { ok: false, reason: `${person} found no button named for cheering.` };
+          await button.click();
+          await page.waitForTimeout(1_500);
+        }
+        const after = await shown("ada");
+        return rose(before, after, 2)
           ? { ok: true }
           : {
               ok: false,
-              reason: `After Ben cheered, Cleo saw ${now.join(", ") || "no numbers"} where Ben had seen ${seen.join(", ") || "no numbers"}.`
+              reason: `After Ben and Cleo cheered, Ada saw ${after.join(", ") || "no numbers"} where Ada had seen ${before.join(", ") || "no numbers"}.`
             };
       }
     }

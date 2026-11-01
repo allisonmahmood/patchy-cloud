@@ -204,12 +204,16 @@ export const makeClaudeTally = (asked: string): Tally => {
         if (Option.isNone(content)) continue;
         const block = content.value;
         if (block.type === "tool_use") {
-          const target = TARGETS.map((key) => block.input[key]).find(
-            (value): value is string => typeof value === "string" && value !== ""
-          );
+          const named = (value: unknown): value is string =>
+            typeof value === "string" && value !== "";
+          const target = TARGETS.map((key) => block.input[key]).find(named);
+          // A search keeps where it looked, so a grep through the package counts as one.
+          const where = [block.input.path, block.input.glob]
+            .filter(named)
+            .filter((w) => w !== target);
           steps.set(block.id, {
             tool: block.name,
-            input: target ?? "",
+            input: [target ?? "", ...where].join(" ").trim(),
             outcome: "unfinished",
             exitCode: null,
             error: null,

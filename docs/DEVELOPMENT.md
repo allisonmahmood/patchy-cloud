@@ -472,11 +472,19 @@ against a base and judging the code are #1143.
 
 - **The sandbox.** Each builder runs in `bwrap`: the system read-only, node,
   pnpm, `claude` and `codex` read-only under `/opt` (resolved once per suite,
-  through mise's wrappers too, and recorded with their versions), a private
-  `/tmp`, and a HOME of the run's own at `/home/builder`. Nothing else of this
-  machine is mounted: no home folder, no Patchy checkout, no personal agent
-  settings, skills or instructions. Inside, each harness has every permission,
-  so a failure measures Patchy rather than a permission prompt.
+  through mise's wrappers too, and recorded with their versions; a tool in a
+  shared folder such as `~/.local/bin` is mounted alone), a private `/tmp`, and
+  a HOME of the run's own at `/home/builder`. Nothing else of this machine is
+  mounted: no home folder, no Patchy checkout, no personal agent settings,
+  skills or instructions. Inside, each harness has every permission, so a
+  failure measures Patchy rather than a permission prompt.
+- **The network.** The sandbox has a network of its own with only loopback,
+  so nothing on this machine's network is reachable: not the instance's
+  Postgres, not other worktrees' instances, not the LAN. A bridge in the
+  sandbox serves two Unix sockets on loopback: the instance's port, and a
+  proxy (`HTTPS_PROXY`) to the public internet that refuses loopback, private,
+  shared and link-local addresses. Your Codex model provider's host, when you
+  use one, is the one private host it lets through.
 - **The instance.** One evidence instance at `HEAD`, on `team`, whose personas
   door is keyed: only the grader can sign anyone in, so builders verify through
   `patchy dev`'s own viewers, as builders can in production.
@@ -516,7 +524,8 @@ Playwright's Chromium. Claude Code builders sign in with
 from the environment or `~/.config/patchy-cloud/dev.env`; without either, its
 credentials file is mounted read-only, which lasts as long as its current
 access token. Codex builders get a fresh `~/.codex/config.toml` with your model
-provider, when you use one, or your `auth.json` mounted. The suite holds the
+provider, when you use one, or a copy of your `auth.json` per run, so a builder
+can never write to your own login. The suite holds the
 evidence lock, so no `compare`, `film`, `transcript` or `trial` runs beside it.
 Each run is a model run: a cheers build takes about two minutes.
 

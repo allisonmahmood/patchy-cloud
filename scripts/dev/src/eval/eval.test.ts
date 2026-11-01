@@ -1,6 +1,8 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import net from "node:net";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
@@ -12,8 +14,10 @@ import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js"
 import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
+import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME } from "./sandbox.js";
 import { classify } from "./scorecard.js";
+import { rose } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
 const ended = { exitCode: 0, timedOut: false, seconds: 90, stderr: "" };
@@ -24,10 +28,24 @@ describe("the sandbox", () => {
     {
       home: "/data/evals/run/home",
       tools: [
-        { name: "node", root: "/data/mise/node/24", path: "/opt/node/bin", version: "v24" },
-        { name: "git", root: null, path: null, version: "git 2" }
+        {
+          name: "node",
+          from: "/data/mise/node/24",
+          to: "/opt/node",
+          path: "/opt/node/bin",
+          version: "v24"
+        },
+        {
+          name: "claude",
+          from: "/data/claude/versions/2.1",
+          to: "/opt/claude/claude",
+          path: "/opt/claude",
+          version: "2.1"
+        },
+        { name: "git", from: null, to: null, path: null, version: "git 2" }
       ],
-      env: { PATCHY_API_URL: "http://x.localhost:1" }
+      network: { sockets: "/data/evals/sockets", instancePort: 31337, bridge: "/repo/bridge.mjs" },
+      env: { EXTRA: "1" }
     },
     "claude",
     ["-p"]
@@ -35,23 +53,74 @@ describe("the sandbox", () => {
   const pairs = (flag: string) =>
     args.flatMap((arg, i) => (arg === flag ? [[args[i + 1], args[i + 2]]] : []));
 
-  it("mounts the run's home and the tools, and nothing else of this machine's", () => {
+  it("mounts the run's home, the tools and the network's sockets, and nothing else of this machine's", () => {
     expect(pairs("--bind")).toEqual([["/data/evals/run/home", HOME]]);
     expect(pairs("--ro-bind")).toEqual([
       ["/usr", "/usr"],
       ["/etc", "/etc"],
-      ["/data/mise/node/24", "/opt/node"]
+      ["/data/mise/node/24", "/opt/node"],
+      ["/data/claude/versions/2.1", "/opt/claude/claude"],
+      ["/data/evals/sockets", "/run/eval"],
+      ["/repo/bridge.mjs", "/opt/eval/bridge.mjs"]
     ]);
     expect(args).toContain("--clearenv");
-    expect(args.slice(-3)).toEqual(["--", "claude", "-p"]);
   });
 
-  it("puts the user's own bin and the tools on PATH, and passes the run's variables", () => {
+  it("gives the sandbox a network of its own and runs the command behind the bridge", () => {
+    expect(args).toContain("--unshare-net");
+    expect(args.slice(args.indexOf("--chdir") + 2)).toEqual([
+      "--",
+      "node",
+      "/opt/eval/bridge.mjs",
+      "31337",
+      "--",
+      "claude",
+      "-p"
+    ]);
     const env = Object.fromEntries(pairs("--setenv"));
-    expect(env.PATH).toBe(`${HOME}/.local/bin:/opt/node/bin:/usr/bin`);
-    expect(env.HOME).toBe(HOME);
-    expect(env.PATCHY_API_URL).toBe("http://x.localhost:1");
+    expect(env.PATH).toBe(`${HOME}/.local/bin:/opt/node/bin:/opt/claude:/usr/bin`);
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:3128");
+    expect(env.NO_PROXY).toContain(".localhost");
+    expect(env.EXTRA).toBe("1");
   });
+});
+
+describe("the sandbox's proxy", () => {
+  it("lets public addresses through and refuses this machine's and private networks'", () => {
+    for (const address of ["1.1.1.1", "160.79.104.10", "2607:6bc0::10"])
+      expect(isPublic(address)).toBe(true);
+    for (const address of [
+      "127.0.0.1",
+      "10.1.2.3",
+      "100.101.102.103",
+      "172.20.0.1",
+      "192.168.1.5",
+      "169.254.169.254",
+      "0.0.0.0",
+      "::1",
+      "fd7a:115c:a1e0::1",
+      "fe80::1",
+      "::ffff:127.0.0.1"
+    ])
+      expect(isPublic(address), address).toBe(false);
+  });
+
+  it.effect("refuses a CONNECT to this machine's loopback", () =>
+    Effect.gen(function* () {
+      const dir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+      const network = yield* openNetwork({ dir, instancePort: 1, allow: [] });
+      const reply = yield* Effect.promise(
+        () =>
+          new Promise<string>((resolve) => {
+            const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
+              socket.write("CONNECT 127.0.0.1:5432 HTTP/1.1\r\nHost: 127.0.0.1:5432\r\n\r\n")
+            );
+            socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
+          })
+      );
+      expect(reply).toBe("HTTP/1.1 403 Forbidden");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
 });
 
 describe("the harness logs", () => {
@@ -184,6 +253,34 @@ describe("the harness logs", () => {
     expect(log).toMatchObject({ ending: "finished", turns: 4, costUsd: 0.12 });
   });
 
+  it("keeps where Claude Code's Grep looked, so a search through the package counts", () => {
+    const tally = makeClaudeTally("claude-sonnet-5-5");
+    tally.add(
+      line({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "g1",
+              name: "Grep",
+              input: { pattern: "\\bme\\b", path: "node_modules/patchy/dist", glob: "*.d.ts" }
+            }
+          ]
+        }
+      })
+    );
+    tally.add(
+      line({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "g1", content: "x" }] }
+      })
+    );
+    const log = tally.log(ended);
+    expect(log.steps[0]!.input).toBe("\\bme\\b node_modules/patchy/dist *.d.ts");
+    expect(metricsOf(log).offSkillLookups).toBe(1);
+  });
+
   it("finds refusals with no code by their kind, and unwraps Codex's shell", () => {
     expect(refusalsIn('noise\n{"ok":false,"error":"x","kind":"rejected"}\n{"ok":true}')).toEqual([
       "rejected"
@@ -209,9 +306,10 @@ describe("what a run is", () => {
     ...overrides
   });
   const target = { id: "p1", name: "cheers", address: "http://x/acme/cheers", tier: 1, version: 1 };
-  const graded = (published: boolean) => ({
+  const graded = (published: boolean, infra: string | null = null) => ({
     target: published ? target : null,
     checks: [],
+    infra,
     source: null,
     screenshots: []
   });
@@ -230,6 +328,9 @@ describe("what a run is", () => {
         .outcome
     ).toBe("infra");
     expect(classify(log({ ending: "no-answer", steps: [] }), graded(false)).outcome).toBe("infra");
+    expect(classify(log(), graded(true, "The patch's log couldn't be read.")).outcome).toBe(
+      "infra"
+    );
   });
 
   it("grades the most recently published live patch", () => {
@@ -292,6 +393,13 @@ describe("what a run is", () => {
       typecheckFailures: 1,
       publishes: 1
     });
+  });
+
+  it("reads a count that rose, and never text that stayed the same", () => {
+    expect(rose([0], [2], 2)).toBe(true);
+    expect(rose([0, 2], [2, 2], 2)).toBe(true);
+    expect(rose([0, 2], [0, 2], 2)).toBe(false);
+    expect(rose([0], [1], 2)).toBe(false);
   });
 
   it("keeps the developer's Codex provider and turns its extras off", () => {

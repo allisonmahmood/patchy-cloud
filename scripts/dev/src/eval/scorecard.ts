@@ -3,8 +3,8 @@
  *
  * Outcomes: `built` (it finished and something is published), `asked` (it
  * finished on a question instead), `gave-up` (it finished or failed without
- * publishing), `timed-out`, and `infra` (setup or the model provider failed:
- * retried once, and never counted against a builder). A run passes when it
+ * publishing), `timed-out`, and `infra` (setup, the model provider or the
+ * grader failed: retried once, and never counted against a builder). A run passes when it
  * built and every check passed.
  */
 import * as Schema from "effect/Schema";
@@ -47,6 +47,7 @@ export const classify = (
   log: BuilderLog,
   graded: Graded
 ): { outcome: Outcome; detail: string | null } => {
+  if (graded.infra !== null) return { outcome: "infra", detail: graded.infra };
   if (log.ending === "timed-out") return { outcome: "timed-out", detail: null };
   if (log.ending === "failed" || log.ending === "no-answer") {
     const provider = log.detail !== null && PROVIDER.test(log.detail);

@@ -24,12 +24,31 @@ import type { Browser, Page } from "@playwright/test";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { CheckContext, CheckOutcome, RunPerson, Target, Task } from "./task.js";
 
+/**
+ * The grader's own browser failed: it couldn't start, or the instance wouldn't
+ * sign anyone in. The grader's trouble, not the builder's, so it is an
+ * infrastructure outcome. The message names the step only: a navigation
+ * error's text carries the keyed sign-in address.
+ */
 export class BrowserGradingFailed extends Schema.TaggedError<BrowserGradingFailed>()(
   "BrowserGradingFailed",
-  { cause: Schema.Defect() }
+  { step: Schema.Literals(["launch", "sign-in", "browse"]), cause: Schema.Defect() }
 ) {
   override get message() {
-    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+    return this.step === "launch"
+      ? "The grader's browser couldn't start."
+      : this.step === "sign-in"
+        ? "The instance wouldn't sign the grader's people in."
+        : "The grader's browser stopped partway.";
+  }
+}
+
+export class NoGradingBrowser extends Schema.TaggedError<NoGradingBrowser>()(
+  "NoGradingBrowser",
+  {}
+) {
+  override get message() {
+    return "The grader opens patches in Playwright's Chromium, which didn't start. Run `pnpm exec playwright install chromium`, then run again.";
   }
 }
 
@@ -51,6 +70,8 @@ export const TargetRecord = Schema.Struct({
 export const Graded = Schema.Struct({
   target: Schema.NullOr(TargetRecord),
   checks: Schema.Array(CheckResult),
+  /** Why grading itself couldn't finish, when it couldn't: the run is then infrastructure, not the builder's. */
+  infra: Schema.NullOr(Schema.String),
   /** Inside the run's folder: the published source the judges read, when there is one. */
   source: Schema.NullOr(Schema.String),
   screenshots: Schema.Array(Schema.String)
@@ -176,18 +197,23 @@ const openAs = async (
   });
   page.on("pageerror", (error) => errors.push(error.message));
   const target = new URL(address).pathname + path;
-  const response = await page.goto(
-    `${door.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=${encodeURIComponent(target)}&key=${encodeURIComponent(door.key)}`
-  );
-  if (response === null || response.status() >= 400)
-    throw new Error(`Signing ${person.key} in answered ${response?.status() ?? "nothing"}.`);
+  const response = await page
+    .goto(
+      `${door.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=${encodeURIComponent(target)}&key=${encodeURIComponent(door.key)}`
+    )
+    .catch(() => null);
+  if (response === null || response.status() >= 400) {
+    await context.close();
+    return { signedIn: false } as const;
+  }
   const ready = await waitReady(page);
-  return { context, page, errors, ready };
+  return { signedIn: true, context, page, errors, ready } as const;
 };
 
 /**
  * The browser half of grading: `opens ready` as a colleague, the screenshots,
- * then the task's checks. Each check gets fresh contexts, closed after it.
+ * then the task's checks, each with fresh contexts closed after it. A check
+ * whose pages logged a console or page error fails, however it ended.
  */
 const inBrowser = (input: {
   readonly task: Task;
@@ -196,62 +222,100 @@ const inBrowser = (input: {
   readonly colleague: RunPerson;
   readonly door: Door;
   readonly shots: string;
-}) =>
-  Effect.tryPromise({
+}) => {
+  // Where it got to, for the error: set from inside the browser code and its callbacks.
+  const state = { launched: false, signInRefused: false };
+  return Effect.tryPromise({
     try: async () => {
       const { chromium } = await import("@playwright/test");
       const browser = await chromium.launch();
+      state.launched = true;
       try {
-        const results: Array<CheckResult> = [];
+        /** `openAs`, where the instance refusing to sign someone in is the grader's trouble. */
+        const signedIn = async (
+          person: RunPerson,
+          path = "",
+          viewport: (typeof VIEWPORTS)[keyof typeof VIEWPORTS] = VIEWPORTS.desktop
+        ) => {
+          const opened = await openAs(
+            browser,
+            input.door,
+            person,
+            input.target.address,
+            path,
+            viewport
+          );
+          if (!opened.signedIn) {
+            state.signInRefused = true;
+            throw new Error("sign-in");
+          }
+          return opened;
+        };
         const screenshots: Array<string> = [];
-        const first = await openAs(browser, input.door, input.colleague, input.target.address);
-        const browserErrors = [...first.errors];
-        await first.page.screenshot({ path: `${input.shots}/desktop.png`, fullPage: true });
-        screenshots.push(`${input.shots}/desktop.png`);
-        await first.context.close();
-        const phone = await openAs(
-          browser,
-          input.door,
-          input.colleague,
-          input.target.address,
-          "",
-          VIEWPORTS.phone
-        );
-        await phone.page.screenshot({ path: `${input.shots}/phone.png`, fullPage: true });
-        screenshots.push(`${input.shots}/phone.png`);
-        browserErrors.push(...phone.errors);
-        await phone.context.close();
-        const opened = first.ready && phone.ready;
+        const browserErrors: Array<string> = [];
+        let opened = true;
+        for (const [name, viewport] of Object.entries(VIEWPORTS)) {
+          const view = await signedIn(input.colleague, "", viewport);
+          opened &&= view.ready;
+          await view.page.screenshot({ path: `${input.shots}/${name}.png`, fullPage: true });
+          screenshots.push(`${input.shots}/${name}.png`);
+          browserErrors.push(...view.errors);
+          await view.context.close();
+        }
+        const results: Array<CheckResult> = [];
         for (const check of input.task.checks) {
-          const contexts: Array<{ close: () => Promise<void> }> = [];
+          const views: Array<{
+            readonly close: () => Promise<void>;
+            readonly errors: ReadonlyArray<string>;
+          }> = [];
           const ctx: CheckContext = {
             target: input.target,
             people: input.people,
             open: async (key, path) => {
               const person = input.people.find((p) => p.key === key);
               if (person === undefined) throw new Error(`The run has no person ${key}.`);
-              const each = await openAs(browser, input.door, person, input.target.address, path);
-              contexts.push(each.context);
-              if (!each.ready) throw new Error(`The patch never showed ${key} anything.`);
-              return { page: each.page, frame: each.page.frameLocator("iframe").first() };
+              const view = await signedIn(person, path);
+              views.push({ close: () => view.context.close(), errors: view.errors });
+              if (!view.ready) throw new Error(`The patch never showed ${person.name} anything.`);
+              return { page: view.page, frame: view.page.frameLocator("iframe").first() };
             }
           };
           const outcome: CheckOutcome = await check.run(ctx).catch((error: unknown) => ({
             ok: false,
             reason: error instanceof Error ? error.message : String(error)
           }));
+          if (state.signInRefused) throw new Error("sign-in");
+          const logged = views.flatMap((view) => view.errors);
+          await Promise.all(views.map((view) => view.close()));
           results.push(
-            outcome.ok ? pass(check.name, outcome.note ?? null) : fail(check.name, outcome.reason)
+            !outcome.ok
+              ? fail(check.name, outcome.reason)
+              : logged.length > 0
+                ? fail(check.name, `It worked, but the page logged: ${logged[0]!.split("\n")[0]}`)
+                : pass(check.name, outcome.note ?? null)
           );
-          await Promise.all(contexts.map((context) => context.close()));
         }
         return { opened, browserErrors, results, screenshots };
       } finally {
         await browser.close();
       }
     },
-    catch: (cause) => new BrowserGradingFailed({ cause })
+    catch: (cause) =>
+      new BrowserGradingFailed({
+        step: state.signInRefused ? "sign-in" : state.launched ? "browse" : "launch",
+        cause
+      })
   });
+};
+
+/** Fails before any build starts when the grader's browser can't launch. */
+export const checkBrowser = Effect.tryPromise({
+  try: async () => {
+    const { chromium } = await import("@playwright/test");
+    await (await chromium.launch()).close();
+  },
+  catch: () => new NoGradingBrowser()
+});
 
 /** Grades a run once its builder has ended. Never fails: a check that can't run says why. */
 export const grade = Effect.fn("Eval.grade")(function* (input: {
@@ -267,31 +331,40 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   const listed = yield* runSandboxed(input.spec, "patchy", ["list", "--json"], {
     timeout: "1 minute"
   });
-  const target = Option.match(decodeListed(listed.stdout), {
-    onNone: () => null,
-    onSome: pickTarget
-  });
   const names = [
     "published",
     "typechecks",
     "opens ready",
     ...input.task.checks.map((check) => check.name)
   ];
-  if (target === null) {
-    const why =
-      listed.exitCode === 0
-        ? "Nothing is published in the run's company."
-        : `\`patchy list\` failed: ${lastLine(listed.stderr)}`;
+  /** Grading that couldn't finish: what ran so far, the rest skipped, and why. */
+  const unfinished = (
+    why: string,
+    done: ReadonlyArray<CheckResult>,
+    target: Target | null,
+    source: string | null
+  ): Graded => ({
+    target,
+    checks: [...done, ...names.slice(done.length).map((name) => skipped(name, why))],
+    infra: why,
+    source,
+    screenshots: []
+  });
+  const decoded = decodeListed(listed.stdout);
+  if (listed.exitCode !== 0 || Option.isNone(decoded))
+    return unfinished("`patchy list` didn't answer.", [], null, null);
+  const target = pickTarget(decoded.value);
+  if (target === null)
     return {
       target: null,
       checks: [
-        fail("published", why),
+        fail("published", "Nothing is published in the run's company."),
         ...names.slice(1).map((name) => skipped(name, "Nothing to check."))
       ],
+      infra: null,
       source: null,
       screenshots: []
     } satisfies Graded;
-  }
   const checks: Array<CheckResult> = [
     pass("published", `${target.name} v${target.version}, tier ${target.tier}`)
   ];
@@ -309,24 +382,22 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
       { timeout: "5 minutes" }
     );
     if (pulled.exitCode !== 0)
-      checks.push(fail("typechecks", `\`patchy pull\` failed: ${lastLine(pulled.stderr)}`));
-    else {
-      source = path.join("home", ".eval", "published");
-      const typecheck = yield* runSandboxed(
-        { ...input.spec, cwd: `${HOME}/.eval/published` },
-        "pnpm",
-        ["typecheck"],
-        { timeout: "5 minutes" }
-      );
-      checks.push(
-        typecheck.exitCode === 0
-          ? pass("typechecks")
-          : fail(
-              "typechecks",
-              lastLine(`${typecheck.stderr}\n${typecheck.stdout}`) || "It didn't finish."
-            )
-      );
-    }
+      return unfinished("`patchy pull` couldn't fetch the published source.", checks, target, null);
+    source = path.join("home", ".eval", "published");
+    const typecheck = yield* runSandboxed(
+      { ...input.spec, cwd: `${HOME}/.eval/published` },
+      "pnpm",
+      ["typecheck"],
+      { timeout: "5 minutes" }
+    );
+    checks.push(
+      typecheck.exitCode === 0
+        ? pass("typechecks")
+        : fail(
+            "typechecks",
+            lastLine(`${typecheck.stderr}\n${typecheck.stdout}`) || "It didn't finish."
+          )
+    );
   }
 
   const colleague =
@@ -340,14 +411,7 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     door: input.door,
     shots: input.runDir
   }).pipe(Effect.result);
-  if (Result.isFailure(browsed)) {
-    const why = `The browser couldn't grade it: ${browsed.failure.message}`;
-    checks.push(
-      fail("opens ready", why),
-      ...input.task.checks.map((check) => skipped(check.name, why))
-    );
-    return { target, checks, source, screenshots: [] } satisfies Graded;
-  }
+  if (Result.isFailure(browsed)) return unfinished(browsed.failure.message, checks, target, source);
 
   // Failed calls during grading, against the graded version; a tier 1 patch has no log.
   const failures: Array<string> = [];
@@ -358,11 +422,12 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
       ["logs", "--patch", target.id, "--failed", "--limit", "25", "--json"],
       { timeout: "1 minute" }
     );
-    Option.map(decodeLogPage(logged.stdout), (page) => {
-      for (const entry of page.entries)
-        if (entry.startedAt >= gradingFrom && entry.version === target.version)
-          failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
-    });
+    const page = decodeLogPage(logged.stdout);
+    if (logged.exitCode !== 0 || Option.isNone(page))
+      return unfinished("The patch's log couldn't be read.", checks, target, source);
+    for (const entry of page.value.entries)
+      if (entry.startedAt >= gradingFrom && entry.version === target.version)
+        failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
   }
   const { opened, browserErrors, results, screenshots } = browsed.success;
   const problems = [
@@ -377,6 +442,7 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   return {
     target,
     checks,
+    infra: null,
     source,
     screenshots: screenshots.map((file) => path.relative(input.runDir, file))
   } satisfies Graded;

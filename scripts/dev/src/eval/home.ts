@@ -17,6 +17,8 @@ import * as Schema from "effect/Schema";
 import { developerEnvFile } from "../developerEnv.js";
 import { stepOutput } from "../steps.js";
 import type { Builder } from "./builders.js";
+import { secretsInJson } from "../sanitize.js";
+import type { Network } from "./network.js";
 import { type Bind, HOME, runSandboxed, type SandboxSpec, type Tool } from "./sandbox.js";
 
 export class SetupFailed extends Schema.TaggedError<SetupFailed>()("SetupFailed", {
@@ -44,9 +46,15 @@ export interface SignIns {
     readonly env: Readonly<Record<string, string>>;
     readonly binds: ReadonlyArray<Bind>;
   };
-  /** Codex: the `config.toml` each run's `~/.codex` gets, and its login mounted when it has one. */
-  readonly codex: { readonly config: string; readonly binds: ReadonlyArray<Bind> };
-  /** Every secret in the above, for the sanitizer. */
+  /**
+   * Codex: the `config.toml` each run's `~/.codex` gets, and the developer's
+   * `auth.json` to copy into it when there is no model provider. A copy, so a
+   * builder can't write to the developer's own login.
+   */
+  readonly codex: { readonly config: string; readonly auth: string | null };
+  /** Private hosts the sandbox's proxy may reach: a model provider on the developer's own network. */
+  readonly privateHosts: ReadonlyArray<string>;
+  /** Every secret in the above, credential files' tokens included, for the sanitizer. */
   readonly secrets: ReadonlyArray<string>;
 }
 
@@ -88,12 +96,33 @@ export const codexConfig = (developerConfig: string) => {
 const configSecrets = (config: string) =>
   [...config.matchAll(/^\s*\w*(?:token|key|secret)\w*\s*=\s*"([^"]+)"/gim)].map((m) => m[1]!);
 
+/** The host a provider table's `base_url` names, for the proxy to let through. */
+export const providerHost = (config: string) => {
+  const url = /^\s*base_url\s*=\s*"([^"]+)"/m.exec(config)?.[1];
+  if (url === undefined) return undefined;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+};
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+
+/** The secret-named values in a JSON credentials file, such as its tokens; none when it can't be read. */
+const fileSecrets = Effect.fn("Eval.fileSecrets")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+  const parsed = yield* decodeJson(text).pipe(Effect.option);
+  return Option.match(parsed, { onNone: () => [], onSome: (value) => secretsInJson(value) });
+});
+
 /**
  * Each harness's sign-in. Claude Code takes `CLAUDE_CODE_OAUTH_TOKEN` (from
  * `claude setup-token`) or `ANTHROPIC_API_KEY`, from the environment or the
  * developer's `dev.env`; failing both, its credentials file read-only, which
  * lasts as long as its current access token. Codex takes the developer's
- * model provider, or their `auth.json`, mounted so a refresh is written back.
+ * model provider, or a copy of their `auth.json` per run.
  */
 export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
   builders: ReadonlyArray<Builder>
@@ -135,9 +164,11 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
         env: {},
         binds: [{ from: file, to: `${HOME}/.claude/.credentials.json`, readOnly: true }]
       };
+      secrets.push(...(yield* fileSecrets(file)));
     }
   }
-  let codex: SignIns["codex"] = { config: codexConfig(""), binds: [] };
+  let codex: SignIns["codex"] = { config: codexConfig(""), auth: null };
+  const privateHosts: Array<string> = [];
   if (builders.some((builder) => builder.harness === "codex")) {
     const codexHome = Option.getOrElse(yield* Config.option(Config.String("CODEX_HOME")), () =>
       path.join(home, ".codex")
@@ -150,13 +181,14 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
     const hasProvider = config.includes("model_provider =");
     if (!hasProvider && !(yield* fs.exists(auth)))
       return yield* new NoSignIn({ harness: "Codex", fix: "Sign Codex in with `codex login`." });
-    codex = {
-      config,
-      binds: hasProvider ? [] : [{ from: auth, to: `${HOME}/.codex/auth.json`, readOnly: false }]
-    };
+    codex = { config, auth: hasProvider ? null : auth };
     secrets.push(...configSecrets(config));
+    if (hasProvider) {
+      const host = providerHost(config);
+      if (host !== undefined) privateHosts.push(host);
+    } else secrets.push(...(yield* fileSecrets(auth)));
   }
-  return { claude, codex, secrets } satisfies SignIns;
+  return { claude, codex, privateHosts, secrets } satisfies SignIns;
 });
 
 /** Runs a setup command in the sandbox; anything but exit 0 fails setup with its last error line. */
@@ -192,13 +224,14 @@ export const prepareTemplate = Effect.fn("Eval.prepareTemplate")(function* (inpu
   readonly dir: string;
   readonly apiUrl: string;
   readonly tools: ReadonlyArray<Tool>;
+  readonly network: Network;
   /** A machine token on the side's instance, for the warming `init`s. */
   readonly token: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(input.dir, { recursive: true });
-  const spec: SandboxSpec = { home: input.dir, tools: input.tools };
+  const spec: SandboxSpec = { home: input.dir, tools: input.tools, network: input.network };
   yield* setupStep("Installing patchy from the instance", spec, "bash", [
     "-c",
     'curl -fsSL "$1/install.mjs" -o /tmp/install.mjs && node /tmp/install.mjs',
@@ -234,6 +267,7 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
   readonly home: string;
   readonly apiUrl: string;
   readonly tools: ReadonlyArray<Tool>;
+  readonly network: Network;
   readonly token: string;
   readonly builder: Builder;
   readonly signIns: SignIns;
@@ -249,7 +283,7 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
       prefix: "cp"
     }
   );
-  const base: SandboxSpec = { home: input.home, tools: input.tools };
+  const base: SandboxSpec = { home: input.home, tools: input.tools, network: input.network };
   yield* setupStep(
     "Logging the run's publisher in",
     base,
@@ -262,11 +296,11 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
     yield* fs.writeFileString(
       path.join(input.home, ".codex", "config.toml"),
       input.signIns.codex.config,
-      {
-        mode: 0o600
-      }
+      { mode: 0o600 }
     );
-    return { ...base, binds: input.signIns.codex.binds } satisfies SandboxSpec;
+    if (input.signIns.codex.auth !== null)
+      yield* fs.copyFile(input.signIns.codex.auth, path.join(input.home, ".codex", "auth.json"));
+    return base;
   }
   yield* fs.makeDirectory(path.join(input.home, ".claude"), { recursive: true });
   return {

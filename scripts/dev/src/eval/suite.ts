@@ -26,9 +26,10 @@ import { makeSanitizer } from "../sanitize.js";
 import { loadScenario, publisherToken } from "../scenario.js";
 import { type Builder, BUILDERS, type BuilderId, runBuilder, type Step } from "./builders.js";
 import { retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
-import { grade } from "./grade.js";
+import { checkBrowser, grade } from "./grade.js";
 import { prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
+import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, resolveTools, type Tool } from "./sandbox.js";
 import { classify, RunRecord, Scorecard, scorecardMarkdown } from "./scorecard.js";
 import { type Task, taskPrompt } from "./task.js";
@@ -56,6 +57,7 @@ interface Suite {
   readonly doorKey: string;
   readonly template: string;
   readonly tools: ReadonlyArray<Tool>;
+  readonly network: Network;
   readonly signIns: SignIns;
 }
 
@@ -111,6 +113,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
       home,
       apiUrl: suite.apiUrl,
       tools: suite.tools,
+      network: suite.network,
       token: identities.token,
       builder,
       signIns: suite.signIns
@@ -144,7 +147,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     record: (line) => Effect.ignore(stream.writeAll(encoder.encode(`${line}\n`))),
     onStep: (step) => progress(label, step)
   });
-  const graded = yield* grade({
+  const grading = grade({
     task,
     spec,
     runDir,
@@ -152,6 +155,9 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     publisher: identities.publisher,
     door: { apiUrl: suite.apiUrl, key: suite.doorKey }
   });
+  // The grader's own trouble gets one more try before the run counts as infrastructure.
+  const first = yield* grading;
+  const graded = first.infra === null ? first : yield* grading;
   yield* Effect.ignore(retireRun(scenario, run).pipe(Effect.provideContext(suite.database)));
   const { outcome, detail } = classify(log, graded);
   const pass = outcome === "built" && graded.checks.every((check) => check.status === "pass");
@@ -194,6 +200,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* checkSandbox(input.root);
+  yield* checkBrowser;
   const builders = input.builders.map((id) => BUILDERS[id]);
   const tools = yield* resolveTools(input.root);
   const signIns = yield* readSignIns(builders);
@@ -217,12 +224,18 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
         personasKey: doorKey
       });
       const side = sides.after;
+      const network = yield* openNetwork({
+        dir: path.join(dir, "sockets"),
+        instancePort: Number(new URL(side.served.apiUrl).port),
+        allow: signIns.privateHosts
+      });
       const template = path.join(dir, "homes", "head");
       yield* Console.error("  head    setting up a builder's home");
       yield* prepareTemplate({
         dir: template,
         apiUrl: side.served.apiUrl,
         tools,
+        network,
         token: publisherToken(sideScenario)
       });
       const suite: Suite = {
@@ -234,6 +247,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
         doorKey,
         template,
         tools,
+        network,
         signIns
       };
       // Repeats outermost, so an interrupted suite has every task and builder at least once.
@@ -253,7 +267,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   const sanitizer = yield* makeSanitizer({
     stateDirs: [],
     envs: [signIns.claude.env],
-    identities: signIns.secrets
+    identities: [...signIns.secrets, doorKey]
   });
   const markdown = yield* sanitizer.redact(scorecardMarkdown(card));
   const json = printJson(yield* sanitizer.redactJson(encodeScorecard(card)));
