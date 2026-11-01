@@ -8,9 +8,11 @@
  * - the instance: every connection goes to the evidence instance's HTTP port;
  * - a proxy (`HTTPS_PROXY`): `CONNECT` to the public internet, as a real user's
  *   agent has, refusing loopback, private, shared and link-local addresses;
- *   only hosts named in `allow` (a model provider on a private network) skip
- *   that check. It connects to the address it vetted, so a name can't be
- *   rebound to a private one between the check and the connection.
+ *   only the exact `host:port` endpoints in `allow` (a model provider on a
+ *   private network) skip that check. It connects to the address it vetted,
+ *   so a name can't be rebound to a private one between the check and the
+ *   connection. Whatever a request holds, it can only fail its own connection:
+ *   every builder shares the proxy.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -75,14 +77,22 @@ export const isPublic = (address: string) => {
   return !PRIVATE.check(address, net.isIP(address) === 6 ? "ipv6" : "ipv4");
 };
 
-/** The address to connect to for `host`, or why not. */
-const vet = async (host: string, allow: ReadonlySet<string>) => {
+/** An endpoint as the allow list holds it: a lowercased host without brackets, and a port. */
+export const endpoint = (host: string, port: number) =>
+  `${host.replace(/^\[|\]$/g, "").toLowerCase()}:${port}`;
+
+/**
+ * The address to connect to for `host:port`, or why not. An allowed endpoint
+ * skips the private-address check, name or address alike; nothing else does.
+ */
+const vet = async (host: string, port: number, allow: ReadonlySet<string>) => {
   const name = host.replace(/^\[|\]$/g, "").toLowerCase();
+  const allowed = allow.has(endpoint(name, port));
   if (net.isIP(name) !== 0)
-    return isPublic(name) ? { address: name } : { refused: "a private address" };
+    return allowed || isPublic(name) ? { address: name } : { refused: "a private address" };
   const addresses = await lookup(name, { all: true }).catch(() => []);
   if (addresses.length === 0) return { refused: "a name that doesn't resolve" };
-  if (allow.has(name)) return { address: addresses[0]!.address };
+  if (allowed) return { address: addresses[0]!.address };
   const open = addresses.find((each) => isPublic(each.address));
   return addresses.every((each) => isPublic(each.address)) && open !== undefined
     ? { address: open.address }
@@ -101,31 +111,41 @@ const proxyConnection = (allow: ReadonlySet<string>) => (inside: net.Socket) => 
       if (head.length > 8_192) refuse("431 Request Header Fields Too Large");
       return;
     }
-    inside.off("data", onData);
+    inside.removeAllListeners("data");
     inside.pause();
-    const match = /^CONNECT\s+(\[[^\]]+\]|[^\s:]+):(\d+)\s+HTTP\/1\.[01]/i.exec(head);
+    const match = /^CONNECT\s+(\[[^\]]+\]|[^\s:]+):(\d{1,5})\s+HTTP\/1\.[01]/i.exec(head);
     if (match === null) return refuse("405 Method Not Allowed");
-    const [, host, port] = match;
+    const host = match[1]!;
+    const port = Number(match[2]);
+    if (port < 1 || port > 65_535) return refuse("400 Bad Request");
     const rest = Buffer.from(head.slice(end + 4), "latin1");
-    void vet(host!, allow).then((vetted) => {
-      if ("refused" in vetted) return refuse("403 Forbidden");
-      const outside = net.connect(Number(port), vetted.address);
-      let joined = false;
-      outside.on("error", () => {
-        outside.destroy();
-        if (joined) inside.destroy();
-        else refuse("502 Bad Gateway");
-      });
-      outside.on("connect", () => {
-        joined = true;
-        inside.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        if (rest.length > 0) outside.write(rest);
-        inside.pipe(outside).pipe(inside);
-        inside.resume();
-      });
-    });
+    void vet(host, port, allow)
+      .then((vetted) => {
+        if ("refused" in vetted) return refuse("403 Forbidden");
+        const outside = net.connect(port, vetted.address);
+        let joined = false;
+        outside.on("error", () => {
+          outside.destroy();
+          if (joined) inside.destroy();
+          else refuse("502 Bad Gateway");
+        });
+        outside.on("connect", () => {
+          joined = true;
+          inside.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (rest.length > 0) outside.write(rest);
+          inside.pipe(outside).pipe(inside);
+          inside.resume();
+        });
+      })
+      .catch(() => refuse("502 Bad Gateway"));
   };
-  inside.on("data", onData);
+  inside.on("data", (chunk: Buffer) => {
+    try {
+      onData(chunk);
+    } catch {
+      inside.destroy();
+    }
+  });
 };
 
 /** Every connection joined to the instance's port on this machine's loopback. */
@@ -157,8 +177,9 @@ const listen = (door: string, file: string, handle: (socket: net.Socket) => void
 /**
  * Opens the instance and proxy sockets for the rest of the scope, in a temp
  * folder of their own: a Unix socket's path has to fit in about 100 bytes,
- * which a suite folder inside a worktree doesn't. `allow` names private hosts
- * the proxy may reach, such as a model provider on the developer's own network.
+ * which a suite folder inside a worktree doesn't. `allow` names the `host:port`
+ * endpoints the proxy may reach on a private network (`endpoint`), such as a
+ * model provider on the developer's own.
  */
 export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   readonly instancePort: number;

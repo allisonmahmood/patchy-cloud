@@ -472,7 +472,8 @@ against a base and judging the code are #1143.
 
 - **The sandbox.** Each builder runs in `bwrap`: the system read-only, node,
   pnpm, `claude` and `codex` read-only under `/opt` (resolved once per suite,
-  through mise's wrappers too, and recorded with their versions; a tool in a
+  through mise's wrappers too, and recorded with their versions; each tool's
+  own install is mounted and its command linked in `/opt/bin`, and a tool in a
   shared folder such as `~/.local/bin` is mounted alone), a private `/tmp`, and
   a HOME of the run's own at `/home/builder`. Nothing else of this machine is
   mounted: no home folder, no Patchy checkout, no personal agent settings,
@@ -483,8 +484,8 @@ against a base and judging the code are #1143.
   Postgres, not other worktrees' instances, not the LAN. A bridge in the
   sandbox serves two Unix sockets on loopback: the instance's port, and a
   proxy (`HTTPS_PROXY`) to the public internet that refuses loopback, private,
-  shared and link-local addresses. Your Codex model provider's host, when you
-  use one, is the one private host it lets through.
+  shared and link-local addresses. Your Codex model provider's endpoint, its
+  host and port, when you use one, is the one private address it lets through.
 - **The instance.** One evidence instance at `HEAD`, on `team`, whose personas
   door is keyed: only the grader can sign anyone in, so builders verify through
   `patchy dev`'s own viewers, as builders can in production.

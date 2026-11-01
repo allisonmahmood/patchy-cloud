@@ -75,16 +75,38 @@ export const UNATTENDED =
 export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
 
 /**
- * Whether a count shown in `before` went up by `by` in `after`: some number
- * there is now `by` higher, and the old value shows fewer times than it did.
- * Text that didn't change never passes, however its numbers line up.
+ * Every integer the patch's frame shows, keyed by where it is: the path of
+ * elements to its text and its place in that text. Run in the page.
  */
-export const rose = (before: ReadonlyArray<number>, after: ReadonlyArray<number>, by: number) => {
-  const times = (list: ReadonlyArray<number>, n: number) =>
-    list.filter((each) => each === n).length;
-  return before.some((n) => after.includes(n + by) && times(after, n) < times(before, n));
-};
+export const countsByPlace = async (frame: FrameLocator): Promise<ReadonlyMap<string, number>> =>
+  new Map(
+    await frame.locator("body").evaluate((body) => {
+      const found: Array<[string, number]> = [];
+      const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const numbers = [...(node.textContent ?? "").matchAll(/\d[\d,]*/g)];
+        if (numbers.length === 0) continue;
+        const path: Array<string> = [];
+        for (let at = node.parentElement; at !== null && at !== body; at = at.parentElement)
+          path.unshift(`${at.tagName}${[...(at.parentElement?.children ?? [])].indexOf(at)}`);
+        numbers.forEach((match, index) =>
+          found.push([`${path.join("/")}#${index}`, Number(match[0].replaceAll(",", ""))])
+        );
+      }
+      return found;
+    })
+  );
 
-/** Every integer in a stretch of visible text, for checks that read a count. */
-export const integersIn = (text: string): ReadonlyArray<number> =>
-  [...text.matchAll(/\d[\d,]*/g)].map((match) => Number(match[0].replaceAll(",", "")));
+/**
+ * Whether one number in the page went up by exactly one at each step: the
+ * same place showing `n`, `n + 1`, `n + 2`… across snapshots taken after each
+ * action. Numbers that didn't move, or moved because the page around them
+ * changed, never line up.
+ */
+export const steadyRise = (snapshots: ReadonlyArray<ReadonlyMap<string, number>>) => {
+  const [first, ...rest] = snapshots;
+  if (first === undefined || rest.length === 0) return false;
+  return [...first].some(([place, value]) =>
+    rest.every((snapshot, index) => snapshot.get(place) === value + index + 1)
+  );
+};

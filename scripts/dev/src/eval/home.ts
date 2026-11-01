@@ -18,7 +18,7 @@ import { developerEnvFile } from "../developerEnv.js";
 import { stepOutput } from "../steps.js";
 import type { Builder } from "./builders.js";
 import { secretsInJson } from "../sanitize.js";
-import type { Network } from "./network.js";
+import { endpoint, type Network } from "./network.js";
 import { type Bind, HOME, runSandboxed, type SandboxSpec, type Tool } from "./sandbox.js";
 
 export class SetupFailed extends Schema.TaggedError<SetupFailed>()("SetupFailed", {
@@ -52,8 +52,8 @@ export interface SignIns {
    * builder can't write to the developer's own login.
    */
   readonly codex: { readonly config: string; readonly auth: string | null };
-  /** Private hosts the sandbox's proxy may reach: a model provider on the developer's own network. */
-  readonly privateHosts: ReadonlyArray<string>;
+  /** The `host:port` endpoints on a private network the sandbox's proxy may reach: a model provider on the developer's own. */
+  readonly privateEndpoints: ReadonlyArray<string>;
   /** Every secret in the above, credential files' tokens included, for the sanitizer. */
   readonly secrets: ReadonlyArray<string>;
 }
@@ -96,21 +96,18 @@ export const codexConfig = (developerConfig: string) => {
 const configSecrets = (config: string) =>
   [...config.matchAll(/^\s*\w*(?:token|key|secret)\w*\s*=\s*"([^"]+)"/gim)].map((m) => m[1]!);
 
-/** The host a provider table's `base_url` names, for the proxy to let through. */
-export const providerHost = (config: string) => {
+/** The endpoint a provider table's `base_url` names, its host and port, for the proxy to let through. */
+export const providerEndpoint = (config: string) => {
   const url = /^\s*base_url\s*=\s*"([^"]+)"/m.exec(config)?.[1];
-  if (url === undefined) return undefined;
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
+  if (url === undefined || !URL.canParse(url)) return undefined;
+  const parsed = new URL(url);
+  return endpoint(parsed.hostname, Number(parsed.port || (parsed.protocol === "http:" ? 80 : 443)));
 };
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** The secret-named values in a JSON credentials file, such as its tokens; none when it can't be read. */
-const fileSecrets = Effect.fn("Eval.fileSecrets")(function* (file: string) {
+export const fileSecrets = Effect.fn("Eval.fileSecrets")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
   const parsed = yield* decodeJson(text).pipe(Effect.option);
@@ -168,7 +165,7 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
     }
   }
   let codex: SignIns["codex"] = { config: codexConfig(""), auth: null };
-  const privateHosts: Array<string> = [];
+  const privateEndpoints: Array<string> = [];
   if (builders.some((builder) => builder.harness === "codex")) {
     const codexHome = Option.getOrElse(yield* Config.option(Config.String("CODEX_HOME")), () =>
       path.join(home, ".codex")
@@ -184,11 +181,11 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
     codex = { config, auth: hasProvider ? null : auth };
     secrets.push(...configSecrets(config));
     if (hasProvider) {
-      const host = providerHost(config);
-      if (host !== undefined) privateHosts.push(host);
+      const provider = providerEndpoint(config);
+      if (provider !== undefined) privateEndpoints.push(provider);
     } else secrets.push(...(yield* fileSecrets(auth)));
   }
-  return { claude, codex, privateHosts, secrets } satisfies SignIns;
+  return { claude, codex, privateEndpoints, secrets } satisfies SignIns;
 });
 
 /** Runs a setup command in the sandbox; anything but exit 0 fails setup with its last error line. */

@@ -25,10 +25,10 @@ import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { CheckContext, CheckOutcome, RunPerson, Target, Task } from "./task.js";
 
 /**
- * The grader's own browser failed: it couldn't start, or the instance wouldn't
- * sign anyone in. The grader's trouble, not the builder's, so it is an
- * infrastructure outcome. The message names the step only: a navigation
- * error's text carries the keyed sign-in address.
+ * The grader's own browser failed: it couldn't start, the instance wouldn't
+ * sign anyone in, or it stopped somewhere grading doesn't attribute to the
+ * patch. The grader's trouble, not the builder's, so it is an infrastructure
+ * outcome. The message names the step only, never an address.
  */
 export class BrowserGradingFailed extends Schema.TaggedError<BrowserGradingFailed>()(
   "BrowserGradingFailed",
@@ -180,7 +180,12 @@ const VIEWPORTS = {
   phone: { width: 390, height: 844 }
 } as const;
 
-/** A fresh browser context signed in as `person` through the keyed door, on `address + path`. */
+/**
+ * A fresh browser context signed in as `person` through the keyed door, then
+ * on `address + path`. Signing in is checked on its own, without following
+ * the redirect, so a page that answers an error or breaks is the patch's
+ * result, and only a refused sign-in is the grader's trouble.
+ */
 const openAs = async (
   browser: Browser,
   door: Door,
@@ -190,24 +195,38 @@ const openAs = async (
   viewport: { readonly width: number; readonly height: number } = VIEWPORTS.desktop
 ) => {
   const context = await browser.newContext({ viewport });
+  const signedIn = await context.request
+    .get(
+      `${door.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=%2F&key=${encodeURIComponent(door.key)}`,
+      { maxRedirects: 0 }
+    )
+    .then((response) => response.status() === 303)
+    .catch(() => false);
+  if (!signedIn) {
+    await context.close();
+    return { signedIn: false } as const;
+  }
   const page = await context.newPage();
   const errors: Array<string> = [];
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
   page.on("pageerror", (error) => errors.push(error.message));
-  const target = new URL(address).pathname + path;
-  const response = await page
-    .goto(
-      `${door.apiUrl}/dev/sign-in?as=${encodeURIComponent(person.email)}&return=${encodeURIComponent(target)}&key=${encodeURIComponent(door.key)}`
-    )
-    .catch(() => null);
-  if (response === null || response.status() >= 400) {
-    await context.close();
-    return { signedIn: false } as const;
-  }
-  const ready = await waitReady(page);
-  return { signedIn: true, context, page, errors, ready } as const;
+  const navigated = await page.goto(address + path).then(
+    (response) => ({ status: response?.status() ?? null, error: null }),
+    (error: unknown) => ({
+      status: null,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  );
+  const broke =
+    navigated.error !== null
+      ? `it didn't load (${navigated.error.split("\n")[0]})`
+      : navigated.status !== null && navigated.status >= 400
+        ? `it answered ${navigated.status}`
+        : null;
+  const ready = broke === null && (await waitReady(page));
+  return { signedIn: true, context, page, errors, ready, broke } as const;
 };
 
 /**
@@ -253,12 +272,20 @@ const inBrowser = (input: {
         };
         const screenshots: Array<string> = [];
         const browserErrors: Array<string> = [];
-        let opened = true;
+        const unready: Array<string> = [];
         for (const [name, viewport] of Object.entries(VIEWPORTS)) {
           const view = await signedIn(input.colleague, "", viewport);
-          opened &&= view.ready;
-          await view.page.screenshot({ path: `${input.shots}/${name}.png`, fullPage: true });
-          screenshots.push(`${input.shots}/${name}.png`);
+          try {
+            if (view.broke !== null) unready.push(`on ${name}, ${view.broke}`);
+            else if (!view.ready) unready.push(`on ${name}, it never showed anything`);
+            await view.page.screenshot({ path: `${input.shots}/${name}.png`, fullPage: true });
+            screenshots.push(`${input.shots}/${name}.png`);
+          } catch (error) {
+            // The patch's page breaking the browser is the patch's result, not the grader's.
+            unready.push(
+              `on ${name}, the page broke (${error instanceof Error ? error.message.split("\n")[0] : String(error)})`
+            );
+          }
           browserErrors.push(...view.errors);
           await view.context.close();
         }
@@ -276,6 +303,7 @@ const inBrowser = (input: {
               if (person === undefined) throw new Error(`The run has no person ${key}.`);
               const view = await signedIn(person, path);
               views.push({ close: () => view.context.close(), errors: view.errors });
+              if (view.broke !== null) throw new Error(`For ${person.name}, ${view.broke}.`);
               if (!view.ready) throw new Error(`The patch never showed ${person.name} anything.`);
               return { page: view.page, frame: view.page.frameLocator("iframe").first() };
             }
@@ -295,7 +323,7 @@ const inBrowser = (input: {
                 : pass(check.name, outcome.note ?? null)
           );
         }
-        return { opened, browserErrors, results, screenshots };
+        return { unready, browserErrors, results, screenshots };
       } finally {
         await browser.close();
       }
@@ -373,7 +401,9 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
   if (input.task.target.create === "page")
     checks.push(skipped("typechecks", "A single-file page has no repo."));
   else {
-    // `patchy pull` makes the folder, not its parent.
+    // `patchy pull` makes the folder, not its parent, and refuses one that isn't empty: a
+    // retried grading starts from a fresh one.
+    yield* fs.remove(path.join(input.spec.home, ".eval"), { recursive: true, force: true });
     yield* fs.makeDirectory(path.join(input.spec.home, ".eval"), { recursive: true });
     const pulled = yield* runSandboxed(
       input.spec,
@@ -429,9 +459,9 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
       if (entry.startedAt >= gradingFrom && entry.version === target.version)
         failures.push(`${entry.handler}: ${entry.code ?? entry.outcome}`);
   }
-  const { opened, browserErrors, results, screenshots } = browsed.success;
+  const { unready, browserErrors, results, screenshots } = browsed.success;
   const problems = [
-    ...(opened ? [] : [`${colleague.name}'s view never showed anything`]),
+    ...unready.map((problem) => `${colleague.name}'s view ${problem}`),
     ...browserErrors.slice(0, 3).map((error) => `console: ${error.split("\n")[0]}`),
     ...failures.slice(0, 3).map((failure) => `failed call ${failure}`)
   ];

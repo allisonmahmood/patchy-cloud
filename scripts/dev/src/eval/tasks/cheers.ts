@@ -1,9 +1,10 @@
-import { integersIn, rose, type Task } from "../task.js";
+import { countsByPlace, steadyRise, type Task } from "../task.js";
 
 /**
  * The most common real first patch: a button the company presses together.
- * Two colleagues cheer, and a third, opening it fresh, sees the count up by
- * two: the count is stored and shared, not the page's own.
+ * Ben cheers, then Cleo, and Ada, opening it fresh before and after each,
+ * sees the same count go up by one each time: the count is stored and
+ * shared, not the page's own.
  */
 export default {
   id: "cheers",
@@ -21,11 +22,10 @@ export default {
   ].join("\n"),
   checks: [
     {
-      name: "two cheers reach a third colleague",
+      name: "each cheer reaches a third colleague",
       run: async (ctx) => {
-        const shown = async (person: string) =>
-          integersIn(await (await ctx.open(person)).frame.locator("body").innerText());
-        const before = await shown("ada");
+        const adaSees = async () => countsByPlace((await ctx.open("ada")).frame);
+        const seen = [await adaSees()];
         for (const person of ["ben", "cleo"]) {
           const { page, frame } = await ctx.open(person);
           const button = frame.getByRole("button", { name: /cheer/i }).first();
@@ -33,13 +33,13 @@ export default {
             return { ok: false, reason: `${person} found no button named for cheering.` };
           await button.click();
           await page.waitForTimeout(1_500);
+          seen.push(await adaSees());
         }
-        const after = await shown("ada");
-        return rose(before, after, 2)
+        return steadyRise(seen)
           ? { ok: true }
           : {
               ok: false,
-              reason: `After Ben and Cleo cheered, Ada saw ${after.join(", ") || "no numbers"} where Ada had seen ${before.join(", ") || "no numbers"}.`
+              reason: `No number Ada sees went up by one after Ben's cheer and again after Cleo's (Ada saw ${seen.map((counts) => [...counts.values()].join(" ") || "none").join(" → ")}).`
             };
       }
     }

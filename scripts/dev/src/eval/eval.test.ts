@@ -1,7 +1,9 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import net from "node:net";
 import { it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vitest";
 import { Users } from "@patchy/companies";
@@ -14,9 +16,9 @@ import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
-import { bwrapArgs, HOME } from "./sandbox.js";
+import { bwrapArgs, HOME, resolveTools } from "./sandbox.js";
 import { classify } from "./scorecard.js";
-import { rose } from "./task.js";
+import { steadyRise } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
 const ended = { exitCode: 0, timedOut: false, seconds: 90, stderr: "" };
@@ -31,17 +33,19 @@ describe("the sandbox", () => {
           name: "node",
           from: "/data/mise/node/24",
           to: "/opt/node",
+          link: "/opt/node/bin/node",
           path: "/opt/node/bin",
           version: "v24"
         },
         {
           name: "claude",
           from: "/data/claude/versions/2.1",
-          to: "/opt/claude/claude",
-          path: "/opt/claude",
+          to: "/opt/claude/2.1",
+          link: "/opt/claude/2.1",
+          path: null,
           version: "2.1"
         },
-        { name: "git", from: null, to: null, path: null, version: "git 2" }
+        { name: "git", from: null, to: null, link: null, path: null, version: "git 2" }
       ],
       network: { sockets: "/data/evals/sockets", instancePort: 31337, bridge: "/repo/bridge.mjs" },
       env: { EXTRA: "1" }
@@ -58,9 +62,13 @@ describe("the sandbox", () => {
       ["/usr", "/usr"],
       ["/etc", "/etc"],
       ["/data/mise/node/24", "/opt/node"],
-      ["/data/claude/versions/2.1", "/opt/claude/claude"],
+      ["/data/claude/versions/2.1", "/opt/claude/2.1"],
       ["/data/evals/sockets", "/run/eval"],
       ["/repo/bridge.mjs", "/opt/eval/bridge.mjs"]
+    ]);
+    expect(pairs("--symlink").filter(([, at]) => at!.startsWith("/opt/bin"))).toEqual([
+      ["/opt/node/bin/node", "/opt/bin/node"],
+      ["/opt/claude/2.1", "/opt/bin/claude"]
     ]);
     expect(args).toContain("--clearenv");
   });
@@ -77,7 +85,7 @@ describe("the sandbox", () => {
       "-p"
     ]);
     const env = Object.fromEntries(pairs("--setenv"));
-    expect(env.PATH).toBe(`${HOME}/.local/bin:/opt/node/bin:/opt/claude:/usr/bin`);
+    expect(env.PATH).toBe(`${HOME}/.local/bin:/opt/bin:/opt/node/bin:/usr/bin`);
     expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:3128");
     expect(env.NO_PROXY).toContain(".localhost");
     expect(env.EXTRA).toBe("1");
@@ -118,6 +126,91 @@ describe("the sandbox's proxy", () => {
       );
       expect(reply).toBe("HTTP/1.1 403 Forbidden");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+  it.effect("lets only the provider's exact endpoint through, and outlives a bad port", () =>
+    Effect.gen(function* () {
+      const listener = yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<net.Server>((resolve) => {
+              const server = net.createServer((socket) => socket.end("provider\n"));
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            })
+        ),
+        (server) =>
+          Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve())))
+      );
+      const port = (listener.address() as net.AddressInfo).port;
+      const network = yield* openNetwork({ instancePort: 1, allow: [`127.0.0.1:${port}`] });
+      const connect = (target: string) =>
+        Effect.promise(
+          () =>
+            new Promise<string>((resolve) => {
+              const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
+                socket.write(`CONNECT ${target} HTTP/1.1\r\n\r\n`)
+              );
+              socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
+              socket.on("error", () => resolve("error"));
+            })
+        );
+      expect(yield* connect("1.1.1.1:65536")).toBe("HTTP/1.1 400 Bad Request");
+      expect(yield* connect(`127.0.0.1:${port}`)).toBe("HTTP/1.1 200 Connection Established");
+      expect(yield* connect(`127.0.0.1:${port + 1}`)).toBe("HTTP/1.1 403 Forbidden");
+      expect(yield* connect(`localhost:${port}`)).toBe("HTTP/1.1 403 Forbidden");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+});
+
+describe("the toolchain", () => {
+  it.effect("mounts each tool's own install, never a shared folder, and links its command", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tmp = yield* fs.makeTempDirectoryScoped();
+      const tool = (file: string) =>
+        fs
+          .makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, "#!/bin/sh\necho v1\n", { mode: 0o755 })));
+      const home = `${tmp}/home`;
+      yield* tool(`${home}/.local/bin/node`);
+      yield* tool(`${tmp}/pkgs/claude-code/cli.js`);
+      yield* fs.writeFileString(`${tmp}/pkgs/claude-code/package.json`, "{}");
+      yield* tool(`${tmp}/pkgs/pnpm/bin/pnpm.cjs`);
+      yield* tool(`${tmp}/tools/codex/1.0/bin/codex`);
+      yield* fs.makeDirectory(`${tmp}/bins`);
+      yield* fs.makeDirectory(`${tmp}/checkout`);
+      yield* fs.symlink(`${tmp}/pkgs/claude-code/cli.js`, `${tmp}/bins/claude`);
+      yield* fs.symlink(`${tmp}/pkgs/pnpm/bin/pnpm.cjs`, `${tmp}/bins/pnpm`);
+      const tools = yield* resolveTools(`${tmp}/checkout`).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              HOME: home,
+              PATH: `${home}/.local/bin:${tmp}/bins:${tmp}/tools/codex/1.0/bin`
+            })
+          )
+        )
+      );
+      const by = Object.fromEntries(tools.map((each) => [each.name, each]));
+      expect(by.node).toMatchObject({
+        from: `${home}/.local/bin/node`,
+        to: "/opt/node/node",
+        link: "/opt/node/node",
+        path: null
+      });
+      expect(by.claude).toMatchObject({
+        from: `${tmp}/pkgs/claude-code`,
+        link: "/opt/claude/cli.js"
+      });
+      expect(by.pnpm).toMatchObject({ from: `${tmp}/pkgs/pnpm`, link: "/opt/pnpm/bin/pnpm.cjs" });
+      expect(by.codex).toMatchObject({
+        from: `${tmp}/tools/codex/1.0`,
+        link: "/opt/codex/bin/codex"
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeServices.layer))
+    )
   );
 });
 
@@ -393,11 +486,19 @@ describe("what a run is", () => {
     });
   });
 
-  it("reads a count that rose, and never text that stayed the same", () => {
-    expect(rose([0], [2], 2)).toBe(true);
-    expect(rose([0, 2], [2, 2], 2)).toBe(true);
-    expect(rose([0, 2], [0, 2], 2)).toBe(false);
-    expect(rose([0], [1], 2)).toBe(false);
+  it("reads a count that rose by one at each step in one place, and nothing else", () => {
+    const at = (entries: Record<string, number>) => new Map(Object.entries(entries));
+    expect(steadyRise([at({ count: 0 }), at({ count: 1 }), at({ count: 2 })])).toBe(true);
+    // A no-op button while an unrelated line disappears: "0 cheers · 2 pending · 4 members", then "0 cheers · 4 members".
+    expect(
+      steadyRise([
+        at({ "P0#0": 0, "P1#0": 2, "P2#0": 4 }),
+        at({ "P0#0": 0, "P1#0": 4 }),
+        at({ "P0#0": 0, "P1#0": 4 })
+      ])
+    ).toBe(false);
+    expect(steadyRise([at({ count: 0 }), at({ count: 2 })])).toBe(false);
+    expect(steadyRise([at({ count: 0 })])).toBe(false);
   });
 
   it("keeps the developer's Codex provider and turns its extras off", () => {

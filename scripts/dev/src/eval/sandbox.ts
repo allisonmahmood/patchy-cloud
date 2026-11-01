@@ -47,11 +47,13 @@ export const TOOL_NAMES = ["node", "pnpm", "claude", "codex"] as const;
 /** One tool as the sandbox mounts it, resolved once per suite so every run gets the same build. */
 export const Tool = Schema.Struct({
   name: Schema.String,
-  /** What this machine mounts, its install folder or the executable alone; null when it is already under `/usr`. */
+  /** What this machine mounts, its install or the executable alone; null when it is already under `/usr`. */
   from: Schema.NullOr(Schema.String),
   /** Where it is mounted inside the sandbox. */
   to: Schema.NullOr(Schema.String),
-  /** The PATH entry inside the sandbox. */
+  /** The executable inside the sandbox, linked as `/opt/bin/<name>`, whatever its own file is called. */
+  link: Schema.NullOr(Schema.String),
+  /** An extra PATH entry, for a tool whose install holds commands of its own: Node's npm and npx. */
   path: Schema.NullOr(Schema.String),
   /** The first line of `<tool> --version`, for the record. */
   version: Schema.String
@@ -81,6 +83,7 @@ export interface SandboxSpec {
 export const sandboxPath = (tools: ReadonlyArray<Tool>) =>
   [
     `${HOME}/.local/bin`,
+    "/opt/bin",
     ...tools.flatMap((tool) => (tool.path === null ? [] : [tool.path])),
     "/usr/bin"
   ].join(":");
@@ -128,9 +131,10 @@ export const bwrapArgs = (
   // systemd-resolved hosts point /etc/resolv.conf here.
   ...["--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve"],
   ...["--tmpfs", "/home", "--bind", spec.home, HOME],
-  ...spec.tools.flatMap((tool) =>
-    tool.from === null || tool.to === null ? [] : ["--ro-bind", tool.from, tool.to]
-  ),
+  ...spec.tools.flatMap((tool) => [
+    ...(tool.from === null || tool.to === null ? [] : ["--ro-bind", tool.from, tool.to]),
+    ...(tool.link === null ? [] : ["--symlink", tool.link, `/opt/bin/${tool.name}`])
+  ]),
   ...["--ro-bind", spec.network.sockets, "/run/eval"],
   ...["--ro-bind", spec.network.bridge, "/opt/eval/bridge.mjs"],
   ...(spec.binds ?? []).flatMap((bind) => [
@@ -188,14 +192,22 @@ const sharedFolders = (home: string, root: string, path: Path.Path) => {
   };
 };
 
+/** How far up from an executable to look for the npm package it belongs to. */
+const PACKAGE_DEPTH = 4;
+
 /**
  * Where each tool lives, resolved through PATH and symlinks to its real
  * install, and through mise's wrappers when that is what PATH holds. A tool
- * under `/usr` needs no mount. Otherwise its own install folder is mounted
- * (for Node, the folder above `bin`, where npm lives), unless that folder is
- * shared or the executable isn't named for the command, as Claude Code's
- * versioned binaries aren't: then only the executable is mounted, under the
- * command's name.
+ * under `/usr` needs no mount. Otherwise the tool's own install is mounted,
+ * the first that applies, and never a shared folder:
+ *
+ * 1. the install above its `bin` folder (Node's, with npm beside it; Codex's,
+ *    with its resources);
+ * 2. the npm package it is part of, so a launcher finds its files;
+ * 3. its own folder;
+ * 4. the executable alone.
+ *
+ * The executable is then linked as `/opt/bin/<name>`, whatever it is called.
  */
 export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -203,6 +215,19 @@ export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: s
   const home = yield* Config.String("HOME");
   const shared = sharedFolders(home, root, path);
   const dirs = (yield* Config.String("PATH").pipe(Config.withDefault(""))).split(":");
+  /** The nearest folder above `file`, below any shared one, holding a package.json. */
+  const packageOf = Effect.fn(function* (file: string) {
+    let dir = path.dirname(file);
+    for (
+      let depth = 0;
+      depth < PACKAGE_DEPTH && !shared(dir) && dir !== path.dirname(dir);
+      depth++
+    ) {
+      if (yield* fs.exists(path.join(dir, "package.json"))) return dir;
+      dir = path.dirname(dir);
+    }
+    return undefined;
+  });
   const tools: Array<Tool> = [];
   for (const name of TOOL_NAMES) {
     let found: string | undefined;
@@ -226,22 +251,26 @@ export const resolveTools = Effect.fn("Sandbox.resolveTools")(function* (root: s
       .split("\n")[0]!
       .trim();
     if (real.startsWith("/usr/")) {
-      tools.push({ name, from: null, to: null, path: null, version });
+      tools.push({ name, from: null, to: null, link: null, path: null, version });
       continue;
     }
     const dir = path.dirname(real);
-    const install = path.dirname(dir);
-    if (
-      name === "node" &&
-      path.basename(dir) === "bin" &&
-      !shared(install) &&
-      (yield* fs.exists(path.join(install, "lib", "node_modules")))
-    )
-      tools.push({ name, from: install, to: "/opt/node", path: "/opt/node/bin", version });
-    else if (path.basename(real) === name && !shared(dir))
-      tools.push({ name, from: dir, to: `/opt/${name}`, path: `/opt/${name}`, version });
-    else
-      tools.push({ name, from: real, to: `/opt/${name}/${name}`, path: `/opt/${name}`, version });
+    const mounted =
+      path.basename(dir) === "bin" && !shared(path.dirname(dir))
+        ? path.dirname(dir)
+        : ((yield* packageOf(real)) ?? (shared(dir) ? real : dir));
+    const to = `/opt/${name}`;
+    tools.push({
+      name,
+      from: mounted,
+      to: mounted === real ? `${to}/${path.basename(real)}` : to,
+      link:
+        mounted === real
+          ? `${to}/${path.basename(real)}`
+          : path.join(to, path.relative(mounted, real)),
+      path: name === "node" && mounted !== real ? `${to}/bin` : null,
+      version
+    });
   }
   return tools;
 });

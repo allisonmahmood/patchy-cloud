@@ -19,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { evidence, type Commit } from "../evidence.js";
@@ -27,7 +28,7 @@ import { loadScenario, publisherToken } from "../scenario.js";
 import { type Builder, BUILDERS, type BuilderId, runBuilder, type Step } from "./builders.js";
 import { retireRun, seedRun, sideDatabase, sideSql } from "./fixtures.js";
 import { checkBrowser, grade } from "./grade.js";
-import { prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
+import { fileSecrets, prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
 import { checkSandbox, resolveTools, type Tool } from "./sandbox.js";
@@ -59,6 +60,8 @@ interface Suite {
   readonly tools: ReadonlyArray<Tool>;
   readonly network: Network;
   readonly signIns: SignIns;
+  /** Secrets read from runs' own credential files after they ended, refreshed tokens included. */
+  readonly seen: Ref.Ref<ReadonlyArray<string>>;
 }
 
 interface Planned {
@@ -159,6 +162,12 @@ const runOne = Effect.fn("Eval.runOne")(function* (
   const first = yield* grading;
   const graded = first.infra === null ? first : yield* grading;
   yield* Effect.ignore(retireRun(scenario, run).pipe(Effect.provideContext(suite.database)));
+  // A token a harness refreshed during the run is in its copy now; the scorecard redacts it too.
+  const refreshed = [
+    ...(yield* fileSecrets(path.join(home, ".codex", "auth.json"))),
+    ...(yield* fileSecrets(path.join(home, ".patchy", "credentials.json")))
+  ];
+  yield* Ref.update(suite.seen, (known) => [...known, ...refreshed]);
   const { outcome, detail } = classify(log, graded);
   const pass = outcome === "built" && graded.checks.every((check) => check.status === "pass");
   const record = {
@@ -212,6 +221,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   for (const task of input.tasks) yield* loadScenario(input.root, task.scenario);
   const { scenario: sideScenario } = yield* loadScenario(input.root, SIDE_SCENARIO);
   const doorKey = randomId(32);
+  const seen = yield* Ref.make<ReadonlyArray<string>>([]);
   const runs = yield* Effect.scoped(
     Effect.gen(function* () {
       const sides = yield* evidence({
@@ -226,7 +236,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       const side = sides.after;
       const network = yield* openNetwork({
         instancePort: Number(new URL(side.served.apiUrl).port),
-        allow: signIns.privateHosts
+        allow: signIns.privateEndpoints
       });
       const template = path.join(dir, "homes", "head");
       yield* Console.error("  head    setting up a builder's home");
@@ -247,7 +257,8 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
         template,
         tools,
         network,
-        signIns
+        signIns,
+        seen
       };
       // Repeats outermost, so an interrupted suite has every task and builder at least once.
       const planned: Array<Planned> = [];
@@ -266,7 +277,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   const sanitizer = yield* makeSanitizer({
     stateDirs: [],
     envs: [signIns.claude.env],
-    identities: [...signIns.secrets, doorKey]
+    identities: [...signIns.secrets, doorKey, ...(yield* Ref.get(seen))]
   });
   const markdown = yield* sanitizer.redact(scorecardMarkdown(card));
   const json = printJson(yield* sanitizer.redactJson(encodeScorecard(card)));
