@@ -56,11 +56,20 @@ export const JUDGE_IDS = Object.keys(JUDGES) as ReadonlyArray<JudgeId>;
 const NO_INSTANCE = 47_000;
 
 /**
- * The public hosts a judge may reach, with their subdomains: its harness's
- * model provider and sign-in. Everything else is refused, the public repo
- * that holds the skills and calibration labels included.
+ * The exact public hosts a judge may reach: its harness's inference and
+ * sign-in endpoints. Never whole domains: a provider's other subdomains can
+ * sit on shared hosting that serves any site, a mirror of the public repo
+ * holding the skills and calibration labels included.
  */
-const PROVIDER_HOSTS = ["anthropic.com", "claude.ai", "claude.com", "openai.com", "chatgpt.com"];
+const PROVIDER_HOSTS = [
+  "api.anthropic.com",
+  "console.anthropic.com",
+  "platform.claude.com",
+  "claude.ai",
+  "api.openai.com",
+  "auth.openai.com",
+  "chatgpt.com"
+];
 
 /** What a judge scores, each from 1 to 5. */
 export const DIMENSIONS = ["fit", "platform", "correctness", "ux", "code"] as const;

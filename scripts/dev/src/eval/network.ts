@@ -10,8 +10,12 @@
  *   agent has, refusing loopback, private, shared and link-local addresses;
  *   only the exact `host:port` endpoints in `allow` (a model provider on a
  *   private network) skip that check. A network opened with `only` reaches
- *   just those public hosts and their subdomains, by name, besides `allow`:
- *   judges need their model providers and nothing else. It connects to the address it vetted,
+ *   just those exact public hosts besides `allow`, for judges, who need their
+ *   model providers and nothing else; its tunnels must open TLS naming the
+ *   host they vetted, since a shared ingress routes by that name and would
+ *   otherwise serve any site it hosts on the same connection. (A request
+ *   naming another site inside that TLS session is the ingress's to refuse.)
+ *   It connects to the address it vetted,
  *   so a name can't be rebound to a private one between the check and the
  *   connection. Whatever a request holds, it can only fail its own connection:
  *   every builder shares the proxy.
@@ -85,10 +89,53 @@ export const isPublic = (address: string) => {
 export const endpoint = (host: string, port: number) =>
   `${host.replace(/^\[|\]$/g, "").toLowerCase()}:${port}`;
 
-/** Whether `name` is one of `only`'s hosts or their subdomains; true when there's no `only`. */
+/** Whether `name` is one of `only`'s exact hosts; true when there's no `only`. */
 export const among = (name: string, only: ReadonlyArray<string> | undefined) =>
-  only === undefined ||
-  (net.isIP(name) === 0 && only.some((host) => name === host || name.endsWith(`.${host}`)));
+  only === undefined || only.includes(name);
+
+/**
+ * The server name a TLS ClientHello asks for: the name, null when the bytes
+ * hold a whole first record that isn't a ClientHello naming one, or undefined
+ * while that record is still arriving.
+ */
+export const serverNameOf = (bytes: Buffer): string | null | undefined => {
+  if (bytes.length < 5) return undefined;
+  if (bytes[0] !== 0x16) return null;
+  const end = 5 + bytes.readUInt16BE(3);
+  if (end > HELLO_MAX) return null;
+  if (bytes.length < end) return undefined;
+  let at = 5;
+  if (bytes[at] !== 0x01) return null;
+  // Handshake type and length, client version, random.
+  at += 4 + 2 + 32;
+  if (at + 1 > end) return null;
+  at += 1 + bytes[at]!;
+  if (at + 2 > end) return null;
+  at += 2 + bytes.readUInt16BE(at);
+  if (at + 1 > end) return null;
+  at += 1 + bytes[at]!;
+  if (at + 2 > end) return null;
+  const extensionsEnd = Math.min(end, at + 2 + bytes.readUInt16BE(at));
+  at += 2;
+  while (at + 4 <= extensionsEnd) {
+    const type = bytes.readUInt16BE(at);
+    const size = bytes.readUInt16BE(at + 2);
+    at += 4;
+    // server_name: its list's length, the name's type (0, a host name), the name's length, the name.
+    if (type === 0) {
+      if (at + 5 > extensionsEnd || bytes[at + 2] !== 0) return null;
+      const length = bytes.readUInt16BE(at + 3);
+      return at + 5 + length <= extensionsEnd
+        ? bytes.toString("latin1", at + 5, at + 5 + length).toLowerCase()
+        : null;
+    }
+    at += size;
+  }
+  return null;
+};
+
+/** The longest first TLS record a narrowed tunnel waits for: one record's header and its largest body. */
+const HELLO_MAX = 5 + 16_384;
 
 /**
  * The address to connect to for `host:port`, or why not. An allowed endpoint
@@ -105,13 +152,15 @@ const vet = async (
   const allowed = allow.has(endpoint(name, port));
   if (!allowed && !among(name, only)) return { refused: "a host this network doesn't reach" };
   if (net.isIP(name) !== 0)
-    return allowed || isPublic(name) ? { address: name } : { refused: "a private address" };
+    return allowed || isPublic(name)
+      ? { address: name, name, allowed }
+      : { refused: "a private address" };
   const addresses = await lookup(name, { all: true }).catch(() => []);
   if (addresses.length === 0) return { refused: "a name that doesn't resolve" };
-  if (allowed) return { address: addresses[0]!.address };
+  if (allowed) return { address: addresses[0]!.address, name, allowed };
   const open = addresses.find((each) => isPublic(each.address));
   return addresses.every((each) => isPublic(each.address)) && open !== undefined
-    ? { address: open.address }
+    ? { address: open.address, name, allowed }
     : { refused: "a private address" };
 };
 
@@ -150,9 +199,33 @@ const proxyConnection =
           outside.on("connect", () => {
             joined = true;
             inside.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-            if (rest.length > 0) outside.write(rest);
-            inside.pipe(outside).pipe(inside);
+            if (only === undefined || vetted.allowed) {
+              if (rest.length > 0) outside.write(rest);
+              inside.pipe(outside).pipe(inside);
+              inside.resume();
+              return;
+            }
+            // A narrowed tunnel opens only once its TLS names the host it vetted.
+            let hello = rest;
+            const check = () => {
+              const name = hello.length > HELLO_MAX ? null : serverNameOf(hello);
+              if (name === undefined) return;
+              inside.removeListener("data", onHello);
+              if (name !== vetted.name) {
+                inside.destroy();
+                outside.destroy();
+                return;
+              }
+              outside.write(hello);
+              inside.pipe(outside).pipe(inside);
+            };
+            const onHello = (chunk: Buffer) => {
+              hello = Buffer.concat([hello, chunk]);
+              check();
+            };
+            inside.on("data", onHello);
             inside.resume();
+            check();
           });
         })
         .catch(() => refuse("502 Bad Gateway"));
@@ -198,7 +271,7 @@ const listen = (door: string, file: string, handle: (socket: net.Socket) => void
  * which a suite folder inside a worktree doesn't. `allow` names the `host:port`
  * endpoints the proxy may reach on a private network (`endpoint`), such as a
  * model provider on the developer's own; `only`, when given, narrows the
- * public internet to those hosts and their subdomains.
+ * public internet to those exact hosts, reached over TLS that names them.
  */
 export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   readonly instancePort: number;

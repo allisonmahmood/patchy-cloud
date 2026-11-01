@@ -1,5 +1,6 @@
 import { NodeFileSystem, NodeHttpServer, NodePath, NodeServices } from "@effect/platform-node";
 import net from "node:net";
+import tls from "node:tls";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,7 +23,7 @@ import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js"
 import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
-import { among, isPublic, openNetwork } from "./network.js";
+import { among, isPublic, openNetwork, serverNameOf } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
 import { Expectation, ranks } from "./calibrate.js";
 import { closed, copySource, masksIn, meanScores, splits, taskBrief } from "./judges.js";
@@ -161,22 +162,49 @@ describe("the sandbox's proxy", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
   );
 
-  it("narrows a judge's network to its providers' hosts, by name", () => {
-    const only = ["anthropic.com", "openai.com"];
+  it("narrows a judge's network to its providers' exact hosts", () => {
+    const only = ["api.anthropic.com", "chatgpt.com"];
     expect(among("api.anthropic.com", only)).toBe(true);
-    expect(among("openai.com", only)).toBe(true);
-    expect(among("raw.githubusercontent.com", only)).toBe(false);
-    expect(among("anthropic.com.example.org", only)).toBe(false);
+    expect(among("chatgpt.com", only)).toBe(true);
+    expect(among("cookbook.openai.com", only)).toBe(false);
+    expect(among("api.anthropic.com.example.org", only)).toBe(false);
     expect(among("160.79.104.10", only)).toBe(false);
     expect(among("raw.githubusercontent.com", undefined)).toBe(true);
   });
+
+  it.effect("reads the server name a real TLS client asks for, and nothing else", () =>
+    Effect.gen(function* () {
+      // The first bytes Node's own TLS client sends, as a tunnel would see them.
+      const hello = yield* Effect.promise(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            const server = net.createServer((socket) =>
+              socket.once("data", (chunk: Buffer) => {
+                resolve(chunk);
+                socket.destroy();
+                server.close();
+              })
+            );
+            server.listen(0, "127.0.0.1", () => {
+              const { port } = server.address() as net.AddressInfo;
+              tls
+                .connect({ host: "127.0.0.1", port, servername: "api.anthropic.com" })
+                .on("error", () => {});
+            });
+          })
+      );
+      expect(serverNameOf(hello)).toBe("api.anthropic.com");
+      expect(serverNameOf(hello.subarray(0, 40))).toBeUndefined();
+      expect(serverNameOf(Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))).toBeNull();
+    })
+  );
 
   it.effect("refuses a judge's CONNECT to the public repo before looking it up", () =>
     Effect.gen(function* () {
       const network = yield* openNetwork({
         instancePort: 1,
         allow: [],
-        only: ["anthropic.com"],
+        only: ["api.anthropic.com"],
         node: "/usr/bin/node"
       });
       const reply = yield* Effect.promise(
