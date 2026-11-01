@@ -13,7 +13,7 @@
  *   pnpm dev film <person> <flow>        a flow recorded before and after, as mp4
  *   pnpm dev transcript <script>         CLI lines run before and after, compared
  *   pnpm dev trial "<task>"              a fresh agent tries a task before and after
- *   pnpm dev eval --only-head            builders take the eval suite in sandboxes, graded
+ *   pnpm dev eval [--base <ref>]         builders take the eval suite at base and HEAD, graded
  *   pnpm dev down             stop everything and delete everything up made
  *
  * A start or reset first bundles the shell broker (nothing else compiles it,
@@ -1706,9 +1706,12 @@ const CliSurface = Layer.mergeAll(
   })
 );
 
-class EvalNeedsHead extends Schema.TaggedError<EvalNeedsHead>()("EvalNeedsHead", {}) {
+class EvalBaseAndHeadOnly extends Schema.TaggedError<EvalBaseAndHeadOnly>()(
+  "EvalBaseAndHeadOnly",
+  {}
+) {
   override get message() {
-    return "Comparing against a base isn't built yet (#1143). Pass --only-head to run the suite at HEAD.";
+    return "--base and --only-head contradict each other: pick a base to compare against, or run HEAD alone.";
   }
 }
 
@@ -1747,9 +1750,10 @@ const evalCommand = Command.make(
   "eval",
   {
     onlyHead: Flag.Boolean("only-head").pipe(
-      Flag.withDescription("Run the suite at HEAD alone; comparing against a base comes later"),
+      Flag.withDescription("Run the suite at HEAD alone, with no base to compare against"),
       Flag.withDefault(false)
     ),
+    base: baseFlag,
     tasks: Flag.String("tasks").pipe(
       Flag.withDescription("Comma-separated task ids; every task that isn't held out when omitted"),
       Flag.optional
@@ -1773,9 +1777,9 @@ const evalCommand = Command.make(
       Flag.withDefault(false)
     )
   },
-  Effect.fn(function* ({ onlyHead, tasks, builders, repeats, concurrency, json }) {
+  Effect.fn(function* ({ onlyHead, base, tasks, builders, repeats, concurrency, json }) {
     const root = yield* worktree;
-    if (!onlyHead) return yield* new EvalNeedsHead();
+    if (onlyHead && Option.isSome(base)) return yield* new EvalBaseAndHeadOnly();
     if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10)
       return yield* new InvalidBudget({ flag: "repeats", given: repeats, max: 10 });
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 12)
@@ -1791,10 +1795,14 @@ const evalCommand = Command.make(
           (ids) => TASKS.filter((task) => ids.includes(task.id))
         );
     const pickedBuilders = yield* choices("builders", builders, BUILDER_IDS);
-    const commits = yield* resolveCommits(root, { base: Option.none(), baseBranch: Option.none() });
+    const commits = yield* resolveCommits(root, { base, baseBranch: Option.none() });
     if (commits.dirty)
       yield* Console.error(
         `Uncommitted changes aren't included: the suite runs ${commits.after.sha.slice(0, 7)}.`
+      );
+    if (!onlyHead && commits.before.sha === commits.after.sha)
+      yield* Console.error(
+        "Base and head are the same commit: every difference in this scorecard is noise between runs."
       );
     const {
       dir,
@@ -1802,7 +1810,8 @@ const evalCommand = Command.make(
       json: card
     } = yield* runSuite({
       root,
-      commit: commits.after,
+      head: commits.after,
+      base: onlyHead ? Option.none() : Option.some(commits.before),
       tasks: picked,
       builders: pickedBuilders,
       repeats,
@@ -1812,7 +1821,7 @@ const evalCommand = Command.make(
   }, userFacing)
 ).pipe(
   Command.withDescription(
-    "Give the eval suite's tasks to sandboxed builders on an evidence instance, grade what they publish, and write a scorecard"
+    "Give the eval suite's tasks to sandboxed builders at the base and HEAD (or HEAD alone), grade what they publish, and write a scorecard comparing them"
   )
 );
 

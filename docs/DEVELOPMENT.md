@@ -467,8 +467,10 @@ words, goes to each **builder** a number of times, and what the builder
 publishes is graded. The builders are deliberately not the most capable
 settings: Claude Code with Sonnet 5.5 at `--effort high` (`sonnet`) and Codex
 with GPT-6.1 Terra at `model_reasoning_effort=high` (`terra`), each in its
-real CLI, headless. For now it runs `HEAD` alone (`--only-head`); comparing
-against a base and judging the code are #1143.
+real CLI, headless. It runs each task on both sides, the base commit and
+`HEAD`, and shows each figure as base → head; `--only-head` runs `HEAD` alone.
+The base is where `HEAD` left `origin/main`, or `--base <ref>`. Judging the
+code is #1143.
 
 - **The sandbox.** Each builder runs in `bwrap`: the system read-only, a
   private `/tmp`, and a HOME of the run's own at `/home/builder`. Nothing else
@@ -483,9 +485,14 @@ against a base and judging the code are #1143.
   proxy (`HTTPS_PROXY`) to the public internet that refuses loopback, private,
   shared and link-local addresses. Your Codex model provider's endpoint, its
   host and port, when you use one, is the one private address it lets through.
-- **The instance.** One evidence instance at `HEAD`, on `team`, whose personas
-  door is keyed: only the grader can sign anyone in, so builders verify through
-  `patchy dev`'s own viewers, as builders can in production.
+- **The instances.** One evidence instance per side, on `team`, each with its
+  own network, builder home and database, whose personas door is keyed: only
+  the grader can sign anyone in, so builders verify through `patchy dev`'s own
+  viewers, as builders can in production. Both sides must come up, and a side
+  whose door answers without the key (a commit from before the keyed door)
+  stops the suite before any setup. Runs alternate sides, and which side goes
+  first alternates by repeat. Tasks, fixtures and checks come from this
+  checkout for both sides, so they're graded alike.
 - **A builder's HOME.** A template per suite, set up as a person sets up:
   Node from its release tarball, pnpm, Claude Code and Codex from npm (pinned
   to the versions this machine has, `latest` for one it lacks, and recorded),
@@ -510,9 +517,10 @@ against a base and judging the code are #1143.
   or the model provider failed: retried once, and never counted against a
   builder. A run passes when it built and every check passed.
 
-Flags: `--tasks` (comma-separated ids; every task that isn't held out by
-default), `--builders` (`sonnet,terra`), `--repeats` (3), `--concurrency` (4),
-`--json`. Tasks are modules under `scripts/dev/src/eval/tasks/`, listed in its
+Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
+task that isn't held out by default), `--builders` (`sonnet,terra`),
+`--repeats` (3), `--concurrency` (4), `--json`. A base that is the same commit
+as `HEAD` is allowed and says so: its differences are noise between runs. Tasks are modules under `scripts/dev/src/eval/tasks/`, listed in its
 `index.ts`; `task.ts` says what one holds. Everything lands in
 `.local/evals/<suite>/`: per run its raw stream, its HOME (the working folder
 and the published source), screenshots and `run.json`, then `scorecard.md` and

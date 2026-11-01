@@ -1,7 +1,7 @@
 /**
  * `pnpm dev eval`: a suite of tasks, each given to each builder a number of
- * times, on an evidence instance at `HEAD` whose personas door only the grader
- * can open. Per run: its own company and people, a copy of the side's template
+ * times on each side, the base commit and `HEAD` (or `HEAD` alone), each side
+ * an evidence instance whose personas door only the grader can open. Per run: its own company and people, a copy of the side's template
  * HOME, the builder in its sandbox within the task's minutes, grading, and its
  * people retired. A run whose setup or model provider failed is retried once.
  *
@@ -21,8 +21,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { HttpClient } from "effect/http";
 import type * as SqlClient from "effect/sql/SqlClient";
-import { evidence, type Commit } from "../evidence.js";
+import { evidence, type Commit, type Side } from "../evidence.js";
 import { realNode } from "../runtimes.js";
 import { makeSanitizer } from "../sanitize.js";
 import { loadScenario, publisherToken } from "../scenario.js";
@@ -32,7 +33,7 @@ import { checkBrowser, grade } from "./grade.js";
 import { fileSecrets, prepareHome, prepareTemplate, readSignIns, type SignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { type Network, openNetwork } from "./network.js";
-import { checkSandbox, readToolchain } from "./sandbox.js";
+import { checkSandbox, readToolchain, type Toolchain } from "./sandbox.js";
 import { classify, RunRecord, Scorecard, scorecardMarkdown, scorecardRun } from "./scorecard.js";
 import { type Task, taskPrompt } from "./task.js";
 
@@ -52,22 +53,29 @@ const SIDE_SCENARIO = "team";
 interface Suite {
   readonly root: string;
   readonly dir: string;
+  readonly doorKey: string;
+  readonly signIns: SignIns;
+  /** Secrets read from runs' own credential files after they ended, refreshed tokens included. */
+  readonly seen: Ref.Ref<ReadonlyArray<string>>;
+}
+
+/** One side of the comparison, up for the suite: its instance and what its runs start from. */
+interface SideContext {
+  readonly name: "base" | "head";
   readonly commit: Commit;
   readonly apiUrl: string;
   /** The side's database, where runs are seeded and retired. */
   readonly database: Context.Context<SqlClient.SqlClient>;
-  readonly doorKey: string;
+  /** The side's template HOME: its release's CLI and global skill. */
   readonly template: string;
   readonly network: Network;
-  readonly signIns: SignIns;
-  /** Secrets read from runs' own credential files after they ended, refreshed tokens included. */
-  readonly seen: Ref.Ref<ReadonlyArray<string>>;
 }
 
 interface Planned {
   readonly task: Task;
   readonly builder: Builder;
   readonly repeat: number;
+  readonly side: SideContext;
 }
 
 const short = (text: string, max = 110) => {
@@ -77,7 +85,7 @@ const short = (text: string, max = 110) => {
 
 const progress = (label: string, step: Step) =>
   Console.error(
-    `  ${label.padEnd(18)}  ${(step.tool === "Bash" ? (step.exitCode === null ? step.outcome : `exit ${step.exitCode}`) : step.tool.toLowerCase()).padEnd(7)}  ${short(step.input)}`
+    `  ${label.padEnd(24)}  ${(step.tool === "Bash" ? (step.exitCode === null ? step.outcome : `exit ${step.exitCode}`) : step.tool.toLowerCase()).padEnd(7)}  ${short(step.input)}`
   );
 
 /** One run, start to finish. Setup failures come back as an `infra` record, never as an error. */
@@ -88,13 +96,13 @@ const runOne = Effect.fn("Eval.runOne")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { task, builder, repeat } = planned;
+  const { task, builder, repeat, side } = planned;
   const run = randomId(6);
-  const label = `${task.id}/${builder.id}/${repeat}${attempt > 1 ? "+" : ""}`;
+  const label = `${side.name}:${task.id}/${builder.id}/${repeat}${attempt > 1 ? "+" : ""}`;
   const runDir = path.join(
     suite.dir,
     "runs",
-    `${task.id}-${builder.id}-${repeat}${attempt > 1 ? `-retry` : ""}`
+    `${side.name}-${task.id}-${builder.id}-${repeat}${attempt > 1 ? `-retry` : ""}`
   );
   yield* fs.makeDirectory(runDir, { recursive: true });
   const home = path.join(runDir, "home");
@@ -105,17 +113,17 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     model: builder.model,
     effort: builder.effort,
     repeat,
-    side: "head" as const,
-    commit: suite.commit.sha
+    side: side.name,
+    commit: side.commit.sha
   };
   const { scenario } = yield* loadScenario(suite.root, task.scenario);
   const setUp = yield* Effect.gen(function* () {
-    const identities = yield* seedRun(scenario, run).pipe(Effect.provideContext(suite.database));
+    const identities = yield* seedRun(scenario, run).pipe(Effect.provideContext(side.database));
     const spec = yield* prepareHome({
-      template: suite.template,
+      template: side.template,
       home,
-      apiUrl: suite.apiUrl,
-      network: suite.network,
+      apiUrl: side.apiUrl,
+      network: side.network,
       token: identities.token,
       builder,
       signIns: suite.signIns
@@ -123,7 +131,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     return { identities, spec };
   }).pipe(Effect.result);
   if (setUp._tag === "Failure") {
-    yield* Console.error(`  ${label.padEnd(18)}  setup failed: ${setUp.failure.message}`);
+    yield* Console.error(`  ${label.padEnd(24)}  setup failed: ${setUp.failure.message}`);
     return {
       ...base,
       outcome: "infra",
@@ -147,7 +155,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     ];
     if (found.length > 0) yield* Ref.update(suite.seen, (known) => [...known, ...found]);
   }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
-  yield* Console.error(`  ${label.padEnd(18)}  building as ${identities.publisher.email}`);
+  yield* Console.error(`  ${label.padEnd(24)}  building as ${identities.publisher.email}`);
   const stream = yield* fs.open(path.join(runDir, "stream.jsonl"), { flag: "w" });
   const encoder = new TextEncoder();
   const log = yield* runBuilder({
@@ -164,12 +172,12 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     runDir,
     people: identities.people,
     publisher: identities.publisher,
-    door: { apiUrl: suite.apiUrl, key: suite.doorKey }
+    door: { apiUrl: side.apiUrl, key: suite.doorKey }
   });
   // The grader's own trouble gets one more try before the run counts as infrastructure.
   const first = yield* grading;
   const graded = first.infra === null ? first : yield* grading;
-  yield* Effect.ignore(retireRun(scenario, run).pipe(Effect.provideContext(suite.database)));
+  yield* Effect.ignore(retireRun(scenario, run).pipe(Effect.provideContext(side.database)));
   yield* collect;
   const { outcome, detail } = classify(log, graded);
   const pass = outcome === "built" && graded.checks.every((check) => check.status === "pass");
@@ -187,7 +195,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
   } satisfies RunRecord;
   yield* fs.writeFileString(path.join(runDir, "run.json"), encodeRecord(record));
   yield* Console.error(
-    `  ${label.padEnd(18)}  ${outcome}${pass ? ", passed" : ""} in ${(log.seconds / 60).toFixed(1)} min: ${graded.checks.map((check) => `${check.name} ${check.status}`).join(", ")}`
+    `  ${label.padEnd(24)}  ${outcome}${pass ? ", passed" : ""} in ${(log.seconds / 60).toFixed(1)} min: ${graded.checks.map((check) => `${check.name} ${check.status}`).join(", ")}`
   );
   return record;
 });
@@ -200,10 +208,83 @@ const runWithRetry = (suite: Suite, planned: Planned) =>
     )
   );
 
-/** Runs the suite at `HEAD` and writes its scorecard; returns the scorecard and where it is. */
+export class BaseUnavailable extends Schema.TaggedError<BaseUnavailable>()("BaseUnavailable", {
+  reason: Schema.String
+}) {
+  override get message() {
+    return `The base side couldn't come up, so there's nothing to compare against: ${this.reason} Fix the base, pick another with --base, or run --only-head.`;
+  }
+}
+
+export class DoorOpen extends Schema.TaggedError<DoorOpen>()("DoorOpen", {
+  side: Schema.String,
+  commit: Schema.String
+}) {
+  override get message() {
+    return `The ${this.side} instance (${this.commit.slice(0, 7)}) signs anyone in without the eval's key: its commit predates the keyed personas door, so its builders could see other runs' people. Pick a base that has it.`;
+  }
+}
+
+/** Whether a side's personas door refuses a request without the key, as every eval instance's must. */
+const checkDoor = Effect.fn("Eval.checkDoor")(function* (name: "base" | "head", side: Side) {
+  const status = yield* HttpClient.get(`${side.served.apiUrl}/dev/sign-in`).pipe(
+    Effect.map((response) => response.status),
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => 0)
+  );
+  if (status !== 403) return yield* new DoorOpen({ side: name, commit: side.commit.sha });
+});
+
+/**
+ * A side, up and ready for runs: its network, its template HOME (its own
+ * release's CLI and global skill on the shared toolchain), its database.
+ */
+const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
+  readonly name: "base" | "head";
+  readonly side: Side;
+  readonly dir: string;
+  readonly toolchain: Toolchain;
+  readonly builders: ReadonlyArray<Builder>;
+  readonly signIns: SignIns;
+  readonly token: string;
+}) {
+  const path = yield* Path.Path;
+  const network = yield* openNetwork({
+    node: (yield* realNode()).execPath,
+    instancePort: Number(new URL(input.side.served.apiUrl).port),
+    allow: input.signIns.privateEndpoints
+  });
+  const template = path.join(input.dir, "homes", input.name);
+  yield* Console.error(`  ${input.name.padEnd(6)}  setting up a builder's home`);
+  const installed = yield* prepareTemplate({
+    dir: template,
+    apiUrl: input.side.served.apiUrl,
+    network,
+    toolchain: input.toolchain,
+    builders: input.builders,
+    token: input.token
+  });
+  const context: SideContext = {
+    name: input.name,
+    commit: input.side.commit,
+    apiUrl: input.side.served.apiUrl,
+    database: yield* Layer.build(sideSql(yield* sideDatabase(input.side.clone))),
+    template,
+    network
+  };
+  return { context, installed };
+});
+
+/**
+ * Runs the suite on each side, `base` then `head`, or `head` alone when `base`
+ * is none, and writes its scorecard; returns the scorecard and where it is.
+ * Runs alternate sides, and which side goes first alternates by repeat, so
+ * neither side always meets a busier machine.
+ */
 export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   readonly root: string;
-  readonly commit: Commit;
+  readonly head: Commit;
+  readonly base: Option.Option<Commit>;
   readonly tasks: ReadonlyArray<Task>;
   readonly builders: ReadonlyArray<BuilderId>;
   readonly repeats: number;
@@ -217,7 +298,7 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
   const toolchain = yield* readToolchain(input.root);
   const signIns = yield* readSignIns(builders);
   const startedAt = DateTime.formatIso(yield* DateTime.now);
-  const suiteId = `${startedAt.replace(/[-:]/g, "").replace(/\..*$/, "")}-${input.commit.sha.slice(0, 7)}`;
+  const suiteId = `${startedAt.replace(/[-:]/g, "").replace(/\..*$/, "")}-${input.head.sha.slice(0, 7)}`;
   const dir = path.join(input.root, ".local", "evals", suiteId);
   yield* fs.makeDirectory(dir, { recursive: true });
   // Every task's scenario is loaded up front, so a bad one fails before any instance starts.
@@ -231,56 +312,47 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
         root: input.root,
         command: "eval",
         scenario: SIDE_SCENARIO,
-        before: Option.none(),
-        after: input.commit,
+        before: input.base,
+        after: input.head,
         runDir: dir,
         personasKey: doorKey
       });
-      const side = sides.after;
-      const network = yield* openNetwork({
-        node: (yield* realNode()).execPath,
-        instancePort: Number(new URL(side.served.apiUrl).port),
-        allow: signIns.privateEndpoints
-      });
-      const template = path.join(dir, "homes", "head");
-      yield* Console.error("  head    setting up a builder's home");
-      const installed = yield* prepareTemplate({
-        dir: template,
-        apiUrl: side.served.apiUrl,
-        network,
-        toolchain,
-        builders,
-        token: publisherToken(sideScenario)
-      });
-      const suite: Suite = {
-        root: input.root,
-        dir,
-        commit: input.commit,
-        apiUrl: side.served.apiUrl,
-        database: yield* Layer.build(sideSql(yield* sideDatabase(side.clone))),
-        doorKey,
-        template,
-        network,
-        signIns,
-        seen
-      };
+      if (sides.before.status === "unavailable")
+        return yield* new BaseUnavailable({ reason: sides.before.reason });
+      // Both doors before any setup: a side that would show builders other runs' people never runs.
+      yield* checkDoor("head", sides.after);
+      if (sides.before.status === "served") yield* checkDoor("base", sides.before.side);
+      const common = { dir, toolchain, builders, signIns, token: publisherToken(sideScenario) };
+      const head = yield* setUpSide({ ...common, name: "head", side: sides.after });
+      const base =
+        sides.before.status === "served"
+          ? (yield* setUpSide({ ...common, name: "base", side: sides.before.side })).context
+          : null;
+      const suite: Suite = { root: input.root, dir, doorKey, signIns, seen };
       // Repeats outermost, so an interrupted suite has every task and builder at least once.
       const planned: Array<Planned> = [];
       for (let repeat = 1; repeat <= input.repeats; repeat++)
         for (const task of input.tasks)
-          for (const builder of builders) planned.push({ task, builder, repeat });
+          for (const builder of builders)
+            for (const side of base === null
+              ? [head.context]
+              : repeat % 2 === 1
+                ? [base, head.context]
+                : [head.context, base])
+              planned.push({ task, builder, repeat, side });
       yield* Console.error(
         `Running ${planned.length} build${planned.length === 1 ? "" : "s"}, ${input.concurrency} at a time`
       );
       const records = yield* Effect.forEach(planned, (each) => runWithRetry(suite, each), {
         concurrency: input.concurrency
       });
-      return { installed, records };
+      return { installed: head.installed, records };
     })
   );
   const card: Scorecard = {
     suite: suiteId,
-    commit: input.commit.sha,
+    commit: input.head.sha,
+    base: Option.getOrNull(Option.map(input.base, (commit) => commit.sha)),
     startedAt,
     toolchain: installed,
     runs: records.map(scorecardRun)

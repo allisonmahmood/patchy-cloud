@@ -15,7 +15,7 @@ import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { isPublic, openNetwork } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
-import { classify } from "./scorecard.js";
+import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
@@ -367,6 +367,15 @@ describe("what a run is", () => {
     expect(classify(log(), graded(true, "The patch's log couldn't be read.")).outcome).toBe(
       "infra"
     );
+  });
+
+  it("shows a figure as base → head with its change", () => {
+    const tenths = (value: number) => value.toFixed(1);
+    expect(shift(2.1, 1.8, tenths)).toBe("2.1 → 1.8 (−0.3)");
+    expect(shift(1, 3, tenths)).toBe("1.0 → 3.0 (+2.0)");
+    expect(shift(4, 4, tenths)).toBe("4.0 → 4.0");
+    expect(shift(null, 4, tenths)).toBe("– → 4.0");
+    expect(shift(null, null, tenths)).toBe("–");
   });
 
   it("grades the most recently published live patch", () => {
