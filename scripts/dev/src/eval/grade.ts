@@ -232,6 +232,20 @@ const pass = (name: string, detail: string | null = null): CheckResult => ({
   detail
 });
 const fail = (name: string, detail: string): CheckResult => ({ name, status: "fail", detail });
+/**
+ * A task check's result: its own outcome, failed when its pages logged
+ * anything that counts against them (`watchErrors`), even when it worked.
+ */
+export const checkResult = (
+  name: string,
+  outcome: CheckOutcome,
+  logged: ReadonlyArray<string>
+): CheckResult =>
+  !outcome.ok
+    ? fail(name, outcome.reason)
+    : logged[0] !== undefined
+      ? fail(name, `It worked, but the page logged: ${logged[0].split("\n")[0]}`)
+      : pass(name, outcome.note ?? null);
 const skipped = (name: string, detail: string): CheckResult => ({
   name,
   status: "skipped",
@@ -504,13 +518,7 @@ const inBrowser = (input: {
           if (state.signInRefused) throw new Error("sign-in");
           const logged = views.flatMap((view) => view.errors);
           await Promise.all(views.map((view) => view.close().catch(() => undefined)));
-          results.push(
-            !outcome.ok
-              ? fail(check.name, outcome.reason)
-              : logged.length > 0
-                ? fail(check.name, `It worked, but the page logged: ${logged[0]!.split("\n")[0]}`)
-                : pass(check.name, outcome.note ?? null)
-          );
+          results.push(checkResult(check.name, outcome, logged));
         }
         return { unready, browserErrors, results, screenshots };
       } finally {

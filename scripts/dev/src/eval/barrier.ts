@@ -16,12 +16,15 @@
  * including an operation or handler the grader doesn't know: the barrier
  * fails closed.
  *
- * Accepted limit: a write that looking schedules to fire more than about 2 s
- * later can land in a following deliberate window. At the network a write
- * can't be traced to the press that scheduled it, so the barrier only waits
- * for looking to go quiet before it lowers. Pages don't schedule writes like
- * that in practice, and the state checks around each deliberate step still
- * catch a change to a request's decision the step didn't cause.
+ * Accepted limit: a write that looking schedules for later can land in a
+ * following deliberate window. At the network a write can't be traced to
+ * the press that scheduled it, so before lowering the barrier only waits
+ * until 2 s have passed since its last refusal, and with no refusal yet it
+ * lowers at once. A timer of any length set by looking, even one shorter
+ * than 2 s, can fire after the barrier is lowered and its write goes through.
+ * Pages don't schedule writes like that in practice, and the state checks
+ * around each deliberate step still catch a change to a request's decision
+ * the step didn't cause.
  */
 import type { Page } from "@playwright/test";
 import { GraderTrouble, type HandlerKind } from "./task.js";
@@ -69,65 +72,66 @@ export const writes = (
 /** What every refusal says, beside which write it was. */
 export const MARKER = "refused by the eval grader's write barrier";
 
-/** What a refused write answers, as the runtime refuses one: its words say which write it was. */
-const refusal = (id: number, what: string) =>
-  JSON.stringify({
-    ok: false,
-    source: "patchy",
-    code: "access_denied",
-    error: `Write #${id} (${what}) ${MARKER}: the grader was only looking.`
-  });
+/** A token new to one refusal, so its words can be told from anything a page writes itself. */
+const nonce = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
 
-/** A refusal's words wherever a page prints them: its number, and what it refused. */
-const REFUSAL =
-  /Write #(\d+) \(([^()\n]*)\) refused by the eval grader's write barrier: the grader was only looking\./g;
+/** The message a refused write's error carries: its number, what it refused, and its own token. */
+const refusalMessage = (id: number, what: string) =>
+  `Write #${id} (${what}) ${MARKER} [eval-refusal ${nonce()}]: the grader was only looking.`;
+
+/** What a refused write answers, as the runtime refuses one. */
+const refusal = (message: string) =>
+  JSON.stringify({ ok: false, source: "patchy", code: "access_denied", error: message });
+
 /**
  * A stack frame as V8 prints one, and only the frame: a console line joins
  * the next error's words onto the last frame of the one before, and those
  * stay. A frame of any other shape stays too, and so counts.
  */
-const FRAME =
-  /^[ \t]*at (?:(?:async |new )?[^\s()]+(?: \[as [^\]\n]+\])? \([^()\n]*\)|[^\s()]+:\d+:\d+)/gm;
-/** How errors print around a message: class names, an unhandled rejection's prefix, the refusal's code. */
-const PRINTING = /\b(?:Uncaught|in promise|PatchyError|Error|access_denied|patchy)\b/g;
+const FRAME = String.raw`[ \t]*at (?:(?:async |new )?[^\s()]+(?: \[as [^\]\n]+\])? \([^()\n]*\)|[^\s()]+:\d+:\d+)`;
+const ANY_FRAME = new RegExp(`^${FRAME}`, "gm");
 /** Where a refused write stands in what a page logged beside it. */
 const REFUSED = "[a write the grader refused]";
 /** How long after a refusal the page's report of it still counts as one. */
 const REPORT_MS = 5_000;
 
 /**
- * Reads something a page logged for the refusals it reports: each quoted
- * refusal the barrier made (`made` knows it by number, and it refused the
- * same write) no longer than a moment before `now` stands as one
- * placeholder, and stack frames go. Undefined when it reports
- * none. `only` when nothing else is left but how errors print and the
- * names of the writes it refused: then the whole report is the page's own
- * account of those refusals, and anything else it says counts.
+ * One refusal's own text wherever a page prints it: its message, the error
+ * class printed right before it (`PatchyError: `), and the stack frames
+ * right after it. Nothing else is its.
  */
-export const refusalReport = (
-  text: string,
-  made: (id: number) => { readonly at: number; readonly what: string } | undefined,
-  now: number
-) => {
-  const refused = new Set<string>();
+const ownText = (message: string) =>
+  new RegExp(
+    String.raw`(?:[\w$]*Error: )?${message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\n${FRAME})*`,
+    "g"
+  );
+
+/**
+ * Reads something a page logged for the refusals in `live`, the messages of
+ * refusals the barrier made moments ago: each one's own text stands as a
+ * placeholder. Undefined when it reports none of them. `only` when nothing
+ * but whitespace and punctuation is left beside them: then the whole entry
+ * is the page's report of those refusals, and anything else in it counts.
+ * `rest` is the entry as a failure shows it, on one line without its frames.
+ */
+export const refusalReport = (text: string, live: ReadonlyArray<string>) => {
   let quoted = false;
-  const rest = text
-    .replace(REFUSAL, (whole, id: string, what: string) => {
-      const refusal = made(Number(id));
-      if (refusal?.what !== what || now < refusal.at || now - refusal.at > REPORT_MS) return whole;
-      // A handler or operation the page may print beside it; a generic label is part of the words.
-      if (/^[\w.]+$/.test(what)) refused.add(what);
-      quoted = true;
-      return REFUSED;
-    })
-    .replace(FRAME, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const marked = live.reduce(
+    (entry, message) =>
+      entry.replace(ownText(message), () => {
+        quoted = true;
+        return REFUSED;
+      }),
+    text
+  );
   if (!quoted) return undefined;
-  const left = [...refused, REFUSED]
-    .reduce((remaining, name) => remaining.replaceAll(name, ""), rest)
-    .replace(PRINTING, "");
-  return { only: /^[\s\p{P}\p{S}]*$/u.test(left), rest };
+  return {
+    only: /^[\s\p{P}]*$/u.test(marked.replaceAll(REFUSED, "")),
+    rest: marked.replace(ANY_FRAME, "").replace(/\s+/g, " ").trim()
+  };
 };
 
 /** How a call's body reads: its operation, and the handler a server call names. */
@@ -178,9 +182,9 @@ const SETTLE_CAP_MS = 10_000;
 const POLL_MS = 100;
 /** How soon after a refusal an error the page logs is reported as following it. */
 const AFTER_MS = 2_000;
-/** The browser's own line for a request answered 403, which a refused file write is. */
+/** The browser's own line for a request answered 403, which a refused file write is, and nothing else. */
 const FORBIDDEN_LINE =
-  /^Failed to load resource: the server responded with a status of 403\b[^\n]*$/;
+  /^Failed to load resource: the server responded with a status of 403(?: \([^()\n]*\))?$/;
 
 /** A request as the barrier reads it. */
 export interface Sent {
@@ -222,8 +226,8 @@ export interface Barrier {
    */
   readonly counted: (text: string, url: string | undefined) => string | undefined;
   /**
-   * Runs a deliberate step with the barrier down, once looking has gone
-   * quiet. However the step ends, it then waits until every write the page
+   * Runs a deliberate step with the barrier down, once 2 s have passed
+   * since the last refusal. However the step ends, it then waits until every write the page
    * sent meanwhile has been answered and nothing new has been sent for a
    * moment, before raising it again. Writes still unanswered past an
    * action's deadline fail grading as the grader's trouble, since looking on
@@ -244,32 +248,34 @@ export const raiseBarrier = async (
 ): Promise<Barrier> => {
   let lowered = false;
   let lastRefusal = -Infinity;
-  /** Each refusal by its number: when it was made, and what it refused. */
-  const refusals = new Map<number, { readonly at: number; readonly what: string }>();
+  /** Each refusal: when it was made, and the message its error carries. */
+  const refusals: Array<{ readonly at: number; readonly message: string }> = [];
   const refusedFiles: Array<{ readonly url: string; readonly at: number }> = [];
   await page.route("**/api/runtime/**", async (route) => {
     const request = route.request();
     const body = request.postData() ?? "";
     if (lowered || !requestWrites({ url: request.url(), method: request.method(), body }, handlers))
       return route.fallback();
-    const id = refusals.size + 1;
+    const id = refusals.length + 1;
     lastRefusal = performance.now();
     const call = new URL(request.url()).pathname.endsWith("/api/runtime/call");
     const sent = call ? callOf(body) : undefined;
     const what = sent?.handler ?? sent?.op ?? (call ? "a call" : "a file");
-    refusals.set(id, { at: lastRefusal, what });
+    const message = refusalMessage(id, what);
+    refusals.push({ at: lastRefusal, message });
     if (!call) refusedFiles.push({ url: request.url(), at: lastRefusal });
     await route
       .fulfill({
         status: call ? 200 : 403,
         contentType: "application/json",
-        body: refusal(id, what)
+        body: refusal(message)
       })
       .catch(() => undefined);
   });
   /**
-   * Waits until looking has gone quiet, with no write refused for a moment,
-   * so a write it scheduled lands refused rather than in the deliberate step.
+   * Waits until 2 s have passed since the barrier's last refusal, so a write
+   * looking keeps retrying lands refused rather than in the deliberate step.
+   * With no refusal yet it doesn't wait (see the accepted limit above).
    */
   const quietened = async () => {
     for (let waited = 0; performance.now() - lastRefusal < QUIET_MS; waited += POLL_MS) {
@@ -281,7 +287,7 @@ export const raiseBarrier = async (
     }
   };
   return {
-    refused: () => refusals.size,
+    refused: () => refusals.length,
     counted: (text, url) => {
       const now = performance.now();
       if (url !== undefined && FORBIDDEN_LINE.test(text)) {
@@ -293,7 +299,10 @@ export const raiseBarrier = async (
           return undefined;
         }
       }
-      const report = refusalReport(text, (id) => refusals.get(id), now);
+      const live = refusals
+        .filter((made) => made.at <= now && now - made.at <= REPORT_MS)
+        .map((made) => made.message);
+      const report = refusalReport(text, live);
       if (report?.only === true) return undefined;
       const shown = report?.rest ?? text;
       return now - lastRefusal < AFTER_MS

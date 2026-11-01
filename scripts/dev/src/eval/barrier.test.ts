@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off — The barrier is Playwright Promise code, and the fake page keeps its time on vitest's fake timers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type BarrierPage, raiseBarrier, requestWrites, type Sent, writes } from "./barrier.js";
+import { checkResult } from "./grade.js";
 import { isGraderTrouble } from "./task.js";
 
 describe("what the barrier refuses", () => {
@@ -208,59 +209,86 @@ describe("what a page logs beside a refused write", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-  /** A barrier that has just refused one discard (#1) and nothing else. */
+  /** A barrier that has just refused one write, and the message that refusal's error carries. */
   const refusedOnce = async (sent = DISCARD) => {
     const { page, send } = fakePage();
     const barrier = await raiseBarrier(page, HANDLERS);
     const { answer } = await send(sent);
-    return { barrier, answer };
+    const message = String(JSON.parse(answer ?? "{}").error);
+    /** The receipt check's result had it worked and its page logged `entries`. */
+    const receipt = (...entries: ReadonlyArray<string>) =>
+      checkResult(
+        "Ben asks with a receipt, and Ada opens it",
+        { ok: true },
+        entries.flatMap((entry) => barrier.counted(entry, undefined) ?? [])
+      );
+    return { barrier, answer, message, receipt };
   };
-  // As Chromium prints them: errors logged together share a line, the second after the first's last frame.
-  const REPORT =
-    "PatchyError: Write #1 (files.discard) refused by the eval grader's write barrier: the grader was only looking.\n    at answer (about:srcdoc:14:42)";
-  const BROKEN =
-    "Error: Broken request view: undefined.render\n    at HTMLButtonElement.<anonymous> (about:srcdoc:20:62)";
+  // As Chromium prints them: errors logged together share a line, each after the last frame of the one before.
+  const report = (message: string) => `PatchyError: ${message}\n    at answer (about:srcdoc:14:42)`;
+  const unrelated = (words: string) =>
+    `${words}\n    at HTMLButtonElement.<anonymous> (about:srcdoc:20:62)`;
 
-  it("answers a refused call with words that say which write it was", async () => {
-    const { answer } = await refusedOnce();
-    expect(JSON.parse(answer ?? "{}")).toMatchObject({
+  it("answers a refused call with words that say which write it was, and a token new to it", async () => {
+    const first = await refusedOnce();
+    const second = await refusedOnce();
+    expect(JSON.parse(first.answer ?? "{}")).toMatchObject({
       ok: false,
       source: "patchy",
-      code: "access_denied",
-      error:
-        "Write #1 (files.discard) refused by the eval grader's write barrier: the grader was only looking."
+      code: "access_denied"
+    });
+    expect(first.message).toMatch(
+      /^Write #1 \(files\.discard\) refused by the eval grader's write barrier \[eval-refusal [0-9a-f]{16}\]: the grader was only looking\.$/
+    );
+    expect(second.message).not.toBe(first.message);
+  });
+
+  it("excuses only the page's own report of the refusal: logged, by its message alone, or left unhandled", async () => {
+    const { message, receipt } = await refusedOnce();
+    expect(receipt(report(message))).toMatchObject({ status: "pass" });
+    expect(receipt(message)).toMatchObject({ status: "pass" });
+    expect(receipt(`${report(message)} ${report(message)}`)).toMatchObject({ status: "pass" });
+  });
+
+  it("fails the check on any other error logged beside the refusal, in either order, however few its words", async () => {
+    const { message, receipt } = await refusedOnce();
+    for (const other of [
+      unrelated("Error: Broken request view: undefined.render"),
+      unrelated("Error"),
+      unrelated("Error: access_denied")
+    ])
+      for (const entry of [`${other} ${report(message)}`, `${report(message)} ${other}`])
+        expect(receipt(entry), entry).toMatchObject({ status: "fail" });
+    expect(receipt(unrelated("Error: access_denied"), report(message))).toMatchObject({
+      status: "fail",
+      detail: "It worked, but the page logged: Error: access_denied"
+    });
+    expect(receipt(`Uncaught (in promise) ${report(message)}`)).toMatchObject({ status: "fail" });
+    expect(receipt(`Couldn't mark it seen: ${report(message)}`)).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("Couldn't mark it seen: [a write the grader refused]")
     });
   });
 
-  it("excuses only the page's own report of the refusal, however it prints", async () => {
-    const { barrier } = await refusedOnce();
-    expect(barrier.counted(REPORT, undefined)).toBeUndefined();
-    expect(barrier.counted(`Uncaught (in promise) ${REPORT}`, undefined)).toBeUndefined();
-    expect(barrier.counted(`files.discard: ${REPORT}`, undefined)).toBeUndefined();
-  });
-
-  it("counts an unrelated failure reported with the refusal, in either order, and says what it was", async () => {
-    const { barrier } = await refusedOnce();
-    for (const mixed of [`${BROKEN} ${REPORT}`, `${REPORT} ${BROKEN}`]) {
-      const counted = barrier.counted(mixed, undefined);
-      expect(counted).toContain("Broken request view: undefined.render");
-      expect(counted).toContain("[a write the grader refused]");
-    }
-    expect(barrier.counted(`Couldn't mark it seen: ${REPORT}`, undefined)).toContain(
-      "Couldn't mark it seen"
+  it("names the other error when a report mixes it with a refusal", async () => {
+    const { barrier, message } = await refusedOnce();
+    expect(barrier.counted(`${unrelated("Error")} ${report(message)}`, undefined)).toMatch(
+      /^Error \[a write the grader refused\]/
     );
   });
 
-  it("counts a report of a refusal the barrier didn't make, or made for another write, or long ago", async () => {
-    const { barrier } = await refusedOnce();
-    expect(barrier.counted(REPORT.replace("#1", "#2"), undefined)).toBeDefined();
-    expect(
-      barrier.counted(REPORT.replace("files.discard", "requests.approve"), undefined)
-    ).toBeDefined();
+  it("counts a refusal's words the barrier didn't make, or made long ago", async () => {
+    const { message, receipt } = await refusedOnce();
+    expect(receipt(report(message.replace(/[0-9a-f]{16}/, "0".repeat(16))))).toMatchObject({
+      status: "fail"
+    });
+    expect(receipt(report(message.replace(/ \[eval-refusal [0-9a-f]{16}\]/, "")))).toMatchObject({
+      status: "fail"
+    });
     vi.useFakeTimers({ toFake: ["performance"] });
     const late = await refusedOnce();
     vi.advanceTimersByTime(6_000);
-    expect(late.barrier.counted(REPORT, undefined)).toBeDefined();
+    expect(late.receipt(report(late.message))).toMatchObject({ status: "fail" });
   });
 
   it("excuses the browser's own line for a refused file write once, by its URL", async () => {
@@ -269,6 +297,7 @@ describe("what a page logs beside a refused write", () => {
     expect(
       barrier.counted(line, "http://x.localhost/api/runtime/files/p1/ver_1/other.png")
     ).toBeDefined();
+    expect(barrier.counted(`${line} and more`, RECEIPT.url)).toBeDefined();
     expect(barrier.counted(line, RECEIPT.url)).toBeUndefined();
     expect(barrier.counted(line, RECEIPT.url)).toBeDefined();
   });
