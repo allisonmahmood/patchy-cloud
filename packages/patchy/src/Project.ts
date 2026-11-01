@@ -47,7 +47,7 @@ import { requireCurrentCli } from "./ReleaseCheck.js";
 import { processResult } from "./processResult.js";
 import { lookNotices } from "./lookNotices.js";
 import { primitiveReminders } from "./primitiveReminders.js";
-import { runToolchain, typescriptRefusal } from "./toolchainProcess.js";
+import { runToolchain } from "./toolchainProcess.js";
 import { installFailureReason, releaseFromPin, withTarballIntegrity } from "./packagePin.js";
 import { discoverServerModules } from "./serverModules.js";
 
@@ -737,15 +737,13 @@ const refreshRepo = Effect.fn("Project.refreshRepo")(function* (
               message: "Generation returned no SDK capability metadata."
             });
           const addedCapabilities = capabilities.filter(({ id }) => !previousCapabilities.has(id));
-          // An install may move this CLI's own folder aside; the installed release runs the check.
-          const { warnings: viteWarnings } = yield* runToolchain(
+          // An install may move this CLI's own folder aside; the installed release runs the check,
+          // TypeScript included, so an older CLI refreshing into it relays the same warnings.
+          const { warnings: toolchainWarnings } = yield* runToolchain(
             cwd,
             { inspect: release.toolchain },
             path.join(path.dirname(executable), "toolchainChild.js")
           );
-          const typescript = yield* typescriptRefusal(cwd, release.toolchain);
-          const toolchainWarnings =
-            typescript === undefined ? viteWarnings : [...viteWarnings, typescript];
           yield* Output.rememberWarnings(toolchainWarnings);
           // The notice is advisory: without an answer from /api/me it names "The company".
           const lookWarnings = yield* lookNotices(
