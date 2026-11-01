@@ -47,12 +47,22 @@ export interface Target {
 }
 
 /** A person's browser on the target, once its frame is ready. */
+/** What a handler does, by its kind in the published manifest: only a query never writes. */
+export type HandlerKind = "query" | "mutation" | "action";
+
 export interface Opened {
   readonly page: Page;
   /** The patch's own frame. */
   readonly frame: FrameLocator;
   /** Closes this person's browser, as they would close the tab; the check closes any left open. */
   readonly close: () => Promise<void>;
+  /** The kind of each of the target's handlers, by name, from its published manifest; none at tier 1. */
+  readonly handlers: ReadonlyMap<string, HandlerKind>;
+  /**
+   * While on, what the page logs is the grader's doing, such as the page
+   * reporting a write the grader refused, and doesn't fail the check.
+   */
+  readonly excuse: (on: boolean) => void;
 }
 
 /** One of the target's agent tools, as `open_patch` shows it. */

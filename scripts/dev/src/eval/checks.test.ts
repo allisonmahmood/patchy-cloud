@@ -10,7 +10,8 @@ import {
   decisionOf,
   isFileResponse,
   viewCandidates,
-  viewName
+  viewName,
+  writes
 } from "./tasks/page.js";
 import { receipt } from "./tasks/spendApprovals.js";
 
@@ -340,6 +341,38 @@ describe("a search for a page's other views", () => {
       expect(DISMISSAL.test(name), name).toBe(true);
     for (const name of ["Cancel request", "OK", "Close request", "Confirm", "Delete"])
       expect(DISMISSAL.test(name), name).toBe(false);
+  });
+});
+
+describe("the write barrier", () => {
+  const handlers = new Map([
+    ["requests.list", "query"],
+    ["requests.setStatus", "mutation"],
+    ["requests.cancel", "action"]
+  ] as const);
+
+  it("refuses a tier 2 call to anything but a query the published manifest lists", () => {
+    expect(writes("server.call", "requests.list", handlers)).toBe(false);
+    expect(writes("server.call", "requests.setStatus", handlers)).toBe(true);
+    expect(writes("server.call", "requests.cancel", handlers)).toBe(true);
+    expect(writes("server.call", "requests.unlisted", handlers)).toBe(true);
+    expect(writes("server.call", null, handlers)).toBe(true);
+  });
+
+  it("refuses tier 1 table and file writes, and lets reads through", () => {
+    const none = new Map<string, "query">();
+    for (const op of [
+      "tables.insert",
+      "tables.insertMany",
+      "tables.update",
+      "tables.delete",
+      "files.put",
+      "files.stage",
+      "files.delete"
+    ])
+      expect(writes(op, null, none), op).toBe(true);
+    for (const op of ["tables.get", "tables.list", "files.get", "files.list", "me", "members.list"])
+      expect(writes(op, null, none), op).toBe(false);
   });
 });
 

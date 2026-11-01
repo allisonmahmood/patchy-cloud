@@ -26,6 +26,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { Browser, Page } from "@playwright/test";
 import { doorAgent, GRADER_AGENT, mintAgents } from "./agent.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
@@ -35,6 +36,7 @@ import {
   type CheckContext,
   type CheckOutcome,
   type ExpectedRefusal,
+  type HandlerKind,
   isGraderTrouble,
   type RunPerson,
   type Target,
@@ -332,10 +334,15 @@ export const openAs = async (
   }
   const page = await context.newPage();
   const errors: Array<string> = [];
+  // What the page logs while the grader has caused it, such as a write it refused, isn't the page's.
+  const quiet = { on: false };
   page.on("console", (message) => {
+    if (quiet.on) return;
     if (message.type() === "error") errors.push(message.text());
   });
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => {
+    if (!quiet.on) errors.push(error.message);
+  });
   let crashed = false;
   page.on("crash", () => {
     crashed = true;
@@ -356,7 +363,17 @@ export const openAs = async (
   // A renderer crash or a wait that throws while the patch comes up is the patch's result.
   const ready = broke === null && (await waitReady(page).catch(() => false));
   const why = broke ?? (crashed ? "its page crashed" : null);
-  return { signedIn: true, context, page, errors, ready: ready && !crashed, broke: why } as const;
+  return {
+    signedIn: true,
+    context,
+    page,
+    errors,
+    excuse: (on: boolean) => {
+      quiet.on = on;
+    },
+    ready: ready && !crashed,
+    broke: why
+  } as const;
 };
 
 /**
@@ -378,6 +395,8 @@ const inBrowser = (input: {
   readonly expected: Array<LoggedRefusal>;
   /** The target as staged before the builder started; absent for a new patch. */
   readonly staged: StagedPatch | undefined;
+  /** The kind of each of the target's handlers, from its published manifest. */
+  readonly handlers: ReadonlyMap<string, HandlerKind>;
 }) => {
   // Where it got to, for the error: set from inside the browser code and its callbacks.
   const state = { launched: false, signInRefused: false };
@@ -458,7 +477,9 @@ const inBrowser = (input: {
               return {
                 page: view.page,
                 frame: view.page.frameLocator("iframe").first(),
-                close: () => view.context.close().catch(() => undefined)
+                close: () => view.context.close().catch(() => undefined),
+                handlers: input.handlers,
+                excuse: view.excuse
               };
             },
             agent: (key) => {
@@ -523,6 +544,29 @@ export const gradingStep = (
       : state.launched
         ? "browse"
         : "launch";
+
+const PublishedHandlers = Schema.NullOr(
+  Schema.Record(
+    Schema.String,
+    Schema.Struct({ kind: Schema.Literals(["query", "mutation", "action"]) })
+  )
+);
+const decodeHandlers = Schema.decodeUnknownEffect(PublishedHandlers);
+
+/**
+ * The kind of each of a served version's handlers, from the manifest it was
+ * published with, for the write barrier checks look behind; none at tier 1.
+ */
+export const handlerKinds = Effect.fn("Eval.handlerKinds")(function* (target: Target) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly handlers: unknown }>`
+    SELECT manifest->'handlers' AS handlers FROM patch_versions
+    WHERE patch_id = ${target.id} AND version_number = ${target.version}`;
+  const published = yield* decodeHandlers(rows[0]?.handlers ?? null);
+  return new Map<string, HandlerKind>(
+    Object.entries(published ?? {}).map(([name, { kind }]) => [name, kind])
+  );
+});
 
 /** Fails before any build starts when the grader's browser can't launch. */
 export const checkBrowser = Effect.tryPromise({
@@ -644,6 +688,14 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     (token) => Ref.update(input.secrets, (known) => [...known, token])
   ).pipe(Effect.result);
   if (Result.isFailure(agents)) return unfinished(agents.failure.message, checks, target, source);
+  const handlers = yield* handlerKinds(target).pipe(Effect.result);
+  if (Result.isFailure(handlers))
+    return unfinished(
+      "The grader couldn't read the target's published handlers.",
+      checks,
+      target,
+      source
+    );
   const gradingFrom = DateTime.formatIso(yield* DateTime.now);
   const expected: Array<LoggedRefusal> = [];
   const browsed = yield* inBrowser({
@@ -656,7 +708,8 @@ export const grade = Effect.fn("Eval.grade")(function* (input: {
     agents: agents.success,
     code: (yield* Random.next).toString(36).slice(2, 8),
     expected,
-    staged: stagedTarget(input.task.target, input.staged)
+    staged: stagedTarget(input.task.target, input.staged),
+    handlers: handlers.success
   }).pipe(Effect.result);
   if (Result.isFailure(browsed)) return unfinished(browsed.failure.message, checks, target, source);
 

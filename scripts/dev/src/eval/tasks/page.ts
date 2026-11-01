@@ -14,7 +14,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ElementHandle, FrameLocator, Locator, Route } from "@playwright/test";
-import { GraderTrouble, type Opened, type RunPerson } from "../task.js";
+import { GraderTrouble, type HandlerKind, type Opened, type RunPerson } from "../task.js";
 
 const POLL_MS = 500;
 
@@ -297,38 +297,48 @@ const viewFor = async (view: Opened, name: string) => {
  * Whether `text` shows, on the starting view or behind the page's tabs and
  * view toggles, found as a person would look: the controls that are views by
  * their role or state (`isViewControl`), All first, one at a time, from
- * wherever the last left the page. It presses nothing else, so it can miss
- * a list only an unusual control shows; that's a visible failure, never a
- * changed request. A dialog it can't close safely ends the search. With
- * `memo`, a view it found the text under before is pressed first, one
- * click, and the view it finds is remembered.
+ * wherever the last left the page. It can miss a list only an unusual
+ * control shows; that's a visible failure. The whole search runs behind a
+ * write barrier (`observe`), so whatever a control's name says or turns
+ * into, no press of it changes data: a press that tries to write is refused,
+ * isn't counted as a view, and the search moves on. A dialog it can't close
+ * through its own dismissal ends the search. With `memo`, a view it found
+ * the text under before is pressed first, one click, and the view it finds
+ * is remembered.
  */
-export const reveal = async (view: Opened, text: string, memo?: ViewMemo) => {
-  await settle(view);
-  if (await shows(view, text, 1_000)) return true;
-  if (memo?.via !== undefined) {
-    const remembered = await viewFor(view, memo.via);
-    const pressed = remembered === undefined ? "skipped" : await press(view, remembered);
-    if (pressed === "stuck") return false;
-    if (pressed === "pressed" && (await shows(view, text, 1_000))) return true;
-  }
-  const tried = new Set<string>();
-  for (let tries = 0; tries < MAX_TRIES; tries++) {
-    const controls = await controlsOf(view);
-    const next = viewCandidates(controls.map(({ control }) => control))
-      .map((index) => controls[index]!)
-      .find(({ control }) => !tried.has(named(control.name)));
-    if (next === undefined) break;
-    tried.add(named(next.control.name));
-    const pressed = await press(view, next);
-    if (pressed === "stuck") return false;
-    if (pressed === "pressed" && (await shows(view, text, 1_000))) {
-      if (memo !== undefined) memo.via = named(next.control.name);
-      return true;
+export const reveal = async (view: Opened, text: string, memo?: ViewMemo) =>
+  observe(view, async (refused) => {
+    /** A press, and "wrote" when it tried to write: refused, and not a view to count. */
+    const tryView = async (chosen: Parameters<typeof press>[1]) => {
+      const before = refused();
+      const pressed = await press(view, chosen);
+      return refused() > before ? ("wrote" as const) : pressed;
+    };
+    await settle(view);
+    if (await shows(view, text, 1_000)) return true;
+    if (memo?.via !== undefined) {
+      const remembered = await viewFor(view, memo.via);
+      const pressed = remembered === undefined ? "skipped" : await tryView(remembered);
+      if (pressed === "stuck") return false;
+      if (pressed === "pressed" && (await shows(view, text, 1_000))) return true;
     }
-  }
-  return false;
-};
+    const tried = new Set<string>();
+    for (let tries = 0; tries < MAX_TRIES; tries++) {
+      const controls = await controlsOf(view);
+      const next = viewCandidates(controls.map(({ control }) => control))
+        .map((index) => controls[index]!)
+        .find(({ control }) => !tried.has(named(control.name)));
+      if (next === undefined) break;
+      tried.add(named(next.control.name));
+      const pressed = await tryView(next);
+      if (pressed === "stuck") return false;
+      if (pressed === "pressed" && (await shows(view, text, 1_000))) {
+        if (memo !== undefined) memo.via = named(next.control.name);
+        return true;
+      }
+    }
+    return false;
+  });
 
 /** Everything the patch's frame shows, as visible text. */
 export const visibleText = (view: Opened) => view.frame.locator("body").innerText();
@@ -492,6 +502,117 @@ const RuntimeReply = Schema.Struct({
   code: Schema.optionalKey(Schema.String)
 });
 const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(RuntimeReply));
+
+const SENT_CAP_MS = 30_000;
+
+/**
+ * Runs `act`, a deliberate press such as sending a form, then waits until
+ * every call it sent Patchy has been answered (and nothing new for half a
+ * second; at most 30 s), so a write barrier raised afterwards can't catch
+ * the press's own writes.
+ */
+export const sent = async (view: Opened, act: () => Promise<void>) => {
+  const pending = new Set<unknown>();
+  const counts = (request: { url: () => string; method: () => string }) =>
+    request.url().includes("/api/runtime/") && request.method() !== "GET";
+  const started = (request: { url: () => string; method: () => string }) => {
+    if (counts(request)) pending.add(request);
+  };
+  const ended = (request: unknown) => {
+    pending.delete(request);
+  };
+  view.page.on("request", started);
+  view.page.on("requestfinished", ended);
+  view.page.on("requestfailed", ended);
+  try {
+    await act();
+    for (let waited = 0, quiet = 0; waited < SENT_CAP_MS && quiet < 500; waited += 100) {
+      await view.page.waitForTimeout(100);
+      quiet = pending.size === 0 ? quiet + 100 : 0;
+    }
+  } finally {
+    view.page.off("request", started);
+    view.page.off("requestfinished", ended);
+    view.page.off("requestfailed", ended);
+  }
+};
+
+/** The runtime operations that write a patch's tables or files, uploads included. */
+const WRITE_OPS = new Set([
+  "tables.insert",
+  "tables.insertMany",
+  "tables.update",
+  "tables.delete",
+  "files.put",
+  "files.stage",
+  "files.delete"
+]);
+
+/**
+ * Whether a call a page sends would change data: a table or file write, or a
+ * server call to a handler its published manifest doesn't list as a query,
+ * including one it doesn't list at all.
+ */
+export const writes = (
+  op: string,
+  handler: string | null,
+  handlers: ReadonlyMap<string, HandlerKind>
+) =>
+  op === "server.call" ? handler === null || handlers.get(handler) !== "query" : WRITE_OPS.has(op);
+
+const REFUSAL = JSON.stringify({
+  ok: false,
+  source: "patchy",
+  code: "access_denied",
+  error: "The grader refused a write while it was only looking."
+});
+
+/**
+ * Runs `look` behind a write barrier, so whatever it presses can't change
+ * data: every write the page attempts meanwhile (`writes`, or sending a file)
+ * is refused before it reaches Patchy, and what the page logs after a
+ * refusal is excused, since the grader caused it. Reads go through, and so
+ * does nothing the grader can't read: the barrier fails closed. `look` gets
+ * the count of refusals so far, to tell which of its presses tried a write.
+ */
+export const observe = async <T>(view: Opened, look: (refused: () => number) => Promise<T>) => {
+  let refused = 0;
+  const refuse = async (route: Route) => {
+    refused++;
+    view.excuse(true);
+    await route
+      .fulfill({ status: 403, contentType: "application/json", body: REFUSAL })
+      .catch(() => undefined);
+  };
+  const calls = async (route: Route) => {
+    const call = decodeCall(route.request().postData() ?? "");
+    if (Option.isNone(call)) return refuse(route);
+    const { op, args } = call.value;
+    const handler =
+      op === "server.call"
+        ? Option.getOrNull(Option.map(decodeServerArgs(args), (each) => each.handler))
+        : null;
+    if (writes(op, handler, view.handlers)) return refuse(route);
+    await route.fallback();
+  };
+  const files = async (route: Route) =>
+    route.request().method() === "GET" ? route.fallback() : refuse(route);
+  await view.page.route("**/api/runtime/call", calls);
+  await view.page.route("**/api/runtime/files/**", files);
+  await view.page.route("**/api/runtime/staged-files/**", files);
+  try {
+    return await look(() => refused);
+  } finally {
+    await view.page.unroute("**/api/runtime/call", calls);
+    await view.page.unroute("**/api/runtime/files/**", files);
+    await view.page.unroute("**/api/runtime/staged-files/**", files);
+    if (refused > 0) {
+      // What the page logs of the last refusal can come a moment later.
+      await view.page.waitForTimeout(500);
+      view.excuse(false);
+    }
+  }
+};
 
 /** Where and how a page reaches Patchy: enough to call it again as anyone signed in. */
 export interface Envelope {
@@ -680,16 +801,21 @@ export const decide = async (
     const buttons = part.getByRole("button", { name });
     return (await part.count()) > 0 && (await buttons.count()) === 1 ? buttons : undefined;
   };
-  let button = await own();
-  if (button === undefined) {
-    await frame.getByText(text).first().click();
-    await page.waitForTimeout(1_000);
-    button = await own();
-  }
-  if (button === undefined || !(await button.isVisible()) || !(await button.isEnabled()))
-    return null;
-  // A person deciding writes why where the request asks, such as a note a rejection needs.
-  await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
+  // Finding the button, and writing why, only look: nothing may write until the decision itself.
+  const button = await observe(view, async () => {
+    let found = await own();
+    if (found === undefined) {
+      await frame.getByText(text).first().click();
+      await page.waitForTimeout(1_000);
+      found = await own();
+    }
+    if (found === undefined || !(await found.isVisible()) || !(await found.isEnabled()))
+      return undefined;
+    // A person deciding writes why where the request asks, such as a note a rejection needs.
+    await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
+    return found;
+  });
+  if (button === undefined) return null;
   const held: Array<{ readonly route: Route; readonly at: number }> = [];
   if (watch !== undefined)
     await page.route("**/api/runtime/call", async (route) => {

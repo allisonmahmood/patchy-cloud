@@ -13,7 +13,9 @@ import {
   decisionShown,
   fillRest,
   formAround,
+  observe,
   reveal,
+  sent,
   servesFile,
   type ViewMemo
 } from "./page.js";
@@ -65,7 +67,8 @@ const ask = async (view: Opened, reason: string, marker: string, memo: ViewMemo)
   const form = await formAround(frame);
   if (form === undefined) return "found no button to send the request";
   await fillRest(form.scope);
-  await form.send.click();
+  // Sending is deliberate: its writes reach Patchy before anything only looks again.
+  await sent(view, () => form.send.click());
   // Whoever asked sees their request; one that never shows up wasn't sent, whatever the page did.
   return (await reveal(view, reason, memo))
     ? null
@@ -93,18 +96,21 @@ const adaOpensReceipt = async (ada: Opened, reason: string, marker: string, memo
     // From a fresh load, so a preview the page fetches as it renders is seen too.
     await ada.page.reload();
     if (!(await reveal(ada, reason, memo))) return;
-    await ada.frame.getByText(reason).first().click();
-    await ada.page.waitForTimeout(2_000);
-    for (const role of ["link", "button"] as const) {
-      const controls = ada.frame.getByRole(role, { name: RECEIPT_CONTROL });
-      for (const control of await around(ada.frame, reason, { has: controls })
-        .getByRole(role, { name: RECEIPT_CONTROL })
-        .all())
-        if (await control.isVisible().catch(() => false)) {
-          await control.click({ timeout: 5_000 }).catch(() => undefined);
-          await ada.page.waitForTimeout(2_000);
-        }
-    }
+    // Opening the request and its receipt only looks: a "Remove receipt" can't write.
+    await observe(ada, async () => {
+      await ada.frame.getByText(reason).first().click();
+      await ada.page.waitForTimeout(2_000);
+      for (const role of ["link", "button"] as const) {
+        const controls = ada.frame.getByRole(role, { name: RECEIPT_CONTROL });
+        for (const control of await around(ada.frame, reason, { has: controls })
+          .getByRole(role, { name: RECEIPT_CONTROL })
+          .all())
+          if (await control.isVisible().catch(() => false)) {
+            await control.click({ timeout: 5_000 }).catch(() => undefined);
+            await ada.page.waitForTimeout(2_000);
+          }
+      }
+    });
   });
 
 const DECIDED = { approve: "approved", reject: "rejected" } as const;
