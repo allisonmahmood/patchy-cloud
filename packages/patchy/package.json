@@ -109,12 +109,12 @@
     "parse5": "catalog:",
     "semver": "^7.7.2",
     "typescript": "7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vite-plugin-singlefile": "^2.3.4",
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.13",
     "@preact/signals": "2.11.4",
     "@preact/signals-core": "1.14.5",
     "preact": "11.1.0"
