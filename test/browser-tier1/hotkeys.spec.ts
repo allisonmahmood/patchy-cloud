@@ -157,7 +157,8 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-// The sheet on a page whose own element rules would restyle it, with one rule aimed at its keycaps.
+// The sheet on a page whose own element rules would restyle it, some long or in a media query,
+// with one rule aimed at its keycaps.
 // `addLook` adds a company look, as a patch's bundle carries one.
 const styled = `import { render } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
@@ -170,8 +171,9 @@ const css = (text: string) => {
 css(\`
   body { font-family: Georgia, serif; color: rgb(40, 50, 60); }
   kbd { display: none; font-size: 4px; }
-  button { padding: 30px; background: rgb(255, 0, 0); }
-  dialog { border: 9px solid rgb(255, 0, 0); }
+  @media (min-width: 0px) { html body kbd { display: none; font-size: 4px; } }
+  button, html body main button, html body dialog button { padding: 30px; background: rgb(255, 0, 0); }
+  dialog, body dialog { border: 9px solid rgb(255, 0, 0); }
   .hotkey-keys kbd { color: rgb(1, 2, 3); }
 \`);
 const addLook = () => css(\`@layer look {
@@ -584,7 +586,7 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       properties
     );
 
-  await test.step("the page's kbd, button and dialog rules leave it be; its rule for hotkey-keys restyles it", async () => {
+  await test.step("the page's kbd, button and dialog rules leave it be, however long; its rule for hotkey-keys restyles it", async () => {
     await page.keyboard.press("?");
     const key = dialog.locator(".hotkey-row kbd").first();
     await expect(key).toBeVisible();

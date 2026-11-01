@@ -180,8 +180,10 @@ text colour without a look. The first one mounted adds one `<style>`: the
 button's defaults sit in `@layer look.patchy-hotkeys`, beneath the look's own
 rules, so it is one of the look's buttons; the sheet's sit in
 `@layer patchy-hotkeys`, after the look's, so they beat its element styles;
-and one unlayered rule reverts the page's own element rules on every part. The
-patch's rules aimed at `hotkey-*` classes outweigh that rule and restyle them.
+and one unlayered rule, weighing nine element names, reverts the page's rules
+made only of element names on every part. Rules with a class, attribute or
+state outweigh it, so the patch's rules aimed at `hotkey-*` classes restyle the
+sheet, and a page-wide rule such as `button:hover` still reaches its buttons.
 Its dialog renders in the page's `<body>`, outside the patch's root element, so
 restyle it with selectors that don't depend on where it's mounted, such as
 `.hotkey-sheet …`, and set `--look-*` overrides on `:root` or `body`.

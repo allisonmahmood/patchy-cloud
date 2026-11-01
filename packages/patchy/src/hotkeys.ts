@@ -415,7 +415,8 @@ export interface HotkeySheetProps<S extends string> {
  * listing every labelled hotkey under its group. While the sheet is open the page's hotkeys wait.
  * Escape, its close button and a click outside it close it, and focus goes back. It draws in the
  * company look, its button one of the look's, or in the page's font and text colour without one.
- * The page's rules aimed at its `hotkey-*` classes restyle it; its element rules don't reach it.
+ * The page's rules aimed at its `hotkey-*` classes restyle it; rules made only of element names,
+ * such as `kbd { … }`, don't reach it.
  *
  * ```tsx
  * <HotkeySheet />
