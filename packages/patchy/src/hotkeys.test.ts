@@ -13,6 +13,9 @@ const shifted: Chord[] = ["~", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")",
 for (const hotkey of shifted) useHotkey(hotkey, run);
 useHotkey("G H", run, { label: "Go home", group: "Navigation" });
 useHotkey("Alt+ArrowUp", run);
+const list: { current: HTMLUListElement | null } = { current: null };
+useHotkey("Enter", run, { within: list });
+useHotkeys([{ hotkey: "ArrowDown", run, within: list }]);
 const digits: Chord[] = ["1", "2"];
 useHotkeys(digits.map((hotkey) => ({ hotkey, run })));
 for (const hotkey of digits) useHotkey(hotkey, run);

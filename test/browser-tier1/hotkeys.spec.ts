@@ -147,10 +147,85 @@ function App() {
   useHotkey("C T", log("C T"), { label: "Create task", group: "Tasks" });
   useHotkey("G T", log("G T"), { label: "Go to timeline", group: "Navigation" });
   useHotkey("L", log("L"), { label: "Next" });
+  useHotkey("J", log("J"));
   useHotkey("Escape", log("Escape"));
   return <main>
     <button id="search">Search</button>
     <HotkeySheet title="Tracker shortcuts" />
+  </main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+// The same keys on the page, a list, an editor inside the list, and a dialog; a raw widget that
+// handles Escape itself; and fields next to the page's Mod+A and Mod+Z. The window records how
+// each key arrived, so a key a hotkey left alone shows untouched.
+const local = `import { render, useEffect, useRef, useState } from "patchy/preact";
+import { HotkeyScope, HotkeySheet, useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+const log = (name: string) => () => { fired.push(name); };
+const arrived: string[] = [];
+window.addEventListener("keydown", (event) => {
+  if (!["Control", "Meta", "Alt", "Shift"].includes(event.key))
+    arrived.push(\`\${event.key} \${event.defaultPrevented ? "prevented" : "untouched"}\`);
+});
+Object.assign(window, { fired, arrived });
+
+function Editor() {
+  const field = useRef<HTMLInputElement>(null);
+  useHotkey("Enter", log("editor Enter"), { within: field });
+  useHotkey("Escape", log("editor Escape"), { within: field });
+  useHotkey("A", log("editor A"), { within: field });
+  return <input id="editor" ref={field} aria-label="Editor" />;
+}
+
+function List() {
+  const list = useRef<HTMLUListElement>(null);
+  useHotkey("Enter", log("list Enter"), { within: list });
+  useHotkey("ArrowDown", log("list ArrowDown"), { within: list });
+  return <ul id="list" ref={list} tabIndex={0}><li><Editor /></li></ul>;
+}
+
+// Stands in for a third-party widget: a raw listener that handles Escape.
+function Widget() {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current!;
+    const handle = (event: KeyboardEvent) => { if (event.key === "Escape") event.preventDefault(); };
+    element.addEventListener("keydown", handle);
+    return () => element.removeEventListener("keydown", handle);
+  }, []);
+  return <div id="widget" ref={box} tabIndex={0}>widget</div>;
+}
+
+function Dialog() {
+  const notes = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => notes.current?.focus(), []);
+  useHotkey("Escape", log("dialog Escape"), { label: "Close", group: "Create task" });
+  useHotkey("P 5", log("dialog P 5"), { label: "Priority 5", group: "Create task" });
+  return <div role="dialog" aria-label="Create task"><textarea id="notes" ref={notes} aria-label="Notes" /></div>;
+}
+
+function App() {
+  const [open, setOpen] = useState(false);
+  useHotkey("Enter", log("page Enter"), { label: "Open" });
+  useHotkey("Escape", log("page Escape"));
+  useHotkey("Mod+A", log("page Mod+A"), { label: "Select all" });
+  useHotkey("Mod+Z", log("page Mod+Z"));
+  useHotkey("Mod+K", log("page Mod+K"));
+  // Editing keys that ask for text fields too, which they never get.
+  useHotkey("Mod+Backspace", log("page Mod+Backspace"), { whileTyping: true });
+  useHotkey("Mod+ArrowLeft", log("page Mod+ArrowLeft"), { whileTyping: true });
+  useHotkey("Shift+Home", log("page Shift+Home"), { whileTyping: true });
+  useHotkey("O", () => setOpen(true));
+  return <main>
+    <input id="field" aria-label="Field" />
+    <List />
+    <Widget />
+    <p id="body" tabIndex={-1}>body</p>
+    <HotkeySheet />
+    {open && <HotkeyScope><Dialog /></HotkeyScope>}
   </main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -459,10 +534,8 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     ]);
   });
 
-  await test.step("while it is open the page's hotkeys wait, and Tab stays on its close button", async () => {
-    await page.keyboard.press("l");
-    await page.keyboard.press("g");
-    await page.keyboard.press("h");
+  await test.step("while it is open unlisted hotkeys wait, and Tab stays on its close button", async () => {
+    await page.keyboard.press("j");
     await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
     await page.keyboard.press("Shift+Tab");
@@ -475,8 +548,18 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(view.locator("#search")).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
+  });
+
+  await test.step("a listed hotkey pressed in it closes it and runs, once, where focus was", async () => {
+    await page.keyboard.press("?");
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await expect(dialog).toBeHidden();
+    await expect(view.locator("#search")).toBeFocused();
+    await firedNext(frame, ["G H"]);
   });
 
   await test.step("its button opens it, and its close button or a click outside closes it", async () => {
@@ -485,16 +568,16 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await close.click();
     await expect(dialog).toBeHidden();
     await expect(opener).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
     await opener.click();
     await expect(dialog).toBeVisible();
     // The dialog is the scrim around the card; its corner is outside the card.
     await dialog.click({ position: { x: 4, y: 4 } });
     await expect(dialog).toBeHidden();
     await expect(opener).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
   });
 
   // A key dispatched as the dialog's `open` appears lands before anything else can run, so it
@@ -506,7 +589,7 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
         observer.disconnect();
         for (const type of ["keydown", "keyup"])
           document.activeElement?.dispatchEvent(
-            new KeyboardEvent(type, { key: "l", code: "KeyL", bubbles: true, cancelable: true })
+            new KeyboardEvent(type, { key: "j", code: "KeyJ", bubbles: true, cancelable: true })
           );
       }).observe(document.body, { attributes: true, attributeFilter: ["open"], subtree: true });
     });
@@ -515,5 +598,116 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await firedNext(frame, []);
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
+  });
+});
+
+test("local hotkeys: the narrowest place wins, editing keys stay with the field, handled keys stand down, the sheet runs a dialog's keys", async ({
+  page,
+  context,
+  instance
+}) => {
+  const patch = await publish(instance, local);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const view = page.frameLocator("#patch");
+  await expect(view.locator("#list")).toBeVisible();
+  type Arrived = { arrived: string[] };
+  const arrivedNext = async (expected: string[]) => {
+    expect(await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0))).toEqual(
+      expected
+    );
+  };
+
+  await test.step("an editor inside a list inside the page: each place's Enter and Escape fire only there", async () => {
+    await view.locator("#editor").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+    // A key that types stays the field's, even for a hotkey within the field itself.
+    await page.keyboard.press("a");
+    await expect(view.locator("#editor")).toHaveValue("a");
+    await firedNext(frame, ["editor Enter", "editor Escape"]);
+    await view.locator("#list").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["list Enter", "list ArrowDown", "page Escape"]);
+    await view.locator("#body").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await firedNext(frame, ["page Enter"]);
+  });
+
+  await test.step("in a text field, Mod+A, Mod+Z and the other editing keys stay with it; Mod+K fires", async () => {
+    await view.locator("#field").fill("abc");
+    await view.locator("#field").focus();
+    await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0));
+    for (const key of [
+      "Control+a",
+      "Control+z",
+      "Control+Backspace",
+      "Control+ArrowLeft",
+      "Shift+Home"
+    ])
+      await page.keyboard.press(key);
+    await page.keyboard.press("Control+k");
+    await firedNext(frame, ["page Mod+K"]);
+    await arrivedNext([
+      "a untouched",
+      "z untouched",
+      "Backspace untouched",
+      "ArrowLeft untouched",
+      "Home untouched"
+    ]);
+    await view.locator("#body").focus();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+z");
+    await page.keyboard.press("Control+Backspace");
+    await firedNext(frame, ["page Mod+A", "page Mod+Z", "page Mod+Backspace"]);
+  });
+
+  await test.step("on a Mac, ⌘A stays with the field and ⌘K fires", async () => {
+    const mac = await context.newPage();
+    await mac.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
+    });
+    await mac.goto(patch.address);
+    const macView = mac.frameLocator("#patch");
+    await macView.locator("#field").focus();
+    await mac.keyboard.press("Meta+a");
+    await mac.keyboard.press("Meta+k");
+    await firedNext(contentFrame(mac), ["page Mod+K"]);
+    await macView.locator("#body").focus();
+    await mac.keyboard.press("Meta+a");
+    await firedNext(contentFrame(mac), ["page Mod+A"]);
+    await mac.close();
+  });
+
+  await test.step("a key a widget's own handler already handled doesn't fire a hotkey", async () => {
+    await view.locator("#widget").focus();
+    await page.keyboard.press("Escape");
+    await view.locator("#body").focus();
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["page Escape"]);
+  });
+
+  await test.step("inside a dialog, Mod+/ from a field lists the dialog's keys, and P 5 runs there", async () => {
+    await view.locator("#body").focus();
+    await page.keyboard.press("o");
+    await expect(view.locator("#notes")).toBeFocused();
+    await page.keyboard.type("x");
+    await page.keyboard.press("Control+/");
+    const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(sheet).toBeVisible();
+    expect(await sheet.locator(".hotkey-label").allTextContents()).toEqual([
+      "Close",
+      "Priority 5",
+      "Show shortcuts"
+    ]);
+    await page.keyboard.press("p");
+    await page.keyboard.press("5");
+    await expect(sheet).toBeHidden();
+    await expect(view.locator("#notes")).toBeFocused();
+    await expect(view.locator("#notes")).toHaveValue("x");
+    await firedNext(frame, ["dialog P 5"]);
   });
 });

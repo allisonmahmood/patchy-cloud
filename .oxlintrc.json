@@ -15,7 +15,8 @@
     "**/node_modules/**",
     "**/.turbo/**",
     ".claude/**",
-    ".local/**"
+    ".local/**",
+    "packages/patchy/prototype-local-hotkeys/**"
   ],
   "rules": {
     "no-array-constructor": "error",
