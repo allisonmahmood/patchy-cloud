@@ -132,10 +132,13 @@ outside it closes it, and focus goes back to where it was.
 - A hotkey's `group` option lists it under that heading. Groups appear in the order they are
   first registered, and ungrouped hotkeys, the sheet's own included, come last under General.
   With no groups at all, the sheet is one list.
-- Its parts have `hotkey-*` classes, styled inside `@layer patchy-hotkeys`, so the patch's own
-  unlayered CSS restyles any of them. The sheet renders in the page's `<body>`, outside the
-  patch's root element, so restyle it with selectors that don't depend on where it's mounted,
-  such as `.hotkey-sheet …`, and set `--look-*` overrides on `:root` or `body`.
+- With the company look, the `?` button is one of the look's buttons, square. Without a look,
+  the sheet and button take the page's font and text colour.
+- The page's element rules, such as `kbd { … }` or `button { … }`, don't reach the sheet or its
+  button. Its parts have `hotkey-*` classes, and the patch's rules aimed at those restyle them.
+  The sheet renders in the page's `<body>`, outside the patch's root element, so restyle it
+  with selectors that don't depend on where it's mounted, such as `.hotkey-sheet …`, and set
+  `--look-*` overrides on `:root` or `body`.
 - A different sheet is built from `useHotkeyList` and `hotkeyKeys` inside a `HotkeyScope`.
 
 ## Showing hotkeys

@@ -22,31 +22,51 @@ export const sections = (
   return [...groups];
 };
 
-// Only --look-* tokens, so the sheet follows the company look, each with a system colour for a
-// page without one. The layer, added after the look's, beats the look's element styles and loses
-// to the patch's own unlayered CSS.
-const styles = `@layer patchy-hotkeys {
+// The sheet's styles come in three tiers:
+// - The `?` button's defaults sit in a layer inside the company look's, beneath the look's own
+//   rules, so a look's `button` and `button:hover` make it one of the look's buttons.
+// - The sheet's drawing sits in a layer after the look's, so it beats the look's element styles.
+// - One unlayered rule reverts the page's own element rules, such as `kbd { … }`, on every part.
+//   It weighs as two element names, so the page's rules aimed at `hotkey-*` classes still win.
+// On a page without a look, a token used without a fallback drops out: the parts keep the page's
+// font and text colour, the card loses its shadow, and each line falls back to a hairline.
+const styles = `@layer look.patchy-hotkeys {
   .hotkey-opener {
     box-sizing: border-box;
     display: inline-grid;
     place-items: center;
-    flex-shrink: 0;
-    width: 2.75rem;
-    height: 2.75rem;
-    min-height: 0;
+    height: 2.25rem;
     margin: 0;
     padding: 0;
-    border: 2px solid var(--look-border, CanvasText);
-    border-bottom-width: 4px;
-    border-radius: min(var(--look-radius, 8px), 8px);
-    background: var(--look-surface, Canvas);
-    color: var(--look-fg, CanvasText);
-    font: 800 1.05rem/1 var(--look-font-body, system-ui, sans-serif);
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 6px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
     cursor: pointer;
+  }
+  .hotkey-opener:hover {
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+}
+
+@layer patchy-hotkeys {
+  /* Square, at the height the look gives its buttons: with a ratio, its max-content width is its
+     height, so a flex column doesn't stretch it either. */
+  .hotkey-opener {
+    flex-shrink: 0;
+    width: max-content;
+    aspect-ratio: 1;
+    padding-inline: 0;
   }
 
   /* The dialog is the layer over the page: its background is the scrim, and the card sits in it. */
   .hotkey-sheet-dialog {
+    /* The look's lines. Without a look they are invalid, so each use falls back to the hairline. */
+    --hotkey-line: 2px solid var(--look-border);
+    --hotkey-key-line: color-mix(in srgb, var(--look-border) 70%, var(--look-fg));
+    --hotkey-hairline: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     box-sizing: border-box;
     width: 100%;
     max-width: none;
@@ -58,8 +78,8 @@ const styles = `@layer patchy-hotkeys {
     overflow: auto;
     overscroll-behavior: contain;
     background: color-mix(in srgb, var(--look-bg, Canvas) 72%, transparent);
-    color: var(--look-fg, CanvasText);
-    font-family: var(--look-font-body, system-ui, sans-serif);
+    color: var(--look-fg);
+    font-family: var(--look-font-body);
   }
   .hotkey-sheet-dialog[open] {
     display: flex;
@@ -72,11 +92,10 @@ const styles = `@layer patchy-hotkeys {
     width: min(100%, 48rem);
     margin: auto;
     padding: calc(var(--look-space, 8px) * 3);
-    border: 2px solid var(--look-border, CanvasText);
+    border: var(--hotkey-line, var(--hotkey-hairline));
     border-radius: var(--look-radius, 8px);
     background: var(--look-surface, Canvas);
-    box-shadow: calc(var(--look-space, 8px) * 0.5) calc(var(--look-space, 8px) * 0.5) 0
-      var(--look-border, CanvasText);
+    box-shadow: calc(var(--look-space) * 0.5) calc(var(--look-space) * 0.5) 0 var(--look-border);
   }
   /* One column needs no more than a column's width. */
   .hotkey-sheet:where(:has(.hotkey-groups > :only-child)) {
@@ -104,8 +123,11 @@ const styles = `@layer patchy-hotkeys {
     border: 0;
     border-radius: min(var(--look-radius, 8px), 8px);
     background: none;
-    color: var(--look-fg, CanvasText);
-    font: 750 0.9rem/1 var(--look-font-body, system-ui, sans-serif);
+    color: var(--look-fg);
+    font-family: var(--look-font-body);
+    font-size: 0.9rem;
+    font-weight: 750;
+    line-height: 1;
     cursor: pointer;
   }
   .hotkey-sheet-close kbd {
@@ -125,9 +147,12 @@ const styles = `@layer patchy-hotkeys {
   .hotkey-group h3 {
     margin: 0;
     padding-bottom: calc(var(--look-space, 8px) * 0.75);
-    border-bottom: 2px solid var(--look-border, CanvasText);
-    color: var(--look-muted, GrayText);
-    font: 750 0.82rem/1.3 var(--look-font-body, system-ui, sans-serif);
+    border-bottom: var(--hotkey-line, var(--hotkey-hairline));
+    color: var(--look-muted, color-mix(in srgb, currentColor 65%, transparent));
+    font-family: var(--look-font-body);
+    font-size: 0.82rem;
+    font-weight: 750;
+    line-height: 1.3;
     letter-spacing: 0.01em;
   }
   .hotkey-group ul {
@@ -141,7 +166,7 @@ const styles = `@layer patchy-hotkeys {
     justify-content: space-between;
     gap: calc(var(--look-space, 8px) * 2);
     min-height: 2.6rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--look-border, CanvasText) 22%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--look-border, currentColor) 22%, transparent);
   }
   .hotkey-row:last-child {
     border-bottom: 0;
@@ -158,7 +183,7 @@ const styles = `@layer patchy-hotkeys {
   }
   .hotkey-then {
     margin: 0 0.35em;
-    color: var(--look-muted, GrayText);
+    color: var(--look-muted, color-mix(in srgb, currentColor 65%, transparent));
     font-size: 0.78rem;
   }
   .hotkey-sheet-dialog kbd {
@@ -169,12 +194,15 @@ const styles = `@layer patchy-hotkeys {
     height: 1.4rem;
     padding: 0 0.35rem;
     border: 1.5px solid
-      color-mix(in srgb, var(--look-border, CanvasText) 70%, var(--look-fg, CanvasText));
+      var(--hotkey-key-line, color-mix(in srgb, currentColor 35%, transparent));
     border-bottom-width: 3px;
     border-radius: min(var(--look-radius, 8px), 6px);
-    background: var(--look-bg, Canvas);
-    color: var(--look-fg, CanvasText);
-    font: 700 0.76rem/1 var(--look-font-body, system-ui, sans-serif);
+    background: var(--look-bg, color-mix(in srgb, currentColor 5%, transparent));
+    color: var(--look-fg);
+    font-family: var(--look-font-body);
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1;
   }
   .hotkey-sheet-dialog kbd.hotkey-symbol {
     font-size: 0.95rem;
@@ -192,7 +220,8 @@ const styles = `@layer patchy-hotkeys {
       overflow: auto;
       margin: auto 0 0;
       padding: calc(var(--look-space, 8px) * 2.5);
-      border-width: 2px 0 0;
+      border-inline: 0;
+      border-bottom: 0;
       border-radius: var(--look-radius, 8px) var(--look-radius, 8px) 0 0;
       box-shadow: none;
     }
@@ -206,8 +235,7 @@ const styles = `@layer patchy-hotkeys {
     .hotkey-sheet-close {
       min-height: 2.75rem;
       padding: 0 calc(var(--look-space, 8px) * 1.75);
-      border: 2px solid var(--look-border, CanvasText);
-      background: var(--look-surface, Canvas);
+      border: var(--hotkey-line, var(--hotkey-hairline));
     }
     .hotkey-sheet-close kbd {
       display: none;
@@ -216,6 +244,12 @@ const styles = `@layer patchy-hotkeys {
       display: inline;
     }
   }
+}
+
+/* Outside any layer, so the page's unlayered element rules revert on every part. */
+html body :where(.hotkey-opener, .hotkey-sheet-dialog, .hotkey-sheet-dialog *),
+html body :where(.hotkey-sheet-dialog)::backdrop {
+  all: revert-layer;
 }
 `;
 

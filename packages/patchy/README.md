@@ -175,13 +175,16 @@ mounted, and a modal dialog that it and `?` open, listing every labelled hotkey
 under its `group` option. `title` and `hotkey` change its heading and the key
 that opens it. While it is open, its `HotkeyScope` holds the page's hotkeys back;
 Escape, its close button or a click outside closes it, and focus returns. It
-draws with `--look-*` tokens in `hotkey-*` classes. The first one mounted adds
-one `<style>` with those defaults inside `@layer patchy-hotkeys`, after the
-look's styles, so it beats the look's element styles and the patch's own
-unlayered CSS beats it. Its dialog renders in the page's `<body>`, outside the
-patch's root element, so restyle it with selectors that don't depend on where
-it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
-`:root` or `body`.
+draws with `--look-*` tokens in `hotkey-*` classes, and in the page's font and
+text colour without a look. The first one mounted adds one `<style>`: the
+button's defaults sit in `@layer look.patchy-hotkeys`, beneath the look's own
+rules, so it is one of the look's buttons; the sheet's sit in
+`@layer patchy-hotkeys`, after the look's, so they beat its element styles;
+and one unlayered rule reverts the page's own element rules on every part. The
+patch's rules aimed at `hotkey-*` classes outweigh that rule and restyle them.
+Its dialog renders in the page's `<body>`, outside the patch's root element, so
+restyle it with selectors that don't depend on where it's mounted, such as
+`.hotkey-sheet …`, and set `--look-*` overrides on `:root` or `body`.
 
 ### Generated downloads and printing
 

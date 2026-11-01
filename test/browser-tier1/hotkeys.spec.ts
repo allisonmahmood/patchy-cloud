@@ -157,6 +157,37 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
+// The sheet on a page whose own element rules would restyle it, with one rule aimed at its keycaps.
+// `addLook` adds a company look, as a patch's bundle carries one.
+const styled = `import { render } from "patchy/preact";
+import { HotkeySheet, useHotkey } from "patchy/hotkeys";
+
+const css = (text: string) => {
+  const style = document.createElement("style");
+  style.textContent = text;
+  document.head.append(style);
+};
+css(\`
+  body { font-family: Georgia, serif; color: rgb(40, 50, 60); }
+  kbd { display: none; font-size: 4px; }
+  button { padding: 30px; background: rgb(255, 0, 0); }
+  dialog { border: 9px solid rgb(255, 0, 0); }
+  .hotkey-keys kbd { color: rgb(1, 2, 3); }
+\`);
+const addLook = () => css(\`@layer look {
+  :root { --look-border: rgb(0, 0, 0); --look-space: 8px; }
+  button { min-height: 48px; background: rgb(0, 0, 200); }
+  button:hover { background: rgb(0, 0, 100); }
+}\`);
+Object.assign(window, { addLook });
+
+function App() {
+  useHotkey("G H", () => {}, { label: "Go home" });
+  return <main><HotkeySheet /></main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
 /** Bundles a page's source against the built patchy package and publishes it. */
 const publish = async (instance: Instance, tsx: string) => {
   const bundle = await build({
@@ -531,5 +562,93 @@ test("the sheet opens by ? or its button, lists by group, holds the page's hotke
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(view.locator("#search")).toBeFocused();
+  });
+});
+
+test("a page's element rules don't reach the sheet, which takes the page's font without a look and its button follows one", async ({
+  page,
+  instance
+}) => {
+  const patch = await publish(instance, styled);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const view = page.frameLocator("#patch");
+  const opener = view.getByRole("button", { name: "Keyboard shortcuts" });
+  const dialog = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const style = (locator: ReturnType<typeof view.locator>, properties: string[]) =>
+    locator.evaluate(
+      (element, names) =>
+        Object.fromEntries(
+          names.map((name) => [name, getComputedStyle(element).getPropertyValue(name)])
+        ),
+      properties
+    );
+
+  await test.step("the page's kbd, button and dialog rules leave it be; its rule for hotkey-keys restyles it", async () => {
+    await page.keyboard.press("?");
+    const key = dialog.locator(".hotkey-row kbd").first();
+    await expect(key).toBeVisible();
+    expect(await style(key, ["font-size", "color"])).toEqual({
+      "font-size": "12.16px",
+      color: "rgb(1, 2, 3)"
+    });
+    expect(
+      await style(dialog.locator(".hotkey-sheet-close"), ["padding-left", "background-color"])
+    ).toEqual({
+      "padding-left": "0px",
+      "background-color": "rgba(0, 0, 0, 0)"
+    });
+    expect(await style(dialog, ["border-top-width"])).toEqual({ "border-top-width": "0px" });
+  });
+
+  await test.step("without a look it draws in the page's font and text colour, with a hairline and no shadow", async () => {
+    expect(
+      await style(dialog.locator(".hotkey-sheet"), [
+        "font-family",
+        "color",
+        "border-top-width",
+        "box-shadow"
+      ])
+    ).toEqual({
+      "font-family": "Georgia, serif",
+      color: "rgb(40, 50, 60)",
+      "border-top-width": "1px",
+      "box-shadow": "none"
+    });
+    await page.keyboard.press("Escape");
+    expect(
+      await style(opener, ["font-family", "color", "border-top-width", "padding-left"])
+    ).toEqual({
+      "font-family": "Georgia, serif",
+      color: "rgb(40, 50, 60)",
+      "border-top-width": "1px",
+      "padding-left": "0px"
+    });
+    const resting = (await style(opener, ["background-color"]))["background-color"];
+    await opener.hover();
+    await expect
+      .poll(async () => (await style(opener, ["background-color"]))["background-color"])
+      .not.toBe(resting);
+  });
+
+  await test.step("with a look, its button is one of the look's, square, and the sheet takes the look's frame", async () => {
+    await frame.evaluate(() => (window as unknown as { addLook: () => void }).addLook());
+    await page.mouse.move(0, 0);
+    expect(await style(opener, ["background-color"])).toEqual({
+      "background-color": "rgb(0, 0, 200)"
+    });
+    const box = await opener.boundingBox();
+    expect([box?.width, box?.height]).toEqual([48, 48]);
+    await opener.hover();
+    await expect
+      .poll(async () => (await style(opener, ["background-color"]))["background-color"])
+      .toBe("rgb(0, 0, 100)");
+    await opener.click();
+    expect(
+      await style(dialog.locator(".hotkey-sheet"), ["border-top-width", "box-shadow"])
+    ).toEqual({
+      "border-top-width": "2px",
+      "box-shadow": "rgb(0, 0, 0) 4px 4px 0px 0px"
+    });
   });
 });
