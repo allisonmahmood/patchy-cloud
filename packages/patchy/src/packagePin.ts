@@ -2,6 +2,7 @@ import { parseExpression } from "@babel/parser";
 import type { Node, ObjectExpression, ObjectProperty } from "@babel/types";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { isMap, isNode, isScalar, parseDocument } from "yaml";
 
 const decode = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -36,28 +37,61 @@ export function withTarballIntegrity(lockfile: string, tarball: string, integrit
     .join("\n");
 }
 
-const workerdBuild =
-  "# Patchy runs workerd's binary itself; its install script is not needed.\nallowBuilds:\n  workerd: false\n";
+const workerdBuild = [
+  "# Patchy runs workerd's binary itself; its install script is not needed.",
+  "allowBuilds:",
+  "  workerd: false",
+  ""
+];
+const named = (node: unknown, name: string) => isScalar(node) && node.value === name;
+/** pnpm's build keys are package names, optionally with a version: `workerd@1.2.3`. */
+const choosesWorkerd = (node: unknown) =>
+  isScalar(node) && typeof node.value === "string" && /^workerd(@|$)/.test(node.value);
+/** Where a parsed node sits in its source: `[start, valueEnd, nodeEnd]`. */
+const rangeOf = (node: unknown) => (isNode(node) ? (node.range ?? undefined) : undefined);
 
 /**
- * A repo's pnpm-workspace.yaml with workerd's build script declined, keeping every other line.
- * pnpm 12 fails `install`, `add` and `remove` when it ignores a build script, and Patchy runs
- * workerd's platform binary directly. A block `allowBuilds` gains the entry unless it already
- * names workerd; a flow-style one is the repo's own and is left alone.
+ * A repo's pnpm-workspace.yaml with workerd's build script declined. pnpm 12 fails `install`,
+ * `add` and `remove` when it ignores a build script, and Patchy runs workerd's platform binary
+ * directly. YAML decides which key is `allowBuilds`, quoted or not, and whether it already names
+ * workerd; the entry is spliced into the source, so every other byte stays the repo's. A choice
+ * the repo made for workerd is kept, and a file pnpm would refuse anyway is left to the repo.
  */
 export function withWorkerdBuildDeclined(source: string): string {
-  const lines = source.split("\n");
-  const key = lines.findIndex((line) => /^allowBuilds\s*:/.test(line));
-  if (key === -1)
-    return `${source}${source === "" || source.endsWith("\n") ? "" : "\n"}${workerdBuild}`;
-  if (!/^allowBuilds\s*:\s*(#.*)?$/.test(lines[key]!)) return source;
-  const after = lines.slice(key + 1);
-  const end = after.findIndex((line) => line !== "" && !/^[\s#]/.test(line));
-  const entries = end === -1 ? after : after.slice(0, end);
-  if (entries.some((line) => /^\s+(workerd|"workerd"|'workerd')\s*:/.test(line))) return source;
-  const indent = entries.find((line) => /^\s+[^\s#]/.test(line))?.match(/^\s+/)?.[0] ?? "  ";
-  lines.splice(key + 1, 0, `${indent}workerd: false`);
-  return lines.join("\n");
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const splice = (at: number, text: string, end = at) =>
+    `${source.slice(0, at)}${text}${source.slice(end)}`;
+  const document = parseDocument(source);
+  const root = document.contents;
+  if (document.errors.length > 0 || (root !== null && !isMap(root))) return source;
+  const setting = root?.items.find((pair) => named(pair.key, "allowBuilds"));
+  if (setting === undefined)
+    return root?.flow
+      ? source
+      : `${source}${source === "" || source.endsWith("\n") ? "" : eol}${workerdBuild.join(eol)}`;
+  const value = setting.value;
+  if (isMap(value)) {
+    if (value.items.some((pair) => choosesWorkerd(pair.key))) return source;
+    const entry = rangeOf(value.items[0]?.key);
+    const whole = rangeOf(value);
+    if (value.flow) {
+      if (entry) return splice(entry[0], "workerd: false, ");
+      return whole ? splice(whole[0], "{ workerd: false }", whole[1]) : source;
+    }
+    if (!entry) return source;
+    // Its own line, indented like the mapping's first entry.
+    const line = source.lastIndexOf("\n", entry[0] - 1) + 1;
+    return splice(line, `${source.slice(line, entry[0])}workerd: false${eol}`);
+  }
+  if (isScalar(value) && value.value === null) {
+    const whole = rangeOf(value);
+    if (whole && value.source !== "") return splice(whole[0], "{ workerd: false }", whole[1]);
+    const key = rangeOf(setting.key);
+    if (!key) return source;
+    const end = source.indexOf(eol, key[1]);
+    return splice(end === -1 ? source.length : end, `${eol}  workerd: false`);
+  }
+  return source;
 }
 
 /**

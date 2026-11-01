@@ -449,8 +449,9 @@ version string is unchanged. Installation disables lifecycle scripts; workerd
 is spawned from its platform package rather than its postinstall-created
 wrapper, so `pnpm-workspace.yaml` declines workerd's build script with
 `allowBuilds: { workerd: false }`: pnpm 12 fails any install, add or remove
-that ignores one. Init and refresh add the entry unless `allowBuilds` already
-names workerd, leaving the rest of the file alone. The installed release's
+that ignores one. Init and refresh add the entry to a block or flow
+`allowBuilds`, quoted or not, unless it already names workerd, and leave every
+other byte and any file pnpm would refuse alone. The installed release's
 generation step writes it, so an older CLI's refresh adds it too. Publish
 refuses a mismatched managed pin with `release_mismatch`.
 There is no scaffold `pnpm.overrides`.

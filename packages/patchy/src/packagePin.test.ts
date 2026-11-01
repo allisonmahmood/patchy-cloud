@@ -134,27 +134,54 @@ it("reads causes only from pnpm 12's narrated report", () => {
 });
 
 // packed-tier2-e2e.mjs proves pnpm 12 then installs a scaffolded tier 2 repo.
-it("declines workerd's build script and keeps the repo's own build choices and settings", () => {
-  const declined = withWorkerdBuildDeclined("");
+const declined = withWorkerdBuildDeclined("");
+
+it("writes a file that only declines workerd's build script, and leaves it alone after", () => {
   expect(declined).toMatch(/^allowBuilds:\n {2}workerd: false\n$/m);
   expect(withWorkerdBuildDeclined(declined)).toBe(declined);
-  for (const [source, expected] of [
-    ["minimumReleaseAge: 1440\n", `minimumReleaseAge: 1440\n${declined}`],
-    ["minimumReleaseAge: 1440", `minimumReleaseAge: 1440\n${declined}`],
-    [
-      "allowBuilds:\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n",
-      "allowBuilds:\n    workerd: false\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n"
-    ],
-    [
-      "allowBuilds: # chosen\nminimumReleaseAge: 1440\n",
-      "allowBuilds: # chosen\n  workerd: false\nminimumReleaseAge: 1440\n"
-    ]
-  ] as const)
-    expect(withWorkerdBuildDeclined(source)).toBe(expected);
-  for (const own of [
-    "allowBuilds:\n  esbuild: true\n  workerd: true\n",
-    "allowBuilds:\n  # build it\n  'workerd': true\n",
-    "allowBuilds: { workerd: true }\n"
-  ])
-    expect(withWorkerdBuildDeclined(own)).toBe(own);
+});
+
+it.each([
+  ["other settings", "minimumReleaseAge: 1440\n", `minimumReleaseAge: 1440\n${declined}`],
+  ["no final newline", "minimumReleaseAge: 1440", `minimumReleaseAge: 1440\n${declined}`],
+  [
+    "a block mapping",
+    "allowBuilds:\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n",
+    "allowBuilds:\n    workerd: false\n    esbuild: true # keep\n\nminimumReleaseAge: 1440\n"
+  ],
+  [
+    "a quoted key",
+    '"allowBuilds":\n  esbuild: true\n',
+    '"allowBuilds":\n  workerd: false\n  esbuild: true\n'
+  ],
+  [
+    "a flow mapping",
+    "allowBuilds: { esbuild: true } # keep\n",
+    "allowBuilds: { workerd: false, esbuild: true } # keep\n"
+  ],
+  ["an empty flow mapping", "allowBuilds: {}\n", "allowBuilds: { workerd: false }\n"],
+  [
+    "an empty value",
+    "allowBuilds: # chosen\nminimumReleaseAge: 1440\n",
+    "allowBuilds: # chosen\n  workerd: false\nminimumReleaseAge: 1440\n"
+  ],
+  ["a null value", "allowBuilds: null\n", "allowBuilds: { workerd: false }\n"],
+  [
+    "Windows line endings",
+    "allowBuilds:\r\n  esbuild: true\r\n",
+    "allowBuilds:\r\n  workerd: false\r\n  esbuild: true\r\n"
+  ]
+])("declines workerd's build script beside %s", (_, source, expected) => {
+  expect(withWorkerdBuildDeclined(source)).toBe(expected);
+});
+
+it.each([
+  ["a block workerd: true", "allowBuilds:\n  esbuild: true\n  workerd: true\n"],
+  ["a quoted key's workerd: false", "'allowBuilds':\n  # off\n  \"workerd\": false\n"],
+  ["a flow workerd", 'allowBuilds: { esbuild: true, "workerd": true }\n'],
+  ["a choice for one workerd version", "allowBuilds:\n  workerd@1.20260924.1: true\n"],
+  ["YAML pnpm would refuse", "allowBuilds:\n  esbuild: true\nallowBuilds:\n  sharp: true\n"],
+  ["a list where pnpm expects a mapping", "allowBuilds:\n  - esbuild\n"]
+])("keeps %s as the repo wrote it", (_, own) => {
+  expect(withWorkerdBuildDeclined(own)).toBe(own);
 });
