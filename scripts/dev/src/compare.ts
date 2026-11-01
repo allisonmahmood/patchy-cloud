@@ -82,7 +82,8 @@ export const shotFile = (
  * shot may still be cut short: content that scrolls inside an element, a
  * height that keeps following the viewport, or one past the bound. Pages
  * without a patch frame are left alone. The functions sent to the page declare
- * no named inner functions: tsx would wrap them in `__name`, which pages lack.
+ * no named inner functions: a transpiler that keeps names, as tsx does, wraps
+ * them in `__name`, which pages lack.
  */
 const growPatchFrame = async (page: Page): Promise<string | null> => {
   const element = await page.$("iframe#patch");

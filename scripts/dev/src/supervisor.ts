@@ -32,6 +32,7 @@ import {
 import { DATABASE_NAME, Plan, signInOf } from "./plan.js";
 import { alive } from "./process.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./postgres.js";
+import { bun, realNode } from "./runtimes.js";
 import { loadScenario, seedScenario } from "./scenario.js";
 import { FAILED, layout, writeEnv, writePlan } from "./state.js";
 
@@ -219,9 +220,10 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   yield* say("database migrated and seeded");
 
   yield* say("building the patchy release artifact");
+  const node = yield* realNode();
   const build = yield* spawner.spawn(
     ChildProcess.make(
-      process.execPath,
+      node.execPath,
       [path.join(plan.worktree, "scripts/build-patchy-package.mjs"), "--stage-for-server"],
       {
         cwd: plan.worktree,
@@ -239,10 +241,10 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const buildExitCode = yield* build.exitCode;
   if (buildExitCode !== 0) return yield* new PackageBuildFailed({ exitCode: buildExitCode });
 
-  // The server: plain node with the tsx loader so the pid we record is the
-  // one signals reach. Its env is closed: the plan, what a process needs to
-  // run at all, and the sign-in settings (the personas secret, or Clerk's
-  // from the developer's `dev.env`), so
+  // The server: Bun running its TypeScript directly, as production runs it,
+  // so the pid we record is the one signals reach. Its env is closed: the
+  // plan, what a process needs to run at all, and the sign-in settings (the
+  // personas secret, or Clerk's from the developer's `dev.env`), so
   // nothing exported in the agent's shell (another DATABASE_URL, a storage
   // driver, an API token) leaks in.
   yield* say(
@@ -252,13 +254,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   );
   const server = yield* spawner.spawn(
     ChildProcess.make(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--conditions=development",
-        path.join(plan.worktree, "apps", "server", "src", "start.ts")
-      ],
+      bun,
+      ["--conditions=development", path.join(plan.worktree, "apps", "server", "src", "start.ts")],
       {
         cwd: plan.worktree,
         env: {
