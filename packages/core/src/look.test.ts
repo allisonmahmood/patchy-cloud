@@ -227,6 +227,20 @@ describe("checkLook", () => {
     ]);
   });
 
+  it("reads nested @supports conditions inside @layer look, and checks what they hold", () => {
+    const conditional = (body: string) =>
+      look(
+        {},
+        `@layer look {\n  @supports ((display:grid)) and (not (margin-trim:inline)) {\n${body}\n  }\n}`
+      );
+    expect(checkLook(conditional("    main { display: grid; }"))).toEqual([]);
+    expect(
+      checkLook(conditional("    body { background: url(https://cdn.example.com/paper.png); }"))
+    ).toEqual([
+      "look.css:22 references https://cdn.example.com/paper.png; every URL must be a data: URL."
+    ]);
+  });
+
   it("refuses CSS it cannot parse, and a logo that is not an SVG", () => {
     expect(
       checkLook(
