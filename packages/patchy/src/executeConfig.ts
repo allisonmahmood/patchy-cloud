@@ -352,7 +352,6 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
     ([, declaration]) => declaration.kind !== "members"
   );
   const uses: Record<string, (typeof Manifest.Type)["uses"][string]> = {};
-  if (config.uses.members?.kind === "members") uses.members = config.uses.members;
   let index: typeof generatedIndexSchema.Type;
   try {
     index = decodeIndex(source);
@@ -370,7 +369,12 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
     stamps.set(stamp.alias, stamp);
   }
   if (stamps.size !== declarations.length) throw new StaleGenerated();
-  for (const [alias, declaration] of declarations) {
+  // In config order, as refresh writes them, so every command writes the same manifest.
+  for (const [alias, declaration] of Object.entries(config.uses)) {
+    if (declaration.kind === "members") {
+      uses[alias] = declaration;
+      continue;
+    }
     const stamp = stamps.get(alias);
     if (!stamp) throw new StaleGenerated();
     const generated = stamp.declaration;
