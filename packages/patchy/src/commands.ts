@@ -608,7 +608,9 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   yield* Output.notice(
     `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
   );
-  const { snapshot, warnings: checked } = yield* prepareRepoPublish(repo, token);
+  const { snapshot, warnings: checked } = yield* prepareRepoPublish(repo, token, {
+    dryRun: true
+  });
   const warnings = pending
     ? [
         ...checked,
@@ -687,12 +689,15 @@ const publish = Command.make(
             message:
               "--dry-run is for repo publishing; `patchy validate <file>` checks an HTML file without publishing it."
           });
+        if (options.dryRun && repo !== undefined) {
+          const token = yield* requiredToken();
+          yield* checkRepoPublish(repo, options);
+          // Only looked at: reading an attempt can clear one that can't be sent again.
+          const pending = yield* state.hasPendingPublish(instance.apiUrl, repo);
+          return yield* dryRunPublish(repo, token, pending);
+        }
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
-        if (options.dryRun && repo !== undefined) {
-          yield* checkRepoPublish(repo, options);
-          return yield* dryRunPublish(repo, apiToken, Option.isSome(pending));
-        }
         const client = yield* Api.client(apiToken);
         const identity = yield* client
           .me()

@@ -1,15 +1,18 @@
 // Repo publish checks: bound targets, the tier 0 refusal and bundled resources.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CURRENT_RELEASE } from "@patchy/api";
+import { sha256 } from "../../../test/crypto.js";
+import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import {
   decodePublishRequest,
   embeddedFontLook,
   generateProjectResponse,
+  identity,
   localPackageRegistry,
   packageDir,
   projectHandler,
+  projectSource,
   projectTree,
   publish,
   publishTree,
@@ -167,6 +170,110 @@ describe("repo publish checks", () => {
     const file = await runCli(["publish", "index.html", "--dry-run", "--json"], options);
     expect(file).toMatchObject({ status: 1, stdout: "" });
     expect(JSON.parse(file.stderr).error).toContain("patchy validate <file>");
+  });
+
+  // A dry run checks what publish would send, the portal's newer description included, but
+  // writes nothing: patchy.json keeps its text and stamp, and the generated manifest, the baseline
+  // the next publish's reminders compare against, stays as refresh left it.
+  it("leaves patchy.json and the generated manifest untouched after a dry run", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, {
+          ...projectSource,
+          description: "New portal text",
+          descriptionUpdatedAt: "2026-09-17T00:00:00.000Z"
+        });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const repoFile = path.join(dir, "patchy.json");
+    writeFileSync(
+      repoFile,
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        version: 1,
+        description: "Local edit",
+        descriptionSyncedAt: "2026-09-15T00:00:00.000Z"
+      })
+    );
+    const config = path.join(dir, "patchy.config.ts");
+    writeFileSync(
+      config,
+      readFileSync(config, "utf8").replace(
+        "title: t.text()",
+        "title: t.text(), extra: t.text().optional()"
+      )
+    );
+    const manifest = path.join(dir, "patchy/_generated/manifest.json");
+    const before = [readFileSync(repoFile, "utf8"), readFileSync(manifest, "utf8")];
+
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(dry.stdout).warnings).toEqual([
+      expect.stringContaining("publish replaces local description: 'Local edit'"),
+      expect.stringContaining("Table `notes` changed since its last generation")
+    ]);
+    expect([readFileSync(repoFile, "utf8"), readFileSync(manifest, "utf8")]).toEqual(before);
+  });
+
+  // State.test.ts owns how publish clears an older CLI's tier 0 attempt; a dry run only reports it.
+  it("leaves an older CLI's tier 0 attempt in place after a dry run", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+    mkdirSync(attemptPath, { recursive: true });
+    const file = path.join(attemptPath, `${sha256("tier-zero-attempt")}.json`);
+    const attempt = JSON.stringify({
+      ownerUserId: identity.user.id,
+      target: { mode: "repo" },
+      request: {
+        publishKey: "tier-zero-attempt",
+        html: validHtml,
+        metadata: {},
+        manifest: {
+          release: CURRENT_RELEASE,
+          manifestVersion: MANIFEST_VERSION,
+          tier: 0,
+          name: "cli-project",
+          tables: {},
+          files: {},
+          uses: {}
+        }
+      }
+    });
+    writeFileSync(file, attempt);
+
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(dry.stdout).warnings).toEqual([
+      expect.stringContaining("A publish is pending")
+    ]);
+    expect(readFileSync(file, "utf8")).toBe(attempt);
+  });
+
+  // Notices found before a failure are kept, the snapshot's own warnings too.
+  it("keeps the near-limit warning when the typecheck fails, in publish and its dry run", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    mkdirSync(path.join(dir, "assets"));
+    writeFileSync(path.join(dir, "assets/video.bin"), Buffer.alloc(8.5 * 1024 * 1024));
+    writeFileSync(path.join(dir, "src/main.ts"), "const title: string = 42;");
+    for (const args of [["publish"], ["publish", "--dry-run"]]) {
+      const failed = await runCli([...args, "--json"], options);
+      expect(failed, args.join(" ")).toMatchObject({ status: 1, stdout: "" });
+      expect(JSON.parse(failed.stderr)).toMatchObject({
+        kind: "local",
+        error: expect.stringContaining("Typecheck"),
+        warnings: [expect.stringContaining("near the most a version keeps")]
+      });
+    }
   });
 
   // Tier 0 is now tier 1: a repo still configured at tier 0 is refused before it builds, generates

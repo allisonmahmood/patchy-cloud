@@ -256,11 +256,18 @@ export const recordDescription = Effect.fn("Project.recordDescription")(function
   );
 });
 
-/** A local text edit does not move the last acknowledged cloud timestamp. */
+/**
+ * A local text edit does not move the last acknowledged cloud timestamp. `publishing` names a gone
+ * patch as publish does; `record: false`, for a dry run, returns the portal's newer text without
+ * writing it into patchy.json.
+ */
 export const syncDescription = Effect.fn("Project.syncDescription")(function* (
   cwd: string,
   token: Redacted.Redacted,
-  publishing = false
+  {
+    publishing = false,
+    record = true
+  }: { readonly publishing?: boolean; readonly record?: boolean } = {}
 ) {
   const repo = yield* readRepo(cwd);
   const warnings: string[] = [];
@@ -292,19 +299,20 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
   warnings.push(
     `The description was changed in the portal to '${cloud.description}'; check it` +
       (repo.description !== undefined && repo.description !== cloud.description
-        ? ` (replaced local description: '${repo.description}').`
+        ? ` (${record ? "replaced" : "publish replaces"} local description: '${repo.description}').`
         : ".")
   );
   yield* Output.rememberWarnings(warnings);
-  yield* recordDescription(
-    cwd,
-    {
-      patchId: cloud.id,
-      description: cloud.description,
-      descriptionUpdatedAt: cloud.descriptionUpdatedAt
-    },
-    instance.apiUrl
-  );
+  if (record)
+    yield* recordDescription(
+      cwd,
+      {
+        patchId: cloud.id,
+        description: cloud.description,
+        descriptionUpdatedAt: cloud.descriptionUpdatedAt
+      },
+      instance.apiUrl
+    );
   return {
     repo: {
       ...repo,

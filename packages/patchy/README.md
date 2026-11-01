@@ -1247,8 +1247,10 @@ lists what its version would keep, and sends nothing: the snapshot's files and
 bytes against its limits, and every top-level entry with its files and bytes,
 those using most of either limit first. JSON is `{ ok: true, dryRun: true, repo:
 { files, bytes, limits: { bytes, files }, entries: [{ path, files, bytes }] },
-warnings }`, a folder's `path` ending in `/`. A pending publish stays for the
-next publish to recover, and `warnings` says so. It refuses what repo publish
+warnings }`, a folder's `path` ending in `/`. It writes nothing to the repo: a
+description changed in the portal is checked as publish would send it, without
+writing it into `patchy.json`. A pending publish stays as it is for the next
+publish to recover, and `warnings` says so. It refuses what repo publish
 refuses locally, `unknown_base_version` included unless `--allow-behind` is
 passed. The instance decides `--share`, `--force` and `behind`, so a dry run
 can't check those. With a file it is local, exit 1; `patchy validate` checks a
