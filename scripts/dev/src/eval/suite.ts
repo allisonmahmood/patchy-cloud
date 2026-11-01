@@ -235,15 +235,22 @@ export class DoorOpen extends Schema.TaggedError<DoorOpen>()("DoorOpen", {
 /**
  * Whether a side's personas door refuses every request without the eval's
  * key, as every eval instance's must: the picker, and signing one of the
- * side's own people in with no key or a wrong one. Each probe's own answer
+ * people that side itself serves in with no key or a wrong one (each side
+ * runs its own scenario, so its people can differ). Each probe's own answer
  * must be 403, redirects not followed: an open door answers a sign-in with a
  * cookie and a redirect, wherever that redirect would end.
  */
 export const checkDoor = Effect.fn("Eval.checkDoor")(function* (
   name: "base" | "head",
-  side: { readonly served: { readonly apiUrl: string }; readonly commit: { readonly sha: string } },
-  person: string
+  side: {
+    readonly served: {
+      readonly apiUrl: string;
+      readonly people: ReadonlyArray<{ readonly email: string }>;
+    };
+    readonly commit: { readonly sha: string };
+  }
 ) {
+  const person = side.served.people[0]?.email ?? "door-probe@patchy.local";
   const as = `as=${encodeURIComponent(person)}&return=%2F`;
   for (const probe of ["", `?${as}`, `?${as}&key=wrong`]) {
     const status = yield* HttpClient.get(`${side.served.apiUrl}/dev/sign-in${probe}`).pipe(
@@ -387,9 +394,8 @@ export const runSuite = Effect.fn("Eval.runSuite")(function* (input: {
       if (sides.before.status === "unavailable")
         return yield* new BaseUnavailable({ reason: sides.before.reason });
       // Both doors before any setup: a side that would show builders other runs' people never runs.
-      const person = sideScenario.people[0].email;
-      yield* checkDoor("head", sides.after, person);
-      if (sides.before.status === "served") yield* checkDoor("base", sides.before.side, person);
+      yield* checkDoor("head", sides.after);
+      if (sides.before.status === "served") yield* checkDoor("base", sides.before.side);
       const common = { dir, builders, signIns, scenario: sideScenario };
       const head = yield* setUpSide({ ...common, toolchain, name: "head", side: sides.after });
       // Base installs exactly what head did, `latest` included, and must end up with the same.

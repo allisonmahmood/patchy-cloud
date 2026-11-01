@@ -172,43 +172,52 @@ describe("the sandbox's proxy", () => {
 });
 
 describe("a side's personas door", () => {
-  /** A door on a free port: `signIn` answers a sign-in that names someone, 403 the rest. */
-  const door = (signIn: HttpServerResponse.HttpServerResponse) =>
+  /** A door on a free port that knows only `known`: `signIn` answers signing them in, 403 the rest. */
+  const door = (known: string, signIn: HttpServerResponse.HttpServerResponse) =>
     HttpRouter.serve(
       HttpRouter.use((router) =>
         router.add(
           "GET",
           "/dev/sign-in",
           Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-            request.url.includes("as=") ? signIn : HttpServerResponse.empty({ status: 403 })
+            request.url.includes(`as=${encodeURIComponent(known)}`)
+              ? signIn
+              : HttpServerResponse.empty({ status: 403 })
           )
         )
       ),
       { disableLogger: true, disableListenLog: true }
     ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
 
-  /** Checks the door on this test's server through a plain fetch client, as the suite does. */
-  const check = Effect.gen(function* () {
-    const server = yield* HttpServer.HttpServer;
-    if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP listener");
-    const side = {
-      served: { apiUrl: `http://127.0.0.1:${server.address.port}` },
-      commit: { sha: "abc1234" }
-    };
-    return yield* checkDoor("head", side, "ada@example.com").pipe(
-      Effect.provide(FetchHttpClient.layer)
-    );
-  });
-
-  it.effect("is open when a sign-in without the key redirects, wherever the redirect ends", () =>
+  /** Checks the door on this test's server, serving `people`, through a plain fetch client, as the suite does. */
+  const check = (people: ReadonlyArray<{ readonly email: string }>) =>
     Effect.gen(function* () {
-      const open = yield* Effect.flip(check);
-      expect(open._tag).toBe("DoorOpen");
-    }).pipe(Effect.provide(door(HttpServerResponse.redirect("/dev/sign-in", { status: 303 }))))
+      const server = yield* HttpServer.HttpServer;
+      if (server.address._tag === "UnixPathAddress") throw new Error("Expected a TCP listener");
+      const side = {
+        served: { apiUrl: `http://127.0.0.1:${server.address.port}`, people },
+        commit: { sha: "abc1234" }
+      };
+      return yield* checkDoor("head", side).pipe(Effect.provide(FetchHttpClient.layer));
+    });
+
+  it.effect(
+    "is open when it signs its own people in without the key, wherever the redirect ends",
+    () =>
+      Effect.gen(function* () {
+        const open = yield* Effect.flip(check([{ email: "ada@older.example" }]));
+        expect(open._tag).toBe("DoorOpen");
+      }).pipe(
+        Effect.provide(
+          door("ada@older.example", HttpServerResponse.redirect("/dev/sign-in", { status: 303 }))
+        )
+      )
   );
 
   it.effect("is keyed when every request without the key is refused", () =>
-    check.pipe(Effect.provide(door(HttpServerResponse.empty({ status: 403 }))))
+    check([{ email: "ada@older.example" }]).pipe(
+      Effect.provide(door("ada@older.example", HttpServerResponse.empty({ status: 403 })))
+    )
   );
 });
 
