@@ -113,10 +113,26 @@ The scope already holds the page's hotkeys back, so leave them enabled while a d
 open. `useHotkeyList` lists only enabled hotkeys, so a page hotkey disabled for the dialog
 also drops off a shortcuts sheet.
 
+## The shortcuts sheet
+
+`<HotkeySheet />` renders a `?` button where it is mounted. The button and the `?` key open a
+sheet that lists every labelled hotkey, drawn with the company look's tokens. While it is open,
+the page's hotkeys wait. Escape, its close button or a tap outside it closes it, and focus goes
+back to where it was.
+
+- `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
+  the key that opens it, `"?"` by default, checked like `useHotkey`'s.
+- A hotkey's `group` option lists it under that heading. Groups appear in the order they are
+  first registered, and ungrouped hotkeys, the sheet's own included, come last under General.
+  With no groups at all, the sheet is one list.
+- Its parts have `hotkey-*` classes, styled inside `@layer patchy-hotkeys`, so the patch's own
+  unlayered CSS restyles any of them.
+- A different sheet is built from `useHotkeyList` and `hotkeyKeys` inside a `HotkeyScope`.
+
 ## Showing hotkeys
 
 - `formatHotkey("Mod+K")` is `"⌘ K"` on a Mac and `"Ctrl+K"` elsewhere.
 - `hotkeyKeys("G H")` returns each step's keys, `[["G"], ["H"]]`, for drawing keycaps.
-- `useHotkeyList()` returns `{ hotkey, label }` for every labelled, enabled hotkey that is
-  mounted, including those a `HotkeyScope` holds back, for a shortcuts sheet behind `"?"`.
-  Hotkeys of a dialog that isn't open aren't mounted, so they aren't listed.
+- `useHotkeyList()` returns `{ hotkey, label, group }` for every labelled, enabled hotkey that
+  is mounted, including those a `HotkeyScope` holds back. Hotkeys of a dialog that isn't open
+  aren't mounted, so they aren't listed.
