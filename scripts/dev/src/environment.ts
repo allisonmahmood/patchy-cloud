@@ -990,7 +990,7 @@ const materialize = Effect.fn("materialize")(function* (
       for (const guest of guestsOf(patch))
         yield* run(
           `Sharing ${patch.repo} with ${guest.name}`,
-          process.execPath,
+          node,
           [pinned, "share", "--add", guest.email, "--json"],
           { cwd: repo, env }
         );
