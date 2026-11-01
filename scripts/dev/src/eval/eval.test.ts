@@ -115,6 +115,25 @@ describe("the sandbox's proxy", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
   );
 
+  it.effect("closes even with a connection a sandbox left open", () =>
+    Effect.gen(function* () {
+      const left = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const network = yield* openNetwork({ instancePort: 1, allow: [], node: "/usr/bin/node" });
+          // A client that connects and never sends a request or closes.
+          return yield* Effect.promise(
+            () =>
+              new Promise<net.Socket>((resolve) => {
+                const socket = net.connect(`${network.sockets}/proxy.sock`, () => resolve(socket));
+              })
+          );
+        })
+      ).pipe(Effect.timeout("5 seconds"));
+      expect(left.destroyed || left.readableEnded).toBe(true);
+      left.destroy();
+    }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
   it.effect("lets only the provider's exact endpoint through, and outlives a bad port", () =>
     Effect.gen(function* () {
       const listener = yield* Effect.acquireRelease(
