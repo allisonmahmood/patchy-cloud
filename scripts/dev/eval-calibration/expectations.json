@@ -1,0 +1,23 @@
+[
+  {
+    "task": "cheers",
+    "better": "cheers-counter",
+    "worse": "cheers-page-counter",
+    "on": ["platform", "correctness"],
+    "why": "An atomic tier 2 increment read through a live query stays exact when people cheer at once; a counter row read once and written back from the page loses concurrent cheers and never updates for anyone else."
+  },
+  {
+    "task": "cheers",
+    "better": "cheers-recount",
+    "worse": "cheers-page-counter",
+    "on": ["correctness"],
+    "why": "Recounting every row on each change is exact and live; the page's counter loses cheers and goes stale."
+  },
+  {
+    "task": "cheers",
+    "better": "cheers-counter",
+    "worse": "cheers-recount",
+    "on": ["platform"],
+    "why": "One counter row incremented atomically and read through one live query is the platform's own way to keep a total; a one-row query used only as a change trigger, then every page rescanning the whole table, works around it."
+  }
+]

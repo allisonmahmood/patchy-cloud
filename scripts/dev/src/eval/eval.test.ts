@@ -1,7 +1,10 @@
-import { NodeFileSystem, NodeHttpServer, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpServer, NodePath, NodeServices } from "@effect/platform-node";
 import net from "node:net";
+import tls from "node:tls";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import {
   FetchHttpClient,
@@ -20,10 +23,13 @@ import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js"
 import { pickTarget } from "./grade.js";
 import { codexConfig } from "./home.js";
 import { metricsOf } from "./metrics.js";
-import { isPublic, openNetwork } from "./network.js";
+import { among, isPublic, openNetwork, serverNameOf } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
+import { Expectation, ranks } from "./calibrate.js";
+import { closed, copySource, masksIn, meanScores, splits, taskBrief } from "./judges.js";
+import { classify, judging, shift } from "./scorecard.js";
+import cheers from "./tasks/cheers.js";
 import { checkDoor, pinnedTo } from "./suite.js";
-import { classify, shift } from "./scorecard.js";
 import { countFollows, countsBeside } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
@@ -78,6 +84,29 @@ describe("the sandbox", () => {
     expect(env.EXTRA).toBe("1");
   });
 
+  it("hides a folder behind an empty one and a file behind an empty file", () => {
+    const masked = bwrapArgs(
+      {
+        home: "/data/home",
+        network: { sockets: "/s", instancePort: 1, bridge: "/b.mjs", node: "/n" },
+        masks: [
+          { at: "/patchy/skills", file: false },
+          { at: "/patchy/.git", file: true }
+        ]
+      },
+      "true",
+      []
+    );
+    const at = masked.indexOf("--clearenv");
+    expect(masked.slice(at - 5, at)).toEqual([
+      "--tmpfs",
+      "/patchy/skills",
+      "--ro-bind",
+      "/dev/null",
+      "/patchy/.git"
+    ]);
+  });
+
   it("reads the version out of each tool's --version line", () => {
     expect(versionOf("v24.20.0")).toBe("24.20.0");
     expect(versionOf("2.1.316 (Claude Code)")).toBe("2.1.316");
@@ -125,6 +154,66 @@ describe("the sandbox's proxy", () => {
           new Promise<string>((resolve) => {
             const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
               socket.write("CONNECT 127.0.0.1:5432 HTTP/1.1\r\nHost: 127.0.0.1:5432\r\n\r\n")
+            );
+            socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
+          })
+      );
+      expect(reply).toBe("HTTP/1.1 403 Forbidden");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+  it("narrows a judge's network to its providers' exact hosts", () => {
+    const only = ["api.anthropic.com", "chatgpt.com"];
+    expect(among("api.anthropic.com", only)).toBe(true);
+    expect(among("chatgpt.com", only)).toBe(true);
+    expect(among("cookbook.openai.com", only)).toBe(false);
+    expect(among("api.anthropic.com.example.org", only)).toBe(false);
+    expect(among("160.79.104.10", only)).toBe(false);
+    expect(among("raw.githubusercontent.com", undefined)).toBe(true);
+  });
+
+  it.effect("reads the server name a real TLS client asks for, and nothing else", () =>
+    Effect.gen(function* () {
+      // The first bytes Node's own TLS client sends, as a tunnel would see them.
+      const hello = yield* Effect.promise(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            const server = net.createServer((socket) =>
+              socket.once("data", (chunk: Buffer) => {
+                resolve(chunk);
+                socket.destroy();
+                server.close();
+              })
+            );
+            server.listen(0, "127.0.0.1", () => {
+              const { port } = server.address() as net.AddressInfo;
+              tls
+                .connect({ host: "127.0.0.1", port, servername: "api.anthropic.com" })
+                .on("error", () => {});
+            });
+          })
+      );
+      expect(serverNameOf(hello)).toBe("api.anthropic.com");
+      expect(serverNameOf(hello.subarray(0, 40))).toBeUndefined();
+      expect(serverNameOf(Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))).toBeNull();
+    })
+  );
+
+  it.effect("refuses a judge's CONNECT to the public repo before looking it up", () =>
+    Effect.gen(function* () {
+      const network = yield* openNetwork({
+        instancePort: 1,
+        allow: [],
+        only: ["api.anthropic.com"],
+        node: "/usr/bin/node"
+      });
+      const reply = yield* Effect.promise(
+        () =>
+          new Promise<string>((resolve) => {
+            const socket = net.connect(`${network.sockets}/proxy.sock`, () =>
+              socket.write(
+                "CONNECT raw.githubusercontent.com:443 HTTP/1.1\r\nHost: raw.githubusercontent.com:443\r\n\r\n"
+              )
             );
             socket.on("data", (data) => resolve(data.toString().split("\r\n")[0]!));
           })
@@ -391,6 +480,203 @@ describe("the harness logs", () => {
     ).toEqual(["unrecognized", "unrecognized"]);
     expect(unwrapShell(`/usr/bin/bash -lc 'echo '\\''hi'\\'''`)).toBe("echo 'hi'");
     expect(unwrapShell('/usr/bin/bash -lc "cat \\"a b\\""')).toBe('cat "a b"');
+  });
+});
+
+describe("the judges", () => {
+  const scores = (fit: number, platform = fit, correctness = fit, ux = fit, code = fit) => ({
+    fit,
+    platform,
+    correctness,
+    ux,
+    code
+  });
+  const record = (value: ReturnType<typeof scores> | null) => ({
+    judge: "j",
+    model: "m",
+    effort: "xhigh",
+    scores: value,
+    findings: 0,
+    infra: value === null ? "It ran out of time." : null,
+    attributionInfra: null
+  });
+
+  it("closes every object in a harness's schema, nested ones too", () => {
+    expect(
+      closed({
+        type: "object",
+        properties: {
+          type: { type: "string" },
+          items: {
+            type: "array",
+            items: { type: "object", properties: { a: { type: "integer" } } }
+          }
+        },
+        additionalProperties: true
+      })
+    ).toEqual({
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { a: { type: "integer" } },
+            additionalProperties: false
+          }
+        }
+      },
+      additionalProperties: false
+    });
+  });
+
+  it("averages each dimension and flags judges 2 or more apart", () => {
+    expect(meanScores([scores(4), scores(2, 4)])).toEqual({
+      fit: 3,
+      platform: 4,
+      correctness: 3,
+      ux: 3,
+      code: 3
+    });
+    expect(meanScores([])).toBeNull();
+    expect(splits([record(scores(5, 4)), record(scores(3, 4))])).toEqual([
+      "fit",
+      "correctness",
+      "ux",
+      "code"
+    ]);
+    expect(splits([record(scores(4)), record(null)])).toEqual([]);
+  });
+
+  it("sums up a group's judging, ignoring a judge with no verdict", () => {
+    const summary = judging([
+      { judges: [record(scores(4)), record(scores(2))] },
+      { judges: [record(scores(5)), record(null)] },
+      { judges: [] }
+    ]);
+    expect(summary.judged).toBeCloseTo(11 / 3);
+    expect([summary.verdicts, summary.asked]).toEqual([3, 4]);
+    expect(summary.split).toBe(1);
+    expect(judging([{ judges: [] }]).judged).toBeNull();
+  });
+
+  it.effect("hides every copy of what builders are told in a checkout, wherever it is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const checkout = yield* fs.makeTempDirectoryScoped();
+      const files = [
+        "skills/patchy/SKILL.md",
+        "packages/sdk/skills/patchy-tables/SKILL.md",
+        "packages/patchy/artifacts/patchy-1.0.0.tgz",
+        "packages/patchy/src/skillLock.ts",
+        "scenarios/acme/patches/kudos/AGENTS.md",
+        "scenarios/acme/patches/kudos/src/App.tsx",
+        "scripts/dev/eval-calibration/expectations.json",
+        "node_modules/patchy/SKILL.md",
+        "node_modules/.cache/turbo/abc.tar.zst",
+        ".turbo/cache/abc.tar.zst",
+        "AGENTS.md",
+        ".git"
+      ];
+      for (const file of files) {
+        yield* fs.makeDirectory(`${checkout}/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
+        yield* fs.writeFileString(`${checkout}/${file}`, "");
+      }
+      // A tracked link, as this repo's CLAUDE.md is: bwrap can't mount over it, so its target is hidden.
+      yield* fs.symlink("AGENTS.md", `${checkout}/CLAUDE.md`);
+      const masks = yield* masksIn(checkout);
+      expect([...masks].sort((a, b) => a.at.localeCompare(b.at))).toEqual([
+        { at: "/patchy/.git", file: true },
+        { at: "/patchy/.turbo", file: false },
+        { at: "/patchy/AGENTS.md", file: true },
+        { at: "/patchy/node_modules/.cache", file: false },
+        { at: "/patchy/packages/patchy/artifacts", file: false },
+        { at: "/patchy/packages/sdk/skills", file: false },
+        { at: "/patchy/scenarios/acme/patches/kudos/AGENTS.md", file: true },
+        { at: "/patchy/scripts/dev/eval-calibration", file: false },
+        { at: "/patchy/skills", file: false }
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+  it.effect("copies a published source without its instructions or its side's instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const instance = "http://after-6trhq6.localhost:37212";
+      const files: Record<string, string> = {
+        "patchy.json": `{ "instance": "${instance}" }`,
+        "package.json": `{ "patchy": "${instance}/sdk/patchy-1.0.0.tgz" }`,
+        "AGENTS.md": "told",
+        ".agents/skills/patchy-tables/SKILL.md": "told",
+        "src/App.tsx": "export const App = () => null;",
+        "node_modules/patchy/index.js": ""
+      };
+      for (const [file, text] of Object.entries(files)) {
+        yield* fs.makeDirectory(`${dir}/from/${file}`.replace(/\/[^/]+$/, ""), { recursive: true });
+        yield* fs.writeFileString(`${dir}/from/${file}`, text);
+      }
+      yield* fs.symlink("AGENTS.md", `${dir}/from/CLAUDE.md`);
+      yield* copySource(`${dir}/from`, `${dir}/to`, instance);
+      expect((yield* fs.readDirectory(`${dir}/to`, { recursive: true })).sort()).toEqual([
+        "package.json",
+        "patchy.json",
+        "src",
+        "src/App.tsx"
+      ]);
+      expect(yield* fs.readFileString(`${dir}/to/patchy.json`)).toBe(
+        '{ "instance": "http://patchy.localhost" }'
+      );
+      expect(yield* fs.readFileString(`${dir}/to/package.json`)).not.toContain("after-");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
+  );
+
+  it("briefs the scoring pass with the request and rubric, and nothing about the run", () => {
+    const brief = taskBrief(cheers);
+    expect(brief).toContain(cheers.words);
+    expect(brief).toContain("What good looks like");
+    for (const word of ["sonnet", "terra", "base", "head", "Claude", "Codex", "skill"])
+      expect(brief.toLowerCase()).not.toContain(word.toLowerCase());
+  });
+});
+
+describe("judge calibration", () => {
+  const dir = new URL("../../eval-calibration/", import.meta.url).pathname;
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Expectation)));
+  const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+
+  it.effect("labels pairings of builds that are there, for tasks that exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const expectations = yield* decode(yield* fs.readFileString(`${dir}expectations.json`));
+      expect(expectations.length).toBeGreaterThan(0);
+      for (const each of expectations) {
+        expect(yield* fs.exists(`${dir}${each.better}/source`), each.better).toBe(true);
+        expect(yield* fs.exists(`${dir}${each.worse}/source`), each.worse).toBe(true);
+        expect(each.why.length).toBeGreaterThan(20);
+      }
+    }).pipe(Effect.provide(platform))
+  );
+
+  it("ranks a pairing by the mean of its dimensions, and not at all without both verdicts", () => {
+    const expectation = {
+      task: "cheers",
+      better: "a",
+      worse: "b",
+      on: ["platform", "correctness"] as const,
+      why: "a test pairing"
+    };
+    const at = (platform: number, correctness: number) => ({
+      fit: 3,
+      platform,
+      correctness,
+      ux: 3,
+      code: 3
+    });
+    expect(ranks(expectation, at(4, 4), at(3, 4))).toBe(true);
+    expect(ranks(expectation, at(4, 3), at(3, 4))).toBe(false);
+    expect(ranks(expectation, at(4, 4), null)).toBeNull();
   });
 });
 

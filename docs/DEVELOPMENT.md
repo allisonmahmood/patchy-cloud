@@ -469,8 +469,8 @@ settings: Claude Code with Sonnet 5.5 at `--effort high` (`sonnet`) and Codex
 with GPT-6.1 Terra at `model_reasoning_effort=high` (`terra`), each in its
 real CLI, headless. It runs each task on both sides, the base commit and
 `HEAD`, and shows each figure as base → head; `--only-head` runs `HEAD` alone.
-The base is where `HEAD` left `origin/main`, or `--base <ref>`. Judging the
-code is #1143.
+The base is where `HEAD` left `origin/main`, or `--base <ref>`. After the
+builds, two judges review what each run published.
 
 - **The sandbox.** Each builder runs in `bwrap`: the system read-only, a
   private `/tmp`, and a HOME of the run's own at `/home/builder`. Nothing else
@@ -522,10 +522,35 @@ code is #1143.
 - **Outcomes.** `built`, `asked`, `gave-up`, `timed-out`, or `infra` when setup
   or the model provider failed: retried once, and never counted against a
   builder. A run passes when it built and every check passed.
+- **Judges.** Opus 5.5 at `xhigh` in Claude Code and GPT-6.1 Sol at `xhigh` in
+  Codex review every run that published, in the same sandbox, on a network
+  that reaches their model providers and nothing else, with their harnesses'
+  web tools off: no instance, and not the public repo that holds the skills. The scoring pass is blind: the task's words and
+  rubric, the published source without its agent instructions and with its
+  instance renamed, the screenshots, the check results, and this checkout for
+  how Patchy works, the same for both sides, with every skill folder, release
+  archive, build cache and agent file masked wherever it is, its git history,
+  local state and the calibration labels too. It is staged under an anonymous name, so no
+  path says the side or the builder. Each judge scores fit, platform,
+  correctness, UX and code from 1 to 5, with findings. For findings of medium
+  severity or worse, an attribution pass reads the skills the builder had and
+  its log and says which text plausibly led there, or what was missing: a
+  hypothesis for the next edit, never a score. A pass with no answer is tried
+  once more; a judge that still can't answer is noted on its run, and the
+  suite and its scorecard stand without it. The scorecard shows each
+  dimension's mean, base → head, the verdicts it rests on, and the runs whose
+  judges are 2 or more apart. Judging a change to the platform itself reads
+  `HEAD`'s code for both sides.
+- **Calibration.** `pnpm dev eval --calibrate` has both judges score the
+  labelled builds in `scripts/dev/eval-calibration/`, blind, as in a suite,
+  and fails unless each ranks every pairing in its `expectations.json` the
+  labelled way. Run it after changing the judges' prompts, a rubric or the
+  labels.
 
 Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
 task that isn't held out by default), `--builders` (`sonnet,terra`),
-`--repeats` (3), `--concurrency` (4), `--json`. A base that is the same commit
+`--repeats` (3), `--concurrency` (4, for builds and then judgings),
+`--no-judge`, `--calibrate`, `--json`. A base that is the same commit
 as `HEAD` is allowed and says so: its differences are noise between runs. Tasks are modules under `scripts/dev/src/eval/tasks/`, listed in its
 `index.ts`; `task.ts` says what one holds. Everything lands in
 `.local/evals/<suite>/`: per run its raw stream, its HOME (the working folder
@@ -543,7 +568,7 @@ from the environment or `~/.config/patchy-cloud/dev.env`; without either, its
 credentials file is mounted read-only, which lasts as long as its current
 access token. Codex builders get a fresh `~/.codex/config.toml` with your model
 provider, when you use one, or a copy of your `auth.json` per run, so a builder
-can never write to your own login. The suite holds the
+can never write to your own login. Judges sign in the same way. The suite holds the
 evidence lock, so no `compare`, `film`, `transcript` or `trial` runs beside it.
 Each run is a model run: a cheers build takes about two minutes.
 

@@ -27,6 +27,13 @@ export class SideNotRunning extends Schema.TaggedError<SideNotRunning>()("SideNo
   }
 }
 
+/** A random lowercase id, for run ids, door keys and anonymous names. */
+export const randomId = (length: number) =>
+  Array.from(
+    crypto.getRandomValues(new Uint8Array(length)),
+    (byte) => "abcdefghijklmnopqrstuvwxyz0123456789"[byte % 36]
+  ).join("");
+
 const HANDLE_MAX = 32;
 
 /** A handle under a run's id, within the 32 characters a handle may have. */
