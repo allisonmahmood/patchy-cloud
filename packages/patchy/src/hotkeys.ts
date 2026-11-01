@@ -65,9 +65,42 @@ type Named =
   | "PageUp"
   | "PageDown"
   | `F${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}`;
-type Punctuation = "/" | "?" | "," | "." | ";" | "'" | "[" | "]" | "\\" | "-" | "=" | "`";
+// Every ASCII symbol. TanStack reads a trailing `+` as the key, so `"+"` and `"Mod++"` parse.
+type Punctuation =
+  | "!"
+  | '"'
+  | "#"
+  | "$"
+  | "%"
+  | "&"
+  | "'"
+  | "("
+  | ")"
+  | "*"
+  | "+"
+  | ","
+  | "-"
+  | "."
+  | "/"
+  | ":"
+  | ";"
+  | "<"
+  | "="
+  | ">"
+  | "?"
+  | "@"
+  | "["
+  | "\\"
+  | "]"
+  | "^"
+  | "_"
+  | "`"
+  | "{"
+  | "|"
+  | "}"
+  | "~";
 
-/** A key as written in a hotkey. Letters match either case. */
+/** A key as written in a hotkey. Letters match either case; a symbol is the character it types. */
 export type Key = Letter | Lowercase<Letter> | Digit | Named | Punctuation;
 
 // Patchy keeps it for its own shortcuts.
@@ -99,14 +132,16 @@ type FirstRefusal<T extends readonly string[]> = T extends readonly [
     ? FirstRefusal<Rest>
     : Refusal<Step>
   : never;
+// A space too many would otherwise read as an empty step.
+type Problem<S extends string> = S extends `${string}  ${string}` | ` ${string}` | `${string} `
+  ? `'${S}' isn't a hotkey: separate its steps with one space, as in 'G H'`
+  : FirstRefusal<Steps<S>>;
 
 /**
  * A chord such as `"Mod+K"` or `"?"`, or a sequence of chords separated by single spaces,
  * such as `"G H"`. A string that isn't one becomes an error naming the step to fix.
  */
-export type Hotkey<S extends string> = [FirstRefusal<Steps<S>>] extends [never]
-  ? S
-  : FirstRefusal<Steps<S>>;
+export type Hotkey<S extends string> = [Problem<S>] extends [never] ? S : Problem<S>;
 
 export interface HotkeyOptions {
   /** What the hotkey does, in the viewer's words. Labelled hotkeys appear in `useHotkeyList`. */
@@ -116,8 +151,8 @@ export interface HotkeyOptions {
   /** While false, the hotkey stays mounted but doesn't fire or list. Defaults to true. */
   readonly enabled?: boolean;
   /**
-   * Fire while the viewer types in a field. By default single keys and Shift combos wait
-   * until the field loses focus; Mod chords and Escape fire anyway.
+   * Fire while the viewer types in a text field, and on the keys a focused control uses, such
+   * as a button's Enter. By default Mod chords and Escape do; other keys wait.
    */
   readonly whileTyping?: boolean;
   /**
@@ -146,11 +181,16 @@ const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> =>
 
 const definition = (binding: Checked): UseHotkeyDefinition => ({
   hotkey: toTanStack(binding.hotkey),
-  callback: (event) => binding.run(event),
+  // TanStack has already kept each repeat of a held key from the page. Whether this keydown is
+  // one is the event's to say: TanStack's `requireReset` is per registration, and a component
+  // that remounts while the key is held registers afresh.
+  callback: (event) => {
+    if (binding.repeat === false && event.repeat) return;
+    binding.run(event);
+  },
   options: {
     enabled: binding.enabled ?? true,
     ignoreInputs: binding.whileTyping === undefined ? "auto" : !binding.whileTyping,
-    requireReset: binding.repeat === false,
     // TanStack's own warning names options this API doesn't have; ours follows registration.
     conflictBehavior: "allow",
     ...(binding.label === undefined ? {} : { meta: { name: binding.label, group: binding.group } })

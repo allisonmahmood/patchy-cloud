@@ -1,0 +1,12 @@
+diff --git a/dist/_match.js b/dist/_match.js
+--- a/dist/_match.js
++++ b/dist/_match.js
+@@ -11,7 +11,7 @@
+ 		matched: false,
+ 		score: 0
+ 	};
+-	if (normalized.isComposing && (parsed.code !== void 0 || isPrintableKey(parsed.key))) return noMatch;
++	if (normalized.isComposing) return noMatch;
+ 	if (normalized.altGraph && (parsed.ctrl || parsed.alt)) return noMatch;
+ 	if (normalized.altGraph && !altGraphTypedCharacter(normalized)) return noMatch;
+ 	if (parsed.code !== void 0) {

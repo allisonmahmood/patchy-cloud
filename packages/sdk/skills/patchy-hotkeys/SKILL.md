@@ -38,9 +38,11 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 
 ## Keyboard layouts
 
-- Write a symbol as the character it types: `"?"`, not `"Shift+/"`. A letter or a bare
-  symbol matches the character the viewer's layout types, so `"?"` fires wherever they type
-  `?`, and it displays as they see it.
+- Write a symbol as the character it types, with a modifier too: `"?"`, `"+"` and `"Mod++"`,
+  not `"Shift+/"` or `"Shift+="`. Every ASCII symbol is a key. A letter or a bare symbol
+  matches the character the viewer's layout types, so `"?"` fires wherever they type `?`,
+  `"+"` fires from the numpad and a German keyboard's `+` key, and each displays as they see
+  it.
 - A key falls back to its US position when what it typed can't name a shortcut:
   - a non-Latin letter or symbol, or a dead key: the Russian key in J's place fires `"J"`,
     and ⌥- on a Mac, which types `–`, fires `"Alt+-"`;
@@ -59,11 +61,15 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
 - While the component that registered it is mounted and `enabled` isn't false.
 - Patchy focuses the page when it opens. If the viewer clicks Patchy's own bar or a download
   card, keys go there until they click back into the page.
-- While the viewer types in a text field, single keys and Shift chords wait; Mod chords and
-  Escape fire. `whileTyping: true` or `false` overrides either way. Checkboxes, radios and
-  ranges aren't text fields: single keys fire there, and the control keeps Space and the
-  arrow keys.
-- A focused button keeps Enter and Space, and a focused link keeps Enter.
+- While the viewer types in a text field, single keys, Shift chords and Alt chords wait; Mod
+  chords and Escape fire. Checkboxes, radios and ranges aren't text fields: single keys fire
+  there, and the control keeps Space and the arrow keys. A focused button keeps Enter and
+  Space, and a focused link keeps Enter.
+- `whileTyping: true` fires in text fields and on a focused control's own keys, so a button's
+  Enter or a checkbox's Space runs the hotkey instead. `whileTyping: false` makes Mod chords
+  and Escape wait in text fields too.
+- While an input method composes text, as for Japanese or Chinese, no hotkey fires: its
+  keys, Enter, Escape and the arrows included, are the input method's.
 - A hotkey that fires stops the browser's own action for those keys, so a `whileTyping: true`
   letter isn't typed. Keys the browser keeps, such as Mod+T, Mod+W, Mod+N and Mod+L, never
   reach the page.

@@ -38,6 +38,9 @@ overrides:
 # embedded-postgres's beforeExit hook must preserve Vitest failures, not exit 0.
 patchedDependencies:
   async-exit-hook@2.0.1: patches/async-exit-hook@2.0.1.patch
+  # TanStack Hotkeys matches Escape, Enter and the arrows while an input method composes, and
+  # those keys are the input method's. patchy/hotkeys bundles it; drop this when upstream does.
+  "@tanstack/hotkeys@0.19.0": patches/@tanstack__hotkeys@0.19.0.patch
 allowBuilds:
   esbuild: true
   workerd: false
