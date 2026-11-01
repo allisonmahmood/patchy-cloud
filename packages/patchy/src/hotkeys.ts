@@ -16,7 +16,7 @@ import {
   type HotkeyRegistration,
   type UseHotkeyDefinition
 } from "@tanstack/preact-hotkeys";
-import { Fragment, createElement, type ComponentChildren, type JSX } from "preact";
+import { Fragment, createElement, createPortal, type ComponentChildren, type JSX } from "preact";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
 import { addSheetStyles, sections } from "./hotkeySheet.js";
@@ -411,10 +411,11 @@ export interface HotkeySheetProps<S extends string> {
 }
 
 /**
- * A `?` button where it is mounted, and a sheet that it and `hotkey` open, listing every labelled
- * hotkey under its group. While the sheet is open the page's hotkeys wait. Escape, its close
- * button and a click outside it close it, and focus goes back. It draws in the company look with
- * `hotkey-*` classes, in `@layer patchy-hotkeys`, so the page's own CSS restyles it.
+ * A `?` button where it is mounted, and a sheet that it and `hotkey` open over the whole page,
+ * listing every labelled hotkey under its group. While the sheet is open the page's hotkeys wait.
+ * Escape, its close button and a click outside it close it, and focus goes back. It draws in the
+ * company look with `hotkey-*` classes, in `@layer patchy-hotkeys`, so the page's own CSS
+ * restyles it.
  *
  * ```tsx
  * <HotkeySheet />
@@ -441,9 +442,14 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       },
       "?"
     ),
+    // In the page's body, not beside the button: a dialog under a container the page hides at
+    // this width would open modal with nothing drawn.
     open &&
-      createElement(HotkeyScope, {
-        children: createElement(Sheet, { title, onClose: () => setOpen(false) })
-      })
+      createPortal(
+        createElement(HotkeyScope, {
+          children: createElement(Sheet, { title, onClose: () => setOpen(false) })
+        }),
+        document.body
+      )
   );
 }

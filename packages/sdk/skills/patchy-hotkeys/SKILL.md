@@ -122,9 +122,10 @@ also drops off a shortcuts sheet.
 ## The shortcuts sheet
 
 `<HotkeySheet />` renders a `?` button where it is mounted. The button and the `?` key open a
-sheet that lists every labelled hotkey, drawn with the company look's tokens. While it is open,
-the page's hotkeys wait. Escape, its close button or a tap outside it closes it, and focus goes
-back to where it was.
+sheet that lists every labelled hotkey, drawn with the company look's tokens. The sheet opens
+over the whole page wherever the button is, even in a sidebar hidden at the viewer's width, so
+mount it once. While it is open, the page's hotkeys wait. Escape, its close button or a tap
+outside it closes it, and focus goes back to where it was.
 
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
   the key that opens it, `"?"` by default, checked like `useHotkey`'s.
