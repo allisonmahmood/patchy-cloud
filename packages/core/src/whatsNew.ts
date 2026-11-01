@@ -52,6 +52,15 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 34,
+    date: "2026-11-01",
+    through: "e5334caefd847de4c5ad7e5b7e61b0cea0e7b149",
+    changes: [],
+    behindTheScenes: [
+      "Patchy's servers moved to a faster JavaScript runtime, Bun, so each one uses less memory and handles more requests."
+    ]
+  },
+  {
     id: 33,
     date: "2026-11-01",
     through: "d5a7862940822475a089a147659fc4718dc47c20",
