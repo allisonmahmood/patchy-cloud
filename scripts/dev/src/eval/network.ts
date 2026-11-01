@@ -205,7 +205,9 @@ const proxyConnection =
               inside.resume();
               return;
             }
-            // A narrowed tunnel opens only once its TLS names the host it vetted.
+            // A narrowed tunnel opens only once its TLS names the host it vetted;
+            // a client that leaves before then takes the far side with it.
+            inside.on("close", () => outside.destroy());
             let hello = rest;
             const check = () => {
               const name = hello.length > HELLO_MAX ? null : serverNameOf(hello);
