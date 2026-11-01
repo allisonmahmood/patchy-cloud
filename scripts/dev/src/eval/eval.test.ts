@@ -95,20 +95,28 @@ describe("the sandbox's bridge", () => {
     "except BlockingIOError: sys.exit(101)"
   ].join("\n");
 
-  it.live("hands on everything a builder writes, however late the runner reads", () =>
+  it.live("hands on everything a builder writes, however late the runner reads", (ctx) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      // The sandbox runs only where bubblewrap does (not on CI runners), and the
-      // bridge on real Node (under `bun --bun`, `node` is Bun).
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // The sandbox runs only where bubblewrap can start one (not on CI runners), and
+      // the bridge on real Node (under `bun --bun`, `node` is Bun).
+      const sandboxes = yield* spawner
+        .spawn(ChildProcess.make("bwrap", ["--unshare-net", "--ro-bind", "/", "/", "true"]))
+        .pipe(
+          Effect.flatMap((probe) => probe.exitCode),
+          Effect.map((code) => Number(code) === 0),
+          Effect.orElseSucceed(() => false)
+        );
       const node = yield* realNode().pipe(Effect.option);
-      if (!(yield* fs.exists("/usr/bin/bwrap")) || Option.isNone(node)) return;
+      if (!sandboxes || Option.isNone(node))
+        return ctx.skip("no bubblewrap sandbox or real Node here");
       const network = yield* openNetwork({
         instancePort: 47_001,
         allow: [],
         node: node.value.execPath
       });
       const home = yield* fs.makeTempDirectoryScoped();
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const handle = yield* spawner.spawn(
         ChildProcess.make(
           "bwrap",
@@ -430,6 +438,15 @@ describe("what a run is", () => {
         graded(false)
       ).outcome
     ).toBe("infra");
+    expect(
+      classify(
+        log({
+          ending: "failed",
+          detail: "Failed to start the generated server: too many threads (os error 11)"
+        }),
+        graded(false)
+      ).outcome
+    ).toBe("gave-up");
     expect(classify(log(), graded(true, "The patch's log couldn't be read.")).outcome).toBe(
       "infra"
     );

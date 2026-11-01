@@ -5,14 +5,17 @@
 // and at 3128 for the proxy, and joins each connection to the matching Unix socket
 // the runner mounted at /run/eval: the instance, or the proxy that allows only the
 // public internet. Then it runs the command and exits as it exits. The command
-// writes its output to files rather than the runner's pipes, and this hands each
-// on as it grows: a builder's own tools can make an inherited pipe non-blocking,
-// and a write that finds it full then kills the builder (`failed printing to
-// stdout`, os error 11); a file is never full.
+// writes its output to files in its HOME rather than the runner's pipes, and this
+// hands each on as it grows, as fast as the runner reads: a builder's own tools
+// can make an inherited pipe non-blocking, and a write that finds it full then
+// kills the builder (`failed printing to stdout`, os error 11). HOME is on disk,
+// unlike the sandbox's /tmp, so output waiting for the runner costs no memory.
 // Plain JavaScript on purpose: it runs on the sandbox's Node before anything else.
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { closeSync, openSync, readSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const [, , port, separator, command, ...args] = process.argv;
 if (separator !== "--" || command === undefined) {
@@ -45,26 +48,33 @@ const servers = await Promise.all([
 for (const server of servers) server.unref();
 
 /**
- * One of the command's output streams: a file in the sandbox's private /tmp,
- * unlinked once open so nothing else finds it, that the command writes to and
- * this reads as it grows and hands on to `to`.
+ * One of the command's output streams: a file in HOME, unlinked once open so
+ * nothing else finds it, that the command writes to and this reads as it grows
+ * and hands on to `to`, never faster than `to` drains. `finish`, once the
+ * command has exited, hands on the rest and resolves.
  */
 const relay = (name, to) => {
-  const path = `/tmp/.eval-${name}-${process.pid}`;
+  const path = `${process.env.HOME ?? "/tmp"}/.eval-${name}-${process.pid}`;
   const write = openSync(path, "w");
   const read = openSync(path, "r");
   unlinkSync(path);
   const buffer = Buffer.alloc(1 << 16);
-  const drain = () => {
-    for (let n = readSync(read, buffer); n > 0; n = readSync(read, buffer))
-      to.write(Buffer.from(buffer.subarray(0, n)));
-  };
-  const timer = setInterval(drain, 25);
+  let exited = false;
+  const handedOn = (async () => {
+    for (;;) {
+      const n = readSync(read, buffer);
+      if (n > 0) {
+        if (!to.write(Buffer.from(buffer.subarray(0, n)))) await once(to, "drain");
+      } else if (exited) break;
+      else await sleep(25);
+    }
+    await new Promise((resolve) => to.write("", resolve));
+  })();
   return {
     fd: write,
     finish: () => {
-      clearInterval(timer);
-      drain();
+      exited = true;
+      return handedOn;
     }
   };
 };
@@ -82,8 +92,6 @@ child.on("error", (error) => {
 // Exiting ends everything the command left running, as the sandbox's first
 // process; first, whatever it wrote last is handed on.
 child.on("exit", (code, signal) => {
-  stdout.finish();
-  stderr.finish();
   const status = code ?? (signal === null ? 1 : 128);
-  process.stdout.write("", () => process.stderr.write("", () => process.exit(status)));
+  void Promise.allSettled([stdout.finish(), stderr.finish()]).then(() => process.exit(status));
 });
