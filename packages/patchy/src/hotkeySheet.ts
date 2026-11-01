@@ -24,8 +24,10 @@ export const sections = (
 
 // The sheet's defaults, after the page's own styles, in two layers:
 // - The `?` button's defaults sit in a layer inside the company look's, beneath the look's own
-//   rules, so a look's `button` and `button:hover` make it one of the look's buttons.
-// - The sheet's drawing sits in a layer after the look's, so it beats the look's element styles.
+//   rules, so the page's layered button styles, the look's included, make it one of its buttons.
+// - The sheet's drawing sits in a layer declared after the page's existing ones. It first reverts
+//   the sheet's parts past every author layer, so nothing in those layers reaches them, then draws
+//   them from the look's tokens. Focus rings alone come back from the page's layers.
 // On a page without a look, a token used without a fallback drops out: the parts keep the page's
 // font and text colour, the card loses its shadow, and each line falls back to a hairline.
 const styles = `@layer look.patchy-hotkeys {
@@ -57,6 +59,17 @@ const styles = `@layer look.patchy-hotkeys {
     width: max-content;
     aspect-ratio: 1;
     padding-inline: 0;
+  }
+
+  /* Past every author layer, before the defaults below, which come later at the same weight. */
+  .hotkey-sheet-dialog,
+  .hotkey-sheet-dialog *,
+  .hotkey-sheet-dialog::backdrop {
+    all: revert;
+  }
+  .hotkey-sheet-dialog :focus-visible {
+    outline: revert-layer;
+    outline-offset: revert-layer;
   }
 
   /* The dialog is the layer over the page: its background is the scrim, and the card sits in it. */
@@ -108,7 +121,9 @@ const styles = `@layer look.patchy-hotkeys {
   }
   .hotkey-sheet-head h2 {
     margin: 0;
+    font-family: var(--look-font-display);
     font-size: 1.35rem;
+    font-weight: 800;
     line-height: 1.1;
   }
   .hotkey-sheet-close {
@@ -245,16 +260,24 @@ const styles = `@layer look.patchy-hotkeys {
 }
 `;
 
-// A rule made only of element names never reaches the sheet or its button; any rule with a class,
-// attribute or pseudo-class can, `button:hover` included. Each selector here weighs one class,
-// which outranks any number of element names, and reverts the page's unlayered rules to the
-// layers. First in `<head>`, it loses the tie to a page's own one-class rule, such as
-// `.hotkey-key { … }`, since every page stylesheet comes after it.
+// Element rules in the page's stylesheets, layered or not, don't reach the sheet. Its unlayered
+// rules with a class, attribute or pseudo-class can, and so can layers it declares after the sheet
+// first mounts; the `?` button also takes the page's layered styles, as its own buttons do.
+// This reset handles unlayered rules: each selector weighs one class, which outranks any number of
+// element names, and reverts the page's unlayered rules to the layers. It sits first in `<head>`,
+// so a page's own one-class rule, such as `.hotkey-key { … }`, comes after it and wins the tie. A
+// stylesheet prepended later is moved behind it when the sheet next opens; a page that replaces
+// `<head>` wholesale drops it until the sheet next opens. `all` leaves out `direction` and
+// `unicode-bidi`, so the parts inside take their direction from the sheet's container instead.
 const reset = `.hotkey-opener,
 .hotkey-sheet-dialog,
 .hotkey-sheet-dialog *,
 .hotkey-sheet-dialog::backdrop {
   all: revert-layer;
+}
+.hotkey-sheet-dialog * {
+  direction: inherit;
+  unicode-bidi: normal;
 }
 `;
 
@@ -264,16 +287,17 @@ const style = (text: string) => {
   return element;
 };
 
-let styled = false;
+let first: HTMLStyleElement | undefined;
 
 /**
- * Adds the sheet's styles to the page, once: its reset first in `<head>`, before every page
- * stylesheet, and its defaults after whatever styles the page already has, so their layers come
- * after the page's.
+ * Adds the sheet's styles to the page: its defaults once, after whatever styles the page already
+ * has, so their layers come after the page's, and its reset first in `<head>`. Each call puts the
+ * reset back first if a stylesheet has been prepended since, as the sheet does each time it opens.
  */
 export const addSheetStyles = (): void => {
-  if (styled) return;
-  styled = true;
-  document.head.prepend(style(reset));
-  document.head.append(style(styles));
+  if (first === undefined) {
+    first = style(reset);
+    document.head.append(style(styles));
+  }
+  if (document.head.firstElementChild !== first) document.head.prepend(first);
 };

@@ -134,13 +134,14 @@ outside it closes it, and focus goes back to where it was.
   With no groups at all, the sheet is one list.
 - With the company look, the `?` button is one of the look's buttons, square. Without a look,
   the sheet and button take the page's font and text colour.
-- A rule made only of element names, such as `kbd { … }` or `html body dialog kbd { … }`, never
-  reaches the sheet or its button; any rule with a class, attribute or pseudo-class can,
-  `button:hover` included. Aim a rule at the sheet with its `hotkey-*` classes, and name a state
-  with the class to restyle one: `.hotkey-opener:hover`. The sheet renders in the page's
-  `<body>`, outside the patch's root element, so restyle it with selectors that don't depend on
-  where it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on `:root` or
-  `body`.
+- Element rules in the page's stylesheets, layered or not, don't reach the sheet. Its unlayered
+  rules with a class, attribute or pseudo-class can, `button:hover` included, and so can layers
+  declared after the sheet first mounts; the `?` button also takes the page's layered styles, as
+  its own buttons do. Restyle the sheet with unlayered rules aimed at its `hotkey-*` classes,
+  and name a state with the class to restyle one: `.hotkey-opener:hover`. The sheet renders in
+  the page's `<body>`, outside the patch's root element, so restyle it with selectors that don't
+  depend on where it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
+  `:root` or `body`.
 - A different sheet is built from `useHotkeyList` and `hotkeyKeys` inside a `HotkeyScope`.
 
 ## Showing hotkeys

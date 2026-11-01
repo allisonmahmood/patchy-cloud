@@ -157,22 +157,27 @@ function App() {
 render(<App />, document.getElementById("app")!);
 `;
 
-// The sheet on a page whose own element rules would restyle it, some long or in a media query,
-// with a one-class rule aimed at its keycaps. All of it is in <head> before the sheet mounts, as
-// in a built page; `css` adds more after.
+// The sheet on a page whose own element rules would restyle it, some long, in a media query or in
+// a preflight layer like Tailwind's, with a one-class rule aimed at its keycaps. All of it is in
+// <head> before the sheet mounts, as in a built page; `css` adds more after, or prepends it.
 // `addLook` adds a company look, as a patch's bundle carries one.
 const styled = `import { render } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
 
-const css = (text: string) => {
+const css = (text: string, prepend = false) => {
   const style = document.createElement("style");
   style.textContent = text;
-  document.head.append(style);
+  if (prepend) document.head.prepend(style);
+  else document.head.append(style);
 };
 css(\`
+  @layer base {
+    kbd { opacity: 0; font-family: monospace; }
+    button { text-transform: uppercase; border: 0 solid; }
+  }
   body { font-family: Georgia, serif; color: rgb(40, 50, 60); }
   body * { scroll-margin-bottom: 9px; }
-  kbd { display: none; font-size: 4px; }
+  kbd { display: none; font-size: 4px; direction: rtl; unicode-bidi: bidi-override; }
   @media (min-width: 0px) { html body kbd { display: none; font-size: 4px; } }
   button, html body main button, html body dialog button { padding: 30px; background: rgb(255, 0, 0); }
   dialog, body dialog { border: 9px solid rgb(255, 0, 0); }
@@ -588,30 +593,55 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       properties
     );
 
-  const addCss = (text: string) =>
-    frame.evaluate(
-      (added) => (window as unknown as { css: (text: string) => void }).css(added),
-      text
-    );
+  type Css = { css: (text: string, prepend?: boolean) => void };
+  const addCss = (text: string, prepend = false) =>
+    frame.evaluate(([added, first]) => (window as unknown as Css).css(added, first), [
+      text,
+      prepend
+    ] as const);
 
-  await test.step("the page's element rules leave it be, however long; its one-class rule restyles it", async () => {
+  await test.step("the page's element rules leave it be, layered or not, however long; its one-class rules restyle it", async () => {
+    // Prepended ahead of the sheet's reset after it mounted, which the sheet undoes as it opens.
+    await addCss(".hotkey-key { padding-left: 23px; }", true);
     await page.keyboard.press("?");
-    // Added after the sheet mounted, after its reset, and longer than any weight in element names.
+    // Added after the sheet mounted: longer than any weight in element names, or in a layer
+    // declared before it.
     await addCss(`
       html body dialog div div section ul li span kbd { display: none; }
       html body dialog div div section ul li span kbd:not(b b b b b b b b b b) { display: none; }
+      @layer base { kbd { visibility: hidden; } }
     `);
     const key = dialog.locator(".hotkey-row kbd").first();
     await expect(key).toBeVisible();
-    expect(await style(key, ["font-size", "color"])).toEqual({
+    expect(
+      await style(key, [
+        "font-size",
+        "color",
+        "opacity",
+        "font-family",
+        "direction",
+        "unicode-bidi",
+        "padding-left"
+      ])
+    ).toEqual({
       "font-size": "12.16px",
-      color: "rgb(1, 2, 3)"
+      color: "rgb(1, 2, 3)",
+      opacity: "1",
+      "font-family": "Georgia, serif",
+      direction: "ltr",
+      "unicode-bidi": "normal",
+      "padding-left": "23px"
     });
     expect(
-      await style(dialog.locator(".hotkey-sheet-close"), ["padding-left", "background-color"])
+      await style(dialog.locator(".hotkey-sheet-close"), [
+        "padding-left",
+        "background-color",
+        "text-transform"
+      ])
     ).toEqual({
       "padding-left": "0px",
-      "background-color": "rgba(0, 0, 0, 0)"
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-transform": "none"
     });
     expect(await style(dialog, ["border-top-width"])).toEqual({ "border-top-width": "0px" });
     // `body *` reaches the page but no part of the sheet or its button.

@@ -179,12 +179,15 @@ It draws with `--look-*` tokens in `hotkey-*` classes, and in the page's font
 and text colour without a look. The first one mounted adds its defaults after
 the page's styles: the button's in `@layer look.patchy-hotkeys`, beneath the
 look's own rules, so it is one of the look's buttons; the sheet's in
-`@layer patchy-hotkeys`, after the look's, so they beat its element styles. It
-also adds a reset first in `<head>`: a rule made only of element names never
-reaches the sheet or its button, and any rule with a class, attribute or
-pseudo-class can, `button:hover` included. Its dialog renders in the page's
-`<body>`, outside the patch's root element, so restyle it with selectors that
-don't depend on where it's mounted, such as `.hotkey-sheet …`, and set
+`@layer patchy-hotkeys`, after the page's layers, which it reverts on the
+sheet's parts. It also adds a reset first in `<head>`. Element rules in the
+page's stylesheets, layered or not, don't reach the sheet. Its unlayered rules
+with a class, attribute or pseudo-class can, `button:hover` included, and so can
+layers declared after the sheet first mounts; the `?` button also takes the
+page's layered styles, as its own buttons do. A page that replaces `<head>`
+wholesale loses the reset until the sheet next opens. Its dialog renders in the
+page's `<body>`, outside the patch's root element, so restyle it with selectors
+that don't depend on where it's mounted, such as `.hotkey-sheet …`, and set
 `--look-*` overrides on `:root` or `body`.
 
 ### Generated downloads and printing

@@ -339,6 +339,8 @@ function Sheet(props: { readonly title: string; readonly onClose: () => void }):
   const list = useHotkeyList();
   useLayoutEffect(() => {
     const element = dialog.current;
+    // Its reset back first in `<head>`, ahead of any stylesheet prepended since it last opened.
+    addSheetStyles();
     element?.showModal();
     return () => element?.close();
   }, []);
@@ -419,8 +421,8 @@ export interface HotkeySheetProps<S extends string> {
  * listing every labelled hotkey under its group. While the sheet is open the page's hotkeys wait.
  * Escape, its close button and a click outside it close it, and focus goes back. It draws in the
  * company look, its button one of the look's, or in the page's font and text colour without one.
- * The page's rules aimed at its `hotkey-*` classes restyle it; rules made only of element names,
- * such as `kbd { … }`, don't reach it.
+ * The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules in its
+ * stylesheets, layered or not, don't reach it.
  *
  * ```tsx
  * <HotkeySheet />
