@@ -74,6 +74,20 @@ describe("redactText", () => {
     assert.deepStrictEqual(redactText(new Map(), kept), { text: kept, matched: new Set() });
   });
 
+  it.effect("redacts a secret in a JSON document's keys as well as its values", () =>
+    Effect.gen(function* () {
+      const sanitizer = yield* makeSanitizer({
+        stateDirs: [],
+        envs: [],
+        identities: ["s3cret-value"]
+      });
+      const redacted = yield* sanitizer.redactJson({
+        refusals: { "s3cret-value": 1, stale_generated: 2 }
+      });
+      assert.deepStrictEqual(redacted, { refusals: { "[redacted]": 1, stale_generated: 2 } });
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
+
   it("redacts what is shaped like a provider's access token or API key, and nothing like it", () => {
     const text =
       "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U and key sk-ant-api03-abcdefghijklmnop-QRSTUV";

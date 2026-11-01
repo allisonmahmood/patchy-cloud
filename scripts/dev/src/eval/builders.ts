@@ -129,10 +129,16 @@ const RefusalDoc = Schema.Struct({
 });
 const decodeRefusal = Schema.decodeUnknownOption(Schema.fromJsonString(RefusalDoc));
 
+/** A CLI refusal code as ADR-0004 shapes one: lowercase snake case. */
+const CODE = /^[a-z][a-z0-9_]{1,40}$/;
+const KINDS = new Set(["local", "rejected", "unreachable"]);
+
 /**
  * The structured refusals in a command's output: each line that is a CLI
  * failure document (`{ "ok": false, … }`, ADR-0004), as its `code`, or its
- * `kind` when it carries no code.
+ * `kind` when it carries no code. A builder controls what its commands print,
+ * so anything not shaped like a code or a kind is counted as `unrecognized`,
+ * never carried as a label of its own.
  */
 export const refusalsIn = (text: string): ReadonlyArray<string> =>
   text.split("\n").flatMap((line) => {
@@ -140,7 +146,12 @@ export const refusalsIn = (text: string): ReadonlyArray<string> =>
     if (!trimmed.startsWith("{") || !trimmed.includes('"ok":false')) return [];
     return Option.match(decodeRefusal(trimmed), {
       onNone: () => [],
-      onSome: (doc) => ((doc.code ?? doc.kind) === undefined ? [] : [doc.code ?? doc.kind!])
+      onSome: (doc) =>
+        doc.code !== undefined
+          ? [CODE.test(doc.code) ? doc.code : "unrecognized"]
+          : doc.kind !== undefined
+            ? [KINDS.has(doc.kind) ? doc.kind : "unrecognized"]
+            : []
     });
   });
 

@@ -311,6 +311,12 @@ describe("the harness logs", () => {
     expect(refusalsIn('noise\n{"ok":false,"error":"x","kind":"rejected"}\n{"ok":true}')).toEqual([
       "rejected"
     ]);
+    // What a builder prints can't become a label: anything not shaped like a code or a kind.
+    expect(
+      refusalsIn(
+        '{"ok":false,"code":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij"}\n{"ok":false,"kind":"sk-ant-api03-xyz"}'
+      )
+    ).toEqual(["unrecognized", "unrecognized"]);
     expect(unwrapShell(`/usr/bin/bash -lc 'echo '\\''hi'\\'''`)).toBe("echo 'hi'");
     expect(unwrapShell('/usr/bin/bash -lc "cat \\"a b\\""')).toBe('cat "a b"');
   });
@@ -407,6 +413,13 @@ describe("what a run is", () => {
         ]
       })
     );
+    expect(
+      metricsOf(
+        log({
+          steps: [step("cat .agents/skills/patchy-sk-ant-api03-abcdefghijklmnop-QRST/SKILL.md")]
+        })
+      ).skillAccesses
+    ).toEqual({});
     expect(metrics.skillAccesses).toEqual({
       patchy: 1,
       "patchy-loop": 1,
@@ -428,7 +441,10 @@ describe("what a run is", () => {
       1204
     ]);
     expect(countsBeside("0 🎉\ncheers", "cheer")).toEqual([0]);
-    expect(countsBeside("Launch cheers\n3 people here\n0 cheers", "cheer")).toEqual([0]);
+    expect(countsBeside("Total cheers: 0 so far", "cheer")).toEqual([0]);
+    expect(countsBeside("Cheers: 0 (and counting)", "cheer")).toEqual([0]);
+    // A count of something else near the word is read; the visit-only step rules it out.
+    expect(countsBeside("Launch cheers\n3 people here\n0 cheers", "cheer")).toEqual([3, 0]);
     expect(countsBeside("Announcements\n1\n2\n3\n0 cheers", "cheer")).toEqual([0]);
     expect(countsBeside("Ben cheered 2 minutes ago", "cheer")).toEqual([]);
   });

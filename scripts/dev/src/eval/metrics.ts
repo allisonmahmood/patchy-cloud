@@ -45,12 +45,26 @@ const PAGE_CHECK = /\bchromium\b|\bchrome\b|playwright|\bcurl\b[^|;&]*(?:localho
 const pointedAt = (step: Step) =>
   step.tool === "Bash" ? (step.input.split("\n")[0] ?? "") : step.input;
 
-/** Every one of our texts a step names: a skill or its reference, the repo's `AGENTS.md`, the generated index. */
+/** What our texts are called: a skill (`patchy`, `patchy-loop`) and a reference file in one. */
+const SKILL_NAME = /^patchy(?:-[a-z0-9]+){0,3}$/;
+const REFERENCE = /^references\/[a-z0-9-]{1,40}\.(?:md|html)$/;
+
+/**
+ * Every one of our texts a step names: a skill or its reference, the repo's
+ * `AGENTS.md`, the generated index. Only names shaped like ours count: a
+ * builder controls what it types, and these become labels on the scorecard.
+ */
 export const textsIn = (step: Step): ReadonlyArray<string> => {
-  if (step.tool === "Skill") return step.input === "" ? [] : [step.input];
+  if (step.tool === "Skill") return SKILL_NAME.test(step.input) ? [step.input] : [];
   const target = pointedAt(step);
-  const named = [...target.matchAll(SKILL)].map(([, skill, file]) =>
-    file === "SKILL.md" ? skill! : `${skill}/${file}`
+  const named = [...target.matchAll(SKILL)].flatMap(([, skill, file]) =>
+    !SKILL_NAME.test(skill!)
+      ? []
+      : file === "SKILL.md"
+        ? [skill!]
+        : REFERENCE.test(file!)
+          ? [`${skill}/${file}`]
+          : []
   );
   if (/\bAGENTS\.md\b/.test(target)) named.push("AGENTS.md");
   if (/_generated\/index\.json\b/.test(target)) named.push("index.json");

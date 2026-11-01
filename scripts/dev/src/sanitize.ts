@@ -200,9 +200,14 @@ const redactJson = (
     return result.text;
   }
   if (Array.isArray(value)) return value.map((item) => redactJson(secrets, item, matched));
+  // Keys too: a dictionary built from what a command printed can hold a secret in its keys.
   if (typeof value === "object" && value !== null)
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, redactJson(secrets, item, matched)])
+      Object.entries(value).map(([key, item]) => {
+        const redacted = redactText(secrets, key);
+        for (const source of redacted.matched) matched.add(source);
+        return [redacted.text, redactJson(secrets, item, matched)];
+      })
     );
   return value;
 };

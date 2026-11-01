@@ -79,15 +79,16 @@ export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
 /**
  * The numbers a page shows as a count of `word`, in reading order: one just
  * before it, decoration allowed between ("3 cheers", "3 total cheers",
- * "3 🎉\ncheers"), or the first within a short stretch after it ("Cheers: 3",
- * "CHEERS FROM THE TEAM\n3") unless a word on its own line labels it as
- * something else ("Cheers\n3 people here"). `text` is visible text, as
+ * "3 🎉\ncheers"), or the first within a short stretch after it ("Cheers: 3
+ * so far", "CHEERS FROM THE TEAM\n3"). A number near the word that counts
+ * something else is read too; the check's visit-only step is what tells a
+ * count of cheers from a count of visitors. `text` is visible text, as
  * `innerText` gives it; `word` matches its plural too.
  */
 export const countsBeside = (text: string, word: string): ReadonlyArray<number> => {
   const name = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
-    String.raw`(\d[\d,]*)[^\p{L}\d]{1,8}(?:\p{L}+[ \t]+)?${name}s?\b|\b${name}s?\b[^\d]{0,40}?(\d[\d,]*)(?![\d,]*[ \t]*\p{L})`,
+    String.raw`(\d[\d,]*)[^\p{L}\d]{1,8}(?:\p{L}+[ \t]+)?${name}s?\b|\b${name}s?\b[^\d]{0,40}?(\d[\d,]*)`,
     "giu"
   );
   return [...text.matchAll(pattern)].map((match) =>
