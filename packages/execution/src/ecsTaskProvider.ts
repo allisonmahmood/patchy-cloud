@@ -631,10 +631,11 @@ export const make = Effect.fn("EcsTaskProvider.make")(function* (options: Option
                   { key: revisionTag, value: input.deploymentRevision }
                 ],
                 overrides: {
+                  // No command: each release's definition names its own runtime, so a host
+                  // can launch the spares of a release on another runtime beside it.
                   containerOverrides: [
                     {
                       name: containerName,
-                      command: ["node", "dist/exec.js"],
                       environment: [
                         { name: "EXECUTION_TASK_ID", value: input.taskId },
                         {

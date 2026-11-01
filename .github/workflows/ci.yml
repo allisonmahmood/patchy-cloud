@@ -21,7 +21,8 @@ jobs:
       matrix:
         # The labels are the required check names; each runs an exact version, bumped
         # by hand (docs/DEVELOPMENT.md). 22.22.0 is the minimum PostHog requires and
-        # 24.20.0 is production's, the node:24-slim digest in apps/server/Dockerfile.
+        # 24.20.0 builds the server image, the node:24-slim builder in apps/server/Dockerfile.
+        # The CLI runs these packages on people's Node, so every version runs every file.
         node-version: [22, 24, 26]
         include:
           - node-version: 22
@@ -41,6 +42,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  # The offline suite on Bun, the runtime production runs the server on, as the
+  # root package.json pins it; vitest.bun.config.ts lists the Node-only files.
+  test-bun:
+    name: test (bun)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:bun
 
   postgres-concurrency:
     runs-on: ubuntu-24.04
@@ -267,7 +286,7 @@ jobs:
       - uses: actions/setup-node@v7
         if: steps.changed.outputs.rehearse
         with:
-          # Production's Node, the node:24-slim digest in apps/server/Dockerfile.
+          # The image builder's Node; each build's server runs on its own runtime.
           node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile

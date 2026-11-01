@@ -759,7 +759,7 @@ if (command === "status") {
   const execDefinition = definition("patchy-tier2-spike-406-exec", {
     name: "exec",
     user: "0",
-    command: ["node", "dist/exec.js"],
+    command: ["bun", "dist/exec.js"],
     linuxParameters: {
       capabilities: {
         drop: [
@@ -835,7 +835,7 @@ if (command === "status") {
     {
       name: "host",
       user: "1000",
-      command: ["node", "dist/start.js"],
+      command: ["bun", "dist/start.js"],
       environment: Object.entries(hostEnv).map(([name, value]) => ({ name, value })),
       portMappings: [
         { containerPort: 8080, protocol: "tcp" },

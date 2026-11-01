@@ -21,7 +21,9 @@
  * every company database), the stored files and the credential keys. A
  * checkout keeps it, and this file starts each build's server on it the way the
  * dev runner's supervisor does, without the supervisor's seeding, which would
- * repair rows a migration broke.
+ * repair rows a migration broke. Each build's server runs on the runtime its
+ * server package starts with, as production would run it: across the move to
+ * Bun, live's server runs on Node and HEAD's on Bun.
  *
  * The exercise is the same at every step: the deep health check, the build's
  * own CLI (whoami, list, a publish), and in Chromium, as the scenario's admin,
@@ -85,6 +87,10 @@ const LIVE_HEALTH = "https://cloud.patchyhq.com/healthz/deep";
 // Each decoder reads only the fields this file uses; the rest of the JSON is ignored.
 const decodeScenario = Schema.decodeUnknownSync(Schema.fromJsonString(Scenario));
 const decodePlan = Schema.decodeUnknownSync(PlanJson);
+/** The server package's start script, which names the runtime production runs it on. */
+const decodeServerPackage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ start: Schema.String }) }))
+);
 /** What `pnpm dev up --json` prints. */
 const decodeManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -538,10 +544,15 @@ const serve = async (worktree: string, log: string) => {
     proceed();
     throw new Error("Postgres did not start within a minute.");
   }
+  const entry = path.join("apps", "server", "src", "start.ts");
+  const { scripts } = decodeServerPackage(
+    await readFile(path.join(worktree, "apps", "server", "package.json"), "utf8")
+  );
+  const bun = scripts.start.startsWith("bun ");
   const output = await open(log, "a");
   const server = spawn(
-    process.execPath,
-    ["--import", "tsx", "--conditions=development", path.join("apps", "server", "src", "start.ts")],
+    bun ? path.join(worktree, "node_modules", "bun", "bun") : process.execPath,
+    [...(bun ? [] : ["--import", "tsx"]), "--conditions=development", entry],
     {
       cwd: worktree,
       detached: true,
