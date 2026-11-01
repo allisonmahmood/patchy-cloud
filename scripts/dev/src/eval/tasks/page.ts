@@ -300,18 +300,18 @@ const viewFor = async (view: Opened, name: string) => {
  * wherever the last left the page. It can miss a list only an unusual
  * control shows; that's a visible failure. It only looks, behind the page's
  * write barrier, so whatever a control's name says or turns into, no press
- * of it changes data: a press that tries to write is refused, isn't counted
+ * of it changes data: a press that tries to write is held, isn't counted
  * as a view, and the search moves on. A dialog it can't close
  * through its own dismissal ends the search. With `memo`, a view it found
  * the text under before is pressed first, one click, and the view it finds
  * is remembered.
  */
 export const reveal = async (view: Opened, text: string, memo?: ViewMemo) => {
-  /** A press, and "wrote" when it tried to write: refused, and not a view to count. */
+  /** A press, and "wrote" when it tried to write: held, and not a view to count. */
   const tryView = async (chosen: Parameters<typeof press>[1]) => {
-    const before = view.barrier.refused();
+    const before = view.barrier.held();
     const pressed = await press(view, chosen);
-    return view.barrier.refused() > before ? ("wrote" as const) : pressed;
+    return view.barrier.held() > before ? ("wrote" as const) : pressed;
   };
   await settle(view);
   if (await shows(view, text, 1_000)) return true;

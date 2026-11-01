@@ -59,7 +59,7 @@ export interface Opened {
   readonly close: () => Promise<void>;
   /**
    * The page's write barrier, up from its first request: it reads, but every
-   * write is refused unless a deliberate step lowers it (`barrier.deliberately`).
+   * write is held unless a deliberate step lowers it (`barrier.deliberately`).
    */
   readonly barrier: Barrier;
 }

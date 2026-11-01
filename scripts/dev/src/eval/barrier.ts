@@ -1,12 +1,14 @@
 /**
  * The write barrier on every page the grader opens. From its first request
  * and through every reload, a page can read but not write: each write it
- * attempts is refused before it reaches Patchy, whatever control, timer,
- * retry or mount effect sent it. Only a deliberate step a check means to
- * reach Patchy, such as sending a request or Ada's decision, lowers it
- * (`deliberately`), and only until that step's writes have been answered.
- * So the grader never changes data while it only looks, whatever the page's
- * labels say or turn into.
+ * attempts is held, never forwarded, answered or failed, so it never reaches
+ * Patchy and the page never hears back about it, whatever control, timer,
+ * retry or mount effect sent it. With no refusal to report, there is
+ * nothing a page could log about one, so every error it logs counts. Only a
+ * deliberate step a check means to reach Patchy, such as sending a request
+ * or Ada's decision, lowers it (`deliberately`), and only until that step's
+ * writes have been answered. So the grader never changes data while it only
+ * looks, whatever the page's labels say or turn into.
  *
  * A page reaches Patchy through its shell's runtime endpoints under
  * `/api/runtime/`: `call` for operations, PUTs to stage or store files, and
@@ -16,17 +18,22 @@
  * including an operation or handler the grader doesn't know: the barrier
  * fails closed.
  *
+ * A held write lives as long as its page. The shell gives up on it at its
+ * reply deadline (110 s for a server call, 35 s for anything else) and tells
+ * the page its reply was lost; an error the page logs then counts, and says
+ * a held write timed out. Held writes also take up the shell's outstanding
+ * requests (32 a page), and past that it refuses the page's calls itself.
+ *
  * Accepted limit: a write that looking schedules for later can land in a
  * following deliberate window. At the network a write can't be traced to
  * the press that scheduled it, so before lowering the barrier only waits
- * until 2 s have passed since its last refusal, and with no refusal yet it
+ * until 2 s have passed since the last write it held, and with none yet it
  * lowers at once. A timer of any length set by looking, even one shorter
  * than 2 s, can fire after the barrier is lowered and its write goes through.
  * Pages don't schedule writes like that in practice, and the state checks
  * around each deliberate step still catch a change to a request's decision
  * the step didn't cause.
  */
-import type { Page } from "@playwright/test";
 import { GraderTrouble, type HandlerKind } from "./task.js";
 
 /**
@@ -68,71 +75,6 @@ export const writes = (
   handlers: ReadonlyMap<string, HandlerKind>
 ) =>
   op === "server.call" ? handler === null || handlers.get(handler) !== "query" : !READ_OPS.has(op);
-
-/** What every refusal says, beside which write it was. */
-export const MARKER = "refused by the eval grader's write barrier";
-
-/** A token new to one refusal, so its words can be told from anything a page writes itself. */
-const nonce = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
-    byte.toString(16).padStart(2, "0")
-  ).join("");
-
-/** The message a refused write's error carries: its number, what it refused, and its own token. */
-const refusalMessage = (id: number, what: string) =>
-  `Write #${id} (${what}) ${MARKER} [eval-refusal ${nonce()}]: the grader was only looking.`;
-
-/** What a refused write answers, as the runtime refuses one. */
-const refusal = (message: string) =>
-  JSON.stringify({ ok: false, source: "patchy", code: "access_denied", error: message });
-
-/**
- * A stack frame as V8 prints one, and only the frame: a console line joins
- * the next error's words onto the last frame of the one before, and those
- * stay. A frame of any other shape stays too, and so counts.
- */
-const FRAME = String.raw`[ \t]*at (?:(?:async |new )?[^\s()]+(?: \[as [^\]\n]+\])? \([^()\n]*\)|[^\s()]+:\d+:\d+)`;
-const ANY_FRAME = new RegExp(`^${FRAME}`, "gm");
-/** Where a refused write stands in what a page logged beside it. */
-const REFUSED = "[a write the grader refused]";
-/** How long after a refusal the page's report of it still counts as one. */
-const REPORT_MS = 5_000;
-
-/**
- * One refusal's own text wherever a page prints it: its message, the error
- * class printed right before it (`PatchyError: `), and the stack frames
- * right after it. Nothing else is its.
- */
-const ownText = (message: string) =>
-  new RegExp(
-    String.raw`(?:[\w$]*Error: )?${message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\n${FRAME})*`,
-    "g"
-  );
-
-/**
- * Reads something a page logged for the refusals in `live`, the messages of
- * refusals the barrier made moments ago: each one's own text stands as a
- * placeholder. Undefined when it reports none of them. `only` when nothing
- * but whitespace and punctuation is left beside them: then the whole entry
- * is the page's report of those refusals, and anything else in it counts.
- * `rest` is the entry as a failure shows it, on one line without its frames.
- */
-export const refusalReport = (text: string, live: ReadonlyArray<string>) => {
-  let quoted = false;
-  const marked = live.reduce(
-    (entry, message) =>
-      entry.replace(ownText(message), () => {
-        quoted = true;
-        return REFUSED;
-      }),
-    text
-  );
-  if (!quoted) return undefined;
-  return {
-    only: /^[\s\p{P}]*$/u.test(marked.replaceAll(REFUSED, "")),
-    rest: marked.replace(ANY_FRAME, "").replace(/\s+/g, " ").trim()
-  };
-};
 
 /** How a call's body reads: its operation, and the handler a server call names. */
 const callOf = (body: string) => {
@@ -180,11 +122,8 @@ const QUIET_MS = 2_000;
 /** How long the barrier waits for looking to go quiet before a deliberate step. */
 const SETTLE_CAP_MS = 10_000;
 const POLL_MS = 100;
-/** How soon after a refusal an error the page logs is reported as following it. */
+/** How soon after a held write timed out an error the page logs is reported as following it. */
 const AFTER_MS = 2_000;
-/** The browser's own line for a request answered 403, which a refused file write is, and nothing else. */
-const FORBIDDEN_LINE =
-  /^Failed to load resource: the server responded with a status of 403(?: \([^()\n]*\))?$/;
 
 /** A request as the barrier reads it. */
 export interface Sent {
@@ -197,11 +136,7 @@ export interface Sent {
 export interface BarrierPage {
   route(
     url: string,
-    handler: (route: {
-      request(): Sent;
-      fallback(): Promise<void>;
-      fulfill(response: { status: number; contentType: string; body: string }): Promise<void>;
-    }) => Promise<void>
+    handler: (route: { request(): Sent; fallback(): Promise<void> }) => Promise<void>
   ): Promise<unknown>;
   on(
     event: "request" | "requestfinished" | "requestfailed",
@@ -215,70 +150,54 @@ export interface BarrierPage {
 }
 
 export interface Barrier {
-  /** How many writes it has refused so far. */
-  readonly refused: () => number;
+  /** How many writes the page has tried, and the barrier held, so far. */
+  readonly held: () => number;
+  /** Whether a held write's shell gave up on it in the last moments, to say so beside an error. */
+  readonly heldTimedOut: () => boolean;
   /**
-   * What of something the page logged counts against it: nothing when it is
-   * wholly the page's report of writes the barrier refused moments before, or
-   * the browser's own line for a refused file write's URL, each refusal's
-   * once. Anything else counts, a refusal it also reports standing as a
-   * placeholder, and says so when it came just after a refusal.
-   */
-  readonly counted: (text: string, url: string | undefined) => string | undefined;
-  /**
-   * Runs a deliberate step with the barrier down, once 2 s have passed
-   * since the last refusal. However the step ends, it then waits until every write the page
-   * sent meanwhile has been answered and nothing new has been sent for a
-   * moment, before raising it again. Writes still unanswered past an
-   * action's deadline fail grading as the grader's trouble, since looking on
-   * would overlap them. A page that never stops trying to write while the
+   * Runs a deliberate step with the barrier down, once 2 s have passed since
+   * the last write it held. However the step ends, it then waits until every
+   * write the page sent meanwhile has been answered and nothing new has been
+   * sent for a moment, before raising it again. Writes still unanswered past
+   * an action's deadline fail grading as the grader's trouble, since looking
+   * on would overlap them. A page that never stops trying to write while the
    * grader looks fails the check, since lowering would let those writes in.
    */
   readonly deliberately: <T>(act: () => Promise<T>) => Promise<T>;
 }
 
-/**
- * Raises the barrier on `page` before its first navigation. Refused calls
- * answer as the runtime refuses one, a 200 the shell turns into a refusal;
- * refused file writes answer 403, since a 200 would read as stored.
- */
+/** Raises the barrier on `page` before its first navigation. */
 export const raiseBarrier = async (
   page: BarrierPage,
   handlers: ReadonlyMap<string, HandlerKind>
 ): Promise<Barrier> => {
   let lowered = false;
-  let lastRefusal = -Infinity;
-  /** Each refusal: when it was made, and the message its error carries. */
-  const refusals: Array<{ readonly at: number; readonly message: string }> = [];
-  const refusedFiles: Array<{ readonly url: string; readonly at: number }> = [];
+  let attempts = 0;
+  let lastHeld = -Infinity;
+  let lastTimeout = -Infinity;
+  /** The writes held and still open: never forwarded, answered or failed by the grader. */
+  const holding = new Set<Sent>();
   await page.route("**/api/runtime/**", async (route) => {
     const request = route.request();
     const body = request.postData() ?? "";
     if (lowered || !requestWrites({ url: request.url(), method: request.method(), body }, handlers))
       return route.fallback();
-    const id = refusals.length + 1;
-    lastRefusal = performance.now();
-    const call = new URL(request.url()).pathname.endsWith("/api/runtime/call");
-    const sent = call ? callOf(body) : undefined;
-    const what = sent?.handler ?? sent?.op ?? (call ? "a call" : "a file");
-    const message = refusalMessage(id, what);
-    refusals.push({ at: lastRefusal, message });
-    if (!call) refusedFiles.push({ url: request.url(), at: lastRefusal });
-    await route
-      .fulfill({
-        status: call ? 200 : 403,
-        contentType: "application/json",
-        body: refusal(message)
-      })
-      .catch(() => undefined);
+    // Held: the route is left as it is, so the write never reaches Patchy and no answer reaches the page.
+    attempts++;
+    lastHeld = performance.now();
+    holding.add(request);
+  });
+  // The shell gives up on a held write at its reply deadline, or the page goes.
+  page.on("requestfailed", (request) => {
+    if (holding.delete(request)) lastTimeout = performance.now();
   });
   /**
-   * Waits until 2 s have passed since the barrier's last refusal, so a write
-   * looking keeps retrying lands refused rather than in the deliberate step.
-   * With no refusal yet it doesn't wait (see the accepted limit above).
+   * Waits until 2 s have passed since the last write the barrier held, so a
+   * write looking keeps retrying is held rather than let into the deliberate
+   * step. With none held yet it doesn't wait (see the accepted limit above).
    */
   const quietened = async () => {
-    for (let waited = 0; performance.now() - lastRefusal < QUIET_MS; waited += POLL_MS) {
+    for (let waited = 0; performance.now() - lastHeld < QUIET_MS; waited += POLL_MS) {
       if (waited >= SETTLE_CAP_MS)
         throw new Error(
           "The page kept trying to change data while the grader only looked, so the grader couldn't take its next step without letting those writes through."
@@ -287,34 +206,17 @@ export const raiseBarrier = async (
     }
   };
   return {
-    refused: () => refusals.length,
-    counted: (text, url) => {
-      const now = performance.now();
-      if (url !== undefined && FORBIDDEN_LINE.test(text)) {
-        const index = refusedFiles.findIndex(
-          (file) => file.url === url && now - file.at <= REPORT_MS
-        );
-        if (index !== -1) {
-          refusedFiles.splice(index, 1);
-          return undefined;
-        }
-      }
-      const live = refusals
-        .filter((made) => made.at <= now && now - made.at <= REPORT_MS)
-        .map((made) => made.message);
-      const report = refusalReport(text, live);
-      if (report?.only === true) return undefined;
-      const shown = report?.rest ?? text;
-      return now - lastRefusal < AFTER_MS
-        ? `${shown} (logged just after the grader refused one of the page's writes while only looking)`
-        : shown;
-    },
+    held: () => attempts,
+    heldTimedOut: () => performance.now() - lastTimeout < AFTER_MS,
     deliberately: async (act) => {
       await quietened();
       const pending = new Set<Sent>();
       let last = performance.now();
+      // A write held while looking is never answered, so it isn't the step's to wait for.
       const counts = (request: Sent) =>
-        request.url().includes("/api/runtime/") && request.method() !== "GET";
+        request.url().includes("/api/runtime/") &&
+        request.method() !== "GET" &&
+        !holding.has(request);
       const started = (request: Sent) => {
         if (!counts(request)) return;
         pending.add(request);
@@ -360,24 +262,33 @@ export const raiseBarrier = async (
 
 /** No barrier, for setup that writes on purpose, such as loading sample data. */
 export const noBarrier: Barrier = {
-  refused: () => 0,
-  counted: (text) => text,
+  held: () => 0,
+  heldTimedOut: () => false,
   deliberately: (act) => act()
 };
 
+/** Where a page's errors come from: its console and its uncaught exceptions. */
+export interface ErrorSource {
+  on(event: "console", listener: (message: { type(): string; text(): string }) => void): unknown;
+  on(event: "pageerror", listener: (error: Error) => void): unknown;
+}
+
 /**
- * What a page logs that counts against it: its console errors and uncaught
- * exceptions, less its own reports of writes the barrier refused (`counted`).
+ * What a page logs that counts against it: every console error and uncaught
+ * exception, with nothing excused. One logged just after a held write timed
+ * out says so, since the grader's holding is what made it fail.
  */
-export const watchErrors = (page: Page, barrier: Barrier) => {
+export const watchErrors = (page: ErrorSource, barrier: Barrier) => {
   const errors: Array<string> = [];
-  const keep = (text: string, url: string | undefined) => {
-    const counted = barrier.counted(text, url);
-    if (counted !== undefined) errors.push(counted);
-  };
+  const keep = (text: string) =>
+    errors.push(
+      barrier.heldTimedOut()
+        ? `${text} (logged just after a write the grader held while only looking timed out)`
+        : text
+    );
   page.on("console", (message) => {
-    if (message.type() === "error") keep(message.text(), message.location().url || undefined);
+    if (message.type() === "error") keep(message.text());
   });
-  page.on("pageerror", (error) => keep(error.message, undefined));
+  page.on("pageerror", (error) => keep(error.message));
   return errors;
 };

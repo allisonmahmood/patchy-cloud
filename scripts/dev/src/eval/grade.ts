@@ -29,7 +29,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { Browser, Page } from "@playwright/test";
 import { doorAgent, GRADER_AGENT, mintAgents } from "./agent.js";
-import { noBarrier, raiseBarrier, watchErrors } from "./barrier.js";
+import { type Barrier, noBarrier, raiseBarrier, watchErrors } from "./barrier.js";
 import { HOME, runSandboxed, type SandboxSpec } from "./sandbox.js";
 import type { StagedPatch } from "./stage.js";
 import {
@@ -235,17 +235,26 @@ const fail = (name: string, detail: string): CheckResult => ({ name, status: "fa
 /**
  * A task check's result: its own outcome, failed when its pages logged
  * anything that counts against them (`watchErrors`), even when it worked.
+ * A failure says when the barrier held writes its pages tried while the
+ * grader only looked, since a page left waiting on one can act differently.
  */
 export const checkResult = (
   name: string,
   outcome: CheckOutcome,
-  logged: ReadonlyArray<string>
-): CheckResult =>
-  !outcome.ok
-    ? fail(name, outcome.reason)
-    : logged[0] !== undefined
-      ? fail(name, `It worked, but the page logged: ${logged[0].split("\n")[0]}`)
-      : pass(name, outcome.note ?? null);
+  logged: ReadonlyArray<string>,
+  held = 0
+): CheckResult => {
+  if (outcome.ok && logged[0] === undefined) return pass(name, outcome.note ?? null);
+  const failed = outcome.ok
+    ? `It worked, but the page logged: ${(logged[0] ?? "").split("\n")[0]}`
+    : outcome.reason;
+  return fail(
+    name,
+    held === 0
+      ? failed
+      : `${failed} (While only looking, the grader held ${held} ${held === 1 ? "write" : "writes"} the page tried; ${held === 1 ? "it" : "they"} never reached Patchy and the page never heard back.)`
+  );
+};
 const skipped = (name: string, detail: string): CheckResult => ({
   name,
   status: "skipped",
@@ -462,6 +471,7 @@ const inBrowser = (input: {
           const views: Array<{
             readonly close: () => Promise<void>;
             readonly errors: ReadonlyArray<string>;
+            readonly barrier: Barrier;
           }> = [];
           const person = (key: string) => {
             const found = input.people.find((p) => p.key === key);
@@ -480,7 +490,11 @@ const inBrowser = (input: {
             open: async (key, path) => {
               const who = person(key);
               const view = await signedIn(who, path);
-              views.push({ close: () => view.context.close(), errors: view.errors });
+              views.push({
+                close: () => view.context.close(),
+                errors: view.errors,
+                barrier: view.barrier
+              });
               if (view.broke !== null) throw new Error(`For ${who.name}, ${view.broke}.`);
               if (!view.ready) throw new Error(`The patch never showed ${who.name} anything.`);
               return {
@@ -518,7 +532,8 @@ const inBrowser = (input: {
           if (state.signInRefused) throw new Error("sign-in");
           const logged = views.flatMap((view) => view.errors);
           await Promise.all(views.map((view) => view.close().catch(() => undefined)));
-          results.push(checkResult(check.name, outcome, logged));
+          const held = views.reduce((sum, view) => sum + view.barrier.held(), 0);
+          results.push(checkResult(check.name, outcome, logged, held));
         }
         return { unready, browserErrors, results, screenshots };
       } finally {

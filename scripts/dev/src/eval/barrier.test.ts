@@ -1,17 +1,25 @@
 // @effect-diagnostics globalTimers:off — The barrier is Playwright Promise code, and the fake page keeps its time on vitest's fake timers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type BarrierPage, raiseBarrier, requestWrites, type Sent, writes } from "./barrier.js";
+import {
+  type BarrierPage,
+  type ErrorSource,
+  raiseBarrier,
+  requestWrites,
+  type Sent,
+  watchErrors,
+  writes
+} from "./barrier.js";
 import { checkResult } from "./grade.js";
 import { isGraderTrouble } from "./task.js";
 
-describe("what the barrier refuses", () => {
+describe("what the barrier holds", () => {
   const handlers = new Map([
     ["requests.list", "query"],
     ["requests.setStatus", "mutation"],
     ["requests.cancel", "action"]
   ] as const);
 
-  it("refuses a tier 2 call to anything but a query the published manifest lists", () => {
+  it("holds a tier 2 call to anything but a query the published manifest lists", () => {
     expect(writes("server.call", "requests.list", handlers)).toBe(false);
     expect(writes("server.call", "requests.setStatus", handlers)).toBe(true);
     expect(writes("server.call", "requests.cancel", handlers)).toBe(true);
@@ -19,7 +27,7 @@ describe("what the barrier refuses", () => {
     expect(writes("server.call", null, handlers)).toBe(true);
   });
 
-  it("refuses every operation but a read, unknown ones and staged uploads included", () => {
+  it("holds every operation but a read, unknown ones and staged uploads included", () => {
     const none = new Map<string, "query">();
     for (const op of [
       "tables.insert",
@@ -83,15 +91,11 @@ const DISCARD = {
   method: "POST",
   body: JSON.stringify({ op: "files.discard", args: {} })
 };
-const RECEIPT = {
-  url: "http://x.localhost/api/runtime/files/p1/ver_1/receipts/r.png",
-  method: "PUT",
-  body: ""
-};
 
 /**
  * A page as the barrier sees it: a test sends its runtime requests through
- * the barrier's route, and answers the ones that pass by hand.
+ * the barrier's route as a browser does, and answers or fails the ones that
+ * go on by hand. A held request is neither forwarded nor answered.
  */
 const fakePage = () => {
   let routed: Parameters<BarrierPage["route"]>[1] | undefined;
@@ -108,28 +112,29 @@ const fakePage = () => {
   const emit = (event: string, request: Sent) => {
     for (const listener of listeners.get(event) ?? []) listener(request);
   };
-  /** Sends a request as the page's shell would: whether it went on to Patchy, and how it was answered if not. */
+  /** Sends a request: the browser announces it, then routes it. Whether it went on to Patchy. */
   const send = async (sent: { url: string; method: string; body: string }) => {
     const request: Sent = {
       url: () => sent.url,
       method: () => sent.method,
       postData: () => sent.body
     };
+    emit("request", request);
     let passed = false;
-    let answer: string | undefined;
     await routed?.({
       request: () => request,
       fallback: async () => {
         passed = true;
-      },
-      fulfill: async (response) => {
-        answer = response.body;
       }
     });
-    if (passed) emit("request", request);
-    return { passed, request, answer };
+    return { passed, request };
   };
-  return { page, send, answer: (request: Sent) => emit("requestfinished", request) };
+  return {
+    page,
+    send,
+    answer: (request: Sent) => emit("requestfinished", request),
+    fail: (request: Sent) => emit("requestfailed", request)
+  };
 };
 
 describe("a deliberate step", () => {
@@ -140,6 +145,26 @@ describe("a deliberate step", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("goes through after a looking write was held, which never does", async () => {
+    const { page, send, answer } = fakePage();
+    const barrier = await raiseBarrier(page, HANDLERS);
+    const looking = await send(APPROVE);
+    expect(looking.passed).toBe(false);
+    expect(barrier.held()).toBe(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    let deliberate = false;
+    const step = barrier.deliberately(async () => {
+      const sent = await send(APPROVE);
+      deliberate = sent.passed;
+      setTimeout(() => answer(sent.request), 300);
+    });
+    await vi.advanceTimersByTimeAsync(2_500);
+    await step;
+    expect(deliberate).toBe(true);
+    expect(barrier.held()).toBe(1);
+    expect((await send(APPROVE)).passed).toBe(false);
   });
 
   it("waits for its writes to be answered even when it throws, before the barrier rises", async () => {
@@ -177,7 +202,7 @@ describe("a deliberate step", () => {
     expect(isGraderTrouble(await ended)).toBe(true);
   });
 
-  it("waits for looking to go quiet, and never lowers while a page keeps trying to write", async () => {
+  it("waits 2 s after the last held write, and never lowers while a page keeps trying to write", async () => {
     const { page, send } = fakePage();
     const barrier = await raiseBarrier(page, HANDLERS);
     await send(DISCARD);
@@ -205,100 +230,79 @@ describe("a deliberate step", () => {
   });
 });
 
-describe("what a page logs beside a refused write", () => {
-  afterEach(() => {
-    vi.useRealTimers();
+describe("what a page logs", () => {
+  /** A page's console and uncaught exceptions, as a test reports them. */
+  const fakeSource = () => {
+    type Logged = { type(): string; text(): string } & Error;
+    const listeners: Array<{ event: string; listener: (value: Logged) => void }> = [];
+    const source: ErrorSource = {
+      on: (event: "console" | "pageerror", listener: (value: Logged) => void) =>
+        listeners.push({ event, listener })
+    };
+    const emit = (event: string, text: string) => {
+      const value = Object.assign(new Error(text), { type: () => "error", text: () => text });
+      for (const each of listeners) if (each.event === event) each.listener(value);
+    };
+    return {
+      source,
+      log: (text: string) => emit("console", text),
+      raise: (message: string) => emit("pageerror", message)
+    };
+  };
+  /** The receipt check's result had it worked, with what its page logged and the writes it held. */
+  const receipt = (logged: ReadonlyArray<string>, held = 0) =>
+    checkResult("Ben asks with a receipt, and Ada opens it", { ok: true }, logged, held);
+  // As Chromium printed them when the barrier still answered refusals: nothing in them is excused now.
+  const REFUSAL =
+    "Write #1 (files.discard) refused by the eval grader's write barrier [eval-refusal 7f3a9c0d1e2b4a5f]: the grader was only looking.";
+  const FRAME = "\n    at answer (about:srcdoc:14:42)";
+
+  it("counts every console error and uncaught exception, whatever it says", async () => {
+    const watched = async () => {
+      const { page } = fakePage();
+      const { source, log, raise } = fakeSource();
+      return { errors: watchErrors(source, await raiseBarrier(page, HANDLERS)), log, raise };
+    };
+    for (const [entry, text] of [
+      ["Sol's AggregateError", `AggregateError: ${REFUSAL}${FRAME}`],
+      ["Sol's cause chain", `Error: ${REFUSAL}${FRAME}`],
+      ["an empty Error() beside a refusal", `Error${FRAME} PatchyError: ${REFUSAL}${FRAME}`],
+      [
+        'Error("access_denied") beside a refusal',
+        `Error: access_denied${FRAME} PatchyError: ${REFUSAL}${FRAME}`
+      ],
+      ["a refusal alone", `PatchyError: ${REFUSAL}${FRAME}`]
+    ] as const) {
+      const { errors, log } = await watched();
+      log(text);
+      expect(receipt(errors), entry).toMatchObject({ status: "fail" });
+    }
+    const { errors, raise } = await watched();
+    raise(REFUSAL);
+    expect(receipt(errors)).toMatchObject({ status: "fail" });
   });
-  /** A barrier that has just refused one write, and the message that refusal's error carries. */
-  const refusedOnce = async (sent = DISCARD) => {
+
+  it("is quiet for a lone held write, so the check passes", async () => {
     const { page, send } = fakePage();
     const barrier = await raiseBarrier(page, HANDLERS);
-    const { answer } = await send(sent);
-    const message = String(JSON.parse(answer ?? "{}").error);
-    /** The receipt check's result had it worked and its page logged `entries`. */
-    const receipt = (...entries: ReadonlyArray<string>) =>
-      checkResult(
-        "Ben asks with a receipt, and Ada opens it",
-        { ok: true },
-        entries.flatMap((entry) => barrier.counted(entry, undefined) ?? [])
-      );
-    return { barrier, answer, message, receipt };
-  };
-  // As Chromium prints them: errors logged together share a line, each after the last frame of the one before.
-  const report = (message: string) => `PatchyError: ${message}\n    at answer (about:srcdoc:14:42)`;
-  const unrelated = (words: string) =>
-    `${words}\n    at HTMLButtonElement.<anonymous> (about:srcdoc:20:62)`;
-
-  it("answers a refused call with words that say which write it was, and a token new to it", async () => {
-    const first = await refusedOnce();
-    const second = await refusedOnce();
-    expect(JSON.parse(first.answer ?? "{}")).toMatchObject({
-      ok: false,
-      source: "patchy",
-      code: "access_denied"
-    });
-    expect(first.message).toMatch(
-      /^Write #1 \(files\.discard\) refused by the eval grader's write barrier \[eval-refusal [0-9a-f]{16}\]: the grader was only looking\.$/
-    );
-    expect(second.message).not.toBe(first.message);
+    const { source } = fakeSource();
+    const errors = watchErrors(source, barrier);
+    expect((await send(DISCARD)).passed).toBe(false);
+    expect(receipt(errors, barrier.held())).toMatchObject({ status: "pass" });
   });
 
-  it("excuses only the page's own report of the refusal: logged, by its message alone, or left unhandled", async () => {
-    const { message, receipt } = await refusedOnce();
-    expect(receipt(report(message))).toMatchObject({ status: "pass" });
-    expect(receipt(message)).toMatchObject({ status: "pass" });
-    expect(receipt(`${report(message)} ${report(message)}`)).toMatchObject({ status: "pass" });
-  });
-
-  it("fails the check on any other error logged beside the refusal, in either order, however few its words", async () => {
-    const { message, receipt } = await refusedOnce();
-    for (const other of [
-      unrelated("Error: Broken request view: undefined.render"),
-      unrelated("Error"),
-      unrelated("Error: access_denied")
-    ])
-      for (const entry of [`${other} ${report(message)}`, `${report(message)} ${other}`])
-        expect(receipt(entry), entry).toMatchObject({ status: "fail" });
-    expect(receipt(unrelated("Error: access_denied"), report(message))).toMatchObject({
+  it("says when an error came just after a held write timed out, and that the grader held it", async () => {
+    const { page, send, fail } = fakePage();
+    const barrier = await raiseBarrier(page, HANDLERS);
+    const { source, log } = fakeSource();
+    const errors = watchErrors(source, barrier);
+    const { request } = await send(DISCARD);
+    fail(request);
+    log("PatchyError: The runtime reply was lost.");
+    expect(receipt(errors, barrier.held())).toMatchObject({
       status: "fail",
-      detail: "It worked, but the page logged: Error: access_denied"
+      detail:
+        "It worked, but the page logged: PatchyError: The runtime reply was lost. (logged just after a write the grader held while only looking timed out) (While only looking, the grader held 1 write the page tried; it never reached Patchy and the page never heard back.)"
     });
-    expect(receipt(`Uncaught (in promise) ${report(message)}`)).toMatchObject({ status: "fail" });
-    expect(receipt(`Couldn't mark it seen: ${report(message)}`)).toMatchObject({
-      status: "fail",
-      detail: expect.stringContaining("Couldn't mark it seen: [a write the grader refused]")
-    });
-  });
-
-  it("names the other error when a report mixes it with a refusal", async () => {
-    const { barrier, message } = await refusedOnce();
-    expect(barrier.counted(`${unrelated("Error")} ${report(message)}`, undefined)).toMatch(
-      /^Error \[a write the grader refused\]/
-    );
-  });
-
-  it("counts a refusal's words the barrier didn't make, or made long ago", async () => {
-    const { message, receipt } = await refusedOnce();
-    expect(receipt(report(message.replace(/[0-9a-f]{16}/, "0".repeat(16))))).toMatchObject({
-      status: "fail"
-    });
-    expect(receipt(report(message.replace(/ \[eval-refusal [0-9a-f]{16}\]/, "")))).toMatchObject({
-      status: "fail"
-    });
-    vi.useFakeTimers({ toFake: ["performance"] });
-    const late = await refusedOnce();
-    vi.advanceTimersByTime(6_000);
-    expect(late.receipt(report(late.message))).toMatchObject({ status: "fail" });
-  });
-
-  it("excuses the browser's own line for a refused file write once, by its URL", async () => {
-    const { barrier } = await refusedOnce(RECEIPT);
-    const line = "Failed to load resource: the server responded with a status of 403 (Forbidden)";
-    expect(
-      barrier.counted(line, "http://x.localhost/api/runtime/files/p1/ver_1/other.png")
-    ).toBeDefined();
-    expect(barrier.counted(`${line} and more`, RECEIPT.url)).toBeDefined();
-    expect(barrier.counted(line, RECEIPT.url)).toBeUndefined();
-    expect(barrier.counted(line, RECEIPT.url)).toBeDefined();
   });
 });
