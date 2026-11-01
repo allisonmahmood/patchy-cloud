@@ -31,25 +31,47 @@ export const shows = async (view: Opened, text: string, ms = 10_000) => {
   return false;
 };
 
-/** Names a page gives its views of a list: all of it, someone's own, what waits for a decision. */
-const VIEWS =
-  /^\s*(all|everything|mine|my \w+|history|review\w*|pending|waiting|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|open|decided)\b/i;
+/**
+ * Names a page gives its views of a list: all of it, someone's own, what
+ * waits for a decision. Never an action's, such as Open request or New
+ * request, which open something rather than switch the view.
+ */
+export const VIEW_NAMES =
+  /^\s*(all|everything|mine|my \w+|history|review\w*|pending|waiting|to (approve|review|decide)|approvals|queue|inbox|requests|submitted|decided)\b/i;
 
 /**
- * Whether `text` shows, looking under the page's views as a person would
- * when it isn't in the first one: its tabs, its toggles (`aria-pressed`,
- * `aria-selected`, `aria-current`) and the buttons or links named for a view
- * of the list, such as Review or Pending, All first. The view it showed
- * under stays picked.
+ * Closes a dialog a speculative click opened, past the `before` the page had:
+ * Escape, then its own close or cancel button if it's still open.
+ */
+const dismissDialogs = async (view: Opened, before: number) => {
+  const dialogs = view.frame.getByRole("dialog");
+  if ((await dialogs.count()) <= before) return;
+  await view.page.keyboard.press("Escape");
+  await view.page.waitForTimeout(POLL_MS);
+  if ((await dialogs.count()) <= before) return;
+  await dialogs
+    .last()
+    .getByRole("button", { name: /close|cancel|dismiss|^\s*[×✕x]\s*$/i })
+    .first()
+    .click({ timeout: 2_000 })
+    .catch(() => undefined);
+  await view.page.waitForTimeout(POLL_MS);
+};
+
+/**
+ * Whether `text` shows, looking under the page's other views of the list as
+ * a person would when it isn't in the first one: its tabs, and the buttons
+ * and links named for a view (`VIEW_NAMES`), such as Review or Pending, All
+ * first. A click that opens a dialog instead is undone before the next. The
+ * view it showed under stays picked.
  */
 export const reveal = async (view: Opened, text: string) => {
   if (await shows(view, text, 3_000)) return true;
   const { frame } = view;
   const controls = [
     ...(await frame.getByRole("tab").all()),
-    ...(await frame.locator("[aria-pressed], [aria-selected], [aria-current]").all()),
-    ...(await frame.getByRole("button", { name: VIEWS }).all()),
-    ...(await frame.getByRole("link", { name: VIEWS }).all())
+    ...(await frame.getByRole("button", { name: VIEW_NAMES }).all()),
+    ...(await frame.getByRole("link", { name: VIEW_NAMES }).all())
   ];
   const names = await Promise.all(controls.map((control) => control.innerText().catch(() => "")));
   const order = controls
@@ -57,8 +79,10 @@ export const reveal = async (view: Opened, text: string) => {
     .sort((a, b) => Number(b.all) - Number(a.all));
   for (const { control } of order) {
     if (!(await control.isVisible().catch(() => false))) continue;
+    const dialogs = await frame.getByRole("dialog").count();
     await control.click({ timeout: 2_000 }).catch(() => undefined);
     if (await shows(view, text, 2_000)) return true;
+    await dismissDialogs(view, dialogs);
   }
   return shows(view, text, 5_000);
 };

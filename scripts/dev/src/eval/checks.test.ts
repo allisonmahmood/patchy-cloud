@@ -4,7 +4,7 @@ import { type AgentTool, isGraderTrouble, type JsonSchema, type RunPerson } from
 import { BrowserGradingFailed, gradingStep } from "./grade.js";
 import { boardProblem, dayOf } from "./tasks/brokenHandler.js";
 import { GIVE, LIST } from "./tasks/kudosAgents.js";
-import { decisionOf, isFileResponse } from "./tasks/page.js";
+import { decisionOf, isFileResponse, VIEW_NAMES } from "./tasks/page.js";
 import { receipt } from "./tasks/spendApprovals.js";
 
 const priya: RunPerson = {
@@ -249,6 +249,16 @@ describe("a receipt", () => {
     expect(isFileResponse("http://x/api/runtime/files/p1/ver_1/receipts/r.png", true)).toBe(true);
     expect(isFileResponse("http://x/api/runtime/files/p1/ver_1/receipts/r.png", false)).toBe(false);
     expect(isFileResponse("http://x/api/runtime/call", true)).toBe(false);
+  });
+});
+
+describe("a page's views", () => {
+  it("are switched by controls named for a view, never by an action that opens something", () => {
+    for (const name of ["All", "Review", "Review (admin)", "My requests", "Pending", "Approvals"])
+      expect(VIEW_NAMES.test(name), name).toBe(true);
+    // An action's own button, and a toggle that opens a form, aren't views of the list.
+    for (const name of ["Open request", "New request", "Approve", "Reject", "Export CSV"])
+      expect(VIEW_NAMES.test(name), name).toBe(false);
   });
 });
 
