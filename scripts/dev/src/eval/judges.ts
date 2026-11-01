@@ -214,12 +214,13 @@ const decodeClaudeAnswer = Schema.decodeUnknownOption(Schema.fromJsonString(Clau
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /**
- * A judge's harness exiting non-zero, its last error line on this machine's
- * console only: the line can name local paths, so it never reaches a record.
+ * A judge's harness exiting non-zero, the start of its last error line on
+ * this machine's console only: the line can name local paths, so it never
+ * reaches a record, and can echo a whole file the judge read.
  */
 const reportFailure = (judge: Builder, exitCode: number, stderr: string) =>
   Console.error(
-    `  ${judge.id}  exited ${exitCode}: ${stderr.trim().split("\n").at(-1) ?? "(nothing on stderr)"}`
+    `  ${judge.id}  exited ${exitCode}: ${(stderr.trim().split("\n").at(-1) ?? "(nothing on stderr)").slice(0, 240)}`
   );
 
 /** How long a judge may take over one pass at its highest effort. */
