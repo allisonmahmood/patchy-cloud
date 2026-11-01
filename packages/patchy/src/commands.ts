@@ -600,27 +600,32 @@ const dryRunScope =
   "Checks the repo snapshot and version without building or sending; publish still runs the build.";
 
 /**
- * `publish --dry-run`, after the refusals publish makes first: the snapshot a repo publish would
- * keep, with patchy.json measured as the description sync would leave it. It builds, sends and
- * writes nothing, and leaves a pending publish for the next real one.
+ * `publish --dry-run`: the refusals a repo publish makes before any work, then the snapshot it
+ * would keep, with patchy.json measured as the description sync would leave it. It builds, sends
+ * and writes nothing, and leaves a pending publish for the next real one. Each notice is
+ * remembered as found, so a later refusal still carries it.
  */
 const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   repo: string,
-  token: Redacted.Redacted,
-  pending: boolean
+  options: Parameters<typeof checkRepoPublish>[1]
 ) {
   const instance = yield* Instance.Instance;
+  const state = yield* State.State;
+  // Only looked at: reading an attempt can clear one that can't be sent again.
+  const pending: ReadonlyArray<string> = (yield* state.hasPendingPublish(instance.apiUrl, repo))
+    ? [
+        "A publish is pending: the next `patchy publish` recovers it instead of publishing this repo as it is now."
+      ]
+    : [];
+  yield* Output.rememberWarnings(pending);
+  const token = yield* requiredToken();
+  yield* checkRepoPublish(repo, options);
   yield* Output.notice(
     `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
   );
-  const synced = yield* Project.syncedRepoText(repo, token);
-  const snapshot = yield* RepoSnapshot.survey(repo, Option.getOrUndefined(synced));
-  const warnings = pending
-    ? [
-        ...snapshot.warnings,
-        "A publish is pending: the next `patchy publish` recovers it instead of publishing this repo as it is now."
-      ]
-    : snapshot.warnings;
+  const synced = yield* Project.previewDescriptionSync(repo, token);
+  const snapshot = yield* RepoSnapshot.survey(repo, synced.text);
+  const warnings = [...pending, ...synced.warnings, ...snapshot.warnings];
   yield* Output.report(
     {
       ok: true,
@@ -694,13 +699,7 @@ const publish = Command.make(
             message:
               "--dry-run is for repo publishing; `patchy validate <file>` checks an HTML file without publishing it."
           });
-        if (options.dryRun && repo !== undefined) {
-          const token = yield* requiredToken();
-          yield* checkRepoPublish(repo, options);
-          // Only looked at: reading an attempt can clear one that can't be sent again.
-          const pending = yield* state.hasPendingPublish(instance.apiUrl, repo);
-          return yield* dryRunPublish(repo, token, pending);
-        }
+        if (options.dryRun && repo !== undefined) return yield* dryRunPublish(repo, options);
         const pending = yield* state.readPendingPublish(instance.apiUrl, repo);
         const apiToken = yield* requiredToken();
         const client = yield* Api.client(apiToken);

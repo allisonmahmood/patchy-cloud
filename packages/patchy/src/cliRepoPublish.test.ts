@@ -1,5 +1,5 @@
 // Repo publish checks: bound targets, the tier 0 refusal and bundled resources.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { sha256 } from "../../../test/crypto.js";
@@ -265,8 +265,13 @@ describe("repo publish checks", () => {
     expect(dry).toMatchObject({ status: 1, stdout: "" });
     const real = await runCli(["publish", "--json"], options);
     expect(real).toMatchObject({ status: 1, stdout: "" });
-    expect(JSON.parse(dry.stderr)).toMatchObject({ kind: "local", code: "too_large" });
-    expect(JSON.parse(dry.stderr).error).toBe(JSON.parse(real.stderr).error);
+    // The whole document matches, the portal's notice included.
+    expect(JSON.parse(dry.stderr)).toEqual(JSON.parse(real.stderr));
+    expect(JSON.parse(dry.stderr)).toMatchObject({
+      kind: "local",
+      code: "too_large",
+      warnings: [expect.stringContaining("changed in the portal")]
+    });
     expect(instance.requests.some((request) => request.url === "/api/publish")).toBe(false);
   });
 
@@ -289,13 +294,9 @@ describe("repo publish checks", () => {
     });
   });
 
-  // State.test.ts owns how publish clears an older CLI's tier 0 attempt; a dry run only reports it.
-  it("leaves an older CLI's tier 0 attempt in place after a dry run", async () => {
-    const instance = await stubInstance(projectHandler);
-    const dir = publishTree(instance.url);
-    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
-    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    const attemptPath = path.join(dir, ".patchy/publish", sha256(instance.url), "attempt");
+  /** An attempt an older CLI saved for a tier 0 publish, which only a real publish clears. */
+  const tierZeroAttempt = (dir: string, instanceUrl: string) => {
+    const attemptPath = path.join(dir, ".patchy/publish", sha256(instanceUrl), "attempt");
     mkdirSync(attemptPath, { recursive: true });
     const file = path.join(attemptPath, `${sha256("tier-zero-attempt")}.json`);
     const attempt = JSON.stringify({
@@ -317,6 +318,55 @@ describe("repo publish checks", () => {
       }
     });
     writeFileSync(file, attempt);
+    return { file, attempt };
+  };
+
+  // The pending notice is remembered as soon as the attempt is found, so a refusal carries it.
+  it("keeps the pending notice when a dry run is refused for size or a failed portal read", async () => {
+    let gone = false;
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (gone && request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(404, { ok: false, error: "Patch not found." });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        version: 1,
+        description: "Synthetic notes"
+      })
+    );
+    tierZeroAttempt(dir, instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    const pending = expect.stringContaining("A publish is pending");
+
+    const filler = path.join(dir, "filler.bin");
+    writeFileSync(filler, Buffer.alloc(repoLimits.bytes + 1));
+    const large = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(large).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(large.stderr)).toMatchObject({ code: "too_large", warnings: [pending] });
+
+    rmSync(filler);
+    gone = true;
+    const unread = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(unread).toMatchObject({ status: 2, stdout: "" });
+    expect(JSON.parse(unread.stderr)).toMatchObject({
+      kind: "rejected",
+      error: expect.stringContaining("Patch is unavailable for update"),
+      warnings: [pending]
+    });
+  });
+
+  // State.test.ts owns how publish clears an older CLI's tier 0 attempt; a dry run only reports it.
+  it("leaves an older CLI's tier 0 attempt in place after a dry run", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    const { file, attempt } = tierZeroAttempt(dir, instance.url);
 
     const dry = await runCli(["publish", "--dry-run", "--json"], options);
     expect(dry, dry.stderr).toMatchObject({ status: 0, stderr: "" });

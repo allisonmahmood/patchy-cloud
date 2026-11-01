@@ -256,46 +256,78 @@ export const recordDescription = Effect.fn("Project.recordDescription")(function
   );
 });
 
-/** A local text edit does not move the last acknowledged cloud timestamp. */
+/** The portal's description of `patch`; `publishing` refuses a gone patch as publish does. */
+const readPortalDescription = Effect.fn("Project.readPortalDescription")(function* (
+  patch: string,
+  token: Redacted.Redacted,
+  publishing: boolean
+) {
+  const client = yield* Api.client(token);
+  return yield* client.detail({ params: { patchRef: patch }, query: { state: "all" } }).pipe(
+    Effect.catch((error) => {
+      if (publishing && Api.isRefusal(error) && error.error === "Patch not found.")
+        return new RejectedError({
+          refusal: {
+            ok: false,
+            error:
+              "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
+          },
+          cause: error
+        });
+      return Api.classify(error, "Could not read the patch description.");
+    })
+  );
+});
+
+const noWarnings: ReadonlyArray<string> = [];
+
+/**
+ * What the description sync makes of patchy.json, decided from the stamps alone: when the
+ * portal's description is newer than the last one synced, the repo with the portal's text and
+ * stamp, and the notice to give; otherwise nothing. A local text edit does not move the last
+ * acknowledged cloud timestamp. `syncDescription` writes the result; a dry run only measures it.
+ */
+const portalSync = (
+  repo: typeof repoSchema.Type,
+  cloud: { readonly description: string; readonly descriptionUpdatedAt: string | null }
+) => {
+  if (cloud.descriptionUpdatedAt === null) return undefined;
+  const syncedAt =
+    repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
+  if (
+    syncedAt !== undefined &&
+    !DateTime.isGreaterThan(DateTime.makeUnsafe(cloud.descriptionUpdatedAt), syncedAt)
+  )
+    return undefined;
+  const notice =
+    `The description was changed in the portal to '${cloud.description}'; check it` +
+    (repo.description !== undefined && repo.description !== cloud.description
+      ? ` (replaced local description: '${repo.description}').`
+      : ".");
+  const warnings: ReadonlyArray<string> = [notice];
+  return {
+    repo: {
+      ...repo,
+      description: cloud.description,
+      descriptionSyncedAt: cloud.descriptionUpdatedAt
+    },
+    warnings
+  };
+};
+
+/** Brings a newer portal description into patchy.json, remembering its notice. */
 export const syncDescription = Effect.fn("Project.syncDescription")(function* (
   cwd: string,
   token: Redacted.Redacted,
   publishing = false
 ) {
   const repo = yield* readRepo(cwd);
-  const warnings: string[] = [];
-  if (repo.patch === undefined) return { repo, warnings };
+  if (repo.patch === undefined) return { repo, warnings: noWarnings };
   const instance = yield* Instance.Instance;
-  const client = yield* Api.client(token);
-  const cloud = yield* client
-    .detail({ params: { patchRef: repo.patch }, query: { state: "all" } })
-    .pipe(
-      Effect.catch((error) => {
-        if (publishing && Api.isRefusal(error) && error.error === "Patch not found.")
-          return new RejectedError({
-            refusal: {
-              ok: false,
-              error:
-                "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
-            },
-            cause: error
-          });
-        return Api.classify(error, "Could not read the patch description.");
-      })
-    );
-  if (cloud.descriptionUpdatedAt === null) return { repo, warnings };
-  const cloudAt = DateTime.makeUnsafe(cloud.descriptionUpdatedAt);
-  const syncedAt =
-    repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
-  if (syncedAt !== undefined && !DateTime.isGreaterThan(cloudAt, syncedAt))
-    return { repo, warnings };
-  warnings.push(
-    `The description was changed in the portal to '${cloud.description}'; check it` +
-      (repo.description !== undefined && repo.description !== cloud.description
-        ? ` (replaced local description: '${repo.description}').`
-        : ".")
-  );
-  yield* Output.rememberWarnings(warnings);
+  const cloud = yield* readPortalDescription(repo.patch, token, publishing);
+  const synced = portalSync(repo, cloud);
+  if (synced === undefined) return { repo, warnings: noWarnings };
+  yield* Output.rememberWarnings(synced.warnings);
   yield* recordDescription(
     cwd,
     {
@@ -305,60 +337,24 @@ export const syncDescription = Effect.fn("Project.syncDescription")(function* (
     },
     instance.apiUrl
   );
-  return {
-    repo: {
-      ...repo,
-      description: cloud.description,
-      descriptionSyncedAt: cloud.descriptionUpdatedAt
-    },
-    warnings
-  };
+  return synced;
 });
 
 /**
- * patchy.json as a repo publish's description sync would leave it, for `publish --dry-run` to
- * measure: read as `syncDescription` reads it, refused as it refuses a gone patch, and written
- * nowhere. None when the sync would leave the file as it is. Keep it in step with
- * `syncDescription`, whose writes it leaves out.
+ * The description sync a repo publish would make, for `publish --dry-run`: patchy.json's text as
+ * the sync would leave it, when it would change it, and its notice, remembered as found. It reads
+ * as publish reads and writes nothing.
  */
-export const syncedRepoText = Effect.fn("Project.syncedRepoText")(function* (
+export const previewDescriptionSync = Effect.fn("Project.previewDescriptionSync")(function* (
   cwd: string,
   token: Redacted.Redacted
 ) {
   const repo = yield* readRepo(cwd);
-  if (repo.patch === undefined) return Option.none<string>();
-  const client = yield* Api.client(token);
-  const cloud = yield* client
-    .detail({ params: { patchRef: repo.patch }, query: { state: "all" } })
-    .pipe(
-      Effect.catch((error) => {
-        if (Api.isRefusal(error) && error.error === "Patch not found.")
-          return new RejectedError({
-            refusal: {
-              ok: false,
-              error:
-                "Patch is unavailable for update. Remove patch from patchy.json to create a new patch."
-            },
-            cause: error
-          });
-        return Api.classify(error, "Could not read the patch description.");
-      })
-    );
-  if (cloud.descriptionUpdatedAt === null) return Option.none<string>();
-  const syncedAt =
-    repo.descriptionSyncedAt == null ? undefined : DateTime.makeUnsafe(repo.descriptionSyncedAt);
-  if (
-    syncedAt !== undefined &&
-    !DateTime.isGreaterThan(DateTime.makeUnsafe(cloud.descriptionUpdatedAt), syncedAt)
-  )
-    return Option.none<string>();
-  return Option.some(
-    json({
-      ...repo,
-      description: cloud.description,
-      descriptionSyncedAt: cloud.descriptionUpdatedAt
-    })
-  );
+  if (repo.patch === undefined) return { text: undefined, warnings: noWarnings };
+  const synced = portalSync(repo, yield* readPortalDescription(repo.patch, token, true));
+  if (synced === undefined) return { text: undefined, warnings: noWarnings };
+  yield* Output.rememberWarnings(synced.warnings);
+  return { text: json(synced.repo), warnings: synced.warnings };
 });
 
 /**
