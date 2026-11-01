@@ -52,6 +52,21 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 33,
+    date: "2026-11-01",
+    through: "d5a7862940822475a089a147659fc4718dc47c20",
+    changes: [
+      {
+        kind: "New",
+        title: "Patches can have keyboard shortcuts",
+        detail:
+          "Ask your agent for shortcuts, such as Ctrl+K (⌘K on a Mac) to search or G then H to go home, and the patch responds to them as soon as it opens. Press ? to see every shortcut a patch has, in your company's look. Your agent picks this up the next time it refreshes the patch.",
+        prs: [1098, 1107]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 32,
     date: "2026-11-01",
     through: "58d94b3050a2704b00a1fc92b6e9698e5b47f267",
