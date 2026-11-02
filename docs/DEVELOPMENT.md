@@ -547,6 +547,19 @@ builds, two judges review what each run published.
   labelled way. Run it after changing the judges' prompts, a rubric or the
   labels.
 
+**Tasks** each name a scenario, the request in a person's words, and a
+target: a new repo patch or page, or one of the scenario's patches to change.
+For those, before the builder starts and untimed, the run's publisher
+publishes the scenario's patches into the run's company through the run's own
+CLI, as `pnpm dev up` does, with their sample data and guests; the builder
+finds only the target's repo in `~/Patchy`, and grading needs a version newer
+than the staged one. Checks act as the run's people in a browser and, through
+Patchy MCP, as their agents; to try a rule against the server, a check holds
+back a change one person's page sends and sends it as another first. The suite: `cheers` (one shared count),
+`spend-approvals` (tier 2: receipts, and only admins decide),
+`broken-handler` (fix `kit-room`'s failing Kit loans) and `kudos-agents`
+(agent tools on `brightline`'s Kudos).
+
 Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
 task that isn't held out by default), `--builders` (`sonnet,terra`),
 `--repeats` (3), `--concurrency` (4, for builds and then judgings),

@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { Page } from "@playwright/test";
 import { developerEnvFile, readAttioTestKey, readPidgeonTestKey } from "./developerEnv.js";
 import {
   decodeMail,
@@ -739,6 +740,28 @@ const connectedLocalPart = Effect.fn("connectedLocalPart")(function* (
 export const connectFailed = (connection: string, step: string, cause: unknown) =>
   new ConnectFailed({ connection, step, cause: Redacted.make(cause) });
 
+/**
+ * Presses "Load sample data" in the patch open on `page`, then waits for its
+ * empty state to stay gone; throws when it never goes. `pnpm dev eval` stages
+ * its fixtures with it too.
+ */
+export const pressSampleData = async (page: Page) => {
+  const frame = page.frameLocator("iframe").first();
+  await frame
+    .getByRole("button", { name: /load sample data/i })
+    .first()
+    .click({ timeout: 30_000 });
+  // The button relabels while its call runs, so wait for the empty state
+  // to stay gone; closing the browser earlier can drop the call.
+  const emptyState = frame.getByText(/load(ing)? sample data/i);
+  // 250ms polls: up to a minute, done once it has stayed gone for over 2s.
+  for (let poll = 0, quiet = 0; poll < 240; poll++, await page.waitForTimeout(250)) {
+    quiet = (await emptyState.count()) > 0 ? 0 : quiet + 1;
+    if (quiet > 8) return;
+  }
+  throw new Error("the sample data never replaced the empty state");
+};
+
 /** Presses a patch's "Load sample data" as `email`, through the persona sign-in. */
 const loadSampleData = Effect.fn("loadSampleData")(function* (
   apiUrl: string,
@@ -755,20 +778,7 @@ const loadSampleData = Effect.fn("loadSampleData")(function* (
         await page.goto(
           `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent(target)}`
         );
-        const frame = page.frameLocator("iframe").first();
-        await frame
-          .getByRole("button", { name: /load sample data/i })
-          .first()
-          .click({ timeout: 30_000 });
-        // The button relabels while its call runs, so wait for the empty state
-        // to stay gone; closing the browser earlier can drop the call.
-        const emptyState = frame.getByText(/load(ing)? sample data/i);
-        // 250ms polls: up to a minute, done once it has stayed gone for over 2s.
-        for (let poll = 0, quiet = 0; poll < 240; poll++, await page.waitForTimeout(250)) {
-          quiet = (await emptyState.count()) > 0 ? 0 : quiet + 1;
-          if (quiet > 8) return;
-        }
-        throw new Error("the sample data never replaced the empty state");
+        await pressSampleData(page);
       } finally {
         await browser.close();
       }
@@ -801,7 +811,7 @@ const PATCH_SOURCE_SKIP = new Set(["node_modules", ".patchy", "dist"]);
  * repo. A directory the scenario has (`src/`, `server/` …) replaces the
  * starter's, so starter modules such as `server/notes.ts` don't linger.
  */
-const overlay = (
+export const overlay = (
   from: string,
   to: string
 ): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
