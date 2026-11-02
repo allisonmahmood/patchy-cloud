@@ -109,8 +109,11 @@ export const bwrapArgs = (
   "--unshare-net",
   "--new-session",
   ...["--ro-bind", "/usr", "/usr"],
-  ...["--symlink", "usr/bin", "/bin", "--symlink", "usr/bin", "/sbin"],
-  ...["--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64"],
+  // Merged-/usr systems all have `usr/sbin` and `usr/lib64`: folders on Debian,
+  // Ubuntu and Fedora, links to `bin` and `lib` on Arch. Linking each root
+  // folder to its own name under /usr finds the dynamic loader on every one.
+  ...["--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin"],
+  ...["--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64"],
   ...["--ro-bind", "/etc", "/etc"],
   ...["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/dev/shm"],
   ...["--tmpfs", "/tmp", "--tmpfs", "/run"],
