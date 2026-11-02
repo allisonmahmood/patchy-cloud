@@ -123,8 +123,12 @@ const proxyConnection = (allow: ReadonlySet<string>) => (inside: net.Socket) => 
     const rest = Buffer.from(head.slice(end + 4), "latin1");
     void vet(host, port, allow)
       .then((vetted) => {
+        // The sandbox's side may have closed while the name resolved, the network with it.
+        if (inside.destroyed) return;
         if ("refused" in vetted) return refuse("403 Forbidden");
         const outside = net.connect(port, vetted.address);
+        // The far side goes with the sandbox's side, whichever way that ends.
+        inside.on("close", () => outside.destroy());
         let joined = false;
         outside.on("error", () => {
           outside.destroy();
@@ -159,21 +163,39 @@ const instanceConnection = (port: number) => (inside: net.Socket) => {
   };
   inside.on("error", close);
   outside.on("error", close);
+  inside.on("close", close);
   inside.pipe(outside).pipe(inside);
 };
 
+/**
+ * A socket server for the rest of the scope. Closing it also ends every
+ * connection still open, such as one a builder's browser left half-open:
+ * `server.close` alone waits for each to end, so a suite would never finish.
+ */
 const listen = (door: string, file: string, handle: (socket: net.Socket) => void) =>
   Effect.acquireRelease(
     Effect.tryPromise({
       try: () =>
-        new Promise<net.Server>((resolve, reject) => {
-          const server = net.createServer(handle);
+        new Promise<{ server: net.Server; open: Set<net.Socket> }>((resolve, reject) => {
+          const open = new Set<net.Socket>();
+          const server = net.createServer((socket) => {
+            open.add(socket);
+            socket.on("close", () => open.delete(socket));
+            handle(socket);
+          });
           server.on("error", reject);
-          server.listen(file, () => resolve(server));
+          server.listen(file, () => resolve({ server, open }));
         }),
       catch: (cause) => new DoorFailed({ door, cause })
     }),
-    (server) => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve())))
+    ({ server, open }) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            server.close(() => resolve());
+            for (const socket of open) socket.destroy();
+          })
+      )
   );
 
 /**
