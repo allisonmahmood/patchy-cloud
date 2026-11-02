@@ -64,6 +64,7 @@ describe("the sandbox", () => {
     expect(pairs("--ro-bind")).toEqual([
       ["/usr", "/usr"],
       ["/etc", "/etc"],
+      ["/data/evals/sockets/hosts", "/etc/hosts"],
       ["/data/evals/sockets", "/run/eval"],
       ["/repo/bridge.mjs", "/opt/eval/bridge.mjs"],
       ["/data/node/bin/node", "/opt/eval/node"]
@@ -169,6 +170,7 @@ describe("the sandbox's bridge", () => {
         return ctx.skip("no bubblewrap sandbox or real Node here");
       const network = yield* openNetwork({
         instancePort: 47_001,
+        instanceHost: "after-ab12cd.localhost",
         allow: [],
         node: node.value.execPath
       });
@@ -227,6 +229,21 @@ describe("the sandbox's bridge", () => {
         ).pipe(Effect.timeout("20 seconds"));
         expect(ran.exitCode).toBe(0);
         expect(ran.bytes).toBeGreaterThanOrEqual(262_144);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    30_000
+  );
+
+  it.live(
+    "resolves the instance's name inside, without a DNS server",
+    (ctx) =>
+      Effect.gen(function* () {
+        const ran = yield* sandboxed(
+          ctx,
+          "/usr/bin/python3",
+          ["-I", "-c", "import socket; socket.getaddrinfo('after-ab12cd.localhost', 47001)"],
+          { lateBy: "0 millis", perChunk: "0 millis" }
+        );
+        expect(ran.exitCode).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     30_000
   );

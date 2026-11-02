@@ -115,6 +115,7 @@ export const bwrapArgs = (
   ...["--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin"],
   ...["--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64"],
   ...["--ro-bind", "/etc", "/etc"],
+  ...["--ro-bind", `${spec.network.sockets}/hosts`, "/etc/hosts"],
   ...["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/dev/shm"],
   ...["--tmpfs", "/tmp", "--tmpfs", "/run"],
   // systemd-resolved hosts point /etc/resolv.conf here.
