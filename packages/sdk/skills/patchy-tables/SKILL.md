@@ -89,6 +89,10 @@ Rows are bounded to 1 MiB, batches to 1,000 items and 8 MiB, list/getMany result
 
 Pass a non-null returned cursor to the same query for the next page. Cursors are opaque and bound to index/order, not snapshots. Stop on null; a changed query starts a fresh page. Declare the index the UI needs and filter on the server instead of downloading all rows. Index definitions may use `["column"]` or `{ columns: ["column"], unique: true }`.
 
+## Totals
+
+Tables have no count or sum. Paging through `list` to add rows up reads the whole table, and a subscribed screen repeats it as rows change, in every open page. Keep a total that must stay exact as its own row, changed by the same tier 2 mutation that writes the rows it counts: the mutation's transaction makes concurrent changes add up. Pages show it by subscribing to a query that reads the row. On tier 1, a total read and written back from the page loses concurrent changes, since direct writes are last-write-wins.
+
 ## Subscribed screens
 
 On tier 1 company pages, subscribe instead of re-reading after each write:
