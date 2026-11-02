@@ -3,8 +3,8 @@
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
- * names the people stored without one, id 16 records the look's latest restore and id 20
- * adds the agent access switch.
+ * names the people stored without one, id 16 records the look's latest restore, id 20
+ * adds the agent access switch and id 34 records who accepted which terms.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -137,5 +137,18 @@ export const migrations: Migrations = {
       ADD CONSTRAINT companies_agent_access_change_check CHECK (
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
+  ),
+  // Each person's acceptances of the terms and privacy notice, by revision (Terms.Revision):
+  // at sign-up, when their user is created, and at the prompt after a change. Rows are added,
+  // never changed. No foreign key: a record outlives the account it names.
+  "0034_terms_acceptances": ddl(
+    `CREATE TABLE terms_acceptances (
+      user_id TEXT NOT NULL,
+      terms_revision TEXT NOT NULL CHECK (terms_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      privacy_revision TEXT NOT NULL CHECK (privacy_revision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+      via TEXT NOT NULL CHECK (via IN ('sign-up', 'prompt')),
+      accepted_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (user_id, terms_revision, privacy_revision)
+    )`
   )
 };

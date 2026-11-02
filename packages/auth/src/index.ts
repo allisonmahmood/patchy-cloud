@@ -13,6 +13,7 @@ export * as BetaLinks from "./BetaLinks.js";
 export * as BetaLinkPages from "./BetaLinkPages.js";
 export * as Receipt from "./Receipt.js";
 export * as RequireSession from "./RequireSession.js";
+export * as TermsPrompt from "./TermsPrompt.js";
 export * as SetupLinks from "./SetupLinks.js";
 export * as SetupPrompts from "./SetupPrompts.js";
 export * as AuthPages from "./AuthPages.js";

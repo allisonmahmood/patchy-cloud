@@ -447,13 +447,25 @@ to the app's host and keeps the Clerk domain and keys.
   carry no redirect to a Patchy page, which could not consume the ticket.
 - **Legal consent** is on
   ([#493](https://github.com/allisonmahmood/patchy-cloud/issues/493)). The
-  Account Portal's sign-up page requires a ticked box that links the beta terms,
+  Account Portal's sign-up page requires a ticked box that links the terms,
   `https://patchyhq.com/cloud/terms`, and the privacy notice,
   `https://patchyhq.com/cloud/privacy`. Clerk records the time on the user as
-  `legal_accepted_at`. The marketing site serves both pages, outside this
-  repository; moving either needs `compliance.legal_consent` changed with
-  `clerk config patch`. The development and CI instances leave it off, so no
-  test covers the checkbox.
+  `legal_accepted_at`, once, at sign-up. The marketing site serves both pages,
+  outside this repository; moving either needs `compliance.legal_consent`
+  changed with `clerk config patch`. The development and CI instances leave it
+  off, so no test covers the checkbox.
+- **Which terms each person accepted** is Patchy's record, not Clerk's
+  ([#976](https://github.com/allisonmahmood/patchy-cloud/issues/976)):
+  `terms_acceptances` holds one row per person and pair of revisions, from
+  sign-up or from the terms prompt (`docs/product.md` › Signing in). The
+  revisions in force are one line, `current` in
+  `packages/companies/src/Terms.ts`; each names the dated page
+  `https://patchyhq.com/cloud/terms/<revision>` or `…/privacy/<revision>`. A
+  change goes in this order: the website publishes the new dated page; a
+  release moves `current`, and everyone is asked on their next page in a
+  browser; once that release is live, the website switches `/cloud/terms` or
+  `/cloud/privacy` to the new text, so a new sign-up never accepts a revision
+  the running release doesn't know.
 - **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own

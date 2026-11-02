@@ -26,6 +26,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   type RequireSession,
   Session,
+  TermsPrompt,
   withCookies,
   sessionScripts,
   returnPath,
@@ -290,6 +291,18 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       !(yield* grantedGuest(served.value.patch, served.value.version, admission.user.id))
     ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+    }
+    // A patch's page is a page boundary, as a portal page is: someone who hasn't accepted the
+    // current terms, a guest included, is asked here first. Public pages and frames never ask.
+    if (kind === "address" && !isPublic) {
+      const prompt = yield* TermsPrompt.prompt(session, admission.user).pipe(
+        Effect.catchTags({ SqlError: Effect.die })
+      );
+      if (prompt !== null)
+        return withCookies(
+          HttpServerResponse.setHeader(prompt, "x-robots-tag", PATCH_ROBOTS_TAG),
+          cookies
+        );
     }
     if (served.value.patch.state !== "live" && !isAlias) {
       const canOpen = yield* Patches.Openability;

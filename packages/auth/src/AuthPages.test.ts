@@ -9,7 +9,8 @@ import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import * as SqlClient from "effect/sql/SqlClient";
+import { Companies, InviteMail, Terms, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -389,6 +390,87 @@ it.layer(services)("first-party pages in memory", (it) => {
         (yield* (yield* Users.Users).findByClerkId("user_fetch_metadata"))?.name,
         "Alex"
       );
+    })
+  );
+
+  it.effect("asks someone yet to accept the current terms on their next page, then goes on", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const users = yield* Users.Users;
+      const { company } = yield* (yield* Companies.Companies).create({
+        handle: "terms-prompt",
+        name: "Terms Company",
+        clerkUserId: "user_terms_admin",
+        email: "terms-admin@example.com",
+        userName: "Admin"
+      });
+      // Someone already here when acceptances began has none recorded.
+      yield* sql`
+        INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+        VALUES ('usr_terms', 'user_terms', ${company.id}, 'user_terms@example.com', 'Alex', 'member')`;
+      const sessionCookie = cookie("user_terms");
+      const page = { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+      const viewerOf = (response: Response) =>
+        Effect.promise(() => response.json() as Promise<{ user: { id: string } }>);
+      // Fetches, frames and clients without a browser's fetch metadata are never asked.
+      for (const headers of [
+        {},
+        { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" },
+        { "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" }
+      ]) {
+        const passed = yield* send("/private", { headers: { cookie: sessionCookie, ...headers } });
+        assert.strictEqual((yield* viewerOf(passed)).user.id, "usr_terms");
+      }
+      const prompt = yield* send("/private?view=mine", {
+        headers: { cookie: sessionCookie, ...page }
+      });
+      assert.strictEqual(prompt.status, 200);
+      assert.strictEqual(prompt.headers.get("cache-control"), "private, no-store");
+      const html = yield* Effect.promise(() => prompt.text());
+      assert.include(html, "We’ve updated our terms");
+      assert.include(html, `href="${Terms.url("terms", Terms.current.terms)}"`);
+      assert.include(html, `href="${Terms.url("privacy", Terms.current.privacy)}"`);
+      assert.include(html, 'action="/auth/terms"');
+      assert.include(html, 'name="return" value="/private?view=mine"');
+      assert.include(html, 'action="/logout"');
+      const answer = (fields: Record<string, string> = {}) =>
+        send(
+          "/auth/terms",
+          post(
+            {
+              userId: "usr_terms",
+              terms: Terms.current.terms,
+              privacy: Terms.current.privacy,
+              return: "/private?view=mine",
+              ...fields
+            },
+            sessionCookie,
+            page
+          )
+        );
+      const accepted = users.hasAcceptedTerms({ userId: "usr_terms", revisions: Terms.current });
+      // A page left open across an account switch or new terms records nothing and asks again.
+      for (const [fields, note] of [
+        [{ userId: "usr_someone_else" }, "You signed in as someone else"],
+        [{ terms: "2026-01-01" }, "The terms changed"]
+      ] as const) {
+        const asked = yield* answer(fields);
+        assert.strictEqual(asked.status, 409);
+        const again = yield* Effect.promise(() => asked.text());
+        assert.include(again, note);
+        assert.include(again, 'name="userId" value="usr_terms"');
+        assert.isFalse(yield* accepted);
+      }
+      const onward = yield* answer();
+      assert.strictEqual(onward.status, 303);
+      assert.strictEqual(onward.headers.get("location"), "/private?view=mine");
+      assert.isTrue(yield* accepted);
+      const next = yield* send("/private", { headers: { cookie: sessionCookie, ...page } });
+      assert.strictEqual((yield* viewerOf(next)).user.id, "usr_terms");
+      // Once accepted, a stale page just goes on, and only ever to a local page.
+      const late = yield* answer({ terms: "2026-01-01", return: "//foreign.invalid/" });
+      assert.strictEqual(late.status, 303);
+      assert.strictEqual(late.headers.get("location"), "/");
     })
   );
 

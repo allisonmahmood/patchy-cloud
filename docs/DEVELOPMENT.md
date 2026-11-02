@@ -218,6 +218,14 @@ keep working. An instance whose `.local/dev/personas.env` also holds
 `PATCHY_DEV_PERSONAS_KEY`, as `pnpm dev eval`'s does, opens `/dev/sign-in`
 only with `key=<it>` and otherwise answers 403 without naming anyone.
 
+The seed's dev user and every scenario person start past the **terms prompt**,
+as if they had signed up under the current terms, except a scenario person
+marked `termsPending`: `team`'s Cleo gets it on her first page in a browser and
+keeps getting it until she accepts. A persona with a new email records the
+acceptance when it creates or joins a company. The prompt answers only a
+browser's page load, so `curl` and the CLI never see it, while `shot`, `film`
+and `compare` do.
+
 `pnpm patchy` runs the CLI from source and finds this worktree's
 `.local/dev/env` from any directory beneath it. A command uses
 `PATCHY_API_TOKEN`, then a stored login for the instance, then the seed's
@@ -393,7 +401,7 @@ An environment is this instance plus what a multi-person check or demo needs:
   `-c 'mcp_servers.patchy-dev-<hash>.tools.change_patch.approval_mode="approve"'`.
 
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
-is three people and no patches; `brightline` is a five-person agency with tier 2
+is three people, one yet to accept the terms, and no patches; `brightline` is a five-person agency with tier 2
 patches and a single-file tier 1 page, agent areas on two of its tier 2 ones and agent access on, and takes
 about a minute; `dense` is Brightline Studio at full size, for first-party pages in every state:
 patches owned across the studio with their history, retired and deleted ones, guests both ways,
@@ -754,6 +762,11 @@ can quote it.
   and phone widths. Allow and exchange the code, Deny, answer after switching
   persona in another tab (asked again, 409), and answer from another origin
   (403). Nothing reaches the client's redirect except Allow and Deny.
+- **Terms prompt.** On `team`, `pnpm dev shot cleo /` and a patch's address
+  both show the prompt, which links the dated terms and privacy pages; Accept
+  goes on to that page with its query, and nobody else is asked. Its frame, a
+  public patch, `curl` and the CLI are never asked. Accept after switching
+  persona in another tab asks again (409) and records nothing.
 - **Patchy MCP.** `pnpm dev up brightline`, then connect Claude Code through
   consent with the environment's `worker-claude` and Codex with
   `worker-codex <person>`, never with your own config. Have each find the
