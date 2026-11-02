@@ -16,10 +16,10 @@ export default {
   minutes: 15,
   heldOut: false,
   rubric: [
-    "One owned table of cheers (or a single counter row) shared by the company; tier 1 is enough, since nothing must be enforced against a viewer and nothing outside the patch is needed.",
-    "The count is read with a live query, so every open page updates; a press is one insert or one atomic increment, never read-modify-write of a total from the page.",
+    "An exact total that everyone sees live and that stays right when people cheer at the same moment.",
+    "Owned tables have no count, and tier 1 page writes are last-write-wins, so on today's Patchy the expert design is a tier 2 mutation that increments one counter row atomically (its transaction retries on conflict), read through a live query. A tier 1 counter row written from the page loses concurrent cheers; recounting every row on every change is correct but grows with every cheer.",
     "The page starts in the company look and has a clear empty state (no cheers yet).",
-    "Small and plain: no server code, no extra dependencies."
+    "Small and plain: one table, one mutation, one query, no extra dependencies."
   ].join("\n"),
   checks: [
     {

@@ -1,0 +1,23 @@
+/* Layout only: colours, fonts and element styles come from the look. */
+main {
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: calc(var(--look-space, 8px) * 6) calc(var(--look-space, 8px) * 4);
+}
+.cheer { text-align: center; }
+.cheer .sub { color: var(--look-muted); margin-top: 0; }
+.total { margin: calc(var(--look-space) * 4) 0; }
+.total .num { display: block; font: 850 clamp(64px, 18vw, 140px)/1 var(--look-font-display); color: var(--look-accent); animation: tick .25s ease-out; }
+.total .label { display: block; color: var(--look-muted); font-weight: 650; }
+.stage { position: relative; display: block; width: fit-content; margin: 0 auto; }
+.cheer p { margin-left: auto; margin-right: auto; max-width: none; }
+.mine { margin-top: calc(var(--look-space) * 2); }
+.big { font-size: 1.75rem; padding: calc(var(--look-space) * 2) calc(var(--look-space) * 5); cursor: pointer; }
+.big:active { transform: translateY(2px); }
+.pop { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); font-weight: 850; pointer-events: none; animation: rise .9s ease-out forwards; }
+.mine { color: var(--look-muted); min-height: 1.5em; }
+#error { color: var(--look-danger); min-height: 1.5em; }
+@keyframes tick { from { transform: scale(1.12); } to { transform: scale(1); } }
+@keyframes rise { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, -48px); } }
+@media (prefers-reduced-motion: reduce) { .total .num, .pop { animation: none; } }

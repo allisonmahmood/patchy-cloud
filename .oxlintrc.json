@@ -15,7 +15,9 @@
     "**/node_modules/**",
     "**/.turbo/**",
     ".claude/**",
-    ".local/**"
+    ".local/**",
+    // Builder output the eval's judges are calibrated on, kept exactly as built.
+    "scripts/dev/eval-calibration/**"
   ],
   "rules": {
     "no-array-constructor": "error",
