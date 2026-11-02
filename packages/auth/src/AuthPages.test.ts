@@ -402,11 +402,12 @@ it.layer(services)("first-party pages in memory", (it) => {
       const viewerOf = (response: Response) =>
         Effect.promise(() => response.json() as Promise<{ user: { id: string } }>);
       // Fetches, frames and clients without a browser's fetch metadata are never asked.
-      for (const headers of [
+      const passing: ReadonlyArray<Record<string, string>> = [
         {},
         { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" },
         { "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe" }
-      ]) {
+      ];
+      for (const headers of passing) {
         const passed = yield* send("/private", { headers: { cookie: sessionCookie, ...headers } });
         assert.strictEqual((yield* viewerOf(passed)).user.id, "usr_terms");
       }
