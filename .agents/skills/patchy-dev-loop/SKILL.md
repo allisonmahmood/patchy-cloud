@@ -250,9 +250,10 @@ patchy whoami
 
 ## Measuring how agents build
 
-`pnpm dev eval --only-head [--tasks cheers] [--builders sonnet,terra] [--repeats 3]`
-gives the eval suite's tasks to sandboxed builders on an evidence instance at
-`HEAD` and grades what they publish: Sonnet 5.5 high in Claude Code and GPT-6.1
+`pnpm dev eval [--base <ref> | --only-head] [--tasks cheers] [--builders sonnet,terra] [--repeats 3]`
+gives the eval suite's tasks to sandboxed builders on evidence instances at the
+base and `HEAD` (or `HEAD` alone), grades what they publish and shows each
+figure as base → head: Sonnet 5.5 high in Claude Code and GPT-6.1
 Terra high in Codex, each in `bwrap` with a HOME and toolchain of its own and
 nothing of this machine's. Use it to tell whether a change to skill text, the `AGENTS.md`
 template or CLI messages helps builders. It needs bubblewrap, both harnesses signed
