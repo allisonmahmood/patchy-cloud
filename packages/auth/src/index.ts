@@ -10,6 +10,7 @@ export * as Session from "./Session.js";
 export * as DevPersonas from "./DevPersonas.js";
 export * as Receipt from "./Receipt.js";
 export * as RequireSession from "./RequireSession.js";
+export * as TermsPrompt from "./TermsPrompt.js";
 export * as SetupLinks from "./SetupLinks.js";
 export * as SetupPrompts from "./SetupPrompts.js";
 export * as AuthPages from "./AuthPages.js";

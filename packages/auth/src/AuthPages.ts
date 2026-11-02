@@ -8,7 +8,15 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
-import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
+import * as WideEvents from "@patchy/analytics/wide-events";
+import {
+  CompanyPage,
+  Join,
+  Terms,
+  Users,
+  type Companies,
+  type InviteMail
+} from "@patchy/companies";
 import type * as AgentConnections from "./AgentConnections.js";
 import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
@@ -17,6 +25,7 @@ import type * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
+import * as TermsPrompt from "./TermsPrompt.js";
 import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
 
 const join = Effect.gen(function* () {
@@ -101,6 +110,51 @@ const logout = Effect.gen(function* () {
       }
     ),
     session.signOutCookies()
+  );
+});
+
+/** The prompt's answer: four short fields, the return path at most a page address. */
+const MAX_TERMS_BYTES = 8_192;
+
+/**
+ * Accept on the terms prompt (`TermsPrompt`): records the revisions it showed, as the account it
+ * showed, then goes on to the page the prompt stood in for. An answer from a page left open
+ * across an account switch or a new revision records nothing and asks again, unless whoever is
+ * signed in has already accepted the current terms, who just goes on.
+ */
+const acceptTerms = Effect.gen(function* () {
+  const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const form = yield* request.urlParamsBody.pipe(
+    Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_TERMS_BYTES))
+  );
+  const field = (name: string) => Option.getOrNull(UrlParams.getFirst(form, name));
+  const returnTo = returnPath(field("return"), session.publicBaseUrl) ?? "/";
+  return yield* RequireSession.forTerms(
+    Effect.gen(function* () {
+      const viewer = yield* RequireSession.Viewer;
+      const users = yield* Users.Users;
+      const onward = HttpServerResponse.redirect(returnTo, {
+        status: 303,
+        headers: { "cache-control": "private, no-store" }
+      });
+      const changed: TermsPrompt.Changed | undefined =
+        field("userId") !== viewer.user.id
+          ? "account"
+          : field("terms") !== Terms.current.terms || field("privacy") !== Terms.current.privacy
+            ? "terms"
+            : undefined;
+      if (changed === undefined) {
+        yield* users.acceptTerms({ userId: viewer.user.id, revisions: Terms.current });
+        yield* WideEvents.enrich({ code: "terms_accepted" });
+        return onward;
+      }
+      if (yield* users.hasAcceptedTerms({ userId: viewer.user.id, revisions: Terms.current }))
+        return onward;
+      yield* WideEvents.enrich({ code: `terms_${changed}_changed` });
+      return TermsPrompt.page(session, { userId: viewer.user.id, returnTo }, changed);
+    }),
+    returnTo
   );
 });
 
@@ -220,6 +274,11 @@ export const layer: Layer.Layer<
         "POST",
         "/join",
         errors(RequireSession.sameOrigin(RequireSession.forEnrollment(join)))
+      );
+      yield* router.add(
+        "POST",
+        TermsPrompt.ACCEPT_PATH,
+        errors(RequireSession.sameOrigin(acceptTerms))
       );
       yield* router.add(
         "GET",

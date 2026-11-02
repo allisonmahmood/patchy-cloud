@@ -44,6 +44,10 @@ _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal
 
+**Terms prompt**:
+The card that stands in for a viewer's page, at the page's own address, while they haven't accepted the current [terms revisions](../companies/GLOSSARY.md#language): "We've updated our terms", Accept and Sign out. It appears only for a top-level page load in a browser, at the two page boundaries, a first-party page and a company patch's door, and never to a fetch, frame, stream, form post, public patch or client without a browser's fetch metadata. Accept records the revisions it showed, as the account it showed, then goes on to that page. A guest is asked for themselves.
+_Avoid_: terms gate, consent screen (an agent's consent page), terms wall
+
 **Setup link**:
 The `?s=` on the Final step panel's setup line: 128 random bits as 26 base32 characters, one live per person for 30 minutes, which `/llms.txt` carries into its login command as `--setup`. Its fetch marks the line picked up; the first device login it starts binds to it, and a second contests it. It keeps how its login ended (pending, denied, expired, contested, connected or confirmed by another account), because device logins are deleted when they finish. It is no credential: it only lets a login show on its owner's own panel. Events carry a separate setup id.
 _Avoid_: setup token, setup code (the device login's code is the code), attempt

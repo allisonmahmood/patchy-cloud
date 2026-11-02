@@ -1,5 +1,6 @@
 export * as Companies from "./Companies.js";
 export * as Users from "./Users.js";
+export * as Terms from "./Terms.js";
 export * as Directory from "./Directory.js";
 export { migrations } from "./migrations.js";
 export * as Join from "./Join.js";

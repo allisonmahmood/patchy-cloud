@@ -49,6 +49,9 @@ Done when `pnpm dev status` exits 0.
   writes a full-page PNG and prints the final URL, status and the browser's
   errors. Read the PNG to look at it. `<person>` is any email, or an
   environment person's key or first name.
+- **The terms prompt.** Seeded people start past it, except a scenario person
+  marked `termsPending`, such as `team`'s Cleo. A browser's page load shows it,
+  as `shot` does; `curl` sends no fetch metadata, so it gets the page instead.
 - **An agent connection's token.** `pnpm dev mcp-token <person> --client <name>`
   mints an agent connection straight into this instance's database and prints
   its access token, which lasts a year; `--json` adds the connection. `<person>`
