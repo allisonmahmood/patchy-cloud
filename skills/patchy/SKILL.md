@@ -94,7 +94,8 @@ back. Keep both somewhere lasting:
 When the user wants a tool with its own rows, files or company connections,
 start a patch repo: a single-file page can run script, but it has no data of its own.
 Choose tier 1 by default: it reaches only its own tables and files. Choose
-tier 2 for enforced rules, atomic multi-row writes, anything outside the patch
+tier 2 for enforced rules, atomic writes (several rows at once, or a value such
+as a total that several people change at once), anything outside the patch
 (company connections, other patches' shared data, the member directory), or
 when people's agents should use it: agents reach only a tier 2 agent area. Tier 1 rules are advisory because a viewer can make the same writes
 from devtools. Live sync and sequential steps work on tier 1 and do not require
