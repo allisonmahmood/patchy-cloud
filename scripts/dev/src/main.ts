@@ -112,6 +112,7 @@ import {
   trialMarkdown
 } from "./trial.js";
 import { BUILDER_IDS } from "./eval/builders.js";
+import { runCalibration } from "./eval/calibrate.js";
 import { runSuite } from "./eval/suite.js";
 import { TASKS } from "./eval/tasks/index.js";
 
@@ -1769,16 +1770,37 @@ const evalCommand = Command.make(
       Flag.withDefault(3)
     ),
     concurrency: Flag.Int("concurrency").pipe(
-      Flag.withDescription("Builds at once"),
+      Flag.withDescription("Builds, and then judgings, at once"),
       Flag.withDefault(4)
+    ),
+    noJudge: Flag.Boolean("no-judge").pipe(
+      Flag.withDescription("Skip the judges: checks and process metrics only"),
+      Flag.withDefault(false)
+    ),
+    calibrate: Flag.Boolean("calibrate").pipe(
+      Flag.withDescription(
+        "Check the judges against the labelled builds in scripts/dev/eval-calibration, instead of running the suite"
+      ),
+      Flag.withDefault(false)
     ),
     json: Flag.Boolean("json").pipe(
       Flag.withDescription("Print the scorecard as JSON"),
       Flag.withDefault(false)
     )
   },
-  Effect.fn(function* ({ onlyHead, base, tasks, builders, repeats, concurrency, json }) {
+  Effect.fn(function* ({
+    onlyHead,
+    base,
+    tasks,
+    builders,
+    repeats,
+    concurrency,
+    noJudge,
+    calibrate,
+    json
+  }) {
     const root = yield* worktree;
+    if (calibrate) return yield* runCalibration(root);
     if (onlyHead && Option.isSome(base)) return yield* new EvalBaseAndHeadOnly();
     if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10)
       return yield* new InvalidBudget({ flag: "repeats", given: repeats, max: 10 });
@@ -1815,7 +1837,8 @@ const evalCommand = Command.make(
       tasks: picked,
       builders: pickedBuilders,
       repeats,
-      concurrency
+      concurrency,
+      judge: !noJudge
     });
     yield* Console.log(json ? card : ["", markdown, "", `Runs and scorecard: ${dir}`].join("\n"));
   }, userFacing)

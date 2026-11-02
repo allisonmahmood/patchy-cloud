@@ -231,6 +231,47 @@ export const ToolVersion = Schema.Struct({ name: Schema.String, version: Schema.
 export type ToolVersion = typeof ToolVersion.Type;
 
 /**
+ * A toolchain in `spec`'s HOME, as a person installs one: Node from its
+ * release tarball into `~/.local/node`, then pnpm and each harness's CLI from
+ * npm into `~/.local`, at `toolchain`'s versions. Returns each tool's own
+ * reported version. Judges' homes get this alone, without Patchy's skill.
+ */
+export const installToolchain = Effect.fn("Eval.installToolchain")(function* (
+  spec: SandboxSpec,
+  toolchain: Toolchain,
+  harnesses: ReadonlyArray<Builder["harness"]>
+) {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  yield* setupStep("Installing Node", spec, "bash", [
+    "-c",
+    'set -e; mkdir -p ~/.local; curl -fsSL "https://nodejs.org/dist/v$1/node-v$1-linux-$2.tar.xz" | tar -xJ -C ~/.local; mv ~/.local/node-v$1-linux-$2 ~/.local/node',
+    "install",
+    toolchain.node,
+    arch
+  ]);
+  const unique = [...new Set(harnesses)];
+  yield* setupStep("Installing pnpm and the harnesses", spec, "npm", [
+    "install",
+    "--global",
+    "--prefix",
+    `${HOME}/.local`,
+    "--no-fund",
+    "--no-audit",
+    `pnpm@${toolchain.pnpm}`,
+    ...unique.map((harness) => {
+      const [command, pkg] = HARNESS_PACKAGES[harness];
+      return `${pkg}@${toolchain[command]}`;
+    })
+  ]);
+  const installed: Array<ToolVersion> = [];
+  for (const name of ["node", "pnpm", ...unique.map((harness) => HARNESS_PACKAGES[harness][0])]) {
+    const line = yield* setupStep(`Reading ${name}'s version`, spec, name, ["--version"]);
+    installed.push({ name, version: versionOf(line) ?? line.trim() });
+  }
+  return installed;
+});
+
+/**
  * A side's template HOME, set up as a person sets up: Node from its release
  * tarball into `~/.local/node`, pnpm and the suite's harnesses from npm into
  * `~/.local`, the instance's installer, then a tier 1 and a tier 2 `patchy
@@ -251,40 +292,11 @@ export const prepareTemplate = Effect.fn("Eval.prepareTemplate")(function* (inpu
   const path = yield* Path.Path;
   yield* fs.makeDirectory(input.dir, { recursive: true });
   const spec: SandboxSpec = { home: input.dir, network: input.network };
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  yield* setupStep("Installing Node", spec, "bash", [
-    "-c",
-    'set -e; mkdir -p ~/.local; curl -fsSL "https://nodejs.org/dist/v$1/node-v$1-linux-$2.tar.xz" | tar -xJ -C ~/.local; mv ~/.local/node-v$1-linux-$2 ~/.local/node',
-    "install",
-    input.toolchain.node,
-    arch
-  ]);
-  const harnesses = [...new Set(input.builders.map((builder) => builder.harness))];
-  const packages = [
-    `pnpm@${input.toolchain.pnpm}`,
-    ...harnesses.map((harness) => {
-      const [command, pkg] = HARNESS_PACKAGES[harness];
-      return `${pkg}@${input.toolchain[command]}`;
-    })
-  ];
-  yield* setupStep("Installing pnpm and the harnesses", spec, "npm", [
-    "install",
-    "--global",
-    "--prefix",
-    `${HOME}/.local`,
-    "--no-fund",
-    "--no-audit",
-    ...packages
-  ]);
-  const installed: Array<ToolVersion> = [];
-  for (const name of [
-    "node",
-    "pnpm",
-    ...harnesses.map((harness) => HARNESS_PACKAGES[harness][0])
-  ]) {
-    const line = yield* setupStep(`Reading ${name}'s version`, spec, name, ["--version"]);
-    installed.push({ name, version: versionOf(line) ?? line.trim() });
-  }
+  const installed = yield* installToolchain(
+    spec,
+    input.toolchain,
+    input.builders.map((builder) => builder.harness)
+  );
   yield* setupStep("Installing patchy from the instance", spec, "bash", [
     "-c",
     'curl -fsSL "$1/install.mjs" -o /tmp/install.mjs && node /tmp/install.mjs',
@@ -325,7 +337,6 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
   readonly builder: Builder;
   readonly signIns: SignIns;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* stepOutput(
     "Copying the template home",
@@ -344,21 +355,37 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
     ["auth", "set", "--token-stdin", "--api-url", input.apiUrl, "--json"],
     input.token
   );
-  if (input.builder.harness === "codex") {
-    yield* fs.makeDirectory(path.join(input.home, ".codex"), { recursive: true });
-    yield* fs.writeFileString(
-      path.join(input.home, ".codex", "config.toml"),
-      input.signIns.codex.config,
-      { mode: 0o600 }
-    );
-    if (input.signIns.codex.auth !== null)
-      yield* fs.copyFile(input.signIns.codex.auth, path.join(input.home, ".codex", "auth.json"));
-    return base;
-  }
-  yield* fs.makeDirectory(path.join(input.home, ".claude"), { recursive: true });
   return {
     ...base,
-    env: { ...input.signIns.claude.env, DISABLE_AUTOUPDATER: "1" },
-    binds: input.signIns.claude.binds
+    ...(yield* signInHarness(input.home, input.builder, input.signIns))
   } satisfies SandboxSpec;
+});
+
+/**
+ * A harness's sign-in in a HOME: for Codex, its `config.toml` and a copy of
+ * the developer's login when there is no provider; for Claude Code, its token
+ * in the environment or its credentials file mounted read-only. Returns what
+ * the sandbox adds for it.
+ */
+export const signInHarness = Effect.fn("Eval.signInHarness")(function* (
+  home: string,
+  harness: Pick<Builder, "harness">,
+  signIns: SignIns
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (harness.harness === "codex") {
+    yield* fs.makeDirectory(path.join(home, ".codex"), { recursive: true });
+    yield* fs.writeFileString(path.join(home, ".codex", "config.toml"), signIns.codex.config, {
+      mode: 0o600
+    });
+    if (signIns.codex.auth !== null)
+      yield* fs.copyFile(signIns.codex.auth, path.join(home, ".codex", "auth.json"));
+    return {} satisfies Pick<SandboxSpec, "env" | "binds">;
+  }
+  yield* fs.makeDirectory(path.join(home, ".claude"), { recursive: true });
+  return {
+    env: { ...signIns.claude.env, DISABLE_AUTOUPDATER: "1" },
+    binds: signIns.claude.binds
+  } satisfies Pick<SandboxSpec, "env" | "binds">;
 });

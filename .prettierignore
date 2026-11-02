@@ -2,3 +2,5 @@
 pnpm-lock.yaml
 # The shell broker bundle, generated and gitignored.
 packages/serving/src/generated/
+# Builder output the eval's judges are calibrated on, kept exactly as built.
+scripts/dev/eval-calibration/
