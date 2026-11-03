@@ -1,16 +1,28 @@
 /**
- * What `patchy request` and `patchy feedback` print: the documents agents read under `--json` and
- * the lines a person reads otherwise. A filed request's document adds, to each match, the exact
- * command that links to it, and `next`, which says what is left to do. Pure: the commands in
- * `commands.ts` call the instance and hand the answers here.
+ * What `patchy request` and `patchy feedback` print and check before sending: the documents agents
+ * read under `--json`, the lines a person reads otherwise, and each text's bounds. A filed
+ * request's document adds, to each match, the exact command that links to it, and `next`, which
+ * says what is left to do. Pure: the commands in `commands.ts` call the instance and hand the
+ * answers here.
  */
-import type {
-  RequestBrief,
-  RequestFiled,
-  RequestLinked,
-  SubmissionKind,
-  Submissions
+import {
+  type RequestBrief,
+  type RequestFiled,
+  type RequestLinked,
+  SUBMISSION_TEXT_MAX,
+  SUBMISSION_TITLE_MAX,
+  SUBMISSION_TITLE_MIN,
+  type SubmissionKind,
+  type Submissions
 } from "@patchy/api";
+
+/**
+ * `value` as one POSIX shell word: as it is when only safe characters make it up, otherwise
+ * single-quoted with each `'` closed, escaped and reopened. A general request's id is written by
+ * Patchy's team and has no shape, so a command built from one is quoted before it is shown.
+ */
+export const shellWord = (value: string) =>
+  /^[\w@%+=:,./-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** A match as `patchy request --json` shows it: the wire's brief and the command that links to it. */
 export interface Match extends RequestBrief {
@@ -37,7 +49,7 @@ export const filedDocument = (filed: RequestFiled) => ({
   id: filed.id,
   similar: filed.similar.map((match): Match => ({
     ...match,
-    link: `patchy request link ${filed.id} ${match.id}`
+    link: `patchy request link ${shellWord(filed.id)} ${shellWord(match.id)}`
   })),
   next: next(filed.similar)
 });
@@ -86,3 +98,54 @@ export const listLines = (page: Submissions, kind: SubmissionKind) => [
       })),
   ...(page.nextCursor === null ? [] : [`More: patchy ${kind} list --cursor ${page.nextCursor}`])
 ];
+
+const count = (value: number) => value.toLocaleString("en-US");
+const characters = (text: string) => [...text].length;
+
+/**
+ * A text the CLI sends, with the bounds the store holds it to: characters once it is normalized as
+ * the store normalizes it.
+ */
+export interface TextField {
+  /** How a message names it. */
+  readonly name: string;
+  readonly min: number;
+  readonly max: number;
+  readonly normalize: (text: string) => string;
+}
+
+export const requestText: TextField = {
+  name: "The request",
+  min: SUBMISSION_TITLE_MIN,
+  max: SUBMISSION_TITLE_MAX,
+  normalize: (text) => text.replace(/\s+/gu, " ").trim()
+};
+/** A blank why is none, so it has no minimum. */
+export const whyText: TextField = {
+  name: "--why",
+  min: 0,
+  max: SUBMISSION_TEXT_MAX,
+  normalize: (text) => text.trim()
+};
+export const feedbackText: TextField = {
+  name: "The feedback",
+  min: 1,
+  max: SUBMISSION_TEXT_MAX,
+  normalize: (text) => text.trim()
+};
+
+/**
+ * Whether text read so far is already too long for `field`: more input can only lengthen it.
+ * Whitespace past four times the bound counts too, so an endless pipe of blanks ends as well.
+ */
+export const pastBound = (field: TextField, text: string) =>
+  text.length > 4 * field.max || characters(field.normalize(text)) > field.max;
+
+/** Why `text` can't be sent as `field`, or undefined when it can. */
+export const outOfBounds = (field: TextField, text: string) => {
+  const length = characters(field.normalize(text));
+  if (length >= field.min && length <= field.max) return undefined;
+  const bounds =
+    field.min > 0 ? `${count(field.min)}–${count(field.max)}` : `at most ${count(field.max)}`;
+  return `${field.name} must be ${bounds} characters; it is ${count(length)}. Nothing was sent.`;
+};

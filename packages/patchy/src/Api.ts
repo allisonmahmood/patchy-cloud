@@ -4,6 +4,7 @@
  * turned into a `CliError` whose kind says who has to act. Every request names
  * the CLI's release, command and coding agent in its `Patchy-Cli` header.
  */
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -135,6 +136,30 @@ export interface Refusal {
 export type ClientFailure = Refusal | HttpClientError.HttpClientError | Schema.SchemaError;
 
 export const isRefusal = (error: ClientFailure): error is Refusal => "ok" in error;
+
+/**
+ * Whether a call's answer was a declared refusal status whose body didn't decode. The generated
+ * client fails with the status and the decode failure together, and the status alone would read
+ * as the instance's refusal; the answer couldn't be read, so it is no answer at all.
+ */
+export const isUnreadableRefusal = <E extends ClientFailure>(cause: Cause.Cause<E>): boolean => {
+  const errors = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  return (
+    errors.some(
+      (error) =>
+        !isRefusal(error) &&
+        error._tag === "HttpClientError" &&
+        error.reason._tag === "StatusCodeError"
+    ) &&
+    errors.some(
+      (error) =>
+        !isRefusal(error) &&
+        (error._tag === "SchemaError" ||
+          error.reason._tag === "DecodeError" ||
+          error.reason._tag === "EmptyBodyError")
+    )
+  );
+};
 
 /** Wire literal of the patch-route 404; `publish` and `delete` each turn it into their next action. */
 export const PATCH_NOT_FOUND = "Patch not found.";
