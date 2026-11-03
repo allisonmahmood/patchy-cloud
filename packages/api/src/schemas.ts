@@ -1398,6 +1398,16 @@ export type SubmissionSurface = typeof SubmissionSurface.Type;
 /** A request is something Patchy can't do yet; feedback is something it did wrong or made hard. */
 export const SubmissionKind = Schema.Literals(["request", "feedback"]);
 export type SubmissionKind = typeof SubmissionKind.Type;
+/** A request's title, in characters once whitespace runs collapse to one space and the ends are trimmed. */
+export const SUBMISSION_TITLE_MIN = 3;
+export const SUBMISSION_TITLE_MAX = 200;
+/** The most characters a request's why, a link's why or a feedback note holds, trimmed. */
+export const SUBMISSION_TEXT_MAX = 4_000;
+/**
+ * A request's or feedback's id as the store mints it: `req_` or `fbk_`, then 24 lowercase letters
+ * and digits. A general request's `gen_` id is Patchy's team's and takes no shape here.
+ */
+export const SubmissionId = Schema.String.check(Schema.isPattern(/^(?:req|fbk)_[a-z0-9]{24}$/));
 /** A general request's status, which a company request linked straight to it shares. */
 export const RequestStatus = Schema.Literals(["open", "planned", "shipped", "declined"]);
 export type RequestStatus = typeof RequestStatus.Type;

@@ -1438,6 +1438,47 @@ agent made the call and null for their page's; an instance from before agents
 sends none, which the CLI prints as null. Another member's key is refused with `not_owner`,
 exit 2, naming the owner.
 
+### Requests and feedback
+
+Tell Patchy's team what Patchy can't do yet, a **request**, or what it did wrong,
+strangely or made hard, **feedback**. Each send is stored as the signed-in person,
+with the coding agent and CLI release from the `Patchy-Cli` header; inside a
+published patch repo it also names `patchy.json`'s patch. These commands run
+anywhere with the saved login and accept `--json`. Any text argument, or `--why`,
+may be `-` to read it from stdin; only one of them per call.
+
+| command                                                      | behaviour                                                                                                                                                  | `--json` success                                                  |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `patchy request "<what Patchy should do>" [--why "<need>"]`  | Stores the request, then prints its id and up to three similar requests, the company's own and Patchy's general ones, shipped ones with their public note. | `{ ok, id, similar: [{ id, title, status, note?, link }], next }` |
+| `patchy request link <id> <match-id> [--why "<reason>"]`     | Links your request to a match that is the same need, replacing any earlier link.                                                                           | `{ ok, id, link }`                                                |
+| `patchy request unlink <id>`                                 | Clears the link and its reason.                                                                                                                            | `{ ok, id, link: null }`                                          |
+| `patchy feedback "<what you ran, expected, and happened>"`   | Stores the feedback and prints its id.                                                                                                                     | `{ ok, id }`                                                      |
+| `patchy request list` or `patchy feedback list`              | One page of what you sent of that kind, through any surface, newest first; `--cursor` takes the page's `nextCursor`. Never a note or a why.                | `{ submissions, nextCursor }`                                     |
+| `patchy request withdraw <id>` or `patchy feedback withdraw` | Deletes one of yours, and clears other requests' links to it.                                                                                              | `{ ok, id }`                                                      |
+
+A filed request is exit 0 whether or not it has matches. Each match's `link` is
+the exact command that links to it, its ids quoted for the shell when they need
+it, and `next` says what is left: nothing, unless
+a match fully meets the need, or has shipped and the person should hear so.
+[`docs/API.md`](../../docs/API.md#feedback) owns the wire fields.
+
+Before sending, the CLI checks what the store would refuse anyway and exits 1,
+`local`, with nothing sent: a request outside 3–200 characters once whitespace
+collapses, a why or feedback over 4,000, stdin that isn't UTF-8 or passes that
+bound (reading stops there), and an id that isn't `req_` or `fbk_` and 24
+lowercase letters and digits, as the store mints them. A match id isn't checked:
+a general request's id is Patchy's team's.
+
+Refusals are `rejected`, exit 2, in the instance's words with their `code`:
+`contains_secret` names the field and kind of credential to remove,
+`invalid_text` the field out of bounds, `rate_limited` when to send again,
+`not_found` an id that isn't one of yours, and `invalid_link` a match you
+couldn't have been shown. An instance without requests answers these routes
+with its catch-all 404, which is exit 2: "<instance> doesn't take requests yet."
+A refusal whose body can't be read is exit 3. A send whose answer is lost or
+unreadable is exit 3 and may have been stored: the CLI never sends it again, and
+its message says to check `list` first.
+
 ### The company look
 
 A company has numbered look revisions and a pointer to the current one. Having
@@ -1616,7 +1657,7 @@ warning after the local logout succeeds, never exit 3.
 Every command takes these, before or after the subcommand:
 
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
-- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish` and `look restore` print the API shapes in [`docs/API.md`](../../docs/API.md). Publish and share include `scope`. `status` prints JSON either way.
+- `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish`, `look restore`, `request link`, `request unlink`, `feedback`, `withdraw` and both `list`s of requests and feedback print the API shapes in [`docs/API.md`](../../docs/API.md); `request` adds `link` and `next`. Publish and share include `scope`. `status` prints JSON either way.
 
 A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
@@ -1660,6 +1701,8 @@ without `--json`, it is one line on stderr, and usage may precede it on stdout.
 - `--foreground` — on `dev`, wait and stream logs after readiness; interruption stops only a session this invocation started.
 - `--note <text>` — on `look publish`, required: why this revision exists, such as `darker green`.
 - `--compare` — on `look preview`: the folder's look beside the company's, or the Patchy look when it has none.
+- `--why <text>` — on `request`, the need behind it and its constraints; on `request link`, why the match meets the need. `-` reads it from stdin.
+- `--cursor <cursor>` — on `request list` and `feedback list`, continue from a page's `nextCursor`.
 
 ## Environment variables
 
@@ -1693,10 +1736,11 @@ The dev seed is available only when the URL source is `dev-env`. An explicit
 
 Every request a command sends to the instance names the CLI in one header,
 `Patchy-Cli: <release> <command> <agent>`, such as
-`Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records
-and nothing else depends on it. The command is the one you ran (`auth set`,
+`Patchy-Cli: 0.0.1 publish codex`. The instance records it in its usage records,
+and the agent and release on each request or feedback sent; nothing else depends on it. The command is the one you ran (`auth set`,
 `status`, `setup` and `validate` send no requests; `look publish`,
-`look restore` and `look preview` send `look`). The agent is the first of
+`look restore` and `look preview` send `look`, and `request`'s and `feedback`'s subcommands send
+`request` and `feedback`). The agent is the first of
 these whose variable is set in the CLI's environment (`GROK_AGENT` only at
 `1`), or `unknown`:
 
