@@ -680,6 +680,8 @@ const DECISION_BUTTONS = {
 const OPEN_MS = 8_000;
 /** Marks the buttons a decision's press found already there. */
 const SEEN = "data-eval-seen";
+/** A disclosure's summary while it's closed: what it holds is hidden, its buttons too. */
+const CLOSED = "details:not([open]) > summary";
 
 /** How long a press may take, from the click, to make its decision take effect. */
 const DECISION_MS = 60_000;
@@ -703,9 +705,9 @@ export interface DecisionWatch {
 /**
  * Decides on the request holding `text` the way a person would: fills in
  * any words its part of the page asks for, such as why, presses its own
- * Approve, Reject or Resolve, or the one in whatever opens when they click it, and
- * answers every dialog the press opens, or a confirmation it brings up in
- * place, filling in any words it wants. A
+ * Approve, Reject or Resolve, or the one in whatever opens when they click it
+ * or a disclosure named for it, and answers every dialog the press opens, or
+ * a confirmation it brings up in place, filling in any words it wants. A
  * part holding more than one such button isn't the request's own.
  *
  * With `watch`, every call the press sends Patchy, other than plain reads,
@@ -732,14 +734,24 @@ export const decide = async (
     const buttons = part.getByRole("button", { name });
     return (await part.count()) > 0 && (await buttons.count()) === 1 ? buttons : undefined;
   };
+  /** Opens the request's closed disclosure named for the decision, such as a "Resolve incident" summary. */
+  const disclose = async () => {
+    const closed = around(frame, text, { has: frame.locator(CLOSED).filter({ hasText: name }) })
+      .locator(CLOSED)
+      .filter({ hasText: name });
+    if ((await closed.count()) !== 1) return false;
+    await closed.click();
+    return true;
+  };
+  const find = async () => (await own()) ?? ((await disclose()) ? await own() : undefined);
   // Finding the button, and writing why, only look, behind the barrier: nothing writes before the decision.
-  let button = await own();
+  let button = await find();
   if (button === undefined) {
     await frame.getByText(text).first().click();
     // What opens can load a moment before it shows its buttons.
     for (let waited = 0; button === undefined && waited < OPEN_MS; waited += POLL_MS) {
       await page.waitForTimeout(POLL_MS);
-      button = await own();
+      button = await find();
     }
   }
   if (button === undefined || !(await button.isVisible())) return null;
