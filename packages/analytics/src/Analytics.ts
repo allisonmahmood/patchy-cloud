@@ -88,6 +88,16 @@ type ConnectionSubject = {
 };
 
 /**
+ * A request or feedback, and the surface and agent that sent it or linked it: the dashboard
+ * names no agent. Never its text, its reason or a link's reason.
+ */
+type Submission = {
+  readonly submissionId: string;
+  readonly surface: "cli" | "mcp" | "dashboard";
+  readonly agent: string | null;
+};
+
+/**
  * Every business event, named for what happened, with the properties it carries
  * beyond `companyId`. Each entry says when it fires and who its principal is.
  * Runtime work is reported separately by WideEvents.
@@ -232,6 +242,24 @@ export type AnalyticsCatalogue = Catalogue<{
 
   /** An admin deleted a connection. Principal: that admin. */
   readonly "connection.deleted": ConnectionSubject;
+
+  /** A person, or their agent, filed a request. Principal: that person. */
+  readonly "request.sent": Submission & {
+    /** The similar requests filing it returned, at most 3. */
+    readonly matches: number;
+  };
+
+  /**
+   * A person, or their agent, linked their request to the same need: a request of their
+   * company's or a general request. Principal: that person.
+   */
+  readonly "request.linked": Submission & {
+    readonly targetId: string;
+    readonly target: "request" | "general";
+  };
+
+  /** A person, or their agent, sent feedback. Principal: that person. */
+  readonly "feedback.sent": Submission;
 }>;
 
 export type AnalyticsEventName = keyof AnalyticsCatalogue;

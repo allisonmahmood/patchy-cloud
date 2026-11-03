@@ -2,6 +2,7 @@ import { migrations as auth } from "@patchy/auth";
 import { migrations as companies } from "@patchy/companies";
 import { migrations as companyDatabase } from "@patchy/company-database";
 import { migrations as execution } from "@patchy/execution/migrations";
+import { migrations as feedback } from "@patchy/feedback";
 import { migrations as integrations } from "@patchy/integrations";
 import { migrations as limits } from "@patchy/limits/migrations";
 import { migrations as mcp } from "@patchy/mcp";
@@ -23,7 +24,8 @@ export const capabilityMigrations: ReadonlyArray<Migrations> = [
   integrations,
   limits,
   execution,
-  mcp
+  mcp,
+  feedback
 ];
 
 /**
