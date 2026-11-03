@@ -794,25 +794,38 @@ company's place, labelled "The Patchy look" and noting the company has none.
 
 A filed request exits 0 even when it has matches: a failure exit would invite a
 retry, and a retry stores a real duplicate. Each match's `link` is the exact
-`patchy request link` command with both ids, and `next` says nothing else is
-required, to link only a match that fully meets the need, and, when one has
-shipped, to tell the person using its note. Text prints the id, then the matches.
+`patchy request link` command with both ids, each a single POSIX shell word
+(quoted when it holds anything but safe characters, since a general request's id
+is written by Patchy's team), and `next` says nothing else is required, to link
+only a match that fully meets the need, and, when one has shipped, to tell the
+person using its note. Text prints the id, then the matches.
 A text argument or `--why` of `-` reads stdin, one per call. Inside a patch repo
 the send names `patchy.json`'s patch; a missing or unreadable `patchy.json`
 names none and never stops it. The `Patchy-Cli` command is `request` or
 `feedback` for every subcommand.
 
+Before anything is sent, these are `local`, exit 1, saying nothing was sent:
+a text outside the store's bounds (`SUBMISSION_TITLE_MIN`–`SUBMISSION_TITLE_MAX`
+characters for a request once whitespace runs collapse, at most
+`SUBMISSION_TEXT_MAX` for a why or feedback, from `@patchy/api`); stdin that
+isn't UTF-8, or that passes the bound, where reading stops at once; and an id
+that isn't one the store mints for that kind (`SubmissionId`, `req_` or `fbk_`
+and 24 lowercase letters and digits). A match id goes in the body, so a general
+request's `gen_` id is the instance's to judge.
+
 Refusals are `rejected`, exit 2, with the instance's message and `code`:
 `contains_secret` (the message names each field and kind of credential, never
 the value), `invalid_text`, `rate_limited`, `not_found` and `invalid_link`; a
-bad cursor is a 400 without a code. Sends never retry: a lost or unreadable
-answer stays `unreachable`, exit 3, and its message says the submission may
-have been stored and to check `list` before sending again.
+bad cursor is a 400 without a code. A refusal status whose body doesn't decode
+is no answer, `unreachable`, exit 3. Sends never retry: a lost or unreadable
+answer stays exit 3, and its message says the submission may have been stored
+and to check `list` before sending again.
 
 These commands are never gated on an exact release. An older CLI has none of
-them. A newer CLI against an instance from before them gets the API's catch-all
-404, `{ ok: false, error: "Not found." }` with no code, which they report as
-`rejected`, exit 2: "<instance> doesn't take requests yet" (or feedback).
+them. A newer CLI against an instance without them gets the API's catch-all 404,
+`{ ok: false, error: "Not found." }` with no code. The routes' own 404 always
+carries `not_found`, and ids are checked first, so that is reported as
+`rejected`, exit 2: "<instance> doesn't take requests yet." (or feedback).
 
 ### Publish recovery
 

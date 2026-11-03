@@ -1457,18 +1457,27 @@ may be `-` to read it from stdin; only one of them per call.
 | `patchy request withdraw <id>` or `patchy feedback withdraw` | Deletes one of yours, and clears other requests' links to it.                                                                                              | `{ ok, id }`                                                      |
 
 A filed request is exit 0 whether or not it has matches. Each match's `link` is
-the exact command that links to it, and `next` says what is left: nothing, unless
+the exact command that links to it, its ids quoted for the shell when they need
+it, and `next` says what is left: nothing, unless
 a match fully meets the need, or has shipped and the person should hear so.
 [`docs/API.md`](../../docs/API.md#feedback) owns the wire fields.
+
+Before sending, the CLI checks what the store would refuse anyway and exits 1,
+`local`, with nothing sent: a request outside 3–200 characters once whitespace
+collapses, a why or feedback over 4,000, stdin that isn't UTF-8 or passes that
+bound (reading stops there), and an id that isn't `req_` or `fbk_` and 24
+lowercase letters and digits, as the store mints them. A match id isn't checked:
+a general request's id is Patchy's team's.
 
 Refusals are `rejected`, exit 2, in the instance's words with their `code`:
 `contains_secret` names the field and kind of credential to remove,
 `invalid_text` the field out of bounds, `rate_limited` when to send again,
 `not_found` an id that isn't one of yours, and `invalid_link` a match you
-couldn't have been shown. An instance from before requests answers these routes
-404, which is exit 2: "<instance> doesn't take requests yet". A send whose answer
-is lost or unreadable is exit 3 and may have been stored: the CLI never sends it
-again, and its message says to check `list` first.
+couldn't have been shown. An instance without requests answers these routes
+with its catch-all 404, which is exit 2: "<instance> doesn't take requests yet."
+A refusal whose body can't be read is exit 3. A send whose answer is lost or
+unreadable is exit 3 and may have been stored: the CLI never sends it again, and
+its message says to check `list` first.
 
 ### The company look
 
