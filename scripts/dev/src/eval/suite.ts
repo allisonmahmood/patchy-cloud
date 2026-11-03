@@ -336,6 +336,7 @@ const setUpSide = Effect.fn("Eval.setUpSide")(function* (input: {
   const network = yield* openNetwork({
     node: (yield* realNode()).execPath,
     instancePort: Number(new URL(input.side.served.apiUrl).port),
+    instanceHost: new URL(input.side.served.apiUrl).hostname,
     allow: input.signIns.privateEndpoints
   });
   const template = path.join(input.dir, "homes", input.name);

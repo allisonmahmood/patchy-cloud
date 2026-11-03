@@ -38,7 +38,10 @@ export class DoorFailed extends Schema.TaggedError<DoorFailed>()("DoorFailed", {
 
 /** Where the sockets are, for the sandbox to mount, and the instance's port, for the bridge to listen on. */
 export interface Network {
-  /** The folder holding `instance.sock` and `proxy.sock`, mounted at `/run/eval`. */
+  /**
+   * The folder holding `instance.sock` and `proxy.sock`, mounted at `/run/eval`,
+   * and the sandbox's `hosts`, mounted at `/etc/hosts`.
+   */
   readonly sockets: string;
   readonly instancePort: number;
   /** The bridge script, mounted at `/opt/eval/bridge.mjs`. */
@@ -294,9 +297,15 @@ const listen = (door: string, file: string, handle: (socket: net.Socket) => void
  * endpoints the proxy may reach on a private network (`endpoint`), such as a
  * model provider on the developer's own; `only`, when given, narrows the
  * public internet to those exact hosts, reached over TLS that names them.
+ * Beside them goes the sandbox's `hosts`: this machine's, plus the instance's
+ * `*.localhost` name on loopback, since a system that resolves those names
+ * through a local DNS server (Ubuntu's systemd-resolved) can't reach it from
+ * a sandbox's own network.
  */
 export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   readonly instancePort: number;
+  /** The instance's host name, such as `after-ab12cd.localhost`. */
+  readonly instanceHost?: string;
   readonly allow: ReadonlyArray<string>;
   readonly only?: ReadonlyArray<string>;
   /** Real Node's binary, never Bun's: the runner itself runs on Bun. */
@@ -305,6 +314,13 @@ export const openNetwork = Effect.fn("Eval.openNetwork")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-eval-" });
+  const hosts = yield* fs
+    .readFileString("/etc/hosts")
+    .pipe(Effect.orElseSucceed(() => "127.0.0.1 localhost\n::1 localhost"));
+  const name = input.instanceHost;
+  const named =
+    name === undefined || net.isIP(name) !== 0 ? "" : `127.0.0.1 ${name}\n::1 ${name}\n`;
+  yield* fs.writeFileString(path.join(dir, "hosts"), `${hosts.trimEnd()}\n${named}`);
   const allow = new Set(input.allow.map((host) => host.toLowerCase()));
   yield* listen(
     "instance",
