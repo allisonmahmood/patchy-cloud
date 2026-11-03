@@ -266,7 +266,7 @@ export const classify = (
             cause: error
           });
         }
-        // An undescribed status, or a body that could not be read or was missing.
+        // A status nothing describes, or a body that stopped arriving or could not be read.
         return yield* new UnreachableError({
           instanceUrl: apiUrl,
           reason: unreachableReason(error),

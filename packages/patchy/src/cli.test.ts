@@ -1,6 +1,8 @@
 // The CLI contract from outside: setup, the exit-code ladder, login, keys and status.
 import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -13,6 +15,7 @@ import {
   readJson,
   requestBarrier,
   runCli,
+  servers,
   stubInstance,
   tempDir
 } from "./test/cli.js";
@@ -80,6 +83,18 @@ describe("the patchy executable", () => {
   });
 });
 
+/** An instance whose every answer stops partway through its body. */
+const cutInstance = async () => {
+  const server = createServer((_, response) => {
+    // The headers promise more than arrives before the socket closes.
+    response.writeHead(200, { "content-type": "application/json", "content-length": "100" });
+    response.write('{"user":', () => response.destroy());
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+};
+
 describe("the exit-code ladder", async () => {
   it.each(["SIGINT", "SIGTERM"] as const)(
     "exits 130 on %s, as Effect's interruption",
@@ -138,18 +153,19 @@ describe("the exit-code ladder", async () => {
     expect(result.stderr).not.toContain("bad-token");
   });
 
-  it("exits 3 when there was no usable answer: a 5xx, an unreadable body, or nothing listening", async () => {
+  it("exits 3 when there was no usable answer: a 5xx, an unreadable body, or none that arrived whole", async () => {
     const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
     const env = { PATCHY_API_TOKEN: "token" };
-    const [instance, garbled] = await Promise.all([
+    const [instance, garbled, cut] = await Promise.all([
       stubInstance((_, respond) => respond(503, "<html>down</html>")),
-      stubInstance((_, respond) => respond(200, { surprise: true }))
+      stubInstance((_, respond) => respond(200, { surprise: true })),
+      cutInstance()
     ]);
     const [down, downJson, unreadable, ...nobody] = await Promise.all([
       runCli(["whoami", "--api-url", instance.url], { env }),
       runCli(["whoami", "--api-url", instance.url, "--json"], { env }),
       runCli(["whoami", "--api-url", garbled.url, "--json"], { env }),
-      ...["http://127.0.0.1:1", "http://patchy.invalid"].map((url) =>
+      ...["http://127.0.0.1:1", "http://patchy.invalid", cut].map((url) =>
         runCli(["whoami", "--api-url", url, "--json"], { env })
       )
     ]);
