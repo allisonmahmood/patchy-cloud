@@ -33,13 +33,13 @@ export default {
         };
         /** A visit, with or without a cheer; the reason it couldn't cheer, if it couldn't. */
         const visit = async (person: string, cheer: boolean) => {
-          const { page, frame, close } = await ctx.open(person);
+          const { frame, barrier, close } = await ctx.open(person);
           if (cheer) {
             const button = frame.getByRole("button", { name: /cheer/i }).first();
             if ((await button.count()) === 0)
               return `${person} found no button named for cheering.`;
-            await button.click();
-            await page.waitForTimeout(1_500);
+            // Cheering is deliberate: it reaches Patchy, and the barrier is up again once it's answered.
+            await barrier.deliberately(() => button.click());
           }
           await close();
           return null;
