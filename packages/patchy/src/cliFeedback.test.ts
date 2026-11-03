@@ -3,7 +3,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCli, stubInstance, tempDir } from "./test/cli.js";
+import { type Recorded, runCli, stubInstance, tempDir } from "./test/cli.js";
 
 const env = (url: string) => ({ PATCHY_API_URL: url, PATCHY_API_TOKEN: "pp_member" });
 const general = {
@@ -16,8 +16,12 @@ const sibling = { id: "req_tls", title: "Postgres connection over TLS only", sta
 const filed = { ok: true, id: "req_rsa", similar: [general, sibling] };
 /** What an instance whose release predates requests answers on their routes. */
 const unknownRoute = { ok: false, error: "Not found." };
-const posts = (requests: ReadonlyArray<{ method: string; url: string }>, url: string) =>
-  requests.filter((request) => request.method === "POST" && request.url === url);
+type Log = ReadonlyArray<Recorded>;
+/** What the CLI sent the API; a local port probe's stray `GET /` can land in the stub's log too. */
+const api = (requests: Log) => requests.filter((request) => request.url.startsWith("/api/"));
+const lastSent = (requests: Log) => api(requests).at(-1);
+const posts = (requests: Log, url: string) =>
+  api(requests).filter((request) => request.method === "POST" && request.url === url);
 
 describe("patchy request", () => {
   it("stores the request and exits 0 with its matches, each with its link command, and what's next", async () => {
@@ -41,7 +45,7 @@ describe("patchy request", () => {
         "command, with --why saying why it does. A match has shipped: tell the person, using its note."
     });
     // Outside a patch repo the request names no patch.
-    expect(instance.requests.at(-1)).toMatchObject({
+    expect(lastSent(instance.requests)).toMatchObject({
       body: { text: "Postgres encrypted with RSA", why: "Our auditors require RSA" },
       patchyCli: expect.stringMatching(/^\S+ request \S+$/)
     });
@@ -92,7 +96,7 @@ describe("patchy request", () => {
     ]) {
       const result = await runCli(args, { env: env(instance.url), cwd: repo });
       expect(result, result.stderr).toMatchObject({ status: 0 });
-      expect(instance.requests.at(-1)?.body).toEqual({ text: args[1], patch: "abcdefghijkl" });
+      expect(lastSent(instance.requests)?.body).toEqual({ text: args[1], patch: "abcdefghijkl" });
     }
 
     writeFileSync(path.join(repo, "patchy.json"), "{ not JSON");
@@ -101,7 +105,7 @@ describe("patchy request", () => {
       cwd: repo
     });
     expect(broken, broken.stderr).toMatchObject({ status: 0 });
-    expect(instance.requests.at(-1)?.body).toEqual({ text: "Gmail integration" });
+    expect(lastSent(instance.requests)?.body).toEqual({ text: "Gmail integration" });
   });
 
   it("reads `-` from stdin, for the request or --why, never both", async () => {
@@ -114,7 +118,7 @@ describe("patchy request", () => {
       input: why
     });
     expect(piped, piped.stderr).toMatchObject({ status: 0 });
-    expect(instance.requests.at(-1)?.body).toEqual({
+    expect(lastSent(instance.requests)?.body).toEqual({
       text: "Gmail integration",
       why: "Sales reads every reply.\nThey live in Gmail."
     });
@@ -125,7 +129,7 @@ describe("patchy request", () => {
     });
     expect(both.status).toBe(1);
     expect(JSON.parse(both.stderr)).toMatchObject({ kind: "local" });
-    expect(instance.requests).toHaveLength(1);
+    expect(api(instance.requests)).toHaveLength(1);
   });
 
   it("links a request to a match, unlinks it and withdraws it", async () => {
@@ -142,7 +146,7 @@ describe("patchy request", () => {
     const linked = await runCli([...link, "--json"], { env: env(instance.url) });
     expect(linked, linked.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(linked.stdout)).toEqual({ ok: true, id: "req_rsa", link: general });
-    expect(instance.requests.at(-1)).toMatchObject({
+    expect(lastSent(instance.requests)).toMatchObject({
       body: { to: "gen_encryption", why: "TLS covers it" },
       patchyCli: expect.stringMatching(/^\S+ request \S+$/)
     });
@@ -179,14 +183,14 @@ describe("patchy feedback", () => {
     const json = await runCli(["feedback", note, "--json"], { env: env(instance.url) });
     expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(json.stdout)).toEqual({ ok: true, id: "fbk_odd" });
-    expect(instance.requests.at(-1)).toMatchObject({
+    expect(lastSent(instance.requests)).toMatchObject({
       body: { text: note },
       patchyCli: expect.stringMatching(/^\S+ feedback \S+$/)
     });
 
     const piped = await runCli(["feedback", "-"], { env: env(instance.url), input: `${note}\n` });
     expect(piped.stdout.trim()).toBe("Sent feedback fbk_odd to Patchy's team.");
-    expect(instance.requests.at(-1)?.body).toEqual({ text: note });
+    expect(lastSent(instance.requests)?.body).toEqual({ text: note });
   });
 
   it("lists a page of the person's own, then the next by its cursor", async () => {
@@ -220,7 +224,7 @@ describe("patchy feedback", () => {
     const json = await runCli(["feedback", "list", "--json"], { env: env(instance.url) });
     expect(json, json.stderr).toMatchObject({ status: 0, stderr: "" });
     expect(JSON.parse(json.stdout)).toEqual(page);
-    expect(instance.requests.at(-1)?.url).toBe("/api/submissions?kind=feedback");
+    expect(lastSent(instance.requests)?.url).toBe("/api/submissions?kind=feedback");
 
     const text = await runCli(["feedback", "list"], { env: env(instance.url) });
     expect(text.stdout.trim().split("\n")).toEqual([
@@ -230,7 +234,7 @@ describe("patchy feedback", () => {
     ]);
 
     const last = await runCli(["feedback", "list", "--cursor", "c_2"], { env: env(instance.url) });
-    expect(instance.requests.at(-1)?.url).toBe("/api/submissions?kind=feedback&cursor=c_2");
+    expect(lastSent(instance.requests)?.url).toBe("/api/submissions?kind=feedback&cursor=c_2");
     expect(last.stdout.trim()).toBe("You have sent no feedback.");
 
     const bad = await runCli(["feedback", "list", "--cursor", "bad"], { env: env(instance.url) });
