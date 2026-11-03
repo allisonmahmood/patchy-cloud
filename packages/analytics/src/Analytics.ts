@@ -181,6 +181,12 @@ export type AnalyticsCatalogue = Catalogue<{
     | { readonly via: "create"; readonly role: Role }
     | { readonly via: "invite"; readonly role: Role; readonly inviteId: string };
 
+  /**
+   * Someone opened the demo link and was sent to Clerk to sign in as its account. Principal: that
+   * account, reported only once it has a company.
+   */
+  readonly "demo_link.opened": Record<string, never>;
+
   /** An admin invited an email address. Principal: that admin. */
   readonly "invite.sent": Delivery & { readonly role: Role };
 

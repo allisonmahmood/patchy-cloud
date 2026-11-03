@@ -19,7 +19,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/http/HttpServer";
-import { ClientDocumentNetwork, DevPersonas, Session } from "@patchy/auth";
+import { ClientDocumentNetwork, DemoLink, DevPersonas, Session } from "@patchy/auth";
 import { PgCompanyDatabases } from "@patchy/company-database";
 import { S3ContentStore } from "@patchy/content-store";
 import { CredentialKeys } from "@patchy/integrations";
@@ -75,7 +75,8 @@ NodeRuntime.runMain(
     yield* Config.all([
       Config.Redacted("DATABASE_URL"),
       PgCompanyDatabases.config,
-      CredentialKeys.config
+      CredentialKeys.config,
+      DemoLink.config
     ]);
     if (yield* DevPersonas.enabled) yield* DevPersonas.config;
     else yield* Session.config;

@@ -32,7 +32,9 @@ export const hostSecretKeys = [
   "PATCHY_S3_ACCESS_KEY_ID",
   "PATCHY_S3_SECRET_ACCESS_KEY",
   "PATCHY_CREDENTIAL_KEYS",
-  "PATCHY_POSTHOG_API_KEY"
+  "PATCHY_POSTHOG_API_KEY",
+  // Empty for no demo link: a host cannot start without every key present.
+  "PATCHY_DEMO_LINK"
 ] as const;
 
 const githubTokens = "token.actions.githubusercontent.com";

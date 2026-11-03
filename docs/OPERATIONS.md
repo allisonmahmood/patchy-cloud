@@ -375,6 +375,9 @@ The events, by area:
 - Companies and users: `company.created`, `user.joined`, `user.role_changed`,
   `user.deactivated`, `user.reactivated`.
 - Invitations: `invite.sent`, `invite.resent`, `invite.revoked`.
+- The demo link: `demo_link.opened` when a visit is sent to Clerk to sign in as the
+  link's account, once that account has a company. The account's own use follows in
+  its request events.
 - Connections: `connection.connected`, `connection.deleted`.
 - Company look: `look.published`, `look.restored`, each after its change commits. Restoring
   the revision that is already current reports nothing.
@@ -446,6 +449,19 @@ to the app's host and keeps the Clerk domain and keys.
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own
   ([#490](https://github.com/allisonmahmood/patchy-cloud/issues/490) for Google).
+- **The demo link** signs whoever opens it in as one account, for reviewers
+  nobody can invite by email. `PATCHY_DEMO_LINK` is
+  `<sha-256 hex of the secret>:<Clerk user id>:<YYYY-MM-DD>`, and the link is
+  `<origin>/signin/<secret>` until the start of that day in UTC; the secret
+  lives only in the link, never in configuration, the repository or a log.
+  Empty, there is no link. Each visit mints a minute-long Clerk sign-in token,
+  which Clerk accepts once, and redirects to the Account Portal with it, which
+  works in waitlist mode without passwords. Create the account with the
+  Backend API (`POST /v1/users` with the email, a name and
+  `legal_accepted_at`, which legal consent requires), and give it a company
+  before sharing the link: a visit reports `demo_link.opened` only for an
+  account in one. To end it early, empty the setting and deploy, or deactivate
+  the account.
 - **Keys** come from
   `clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --instance prod --file <file>`.
   Keep them out of output, chat and git.
@@ -710,8 +726,10 @@ lists them. `pnpm --filter @patchy/infra synth:example` synthesizes both offline
 The host secret, `patchy/<environment>/host`, is one JSON object a person fills
 in. Its description lists the keys, and each becomes the host environment variable
 it names. A deploy never writes it, and a host cannot start until every key is
-present. The management secret, `patchy/<environment>/fleet-management`, is
-two slots, `{"a": "…", "b": "…"}`. Slot `a` is generated once, `b` stays empty
+present, so a release that adds a key needs it filled in first; an optional
+setting such as `PATCHY_DEMO_LINK` is present and empty when unused. The
+management secret, `patchy/<environment>/fleet-management`, is two slots,
+`{"a": "…", "b": "…"}`. Slot `a` is generated once, `b` stays empty
 until the first rotation, and each release reads one slot; only
 [rotation](#rotating-the-management-secret)
 changes it. Host logs go to `/patchy/<environment>/host` and exec logs to

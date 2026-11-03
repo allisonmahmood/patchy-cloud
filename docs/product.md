@@ -736,6 +736,8 @@ A person signs in with Google, Microsoft or a code sent to their email through C
 
 During the private beta, Clerk creates a new account only from an invitation's link: a company's invitation, or an approval from the waitlist. The login door says so and offers **Join the waitlist** beside Sign in.
 
+The **demo link** is the one way in without an email: an operator-configured address that signs whoever opens it in as one prepared account, for reviewers nobody can invite because nobody knows who they will be. It has an end date, and every open is reported as `demo_link.opened`. Anyone holding the link is that account, so the account belongs to a company kept for showing Patchy.
+
 Creating an account means ticking a box on Clerk's sign-up page that accepts the [beta terms](https://patchyhq.com/cloud/terms) and the [privacy notice](https://patchyhq.com/cloud/privacy). That one acceptance covers the company a person creates and their use of a company they join; nothing is signed.
 
 Company **SSO** is future work: Patchy will enable it for a company, and its admin will set up SAML or OIDC against their IdP themselves — Patchy never handles the IdP credentials. SSO will be enforced on the company's verified domain, so everyone at `acme.com` signs in through Acme's IdP and nothing else. SSO is intended as a paid feature; the price is a pricing question, not a design one.
