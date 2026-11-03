@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   cliChildren,
   cliPath,
+  cutInstance,
   exec,
   type Recorded,
   runCli,
@@ -15,6 +16,8 @@ import {
   tempDir
 } from "./test/cli.js";
 
+/** The line a request's unexpected failure offers; `patchy feedback`'s own failures never do. */
+const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
 const env = (url: string) => ({ PATCHY_API_URL: url, PATCHY_API_TOKEN: "pp_member" });
 /** An id of the shape the store mints: its prefix, then 24 lowercase letters and digits. */
 const minted = (prefix: "req" | "fbk", name: string) => `${prefix}_${name.padEnd(24, "0")}`;
@@ -501,6 +504,68 @@ describe("refusals", () => {
     }
   });
 
+  it("a request offers patchy feedback after an answer it can't use, not one cut off, and patchy feedback never does", async () => {
+    let answer: "500" | "unreadable refusal" = "500";
+    const instance = await stubInstance((_request, respond) =>
+      answer === "500"
+        ? respond(500, { message: "Internal error" })
+        : // A declared refusal's status with a body that isn't JSON at all.
+          respond(422, undefined)
+    );
+    const run = (args: ReadonlyArray<string>) => runCli(args, { env: env(instance.url) });
+    const [request, requestJson, ...feedback] = await Promise.all([
+      run(["request", "Gmail integration"]),
+      run(["request", "Gmail integration", "--json"]),
+      run(["feedback", "Something odd"]),
+      run(["feedback", "Something odd", "--json"]),
+      run(["feedback", "list"]),
+      run(["feedback", "list", "--json"])
+    ]);
+    expect(request.status).toBe(3);
+    expect(request.stderr).toBe(
+      `${instance.url} answered 500, so the request may have been stored anyway.\n` +
+        `Run patchy request list to check before sending it again.\n${hint}\n`
+    );
+    expect(JSON.parse(requestJson.stderr)).toMatchObject({
+      kind: "unreachable",
+      feedbackHint: hint
+    });
+    for (const result of feedback) {
+      expect(result.status).toBe(3);
+      expect(result.stderr).not.toContain("If Patchy got this wrong");
+      expect(result.stderr).not.toContain("feedbackHint");
+    }
+
+    answer = "unreadable refusal";
+    const [unreadable, unreadableJson] = await Promise.all([
+      run(["request", "Gmail integration"]),
+      run(["request", "Gmail integration", "--json"])
+    ]);
+    expect(unreadable.status).toBe(3);
+    expect(unreadable.stderr).toBe(
+      `${instance.url} answered with a body the CLI could not read, so the request may have been stored anyway.\n` +
+        `Run patchy request list to check before sending it again.\n${hint}\n`
+    );
+    expect(JSON.parse(unreadableJson.stderr)).toMatchObject({
+      kind: "unreachable",
+      feedbackHint: hint
+    });
+
+    // A declared refusal's headers, then a body that stops arriving: no answer at all.
+    const cut = await cutInstance(422);
+    const [cutOff, cutOffJson] = await Promise.all([
+      runCli(["request", "Gmail integration"], { env: env(cut) }),
+      runCli(["request", "Gmail integration", "--json"], { env: env(cut) })
+    ]);
+    expect(cutOff.status).toBe(3);
+    expect(cutOff.stderr).toBe(
+      `${cut} answered with a body the CLI could not read, so the request may have been stored anyway.\n` +
+        "Run patchy request list to check before sending it again.\n"
+    );
+    expect(cutOffJson.status).toBe(3);
+    expect(JSON.parse(cutOffJson.stderr)).not.toHaveProperty("feedbackHint");
+  });
+
   it("a send whose answer is lost or unreadable is exit 3, sent once, and says to check the list first", async () => {
     let answer: "drop" | "502" | "garbled" | "unreadable refusal" | "empty 403" = "drop";
     const instance = await stubInstance((_request, respond, disconnect) =>
@@ -564,7 +629,9 @@ describe("refusals", () => {
       kind: "unreachable",
       error:
         `${instance.url} answered 403, so the request may have been stored anyway.\n` +
-        "Run patchy request list to check before sending it again."
+        "Run patchy request list to check before sending it again.",
+      // The instance answered, though with nothing the CLI could read.
+      feedbackHint: hint
     });
     // Away from a send the same answer is still the instance's: listing changes nothing.
     const listed = await runCli(["request", "list", "--json"], { env: env(instance.url) });

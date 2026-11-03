@@ -289,7 +289,8 @@ for (const delay of ["response", "response body"] as const) {
         yield* TestClock.adjust(7_000);
         const { result, completedAt } = yield* Fiber.join(fiber);
         assert(Result.isFailure(result));
-        assert.strictEqual(result.failure.kind, "unreachable");
+        // No answer in time is the network's, so it offers no `patchy feedback`.
+        assert.deepInclude(result.failure, { kind: "unreachable", reason: "transport" });
         assert.strictEqual(completedAt, 6_000);
         assert.strictEqual(files.get("/state/device-login.json"), originalPending);
         assert.isFalse(files.has("/state/credentials.json"));

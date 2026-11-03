@@ -11,11 +11,12 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ToolRefusal } from "@patchy/api";
 import { typescriptRefusal } from "./toolchainProcess.js";
 import type { CliError } from "./CliError.js";
-import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import { LocalError, RejectedError, UnreachableError, unreachableReason } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
 import * as Preparation from "./devPreparation.js";
@@ -474,9 +475,10 @@ export const agent = Effect.fn("Dev.agent")(function* (
   if (record?.url === undefined || !(yield* healthy(record))) return yield* notRunning();
   // Each mount answers as its own person.
   const origin = new URL((input.colleague ? record.colleagueUrl : undefined) ?? record.url).origin;
-  const unusable = (cause: unknown) =>
+  const unusable = (cause: HttpClientError.HttpClientError | Schema.SchemaError) =>
     new UnreachableError({
       instanceUrl: origin,
+      reason: unreachableReason(cause),
       message:
         call === undefined
           ? "The dev runtime gave no usable answer. Read `pnpm patchy dev logs`."
