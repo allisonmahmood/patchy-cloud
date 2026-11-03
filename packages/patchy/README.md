@@ -1638,6 +1638,10 @@ A decoded wire refusal is `rejected`, including the API's declared 503 `busy`
 and `source_unavailable` responses. Other 4xx responses are rejected; transport
 failures, unmodelled 5xx and unreadable bodies are unreachable. A bug in the CLI
 is `Unexpected error: <message>`, exit 1; add `--log-level debug` for the stack.
+After an answer the CLI could not use, such as an unmodelled 5xx or an
+unreadable body, or after an `Unexpected error`, the CLI adds `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
+on the next line, or `feedbackHint` under `--json`. No answer at all, a refusal,
+a local mistake, a sign-in state and `patchy feedback`'s own failures carry none.
 Text diagnostics can include multiple repair or validation lines. Branch on the
 exit code and optional domain code, not prose or its line count.
 
@@ -1659,10 +1663,10 @@ Every command takes these, before or after the subcommand:
 - `--api-url <url>` — the highest-precedence instance override; for repo commands it must match the authoritative stored instance. See [precedence](#environment-variables).
 - `--json` prints one result document on stdout. Command success shapes are documented above; `auth set` prints `{ "ok": true, "instanceUrl" }`, `validate` prints `{ "ok": true, "warnings" }`, and `whoami`, `publish`, `share`, `retire`, `delete`, `restore`, `rollback`, `describe`, `logs`, `look`, `look publish`, `look restore`, `request link`, `request unlink`, `feedback`, `withdraw` and both `list`s of requests and feedback print the API shapes in [`docs/API.md`](../../docs/API.md); `request` adds `link` and `next`. Publish and share include `scope`. `status` prints JSON either way.
 
-A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, warnings? }`
+A failure is `{ ok: false, error, kind, code?, state?, owner?, dependants?, sources?, purgeAt?, versionNumber?, baseVersion?, latestVersion?, publishedBy?, publishedAt?, admins?, feedbackHint?, warnings? }`
 on stderr, ordinarily with empty stdout and the exit code for `kind`. Lifecycle
 refusals retain the affected owner, patch state, dependant/source lists or reclaim
-date; `admin_required` retains the company's `admins`. Notices discovered before a later failure remain in `warnings`; success
+date; `admin_required` retains the company's `admins`. `feedbackHint` is the line [above](#exit-codes) that offers `patchy feedback`. Notices discovered before a later failure remain in `warnings`; success
 warnings stay in the stdout document. There is no separate JSON-mode warning output.
 
 Branch on `kind`/exit first, then `code`. Codes preserve wire refusals and identify
