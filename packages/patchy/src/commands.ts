@@ -74,7 +74,13 @@ import { Cryptography, documentTitle } from "@patchy/core";
 import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
 import { checkBundle } from "./bundleCheck.js";
-import { type CliError, LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import {
+  bodyCutOff,
+  type CliError,
+  LocalError,
+  RejectedError,
+  UnreachableError
+} from "./CliError.js";
 import * as Discovery from "./Discovery.js";
 import { previewPage } from "./lookPreview.js";
 import * as Git from "./Git.js";
@@ -1340,10 +1346,15 @@ const submissionFailure =
       const unreadable = Api.isUnreadableRefusal(cause);
       const undecoded =
         !Api.isRefusal(error) && error._tag === "HttpClientError" && "response" in error.reason;
+      // An answer whose body stopped arriving is no answer at all, so it offers no feedback.
+      const cutOff = cause.reasons.some(
+        (reason) =>
+          Cause.isFailReason(reason) && !Api.isRefusal(reason.error) && bodyCutOff(reason.error)
+      );
       const failure = unreadable
         ? new UnreachableError({
             instanceUrl: apiUrl,
-            reason: "decode",
+            reason: cutOff ? "transport" : "decode",
             message: `${apiUrl} answered with a body the CLI could not read.`,
             cause: error
           })
@@ -1352,7 +1363,8 @@ const submissionFailure =
       return yield* new UnreachableError({
         instanceUrl: apiUrl,
         // A refusal status the CLI couldn't decode is still the instance's answer.
-        reason: failure._tag === "UnreachableError" ? failure.reason : "response",
+        reason:
+          failure._tag === "UnreachableError" ? failure.reason : cutOff ? "transport" : "response",
         message:
           `${apiUrl} ${unreadable ? "answered with a body the CLI could not read" : unanswered(error)}, ` +
           `so the ${kind} may have been stored anyway.\n` +
