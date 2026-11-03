@@ -232,13 +232,16 @@ export class BaseStack extends Stack {
     // Emails when the month's forecast passes each amount. Each alert is its own
     // budget: CloudFormation replaces a budget to change its notifications, and
     // budget names are unique, so adding a threshold to one fails the deploy.
+    // It counts usage before credits: while credits pay the bill, it tracks how
+    // fast they are spent, and once they run out it tracks what we pay.
     const forecastAlert = (id: string, budgetName: string, amount: number) =>
       new budgets.CfnBudget(this, id, {
         budget: {
           budgetName,
           budgetType: "COST",
           timeUnit: "MONTHLY",
-          budgetLimit: { amount, unit: "USD" }
+          budgetLimit: { amount, unit: "USD" },
+          costTypes: { includeCredit: false }
         },
         notificationsWithSubscribers: [
           {

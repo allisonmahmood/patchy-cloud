@@ -516,10 +516,10 @@ stacks on 2026-10-05.
 The **base stack** holds what outlives a release: the ECR repository, with
 immutable tags named by commit; the GitHub OIDC provider and a deploy role
 trusted only for the repository's GitHub environment of the same name; the
-$300 forecast budget; the host secret, declared without a value and filled by a
-person; and the fleet management secret, with two slots of which a release reads
-one. Only production
-declares the account-wide provider and budget. It deploys first: a host cannot
+$300 and $600 forecast budgets, which count usage before credits; the host
+secret, declared without a value and filled by a person; and the fleet
+management secret, with two slots of which a release reads one. Only production
+declares the account-wide provider and budgets. It deploys first: a host cannot
 start until its image is in ECR and its secret is filled.
 
 The **app stack** is one release, pinned to an image digest:
