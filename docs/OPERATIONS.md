@@ -460,8 +460,10 @@ to the app's host and keeps the Clerk domain and keys.
   Backend API (`POST /v1/users` with the email, a name and
   `legal_accepted_at`, which legal consent requires), and give it a company
   before sharing the link: a visit reports `demo_link.opened` only for an
-  account in one. To end it early, empty the setting and deploy, or deactivate
-  the account.
+  account in one. A browser already signed in to Patchy as someone else stays
+  that person, because Clerk keeps one session; try the link in a private
+  window. To end it early, empty the setting and deploy, or deactivate the
+  account.
 - **Keys** come from
   `clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --instance prod --file <file>`.
   Keep them out of output, chat and git.

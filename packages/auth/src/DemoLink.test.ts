@@ -124,8 +124,13 @@ it.layer(layer)("the demo link", (it) => {
         assert.strictEqual((yield* visit(path, setting())).status, 404);
       }
       // The test clock starts at 1970-01-01T00:00:00Z, the moment this link stops working.
-      const ended = setting(DEV_SEED.clerkUserId, "1970-01-01");
-      assert.strictEqual((yield* visit("/signin/demo-secret", ended)).status, 404);
+      const ended = yield* visit(
+        "/signin/demo-secret",
+        setting(DEV_SEED.clerkUserId, "1970-01-01")
+      );
+      assert.strictEqual(ended.status, 404);
+      // Its links must not hand the secret on to the page they open.
+      assert.strictEqual(ended.headers.get("referrer-policy"), "no-referrer");
       assert.deepStrictEqual(clerk.minted, []);
       assert.deepStrictEqual(events, []);
     })
@@ -154,6 +159,7 @@ it.layer(layer)("the demo link", (it) => {
       clerk.refuse = true;
       const response = yield* visit("/signin/demo-secret", setting());
       assert.strictEqual(response.status, 502);
+      assert.strictEqual(response.headers.get("referrer-policy"), "no-referrer");
       assert.include(yield* Effect.promise(() => response.text()), "Sign-in service unavailable");
       assert.deepStrictEqual(events, []);
     })

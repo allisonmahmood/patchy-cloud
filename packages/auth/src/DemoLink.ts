@@ -118,7 +118,7 @@ export const routes = (notFound: HttpServerResponse.HttpServerResponse) =>
         target.searchParams.set("redirect_url", publicUrl.href);
         return HttpServerResponse.redirect(target.href, {
           status: 303,
-          headers: { "cache-control": "no-store", "referrer-policy": "no-referrer" }
+          headers: { "cache-control": "no-store" }
         });
       });
       yield* router.add(
@@ -142,7 +142,9 @@ export const routes = (notFound: HttpServerResponse.HttpServerResponse) =>
                   status: 503
                 })
               )
-          })
+          }),
+          // Every answer carries the secret in its URL, so none may pass it on as a referrer.
+          Effect.map(HttpServerResponse.setHeader("referrer-policy", "no-referrer"))
         )
       );
     })
