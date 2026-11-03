@@ -33,6 +33,7 @@
     "@patchy/content-store": "workspace:*",
     "@patchy/core": "workspace:*",
     "@patchy/execution": "workspace:*",
+    "@patchy/feedback": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/mcp": "workspace:*",

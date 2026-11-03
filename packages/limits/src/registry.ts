@@ -1329,6 +1329,16 @@ export const registry = {
     refusal: "too_large",
     overridable: false
   },
+  "feedback.sends.perMinute": {
+    kind: "operating",
+    default: 10,
+    unit: "sends/minute",
+    scope: "viewer",
+    measure:
+      "Requests and feedback one person sends per host replica, both kinds and every surface together; linking, unlinking, listing and withdrawing spend none",
+    refusal: "rate_limited",
+    overridable: false
+  },
   "rate.protectedApi.perMinute": {
     kind: "operating",
     configuration: "legacy",

@@ -1,0 +1,37 @@
+{
+  "name": "@patchy/feedback",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Requests and feedback people and their agents send Patchy: the feedback schema, the shared service every surface calls, the secret check, matching, the send limit and the CLI's HttpApi group.",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "read-role.sql",
+    "read-role-drop.sql"
+  ],
+  "scripts": {
+    "build": "effect-tsgo tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@patchy/analytics": "workspace:*",
+    "@patchy/api": "workspace:*",
+    "@patchy/core": "workspace:*",
+    "@patchy/limits": "workspace:*",
+    "@patchy/sql": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "vitest": "^5.0.5"
+  }
+}

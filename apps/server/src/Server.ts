@@ -47,6 +47,7 @@ import {
   ResourceChanges
 } from "@patchy/company-database";
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
+import { Feedback, FeedbackApi } from "@patchy/feedback";
 import {
   ConnectionPages,
   ConnectionsApi,
@@ -216,6 +217,7 @@ const services = Layer.mergeAll(
   Content.layer,
   DeletionSweep.layer,
   DeviceLogins.layer,
+  Feedback.layer,
   OrphanSweep.layer,
   Layer.unwrap(
     Effect.gen(function* () {
@@ -352,6 +354,7 @@ const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).p
     ConnectionsApi.layer,
     DevReads.layer,
     LookApi.layer,
+    FeedbackApi.layer,
     SdkApi.layer,
     RuntimeApi.layer,
     RuntimeStreamApi.layer
