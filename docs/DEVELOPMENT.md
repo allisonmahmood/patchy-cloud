@@ -556,10 +556,17 @@ CLI, as `pnpm dev up` does, with their sample data and guests; the builder
 finds only the target's repo in `~/Patchy`, and grading needs a version newer
 than the staged one. Checks act as the run's people in a browser and, through
 Patchy MCP, as their agents; to try a rule against the server, a check holds
-back a change one person's page sends and sends it as another first. The suite: `cheers` (one shared count),
+back a change one person's page sends and sends it as another first. A
+check can act as the run's guests at the scenario's other companies too, and
+since a builder can't look someone up at another company, a task's words
+write `{email:<key>}` for that person's address in the run; the judges read
+it as "<key>'s email". The suite: `cheers` (one shared count),
 `spend-approvals` (tier 2: receipts, and only admins decide),
-`broken-handler` (fix `kit-room`'s failing Kit loans) and `kudos-agents`
-(agent tools on `brightline`'s Kudos).
+`broken-handler` (fix `kit-room`'s failing Kit loans), `kudos-agents`
+(agent tools on `brightline`'s Kudos) and `war-room`, the reference for the
+hardest builds: a live incident room on `brightline` where only the commander
+or an admin resolves, Taylor at Cedar Works works incidents as a guest, and
+agents never resolve a SEV1.
 
 Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
 task that isn't held out by default), `--builders` (`sonnet,terra`),

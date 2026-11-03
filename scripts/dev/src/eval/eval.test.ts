@@ -35,8 +35,9 @@ import { Expectation, ranks } from "./calibrate.js";
 import { closed, copySource, masksIn, meanScores, splits, taskBrief } from "./judges.js";
 import { classify, judging, shift } from "./scorecard.js";
 import cheers from "./tasks/cheers.js";
+import { incidentRefs, resolvedIn } from "./tasks/warRoom.js";
 import { checkDoor, pinnedTo } from "./suite.js";
-import { countFollows, countsBeside } from "./task.js";
+import { countFollows, countsBeside, wordsFor } from "./task.js";
 
 const repo = new URL("../../../..", import.meta.url).pathname;
 const ended = { exitCode: 0, timedOut: false, seconds: 90, stderr: "" };
@@ -778,6 +779,19 @@ describe("the judges", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   );
 
+  it("fills a run's people into a task's words, and says whose for the judges", () => {
+    const task = { words: "Share it with Taylor ({email:taylor})." };
+    const taylor = {
+      id: "usr_1",
+      key: "taylor",
+      name: "Taylor Morgan",
+      email: "taylor+ab12cd@cedar.example",
+      role: "member"
+    } as const;
+    expect(wordsFor(task, [taylor])).toBe("Share it with Taylor (taylor+ab12cd@cedar.example).");
+    expect(wordsFor(task)).toBe("Share it with Taylor (taylor's email).");
+  });
+
   it("briefs the scoring pass with the request and rubric, and nothing about the run", () => {
     const brief = taskBrief(cheers);
     expect(brief).toContain(cheers.words);
@@ -979,6 +993,24 @@ describe("what a run is", () => {
     expect(countsBeside("Launch cheers\n3 people here\n0 cheers", "cheer")).toEqual([3, 0]);
     expect(countsBeside("Announcements\n1\n2\n3\n0 cheers", "cheer")).toEqual([0]);
     expect(countsBeside("Ben cheered 2 minutes ago", "cheer")).toEqual([]);
+  });
+
+  it("reads an incident's status from its own card, not a tab beside it", () => {
+    expect(resolvedIn("Open\nResolved\nINC-3 Checkout failing · Investigating")).toBe(false);
+    expect(resolvedIn("INC-3 Checkout failing\nResolved 2m ago")).toBe(true);
+    expect(resolvedIn("Open incidents\nINC-3 Checkout failing")).toBe(false);
+    expect(resolvedIn("INC-3 Checkout failing")).toBeUndefined();
+    // A badge's text runs into its neighbours'.
+    expect(resolvedIn("SEV2investigating\nSearch is slow")).toBe(false);
+    expect(resolvedIn("SEV2resolved\nSearch is slow")).toBe(true);
+    expect(resolvedIn("Unresolved · Reopen")).toBeUndefined();
+  });
+
+  it("finds each way a tool's answer names the incident it made", () => {
+    expect(incidentRefs({ ref: "INC-12", incident: { id: "abc" } })).toEqual(["INC-12", 12, "abc"]);
+    expect(incidentRefs({ message: "Declared." })).toEqual([]);
+    expect(incidentRefs("k3x9a2b7")).toEqual(["k3x9a2b7"]);
+    expect(incidentRefs("Declared INC-4: Payments API erroring.")).toEqual(["INC-4", 4]);
   });
 
   it("passes a count that held for a visit and rose with each cheer, and no visit counter", () => {

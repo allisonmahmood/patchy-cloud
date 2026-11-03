@@ -177,7 +177,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
   const log = yield* runBuilder({
     builder,
     spec,
-    task: taskPrompt(task),
+    task: taskPrompt(task, [...identities.people, ...identities.guests]),
     timeout: Duration.minutes(task.minutes),
     record: (line) => Effect.ignore(stream.writeAll(encoder.encode(`${line}\n`))),
     onStep: (step) => collect.pipe(Effect.andThen(progress(label, step)))
@@ -186,7 +186,7 @@ const runOne = Effect.fn("Eval.runOne")(function* (
     task,
     spec,
     runDir,
-    people: identities.people,
+    people: [...identities.people, ...identities.guests],
     publisher: identities.publisher,
     door: { apiUrl: side.apiUrl, key: suite.doorKey },
     staged,
