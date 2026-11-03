@@ -142,10 +142,11 @@ describe("the exit-code ladder", async () => {
   it("exits 3 when there was no usable answer: a 5xx, an unreadable body, or none that arrived whole", async () => {
     const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
     const env = { PATCHY_API_TOKEN: "token" };
-    const [instance, garbled, cut] = await Promise.all([
+    const [instance, garbled, cut, cutRefusal] = await Promise.all([
       stubInstance((_, respond) => respond(503, "<html>down</html>")),
       stubInstance((_, respond) => respond(200, { surprise: true })),
-      cutInstance()
+      cutInstance(),
+      cutInstance(503)
     ]);
     const [down, downJson, unreadable, ...nobody] = await Promise.all([
       runCli(["whoami", "--api-url", instance.url], { env }),
@@ -153,7 +154,9 @@ describe("the exit-code ladder", async () => {
       runCli(["whoami", "--api-url", garbled.url, "--json"], { env }),
       ...["http://127.0.0.1:1", "http://patchy.invalid", cut].map((url) =>
         runCli(["whoami", "--api-url", url, "--json"], { env })
-      )
+      ),
+      // Listing rows declares a 503, so its body is read; this one stops arriving.
+      runCli(["list", "some-patch", "tasks", "--api-url", cutRefusal, "--json"], { env })
     ]);
     // An answer Patchy may have gotten wrong offers feedback, once; no answer at all doesn't.
     const error = `${instance.url} answered 503. Try again later, or tell the operator.`;

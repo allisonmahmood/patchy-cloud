@@ -12,7 +12,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as HttpApi from "effect/http-api/HttpApi";
 import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
@@ -31,7 +31,13 @@ import {
   PublishUpdated,
   integrations
 } from "@patchy/api";
-import { LocalError, RejectedError, UnreachableError, unreachableReason } from "./CliError.js";
+import {
+  bodyCutOff,
+  LocalError,
+  RejectedError,
+  UnreachableError,
+  unreachableReason
+} from "./CliError.js";
 import * as CodingAgent from "./CodingAgent.js";
 import * as Instance from "./Instance.js";
 import { RELEASE } from "./release.js";
@@ -51,6 +57,27 @@ export class CurrentCommand extends Context.Service<CurrentCommand, CliCommand>(
   "patchy/Api/CurrentCommand"
 ) {}
 
+/**
+ * Puts a response body that stopped arriving first in a failed call's cause. For a declared
+ * refusal status whose body didn't decode, the generated client fails with the status first and
+ * the body's failure after it, and `Effect.catch` hands on only the first, so a dropped connection
+ * would read as the instance's answer. The status stays in the cause.
+ */
+const cutOffFirst = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.catchCause(effect, (cause) => {
+    const cut = cause.reasons.find(
+      (reason) =>
+        Cause.isFailReason(reason) &&
+        HttpClientError.isHttpClientError(reason.error) &&
+        bodyCutOff(reason.error)
+    );
+    return Effect.failCause(
+      cut === undefined
+        ? cause
+        : Cause.fromReasons([cut, ...cause.reasons.filter((reason) => reason !== cut)])
+    );
+  });
+
 /** Public login requests need no bearer; protected calls supply one explicitly. */
 export const client = (token?: Redacted.Redacted) =>
   Effect.gen(function* () {
@@ -61,7 +88,7 @@ export const client = (token?: Redacted.Redacted) =>
       cliCommand: yield* CurrentCommand,
       agent: yield* CodingAgent.detect
     });
-    return yield* makeClient(instance.apiUrl).pipe(
+    return yield* makeClient(instance.apiUrl, cutOffFirst).pipe(
       Effect.provide(
         token === undefined
           ? HttpApiMiddleware.layerClient(Authorization, ({ next, request }) => next(request))
