@@ -1,10 +1,19 @@
 // `patchy request` and `patchy feedback` through the bundled CLI: what they send, their two
 // outputs, what they check before sending, and how each refusal, an instance without them and a
 // lost answer exit.
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { cliPath, exec, type Recorded, runCli, stubInstance, tempDir } from "./test/cli.js";
+import {
+  cliChildren,
+  cliPath,
+  exec,
+  type Recorded,
+  runCli,
+  stubInstance,
+  tempDir
+} from "./test/cli.js";
 
 const env = (url: string) => ({ PATCHY_API_URL: url, PATCHY_API_TOKEN: "pp_member" });
 /** An id of the shape the store mints: its prefix, then 24 lowercase letters and digits. */
@@ -31,20 +40,34 @@ const lastSent = (requests: Log) => api(requests).at(-1);
 const posts = (requests: Log, url: string) =>
   api(requests).filter((request) => request.method === "POST" && request.url === url);
 
-/** The bundled CLI with stdin from a shell producer, such as `yes`, which never ends by itself. */
-const pipeInto = async (producer: string, args: ReadonlyArray<string>, url: string) => {
+/**
+ * The bundled CLI with a stdin the test writes to and may leave open, and how it exited. A CLI
+ * that waits for the end of stdin never exits on its own, so the test times out.
+ */
+const withStdin = (
+  args: ReadonlyArray<string>,
+  url: string,
+  input: string | Buffer,
+  end: boolean
+) => {
   const home = tempDir();
-  try {
-    const { stdout, stderr } = await exec(
-      "sh",
-      ["-c", `${producer} | "$0" "$@"`, process.execPath, cliPath, ...args],
-      { env: { PATH: process.env.PATH ?? "", HOME: home, PATCHY_STATE_DIR: home, ...env(url) } }
-    );
-    return { status: 0, stdout, stderr };
-  } catch (error) {
-    const { code, stdout, stderr } = error as { code: number; stdout: string; stderr: string };
-    return { status: code, stdout, stderr };
-  }
+  const child = spawn(process.execPath, [cliPath, ...args], {
+    cwd: home,
+    env: { PATH: process.env.PATH ?? "", HOME: home, PATCHY_STATE_DIR: home, ...env(url) }
+  });
+  cliChildren.add(child);
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+  // An exit before the CLI read everything closes the pipe under the write; that's the point.
+  child.stdin.on("error", () => {});
+  if (end) child.stdin.end(input);
+  else child.stdin.write(input);
+  return new Promise<{ status: number | null; stderr: string }>((resolve) =>
+    child.on("close", (status) => {
+      cliChildren.delete(child);
+      resolve({ status, stderr });
+    })
+  );
 };
 
 describe("patchy request", () => {
@@ -339,18 +362,28 @@ describe("before sending", () => {
     expect(api(instance.requests)).toHaveLength(1);
   });
 
-  it("stops reading an endless stdin at the bound, and refuses stdin that isn't UTF-8", async () => {
+  it("stops reading stdin as soon as it passes the bound, without waiting for its end", async () => {
     const instance = await stubInstance((_request, respond) => respond(201, { ok: true, id: odd }));
-    // `timeout` ends `yes` only if the CLI kept reading, which would fail the expectation below.
-    const endless = await pipeInto("timeout 20 yes", ["feedback", "-", "--json"], instance.url);
-    expect(endless.status).toBe(1);
-    expect(JSON.parse(endless.stderr).error).toBe(
+    // One character over, and stdin stays open: only a CLI that stops at the bound exits.
+    const over = await withStdin(
+      ["feedback", "-", "--json"],
+      instance.url,
+      "y".repeat(4_001),
+      false
+    );
+    expect(over.status).toBe(1);
+    expect(JSON.parse(over.stderr).error).toBe(
       "The feedback on stdin is longer than 4,000 characters. Nothing was sent."
     );
+    expect(api(instance.requests)).toHaveLength(0);
+  });
 
-    const latin1 = await pipeInto("printf 'caf\\351'", ["feedback", "-", "--json"], instance.url);
-    expect(latin1.status).toBe(1);
-    expect(JSON.parse(latin1.stderr).error).toBe("stdin isn't valid UTF-8. Nothing was sent.");
+  it("refuses stdin that isn't UTF-8", async () => {
+    const instance = await stubInstance((_request, respond) => respond(201, { ok: true, id: odd }));
+    const latin1 = Buffer.from("Publish failed in the café patch", "latin1");
+    const result = await withStdin(["feedback", "-", "--json"], instance.url, latin1, true);
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr).error).toBe("stdin isn't valid UTF-8. Nothing was sent.");
     expect(api(instance.requests)).toHaveLength(0);
   });
 
@@ -469,7 +502,7 @@ describe("refusals", () => {
   });
 
   it("a send whose answer is lost or unreadable is exit 3, sent once, and says to check the list first", async () => {
-    let answer: "drop" | "502" | "garbled" | "unreadable refusal" = "drop";
+    let answer: "drop" | "502" | "garbled" | "unreadable refusal" | "empty 403" = "drop";
     const instance = await stubInstance((_request, respond, disconnect) =>
       answer === "drop"
         ? disconnect()
@@ -477,8 +510,11 @@ describe("refusals", () => {
           ? respond(502, { message: "Bad gateway" })
           : answer === "garbled"
             ? respond(201, { ok: true })
-            : // A declared refusal's status with a body that isn't JSON at all.
-              respond(422, undefined)
+            : answer === "empty 403"
+              ? // A status the routes don't declare, such as a proxy's, with nothing in it.
+                respond(403, undefined)
+              : // A declared refusal's status with a body that isn't JSON at all.
+                respond(422, undefined)
     );
     const dropped = await runCli(["request", "Gmail integration"], { env: env(instance.url) });
     expect(dropped.status).toBe(3);
@@ -517,5 +553,21 @@ describe("refusals", () => {
       });
     }
     expect(posts(instance.requests, "/api/feedback")).toHaveLength(3);
+
+    answer = "empty 403";
+    const forbidden = await runCli(["request", "Gmail integration", "--json"], {
+      env: env(instance.url)
+    });
+    expect(forbidden.status).toBe(3);
+    expect(JSON.parse(forbidden.stderr)).toEqual({
+      ok: false,
+      kind: "unreachable",
+      error:
+        `${instance.url} answered 403, so the request may have been stored anyway.\n` +
+        "Run patchy request list to check before sending it again."
+    });
+    // Away from a send the same answer is still the instance's: listing changes nothing.
+    const listed = await runCli(["request", "list", "--json"], { env: env(instance.url) });
+    expect(listed.status).toBe(2);
   });
 });
