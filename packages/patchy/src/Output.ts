@@ -99,7 +99,7 @@ const isDebug = (level: Option.Option<string>) =>
 const FEEDBACK_HINT = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
 
 /** Commands whose own failures never offer it, so a failed `patchy feedback` doesn't point at itself. */
-const unhintedCommands: ReadonlySet<string> = new Set(["feedback"]);
+const unhintedCommands: ReadonlySet<Api.CurrentCommand["Service"]> = new Set(["feedback"]);
 
 /**
  * The contract: a known failure is its one message and its kind's exit code;
