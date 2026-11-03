@@ -50,7 +50,10 @@ export class NoSignIn extends Schema.TaggedError<NoSignIn>()("NoSignIn", {
 
 /** How each harness signs in inside a sandbox, read once per suite. */
 export interface SignIns {
-  /** Claude Code: a token in its environment, or its credentials file mounted read-only. */
+  /**
+   * Claude Code: the developer's model provider and a token in its
+   * environment, or its credentials file mounted read-only.
+   */
   readonly claude: {
     readonly env: Readonly<Record<string, string>>;
     readonly binds: ReadonlyArray<Bind>;
@@ -61,13 +64,45 @@ export interface SignIns {
    * builder can't write to the developer's own login.
    */
   readonly codex: { readonly config: string; readonly auth: string | null };
-  /** The `host:port` endpoints on a private network the sandbox's proxy may reach: a model provider on the developer's own. */
+  /** The `host:port` endpoints on a private network the sandbox's proxy may reach: model providers on the developer's own. */
   readonly privateEndpoints: ReadonlyArray<string>;
   /** Every secret in the above, credential files' tokens included, for the sanitizer. */
   readonly secrets: ReadonlyArray<string>;
 }
 
 const TOKEN_NAMES = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"] as const;
+
+/** What points Claude Code at a model provider, and the provider's own ways in. */
+const PROVIDER_NAMES = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_CUSTOM_HEADERS"
+] as const;
+
+/**
+ * Claude Code's environment for a sandbox, from the developer's own variables:
+ * their model provider when `ANTHROPIC_BASE_URL` names one, with the variables
+ * that reach it, and the first of their tokens. `signedIn` is false when
+ * neither a token nor the provider's `ANTHROPIC_AUTH_TOKEN` signs Claude Code
+ * in, so its credentials file has to.
+ */
+export const claudeEnv = (variables: Readonly<Partial<Record<string, string>>>) => {
+  const pick = (names: ReadonlyArray<string>) =>
+    Object.fromEntries(names.flatMap((name) => (variables[name] ? [[name, variables[name]]] : [])));
+  const provider = variables.ANTHROPIC_BASE_URL ? pick(PROVIDER_NAMES) : {};
+  const token = pick(TOKEN_NAMES.filter((name) => variables[name]).slice(0, 1));
+  const env: Readonly<Record<string, string>> = { ...provider, ...token };
+  return {
+    env,
+    signedIn: Object.keys(token).length > 0 || "ANTHROPIC_AUTH_TOKEN" in provider
+  };
+};
+
+/** The `env` Claude Code's `settings.json` sets, which is where a model provider usually lives. */
+const ClaudeSettings = Schema.Struct({
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String))
+});
+const decodeClaudeSettings = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeSettings));
 
 /**
  * Codex's own settings for a run: no daemon outliving it, none of the
@@ -105,13 +140,16 @@ export const codexConfig = (developerConfig: string) => {
 const configSecrets = (config: string) =>
   [...config.matchAll(/^\s*\w*(?:token|key|secret)\w*\s*=\s*"([^"]+)"/gim)].map((m) => m[1]!);
 
-/** The endpoint a provider table's `base_url` names, its host and port, for the proxy to let through. */
-export const providerEndpoint = (config: string) => {
-  const url = /^\s*base_url\s*=\s*"([^"]+)"/m.exec(config)?.[1];
+/** A model provider's URL as the endpoint the proxy lets through: its host and port. */
+const urlEndpoint = (url: string | undefined) => {
   if (url === undefined || !URL.canParse(url)) return undefined;
   const parsed = new URL(url);
   return endpoint(parsed.hostname, Number(parsed.port || (parsed.protocol === "http:" ? 80 : 443)));
 };
+
+/** The endpoint a Codex provider table's `base_url` names. */
+export const providerEndpoint = (config: string) =>
+  urlEndpoint(/^\s*base_url\s*=\s*"([^"]+)"/m.exec(config)?.[1]);
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -124,11 +162,14 @@ export const fileSecrets = Effect.fn("Eval.fileSecrets")(function* (file: string
 });
 
 /**
- * Each harness's sign-in. Claude Code takes `CLAUDE_CODE_OAUTH_TOKEN` (from
- * `claude setup-token`) or `ANTHROPIC_API_KEY`, from the environment or the
- * developer's `dev.env`; failing both, its credentials file read-only, which
- * lasts as long as its current access token. Codex takes the developer's
- * model provider, or a copy of their `auth.json` per run.
+ * Each harness's sign-in. Claude Code takes the developer's model provider,
+ * when `ANTHROPIC_BASE_URL` names one, and `CLAUDE_CODE_OAUTH_TOKEN` (from
+ * `claude setup-token`) or `ANTHROPIC_API_KEY`, each from the environment, the
+ * developer's `dev.env` or the `env` of Claude Code's `settings.json`. When
+ * neither a token nor the provider's own token signs in, its credentials file
+ * goes in read-only, which lasts as long as its current access token. Codex
+ * takes the developer's model provider, or a copy of their `auth.json` per run.
+ * The providers' endpoints are the only private addresses a sandbox may reach.
  */
 export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
   builders: ReadonlyArray<Builder>
@@ -137,29 +178,42 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
   const path = yield* Path.Path;
   const home = yield* Config.String("HOME");
   const secrets: Array<string> = [];
+  const privateEndpoints: Array<string> = [];
   let claude: SignIns["claude"] = { env: {}, binds: [] };
   if (builders.some((builder) => builder.harness === "claude-code")) {
+    const configDir = Option.getOrElse(
+      yield* Config.option(Config.String("CLAUDE_CONFIG_DIR")),
+      () => path.join(home, ".claude")
+    );
     const devEnv = yield* developerEnvFile(home);
     const devEnvText = (yield* fs.exists(devEnv)) ? yield* fs.readFileString(devEnv) : "";
     const fromFile = (name: string) =>
       new RegExp(String.raw`^${name}=(.+)$`, "m").exec(devEnvText)?.[1]?.trim();
-    let found: readonly [string, string] | undefined;
-    for (const name of TOKEN_NAMES) {
+    const settings = yield* fs.readFileString(path.join(configDir, "settings.json")).pipe(
+      Effect.flatMap(decodeClaudeSettings),
+      Effect.map((decoded) => decoded.env ?? {}),
+      Effect.orElseSucceed((): Partial<Record<string, string>> => ({}))
+    );
+    const variables: Record<string, string> = {};
+    for (const name of [...TOKEN_NAMES, ...PROVIDER_NAMES]) {
       const value =
-        Option.getOrUndefined(yield* Config.option(Config.String(name))) ?? fromFile(name);
-      if (value !== undefined && value !== "") {
-        found = [name, value];
-        break;
-      }
+        Option.getOrUndefined(yield* Config.option(Config.String(name))) ??
+        fromFile(name) ??
+        settings[name];
+      if (value) variables[name] = value;
     }
-    if (found !== undefined) {
-      claude = { env: { [found[0]]: found[1] }, binds: [] };
-      secrets.push(found[1]);
-    } else {
-      const configDir = Option.getOrElse(
-        yield* Config.option(Config.String("CLAUDE_CONFIG_DIR")),
-        () => path.join(home, ".claude")
+    const { env, signedIn } = claudeEnv(variables);
+    const { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_CUSTOM_HEADERS: headers, ...tokens } = env;
+    secrets.push(...Object.values(tokens));
+    if (headers !== undefined)
+      secrets.push(
+        headers,
+        ...headers.split("\n").map((line) => line.split(":").slice(1).join(":").trim())
       );
+    const provider = urlEndpoint(baseUrl);
+    if (provider !== undefined) privateEndpoints.push(provider);
+    if (signedIn) claude = { env, binds: [] };
+    else {
       const file = path.join(configDir, ".credentials.json");
       if (!(yield* fs.exists(file)))
         return yield* new NoSignIn({
@@ -167,14 +221,13 @@ export const readSignIns = Effect.fn("Eval.readSignIns")(function* (
           fix: "Run `claude setup-token` and put CLAUDE_CODE_OAUTH_TOKEN=<token> in ~/.config/patchy-cloud/dev.env."
         });
       claude = {
-        env: {},
+        env,
         binds: [{ from: file, to: `${HOME}/.claude/.credentials.json`, readOnly: true }]
       };
       secrets.push(...(yield* fileSecrets(file)));
     }
   }
   let codex: SignIns["codex"] = { config: codexConfig(""), auth: null };
-  const privateEndpoints: Array<string> = [];
   if (builders.some((builder) => builder.harness === "codex")) {
     const codexHome = Option.getOrElse(yield* Config.option(Config.String("CODEX_HOME")), () =>
       path.join(home, ".codex")
@@ -363,8 +416,9 @@ export const prepareHome = Effect.fn("Eval.prepareHome")(function* (input: {
 
 /**
  * A harness's sign-in in a HOME: for Codex, its `config.toml` and a copy of
- * the developer's login when there is no provider; for Claude Code, its token
- * in the environment or its credentials file mounted read-only. Returns what
+ * the developer's login when there is no provider; for Claude Code, its
+ * provider and token in the environment, or its credentials file mounted
+ * read-only. Returns what
  * the sandbox adds for it.
  */
 export const signInHarness = Effect.fn("Eval.signInHarness")(function* (

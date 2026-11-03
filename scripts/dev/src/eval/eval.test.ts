@@ -2,6 +2,7 @@ import { NodeFileSystem, NodeHttpServer, NodePath, NodeServices } from "@effect/
 import net from "node:net";
 import tls from "node:tls";
 import { it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,10 +24,10 @@ import { NodeCryptography } from "@patchy/core";
 import * as Testing from "@patchy/sql/testing";
 import { realNode } from "../runtimes.js";
 import { loadScenario } from "../scenario.js";
-import { makeClaudeTally, makeCodexTally, refusalsIn, unwrapShell } from "./builders.js";
+import { BUILDERS, makeClaudeTally, makeCodexTally, refusalsIn, unwrapShell } from "./builders.js";
 import { namespaceScenario, retireRun, runHandle, seedRun } from "./fixtures.js";
 import { pickTarget } from "./grade.js";
-import { codexConfig } from "./home.js";
+import { claudeEnv, codexConfig, readSignIns } from "./home.js";
 import { metricsOf } from "./metrics.js";
 import { among, isPublic, openNetwork, serverNameOf } from "./network.js";
 import { bwrapArgs, HOME, versionOf } from "./sandbox.js";
@@ -1031,6 +1032,47 @@ describe("what a run is", () => {
     expect(config).not.toContain("mcp_servers");
     expect(config.indexOf("model_provider =")).toBeLessThan(config.indexOf("[features]"));
   });
+
+  it("keeps the developer's Claude Code provider, and asks for a login only when it has no token", () => {
+    const provider = { ANTHROPIC_BASE_URL: "https://p.example:8317" };
+    expect(claudeEnv({ ...provider, ANTHROPIC_AUTH_TOKEN: "tok" })).toEqual({
+      env: { ...provider, ANTHROPIC_AUTH_TOKEN: "tok" },
+      signedIn: true
+    });
+    expect(claudeEnv({ ...provider, ANTHROPIC_CUSTOM_HEADERS: "X-Api-Key: k" })).toEqual({
+      env: { ...provider, ANTHROPIC_CUSTOM_HEADERS: "X-Api-Key: k" },
+      signedIn: false
+    });
+    expect(
+      claudeEnv({
+        ANTHROPIC_AUTH_TOKEN: "stray",
+        CLAUDE_CODE_OAUTH_TOKEN: "o",
+        ANTHROPIC_API_KEY: "k"
+      })
+    ).toEqual({ env: { CLAUDE_CODE_OAUTH_TOKEN: "o" }, signedIn: true });
+  });
+
+  it.effect("reads Claude Code's provider from its settings and lets the proxy reach it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(`${home}/.claude`);
+      const env = {
+        ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317",
+        ANTHROPIC_AUTH_TOKEN: "tok"
+      };
+      yield* fs.writeFileString(
+        `${home}/.claude/settings.json`,
+        `{"env":{"ANTHROPIC_BASE_URL":"${env.ANTHROPIC_BASE_URL}","ANTHROPIC_AUTH_TOKEN":"tok"},"theme":"dark"}`
+      );
+      const signIns = yield* readSignIns([BUILDERS.sonnet]).pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home })))
+      );
+      expect(signIns.claude).toEqual({ env, binds: [] });
+      expect(signIns.privateEndpoints).toEqual(["hub.example.ts.net:8317"]);
+      expect(signIns.secrets).toEqual(["tok"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
 });
 
 const database = Testing.layer().pipe(Layer.provideMerge(NodeCryptography.layer));

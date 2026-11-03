@@ -483,8 +483,9 @@ builds, two judges review what each run published.
   Postgres, not other worktrees' instances, not the LAN. A bridge in the
   sandbox serves two Unix sockets on loopback: the instance's port, and a
   proxy (`HTTPS_PROXY`) to the public internet that refuses loopback, private,
-  shared and link-local addresses. Your Codex model provider's endpoint, its
-  host and port, when you use one, is the one private address it lets through.
+  shared and link-local addresses. Your Claude Code and Codex model providers'
+  endpoints, their hosts and ports, when you use them, are the only private
+  addresses it lets through.
 - **The instances.** One evidence instance per side, on `team`, each with its
   own network, builder home and database, whose personas door is keyed: only
   the grader can sign anyone in, so builders verify through `patchy dev`'s own
@@ -575,10 +576,14 @@ checks, metrics and a summary of each log, redacted.
 Prerequisites: bubblewrap; Claude Code and Codex signed in on this machine
 (their installs here only set the versions builders get); Playwright's
 Chromium. Setting up the template downloads Node and the npm packages through
-the sandbox's proxy, a minute or two per suite. Claude Code builders sign in with
-`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`,
-from the environment or `~/.config/patchy-cloud/dev.env`; without either, its
-credentials file is mounted read-only, which lasts as long as its current
+the sandbox's proxy, a minute or two per suite. Claude Code builders get your
+model provider, when you use one (`ANTHROPIC_BASE_URL`, with
+`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS`), and sign in with
+`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`.
+Each is read from the environment, `~/.config/patchy-cloud/dev.env` or the
+`env` of Claude Code's `settings.json`. A provider's `ANTHROPIC_AUTH_TOKEN`
+signs in too; with no token at all, its credentials file is mounted read-only,
+which lasts as long as its current
 access token. Codex builders get a fresh `~/.codex/config.toml` with your model
 provider, when you use one, or a copy of your `auth.json` per run, so a builder
 can never write to your own login. Judges sign in the same way. The suite holds the
