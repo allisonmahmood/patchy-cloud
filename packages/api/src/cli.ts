@@ -34,6 +34,8 @@ export const CliCommand = Schema.Literals([
   "look",
   "add",
   "remove",
+  "request",
+  "feedback",
   "__generate"
 ]);
 export type CliCommand = typeof CliCommand.Type;
