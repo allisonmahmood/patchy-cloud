@@ -6,6 +6,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import path from "node:path";
@@ -1110,6 +1111,28 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     // Only an answer Patchy may have gotten wrong offers `patchy feedback`.
     expect("feedbackHint" in failure).toBe(status >= 500);
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
+  });
+
+  it("relays the installed CLI's Unexpected error with its feedback hint, still exit 1", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = projectTree(instance.url);
+    const failure = {
+      ok: false,
+      error: "Unexpected error: boom",
+      kind: "local",
+      feedbackHint: `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
+    };
+    // An installed CLI whose generation crashes, in place of the linked package.
+    const installed = path.join(dir, "node_modules/patchy");
+    unlinkSync(installed);
+    mkdirSync(path.join(installed, "dist"), { recursive: true });
+    writeFileSync(
+      path.join(installed, "dist/index.js"),
+      `process.stderr.write(${JSON.stringify(JSON.stringify(failure))});\nprocess.exitCode = 1;\n`
+    );
+    const result = await runCli(["refresh", "--json"], { cwd: dir, env });
+    expect(result).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(result.stderr)).toMatchObject(failure);
   });
 
   it("refuses init from a CLI behind its instance before asking for a purpose or writing", async () => {

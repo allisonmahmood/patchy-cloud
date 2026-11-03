@@ -447,7 +447,11 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
         reason: error.feedbackHint === undefined ? "transport" : "response"
       });
     case "local":
-      return yield* new LocalError(fields);
+      return yield* new LocalError({
+        ...fields,
+        // Only its `Unexpected error` carries the hint.
+        ...(error.feedbackHint === undefined ? {} : { unexpected: true })
+      });
   }
 });
 

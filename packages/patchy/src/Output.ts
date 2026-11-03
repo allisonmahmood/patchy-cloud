@@ -130,13 +130,16 @@ export const contract = <A, R>(handler: Effect.Effect<A, CliError, R>) =>
           : [...warnings, error, ...(offer ? [FEEDBACK_HINT] : [])].join("\n")
       ).pipe(Effect.andThen(new Failed({ code: exitCode(kind) })));
     };
-    // No answer at all may be the network's; only an answer the CLI could not use offers feedback.
+    // No answer at all may be the network's; an answer the CLI could not use, or a relayed
+    // defect of the installed CLI's, offers feedback.
     const failKnown = (error: Exclude<CliError, RejectedError>) =>
       fail(
         error.message,
         error.kind,
         error.code === undefined ? {} : { code: error.code },
-        error._tag === "UnreachableError" && error.reason !== "transport"
+        error._tag === "UnreachableError"
+          ? error.reason !== "transport"
+          : error._tag === "LocalError" && error.unexpected === true
       );
     const failRejected = (error: RejectedError) =>
       fail(error.message, error.kind, refusalDetails(error));
