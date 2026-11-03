@@ -19,6 +19,7 @@
           - "packages/company-database/**"
           - "packages/content-store/**"
           - "packages/execution/**"
+          - "packages/feedback/**"
           - "packages/limits/**"
           - "packages/mcp/**"
           - "packages/patches/**"
