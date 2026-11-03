@@ -25,7 +25,7 @@ The wide event for one server request. Runtime requests record their own, as [Ru
 _Avoid_: access log (it records URLs), request log
 
 **MCP request event**:
-The request event for one request to Patchy MCP's door, refusals included and unsampled. It names the person and company, the agent connection with its client name and document site, the `clientInfo` name and version a request sent, the revision's era and version, the JSON-RPC method, the door's tool when it is one of the four, and the `Origin` cut to 256 characters; a refusal adds its code and any limit id. Arguments, results, tokens, change keys and the instructions are never on it.
+The request event for one request to Patchy MCP's door, refusals included and unsampled. It names the person and company, the agent connection with its client name and document site, the `clientInfo` name and version a request sent, the revision's era and version, the JSON-RPC method, the door's tool when it is one of its five, and the `Origin` cut to 256 characters; a refusal adds its code and any limit id. Arguments, results, tokens, change keys and the instructions are never on it.
 _Avoid_: MCP log, call log (Runtime's)
 
 **Subscription request event**:

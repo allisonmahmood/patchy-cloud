@@ -98,7 +98,7 @@ _Avoid_: MCP server (Patchy MCP is the one server), `server/agent.ts` (the proto
 
 **Agent tool**:
 One export of an agent area: a described query, mutation or action that a worker agent calls through Patchy MCP, named after its export. It is a read when it is a query or a read-only action, otherwise a change. Agents only; the page calls server handlers. A builder agent tries them in the dev runtime with `patchy dev agent`, which calls them as the door does.
-_Avoid_: MCP tool (Patchy MCP's four fixed tools), endpoint
+_Avoid_: MCP tool (Patchy MCP's five fixed tools), endpoint
 
 **Agent area check**:
 The one shared check of a patch's agent tools that watched dev builds and publish run before sending and the instance runs on the stored bundle: no `agent.*` handler without the agent tool mark, each tool described, JSON only, rows naming defined tables, and all the tools fitting 60 KiB of the `open_patch` answer an agent reads. The CLI's refusals name the file, the instance's the tool.
