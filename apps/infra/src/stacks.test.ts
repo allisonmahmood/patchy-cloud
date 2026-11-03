@@ -174,7 +174,7 @@ it("lets only this repository's production environment assume the deploy role", 
   });
 });
 
-it("emails a forecast past $300 a month and another past $600, from two budgets", () => {
+it("emails a forecast past $300 a month and another past $600 before credits, from two budgets", () => {
   base.resourceCountIs("AWS::Budgets::Budget", 2);
   for (const [name, amount] of [
     ["patchy-monthly", 300],
@@ -185,7 +185,8 @@ it("emails a forecast past $300 a month and another past $600, from two budgets"
         BudgetName: name,
         BudgetType: "COST",
         TimeUnit: "MONTHLY",
-        BudgetLimit: { Amount: amount, Unit: "USD" }
+        BudgetLimit: { Amount: amount, Unit: "USD" },
+        CostTypes: { IncludeCredit: false }
       },
       NotificationsWithSubscribers: [
         {

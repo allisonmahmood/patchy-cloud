@@ -734,9 +734,12 @@ goes to 30 once it is.
 
 Two monthly cost budgets in the base stack email the alert addresses when the
 month's forecast passes their amount: `patchy-monthly` at $300 and
-`patchy-monthly-600` at $600. Add another threshold as another budget, not as a
-notification on an existing one: CloudFormation replaces a budget to change its
-notifications, and the replacement collides with the budget's unique name.
+`patchy-monthly-600` at $600. Both count usage before credits, so while credits
+pay the bill they warn about how fast the credits are spent; a budget that
+counted credits would read $0 and never fire. Add another threshold as another
+budget, not as a notification on an existing one: CloudFormation replaces a
+budget to change its notifications, and the replacement collides with the
+budget's unique name.
 
 ### Setting up production
 
