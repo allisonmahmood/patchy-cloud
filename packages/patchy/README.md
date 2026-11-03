@@ -1733,8 +1733,9 @@ failures, unmodelled 5xx and unreadable bodies are unreachable. A bug in the CLI
 is `Unexpected error: <message>`, exit 1; add `--log-level debug` for the stack.
 After an answer the CLI could not use, such as an unmodelled 5xx or an
 unreadable body, or after an `Unexpected error`, the CLI adds `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
-on the next line, or `feedbackHint` under `--json`. No answer at all, a refusal,
-a local mistake, a sign-in state and `patchy feedback`'s own failures carry none.
+on the next line, or `feedbackHint` under `--json`. No answer at all or one cut off
+mid-body, a refusal, a local mistake, a sign-in state and `patchy feedback`'s own
+failures carry none.
 Text diagnostics can include multiple repair or validation lines. Branch on the
 exit code and optional domain code, not prose or its line count.
 

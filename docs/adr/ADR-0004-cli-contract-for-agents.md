@@ -44,8 +44,10 @@ could not use, such as an unmodelled 5xx or an unreadable body, and a defect.
 Text mode adds the line
 `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`
 after the error; `--json` carries it as `feedbackHint`. It offers the command and
-doesn't order a call. A transport failure, a refusal, a local mistake or a
-sign-in state carries none, nor does any failure of `patchy feedback` itself.
+doesn't order a call. A transport failure, including a body cut off mid-stream,
+a refusal, a local mistake or a sign-in state carries none, nor does any failure
+of `patchy feedback` itself. A command relaying the installed CLI's failure keeps
+its hint.
 `UnreachableError` records which it was, transport, response or decode, where
 it is created; exit 3 covers all three.
 
