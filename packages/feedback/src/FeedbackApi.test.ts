@@ -247,12 +247,14 @@ it.layer(layer)("the feedback group", (it) => {
         )).body,
         { code: "not_found", error: `You sent no request or feedback with id ${theirs.id}.` }
       );
-      assert.strictEqual(
-        (yield* answer(
-          ben.api.listSubmissions({ query: { cursor: "nope" }, responseMode: "response-only" })
-        )).status,
-        400
-      );
+      // Malformed, or naming a time past a bigint or a timestamp, is the caller's 400.
+      const id = `req_${"0".repeat(24)}`;
+      const list = (cursor: string) =>
+        answer(ben.api.listSubmissions({ query: { cursor }, responseMode: "response-only" }));
+      for (const cursor of ["nope", `9999999999999999999-${id}`, `9223372036854775807-${id}`])
+        assert.deepInclude(yield* list(cursor), { status: 400 }, cursor);
+      // The end of 9999 is still a time Postgres reads.
+      assert.deepInclude(yield* list(`253402300799999999-${id}`), { status: 200 });
 
       for (let sent = 1; sent < 10; sent++)
         yield* ben.api.sendFeedback({ payload: new SendFeedback({ text: `Note ${sent}` }) });
