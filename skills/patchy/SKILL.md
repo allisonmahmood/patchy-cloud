@@ -1,13 +1,13 @@
 ---
 name: patchy
-description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, or run onboarding.
+description: Publish an HTML page on Patchy Cloud, start a patch repo, find company tools or data sources, manage a patch's lifecycle or description, read a Patchy link, change the company look, run onboarding, or tell Patchy's team what it lacks or got wrong.
 ---
 
 # Patchy
 
 Use this global skill to publish a page, start a tool's patch repo, discover
-company tools and data sources, manage a patch, read one, change the company look, or
-sign the machine in.
+company tools and data sources, manage a patch, read one, change the company look,
+tell Patchy's team what it lacks or got wrong, or sign the machine in.
 Inside a patch repo, its project skills govern building.
 
 ## Onboarding
@@ -296,6 +296,31 @@ last generation but its description did not. Check what one row or object means,
 its keys and units, and update the config description if needed. Notices do not
 block commands; under `--json`, read `warnings` on success or failure. Publish
 recovery retains the saved attempt's notices.
+
+## Requests and feedback
+
+`patchy request` and `patchy feedback` reach Patchy's team, the people who build
+Patchy: not the company, a patch's owner or your harness's own feedback tool. A
+patch's own bug, or an agent tool it lacks, goes to that patch's owner.
+
+- **Request** when Patchy can't do what the person needs, such as an integration,
+  a command or an SDK capability, even after a workaround. Name the capability,
+  not a guessed command, and put the need and its constraints in `--why`:
+  `patchy request "Gmail integration" --why "Sales tracks replies in the pipeline patch; reading is enough" --json`.
+  It stores the request and exits 0 with up to three `similar` requests. Run a
+  match's `link` command, with `--why`, only when it is the same need. A shipped
+  match's `note` says how to use it now; `next` says what is left.
+- **Feedback** when Patchy did something wrong, surprising or harder than it
+  should be. Say what you ran, what you expected and what happened:
+  `patchy feedback "Ran patchy publish --json; expected a URL; got exit 3, then the same publish worked" --json`.
+
+Send once per problem, when you finish or give up, and tell the person the id.
+Patchy attaches the person, company, agent and CLI version; the rest is your own
+words about the problem. Leave out keys, connection strings, rows, file contents,
+other people's personal details and pasted logs. `contains_secret` names the
+field to rewrite. Text or `--why` of `-` reads stdin. After exit 3 the send may
+have been stored: check `patchy request list` or `patchy feedback list` before
+sending again. `withdraw <id>` deletes one.
 
 ## Good fits
 
