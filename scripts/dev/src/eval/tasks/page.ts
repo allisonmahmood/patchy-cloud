@@ -355,23 +355,37 @@ export const around = (
 ) => frame.locator("body *").filter({ hasText: text }).filter(also).last();
 
 /**
- * Whether a field takes typed words as an answer: a textarea or a text-like
- * input, and not a search box, which only filters what the page shows,
- * however its label words it ("Search title, impact or commander").
+ * Whether a field is a search box or a filter, however its label words it
+ * ("Search title, impact or commander", "Find commander"). It only changes
+ * what the page shows, and typing in one can clear a choice the form made
+ * from it, so a person filling in a form leaves it be.
  */
-const typed = (field: Locator) =>
+const searchBox = (field: Locator) =>
   field.evaluate((element) => {
-    if (element instanceof HTMLInputElement) {
-      const kinds = ["file", "checkbox", "radio", "hidden", "submit", "button", "date", "range"];
-      if (kinds.includes(element.type) || element.type === "search") return false;
-    } else if (!(element instanceof HTMLTextAreaElement)) return false;
-    const said = [
+    if (element instanceof HTMLInputElement && element.type === "search") return true;
+    const labels =
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement
+        ? Array.from(element.labels ?? [], (label) => label.textContent)
+        : [];
+    return [
       element.getAttribute("aria-label"),
-      element.placeholder,
-      ...Array.from(element.labels ?? [], (label) => label.textContent)
-    ];
-    return !said.some((words) => /^\s*(search|filter|find)\b/i.test(words ?? ""));
+      element.getAttribute("placeholder"),
+      ...labels
+    ].some((words) => /^\s*(search|filter|find)\b/i.test(words ?? ""));
   });
+
+/** Whether a field takes typed words as an answer: a textarea or a text-like input, not a search box. */
+const typed = async (field: Locator) =>
+  (await field.evaluate(
+    (element) =>
+      element instanceof HTMLTextAreaElement ||
+      (element instanceof HTMLInputElement &&
+        !["file", "checkbox", "radio", "hidden", "submit", "button", "date", "range"].includes(
+          element.type
+        ))
+  )) && !(await searchBox(field));
 
 /** Marks a field a check has chosen, so it isn't chosen twice. */
 const CHOSEN = "data-eval-chosen";
@@ -435,7 +449,8 @@ export const formAround = async (frame: FrameLocator, names: ReadonlyArray<RegEx
 /**
  * Fills whatever else a form holds and is still empty, with plain values, as
  * a person in a hurry would: a choice's first option, a date, a number, some
- * words, and the first of any choices nothing is picked from.
+ * words, and the first of any choices nothing is picked from. Search boxes
+ * and filters are left be.
  */
 export const fillRest = async (scope: Locator) => {
   for (const field of await scope
@@ -446,7 +461,8 @@ export const fillRest = async (scope: Locator) => {
     if (
       !(await field.isVisible()) ||
       !(await field.isEditable().catch(() => false)) ||
-      (await field.inputValue().catch(() => "-")) !== ""
+      (await field.inputValue().catch(() => "-")) !== "" ||
+      (await searchBox(field).catch(() => true))
     )
       continue;
     const kind = await field.evaluate((element) =>

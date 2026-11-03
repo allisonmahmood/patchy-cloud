@@ -229,6 +229,8 @@ const declare = async (view: Opened, title: string, commander: RunPerson, memo: 
         ? "found the button to declare it still disabled once the form was filled"
         : "found no button to declare the incident";
     await fillRest(form.scope);
+    if (!(await form.send.isEnabled().catch(() => false)))
+      return "found the button to declare it still disabled once the form was filled";
     pressed = (await form.send.innerText().catch(() => "")).trim() || "send";
     await form.send.click();
     return null;
