@@ -17,13 +17,17 @@ export const authorizationClient = (token: Redacted.Redacted) =>
     next(HttpClientRequest.bearerToken(request, token))
   );
 
+type TransformResponse = NonNullable<Parameters<typeof HttpApiClient.make>[1]>["transformResponse"];
+
 /**
  * A client for one instance. Needs an `HttpClient` in the environment and,
  * for the protected routes, the layer from `authorizationClient`.
+ * `transformResponse` wraps each call's decoding, as `HttpApiClient` does.
  */
-export const makeClient = (apiUrl: string) =>
+export const makeClient = (apiUrl: string, transformResponse?: TransformResponse) =>
   HttpApiClient.make(Api.PatchyApi, {
-    transformClient: HttpClient.mapRequest(HttpClientRequest.prependUrl(apiUrl))
+    transformClient: HttpClient.mapRequest(HttpClientRequest.prependUrl(apiUrl)),
+    transformResponse
   });
 
 export type PatchyClient = Effect.Success<ReturnType<typeof makeClient>>;

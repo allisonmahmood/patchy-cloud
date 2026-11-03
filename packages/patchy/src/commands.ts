@@ -1346,11 +1346,9 @@ const submissionFailure =
       const unreadable = Api.isUnreadableRefusal(cause);
       const undecoded =
         !Api.isRefusal(error) && error._tag === "HttpClientError" && "response" in error.reason;
-      // An answer whose body stopped arriving is no answer at all, so it offers no feedback.
-      const cutOff = cause.reasons.some(
-        (reason) =>
-          Cause.isFailReason(reason) && !Api.isRefusal(reason.error) && bodyCutOff(reason.error)
-      );
+      // An answer whose body stopped arriving is no answer at all, so it offers no feedback. The
+      // client puts that failure first, as `Api.classify`'s callers see it.
+      const cutOff = !Api.isRefusal(error) && bodyCutOff(error);
       const failure = unreadable
         ? new UnreachableError({
             instanceUrl: apiUrl,
