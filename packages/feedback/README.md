@@ -6,7 +6,7 @@ Requests and feedback people and their agents send Patchy, whichever surface the
 - `FeedbackApi` — the CLI's `feedback` group of the Patchy API (`POST /api/requests`, `PUT|DELETE /api/requests/:id/link`, `POST /api/feedback`, `GET /api/submissions`, `DELETE /api/submissions/:id`), described in [`docs/API.md`](../../docs/API.md#feedback).
 - `Secrets` — the secret check, a pure function.
 - `migrations` — `0034_feedback`: `feedback.submissions` and `feedback.general_requests`.
-- `read-role.sql`, `read-role-drop.sql` — the role that reads the schema's rows and nothing else, and its undo, run with psql ([`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#the-feedback-read-role)).
+- `read-role.sql`, `read-role-audit.sql`, `read-role-drop.sql` — the role that reads the schema's rows and nothing else, its audit and its undo, run with psql ([`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#the-feedback-read-role)).
 
 ## Calling the service from a surface
 
