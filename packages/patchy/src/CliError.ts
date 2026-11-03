@@ -38,7 +38,12 @@ const fields = {
 };
 
 /** Fixable without touching the network: arguments, files, local state, the HTML. */
-export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", fields) {
+export class LocalError extends Schema.TaggedError<LocalError>()("LocalError", {
+  ...fields,
+  // The installed CLI's own `Unexpected error`, relayed: exit 1 there and here, and like a defect
+  // of this CLI's it offers `patchy feedback`.
+  unexpected: Schema.optionalKey(Schema.Literal(true))
+}) {
   readonly kind = "local";
 }
 

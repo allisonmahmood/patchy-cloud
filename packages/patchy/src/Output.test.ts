@@ -1,5 +1,6 @@
-// When a failure offers `patchy feedback`: after a defect or an answer the CLI could not use,
-// never after no answer at all, a refusal, a local mistake, or in `patchy feedback` itself.
+// When a failure offers `patchy feedback`: after a defect, its own or the installed CLI's, or an
+// answer the CLI could not use; never after no answer at all, a refusal, a local mistake, or in
+// `patchy feedback` itself.
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as GlobalFlag from "effect/cli/GlobalFlag";
@@ -45,7 +46,11 @@ describe("the feedback hint", () => {
   it.effect.each([
     { path: "an unmodelled 5xx", failure: unreachable("response") },
     { path: "an unreadable body", failure: unreachable("decode") },
-    { path: "an unexpected error", failure: defect }
+    { path: "an unexpected error", failure: defect },
+    {
+      path: "the installed CLI's unexpected error",
+      failure: new LocalError({ message: "Unexpected error: boom", unexpected: true })
+    }
   ])("follows $path, once", ({ failure }) =>
     Effect.gen(function* () {
       const { text, document } = yield* render(failure);
