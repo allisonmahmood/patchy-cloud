@@ -18,17 +18,20 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { RequestStatus, SubmissionKind, SubmissionSurface, type RequestBrief } from "@patchy/api";
+import {
+  RequestStatus,
+  SUBMISSION_TEXT_MAX,
+  SUBMISSION_TITLE_MAX,
+  SUBMISSION_TITLE_MIN,
+  SubmissionKind,
+  SubmissionSurface,
+  type RequestBrief
+} from "@patchy/api";
 import { Cryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { withReportedCommit } from "@patchy/sql";
 import * as Secrets from "./Secrets.js";
 
-/** A request title's bounds, in characters. */
-export const TITLE_MIN = 3;
-export const TITLE_MAX = 200;
-/** The most characters a request's `why`, a link's `why` or a feedback note holds. */
-export const TEXT_MAX = 4_000;
 /** Submissions in one page of a person's list. */
 export const PAGE_SIZE = 50;
 /** The most similar requests filing one returns. */
@@ -231,12 +234,12 @@ const bounded = (field: string, text: string, minimum: number, maximum: number) 
 
 /** A request's title is one line: whitespace runs collapse to a space. */
 const titleOf = (text: string) =>
-  bounded("text", text.replace(/\s+/gu, " ").trim(), TITLE_MIN, TITLE_MAX);
+  bounded("text", text.replace(/\s+/gu, " ").trim(), SUBMISSION_TITLE_MIN, SUBMISSION_TITLE_MAX);
 
 /** An optional reason: blank is none. */
 const reasonOf = (field: string, text: string | null | undefined) => {
   const trimmed = text?.trim() ?? "";
-  return trimmed === "" ? Effect.succeed(null) : bounded(field, trimmed, 1, TEXT_MAX);
+  return trimmed === "" ? Effect.succeed(null) : bounded(field, trimmed, 1, SUBMISSION_TEXT_MAX);
 };
 
 const refuseSecrets = (fields: Readonly<Record<string, string | null>>) => {
@@ -476,7 +479,7 @@ export const make = Effect.gen(function* () {
     readonly text: string;
   }) {
     const { sender } = input;
-    const text = yield* bounded("text", input.text.trim(), 1, TEXT_MAX);
+    const text = yield* bounded("text", input.text.trim(), 1, SUBMISSION_TEXT_MAX);
     yield* refuseSecrets({ text });
     yield* spend(sender);
     const id = yield* cryptography.internalId("fbk");
