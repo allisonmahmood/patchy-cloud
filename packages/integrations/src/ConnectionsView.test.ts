@@ -197,6 +197,14 @@ describe("the connections index", () => {
     );
   });
 
+  it("asks for an integration through Tell Patchy with Request picked, not by email", () => {
+    const html = View.renderCatalogue({ admin: false, rows: [], offers });
+    expect(html).toContain(
+      'popovertarget="tell-patchy" data-kind="request">Request an integration</button>'
+    );
+    expect(html).not.toContain("mailto:");
+  });
+
   it("starts an empty company from the catalogue for admins and tells members whom to ask", () => {
     const admin = index([]);
     expect(admin).toContain('<h2 class="section-heading">Connect an integration</h2>');

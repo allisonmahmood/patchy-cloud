@@ -314,8 +314,11 @@ export interface AppShell {
     /** One line naming what their last form did, shown once at the top of the page. */
     readonly receipt?: string | undefined;
   };
-  /** The place the page belongs to; `whats-new` is reached from its own button, so no place is lit there. */
-  readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new";
+  /**
+   * The place the page belongs to. `whats-new` lights What's new, which the page is reached from;
+   * `feedback`, What you sent, lights nothing, since Tell Patchy opens its panel rather than it.
+   */
+  readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new" | "feedback";
   /**
    * A modal panel over the page, such as Home’s Final step: the frame behind it goes inert
    * and blurs, and the panel carries its own role, label and ways out.
@@ -355,6 +358,21 @@ function whatsNewButton(seen: number, current: boolean): string {
   return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="whats-new-panel" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><h2 class="section-heading" id="whats-new-heading">What’s new</h2><p class="supporting-text">${summary}</p>${list}${more}<a class="btn btn-primary" href="/whats-new">See all changes</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
+/** Where the Tell Patchy panel's script is served; every app page loads it. */
+export const tellPatchyScriptPath = "/feedback/tell.js";
+
+/**
+ * Tell Patchy, at the foot of the sidebar beside What's new, opens a panel in What's new's frame
+ * for sending Patchy a request or feedback. Any page's own button with
+ * `popovertarget="tell-patchy"` opens it too, anchored beside that button, and its `data-kind`
+ * picks the kind. The panel sits outside the menu, which a phone hides until Menu opens it.
+ * `/feedback/tell.js` sends in place and shows the receipt and similar requests; without it the
+ * form posts and lands on What you sent.
+ */
+const tellPatchyButton =
+  '<button type="button" class="app-place tell-patchy-button" popovertarget="tell-patchy">Tell Patchy</button>';
+const tellPatchyPanel = `<div id="tell-patchy" class="whats-new-panel tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading"><h2 class="section-heading" id="tell-patchy-heading">Tell Patchy</h2><form class="tell-patchy-form" method="post" action="/feedback" novalidate><fieldset class="tell-patchy-kinds" aria-label="Request or feedback"><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="request" checked>Request</label><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="feedback">Feedback</label></fieldset><textarea class="field" id="tell-patchy-text" name="text" aria-label="What to tell Patchy"></textarea><button class="btn btn-primary" type="submit">Send</button></form><div class="tell-patchy-answer" hidden></div><p class="tell-patchy-foot"><a href="/feedback">What you sent</a></p></div><script defer src="${tellPatchyScriptPath}"></script>`;
+
 const chevron =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const menuIcon =
@@ -388,7 +406,7 @@ function appBody(app: AppShell, body: string): string {
     label: "Search patches",
     className: "app-search"
   });
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${tellPatchyButton}${account(app.viewer.user)}</div></div>${tellPatchyPanel}</div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -1016,8 +1034,8 @@ export function htmlPage(options: {
     }
     /* What's new: the bell, its panel, and a change the viewer has not seen yet. */
     .whats-new-bell { anchor-name: --whats-new; }
-    /* While its panel is open, What's new takes a current place's look. */
-    .whats-new-bell:has(+ .whats-new-panel:popover-open) { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); color: var(--ink); }
+    /* While its panel is open, What's new or Tell Patchy takes a current place's look. */
+    .whats-new-bell:has(+ .whats-new-panel:popover-open), .app-side-inner:has(> .tell-patchy:popover-open) .tell-patchy-button { background: color-mix(in srgb, var(--yellow) 45%, var(--white)); color: var(--ink); }
     .whats-new-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--blue); }
     .app-place > .whats-new-dot { position: static; width: 8px; height: 8px; margin-left: auto; border: 0; }
     .whats-new-panel { position: fixed; inset: auto auto 16px 16px; width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: 0; padding: 18px 20px 20px; overflow-y: auto; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--white); color: var(--ink-soft); box-shadow: var(--shadow-hard); }
@@ -1028,6 +1046,22 @@ export function htmlPage(options: {
       }
     }
     .whats-new-panel > .supporting-text { margin: 0 0 4px; }
+    /* Tell Patchy: What's new's frame, beside whichever button opened it; a request's similar requests below its receipt. */
+    @supports (position-area: bottom) {
+      .tell-patchy { position-anchor: auto; }
+    }
+    .tell-patchy-kinds { display: flex; gap: 20px; min-width: 0; margin: 0 0 6px; padding: 0; border: 0; }
+    .tell-patchy-foot { margin: 10px 0 0; text-align: center; font-size: .9rem; }
+    .tell-patchy-match { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: start; }
+    .tell-patchy-match p { margin: 0; }
+    .tell-patchy-match .supporting-text { margin-top: 4px; }
+    .tell-patchy-match-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .tell-patchy-match form { margin: 0; }
+    .note.tell-patchy-linked { margin: 8px 0 0; }
+    @media (max-width: 600px) {
+      .tell-patchy-match { grid-template-columns: minmax(0, 1fr); }
+      .tell-patchy-match form { justify-self: start; }
+    }
     .whats-new-panel .btn-primary { width: 100%; margin-top: 12px; }
     .whats-new-change { display: grid; grid-template-columns: 6.75rem minmax(0, 1fr); gap: 12px; align-items: start; }
     .list-row.whats-new-change { padding-block: 14px; }

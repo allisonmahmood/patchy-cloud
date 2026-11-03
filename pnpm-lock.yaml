@@ -761,6 +761,9 @@ importers:
       '@patchy/core':
         specifier: workspace:*
         version: link:../core
+      '@patchy/feedback':
+        specifier: workspace:*
+        version: link:../feedback
       '@patchy/integrations':
         specifier: workspace:*
         version: link:../integrations

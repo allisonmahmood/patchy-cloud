@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "The signed-in patch index, cards and inline management pages.",
+  "description": "The signed-in patch index, cards and inline management pages, and what a person sent Patchy.",
   "exports": {
     ".": {
       "development": "./src/index.ts",
@@ -25,6 +25,7 @@
     "@patchy/auth": "workspace:*",
     "@patchy/companies": "workspace:*",
     "@patchy/core": "workspace:*",
+    "@patchy/feedback": "workspace:*",
     "@patchy/integrations": "workspace:*",
     "@patchy/limits": "workspace:*",
     "@patchy/patches": "workspace:*",

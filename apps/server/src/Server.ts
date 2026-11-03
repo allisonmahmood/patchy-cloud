@@ -74,7 +74,7 @@ import {
   Patches,
   PatchesApi
 } from "@patchy/patches";
-import { PortalPages, WhatsNewPages } from "@patchy/portal";
+import { FeedbackPages, PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
@@ -400,6 +400,7 @@ const app = Layer.mergeAll(
     Pages.layer,
     PortalPages.layer,
     WhatsNewPages.layer,
+    FeedbackPages.layer,
     landing,
     AuthPages.layer,
     OAuthMetadata.layer,
