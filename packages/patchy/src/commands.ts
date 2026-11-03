@@ -56,13 +56,23 @@ import {
   type Manifest,
   agentToolEntries,
   agentToolKind,
-  type LookRevision
+  type LookRevision,
+  FileRequest,
+  LinkRequest,
+  PatchId,
+  RequestLinked,
+  RequestUnlinked,
+  SendFeedback,
+  FeedbackSent,
+  type SubmissionKind,
+  Submissions,
+  Withdrawn
 } from "@patchy/api";
 import { Cryptography, documentTitle } from "@patchy/core";
 import { checkLook, type LookFiles } from "@patchy/core/look";
 import * as Api from "./Api.js";
 import { checkBundle } from "./bundleCheck.js";
-import { type CliError, LocalError, RejectedError } from "./CliError.js";
+import { type CliError, LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Discovery from "./Discovery.js";
 import { previewPage } from "./lookPreview.js";
 import * as Git from "./Git.js";
@@ -79,6 +89,7 @@ import * as RepoSnapshot from "./repoSnapshot.js";
 import { publishLookStamp, sentence } from "./lookNotices.js";
 import * as Dev from "./devLifecycle.js";
 import * as Logs from "./logs.js";
+import { filedDocument, filedLines, kindNouns, linkedLines, listLines } from "./submissions.js";
 
 /** The working directory the entrypoint started in; where the dev-env walk begins. */
 export class Cwd extends Context.Service<Cwd, string>()("patchy/commands/Cwd") {}
@@ -1268,6 +1279,249 @@ const logs = Command.make(
   )
 );
 
+// --- requests and feedback ---------------------------------------------------
+
+const encodeRequestLinked = Schema.encodeSync(RequestLinked);
+const encodeRequestUnlinked = Schema.encodeSync(RequestUnlinked);
+const encodeFeedbackSent = Schema.encodeSync(FeedbackSent);
+const encodeSubmissions = Schema.encodeSync(Submissions);
+const encodeWithdrawn = Schema.encodeSync(Withdrawn);
+const isPatchId = Schema.is(PatchId);
+
+/** What an instance from before requests and feedback answers on their routes: its API's catch-all 404. */
+const UNKNOWN_ROUTE = "Not found.";
+
+/** Why a send got no usable answer, for its exit 3 message; refusals never get here. */
+const unanswered = (error: Api.ClientFailure) => {
+  if (Api.isRefusal(error) || error._tag === "SchemaError")
+    return "answered with a body the CLI could not read";
+  const { reason } = error;
+  if (reason._tag === "TransportError") return "could not be reached, or dropped the connection";
+  return "response" in reason ? `answered ${reason.response.status}` : "gave no answer";
+};
+
+/**
+ * A failure of the requests and feedback routes. An instance whose release predates them answers
+ * its catch-all 404, so these commands refuse, exit 2, saying it doesn't take them yet. A send
+ * whose answer was lost may still have been stored: its exit 3 says to read the list rather than
+ * send again, and the CLI never sends again itself.
+ */
+const submissionFailure =
+  (kind: SubmissionKind, fallback: string, send = false) =>
+  (error: Api.ClientFailure) =>
+    Effect.gen(function* () {
+      const { apiUrl } = yield* Instance.Instance;
+      if (Api.isRefusal(error) && error.code === undefined && error.error === UNKNOWN_ROUTE)
+        return yield* new RejectedError({
+          refusal: {
+            ok: false,
+            error: `${apiUrl} doesn't take ${kindNouns[kind]} yet: it runs a Patchy release from before them.`
+          },
+          cause: error
+        });
+      return yield* refused(error, fallback).pipe(
+        Effect.mapError((failure) =>
+          send && failure._tag === "UnreachableError"
+            ? new UnreachableError({
+                instanceUrl: failure.instanceUrl,
+                message:
+                  `${apiUrl} ${unanswered(error)}, so the ${kind} may have been stored anyway.\n` +
+                  `Run patchy ${kind} list to check before sending it again.`,
+                cause: error
+              })
+            : failure
+        )
+      );
+    });
+
+/** A text argument as given, or all of stdin when it is `-`. */
+const readText = Effect.fn("readText")(function* (text: string, what: string) {
+  if (text !== "-") return text;
+  const stdio = yield* Stdio.Stdio;
+  if (yield* stdio.stdinIsTerminal)
+    return yield* new LocalError({ message: `\`-\` reads ${what} from stdin; pipe it in.` });
+  return yield* stdio.stdin.pipe(
+    Stream.decodeText,
+    Stream.mkString,
+    Effect.map((input) => input.trimEnd()),
+    Effect.mapError(
+      (cause) => new LocalError({ message: `Could not read ${what} from stdin.`, cause })
+    )
+  );
+});
+
+/**
+ * The published patch of the repo the command runs in, which a request or feedback names. Read
+ * leniently: a missing or broken `patchy.json` names no patch and never stops a send.
+ */
+const repoPatch = Effect.gen(function* () {
+  const repo = yield* Effect.option(Project.readRepo(yield* Cwd));
+  return Option.isSome(repo) && isPatchId(repo.value.patch) ? { patch: repo.value.patch } : {};
+});
+
+const whyFlag = (description: string) =>
+  Flag.String("why").pipe(Flag.withDescription(description), Flag.optional);
+const submissionId = Argument.String("id").pipe(
+  Argument.withDescription("The id a send or list gave")
+);
+
+/** `patchy <kind> list`: one page of what the person sent of that kind, newest first. */
+const listSubmissions = (kind: SubmissionKind) =>
+  Command.make(
+    "list",
+    {
+      cursor: Flag.String("cursor").pipe(
+        Flag.withDescription("Continue from a page's nextCursor"),
+        Flag.optional
+      )
+    },
+    ({ cursor }) =>
+      run(
+        Effect.gen(function* () {
+          const client = yield* Api.client(yield* requiredToken());
+          const page = yield* client
+            .listSubmissions({
+              query: { kind, ...(Option.isSome(cursor) ? { cursor: cursor.value } : {}) }
+            })
+            .pipe(Effect.catch(submissionFailure(kind, `Listing your ${kindNouns[kind]} failed.`)));
+          yield* Output.report(encodeSubmissions(page), listLines(page, kind));
+        })
+      )
+  ).pipe(Command.withDescription(`List the ${kindNouns[kind]} you sent, newest first, 50 a page.`));
+
+/** `patchy <kind> withdraw <id>`: delete one of the person's own submissions. */
+const withdrawSubmission = (kind: SubmissionKind) =>
+  Command.make("withdraw", { id: submissionId }, ({ id }) =>
+    run(
+      Effect.gen(function* () {
+        const client = yield* Api.client(yield* requiredToken());
+        const withdrawn = yield* client
+          .withdraw({ params: { id } })
+          .pipe(Effect.catch(submissionFailure(kind, "Withdrawing failed.")));
+        yield* Output.report(encodeWithdrawn(withdrawn), [
+          `Withdrew ${withdrawn.id}: it is deleted.`
+        ]);
+      })
+    )
+  ).pipe(
+    Command.withDescription(
+      `Withdraw ${kind === "request" ? "a request" : "feedback"} you sent: it is deleted.`
+    )
+  );
+
+const requestLink = Command.make(
+  "link",
+  {
+    id: submissionId,
+    to: Argument.String("match-id").pipe(
+      Argument.withDescription("The match's id, as the request or list gave it")
+    ),
+    why: whyFlag("Why the match meets the need")
+  },
+  ({ id, to, why }) =>
+    run(
+      Effect.gen(function* () {
+        const reason = Option.isSome(why) ? yield* readText(why.value, "--why") : undefined;
+        const client = yield* Api.client(yield* requiredToken());
+        const linked = yield* client
+          .linkRequest({
+            params: { id },
+            payload: new LinkRequest({ to, ...(reason === undefined ? {} : { why: reason }) })
+          })
+          .pipe(Effect.catch(submissionFailure("request", "Linking the request failed.")));
+        yield* Output.report(encodeRequestLinked(linked), linkedLines(linked));
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Link your request to a match that is the same need; linking again replaces the link."
+  )
+);
+
+const requestUnlink = Command.make("unlink", { id: submissionId }, ({ id }) =>
+  run(
+    Effect.gen(function* () {
+      const client = yield* Api.client(yield* requiredToken());
+      const unlinked = yield* client
+        .unlinkRequest({ params: { id } })
+        .pipe(Effect.catch(submissionFailure("request", "Unlinking the request failed.")));
+      yield* Output.report(encodeRequestUnlinked(unlinked), [`${unlinked.id} has no link.`]);
+    })
+  )
+).pipe(Command.withDescription("Clear your request's link and its reason."));
+
+const request = Command.make(
+  "request",
+  {
+    text: Argument.String("text").pipe(
+      Argument.withDescription("What Patchy should do, in one line; - reads it from stdin")
+    ),
+    why: whyFlag("The need behind it and its constraints; - reads it from stdin")
+  },
+  ({ text, why }) =>
+    run(
+      Effect.gen(function* () {
+        if (text === "-" && Option.contains(why, "-"))
+          return yield* new LocalError({
+            message: "Only one of the request and --why can read stdin."
+          });
+        const title = yield* readText(text, "the request");
+        const reason = Option.isSome(why) ? yield* readText(why.value, "--why") : undefined;
+        const client = yield* Api.client(yield* requiredToken());
+        const filed = yield* client
+          .fileRequest({
+            payload: new FileRequest({
+              text: title,
+              ...(reason === undefined ? {} : { why: reason }),
+              ...(yield* repoPatch)
+            })
+          })
+          .pipe(Effect.catch(submissionFailure("request", "Sending the request failed.", true)));
+        const document = filedDocument(filed);
+        yield* Output.report(document, filedLines(document));
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Tell Patchy's team what Patchy can't do yet; prints the request's id and similar requests."
+  ),
+  Command.withSubcommands([
+    requestLink,
+    requestUnlink,
+    listSubmissions("request"),
+    withdrawSubmission("request")
+  ])
+);
+
+const feedback = Command.make(
+  "feedback",
+  {
+    text: Argument.String("text").pipe(
+      Argument.withDescription(
+        "What you ran, what you expected and what happened; - reads it from stdin"
+      )
+    )
+  },
+  ({ text }) =>
+    run(
+      Effect.gen(function* () {
+        const note = yield* readText(text, "the feedback");
+        const client = yield* Api.client(yield* requiredToken());
+        const sent = yield* client
+          .sendFeedback({ payload: new SendFeedback({ text: note, ...(yield* repoPatch) }) })
+          .pipe(Effect.catch(submissionFailure("feedback", "Sending the feedback failed.", true)));
+        yield* Output.report(encodeFeedbackSent(sent), [
+          `Sent feedback ${sent.id} to Patchy's team.`
+        ]);
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "Tell Patchy's team about something Patchy did wrong, strangely or made hard; prints its id."
+  ),
+  Command.withSubcommands([listSubmissions("feedback"), withdrawSubmission("feedback")])
+);
+
 // --- the company look --------------------------------------------------------
 
 const NO_LOOK = "New patches start from the Patchy look.";
@@ -1859,6 +2113,8 @@ export const root = Command.make("patchy").pipe(
     withCommandHeader(look),
     withCommandHeader(add),
     withCommandHeader(remove),
+    withCommandHeader(request),
+    withCommandHeader(feedback),
     withCommandHeader(generateProject)
   ]),
   Command.withGlobalFlags([Output.JsonFlag, Instance.ApiUrlFlag])
