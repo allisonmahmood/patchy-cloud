@@ -15,6 +15,7 @@
   "files": [
     "dist",
     "read-role.sql",
+    "read-role-audit.sql",
     "read-role-drop.sql"
   ],
   "scripts": {

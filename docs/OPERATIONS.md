@@ -564,45 +564,31 @@ schema, `SELECT` on its tables, and `SELECT` on tables the migration owner adds
 to the schema later. `$MIGRATION_OWNER` is the role the server migrates as, which
 owns the schema. Keep the password out of output, chat and git.
 
-Then audit it, as the same role. Each query says what it should answer:
+Then audit it with `packages/feedback/read-role-audit.sql`, as the migration owner.
+The test that makes the role runs this file too, and shows that it catches a
+column granted to PUBLIC.
 
-```sql
--- 1. Its attributes: rolcanlogin true, every other column false.
-SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
-  rolreplication, rolbypassrls
-FROM pg_roles WHERE rolname = 'feedback_reader';
-
--- 2. Roles it belongs to, directly or through others: none.
-SELECT r.rolname FROM pg_roles r
-WHERE r.rolname <> 'feedback_reader' AND pg_has_role('feedback_reader', r.oid, 'MEMBER');
-
--- 3. Every table, view or sequence it can read outside the catalogs, PUBLIC's grants
---    included: feedback.general_requests and feedback.submissions only.
-SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
-  AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
-  AND has_table_privilege('feedback_reader', c.oid, 'SELECT')
-ORDER BY 1, 2;
-
--- 4. What PUBLIC is granted outside the catalogs: no tables, and USAGE on schemas only.
-SELECT table_schema, table_name, privilege_type FROM information_schema.table_privileges
-WHERE grantee = 'PUBLIC' AND table_schema NOT IN ('pg_catalog', 'information_schema');
-SELECT nspname AS schema, nspacl FROM pg_namespace
-WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_%';
-
--- 5. Functions it can execute outside the catalogs, SECURITY DEFINER first. A SECURITY
---    DEFINER function runs as its owner and can read what the role can't: each one listed
---    needs a reason, or REVOKE EXECUTE ... FROM PUBLIC.
-SELECT p.prosecdef AS security_definer, n.nspname AS schema, p.proname AS name,
-  pg_get_function_identity_arguments(p.oid) AS arguments
-FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-  AND has_function_privilege('feedback_reader', p.oid, 'EXECUTE')
-ORDER BY 1 DESC, 2, 3;
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -f packages/feedback/read-role-audit.sql
 ```
 
-Run the audit again after a release adds a schema, a function or an extension.
+Each numbered query says what it should answer. Anything else is a hole to close
+before the connection uses the role:
+
+1. The role's attributes: it can log in and nothing else.
+2. Roles it belongs to: none.
+3. Every relation it can read, whole or a single column, through its own grants
+   or PUBLIC's: the `feedback` schema's tables only.
+4. Table grants to PUBLIC: none.
+5. Column grants to PUBLIC: none.
+6. Schema grants: PUBLIC holds `USAGE` on `public` at most, and the role `USAGE`
+   on `feedback`.
+7. Functions it can execute, `SECURITY DEFINER` first. Such a function runs as
+   its owner, so each one listed needs a reason, or `REVOKE EXECUTE ... FROM PUBLIC`.
+
+Run the audit again after a release adds a schema, a function, an extension or a
+grant.
 
 To rotate the password, `ALTER ROLE feedback_reader PASSWORD '<new>'` and update
 the connection's credentials on Patchy AI's Connections page. To undo the role,
