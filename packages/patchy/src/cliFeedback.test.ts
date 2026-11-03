@@ -501,9 +501,13 @@ describe("refusals", () => {
     }
   });
 
-  it("a 500 offers patchy feedback after a request, never after patchy feedback itself", async () => {
+  it("an answer it can't use offers patchy feedback after a request, never after patchy feedback itself", async () => {
+    let answer: "500" | "unreadable refusal" = "500";
     const instance = await stubInstance((_request, respond) =>
-      respond(500, { message: "Internal error" })
+      answer === "500"
+        ? respond(500, { message: "Internal error" })
+        : // A declared refusal's status with a body that isn't JSON at all.
+          respond(422, undefined)
     );
     const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
     const run = (args: ReadonlyArray<string>) => runCli(args, { env: env(instance.url) });
@@ -529,6 +533,21 @@ describe("refusals", () => {
       expect(result.stderr).not.toContain("If Patchy got this wrong");
       expect(result.stderr).not.toContain("feedbackHint");
     }
+
+    answer = "unreadable refusal";
+    const [unreadable, unreadableJson] = await Promise.all([
+      run(["request", "Gmail integration"]),
+      run(["request", "Gmail integration", "--json"])
+    ]);
+    expect(unreadable.status).toBe(3);
+    expect(unreadable.stderr).toBe(
+      `${instance.url} answered with a body the CLI could not read, so the request may have been stored anyway.\n` +
+        `Run patchy request list to check before sending it again.\n${hint}\n`
+    );
+    expect(JSON.parse(unreadableJson.stderr)).toMatchObject({
+      kind: "unreachable",
+      feedbackHint: hint
+    });
   });
 
   it("a send whose answer is lost or unreadable is exit 3, sent once, and says to check the list first", async () => {
