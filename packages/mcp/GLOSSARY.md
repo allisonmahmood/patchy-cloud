@@ -1,11 +1,11 @@
 # Patchy MCP
 
-How a person's own agent uses their company's patches: one door, four fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. Its product decisions live in [the product](../../docs/product.md#patchy-mcp).
+How a person's own agent uses their company's patches: one door, five fixed tools and change keys. It acts through [Auth](../auth/GLOSSARY.md)'s agent connections, finds patches through [Patches](../patches/GLOSSARY.md), calls the agent tools [Publishing](../patchy/GLOSSARY.md) builds through [Runtime](../runtime/GLOSSARY.md), sends Patchy's team requests and feedback through [Feedback](../feedback/GLOSSARY.md), and needs [Companies](../companies/GLOSSARY.md)' agent access on. Its product decisions live in [the product](../../docs/product.md#patchy-mcp).
 
 ## Language
 
 **Patchy MCP**:
-The one MCP server an instance offers at `/mcp`, through which worker agents find, read and change their company's patches as their person. Everyone connects to the same door with the same four tools, so a new patch needs no new connection.
+The one MCP server an instance offers at `/mcp`, through which worker agents find, read and change their company's patches as their person. Everyone connects to the same door with the same five tools, so a new patch needs no new connection.
 _Avoid_: a patch's MCP server (a patch has none), connector (a client's word for its side), per-patch server
 
 **Worker agent**:
