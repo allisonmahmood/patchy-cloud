@@ -215,6 +215,12 @@ export class Feedback extends Context.Service<
 /** Control characters other than tab, line feed and carriage return. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 
+/**
+ * An id no row can hold: Postgres text never stores NUL, and a query carrying one fails rather
+ * than matching nothing, so such an id answers as missing before it reaches a query.
+ */
+const unstorable = (id: string) => id.includes("\u0000");
+
 /** A field trimmed, or refused when outside its bounds or holding control characters. */
 const bounded = (field: string, text: string, minimum: number, maximum: number) => {
   const length = [...text].length;
@@ -495,11 +501,12 @@ export const make = Effect.gen(function* () {
     const { sender, id, to } = input;
     const why = yield* reasonOf("why", input.why);
     yield* refuseSecrets({ why });
+    if (unstorable(id)) return yield* new SubmissionNotFound({ id });
     const linked = yield* committed(
       Effect.gen(function* () {
         const own = yield* ownRequest({ id, userId: sender.userId, companyId: sender.companyId });
         if (Option.isNone(own)) return yield* new SubmissionNotFound({ id });
-        if (to === id) return yield* new InvalidLink({ id, to });
+        if (to === id || unstorable(to)) return yield* new InvalidLink({ id, to });
         const found = yield* target({ to, companyId: sender.companyId });
         if (Option.isNone(found)) return yield* new InvalidLink({ id, to });
         const { general } = found.value;
@@ -533,6 +540,7 @@ export const make = Effect.gen(function* () {
     readonly person: Person;
     readonly id: string;
   }) {
+    if (unstorable(id)) return yield* new SubmissionNotFound({ id });
     const rows = yield* sql`
       UPDATE feedback.submissions
       SET link_request_id = NULL, link_general_id = NULL, link_why = NULL
@@ -600,6 +608,7 @@ export const make = Effect.gen(function* () {
     readonly person: Person;
     readonly id: string;
   }) {
+    if (unstorable(id)) return yield* new SubmissionNotFound({ id });
     yield* sql.withTransaction(
       Effect.gen(function* () {
         const own = yield* sql`
