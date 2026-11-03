@@ -177,6 +177,9 @@ header that is not exactly three fields records none. A request without the
 header, from a browser or an older CLI, records none of the three. A request to
 Patchy MCP's door adds the fields [Patchy MCP › Bounds](./product.md#bounds)
 lists under Events.
+A request that sends, links, unlinks or withdraws a request or feedback adds its
+`submissionId`, never its text; a send past `feedback.sends.perMinute` adds the
+limit's `limitId`.
 
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.
@@ -392,6 +395,11 @@ The events, by area:
   the revision that is already current reports nothing.
 - Agent access: `agent_access.changed`, with `on`, after the change commits. Asking for the
   state it already has reports nothing.
+- Requests and feedback: `request.sent` with `matches`, `request.linked` with
+  `targetId` and `target` (`request` or `general`), and `feedback.sent`, each after
+  its change commits, whichever surface sent it. Each carries `submissionId`,
+  `surface` and `agent`, null from the dashboard; never the text, a why or a link's
+  why.
 - Opens: `patch.first_opened`, the one event serving reports, when a member's first
   recorded open of a colleague's patch has committed. Its distinct id is the member
   who opened it; it adds `tier` and `welcomePage`. The owner's own opens, an older
@@ -528,6 +536,106 @@ embedded Postgres of its own under its temp root. Object bytes use the separate
 content store below.
 
 Do not commit real database URLs or generated tokens.
+
+### The feedback read role
+
+Requests and feedback land in the platform database's `feedback` schema
+(`packages/feedback`). Patchy's team reads them through Patchy itself: Patchy AI
+connects the schema through the Postgres integration with a role that reads that
+schema's rows and nothing else. The integration runs whatever read-only SQL a
+patch sends (`packages/integrations/src/postgres/Operations.ts`), so the role's
+privileges are the boundary, not the connection's discovery snapshot.
+
+The role's SQL lives in one place, `packages/feedback/read-role.sql`, which
+`packages/feedback`'s tests run against a migrated database. Make the role with
+it, as the migration owner, from a checkout of the release that is live. On Neon,
+make it this way rather than in the console: a role made in Neon's console joins
+`neon_superuser`.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v password="$FEEDBACK_READER_PASSWORD" -v owner="$MIGRATION_OWNER" \
+  -f packages/feedback/read-role.sql
+```
+
+It makes a login role with no superuser, `CREATEDB`, `CREATEROLE`, replication
+or row-security bypass, inheriting from nothing, and grants it `USAGE` on the
+schema, `SELECT` on its tables, and `SELECT` on tables the migration owner adds
+to the schema later. `$MIGRATION_OWNER` is the role the server migrates as, which
+owns the schema. Keep the password out of output, chat and git.
+
+Then audit it, as the same role. Each query says what it should answer:
+
+```sql
+-- 1. Its attributes: rolcanlogin true, every other column false.
+SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
+  rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = 'feedback_reader';
+
+-- 2. Roles it belongs to, directly or through others: none.
+SELECT r.rolname FROM pg_roles r
+WHERE r.rolname <> 'feedback_reader' AND pg_has_role('feedback_reader', r.oid, 'MEMBER');
+
+-- 3. Every table, view or sequence it can read outside the catalogs, PUBLIC's grants
+--    included: feedback.general_requests and feedback.submissions only.
+SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+  AND has_table_privilege('feedback_reader', c.oid, 'SELECT')
+ORDER BY 1, 2;
+
+-- 4. What PUBLIC is granted outside the catalogs: no tables, and USAGE on schemas only.
+SELECT table_schema, table_name, privilege_type FROM information_schema.table_privileges
+WHERE grantee = 'PUBLIC' AND table_schema NOT IN ('pg_catalog', 'information_schema');
+SELECT nspname AS schema, nspacl FROM pg_namespace
+WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_%';
+
+-- 5. Functions it can execute outside the catalogs, SECURITY DEFINER first. A SECURITY
+--    DEFINER function runs as its owner and can read what the role can't: each one listed
+--    needs a reason, or REVOKE EXECUTE ... FROM PUBLIC.
+SELECT p.prosecdef AS security_definer, n.nspname AS schema, p.proname AS name,
+  pg_get_function_identity_arguments(p.oid) AS arguments
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND has_function_privilege('feedback_reader', p.oid, 'EXECUTE')
+ORDER BY 1 DESC, 2, 3;
+```
+
+Run the audit again after a release adds a schema, a function or an extension.
+
+To rotate the password, `ALTER ROLE feedback_reader PASSWORD '<new>'` and update
+the connection's credentials on Patchy AI's Connections page. To undo the role,
+disconnect it on that page first, then run its undo as the migration owner: it
+stops the role signing in, ends its sessions, revokes its grants and drops it.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v owner="$MIGRATION_OWNER" -f packages/feedback/read-role-drop.sql
+```
+
+### General requests
+
+General requests have no API: Patchy's team writes them with an operator
+credential. A new one takes a generated `gen_…` id; a public `note`, such as how
+to use what shipped, is shown to every company whose request matches it. Set
+`updated_at` with every change.
+
+```sql
+INSERT INTO feedback.general_requests (title, status, note)
+VALUES ('Postgres encryption options', 'open', NULL)
+RETURNING id;
+
+UPDATE feedback.general_requests
+SET status = 'shipped',
+  note = 'Every Postgres connection is encrypted with TLS. Ask for anything more here.',
+  updated_at = now()
+WHERE id = 'gen_...';
+```
+
+`status` is `open`, `planned`, `shipped` or `declined`. A company's request linked
+straight to a general request shows its status in matches and in the person's
+list.
 
 ## Neon Object Storage
 
