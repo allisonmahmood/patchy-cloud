@@ -501,6 +501,36 @@ describe("refusals", () => {
     }
   });
 
+  it("a 500 offers patchy feedback after a request, never after patchy feedback itself", async () => {
+    const instance = await stubInstance((_request, respond) =>
+      respond(500, { message: "Internal error" })
+    );
+    const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
+    const run = (args: ReadonlyArray<string>) => runCli(args, { env: env(instance.url) });
+    const [request, requestJson, ...feedback] = await Promise.all([
+      run(["request", "Gmail integration"]),
+      run(["request", "Gmail integration", "--json"]),
+      run(["feedback", "Something odd"]),
+      run(["feedback", "Something odd", "--json"]),
+      run(["feedback", "list"]),
+      run(["feedback", "list", "--json"])
+    ]);
+    expect(request.status).toBe(3);
+    expect(request.stderr).toBe(
+      `${instance.url} answered 500, so the request may have been stored anyway.\n` +
+        `Run patchy request list to check before sending it again.\n${hint}\n`
+    );
+    expect(JSON.parse(requestJson.stderr)).toMatchObject({
+      kind: "unreachable",
+      feedbackHint: hint
+    });
+    for (const result of feedback) {
+      expect(result.status).toBe(3);
+      expect(result.stderr).not.toContain("If Patchy got this wrong");
+      expect(result.stderr).not.toContain("feedbackHint");
+    }
+  });
+
   it("a send whose answer is lost or unreadable is exit 3, sent once, and says to check the list first", async () => {
     let answer: "drop" | "502" | "garbled" | "unreadable refusal" | "empty 403" = "drop";
     const instance = await stubInstance((_request, respond, disconnect) =>
