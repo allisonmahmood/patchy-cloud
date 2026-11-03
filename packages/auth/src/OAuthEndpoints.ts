@@ -213,6 +213,7 @@ const consentPage = (shown: Shown, changed: Changed | undefined): DoorSpec => {
         can: true,
         text: "It can find the patches you can open and use the agent tools their builders added, as you"
       },
+      { can: true, text: "It can send requests and feedback to Patchy’s team" },
       { can: true, text: `Every change it makes is logged as ${person} via ${agent}` },
       { can: false, text: "It can’t do anything you can’t, or publish" }
     ])}${localNote}${answerForm(shown)}`,
