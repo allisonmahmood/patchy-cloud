@@ -158,6 +158,17 @@ export const UnreachableReason = Schema.Literals(["transport", "response", "deco
 export type UnreachableReason = typeof UnreachableReason.Type;
 
 /**
+ * Whether a response's body stopped arriving. Effect reports it as a `DecodeError` or
+ * `EmptyBodyError` caused by the connection's error; parsing a body that arrived fails with a
+ * `SyntaxError`, or as a `SchemaError`.
+ */
+export const bodyCutOff = (error: HttpClientError.HttpClientError | Schema.SchemaError): boolean =>
+  error._tag === "HttpClientError" &&
+  (error.reason._tag === "DecodeError" || error.reason._tag === "EmptyBodyError") &&
+  error.reason.cause !== undefined &&
+  !(error.reason.cause instanceof SyntaxError);
+
+/**
  * Why a request failed in the HTTP client, or its body failed the schema it was read with. Effect
  * reports two things as a `DecodeError` that this tells apart: a body that stopped arriving, which
  * is `transport`, and the generated client's answer to a status the API doesn't declare, such as
@@ -178,8 +189,7 @@ export const unreachableReason = (
       return "response";
     case "DecodeError":
     case "EmptyBodyError": {
-      // Reading the body fails with the connection's error, parsing it with a SyntaxError.
-      if (reason.cause !== undefined && !(reason.cause instanceof SyntaxError)) return "transport";
+      if (bodyCutOff(error)) return "transport";
       const { status } = reason.response;
       return status >= 200 && status < 300 ? "decode" : "response";
     }

@@ -1,8 +1,6 @@
 // The CLI contract from outside: setup, the exit-code ladder, login, keys and status.
 import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -10,12 +8,12 @@ import { CURRENT_RELEASE } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import {
   binPath,
+  cutInstance,
   htmlFile,
   identity,
   readJson,
   requestBarrier,
   runCli,
-  servers,
   stubInstance,
   tempDir
 } from "./test/cli.js";
@@ -82,18 +80,6 @@ describe("the patchy executable", () => {
     });
   });
 });
-
-/** An instance whose every answer stops partway through its body. */
-const cutInstance = async () => {
-  const server = createServer((_, response) => {
-    // The headers promise more than arrives before the socket closes.
-    response.writeHead(200, { "content-type": "application/json", "content-length": "100" });
-    response.write('{"user":', () => response.destroy());
-  });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-};
 
 describe("the exit-code ladder", async () => {
   it.each(["SIGINT", "SIGTERM"] as const)(
