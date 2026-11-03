@@ -52,6 +52,28 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 35,
+    date: "2026-11-04",
+    through: "dd0e2ecc3d9079c7e188b21ba2d65800514e1aed",
+    changes: [
+      {
+        kind: "Fixed",
+        title: "Keyboard shortcuts in patches do what they say",
+        detail:
+          "A shortcut meant to fire once per press, such as approving a record, no longer fires again while you hold the key. Shortcuts wait while you type in a language that builds characters as you go, such as Japanese, so Escape cancels the word instead of closing the dialog. Shortcuts on symbol keys such as + work on every keyboard. Your agent picks this up the next time it refreshes the patch.",
+        prs: [1152]
+      },
+      {
+        kind: "Improved",
+        title: "Agents keep shared totals exact",
+        detail:
+          "Ask your agent for a count or total that several people change at once, such as a team's running tally of cheers, and it keeps the total so nobody's change is lost and the page stays quick. Your agent picks this up the next time it starts or refreshes a patch.",
+        prs: [1184]
+      }
+    ],
+    behindTheScenes: []
+  },
+  {
     id: 34,
     date: "2026-11-01",
     through: "e5334caefd847de4c5ad7e5b7e61b0cea0e7b149",
