@@ -1320,7 +1320,9 @@ const unanswered = (error: Api.ClientFailure) => {
  * checked before any call, so a 404 without a code means the instance doesn't have these routes:
  * exit 2, saying it doesn't take them yet. A refusal status whose body can't be read is no answer,
  * exit 3. A send whose answer was lost or unreadable may still have been stored: its exit 3 says
- * to read the list rather than send again, and the CLI never sends again itself.
+ * to read the list rather than send again, and the CLI never sends again itself. On a send, an
+ * answer that isn't a refusal the CLI could read, such as an empty 403, is unreadable too: only a
+ * decoded refusal says nothing was stored.
  */
 const submissionFailure =
   (kind: SubmissionKind, fallback: string, send = false) =>
@@ -1336,6 +1338,8 @@ const submissionFailure =
           cause: error
         });
       const unreadable = Api.isUnreadableRefusal(cause);
+      const undecoded =
+        !Api.isRefusal(error) && error._tag === "HttpClientError" && "response" in error.reason;
       const failure = unreadable
         ? new UnreachableError({
             instanceUrl: apiUrl,
@@ -1343,7 +1347,7 @@ const submissionFailure =
             cause: error
           })
         : yield* Effect.flip(refused(error, fallback));
-      if (!send || failure._tag !== "UnreachableError") return yield* failure;
+      if (!send || (failure._tag !== "UnreachableError" && !undecoded)) return yield* failure;
       return yield* new UnreachableError({
         instanceUrl: apiUrl,
         message:
