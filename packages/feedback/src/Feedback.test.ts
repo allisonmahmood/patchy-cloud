@@ -550,6 +550,15 @@ it.layer(layer)("requests and feedback", (it) => {
         assert.isNull(page.nextCursor);
         assert.notInclude(JSON.stringify(page), "Secret plans");
         assert.notInclude(JSON.stringify(page), "Sales needs it");
+        // One read by id is the same item, and only the person's own.
+        assert.deepStrictEqual(yield* feedback.get({ person: c.ada, id: request.id }), {
+          ...page.submissions[1]!
+        });
+        for (const id of [request.id, "req_\u0000"])
+          assert.strictEqual(
+            (yield* feedback.get({ person: c.ben, id }).pipe(Effect.flip))._tag,
+            "SubmissionNotFound"
+          );
         assert.deepStrictEqual(
           (yield* feedback.list({ person: c.ada, kind: "feedback" })).submissions.map(
             ({ id }) => id

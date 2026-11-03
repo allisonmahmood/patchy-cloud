@@ -36,17 +36,18 @@ const filed =
 
 `Feedback.Person` is `{ userId, companyId }`; a `Sender` is a person plus its surface. Requires `SqlClient`, `Cryptography`, `Analytics`, `Limits` and `OperatingLimits`; `Feedback.layer` builds it.
 
-| Method         | Input                        | Result                        | Fails with                                                                       |
-| -------------- | ---------------------------- | ----------------------------- | -------------------------------------------------------------------------------- |
-| `sendRequest`  | `{ sender, text, why? }`     | `{ id, similar }`             | `InvalidText`, `ContainsSecret`, `SendLimited`, `SqlError`                       |
-| `sendFeedback` | `{ sender, text }`           | `{ id }`                      | `InvalidText`, `ContainsSecret`, `SendLimited`, `SqlError`                       |
-| `link`         | `{ sender, id, to, why? }`   | `{ id, link }`                | `SubmissionNotFound`, `InvalidLink`, `InvalidText`, `ContainsSecret`, `SqlError` |
-| `unlink`       | `{ person, id }`             | `{ id, link: null }`          | `SubmissionNotFound`, `SqlError`                                                 |
-| `list`         | `{ person, kind?, cursor? }` | `{ submissions, nextCursor }` | `InvalidCursor`, `SqlError`                                                      |
-| `withdraw`     | `{ person, id }`             | `{ id }`                      | `SubmissionNotFound`, `SqlError`                                                 |
+| Method         | Input                        | Result                            | Fails with                                                                       |
+| -------------- | ---------------------------- | --------------------------------- | -------------------------------------------------------------------------------- |
+| `sendRequest`  | `{ sender, text, why? }`     | `{ id, similar }`                 | `InvalidText`, `ContainsSecret`, `SendLimited`, `SqlError`                       |
+| `sendFeedback` | `{ sender, text }`           | `{ id }`                          | `InvalidText`, `ContainsSecret`, `SendLimited`, `SqlError`                       |
+| `link`         | `{ sender, id, to, why? }`   | `{ id, link }`                    | `SubmissionNotFound`, `InvalidLink`, `InvalidText`, `ContainsSecret`, `SqlError` |
+| `unlink`       | `{ person, id }`             | `{ id, link: null }`              | `SubmissionNotFound`, `SqlError`                                                 |
+| `list`         | `{ person, kind?, cursor? }` | `{ submissions, nextCursor }`     | `InvalidCursor`, `SqlError`                                                      |
+| `get`          | `{ person, id }`             | a `SentRequest` or `SentFeedback` | `SubmissionNotFound`, `SqlError`                                                 |
+| `withdraw`     | `{ person, id }`             | `{ id }`                          | `SubmissionNotFound`, `SqlError`                                                 |
 
 - `similar` and `link` are `RequestBrief`s from `@patchy/api`: `{ id, title, status, note? }`. At most `SIMILAR_MAX` (3) matches, from the company's own requests and general requests; feedback has none.
-- `list` pages hold `PAGE_SIZE` (50), newest first. A `SentRequest` is `{ kind: "request", id, createdAt, surface, agent, title, status, link }`, a `SentFeedback` `{ kind: "feedback", id, createdAt, surface, agent }`; `createdAt` is a `Date`. No item carries a feedback note or any why.
+- `list` pages hold `PAGE_SIZE` (50), newest first; `get` reads one of them by id. A `SentRequest` is `{ kind: "request", id, createdAt, surface, agent, title, status, link }`, a `SentFeedback` `{ kind: "feedback", id, createdAt, surface, agent }`; `createdAt` is a `Date`. No item carries a feedback note or any why.
 - Request ids are `req_…`, feedback ids `fbk_…`, both of the shape `SubmissionId` in `@patchy/api` names; general request ids are `gen_…`.
 - Bounds, from `@patchy/api` so the CLI checks them before sending: a title is `SUBMISSION_TITLE_MIN`–`SUBMISSION_TITLE_MAX` (3–200) characters on one line, whitespace collapsed; a why, a link's why and a feedback note at most `SUBMISSION_TEXT_MAX` (4,000). Blank whys are none. Control characters other than tab and line breaks are refused.
 - Every error's `message` is written for the agent or person reading it; each says whether anything was stored or changed.
@@ -66,5 +67,5 @@ const filed =
 
 ### Limits and events
 
-- Sending spends `feedback.sends.perMinute` (10 per person per host replica, every surface and both kinds together). Linking, unlinking, listing and withdrawing spend nothing, so a person at the limit can still withdraw.
+- Sending spends `feedback.sends.perMinute` (10 per person per host replica, every surface and both kinds together). Linking, unlinking, listing, reading and withdrawing spend nothing, so a person at the limit can still withdraw.
 - After each commit, the service reports `request.sent` (with `matches`), `request.linked` (with `targetId` and `target`) and `feedback.sent`, each with `submissionId`, `surface` and `agent`. It enriches the current wide event with `submissionId`, and with the limit's peak and `limitId` on a refusal. Text never reaches either stream.

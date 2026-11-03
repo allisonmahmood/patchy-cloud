@@ -6,7 +6,8 @@
  * Sending bounds each field, refuses credentials (`Secrets.scan`), spends the person's
  * `feedback.sends.perMinute` and stores the submission. A request's insert and its matching run
  * in one transaction; business events follow the commit, and carry ids, never text. Linking,
- * unlinking, listing and withdrawing touch only the person's own submissions and spend nothing.
+ * unlinking, listing, reading one and withdrawing touch only the person's own submissions and
+ * spend nothing.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -204,6 +205,11 @@ export class Feedback extends Context.Service<
       readonly kind?: SubmissionKind;
       readonly cursor?: string;
     }) => Effect.Effect<Page, InvalidCursor | SqlError>;
+    /** One of the person's own submissions, as their list shows it. */
+    readonly get: (input: {
+      readonly person: Person;
+      readonly id: string;
+    }) => Effect.Effect<SentRequest | SentFeedback, SubmissionNotFound | SqlError>;
     /**
      * Deletes one of the person's submissions, and clears the links other requests had to it,
      * their reasons included, in the same transaction. No other submission is deleted.
@@ -270,6 +276,27 @@ const ListRow = Schema.Struct({
   linkStatus: Schema.NullOr(RequestStatus),
   linkNote: Schema.NullOr(Schema.String)
 });
+
+/** A listed row as the person sees it: a request's title, status and link; never a note or a why. */
+const sentOf = (row: typeof ListRow.Type): SentRequest | SentFeedback => {
+  const sent = { id: row.id, createdAt: row.createdAt, surface: row.surface, agent: row.agent };
+  if (row.kind === "feedback") return { ...sent, kind: "feedback" };
+  return {
+    ...sent,
+    kind: "request",
+    title: row.text,
+    status: row.status,
+    link:
+      row.linkId === null || row.linkTitle === null || row.linkStatus === null
+        ? null
+        : brief({
+            id: row.linkId,
+            title: row.linkTitle,
+            status: row.linkStatus,
+            note: row.linkNote
+          })
+  };
+};
 
 /** A cursor names the last item of a page: its time in microseconds and its id. */
 const CURSOR = /^(\d{1,19})-([a-z]{3}_[a-z0-9]{24})$/;
@@ -403,15 +430,17 @@ export const make = Effect.gen(function* () {
       )
   });
 
+  /** The person's submissions newest first, after a cursor's item, or the one with `id`. */
   const page = SqlSchema.findAll({
     Request: Schema.Struct({
       userId: Schema.String,
       companyId: Schema.String,
       kind: Schema.NullOr(SubmissionKind),
-      after: Schema.NullOr(Schema.Struct({ micros: Schema.String, id: Schema.String }))
+      after: Schema.NullOr(Schema.Struct({ micros: Schema.String, id: Schema.String })),
+      id: Schema.NullOr(Schema.String)
     }),
     Result: ListRow,
-    execute: ({ userId, companyId, kind, after }) => sql`
+    execute: ({ userId, companyId, kind, after, id }) => sql`
       SELECT s.id, s.kind, s.text, s.surface, s.agent, s.created_at AS "createdAt",
         ((extract(epoch FROM s.created_at) * 1000000)::bigint)::text AS micros,
         COALESCE(lg.status, 'open') AS status,
@@ -426,6 +455,7 @@ export const make = Effect.gen(function* () {
       LEFT JOIN feedback.general_requests lrg ON lrg.id = lr.link_general_id
       WHERE s.user_id = ${userId} AND s.company_id = ${companyId}
         ${kind === null ? sql`` : sql`AND s.kind = ${kind}`}
+        ${id === null ? sql`` : sql`AND s.id = ${id}`}
         ${
           after === null
             ? sql``
@@ -571,37 +601,34 @@ export const make = Effect.gen(function* () {
       userId: person.userId,
       companyId: person.companyId,
       kind: kind ?? null,
-      after: match === null ? null : { micros: match[1]!, id: match[2]! }
+      after: match === null ? null : { micros: match[1]!, id: match[2]! },
+      id: null
     }).pipe(Effect.catchTags(dieOnSchemaError));
     const shown = rows.slice(0, PAGE_SIZE);
     const last = shown.at(-1);
     return {
-      submissions: shown.map((row): SentRequest | SentFeedback => {
-        const sent = {
-          id: row.id,
-          createdAt: row.createdAt,
-          surface: row.surface,
-          agent: row.agent
-        };
-        if (row.kind === "feedback") return { ...sent, kind: "feedback" };
-        return {
-          ...sent,
-          kind: "request",
-          title: row.text,
-          status: row.status,
-          link:
-            row.linkId === null || row.linkTitle === null || row.linkStatus === null
-              ? null
-              : brief({
-                  id: row.linkId,
-                  title: row.linkTitle,
-                  status: row.linkStatus,
-                  note: row.linkNote
-                })
-        };
-      }),
+      submissions: shown.map(sentOf),
       nextCursor: rows.length > PAGE_SIZE && last !== undefined ? `${last.micros}-${last.id}` : null
     };
+  });
+
+  const get = Effect.fn("Feedback.get")(function* ({
+    person,
+    id
+  }: {
+    readonly person: Person;
+    readonly id: string;
+  }) {
+    if (unstorable(id)) return yield* new SubmissionNotFound({ id });
+    const [row] = yield* page({
+      userId: person.userId,
+      companyId: person.companyId,
+      kind: null,
+      after: null,
+      id
+    }).pipe(Effect.catchTags(dieOnSchemaError));
+    if (row === undefined) return yield* new SubmissionNotFound({ id });
+    return sentOf(row);
   });
 
   const withdraw = Effect.fn("Feedback.withdraw")(function* ({
@@ -629,7 +656,7 @@ export const make = Effect.gen(function* () {
     return { id };
   });
 
-  return Feedback.of({ sendRequest, sendFeedback, link, unlink, list, withdraw });
+  return Feedback.of({ sendRequest, sendFeedback, link, unlink, list, get, withdraw });
 });
 
 export const layer = Layer.effect(Feedback, make);
