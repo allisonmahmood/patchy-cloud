@@ -144,29 +144,42 @@ const encodeRefusalDetails = Schema.encodeSync(
 export const refusalDetails = (error: RejectedError) => encodeRefusalDetails(error.refusal);
 
 /**
- * Why no usable answer came: none arrived (`transport`: DNS, connect, a timeout), the answer was
- * a status or state nothing describes (`response`), or its body could not be read (`decode`).
+ * Why no usable answer came: none arrived whole (`transport`: DNS, connect, a timeout, a body cut
+ * off), the answer was a status or state nothing describes (`response`), or its body could not be
+ * read (`decode`).
  * The output contract offers `patchy feedback` after the last two, never after `transport`.
  */
 export const UnreachableReason = Schema.Literals(["transport", "response", "decode"]);
 export type UnreachableReason = typeof UnreachableReason.Type;
 
-// Every reason Effect's client fails with; one it adds fails typecheck here.
-const clientReasons = {
-  TransportError: "transport",
-  // A request that could not be built was never sent, so nothing answered it.
-  EncodeError: "transport",
-  InvalidUrlError: "transport",
-  StatusCodeError: "response",
-  DecodeError: "decode",
-  EmptyBodyError: "decode"
-} as const satisfies Record<HttpClientError.HttpClientErrorReason["_tag"], UnreachableReason>;
-
-/** Why a request failed in the HTTP client, or its body failed the schema it was read with. */
+/**
+ * Why a request failed in the HTTP client, or its body failed the schema it was read with. Effect
+ * reports two things as a `DecodeError` that this tells apart: a body that stopped arriving, which
+ * is `transport`, and the generated client's answer to a status the API doesn't declare, such as
+ * a 500, which is `response`. Only a body that arrived and could not be read is `decode`.
+ */
 export const unreachableReason = (
   error: HttpClientError.HttpClientError | Schema.SchemaError
-): UnreachableReason =>
-  error._tag === "SchemaError" ? "decode" : clientReasons[error.reason._tag];
+): UnreachableReason => {
+  if (error._tag === "SchemaError") return "decode";
+  const reason = error.reason;
+  switch (reason._tag) {
+    // Nothing answered: the connection failed, or a request that could not be built was never sent.
+    case "TransportError":
+    case "EncodeError":
+    case "InvalidUrlError":
+      return "transport";
+    case "StatusCodeError":
+      return "response";
+    case "DecodeError":
+    case "EmptyBodyError": {
+      // Reading the body fails with the connection's error, parsing it with a SyntaxError.
+      if (reason.cause !== undefined && !(reason.cause instanceof SyntaxError)) return "transport";
+      const { status } = reason.response;
+      return status >= 200 && status < 300 ? "decode" : "response";
+    }
+  }
+};
 
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
 export class UnreachableError extends Schema.TaggedError<UnreachableError>()("UnreachableError", {
