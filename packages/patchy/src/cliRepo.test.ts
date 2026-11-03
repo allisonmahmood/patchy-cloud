@@ -1073,6 +1073,14 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       exit: 3,
       kind: "unreachable"
     },
+    // Generation runs in the installed CLI, whose failure document the command relays.
+    {
+      args: ["remove", "salesDb"],
+      route: "/api/sdk/generate",
+      status: 503,
+      exit: 3,
+      kind: "unreachable"
+    },
     {
       args: ["remove", "salesDb"],
       route: "/api/sdk/generate",
@@ -1080,7 +1088,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       exit: 3,
       kind: "unreachable"
     }
-  ])("reports $kind on $args's actual $route path", async ({ args, route, status, exit, kind }) => {
+  ])("reports $kind on $args's $route ($status)", async ({ args, route, status, exit, kind }) => {
     const instance = await stubInstance((request, respond, disconnect) => {
       if (request.url.split("?")[0] === route) {
         if (status === 0) return disconnect();
@@ -1097,7 +1105,10 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     );
     const result = await runCli([...args, "--api-url", instance.url, "--json"], { cwd: dir, env });
     expect(result).toMatchObject({ status: exit, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, kind });
+    const failure = JSON.parse(result.stderr);
+    expect(failure).toMatchObject({ ok: false, kind });
+    // Only an answer Patchy may have gotten wrong offers `patchy feedback`.
+    expect("feedbackHint" in failure).toBe(status >= 500);
     expect(instance.requests.some((request) => request.url.split("?")[0] === route)).toBe(true);
   });
 

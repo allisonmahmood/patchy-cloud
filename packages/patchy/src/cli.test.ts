@@ -138,21 +138,42 @@ describe("the exit-code ladder", async () => {
     expect(result.stderr).not.toContain("bad-token");
   });
 
-  it("exits 3 when there was no usable answer: a 5xx, or nothing listening", async () => {
-    const instance = await stubInstance((_, respond) => respond(503, "<html>down</html>"));
-    const down = await runCli(["whoami", "--api-url", instance.url], {
-      env: { PATCHY_API_TOKEN: "token" }
+  it("exits 3 when there was no usable answer: a 5xx, an unreadable body, or nothing listening", async () => {
+    const hint = `If Patchy got this wrong, tell Patchy's team: patchy feedback "<what you ran and what happened>"`;
+    const env = { PATCHY_API_TOKEN: "token" };
+    const [instance, garbled] = await Promise.all([
+      stubInstance((_, respond) => respond(503, "<html>down</html>")),
+      stubInstance((_, respond) => respond(200, { surprise: true }))
+    ]);
+    const [down, downJson, unreadable, ...nobody] = await Promise.all([
+      runCli(["whoami", "--api-url", instance.url], { env }),
+      runCli(["whoami", "--api-url", instance.url, "--json"], { env }),
+      runCli(["whoami", "--api-url", garbled.url, "--json"], { env }),
+      ...["http://127.0.0.1:1", "http://patchy.invalid"].map((url) =>
+        runCli(["whoami", "--api-url", url, "--json"], { env })
+      )
+    ]);
+    // An answer Patchy may have gotten wrong offers feedback, once; no answer at all doesn't.
+    const error = `${instance.url} answered 503. Try again later, or tell the operator.`;
+    expect(down).toMatchObject({ status: 3, stderr: `${error}\n${hint}\n` });
+    expect(downJson.status).toBe(3);
+    expect(JSON.parse(downJson.stderr)).toEqual({
+      ok: false,
+      error,
+      kind: "unreachable",
+      feedbackHint: hint
     });
-    expect(down.status).toBe(3);
-    expect(down.stderr).toBe(
-      `${instance.url} answered 503. Try again later, or tell the operator.\n`
-    );
-
-    const nobody = await runCli(["whoami", "--api-url", "http://127.0.0.1:1", "--json"], {
-      env: { PATCHY_API_TOKEN: "token" }
+    expect(unreadable.status).toBe(3);
+    expect(JSON.parse(unreadable.stderr)).toMatchObject({
+      kind: "unreachable",
+      feedbackHint: hint
     });
-    expect(nobody.status).toBe(3);
-    expect(JSON.parse(nobody.stderr)).toMatchObject({ ok: false, kind: "unreachable" });
+    for (const result of nobody) {
+      expect(result.status).toBe(3);
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({ ok: false, kind: "unreachable" });
+      expect(failure).not.toHaveProperty("feedbackHint");
+    }
   });
 });
 

@@ -224,7 +224,8 @@ describe("patchy dev agent", () => {
         ok: false,
         kind: "unreachable",
         error:
-          "The dev runtime gave no usable answer, so addNote may or may not have run. Read `pnpm patchy dev logs` before calling it again."
+          "The dev runtime gave no usable answer, so addNote may or may not have run. Read `pnpm patchy dev logs` before calling it again.",
+        feedbackHint: expect.stringContaining("patchy feedback")
       });
     }
   });

@@ -110,6 +110,7 @@ const failureSchema = Schema.Struct({
   error: Schema.String,
   kind: Schema.Literals(["local", "rejected", "unreachable"]),
   code: Schema.optionalKey(Schema.String),
+  feedbackHint: Schema.optionalKey(Schema.String),
   warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ...refusalFields
 });
@@ -438,8 +439,13 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
     case "rejected":
       return yield* Api.fromRefusal(error, error.error);
     case "unreachable":
-      // The installed CLI's document doesn't say why, so this can't tell.
-      return yield* new UnreachableError({ ...fields, instanceUrl, reason: "transport" });
+      // The installed CLI offers the hint only after an answer it could not use, without saying
+      // whether a status or a body; one without it got no answer, or predates the hint.
+      return yield* new UnreachableError({
+        ...fields,
+        instanceUrl,
+        reason: error.feedbackHint === undefined ? "transport" : "response"
+      });
     case "local":
       return yield* new LocalError(fields);
   }
