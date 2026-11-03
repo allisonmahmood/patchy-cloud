@@ -72,6 +72,23 @@ const cases: ReadonlyArray<readonly [kind: string, caught: string, passes: strin
     "url_password",
     shaped("postgresql://db/app?user=app&", "password=", "hunter2"),
     "postgresql://db/app?user=app&password=****&sslmode=require"
+  ],
+  // Escaped names and values read as libpq reads them; a placeholder must be the whole value.
+  [
+    "url_password",
+    shaped("postgresql://db/app?", "%70assword=", "hunter2"),
+    "postgresql://db/app?password=%3Ctoken%3E"
+  ],
+  [
+    "url_password",
+    shaped("postgresql://db/app?", "pass%77ord=", "hunter2"),
+    "postgresql://db/app?password=%2A%2A%2A%2A&sslmode=require"
+  ],
+  ["url_password", shaped("postgresql://db/app?", "password=#", "hunter2"), "see #password"],
+  [
+    "url_password",
+    shaped("postgresql://db/app?", "password=<token>", "hunter2"),
+    "postgresql://db/app?password=<token>"
   ]
 ];
 

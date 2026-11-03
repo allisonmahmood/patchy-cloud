@@ -72,13 +72,22 @@ const patterns: ReadonlyArray<Pattern> = [
   },
   {
     // In the authority, with or without a user name, or as a `password` query parameter, as
-    // libpq reads one. A placeholder in angle brackets, or a run of `*`, is not a password.
+    // libpq reads one: to the next `&`, `#` included. A placeholder in angle brackets, or a run
+    // of `*`, is not a password when it is the whole value.
     kind: "url_password",
     label: "a password in a URL",
     pattern:
-      /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s:/@]*:(?!<[^\s@]*>@|\*+@)[^\s/@]+@|[^\s?#]*\?(?:[^\s#]*&)?password=(?!<[^\s&#]*>|\*+(?![^\s&#]))[^\s&#]+)/i
+      /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s:/@]*:(?!<[^\s@]*>@|\*+@)[^\s/@]+@|[^\s?]*\?(?:[^\s]*&)?password=(?!(?:<[^\s&>]*>|\*+)(?:[&\s]|$))[^\s&]+)/i
   }
 ];
+
+/**
+ * The text with its percent-escapes decoded, as a URL's reader decodes them, so `%70assword=`
+ * is still a password parameter and `%3Ctoken%3E` is still a placeholder. Credentials never
+ * hold `%`, so decoding hides none of the other shapes.
+ */
+const decoded = (text: string) =>
+  text.replace(/%([0-9A-Fa-f]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 
 /** One credential the check found: which field held it and what kind it looked like. */
 export interface Found {
@@ -93,6 +102,6 @@ export const scan = (fields: Readonly<Record<string, string | null>>): ReadonlyA
     text === null
       ? []
       : patterns
-          .filter(({ pattern }) => pattern.test(text))
+          .filter(({ pattern }) => pattern.test(decoded(text)))
           .map(({ kind, label }) => ({ field, kind, label }))
   );
