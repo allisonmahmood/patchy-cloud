@@ -406,21 +406,34 @@ it.layer(layer)("requests and feedback", (it) => {
           linkWhy: null
         });
 
-        for (const to of [mine.id, foreign.id, note.id, "req_000000000000000000000000"]) {
+        for (const to of [
+          mine.id,
+          foreign.id,
+          note.id,
+          "req_000000000000000000000000",
+          "gen_\u0000"
+        ]) {
           const refused = yield* feedback
             .link({ sender: c.ada.cli, id: mine.id, to })
             .pipe(Effect.flip);
           assert.strictEqual(refused._tag, "InvalidLink", to);
         }
         // Only the person's own request links or unlinks; another's and a missing one answer alike.
-        for (const id of [colleagues.id, foreign.id, note.id, "req_000000000000000000000000"]) {
+        for (const id of [
+          colleagues.id,
+          foreign.id,
+          note.id,
+          "req_000000000000000000000000",
+          "req_\u0000"
+        ]) {
           const link = yield* feedback
             .link({ sender: c.ada.cli, id, to: options })
             .pipe(Effect.flip);
           const unlink = yield* feedback.unlink({ person: c.ada, id }).pipe(Effect.flip);
+          const withdraw = yield* feedback.withdraw({ person: c.ada, id }).pipe(Effect.flip);
           assert.deepStrictEqual(
-            [link._tag, unlink._tag],
-            ["SubmissionNotFound", "SubmissionNotFound"]
+            [link._tag, unlink._tag, withdraw._tag],
+            ["SubmissionNotFound", "SubmissionNotFound", "SubmissionNotFound"]
           );
           assert.strictEqual(link.message, `You sent no request or feedback with id ${id}.`);
         }
