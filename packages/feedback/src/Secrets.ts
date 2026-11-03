@@ -32,7 +32,12 @@ const patterns: ReadonlyArray<Pattern> = [
     label: "a GitHub token",
     pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/
   },
-  { kind: "slack_token", label: "a Slack token", pattern: /\bxox[abposr]-[A-Za-z0-9-]{10,}/ },
+  {
+    // Bot, user and refresh tokens, app-level tokens and rotating ones such as `xoxe.xapp-`.
+    kind: "slack_token",
+    label: "a Slack token",
+    pattern: /\b(?:xox[abposre]-|(?:xoxe\.)?xapp-\d+-|xoxe\.xox[bp]-)[A-Za-z0-9-]{10,}/
+  },
   {
     kind: "stripe_or_clerk_secret_key",
     label: "a Stripe or Clerk secret key",
@@ -66,10 +71,12 @@ const patterns: ReadonlyArray<Pattern> = [
     pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/
   },
   {
-    // A placeholder in angle brackets, or a run of `*`, is not a password.
+    // In the authority, with or without a user name, or as a `password` query parameter, as
+    // libpq reads one. A placeholder in angle brackets, or a run of `*`, is not a password.
     kind: "url_password",
     label: "a password in a URL",
-    pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:(?!<[^\s@]*>@|\*+@)[^\s/@]+@/i
+    pattern:
+      /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s:/@]*:(?!<[^\s@]*>@|\*+@)[^\s/@]+@|[^\s?#]*\?(?:[^\s#]*&)?password=(?!<[^\s&#]*>|\*+(?![^\s&#]))[^\s&#]+)/i
   }
 ];
 

@@ -25,6 +25,16 @@ const cases: ReadonlyArray<readonly [kind: string, caught: string, passes: strin
     shaped("xo", "xz-", "123456789012-abcdefghijkl")
   ],
   [
+    "slack_token",
+    shaped("xa", "pp-1-", "A0123456789-1234567890123-", "a1b2c3d4".repeat(4)),
+    "xapp-config-loader in the build"
+  ],
+  [
+    "slack_token",
+    shaped("xoxe", ".xapp-1-", "A0123456789-1234567890123-", "a1b2c3d4".repeat(4)),
+    "xoxe.xapp- tokens rotate"
+  ],
+  [
     "stripe_or_clerk_secret_key",
     shaped("sk", "_live_", "a1B2".repeat(6)),
     shaped("pk", "_live_", "a1B2".repeat(6))
@@ -56,6 +66,12 @@ const cases: ReadonlyArray<readonly [kind: string, caught: string, passes: strin
     "url_password",
     shaped("postgres://app:", "hunter2", "@db.example.com/app"),
     "postgres://app:<token>@db.example.com/app"
+  ],
+  ["url_password", shaped("postgres://", ":hunter2", "@db/app"), "postgres://:<token>@db/app"],
+  [
+    "url_password",
+    shaped("postgresql://db/app?user=app&", "password=", "hunter2"),
+    "postgresql://db/app?user=app&password=****&sslmode=require"
   ]
 ];
 
