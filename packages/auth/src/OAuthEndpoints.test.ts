@@ -499,6 +499,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         "Agent will be able to",
         "Find Patchy Dev’s patches you can open",
         "Use the agent tools their builders added, as you",
+        "Send requests and feedback to Patchy’s team",
         "Agent won’t be able to",
         "Do anything you can’t",
         "Every change it makes is logged as Patchy Dev via Agent.",
