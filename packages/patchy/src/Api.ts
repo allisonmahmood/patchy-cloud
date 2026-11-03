@@ -31,7 +31,7 @@ import {
   PublishUpdated,
   integrations
 } from "@patchy/api";
-import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
+import { LocalError, RejectedError, UnreachableError, unreachableReason } from "./CliError.js";
 import * as CodingAgent from "./CodingAgent.js";
 import * as Instance from "./Instance.js";
 import { RELEASE } from "./release.js";
@@ -235,6 +235,7 @@ export const classify = (
     if (error._tag === "SchemaError") {
       return yield* new UnreachableError({
         instanceUrl: apiUrl,
+        reason: "decode",
         message: `${apiUrl} answered with a body the CLI could not read.`,
         cause: error
       });
@@ -244,6 +245,7 @@ export const classify = (
       case "TransportError":
         return yield* new UnreachableError({
           instanceUrl: apiUrl,
+          reason: "transport",
           message:
             `${apiUrl} could not be reached.\n` +
             "Check the address and your network connection, then run the same command again.",
@@ -264,8 +266,10 @@ export const classify = (
             cause: error
           });
         }
+        // An undescribed status, or a body that could not be read or was missing.
         return yield* new UnreachableError({
           instanceUrl: apiUrl,
+          reason: unreachableReason(error),
           message: `${apiUrl} answered ${status}. Try again later, or tell the operator.`,
           cause: error
         });

@@ -8,6 +8,7 @@
  * (docs/adr/ADR-0004).
  */
 import * as Schema from "effect/Schema";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import {
   AdminRequired,
   Behind,
@@ -142,10 +143,36 @@ const encodeRefusalDetails = Schema.encodeSync(
 );
 export const refusalDetails = (error: RejectedError) => encodeRefusalDetails(error.refusal);
 
+/**
+ * Why no usable answer came: none arrived (`transport`: DNS, connect, a timeout), the answer was
+ * a status or state nothing describes (`response`), or its body could not be read (`decode`).
+ * The output contract offers `patchy feedback` after the last two, never after `transport`.
+ */
+export const UnreachableReason = Schema.Literals(["transport", "response", "decode"]);
+export type UnreachableReason = typeof UnreachableReason.Type;
+
+// Every reason Effect's client fails with; one it adds fails typecheck here.
+const clientReasons = {
+  TransportError: "transport",
+  // A request that could not be built was never sent, so nothing answered it.
+  EncodeError: "transport",
+  InvalidUrlError: "transport",
+  StatusCodeError: "response",
+  DecodeError: "decode",
+  EmptyBodyError: "decode"
+} as const satisfies Record<HttpClientError.HttpClientErrorReason["_tag"], UnreachableReason>;
+
+/** Why a request failed in the HTTP client, or its body failed the schema it was read with. */
+export const unreachableReason = (
+  error: HttpClientError.HttpClientError | Schema.SchemaError
+): UnreachableReason =>
+  error._tag === "SchemaError" ? "decode" : clientReasons[error.reason._tag];
+
 /** No usable answer from the instance: connect, timeout, 5xx, an unparseable body. */
 export class UnreachableError extends Schema.TaggedError<UnreachableError>()("UnreachableError", {
   ...fields,
-  instanceUrl: Schema.String
+  instanceUrl: Schema.String,
+  reason: UnreachableReason
 }) {
   readonly kind = "unreachable";
 }

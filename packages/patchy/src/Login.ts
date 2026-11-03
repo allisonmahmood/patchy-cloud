@@ -107,6 +107,7 @@ const poll = Effect.fn("Login.poll")(function* (
               orElse: () =>
                 new UnreachableError({
                   instanceUrl: apiUrl,
+                  reason: "transport",
                   message:
                     `The instance did not answer within the login wait budget. ` +
                     `The outcome is unknown; the local login record was kept. Retry: ${next}`

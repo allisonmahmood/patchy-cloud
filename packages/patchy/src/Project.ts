@@ -366,7 +366,8 @@ const installedFailure = Effect.fn("Project.installedFailure")(function* (
     case "rejected":
       return yield* Api.fromRefusal(error, error.error);
     case "unreachable":
-      return yield* new UnreachableError({ ...fields, instanceUrl });
+      // The installed CLI's document doesn't say why, so this can't tell.
+      return yield* new UnreachableError({ ...fields, instanceUrl, reason: "transport" });
     case "local":
       return yield* new LocalError(fields);
   }
@@ -937,9 +938,11 @@ export const add = Effect.fn("Project.add")(function* (
             : refusal(error, "Could not read the shared source.")
         )
       );
+    // The instance answered, but its company database was unavailable to list the source's resources.
     if (source.inventory === null)
       return yield* new UnreachableError({
         instanceUrl: instance.apiUrl,
+        reason: "response",
         code: "source_unavailable",
         message: "The shared source's inventory is unavailable. Try again later."
       });

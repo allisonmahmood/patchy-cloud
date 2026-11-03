@@ -1343,6 +1343,7 @@ const submissionFailure =
       const failure = unreadable
         ? new UnreachableError({
             instanceUrl: apiUrl,
+            reason: "decode",
             message: `${apiUrl} answered with a body the CLI could not read.`,
             cause: error
           })
@@ -1350,6 +1351,8 @@ const submissionFailure =
       if (!send || (failure._tag !== "UnreachableError" && !undecoded)) return yield* failure;
       return yield* new UnreachableError({
         instanceUrl: apiUrl,
+        // A refusal status the CLI couldn't decode is still the instance's answer.
+        reason: failure._tag === "UnreachableError" ? failure.reason : "response",
         message:
           `${apiUrl} ${unreadable ? "answered with a body the CLI could not read" : unanswered(error)}, ` +
           `so the ${kind} may have been stored anyway.\n` +
