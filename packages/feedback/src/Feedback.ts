@@ -264,6 +264,11 @@ const ListRow = Schema.Struct({
 
 /** A cursor names the last item of a page: its time in microseconds and its id. */
 const CURSOR = /^(\d{1,19})-([a-z]{3}_[a-z0-9]{24})$/;
+/**
+ * The latest time a cursor may name, the end of 9999 in microseconds since 1970. A larger one
+ * would overflow Postgres's `bigint` or its timestamps, and no submission was made then.
+ */
+const LATEST_CURSOR_MICROS = 253_402_300_799_999_999n;
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -549,7 +554,8 @@ export const make = Effect.gen(function* () {
     readonly cursor?: string;
   }) {
     const match = cursor === undefined ? null : CURSOR.exec(cursor);
-    if (match === null && cursor !== undefined) return yield* new InvalidCursor();
+    if (cursor !== undefined && (match === null || BigInt(match[1]!) > LATEST_CURSOR_MICROS))
+      return yield* new InvalidCursor();
     const rows = yield* page({
       userId: person.userId,
       companyId: person.companyId,
