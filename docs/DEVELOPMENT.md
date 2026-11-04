@@ -701,6 +701,29 @@ Stop patch sessions with `pnpm patchy dev stop` before stopping the cloud.
 
 ## What to exercise for a change
 
+### Local teams prototype (#1235)
+
+In a disposable worktree, run `pnpm dev up team` and open
+`/dev/teams-access` at the instance's URL as Ada. Company → People → Teams
+creates one named team; add Ada and Ben there. Publish chooses Company or
+that team explicitly. All patches and each patch's direct link use current
+membership; the owner's update form keeps the audience. Remove and restore
+Ben, then Ada, to see the next request lose and regain access. Cleo is outside
+the team. The ordinary Company page can make Cleo an admin to exercise the
+same denial with that role.
+
+This is a throwaway, memory-only server slice, mounted only with loopback dev
+personas. Restart clears its teams and versions; `pnpm dev down` removes the
+disposable instance. Its local form POST is the prototype's publish transport;
+it does not publish into the normal patch store or change `/api/publish`, the
+CLI or the ordinary portal. Use its own navigation within `/dev/teams-access`.
+It proves only its list, plain-text direct-open and local publish/update
+requests. MCP, tier 1/2 runtime, raw content, live subscriptions, shared
+resources, guest/public admission and production-wide enforcement remain
+unexercised. Never deploy it as an access boundary.
+
+### Product paths
+
 The tests prove the contracts; this is what to watch work for real before
 calling a change done. Done means you observed the behaviour you changed and
 can quote it.
