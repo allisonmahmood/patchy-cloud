@@ -382,8 +382,8 @@ Its manifest carries the text and success records the returned
 `descriptionUpdatedAt` as `descriptionSyncedAt`. `refresh`, a new `dev` start
 and fresh `publish` read the cloud description and stamp from patch detail.
 When the cloud stamp is later, they write its text and stamp to `patchy.json`
-and print "The description was changed in the portal to '…'; check it",
-quoting the replaced local text when different. Publish sends that pulled text.
+and, when the text differs, print "The description was changed in the portal
+to '…'; check it", quoting the replaced local text. Publish sends that pulled text.
 Local edits leave the stamp unchanged; unchanged cloud text never overwrites them.
 
 Those three commands compare executed table/store definitions with the last

@@ -607,6 +607,54 @@ it.live(
   { timeout: 60_000 }
 );
 
+it.live(
+  "a copied repo names the record it carried, and starts with its rows and files once that is deleted",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, instance, stateDir } = yield* fixture;
+      const first = yield* command(root, instance, []);
+      yield* call(first.url, "tables.insert", { table: "notes", row: { title: "Copied along" } });
+      const record = yield* fs.readFileString(path.join(stateDir, "daemon.json"));
+      yield* command(root, instance, ["stop"]);
+      // A copy taken while dev ran carries the original's record.
+      const copy = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-lifecycle-copy-" });
+      yield* Effect.promise(() =>
+        nodeFs.cp(root, copy, { recursive: true, verbatimSymlinks: true })
+      );
+      const copyState = (yield* directory(copy, instance)).stateDir;
+      yield* fs.writeFileString(path.join(copyState, "daemon.json"), record);
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          const running = await readRecord(copyState);
+          if (running && (await sameProcess(running))) process.kill(running.pid, "SIGKILL");
+        })
+      );
+      const file = path.join(".patchy/dev", path.basename(copyState), "daemon.json");
+      for (const args of [[], ["status"], ["reset"]]) {
+        const refused = yield* cli(copy, instance, [...args, "--json"]);
+        assert.strictEqual((yield* exited(refused)).code, 1);
+        assert.strictEqual(
+          JSON.parse(refused.stderr()).error,
+          `The dev record ${file} belongs to ${JSON.parse(record).root} on ${instance}, so it was left untouched. If this repo is a copy, delete ${file} and run \`patchy dev\`; local rows and files are kept.`
+        );
+      }
+      assert.strictEqual(yield* fs.readFileString(path.join(copyState, "daemon.json")), record);
+      yield* fs.remove(path.join(copy, file));
+      const started = yield* command(copy, instance, []);
+      assert.nestedPropertyVal(
+        yield* call(started.url, "tables.list", { table: "notes" }),
+        "value.rows[0].title",
+        "Copied along"
+      );
+      yield* command(copy, instance, ["stop"]);
+    }).pipe(
+      Effect.provide(NodeHttpClient.layerNodeHttp),
+      Effect.provide([NodeServices.layer, NodeCryptography.layer])
+    ),
+  { timeout: 60_000 }
+);
+
 // Project.test.ts owns the stamp comparison and devPreparation.test.ts the primitive reminders.
 it.live(
   "a new dev session pulls a newer cloud description and a joined session makes no request",

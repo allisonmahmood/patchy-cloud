@@ -682,10 +682,11 @@ The manifest carries that text; a successful publish records the returned
 `descriptionUpdatedAt` as `descriptionSyncedAt`.
 
 At `refresh`, a new `dev` start and `publish`, a newer cloud description stamp
-pulls the cloud text into `patchy.json` and records the stamp. The notice says
-"The description was changed in the portal to '…'; check it" and quotes the
-replaced local text when different. Publish sends the pulled text. A local edit
-does not change the stamp, so it is kept unless the cloud has changed too.
+pulls the cloud text into `patchy.json` and records the stamp. When the text
+differs, the notice says "The description was changed in the portal to '…';
+check it" and quotes the replaced local text; a moved stamp over the same text
+is recorded without one. Publish sends the pulled text. A local edit does not
+change the stamp, so it is kept unless the cloud has changed too.
 
 Those three commands also compare executed table and store definitions against
 `patchy/_generated/manifest.json`. A changed definition with byte-identical
