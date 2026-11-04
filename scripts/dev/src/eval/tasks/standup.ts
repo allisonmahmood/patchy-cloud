@@ -1,4 +1,5 @@
 import type { Locator, Page, Request } from "@playwright/test";
+import { READ_OPS } from "../barrier.js";
 import {
   type CheckContext,
   type CheckOutcome,
@@ -58,10 +59,13 @@ const EDITS = [/edit|✎|✏/i, /^\s*(change|fix|update|modify)\b/i];
 /** What opens an entry's own view from a list: Details, View, Open, More. */
 const DETAILS = /detail|\bview\b|\bopen\b|\bmore\b|expand/i;
 
-/** How long a field a press opens, or the call a press sends, may take to come. */
+/** How long a field a press opens may take to come. */
 const OPENS_MS = 5_000;
-/** How long a page with no button to press may take after the last keystroke to save, whatever else it sends. */
-const SAVE_GRACE_MS = 5_000;
+/**
+ * How long after the press, or leaving the field, a page may take to start
+ * the change that saves, whatever it reads or sends first.
+ */
+const SAVE_MS = 10_000;
 const POLL_MS = 500;
 
 /** A write a person has found the way to make, run in a deliberate window: why it couldn't be made, or null once sent. */
@@ -92,10 +96,11 @@ const firstUsable = async (candidates: ReadonlyArray<Locator>) => {
  * Writes in `fields` as a person types, then sends it: counts every call the
  * page sends Patchy from the first keystroke, so a page that saves as they
  * type has saved before any button. Presses the button of the form around
- * the fields, once anything else it holds is filled in; with no such button,
- * leaves the field and waits a while for the page to save, however much
- * else it sends meanwhile. Why it couldn't, or null once the page has sent
- * Patchy something.
+ * the fields, once anything else it holds is filled in, or with no such
+ * button leaves the field. Then waits, a while at most, for a change to
+ * start: a page can read first, or save a while after the last keystroke,
+ * and a read or anything else it sends meanwhile doesn't prove it saved.
+ * Why it couldn't, or null once the page has sent Patchy something.
  */
 const writeAndSend = async (
   view: Opened,
@@ -109,15 +114,14 @@ const writeAndSend = async (
     const form = await formAround(frame, names);
     const pressed =
       form === undefined ? "" : (await form.send.innerText().catch(() => "")).trim() || "send";
-    if (form === undefined) {
-      await page.keyboard.press("Tab");
-      await page.waitForTimeout(SAVE_GRACE_MS);
-    } else {
+    const before = calls.changes();
+    if (form === undefined) await page.keyboard.press("Tab");
+    else {
       await fillRest(form.scope);
       await form.send.click();
-      for (let waited = 0; calls.sent() === 0 && waited < OPENS_MS; waited += POLL_MS)
-        await page.waitForTimeout(POLL_MS);
     }
+    for (let waited = 0; calls.changes() === before && waited < SAVE_MS; waited += POLL_MS)
+      await page.waitForTimeout(POLL_MS);
     if (calls.sent() > 0) return null;
     return form === undefined
       ? "found no button to save with, and writing and leaving the field saved nothing"
@@ -127,14 +131,44 @@ const writeAndSend = async (
   }
 };
 
-/** Counts the calls `page` sends Patchy from now until `stop`. */
+/**
+ * Whether a runtime call changes data, as far as its body says: an operation
+ * that isn't a read, or a server call carrying a change key, as a
+ * mutation's does. A query and an action both read as no, so a page saving
+ * through an action only makes the grader wait longer.
+ */
+const changes = (body: string) => {
+  try {
+    const call: unknown = JSON.parse(body);
+    if (typeof call !== "object" || call === null || !("op" in call)) return false;
+    if (typeof call.op !== "string") return false;
+    if (call.op !== "server.call") return !READ_OPS.has(call.op);
+    return (
+      "args" in call &&
+      typeof call.args === "object" &&
+      call.args !== null &&
+      "mutationKey" in call.args
+    );
+  } catch {
+    return false;
+  }
+};
+
+/** Counts the calls `page` sends Patchy from now until `stop`, and the changes among them. */
 const callsFrom = (page: Page) => {
   let sent = 0;
+  let changed = 0;
   const count = (request: Request) => {
-    if (request.url().includes("/api/runtime/call")) sent++;
+    if (!request.url().includes("/api/runtime/call")) return;
+    sent++;
+    if (changes(request.postData() ?? "")) changed++;
   };
   page.on("request", count);
-  return { sent: () => sent, stop: () => void page.off("request", count) };
+  return {
+    sent: () => sent,
+    changes: () => changed,
+    stop: () => void page.off("request", count)
+  };
 };
 
 /**
@@ -430,18 +464,18 @@ const namesOnly = async (part: Locator, owner: RunPerson, people: ReadonlyArray<
 };
 
 /**
- * The field that edits the entry holding `text`, once the person opens the
- * entry on its own: by clicking the entry itself, then by the one Details,
- * View or Open control in its own container, the smallest part of the page
- * holding its words and naming nobody but `owner`. Only a field holding the
- * entry's own words counts, so opening the wrong entry never edits it. Only
- * looking.
+ * Opens `owner`'s entry holding `text` on its own, as a person does, until
+ * `found` finds what they're after there: by clicking the entry itself, then
+ * by the one Details, View or Open control in its own container, the
+ * smallest part of the page holding its words and naming nobody but
+ * `owner`. Only looking. What `found` found, or undefined.
  */
-const editByOpening = async (
+const openEntry = async <T>(
   view: Opened,
   text: string,
   owner: RunPerson,
-  people: ReadonlyArray<RunPerson>
+  people: ReadonlyArray<RunPerson>,
+  found: () => Promise<T | undefined>
 ) => {
   const { frame } = view;
   await frame
@@ -450,8 +484,8 @@ const editByOpening = async (
     .click({ timeout: 5_000 })
     .catch(() => undefined);
   await settle(view);
-  const opened = await editField(view, text);
-  if (opened !== undefined) return opened;
+  const clicked = await found();
+  if (clicked !== undefined) return clicked;
   const controls = (scope: Opened["frame"] | Locator) =>
     scope.getByRole("button", { name: DETAILS }).or(scope.getByRole("link", { name: DETAILS }));
   const part = around(frame, text, { has: controls(frame) });
@@ -460,7 +494,7 @@ const editByOpening = async (
   if ((await own.count()) !== 1) return undefined;
   await own.click({ timeout: 5_000 }).catch(() => undefined);
   await settle(view);
-  return editField(view, text);
+  return found();
 };
 
 /**
@@ -484,9 +518,10 @@ const fixingAs = async (
     await view.close();
     return "can't find the entry they posted";
   }
+  // Only a field holding the entry's own words counts, so opening the wrong entry never edits it.
   const field =
     (await editField(view, entry.today)) ??
-    (await editByOpening(view, entry.today, owner, ctx.people));
+    (await openEntry(view, entry.today, owner, ctx.people, () => editField(view, entry.today)));
   if (field !== undefined)
     return { view, write: () => writeAndSend(view, [[field, today]], SAVES) };
   await view.close();
@@ -569,15 +604,11 @@ export default {
             { words: entry.blockers, said: "what's blocking Ada" }
           ].flatMap(({ words, said }) => (text.includes(words) ? [] : [said]));
         };
-        // A list can show a summary that opens on a click; opening it only looks.
-        if ((await missing()).length > 0) {
-          await ben.frame
-            .getByText(entry.today)
-            .first()
-            .click({ timeout: 5_000 })
-            .catch(() => undefined);
-          await ben.page.waitForTimeout(1_500);
-        }
+        // A list can show a summary that opens on its own; opening it only looks.
+        if ((await missing()).length > 0)
+          await openEntry(ben, entry.today, ctx.person("ada"), ctx.people, async () =>
+            (await missing()).length === 0 ? true : undefined
+          );
         const unseen = await missing();
         if (unseen.length > 0)
           return {
