@@ -34,35 +34,39 @@ const unseen = async (view: Opened, items: ReadonlyArray<string>, ms = 10_000) =
 const showsSteps = async (view: Opened, recipe: Recipe, ms?: number) =>
   (await unseen(view, [lastStep(recipe)], ms)).length === 0;
 
+/** How long the frame's intersection observer may take to answer. */
+const OBSERVED_MS = 3_000;
+
 /**
  * Whether each rendered element showing `words` is on screen: in view, as an
  * intersection observer in the frame sees it, so inside the frame's own
  * viewport and any scrolling part that clips it. Empty when none is rendered.
+ * An observer that never answers counts as out of view, which can only fail
+ * a landing, never pass one.
  */
-const onScreen = (view: Opened, words: string) =>
-  view.frame
-    .getByText(words)
-    .filter({ visible: true })
-    .evaluateAll((elements) =>
-      Promise.all(
-        elements.map(
-          (element) =>
-            new Promise<boolean>((resolve) => {
-              const observer = new IntersectionObserver(([entry]) => {
-                observer.disconnect();
-                resolve(entry?.isIntersecting ?? false);
-              });
-              observer.observe(element);
-              // This runs in the patch's frame, not in Effect: a fallback should the observer never answer.
-              // @effect-diagnostics-next-line globalTimers:off
-              setTimeout(() => {
-                observer.disconnect();
-                resolve(false);
-              }, 2_000);
-            })
-        )
+const onScreen = async (view: Opened, words: string) => {
+  const shown = view.frame.getByText(words).filter({ visible: true });
+  const count = await shown.count();
+  if (count === 0) return [];
+  const observed = shown.evaluateAll((elements) =>
+    Promise.all(
+      elements.map(
+        (element) =>
+          new Promise<boolean>((resolve) => {
+            const observer = new IntersectionObserver(([entry]) => {
+              observer.disconnect();
+              resolve(entry?.isIntersecting ?? false);
+            });
+            observer.observe(element);
+          })
       )
-    );
+    )
+  );
+  return Promise.race([
+    observed,
+    view.page.waitForTimeout(OBSERVED_MS).then(() => Array.from({ length: count }, () => false))
+  ]);
+};
 
 /** What a recipe's own fields go by; a title is looked for by name before by "recipe". */
 const TITLES = [/title|name|dish|called/i, /recipe/i];
