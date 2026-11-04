@@ -458,9 +458,11 @@ to the app's host and keeps the Clerk domain and keys.
   which Clerk accepts once, and redirects to the Account Portal with it, which
   works in waitlist mode without passwords. Create the account with the
   Backend API (`POST /v1/users` with the email, a name and
-  `legal_accepted_at`, which legal consent requires), and give it a company
-  before sharing the link: a visit reports `demo_link.opened` only for an
-  account in one. A browser already signed in to Patchy as someone else stays
+  `skip_legal_checks: true`, since legal consent otherwise wants
+  `legal_accepted_at`): whoever uses the account accepts the terms, not the
+  operator who made it. A visit signs in rather than up, so Clerk never shows
+  its checkbox. A visit reports `demo_link.opened` only once the account is in
+  a company. A browser already signed in to Patchy as someone else stays
   that person, because Clerk keeps one session; try the link in a private
   window. To end it early, empty the setting and deploy, or deactivate the
   account.
