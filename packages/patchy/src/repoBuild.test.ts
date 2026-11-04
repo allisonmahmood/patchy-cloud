@@ -56,6 +56,16 @@ it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
     )
   );
 
+  it.effect("publishes Tailwind v4's preflight @supports conditions", () =>
+    validate(
+      page(
+        "<style>@layer properties{@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){*,:before,:after,::backdrop{--tw-border-style:solid}}}" +
+          "@layer base{@supports (not ((-webkit-appearance:-apple-pay-button))) or (contain-intrinsic-size:1px){::placeholder{color:currentColor}}" +
+          "@supports (not (-webkit-appearance: -apple-pay-button))  or (contain-intrinsic-size: 1px) {::placeholder{color:currentColor}}}</style>"
+      )
+    )
+  );
+
   it.effect("refuses document-local blob assets and external CSS resources", () =>
     Effect.gen(function* () {
       for (const [asset, dependency] of [
@@ -91,6 +101,10 @@ it.layer(NodeServices.layer)("validateRepoBundle", (it) => {
         [
           String.raw`<style>@\69mport "https://example.test/external.css";</style>`,
           "<style>: CSS @import"
+        ],
+        [
+          '<style>@supports ((-webkit-hyphens:none) and (not (margin-trim:inline))) { body { background-image: url("https://example.test/pixel.png"); } }</style>',
+          "<style>: external CSS url()"
         ]
       ] as const)
         assert.include((yield* refusal(page(asset))).message, `\n- ${dependency}`);
