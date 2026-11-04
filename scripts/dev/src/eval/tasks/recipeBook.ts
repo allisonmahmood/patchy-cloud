@@ -1,4 +1,4 @@
-import type { Locator, Request } from "@playwright/test";
+import type { ConsoleMessage, Locator, Request } from "@playwright/test";
 import type { CheckContext, CheckOutcome, Opened, Task } from "../task.js";
 import { chooseField, fillRest, formAround, reveal, settle, shows, visibleText } from "./page.js";
 
@@ -59,11 +59,17 @@ const add = async (view: Opened, recipe: Recipe) => {
   // What the page sends Patchy from the press on, to tell a recipe that never left from one that hid.
   let pressed = "";
   let sent = 0;
+  // A frame's sandbox has no `allow-forms`: the browser drops a native submission, saying so only in the console.
+  let blocked = false;
   const count = (request: Request) => {
     if (pressed !== "" && request.url().includes("/api/runtime/") && request.method() === "POST")
       sent++;
   };
+  const read = (message: ConsoleMessage) => {
+    if (/blocked form submission/i.test(message.text())) blocked = true;
+  };
   page.on("request", count);
+  page.on("console", read);
   // Adding is deliberate, from opening the form to saving it: it reaches Patchy.
   const refused = await view.barrier
     .deliberately(async () => {
@@ -101,9 +107,13 @@ const add = async (view: Opened, recipe: Recipe) => {
       await form.send.click();
       return null;
     })
-    .finally(() => page.off("request", count));
+    .finally(() => {
+      page.off("request", count);
+      page.off("console", read);
+    });
   if (refused !== null) return refused;
-  if (sent === 0) return `pressed ${pressed}, but the page sent Patchy nothing`;
+  if (sent === 0)
+    return `pressed ${pressed}, but the page sent Patchy nothing${blocked ? " (the browser blocked the form's native submission, which a patch's sandboxed frame doesn't allow)" : ""}`;
   return (await reveal(view, recipe.title))
     ? null
     : "saved a recipe, but it never showed up for them in the book";
