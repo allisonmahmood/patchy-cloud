@@ -306,7 +306,7 @@ document.body.textContent = JSON.stringify({
     expect(failure).toMatchObject({ ok: false, kind: "local", code: "toolchain_unsupported" });
     expect(failure.error).toContain(message);
     expect(failure.error).toContain("pnpm add --save-dev 'typescript@^99.0.0'");
-    expect(failure.error).toContain(".agents/skills/patchy-preact/SKILL.md");
+    expect(failure.error).toContain(".agents/skills/patchy-loop/SKILL.md");
     // Only identity and release were asked: no description sync, no build, no publish.
     expect(
       instance.requests
