@@ -107,6 +107,9 @@ export async function runTier2Flow({
   const source = await init("tier2-shared-source", 1);
   const repo = await init("tier2-acceptance", 2);
   await run("pnpm", ["typecheck"], repo.options);
+  // pnpm 12 fails any install that ignores a build script; the repo declines workerd's (#1170).
+  // --force relinks, so pnpm decides about workerd again rather than finding nothing to do.
+  await run("pnpm", ["install", "--frozen-lockfile", "--force"], repo.options);
 
   console.log("[packed-tier2-e2e] publish a shared table and store through the packed CLI");
   await write(
