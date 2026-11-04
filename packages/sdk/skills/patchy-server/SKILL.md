@@ -92,7 +92,9 @@ Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,
 `t.array(element)`, `t.enum(values)` and `t.nullable(value)`. `t.row("table")`
 validates the full row, including its columns and system fields, not just its id.
-Results are readonly.
+Results are readonly. A row id argument is `t.text()`; table methods take
+`Id<"table">`, a branded string type from `patchy/config`, so a handler passes
+`args.id as Id<"requests">` after `import type { Id } from "patchy/config"`.
 
 A handler's `description` says what it does, and any handler value takes
 `.describe(text)`, such as `t.text().describe("The customer's legal name.")`.
@@ -140,9 +142,10 @@ All three kinds expose `ctx.members` when `uses.members` is declared. Read
 the assignment check. Only queries track directory dependencies. Directory
 reads use the platform database, outside the query's company-database snapshot.
 
-`ctx.viewer` is never null. Owned resources act as the patch, company data as
-the viewer. Server code holds no credential and has no direct network path;
-reach outside systems through declared company integrations in actions.
+`ctx.viewer` is never null. It is the `Me` a page's `me()` returns:
+`{ user: { id, name, email }, company: { id, handle, name }, admin: boolean, guest?: true }`.
+Owned resources act as the patch, company data as the viewer. Server code holds
+no credential and has no direct network path; reach outside systems through declared company integrations in actions.
 Handler memory is not durable state, and handlers cannot schedule background work.
 
 ### Guests
