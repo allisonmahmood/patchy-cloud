@@ -20,6 +20,18 @@ export const steps = (hotkey: string): string[] =>
       )
     );
 
+// Whether each hotkey seen binds the reserved chord. Normalizing reads the platform from the
+// navigator, which costs enough to matter for a page that renders 50 hotkeys many times a second.
+const reserves = new Map<string, boolean>();
+const reserved = (hotkey: string): boolean => {
+  let found = reserves.get(hotkey);
+  if (found === undefined) {
+    found = steps(hotkey).some((step) => normalizeHotkey(step) === reservedChord);
+    reserves.set(hotkey, found);
+  }
+  return found;
+};
+
 const refused = new Set<string>();
 
 /**
@@ -29,7 +41,7 @@ const refused = new Set<string>();
  */
 export const permitted = <T extends { readonly hotkey: string }>(bindings: ReadonlyArray<T>): T[] =>
   bindings.filter(({ hotkey }) => {
-    if (!steps(hotkey).some((step) => normalizeHotkey(step) === reservedChord)) return true;
+    if (!reserved(hotkey)) return true;
     if (!refused.has(hotkey)) {
       refused.add(hotkey);
       // oxlint-disable-next-line no-console -- the warning is for the builder, in the page's console.
