@@ -60,6 +60,78 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 36,
+    date: "2026-11-04",
+    through: "1acc968501baa46c16fb699a34cbb3fc303751b3",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Shortcuts work where you use them",
+        detail:
+          "A shortcut can now belong to one part of a patch, such as the arrow keys in a list or Enter in a title field, and the one closest to where you are wins, so Escape in an editor cancels the edit instead of closing the dialog around it. Typing in a text box always types: Ctrl+A selects your text and Backspace deletes it, whatever shortcuts the patch has. Your agent picks this up the next time it refreshes the patch.",
+        prs: [1231]
+      },
+      {
+        kind: "Improved",
+        title: "The shortcuts sheet shows what works where you are",
+        detail:
+          "In a patch with a shortcuts sheet, press ? to see the shortcuts that work where you are, or Ctrl+/ (⌘/ on a Mac), which works inside dialogs and while you type. Click a shortcut to run it. The sheet can also open from a patch's own menu, opens in view on a narrow screen, and keeps your company's look whatever the page's own styles. Away from a Mac it spells keys out, such as Ctrl+Enter. Your agent picks this up the next time it refreshes the patch.",
+        prs: [1231, 1181, 1178, 1180, 1177]
+      },
+      {
+        kind: "Fixed",
+        title: "Keys pressed while a patch opens reach it",
+        detail:
+          "A key pressed after a patch appeared but before its last images or fonts arrived went nowhere. The patch now gets it.",
+        prs: [1183]
+      },
+      {
+        kind: "Fixed",
+        title: "Pages styled with Tailwind 4 publish",
+        detail:
+          "Publishing refused every page styled with version 4 of Tailwind CSS, a common way to style pages, saying it couldn't inspect the page. Those pages publish now, and a company look with the same kind of style rule saves too.",
+        prs: [1191]
+      },
+      {
+        kind: "Fixed",
+        title: "An old copy of a patch no longer replaces newer work",
+        detail:
+          "A copy of a patch last published before Patchy recorded versions used to publish over whatever was live, even newer work. It now stops first. Your agent can pull the newest version, or publish once more after you agree to replace what's live, and from then on it publishes as before.",
+        prs: [1179]
+      },
+      {
+        kind: "Improved",
+        title: "Your agent can check a publish before sending it",
+        detail:
+          "Ask your agent to check a patch before it publishes, and it sees what publishing would refuse and how much of Patchy's size limit the patch's files use, folder by folder, without building or sending anything. Publishing also warns when a patch gets close to the limit.",
+        prs: [1188]
+      },
+      {
+        kind: "Improved",
+        title: "Your agent hears what changed when it updates a patch",
+        detail:
+          "When your agent brings an older patch up to date with Patchy, it's told each change since then that could make the patch build or behave differently and what to check, including when the patch needs a newer version of TypeScript.",
+        prs: [1186, 1185]
+      },
+      {
+        kind: "Fixed",
+        title: "Your agent stops chasing false alarms",
+        detail:
+          "Adding a package to a patch with server code no longer reports a failure after it worked. Switching between commands no longer leaves a changed file to tidy up, and your agent hears that a patch's description changed only when someone really changed it. A copied patch also says how to start its local preview fresh.",
+        prs: [1176, 1174, 1175]
+      }
+    ],
+    behindTheScenes: [
+      "Agents get fuller instructions for keyboard shortcuts, so they reach for Patchy's shortcuts instead of writing their own.",
+      "Patches with many keyboard shortcuts do less work each time they redraw."
+    ],
+    patchChanges: [
+      "patchy/hotkeys: a text field now keeps every key that types, composes or edits text, whatever `whileTyping` says, so a `whileTyping: true` single key, Shift or Alt chord no longer fires in one, and neither does Mod with A, C, X, V, Z or Y, or Backspace, Delete, the arrows, Home and End with any modifier; other Mod chords and Escape still fire. A key the page already handled with `preventDefault()`, such as a form's own Enter, fires no hotkey and steps no sequence. `HotkeySheet` also opens with Mod+/, inside dialogs too, lists only the commands where focus was, and runs them: check that the page doesn't bind `Mod+/` itself and mounts one `HotkeySheet`, and that CSS restyling `.hotkey-row` still fits rows whose label and keycaps sit inside a button.",
+      "patchy/hotkeys: `HotkeySheet`'s dialog renders in `document.body`, not where the sheet is mounted, and the page's rules made only of element names, such as `kbd` or `button`, no longer reach it or its `?` button, so restyle it through the `hotkey-*` classes alone. Its own row lists after the page's hotkeys, under General unless its `group` prop names another. `formatHotkey` and `hotkeyKeys` take only valid hotkey literals, so a misspelt one such as `Mod+Entr` fails typecheck, and away from a Mac they show Delete, Backspace, Enter, Space and Tab as words.",
+      "Publish refuses a repo bound to a patch with no `version` in patchy.json, last published by a CLI from before versions were recorded, with unknown_base_version: pull a fresh copy with `patchy pull`, or publish once with `--allow-behind` after the person agrees to replace what's live."
+    ]
+  },
+  {
     id: 35,
     date: "2026-11-04",
     through: "dd0e2ecc3d9079c7e188b21ba2d65800514e1aed",
@@ -103,7 +175,7 @@ export const releases: ReadonlyArray<Release> = [
         kind: "New",
         title: "Patches can have keyboard shortcuts",
         detail:
-          "Ask your agent for shortcuts, such as Ctrl+K (⌘K on a Mac) to search or G then H to go home, and the patch responds to them as soon as it opens. Press ? to see every shortcut a patch has, in your company's look. Your agent picks this up the next time it refreshes the patch.",
+          "Ask your agent for shortcuts, such as Ctrl+K (⌘K on a Mac) to search or G then H to go home, and the patch responds to them as soon as it opens. A patch can also list its shortcuts, in your company's look, for you to open with ?. Your agent picks this up the next time it refreshes the patch.",
         prs: [1098, 1107]
       }
     ],
