@@ -125,6 +125,38 @@ const brokenForm = (status: number): Refusal => ({
   body: "Nothing was saved. Send it again."
 });
 
+/** Text as a title: one line, its whitespace runs collapsed, as the store keeps it. */
+const oneLine = (text: string) => text.replace(/\s+/gu, " ").trim();
+const characters = (text: string) => [...text].length;
+const fitsTitle = (text: string) => {
+  const length = characters(text);
+  return length >= Feedback.TITLE_MIN && length <= Feedback.TITLE_MAX;
+};
+
+/** `line` cut to a title: at the last word boundary that leaves room for "…", else mid-word. */
+const shortened = (line: string) => {
+  const all = [...line];
+  const room = all.slice(0, Feedback.TITLE_MAX - 1);
+  const boundary = all[room.length] === " " ? room.length : room.lastIndexOf(" ");
+  const kept = boundary >= Feedback.TITLE_MIN ? room.slice(0, boundary) : room;
+  return `${kept.join("").trimEnd()}…`;
+};
+
+/**
+ * A request from the panel's one field, as the store's title and why. Text that fits a title is
+ * the title alone. Longer text keeps all of itself as the why, which is what Patchy's team reads,
+ * and takes its first line as the title when that fits, else its opening words cut with "…".
+ * Too short is the store's to refuse; the CLI and Patchy MCP send their title and why as given.
+ */
+export const requestOf = (
+  text: string
+): { readonly title: string; readonly why: string | null } => {
+  const whole = oneLine(text);
+  if (characters(whole) <= Feedback.TITLE_MAX) return { title: whole, why: null };
+  const first = oneLine(text.trim().split(/\r?\n/u)[0] ?? "");
+  return { title: fitsTitle(first) ? first : shortened(whole), why: text.trim() };
+};
+
 /** A send's refusal, naming the kind of credential it held and never the text. */
 const sendRefusal = (error: Feedback.SendRefusal, kind: SubmissionKind, text: string): Refusal => {
   const noun = kind === "request" ? "request" : "feedback";
@@ -135,17 +167,22 @@ const sendRefusal = (error: Feedback.SendRefusal, kind: SubmissionKind, text: st
         title: `Your ${noun} has ${sentenceList([...new Set(error.secrets.map(({ label }) => label))])} in it`,
         body: "Nothing was saved. Take it out, or write <code>&lt;token&gt;</code> where it was, and send again."
       };
-    case "InvalidText":
+    case "InvalidText": {
+      // The field holds at most the store's longest text; a request's title is derived to fit.
+      const length = characters(text.trim());
       return {
         status: 422,
         title:
-          text.trim() === ""
+          length === 0
             ? `Write your ${noun} first`
-            : kind === "request"
-              ? `A request is ${error.minimum} to ${error.maximum} characters`
-              : `Feedback is at most ${error.maximum.toLocaleString("en-US")} characters`,
+            : length > Feedback.TEXT_MAX
+              ? `Your ${noun} is longer than ${Feedback.TEXT_MAX.toLocaleString("en-US")} characters`
+              : length < error.minimum
+                ? `A request is at least ${error.minimum} characters`
+                : `Your ${noun} has a control character in it`,
         body: "Nothing was saved."
       };
+    }
     case "SendLimited":
       return {
         status: 429,
@@ -427,15 +464,13 @@ const send = Effect.gen(function* () {
   const { kind, text } = yield* decodeSend(fields);
   const feedback = yield* Feedback.Feedback;
   const sender = { ...person, surface: "dashboard" } satisfies Feedback.Sender;
+  const request = requestOf(text);
   const sent =
     kind === "request"
-      ? Effect.map(feedback.sendRequest({ sender, text }), (filed) =>
-          renderSent({
-            kind,
-            id: filed.id,
-            title: text.replace(/\s+/gu, " ").trim(),
-            similar: filed.similar
-          })
+      ? Effect.map(
+          feedback.sendRequest({ sender, text: request.title, why: request.why }),
+          (filed) =>
+            renderSent({ kind, id: filed.id, title: request.title, similar: filed.similar })
         )
       : Effect.as(feedback.sendFeedback({ sender, text }), renderSent({ kind }));
   return yield* sent.pipe(

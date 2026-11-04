@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import * as Testing from "@patchy/company-database/testing";
-import { NodeCryptography } from "@patchy/core";
+import { htmlPage, NodeCryptography, WhatsNew } from "@patchy/core";
 import { Feedback } from "@patchy/feedback";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as FeedbackPages from "./FeedbackPages.js";
@@ -80,13 +80,83 @@ const submissions = (who: Person) =>
       id: string;
       kind: string;
       text: string;
+      why: string | null;
       surface: string;
       agent: string | null;
       linkGeneralId: string | null;
     }>`
-      SELECT id, kind, text, surface, agent, link_general_id AS "linkGeneralId"
+      SELECT id, kind, text, why, surface, agent, link_general_id AS "linkGeneralId"
       FROM feedback.submissions WHERE user_id = ${who.userId} ORDER BY created_at`
   );
+
+describe("a dashboard request's title and why", () => {
+  const { TITLE_MAX, TEXT_MAX } = Feedback;
+  /** Words "w0 w1 w2 …" running to at least `length` characters. */
+  const words = (length: number) => {
+    let text = "w0";
+    for (let index = 1; text.length < length; index++) text += ` w${index}`;
+    return text;
+  };
+
+  it("keeps text that fits a title as the title alone, on one line", () => {
+    assert.deepStrictEqual(FeedbackPages.requestOf("  Gmail\n  integration "), {
+      title: "Gmail integration",
+      why: null
+    });
+    const full = "x".repeat(TITLE_MAX);
+    assert.deepStrictEqual(FeedbackPages.requestOf(full), { title: full, why: null });
+    // Too short is the store's to refuse.
+    assert.deepStrictEqual(FeedbackPages.requestOf("Hi"), { title: "Hi", why: null });
+  });
+
+  it("takes a long text's first line as its title when it fits, and all of the text as its why", () => {
+    const paragraph = `Gmail integration for the sales inbox\n\n${words(400)}`;
+    assert.deepStrictEqual(FeedbackPages.requestOf(`${paragraph}\n`), {
+      title: "Gmail integration for the sales inbox",
+      why: paragraph
+    });
+    const longest = "y".repeat(TITLE_MAX);
+    assert.strictEqual(FeedbackPages.requestOf(`${longest}\n${words(50)}`).title, longest);
+    // A first line too short or too long gives way to the text's opening words.
+    assert.strictEqual(FeedbackPages.requestOf(`Hi\n${words(400)}`).title.slice(0, 6), "Hi w0 ");
+    assert.isTrue(
+      FeedbackPages.requestOf(`${"z".repeat(TITLE_MAX + 1)}\nmore`).title.endsWith("…")
+    );
+  });
+
+  it("cuts one long line at its last word boundary before the limit", () => {
+    const line = words(400);
+    const { title, why } = FeedbackPages.requestOf(line);
+    assert.strictEqual(why, line);
+    assert.isAtMost([...title].length, TITLE_MAX);
+    assert.isTrue(title.endsWith("…"));
+    const kept = title.slice(0, -1);
+    assert.isTrue(line.startsWith(`${kept} `), title);
+    assert.isAbove([...kept].length, TITLE_MAX - 8);
+    // A word ending exactly at the room left for "…" is kept whole.
+    const exact = `${"a".repeat(TITLE_MAX - 1)} bcd`;
+    assert.strictEqual(FeedbackPages.requestOf(exact).title, `${"a".repeat(TITLE_MAX - 1)}…`);
+    // With no word boundary, it cuts mid-word, counting characters rather than UTF-16 units.
+    const unbroken = FeedbackPages.requestOf("🙂".repeat(TITLE_MAX + 50)).title;
+    assert.strictEqual(unbroken, `${"🙂".repeat(TITLE_MAX - 1)}…`);
+  });
+
+  it("caps the panel's field at the longest text the store keeps", () => {
+    const shell = htmlPage({
+      title: "Home",
+      body: "",
+      app: {
+        viewer: {
+          user: { name: "Ada Park", email: "ada@acme.example" },
+          company: { name: "Acme Co" },
+          whatsNewSeen: WhatsNew.latestRelease
+        },
+        section: "home"
+      }
+    });
+    assert.include(shell, `name="text" maxlength="${TEXT_MAX}"`);
+  });
+});
 
 it.layer(layer)("Feedback pages", (it) => {
   it.effect(
@@ -138,6 +208,35 @@ it.layer(layer)("Feedback pages", (it) => {
         assert.strictEqual(unlinked.status, 303);
         assert.strictEqual(unlinked.headers.location, "/feedback");
         assert.isNull((yield* submissions(ada))[0]?.linkGeneralId);
+      })
+  );
+
+  it.effect(
+    "files a pasted paragraph as a title and a why, refusing only too short or past the field's cap",
+    () =>
+      Effect.gen(function* () {
+        const ada = yield* person();
+        const paragraph = `Gmail integration for the sales inbox\n\n${"Leads land in the shared inbox and someone copies each one into the CRM by hand. ".repeat(6)}`;
+        const sent = yield* request(ada, post("/feedback", { kind: "request", text: paragraph }));
+        assert.strictEqual(sent.status, 200);
+        assert.include(
+          yield* sent.text,
+          '<strong class="note-title">Request sent</strong>Gmail integration for the sales inbox</p>'
+        );
+        assert.deepInclude((yield* submissions(ada))[0], {
+          text: "Gmail integration for the sales inbox",
+          why: paragraph.trim()
+        });
+
+        for (const [text, refusal] of [
+          ["Hi", "A request is at least 3 characters"],
+          ["x".repeat(Feedback.TEXT_MAX + 1), "Your request is longer than 4,000 characters"]
+        ] as const) {
+          const refused = yield* request(ada, post("/feedback", { kind: "request", text }));
+          assert.strictEqual(refused.status, 422);
+          assert.include(yield* refused.text, refusal);
+        }
+        assert.lengthOf(yield* submissions(ada), 1);
       })
   );
 

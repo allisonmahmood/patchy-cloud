@@ -77,7 +77,7 @@ Patchy's changelog for the people using it, at `/whats-new` and behind What's ne
 _Avoid_: notifications (nothing is addressed to one person), release notes (the notes are what the deploying agent writes, not the page), updates
 
 **Tell Patchy**:
-The sidebar foot's panel, beside What's new and in its frame, for sending Patchy a [request or feedback](../feedback/GLOSSARY.md) from the dashboard: Request or Feedback, one text field, then the receipt and, for a request, its similar requests with **Same need** and Unlink. A page's own button opens it beside itself, as Integrations' Request an integration does with Request picked.
+The sidebar foot's panel, beside What's new and in its frame, for sending Patchy a [request or feedback](../feedback/GLOSSARY.md) from the dashboard: Request or Feedback, one text field, then the receipt and, for a request, its similar requests with **Same need** and Unlink. A long request's first line or opening words are its title and the whole text its why. A page's own button opens it beside itself, as Integrations' Request an integration does with Request picked.
 _Avoid_: feedback form, contact, support
 
 **What you sent**:

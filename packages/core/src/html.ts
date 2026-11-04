@@ -367,11 +367,12 @@ export const tellPatchyScriptPath = "/feedback/tell.js";
  * `popovertarget="tell-patchy"` opens it too, anchored beside that button, and its `data-kind`
  * picks the kind. The panel sits outside the menu, which a phone hides until Menu opens it.
  * `/feedback/tell.js` sends in place and shows the receipt and similar requests; without it the
- * form posts and lands on What you sent.
+ * form posts and lands on What you sent. The field's `maxlength` is the feedback store's
+ * `TEXT_MAX`, which core can't import; the portal's tests hold the two together.
  */
 const tellPatchyButton =
   '<button type="button" class="app-place tell-patchy-button" popovertarget="tell-patchy">Tell Patchy</button>';
-const tellPatchyPanel = `<div id="tell-patchy" class="whats-new-panel tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading"><h2 class="section-heading" id="tell-patchy-heading">Tell Patchy</h2><form class="tell-patchy-form" method="post" action="/feedback" novalidate><fieldset class="tell-patchy-kinds" aria-label="Request or feedback"><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="request" checked>Request</label><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="feedback">Feedback</label></fieldset><textarea class="field" id="tell-patchy-text" name="text" aria-label="What to tell Patchy"></textarea><button class="btn btn-primary" type="submit">Send</button></form><div class="tell-patchy-answer" hidden></div><p class="tell-patchy-foot"><a href="/feedback">What you sent</a></p></div><script defer src="${tellPatchyScriptPath}"></script>`;
+const tellPatchyPanel = `<div id="tell-patchy" class="whats-new-panel tell-patchy" popover role="dialog" aria-labelledby="tell-patchy-heading"><h2 class="section-heading" id="tell-patchy-heading">Tell Patchy</h2><form class="tell-patchy-form" method="post" action="/feedback" novalidate><fieldset class="tell-patchy-kinds" aria-label="Request or feedback"><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="request" checked>Request</label><label class="field-choice"><input class="field-radio" type="radio" name="kind" value="feedback">Feedback</label></fieldset><textarea class="field" id="tell-patchy-text" name="text" maxlength="4000" aria-label="What to tell Patchy"></textarea><button class="btn btn-primary" type="submit">Send</button></form><div class="tell-patchy-answer" hidden></div><p class="tell-patchy-foot"><a href="/feedback">What you sent</a></p></div><script defer src="${tellPatchyScriptPath}"></script>`;
 
 const chevron =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
