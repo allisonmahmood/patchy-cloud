@@ -49,7 +49,6 @@ export class FixtureMissing extends Schema.TaggedError<FixtureMissing>()("DevFix
   }
 }
 
-const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const io = <A>(operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
@@ -211,7 +210,7 @@ export const prepare = Effect.fn("DevPreparation.prepare")(function* (
         if (yield* fs.exists(serverPath))
           files.push({ path: serverFile, contents: yield* fs.readFileString(serverPath) });
         yield* io("Activate generated files", () =>
-          transaction.activate(files, encodeManifest(manifest), removedSkills, {
+          transaction.activate(files, Project.manifestFile(manifest), removedSkills, {
             before: source,
             after: source
           })
