@@ -94,8 +94,9 @@ useHotkey("Enter", saveTitle, { within: titleField });
   keeps Space and the arrow keys. A focused button keeps Enter and Space, a focused link keeps
   Enter, and a focused `role="listbox"` keeps its arrows and letters for typeahead.
 - `whileTyping: true` fires on a focused control's own keys, so a button's Enter or a
-  checkbox's Space runs the hotkey instead. In text fields it changes nothing, and
-  `whileTyping: false` makes Mod chords and Escape wait there too.
+  checkbox's Space runs the hotkey instead. In text fields it changes nothing.
+  `whileTyping: false` makes a hotkey wait in every text field, Mod chords and Escape included,
+  even one it is `within`.
 - A key something on the page already handled with `preventDefault()`, such as a date picker's
   Escape or a form's own Enter, fires no hotkey and steps no sequence. A widget handles its key
   before Patchy sees it: in a listener on its element, in its own `onKeyDown`, or in the capture
@@ -185,6 +186,10 @@ return <input ref={field} aria-label="Title" />;
   element doesn't take, because its hotkey is disabled or the key is the field's, goes on to the
   next place out. An element's key also beats a sequence further out that is under way: with
   `"H"` within a list, the page's `"G H"` doesn't take H from the list.
+- A key an element's sequence takes as a step, its first included, is no step for a sequence
+  further out. With `"H X"` within a panel, the page's `"G H"` doesn't complete on H there; with
+  `"G H"` within a chart, the page's `"G T"` can't start there. Chords further out still fire,
+  so the page's `"G"` fires on that G.
 - `within` follows the DOM, not the component tree: a popup portalled to `<body>` isn't inside
   its trigger.
 - A focused `role="listbox"` keeps letters for typeahead, so the page's single-letter hotkeys,
@@ -192,7 +197,7 @@ return <input ref={field} aria-label="Title" />;
   it is what screen readers announce as the list.
 - The ref can hold any element, SVG included, for a keyboard chart. Preact writes an SVG
   element's attributes as given, so make one focusable with a lowercase `tabindex`:
-  `<svg tabindex="0">`.
+  `<svg tabindex={0}>`.
 - Inside a `HotkeyScope`, an element's hotkeys belong to the dialog.
 - Until the element renders, the hotkey isn't registered. The ref is read after each render of
   the component that registers the hotkey, so an element that changes because only a child
@@ -307,6 +312,9 @@ viewer who finds it once learns Mod+/.
   that moves focus, such as by opening another dialog, keeps it there. A command that removes
   the focused element leaves focus with its dialog, or on the page. A polite live region
   announces the command's label.
+- Escape and Tab are the sheet's while it is open, at every step: Escape closes it and Tab
+  moves through its buttons. A command whose keys use either, such as `"G Escape"` or
+  `"Tab A"`, runs from its button alone there.
 - Other hotkeys wait while it is open. Escape, its close button or a tap outside it closes the
   sheet alone, never a dialog under it, and focus goes back to where it was.
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets

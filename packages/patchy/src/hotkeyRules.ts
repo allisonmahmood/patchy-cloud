@@ -133,20 +133,27 @@ const letterOf = (press: Press) =>
       ? press.code.slice(3).toLowerCase()
       : "";
 
+/** What `fieldKeeps` reads of a hotkey: whether it listens on the field itself, and its option. */
+export interface Asking {
+  readonly within: boolean;
+  readonly whileTyping?: boolean | undefined;
+}
+
 /**
- * Whether the focused field keeps a key, so no hotkey takes it, whatever the hotkey's options
- * say. `within` is whether the hotkey listens on that field itself. On a Mac, Mod is ⌘.
+ * Whether the focused field keeps a key from a hotkey, so the hotkey doesn't take it. On a Mac,
+ * Mod is ⌘.
  *
  * A text field keeps every key that types, Shift and Alt chords included, the keys of an input
  * method's composition and dead keys, and the keys that edit text: Backspace, Delete, the arrows,
  * Home, End, Page Up and Page Down with any modifiers; Mod with A, C, X, V, Z or Y; Mod+Shift with
  * Z or V; Mod with B, I or U in rich text. Only these leave it: other Mod chords, Escape, and, for
- * a hotkey within a one-line field, its plain Enter, ↑ and ↓.
+ * a hotkey within a one-line field, its plain Enter, ↑ and ↓. A hotkey with `whileTyping: false`
+ * takes none of them, even within the field. No other option changes this.
  *
  * A read-only field keeps its caret and selection keys, with or without Shift, and Mod with A and
  * C; the rest leave it.
  */
-export const fieldKeeps = (press: Press, field: Field, within: boolean, mac: boolean): boolean => {
+export const fieldKeeps = (press: Press, field: Field, hotkey: Asking, mac: boolean): boolean => {
   const mod = mac ? press.metaKey : press.ctrlKey;
   const letter = letterOf(press);
   if (field === "read-only")
@@ -162,7 +169,7 @@ export const fieldKeeps = (press: Press, field: Field, within: boolean, mac: boo
   const types =
     [...press.key].length === 1 &&
     (!(press.ctrlKey || press.metaKey) || press.getModifierState("AltGraph"));
-  if (composing || types) return true;
+  if (composing || types || hotkey.whileTyping === false) return true;
   if (mod)
     return (
       press.key === "Backspace" ||
@@ -177,7 +184,7 @@ export const fieldKeeps = (press: Press, field: Field, within: boolean, mac: boo
   if (press.key === "Escape") return false;
   const bare = !(press.ctrlKey || press.metaKey || press.altKey || press.shiftKey);
   return !(
-    within &&
+    hotkey.within &&
     field === "line" &&
     bare &&
     (press.key === "Enter" || press.key === "ArrowUp" || press.key === "ArrowDown")

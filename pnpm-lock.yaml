@@ -19,7 +19,7 @@ overrides:
   '@effect/tsgo': 0.62.0
 
 patchedDependencies:
-  '@tanstack/hotkeys@0.19.0': 0fd9266b7ae0bfff9f0ee1318c7ce54f7dedac4e5d0ecc47d307a0179a88aa82
+  '@tanstack/hotkeys@0.19.0': bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d
   async-exit-hook@2.0.1: 0e924a268bde91ae6eab699901a3c4fdd0365ca42542db16dc86d41cb0cf9712
 
 importers:
@@ -666,7 +666,7 @@ importers:
         version: link:../serving
       '@tanstack/hotkeys':
         specifier: 0.19.0
-        version: 0.19.0(patch_hash=0fd9266b7ae0bfff9f0ee1318c7ce54f7dedac4e5d0ecc47d307a0179a88aa82)
+        version: 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
       '@tanstack/preact-hotkeys':
         specifier: 0.17.1
         version: 0.17.1(preact@11.1.0)
@@ -3839,13 +3839,13 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@tanstack/hotkeys@0.19.0(patch_hash=0fd9266b7ae0bfff9f0ee1318c7ce54f7dedac4e5d0ecc47d307a0179a88aa82)':
+  '@tanstack/hotkeys@0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)':
     dependencies:
       '@tanstack/store': 0.11.2
 
   '@tanstack/preact-hotkeys@0.17.1(preact@11.1.0)':
     dependencies:
-      '@tanstack/hotkeys': 0.19.0(patch_hash=0fd9266b7ae0bfff9f0ee1318c7ce54f7dedac4e5d0ecc47d307a0179a88aa82)
+      '@tanstack/hotkeys': 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
       '@tanstack/preact-store': 0.13.5(preact@11.1.0)
       preact: 11.1.0
 

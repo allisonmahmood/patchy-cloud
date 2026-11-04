@@ -157,6 +157,8 @@ function App() {
   useHotkey("C T", log("C T"), { label: "Create task", group: "Tasks" });
   useHotkey("G T", log("G T"), { label: "Go to timeline", group: "Navigation" });
   useHotkey("L", log("L"), { label: "Next" });
+  // A step of the sheet's own Tab: listed, run from its button alone while the sheet is open.
+  useHotkey("Tab A", log("Tab A"), { label: "Tab then A" });
   useHotkey("J", log("J"));
   useHotkey("Escape", log("Escape"));
   return <main>
@@ -233,6 +235,8 @@ function Editor() {
   useHotkey("A", log("editor A"), { within: field, whileTyping: true });
   useHotkey("Shift+Enter", log("editor Shift+Enter"), { within: field });
   useHotkey("Home", log("editor Home"), { within: field });
+  // Waits while typing, though it is within the field it would type in.
+  useHotkey("Mod+K", log("editor Mod+K"), { within: field, whileTyping: false });
   return <input id="editor" ref={field} aria-label="Editor" />;
 }
 
@@ -248,21 +252,35 @@ function Chart() {
   const chart = useRef<SVGSVGElement>(null);
   useHotkey("G H", log("chart G H"), { within: chart });
   useHotkey("ArrowRight", log("chart ArrowRight"), { within: chart });
-  return <svg id="chart" ref={chart} tabindex="0" width="40" height="40" aria-label="Chart"><rect width="40" height="40" /></svg>;
+  return <svg id="chart" ref={chart} tabindex={0} width="40" height="40" aria-label="Chart"><rect width="40" height="40" /></svg>;
 }
 
-// Stands in for a third-party widget: a raw listener that handles Escape and T.
+// A panel whose own sequence starts with the last step of the page's G H.
+function Panel() {
+  const panel = useRef<HTMLDivElement>(null);
+  useHotkey("H X", log("panel H X"), { within: panel });
+  return <div id="panel" ref={panel} tabIndex={0}>panel</div>;
+}
+
+function WidgetPart() {
+  const part = useRef<HTMLSpanElement>(null);
+  useHotkey("L", log("widget part L"), { within: part });
+  return <span id="widget-part" ref={part} tabIndex={0}>part</span>;
+}
+
+// Stands in for a third-party widget: a raw listener that handles Escape, T and H, around a part
+// with a hotkey of its own.
 function Widget() {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = box.current!;
     const handle = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "t") event.preventDefault();
+      if (["Escape", "t", "h"].includes(event.key)) event.preventDefault();
     };
     element.addEventListener("keydown", handle);
     return () => element.removeEventListener("keydown", handle);
   }, []);
-  return <div id="widget" ref={box} tabIndex={0}>widget</div>;
+  return <div id="widget" ref={box} tabIndex={0}>widget <WidgetPart /></div>;
 }
 
 function DatePicker(props: { close: () => void }) {
@@ -285,6 +303,7 @@ function CreateTask(props: { close: () => void }) {
   useHotkey("A", () => { fired.push("dialog A"); setAssigned(true); }, { label: "Assign to me", group });
   useHotkey("D", () => setNotesShown(false), { label: "Discard notes", group });
   useHotkey("T", () => setPicking(true), { label: "Pick a date", group });
+  useHotkey("G Escape", () => { fired.push("dialog G Escape"); props.close(); }, { label: "Leave", group });
   return <div id="create" role="dialog" aria-label="Create task">
     {notesShown && <textarea id="notes" ref={notes} aria-label="Notes" />}
     <p id="priority">{priority}</p>
@@ -294,8 +313,26 @@ function CreateTask(props: { close: () => void }) {
   </div>;
 }
 
+// A native modal dialog: everything outside it is inert while it is open.
+function Rename(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    field.current?.focus();
+    return () => element.close();
+  }, []);
+  useHotkey("S", log("native S"), { label: "Star", group: "Rename" });
+  return <dialog id="native" ref={dialog} aria-label="Rename" onCancel={props.close}>
+    <input id="native-field" ref={field} aria-label="Name" />
+  </dialog>;
+}
+
 function App() {
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  useHotkey("R", () => setRenaming(true));
   useHotkey("Enter", log("page Enter"), { label: "Open", whileTyping: true });
   useHotkey("Escape", log("page Escape"));
   useHotkey("G H", log("page G H"), { label: "Go home" });
@@ -318,10 +355,12 @@ function App() {
     <div id="rich" contentEditable aria-label="Rich">hello world</div>
     <List />
     <Chart />
+    <Panel />
     <Widget />
     <p id="body" tabIndex={-1}>body</p>
     <HotkeySheet />
     {creating && <HotkeyScope><CreateTask close={() => setCreating(false)} /></HotkeyScope>}
+    {renaming && <HotkeyScope><Rename close={() => setRenaming(false)} /></HotkeyScope>}
   </main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -638,18 +677,19 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
         ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?", "Show shortcuts: Ctrl /"]
       ],
       ["Tasks", ["Create task: C T"]],
-      ["General", ["Next: L"]]
+      ["General", ["Next: L", "Tab then A: Tab A"]]
     ]);
   });
 
-  await test.step("while it is open unlisted hotkeys wait, and Tab goes round its buttons", async () => {
+  await test.step("while it is open unlisted hotkeys wait, and Tab goes round its buttons, past a command that starts with Tab", async () => {
     await page.keyboard.press("j");
     const commands = dialog.locator(".hotkey-command");
     await expect(commands).toHaveText([
       "Go homeGthenH",
       "Go to timelineGthenT",
       "Create taskCthenT",
-      "NextL"
+      "NextL",
+      "Tab then ATabthenA"
     ]);
     for (const command of await commands.all()) {
       await page.keyboard.press("Tab");
@@ -922,6 +962,37 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
   };
   const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
   const announced = view.locator(".hotkey-announce");
+  // The text of each status region Chromium exposes in the patch's frame, leaving out the ones a
+  // modal dialog makes inert.
+  const statuses = async () => {
+    type Node = {
+      nodeId: string;
+      ignored: boolean;
+      role?: { value: string };
+      name?: { value: string };
+      childIds?: string[];
+    };
+    type Tree = { frame: { id: string; url: string }; childFrames?: Tree[] };
+    const session = await context.newCDPSession(page);
+    const { frameTree } = (await session.send("Page.getFrameTree")) as { frameTree: Tree };
+    const content = (tree: Tree): Tree | undefined =>
+      tree.frame.url.includes("/~content/")
+        ? tree
+        : (tree.childFrames ?? []).map(content).find((found) => found !== undefined);
+    const { nodes } = (await session.send("Accessibility.getFullAXTree", {
+      frameId: content(frameTree)!.frame.id
+    })) as { nodes: Node[] };
+    await session.detach();
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const text = (node: Node): string =>
+      node.role?.value === "StaticText"
+        ? (node.name?.value ?? "")
+        : (node.childIds ?? [])
+            .map((id) => byId.get(id))
+            .map((child) => (child && !child.ignored ? text(child) : ""))
+            .join("");
+    return nodes.filter((node) => !node.ignored && node.role?.value === "status").map(text);
+  };
   // Trusted key events carrying the key and code each layout reports.
   const cdp = await context.newCDPSession(page);
   const press = async (key: string, code: string, keyCode: number, modifiers: number) => {
@@ -940,7 +1011,9 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.press("Home");
     await expect(view.locator("#editor")).toHaveValue("a");
-    await firedNext(frame, ["editor Enter", "editor Escape", "editor ArrowDown"]);
+    // whileTyping: false holds the editor's own Mod+K back, so the page's takes it.
+    await page.keyboard.press("Control+k");
+    await firedNext(frame, ["editor Enter", "editor Escape", "editor ArrowDown", "page Mod+K"]);
     await view.locator("#list").focus();
     await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowDown");
@@ -950,7 +1023,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, ["list Enter", "list ArrowDown", "page Escape", "page Enter"]);
   });
 
-  await test.step("an element's key beats the page's sequence in progress, an element's sequence beats the page's, and a key it doesn't take goes on", async () => {
+  await test.step("an element's key or sequence step beats the page's sequences, and a key it doesn't take goes on", async () => {
     // The page's G fires on every G, wherever G H is under way.
     await view.locator("#list").focus();
     await page.keyboard.press("g");
@@ -960,10 +1033,18 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("g");
     await page.keyboard.press("h");
     await firedNext(frame, ["page G", "chart G H"]);
+    // The panel's H X takes H, so the page's G H under way doesn't complete on it.
+    await view.locator("#panel").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await page.keyboard.press("x");
+    await firedNext(frame, ["page G", "panel H X"]);
+    await view.locator("#chart").focus();
+    // The chart's G H takes G, so the page's G T can't start there.
     await page.keyboard.press("g");
     await page.keyboard.press("t");
     await page.keyboard.press("ArrowRight");
-    await firedNext(frame, ["page G", "page G T", "chart ArrowRight"]);
+    await firedNext(frame, ["page G", "chart ArrowRight"]);
     await view.locator("#body").focus();
     await page.keyboard.press("g");
     await page.keyboard.press("h");
@@ -1040,6 +1121,14 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await view.locator("#body").focus();
     await page.keyboard.press("Escape");
     await firedNext(frame, ["page G", "page Escape"]);
+    // A part with a hotkey of its own inside the widget, which handles H after the part's
+    // listener has seen it: the page's G H still doesn't complete.
+    await view.locator("#widget-part").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await view.locator("#body").focus();
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["page G", "page Escape"]);
   });
 
   await test.step("Mod+/ opens the sheet from a field on German and French layouts; AZERTY's = isn't Mod+/", async () => {
@@ -1105,7 +1194,8 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
           "button Priority 5",
           "button Assign to me",
           "button Discard notes",
-          "button Pick a date"
+          "button Pick a date",
+          "button Leave"
         ]
       ],
       ["General", ["row Show shortcuts", "row Show shortcuts"]]
@@ -1156,9 +1246,11 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, ["dialog A"]);
   });
 
-  await test.step("Escape closes only the sheet, and a dialog's own button opens it", async () => {
+  await test.step("Escape closes only the sheet, even as a command's step, and a dialog's own button opens it", async () => {
     await page.keyboard.press("Control+/");
     await expect(sheet).toBeVisible();
+    // G Escape is Leave's, but in the sheet Escape is the sheet's at every step.
+    await page.keyboard.press("g");
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
     await expect(view.locator("#create")).toBeVisible();
@@ -1190,5 +1282,21 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Escape");
     await expect(view.locator("#create")).toHaveCount(0);
     await firedNext(frame, ["dialog Escape"]);
+  });
+  await test.step("over a native modal dialog, the command's announcement is in the accessibility tree", async () => {
+    await view.locator("#body").focus();
+    await page.keyboard.press("r");
+    const field = view.locator("#native-field");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("s");
+    await expect(sheet).toBeHidden();
+    await expect(field).toBeFocused();
+    await firedNext(frame, ["native S"]);
+    // A modal dialog makes the rest of the page inert, which only the browser's own tree shows.
+    await expect.poll(statuses).toEqual(["Star"]);
+    await page.keyboard.press("Escape");
+    await expect(view.locator("#native")).toHaveCount(0);
   });
 });

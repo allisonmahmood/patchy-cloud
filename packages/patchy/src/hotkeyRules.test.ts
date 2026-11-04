@@ -86,11 +86,11 @@ const press = (
   getModifierState: (name) => name === "AltGraph" && held.altGraph === true
 });
 const kept =
-  (field: Field, within: boolean, mac = false) =>
+  (field: Field, within: boolean, mac = false, whileTyping?: boolean) =>
   (event: Press) =>
-    fieldKeeps(event, field, within, mac);
+    fieldKeeps(event, field, { within, whileTyping }, mac);
 
-// There is no option to ask: a hotkey's `whileTyping` never reaches this rule, and `within` only
+// No option lets a hotkey take these: `whileTyping: true` changes nothing here, and `within` only
 // opens a one-line field's own Enter, Escape and arrows.
 it("keeps every key that types, composes or edits with a text field, within it or not", () => {
   const typing = [
@@ -135,9 +135,12 @@ it("keeps every key that types, composes or edits with a text field, within it o
   ];
   for (const field of ["line", "lines", "rich"] as const)
     for (const within of [false, true])
-      expect(
-        [...typing, ...composing, ...editing].filter((event) => !kept(field, within)(event))
-      ).toEqual([]);
+      for (const whileTyping of [undefined, true])
+        expect(
+          [...typing, ...composing, ...editing].filter(
+            (event) => !kept(field, within, false, whileTyping)(event)
+          )
+        ).toEqual([]);
 });
 
 it("keeps a field of lines' up, down, Page Up, Page Down and plain Enter, and rich text's B, I and U", () => {
@@ -185,6 +188,21 @@ it("lets Mod chords and Escape out of a text field, and a one-line field's Enter
   expect(waiting.filter(kept("line", true))).toEqual(waiting);
   // A field of lines keeps its plain Enter even from a hotkey within it.
   expect([press("Enter")].filter(kept("lines", true))).toHaveLength(1);
+});
+
+it("holds every key back from a whileTyping: false hotkey in a text field, even within the field", () => {
+  const leaving = [
+    press("k", { ctrlKey: true }),
+    press("Enter", { ctrlKey: true }),
+    press("Escape"),
+    press("Enter"),
+    press("ArrowDown")
+  ];
+  for (const field of ["line", "lines", "rich"] as const)
+    for (const within of [false, true])
+      expect(leaving.filter(kept(field, within, false, false))).toEqual(leaving);
+  // A read-only field isn't a text field, so the option leaves its keys as they were.
+  expect(kept("read-only", true, false, false)(press("Escape"))).toBe(false);
 });
 
 it("reads Mod as ⌘ on a Mac, where Ctrl+A is a chord the field doesn't own", () => {

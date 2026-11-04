@@ -170,13 +170,15 @@ hotkeys with the same keys in one scope both fire, and the console warns once
 naming both. `within: ref` ties a hotkey to one element, any element including
 SVG: it fires only while focus is on it or inside it, as `:focus-within` reads
 it. The narrowest place wins, the element's hotkey, then the dialog's, then the
-page's, even over a sequence further out that is under way; a key the narrower
-place doesn't take goes on to the next. While a `<HotkeyScope>` is mounted, only
+page's, even over a sequence further out that is under way, and a key a
+narrower sequence takes as a step is no step for one further out; a key the
+narrower place doesn't take goes on to the next. While a `<HotkeyScope>` is mounted, only
 the hotkeys registered by components it renders fire; the component that renders
 it is outside it. A held hotkey doesn't block its keys, so the browser still
 acts on them. A text field keeps the keys that type, compose or edit text,
 whatever a hotkey's options say; Mod chords that don't edit, Escape, and a
-one-line field's own Enter and arrows for a hotkey within it leave it. A key the
+one-line field's own Enter and arrows for a hotkey within it leave it, and none
+does for a hotkey with `whileTyping: false`. A key the
 page already handled with `preventDefault()` fires no hotkey and steps no
 sequence.
 `formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer:
@@ -191,9 +193,10 @@ where it is mounted, and a modal dialog that it, `?` and Mod+/ open, over
 dialogs and from text fields too. It lists the commands for the current context,
 the labelled hotkeys that work where focus was, the narrower of two with the
 same keys, under their `group` option, and its own openers last. Each command
-is a button, and its keys run it too: the sheet closes, focus and the text
-selection go back, then the command runs, and a polite live region announces
-it. `title` and `hotkey` change its heading and the key that opens it, and
+is a button, and its keys run it too, unless a step of them is the sheet's own
+Escape or Tab: the sheet closes, focus and the text selection go back, then the
+command runs, and a polite live region announces it, inside a modal dialog
+where focus is in one. `title` and `hotkey` change its heading and the key that opens it, and
 `group` the heading its own rows list under. `openHotkeySheet()` opens the
 mounted one from a control of the page's own, such as a menu item or a dialog's
 button. While it is open, its `HotkeyScope` holds every other hotkey back;

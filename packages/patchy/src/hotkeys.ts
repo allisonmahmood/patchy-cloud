@@ -171,8 +171,8 @@ export interface HotkeyOptions {
   readonly enabled?: boolean;
   /**
    * Fire on the keys a focused control uses, such as a button's Enter or a checkbox's Space. In
-   * text fields it changes nothing: by default Mod chords and Escape fire there and other keys
-   * wait, and false holds Mod chords and Escape back too.
+   * text fields true changes nothing: by default Mod chords and Escape fire there and other keys
+   * wait. False makes the hotkey wait in every text field, even one it is `within`.
    */
   readonly whileTyping?: boolean;
   /**
@@ -211,25 +211,39 @@ const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> =>
   return split.length === 1 ? split[0]! : split;
 };
 
-// Keys Patchy took. One something else already prevented stands every hotkey down; one Patchy
-// took doesn't, so `G` beside `G H` fires on every `G H`.
+// Keys a hotkey of Patchy's took. One something else already prevented stands every hotkey down;
+// one Patchy took doesn't, so `G` beside `G H` fires on every `G H`.
 const consumed = new WeakSet<Event>();
 
 /**
  * Whether a hotkey listening on `target` may take this key: not one something else already
- * handled, and not one the focused field keeps. A key it may take is marked as Patchy's. Chords
- * ask in their callback; TanStack asks for each sequence step, as `allowStep`.
+ * handled, and not one the focused field keeps from it. Chords ask in their callback; TanStack
+ * asks for each sequence step, as `allowStep`, also while it works out which sequence a key
+ * continues, so this only looks.
  */
-const takes = (event: KeyboardEvent, target: EventTarget | null): boolean => {
+const eligible = (
+  event: KeyboardEvent,
+  target: EventTarget | null,
+  whileTyping: boolean | undefined
+): boolean => {
   if (event.defaultPrevented && !consumed.has(event)) return false;
   const focused = focusedField(document);
-  if (
-    focused !== undefined &&
-    fieldKeeps(event, focused.field, target === focused.element, detectPlatform() === "mac")
-  )
-    return false;
+  return (
+    focused === undefined ||
+    !fieldKeeps(
+      event,
+      focused.field,
+      { within: target === focused.element, whileTyping },
+      detectPlatform() === "mac"
+    )
+  );
+};
+
+// A hotkey takes the key: the browser's own action for it stops, and it is marked as Patchy's. A
+// chord does this in its callback, and a sequence for each step it takes, as `onStep`.
+const consume = (event: KeyboardEvent) => {
   consumed.add(event);
-  return true;
+  event.preventDefault();
 };
 
 // From the metadata TanStack keeps for a labelled registration to the binding's `run` as last
@@ -249,11 +263,11 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
     hotkey: toTanStack(binding.hotkey),
     callback: (event) => {
       // Patchy consumes a chord itself, once it knows the key is the hotkey's to take; TanStack's
-      // own consume would come too late to leave a key to a field. TanStack consumes a sequence's
-      // steps, each after asking `takes`.
+      // own consume would come too late to leave a key to a field. A sequence's steps are
+      // consumed as TanStack takes each one, and its last stops propagation there.
       if (!sequence) {
-        if (!takes(event, event.currentTarget)) return;
-        event.preventDefault();
+        if (!eligible(event, event.currentTarget, binding.whileTyping)) return;
+        consume(event);
         event.stopPropagation();
       }
       // Each repeat of a held key is kept from the page either way. Whether this keydown is one
@@ -266,7 +280,14 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
     options: {
       enabled: binding.enabled ?? true,
       ignoreInputs: binding.whileTyping === undefined ? "auto" : !binding.whileTyping,
-      ...(sequence ? { allowStep: takes } : { preventDefault: false, stopPropagation: false }),
+      preventDefault: false,
+      ...(sequence
+        ? {
+            allowStep: (event: KeyboardEvent, target: EventTarget) =>
+              eligible(event, target, binding.whileTyping),
+            onStep: consume
+          }
+        : { stopPropagation: false }),
       // TanStack's own warning names options this API doesn't have; ours follows registration.
       conflictBehavior: "allow",
       ...(binding.within === undefined ? {} : { target: binding.within }),
@@ -553,6 +574,11 @@ const where = (): From => {
   };
 };
 
+// The modal `<dialog>` around an element, or the page's body outside one. A modal dialog makes the
+// rest of the page inert, so a live region outside it goes unheard.
+const modalAround = (element: Element | null): Element =>
+  element?.closest("dialog:modal") ?? document.body;
+
 const focusable = (element: Element | null): element is HTMLElement | SVGElement =>
   element instanceof HTMLElement || element instanceof SVGElement;
 
@@ -639,8 +665,10 @@ const commandsFor = (
     })
   );
 
-// The sheet's own keys, which no command's run takes while it is open.
-const sheetKeys = new Set(["Escape", "Tab", "Shift+Tab"]);
+// Whether a hotkey uses the sheet's own keys at any step: Escape closes the sheet, and Tab moves
+// through its buttons. While it is open, such a command runs from its button alone.
+const usesSheetKeys = (hotkey: string): boolean =>
+  steps(hotkey).some((step) => /(^|\+)(Escape|Tab)$/.test(step));
 
 // A modal dialog: the page behind it is inert and Escape asks it to close. Its state is the
 // sheet's: the dialog closes as it unmounts, which returns focus to where it was. Chrome fires
@@ -662,10 +690,10 @@ function Sheet(props: {
     props.from,
     useDefaultHotkeysOptions().hotkey?.scope
   );
-  // A command's keys run it here too, but for the sheet's own: Escape closes it, Tab moves on.
+  // A command's keys run it here too, unless a step of them is the sheet's own Escape or Tab.
   useBindings(
     commands
-      .filter((command) => !sheetKeys.has(command.hotkey))
+      .filter((command) => !usesSheetKeys(command.hotkey))
       .map((command) => ({
         hotkey: command.hotkey,
         run: (event: KeyboardEvent) => props.onRun(command, event)
@@ -788,13 +816,13 @@ export function openHotkeySheet(): void {
 /**
  * A `?` button where it is mounted, and a sheet that it, `?` and Mod+/ open over the whole page,
  * dialogs included. It lists the commands for the current context: the labelled hotkeys that work
- * where focus was, under their groups. Each is a button, and its keys run it too: the sheet
- * closes, focus and the selection go back, then the command runs, and a polite live region
- * announces its label. Other hotkeys wait while it is open. Escape, its close button and a click
- * outside close it alone. Mount one per page. It draws in the company look, its button one of the
- * look's, or in the page's font and text colour without one. The page's unlayered rules aimed at
- * its `hotkey-*` classes restyle it; element rules in its stylesheets, layered or not, don't
- * reach it.
+ * where focus was, under their groups. Each is a button, and its keys run it too, unless a step of
+ * them is the sheet's own Escape or Tab: the sheet closes, focus and the selection go back, then
+ * the command runs, and a polite live region announces its label. Other hotkeys wait while it is
+ * open. Escape, its close button and a click outside close it alone. Mount one per page. It draws
+ * in the company look, its button one of the look's, or in the page's font and text colour without
+ * one. The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules in its
+ * stylesheets, layered or not, don't reach it.
  *
  * ```tsx
  * <HotkeySheet />
@@ -812,6 +840,9 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
     readonly event?: KeyboardEvent;
   }>(undefined);
   const [said, setSaid] = useState<{ readonly label: string; readonly count: number }>();
+  // Where the live region lives: the modal dialog around where the viewer was, or the body. It
+  // moves there as the sheet opens, so it is in place before a command runs.
+  const [home, setHome] = useState<Element>(() => document.body);
   const own = (props.hotkey === undefined ? ["?", "Mod+/"] : [props.hotkey]).map((hotkey) => ({
     hotkey,
     label: "Show shortcuts",
@@ -832,6 +863,7 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
   const show = useCallback(() => {
     const opened = where();
     setFrom((open) => open ?? opened);
+    setHome(modalAround(opened.focus));
   }, []);
   useLayoutEffect(() => {
     openMounted = show;
@@ -849,8 +881,14 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
     if (command === undefined) return;
     command.run(last.event ?? pressed(command.hotkey));
     setSaid((before) => ({ label: command.label, count: (before?.count ?? 0) + 1 }));
-    // A command that removed the element leaves focus with its dialog, once the page rendered.
-    setTimeout(() => rescue(last.from), 0);
+    // Once the page has rendered: a command that removed the element leaves focus with its
+    // dialog, and one that closed the dialog the live region was in moves it out to say it there.
+    setTimeout(() => {
+      rescue(last.from);
+      if (home.isConnected) return;
+      setHome(modalAround(document.activeElement));
+      setSaid((before) => before && { ...before, count: before.count + 1 });
+    }, 0);
   }, [from]);
   // In the openers' scope, which every `HotkeyScope` lets through. Mod+/ opens it from a text field,
   // where `?` is typed. Pressed again while it is open, either closes it.
@@ -875,15 +913,15 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       },
       "?"
     ),
-    // In the page's body, not beside the button: a dialog under a container the page hides at
-    // this width would open modal with nothing drawn, and a live region there would say nothing.
+    // Not beside the button: a live region in a container the page hides at this width would say
+    // nothing, and the sheet's dialog there would open modal with nothing drawn.
     createPortal(
       createElement(
         "div",
-        { class: "hotkey-announce", "aria-live": "polite" },
+        { class: "hotkey-announce", role: "status", "aria-live": "polite" },
         said && createElement("span", { key: said.count }, said.label)
       ),
-      document.body
+      home
     ),
     from !== undefined &&
       createPortal(
