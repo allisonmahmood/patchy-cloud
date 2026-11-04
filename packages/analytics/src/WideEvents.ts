@@ -120,7 +120,7 @@ const mcpFields = {
   protocolEra: Schema.optionalKey(Schema.Literals(["modern", "legacy"])),
   protocolVersion: Schema.optionalKey(Schema.String),
   mcpMethod: Schema.optionalKey(Schema.String),
-  /** One of the door's four tools; an unknown name is recorded as its code alone. */
+  /** One of the door's five tools; an unknown name is recorded as its code alone. */
   mcpTool: Schema.optionalKey(Schema.String),
   /** The request's `Origin`, cut to 256 characters. */
   origin: Schema.optionalKey(Schema.String),
