@@ -317,4 +317,22 @@ document.body.textContent = JSON.stringify({
     ).toEqual(["/api/me", "/api/release"]);
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(config);
   });
+
+  // TypeScript comes before the description in both, so the first refusal is the same.
+  it("refuses a dry run as publish does when TypeScript and the description are both wrong", async () => {
+    const required = { ...toolchain, typescript: { testedAgainst: "99.0.0", accepted: "^99.0.0" } };
+    const instance = await stubInstance(projectHandler, () => CURRENT_RELEASE, undefined, required);
+    const dir = publishTree(instance.url);
+    expect((await runCli(["refresh", "--json"], { cwd: dir, env })).status).toBe(0);
+    const repoFile = path.join(dir, "patchy.json");
+    const repo = JSON.parse(readFileSync(repoFile, "utf8"));
+    delete repo.description;
+    writeFileSync(repoFile, JSON.stringify(repo));
+    const dry = await runCli(["publish", "--dry-run", "--json"], { cwd: dir, env });
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    const real = await runCli(["publish", "--json"], { cwd: dir, env });
+    expect(real).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(dry.stderr)).toEqual(JSON.parse(real.stderr));
+    expect(JSON.parse(dry.stderr)).toMatchObject({ kind: "local", code: "toolchain_unsupported" });
+  });
 });

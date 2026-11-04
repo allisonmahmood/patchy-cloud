@@ -189,6 +189,11 @@ export class State extends Context.Service<
       apiUrl: string,
       repo?: string
     ) => Effect.Effect<Option.Option<PendingPublish>, LocalError>;
+    /** Whether a publish is pending, looked at without the read that clears what can't be sent. */
+    readonly hasPendingPublish: (
+      apiUrl: string,
+      repo?: string
+    ) => Effect.Effect<boolean, LocalError>;
     readonly forgetPendingPublish: (
       apiUrl: string,
       publishKey: string,
@@ -378,13 +383,9 @@ export const make = Effect.gen(function* () {
         new LocalError({ message: "Could not clear the empty publish slot.", cause })
     });
 
-  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (
-    apiUrl: string,
-    repo?: string
-  ) {
-    const directory = yield* publishPath(apiUrl, repo);
-    const invalid = `Pending publish is invalid: ${directory}. Keep the directory until the publish outcome is resolved.`;
-    const files = yield* fs.readDirectory(directory).pipe(
+  /** The files in a publish slot; none when it doesn't exist. */
+  const slotFiles = (directory: string) =>
+    fs.readDirectory(directory).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause)
@@ -394,6 +395,14 @@ export const make = Effect.gen(function* () {
           new LocalError({ message: `Could not read ${directory}. Check permissions.`, cause })
       )
     );
+
+  const readPendingPublish = Effect.fn("State.readPendingPublish")(function* (
+    apiUrl: string,
+    repo?: string
+  ) {
+    const directory = yield* publishPath(apiUrl, repo);
+    const invalid = `Pending publish is invalid: ${directory}. Keep the directory until the publish outcome is resolved.`;
+    const files = yield* slotFiles(directory);
     if (files.length === 0) return Option.none<PendingPublish>();
     if (files.length !== 1) return yield* new LocalError({ message: invalid });
     const file = path.join(directory, files[0]!);
@@ -534,6 +543,8 @@ export const make = Effect.gen(function* () {
     forgetPendingLogin: (apiUrl) => forgetHost(deviceLoginPath, readLoginFile, apiUrl),
     lockPublish,
     readPendingPublish,
+    hasPendingPublish: (apiUrl, repo) =>
+      Effect.map(Effect.flatMap(publishPath(apiUrl, repo), slotFiles), (files) => files.length > 0),
     forgetPendingPublish: (apiUrl, publishKey, repo) =>
       Effect.gen(function* () {
         const directory = yield* publishPath(apiUrl, repo);
