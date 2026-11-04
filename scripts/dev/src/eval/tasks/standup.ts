@@ -60,6 +60,8 @@ const DETAILS = /detail|\bview\b|\bopen\b|\bmore\b|expand/i;
 
 /** How long a field a press opens, or the call a press sends, may take to come. */
 const OPENS_MS = 5_000;
+/** How long a page with no button to press may take after the last keystroke to save, whatever else it sends. */
+const SAVE_GRACE_MS = 5_000;
 const POLL_MS = 500;
 
 /** A write a person has found the way to make, run in a deliberate window: why it couldn't be made, or null once sent. */
@@ -90,8 +92,9 @@ const firstUsable = async (candidates: ReadonlyArray<Locator>) => {
  * Writes in `fields` as a person types, then sends it: counts every call the
  * page sends Patchy from the first keystroke, so a page that saves as they
  * type has saved before any button. Presses the button of the form around
- * the fields, once anything else it holds is filled in, or with no such
- * button leaves the field. Why it couldn't, or null once the page has sent
+ * the fields, once anything else it holds is filled in; with no such button,
+ * leaves the field and waits a while for the page to save, however much
+ * else it sends meanwhile. Why it couldn't, or null once the page has sent
  * Patchy something.
  */
 const writeAndSend = async (
@@ -106,13 +109,15 @@ const writeAndSend = async (
     const form = await formAround(frame, names);
     const pressed =
       form === undefined ? "" : (await form.send.innerText().catch(() => "")).trim() || "send";
-    if (form === undefined) await page.keyboard.press("Tab");
-    else {
+    if (form === undefined) {
+      await page.keyboard.press("Tab");
+      await page.waitForTimeout(SAVE_GRACE_MS);
+    } else {
       await fillRest(form.scope);
       await form.send.click();
+      for (let waited = 0; calls.sent() === 0 && waited < OPENS_MS; waited += POLL_MS)
+        await page.waitForTimeout(POLL_MS);
     }
-    for (let waited = 0; calls.sent() === 0 && waited < OPENS_MS; waited += POLL_MS)
-      await page.waitForTimeout(POLL_MS);
     if (calls.sent() > 0) return null;
     return form === undefined
       ? "found no button to save with, and writing and leaving the field saved nothing"
@@ -211,49 +216,6 @@ const editField = async (view: Opened, text: string) => {
   return undefined;
 };
 
-/**
- * Opens the entry holding `text` on its own, as a person looking for its
- * Edit does: the one Details, View or Open control in the entry's own part,
- * or else the entry itself. Only looking.
- */
-const openEntry = async (view: Opened, text: string) => {
-  const { frame } = view;
-  const controls = (scope: Opened["frame"] | Locator) =>
-    scope.getByRole("button", { name: DETAILS }).or(scope.getByRole("link", { name: DETAILS }));
-  const part = around(frame, text, { has: controls(frame) });
-  const own = controls(part);
-  const opener =
-    (await part.count()) > 0 &&
-    (await part.getByRole("textbox").count()) === 0 &&
-    (await own.count()) === 1
-      ? own
-      : frame.getByText(text).first();
-  await opener.click({ timeout: 5_000 }).catch(() => undefined);
-  await settle(view);
-};
-
-/**
- * How a person fixes their entry to say `today` instead: in the field
- * holding its words, wherever the page shows it, once the entry's own Edit
- * opens it, or once opening the entry shows its Edit; with nothing to edit,
- * by posting the entry again, as a page that keeps one a person a day takes
- * it. The write, or why they can't.
- */
-const fixing = async (view: Opened, entry: Entry, today: string): Promise<Write | string> => {
-  let field = await editField(view, entry.today);
-  if (field === undefined) {
-    await openEntry(view, entry.today);
-    field = await editField(view, entry.today);
-  }
-  if (field === undefined) {
-    // Whatever opening the entry showed, a dialog included, closes before posting again.
-    await view.page.keyboard.press("Escape");
-    return posting(view, { ...entry, today });
-  }
-  const chosen = field;
-  return () => writeAndSend(view, [[chosen, today]], SAVES);
-};
-
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -267,12 +229,14 @@ export const namePattern = (person: Pick<RunPerson, "name" | "email">) =>
 
 /**
  * Whose each showing of `text` is, as a reader tells: for every innermost
- * visible element holding it, the keys of the run's people its table cell's
- * headers name (its `headers`, else the header cells across its row and
- * above it in its column), or else those named in its nearest ancestor that
- * names anyone, by its text or its `aria-labelledby` or `aria-label`: the
- * column, card, row or section it sits in. A showing nobody is named around
- * has none.
+ * visible element holding it, the keys of the run's people named in its
+ * nearest ancestor that names anyone, by its text or its `aria-labelledby`
+ * or `aria-label`: the card, row or section it sits in. In a table, its
+ * cell's headers count too: the cell's `headers`, else the header cells
+ * across its rows and above it in its columns, laid out with their row and
+ * column spans. Headers and any name inside the cell must agree on one
+ * person; anything else names them all, so it's nobody's alone. A showing
+ * nobody is named around has none.
  */
 const whose = (view: Opened, text: string, people: ReadonlyArray<RunPerson>) =>
   view.frame.locator("body").evaluate(
@@ -288,36 +252,53 @@ const whose = (view: Opened, text: string, people: ReadonlyArray<RunPerson>) =>
           .join(" ");
       const labelOf = (element: Element) =>
         `${byIds(element.getAttribute("aria-labelledby"))} ${element.getAttribute("aria-label") ?? ""}`;
-      const headersOf = (cell: HTMLTableCellElement) => {
-        const explicit = byIds(cell.getAttribute("headers"));
-        if (explicit.trim() !== "") return explicit;
-        const row = cell.parentElement;
-        const table = cell.closest("table");
-        if (!(row instanceof HTMLTableRowElement) || table === null) return "";
-        let column = 0;
-        for (const each of row.cells) {
-          if (each === cell) break;
-          column += each.colSpan;
+      /** Who names `from`, nearest first, going no higher than `stop`. */
+      const nearest = (from: Element, stop: Element | null) => {
+        for (let at: Element | null = from; at !== null; at = at.parentElement) {
+          const keys = named(`${at.textContent ?? ""} ${labelOf(at)}`);
+          if (keys.length > 0 || at === stop) return keys;
         }
-        const words: Array<string> = [];
-        for (const each of row.cells)
-          if (each !== cell && each.tagName === "TH" && each.scope !== "col")
-            words.push(each.textContent ?? "");
-        for (const above of table.rows) {
-          if (above === row) break;
-          let at = 0;
-          for (const each of above.cells) {
-            if (
-              each.tagName === "TH" &&
-              each.scope !== "row" &&
-              at <= column &&
-              column < at + each.colSpan
-            )
-              words.push(each.textContent ?? "");
-            at += each.colSpan;
+        return [];
+      };
+      /** Who a table cell's headers name, with the table laid out on a grid as its spans place it. */
+      const headedBy = (cell: HTMLTableCellElement) => {
+        const explicit = byIds(cell.getAttribute("headers"));
+        if (explicit.trim() !== "") return named(explicit);
+        const table = cell.closest("table");
+        if (table === null) return [];
+        const grid: Array<Array<HTMLTableCellElement>> = [];
+        for (const [top, row] of [...table.rows].entries()) {
+          let left = 0;
+          for (const each of row.cells) {
+            while (grid[top]?.[left] !== undefined) left++;
+            const down = each.rowSpan === 0 ? table.rows.length - top : Math.max(1, each.rowSpan);
+            const across = Math.max(1, each.colSpan);
+            for (let r = top; r < top + down; r++)
+              for (let c = left; c < left + across; c++) (grid[r] ??= [])[c] = each;
+            left += across;
           }
         }
-        return words.join(" ");
+        const slots = grid.flatMap((cells, r) =>
+          cells.flatMap((each, c) => (each === cell ? [[r, c] as const] : []))
+        );
+        const first = Math.min(...slots.map(([r]) => r));
+        const headers = new Set<HTMLTableCellElement>();
+        for (const [r, c] of slots) {
+          for (const each of grid[r] ?? [])
+            if (
+              each !== undefined &&
+              each !== cell &&
+              each.tagName === "TH" &&
+              !/^col/.test(each.scope)
+            )
+              headers.add(each);
+          for (let above = 0; above < first; above++) {
+            const each = grid[above]?.[c];
+            if (each !== undefined && each.tagName === "TH" && !/^row/.test(each.scope))
+              headers.add(each);
+          }
+        }
+        return named([...headers].map((each) => each.textContent ?? "").join(" "));
       };
       const holders = [...body.querySelectorAll("*")].filter(
         (element) =>
@@ -332,13 +313,12 @@ const whose = (view: Opened, text: string, people: ReadonlyArray<RunPerson>) =>
         )
         .map((element) => {
           const cell = element.closest("td, th");
-          const headed = cell instanceof HTMLTableCellElement ? named(headersOf(cell)) : [];
-          if (headed.length > 0) return headed;
-          for (let at: Element | null = element; at !== null; at = at.parentElement) {
-            const keys = named(`${at.textContent ?? ""} ${labelOf(at)}`);
-            if (keys.length > 0) return keys;
-          }
-          return [];
+          const headed = cell instanceof HTMLTableCellElement ? headedBy(cell) : [];
+          if (headed.length === 0) return nearest(element, null);
+          const inCell = nearest(element, cell);
+          return inCell.length === 0 || (headed.length === 1 && inCell.join() === headed.join())
+            ? headed
+            : [...new Set([...headed, ...inCell])];
         });
     },
     { text, names: people.map((person) => [person.key, namePattern(person)] as const) }
@@ -441,6 +421,82 @@ const posted = async (ctx: CheckContext, key: string, entry: Entry) => {
       } as const);
 };
 
+/** Whether `part`'s words name nobody among `people` but `owner`, as an entry's own container's do. */
+const namesOnly = async (part: Locator, owner: RunPerson, people: ReadonlyArray<RunPerson>) => {
+  const words = (await part.textContent().catch(() => null)) ?? "";
+  return people.every(
+    (person) => person.key === owner.key || !new RegExp(namePattern(person)).test(words)
+  );
+};
+
+/**
+ * The field that edits the entry holding `text`, once the person opens the
+ * entry on its own: by clicking the entry itself, then by the one Details,
+ * View or Open control in its own container, the smallest part of the page
+ * holding its words and naming nobody but `owner`. Only a field holding the
+ * entry's own words counts, so opening the wrong entry never edits it. Only
+ * looking.
+ */
+const editByOpening = async (
+  view: Opened,
+  text: string,
+  owner: RunPerson,
+  people: ReadonlyArray<RunPerson>
+) => {
+  const { frame } = view;
+  await frame
+    .getByText(text)
+    .first()
+    .click({ timeout: 5_000 })
+    .catch(() => undefined);
+  await settle(view);
+  const opened = await editField(view, text);
+  if (opened !== undefined) return opened;
+  const controls = (scope: Opened["frame"] | Locator) =>
+    scope.getByRole("button", { name: DETAILS }).or(scope.getByRole("link", { name: DETAILS }));
+  const part = around(frame, text, { has: controls(frame) });
+  if ((await part.count()) === 0 || !(await namesOnly(part, owner, people))) return undefined;
+  const own = controls(part);
+  if ((await own.count()) !== 1) return undefined;
+  await own.click({ timeout: 5_000 }).catch(() => undefined);
+  await settle(view);
+  return editField(view, text);
+};
+
+/**
+ * How `key` fixes their entry to say `today` instead, from a page of their
+ * own: in the field holding its words, wherever the page shows it, once the
+ * entry's own Edit opens it, or once opening the entry shows its Edit. With
+ * nothing that edits it, from a fresh page, so nothing opening it left open
+ * is in the way, by posting the entry again, as a page that keeps one a
+ * person a day takes it. Their page and the write that fixes it there, or
+ * why they can't.
+ */
+const fixingAs = async (
+  ctx: CheckContext,
+  key: string,
+  entry: Entry,
+  today: string
+): Promise<{ readonly view: Opened; readonly write: Write } | string> => {
+  const owner = ctx.person(key);
+  const view = await ctx.open(key);
+  if (!(await findsOwn(view, entry.today))) {
+    await view.close();
+    return "can't find the entry they posted";
+  }
+  const field =
+    (await editField(view, entry.today)) ??
+    (await editByOpening(view, entry.today, owner, ctx.people));
+  if (field !== undefined)
+    return { view, write: () => writeAndSend(view, [[field, today]], SAVES) };
+  await view.close();
+  const fresh = await ctx.open(key);
+  const write = await posting(fresh, { ...entry, today });
+  if (typeof write !== "string") return { view: fresh, write };
+  await fresh.close();
+  return write;
+};
+
 /** Patchy's codes for a patch's handler failing on a try: the patch's answer, never expected. */
 const PATCH_FAILED = new Set(["handler_failed", "handler_timeout"]);
 
@@ -487,7 +543,7 @@ export default {
   heldOut: true,
   rubric: [
     "Tier 2: an entry is its author's alone to change, a rule kept against the viewer, which only server handlers can do; at tier 1 every viewer's page can write every row, so hiding Edit on other people's entries protects nothing.",
-    "Today's entries are visible to the whole team, each its author's alone to change. An owned table of entries: the author from `ctx.viewer` (never an argument), the day it is for, what they did yesterday, what they're doing today and what's blocking them, and when it was last changed. Either entry model fits the request: one per person per day (a unique index on author and day, so posting again changes it) or several a day, each changed through its own edit.",
+    "Today's entries are visible to the whole team, each its author's alone to change. An owned table of entries: the author from `ctx.viewer` (never an argument), the day it is for, what they did yesterday, what they're doing today and what's blocking them, and when it was last changed. Either entry model fits the request: one per person per day, kept under concurrent saves (a unique index on author and day, say, or a serializable mutation that looks the entry up, then updates or inserts it), so posting again changes it; or several a day, each changed through its own edit.",
     "Mutations save and change entries, validating their parts and refusing with declared errors; a change to an existing entry checks that its author is the viewer, so nobody, admins included, can change someone else's. 'Today' means the same day to the page and the server.",
     "The page reads today's entries with a live query and shows the whole team's, each with whose it is, blockers easy to spot, and Edit only on the viewer's own; who hasn't posted yet is a plus.",
     "Clear empty states and errors, in the company look; no extra dependencies."
@@ -547,14 +603,11 @@ export default {
         const refused = await posted(ctx, "cleo", entry);
         if (refused !== null) return refused;
         const fixed = `Pairing on the checkout flow instead ${ctx.code}`;
-        const cleo = await ctx.open("cleo");
-        if (!(await findsOwn(cleo, entry.today)))
-          return { ok: false, reason: "Cleo can't find the entry she posted." };
-        const write = await fixing(cleo, entry, fixed);
-        if (typeof write === "string") return { ok: false, reason: `Cleo ${write}.` };
-        const failed = await cleo.barrier.deliberately(write);
-        if (failed !== null) return { ok: false, reason: `Cleo ${failed}.` };
-        await cleo.close();
+        const fix = await fixingAs(ctx, "cleo", entry, fixed);
+        if (typeof fix === "string") return { ok: false, reason: `Cleo Shah ${fix}.` };
+        const failed = await fix.view.barrier.deliberately(fix.write);
+        await fix.view.close();
+        if (failed !== null) return { ok: false, reason: `Cleo Shah ${failed}.` };
         const seen = await seenBy(ctx, "ben", ctx.person("cleo"), entry, fixed, {});
         return seen === "fixed"
           ? { ok: true }
@@ -584,13 +637,10 @@ export default {
             ok: false,
             reason: `Before Ben fixed anything, Cleo sees his entry ${SAID[before]}.`
           };
-        const view = await ctx.open("ben");
-        if (!(await findsOwn(view, entry.today)))
-          return { ok: false, reason: "Ben can't find the entry he posted." };
-        const write = await fixing(view, entry, fixed);
-        if (typeof write === "string") return { ok: false, reason: `Ben ${write}.` };
+        const fix = await fixingAs(ctx, "ben", entry, fixed);
+        if (typeof fix === "string") return { ok: false, reason: `Ben Ortiz ${fix}.` };
         let seen: Shown = before;
-        const outcome = await holdWhile(view, write, {
+        const outcome = await holdWhile(fix.view, fix.write, {
           probe: async (call) => {
             // What Cleo sees with Ben's call held: his earlier calls may already have made the fix.
             seen = await cleoSees();
@@ -621,9 +671,9 @@ export default {
           },
           took: async () => (seen = await cleoSees()) === "fixed"
         });
-        if ("refused" in outcome) return { ok: false, reason: `Ben ${outcome.refused}.` };
+        if ("refused" in outcome) return { ok: false, reason: `Ben Ortiz ${outcome.refused}.` };
         if (outcome.objection !== null) return { ok: false, reason: outcome.objection };
-        await view.close();
+        await fix.view.close();
         if (outcome.took) return { ok: true };
         return {
           ok: false,
