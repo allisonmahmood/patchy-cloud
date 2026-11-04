@@ -173,15 +173,22 @@ repeat rules.
 `<HotkeySheet />` is a ready-made shortcuts sheet: a `?` button where it is
 mounted, and a modal dialog that it and `?` open, listing every labelled hotkey
 under its `group` option. `title` and `hotkey` change its heading and the key
-that opens it. While it is open, its `HotkeyScope` holds the page's hotkeys back;
-Escape, its close button or a click outside closes it, and focus returns. It
-draws with `--look-*` tokens in `hotkey-*` classes. The first one mounted adds
-one `<style>` with those defaults inside `@layer patchy-hotkeys`, after the
-look's styles, so it beats the look's element styles and the patch's own
-unlayered CSS beats it. Its dialog renders in the page's `<body>`, outside the
-patch's root element, so restyle it with selectors that don't depend on where
-it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
-`:root` or `body`.
+that opens it. While it is open, its `HotkeyScope` holds the page's hotkeys
+back; Escape, its close button or a click outside closes it, and focus returns.
+It draws with `--look-*` tokens in `hotkey-*` classes, and in the page's font
+and text colour without a look. The first one mounted adds its defaults after
+the page's styles: the button's in `@layer look.patchy-hotkeys`, beneath the
+look's own rules, so it is one of the look's buttons; the sheet's in
+`@layer patchy-hotkeys`, after the page's layers, which it reverts on the
+sheet's parts. It also adds a reset first in `<head>`. Element rules in the
+page's stylesheets, layered or not, don't reach the sheet. Its unlayered rules
+with a class, attribute or pseudo-class can, `button:hover` included, and so can
+layers declared after the sheet first mounts; the `?` button also takes the
+page's layered styles, as its own buttons do. A page that replaces `<head>`
+wholesale loses the reset until the sheet next opens. Its dialog renders in the
+page's `<body>`, outside the patch's root element, so restyle it with selectors
+that don't depend on where it's mounted, such as `.hotkey-sheet …`, and set
+`--look-*` overrides on `:root` or `body`.
 
 ### Generated downloads and printing
 
