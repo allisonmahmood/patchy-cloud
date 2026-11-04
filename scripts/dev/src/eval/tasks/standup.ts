@@ -39,8 +39,18 @@ export const BLOCKERS = [/block/i, /imped|stuck|obstacle|in (your|the) way|help|
 
 /** What opens a form to write an entry in, when none is open, most specific first. */
 const OPENERS = [/stand.?up|check.?in/i, /\b(write|post|add|new|start|fill)\b/i, /^\s*\+\s*$/];
-/** What sends a new entry, most specific first. */
-const POSTS = [/post/i, /submit/i, /share/i, /save/i, /send/i, /add/i, /publish/i, /done/i];
+/** What sends an entry, most specific first; posting again can be an Update. */
+const POSTS = [
+  /post/i,
+  /submit/i,
+  /share/i,
+  /save/i,
+  /send/i,
+  /add/i,
+  /publish/i,
+  /done/i,
+  /update/i
+];
 /** What saves a fix, most specific first. */
 const SAVES = [/save/i, /update/i, /done/i, /submit/i, /post/i, /confirm/i, /send/i];
 /** What opens one's own entry to fix it: Edit first, then the other verbs. */
@@ -62,11 +72,15 @@ const firstField = async (frame: Opened["frame"], words: ReadonlyArray<RegExp>) 
   return undefined;
 };
 
-/** The first visible control among `candidates`, most specific first. */
-const firstVisible = async (candidates: ReadonlyArray<Locator>) => {
+/** The first visible, enabled control among `candidates`, most specific first. */
+const firstUsable = async (candidates: ReadonlyArray<Locator>) => {
   for (const each of candidates)
     for (const control of await each.all())
-      if (await control.isVisible().catch(() => false)) return control;
+      if (
+        (await control.isVisible().catch(() => false)) &&
+        (await control.isEnabled().catch(() => false))
+      )
+        return control;
   return undefined;
 };
 
@@ -110,9 +124,11 @@ const send = async (view: Opened, names: ReadonlyArray<RegExp>) => {
  */
 const posting = async (view: Opened, entry: Entry): Promise<Write | string> => {
   const { frame, page } = view;
+  // A form can stay disabled until the page has loaded what it shows.
+  await settle(view);
   let yesterday = await firstField(frame, YESTERDAY);
   if (yesterday === undefined) {
-    const opener = await firstVisible(
+    const opener = await firstUsable(
       OPENERS.flatMap((name) => [
         frame.getByRole("button", { name }),
         frame.getByRole("link", { name })
@@ -141,14 +157,20 @@ const posting = async (view: Opened, entry: Entry): Promise<Write | string> => {
   };
 };
 
-/** The one control that opens the entry holding `text` to edit, its own; none when it has none, or several. */
+/**
+ * The one control that opens the entry holding `text` to edit, its own;
+ * none when it has none, or several. Edit only ever opens something; the
+ * other verbs, such as Update, in a part that also holds fields to type in
+ * send the form beside the entry, so they're never taken for its own.
+ */
 const ownEdit = async (view: Opened, text: string) => {
   const { frame } = view;
-  for (const name of EDITS) {
+  for (const [index, name] of EDITS.entries()) {
     const controls = (scope: Opened["frame"] | Locator) =>
       scope.getByRole("button", { name }).or(scope.getByRole("link", { name }));
     const part = around(frame, text, { has: controls(frame) });
     if ((await part.count()) === 0) continue;
+    if (index > 0 && (await part.getByRole("textbox").count()) > 0) continue;
     const own = controls(part);
     if ((await own.count()) === 1 && (await own.isVisible().catch(() => false))) return own;
   }
@@ -459,7 +481,7 @@ export default {
                 });
               const after = await benSees();
               if (after !== seen)
-                return `${ctx.person(key).name} sent Ada's fix${call.handler === null ? "" : ` (${call.handler})`} as their own, ${answer.ok ? "and" : "and was refused, but"} Ben then saw her entry ${SAID[after]}.`;
+                return `${ctx.person(key).name} sent Ada's fix${call.handler === null ? "" : ` (${call.handler})`} as their own, ${answer.ok ? "and" : "and was refused, but"} before Ada's own call went through, her entry showed ${SAID[after]}.`;
               if (!answer.ok && answer.byHandler && call.handler !== null)
                 ctx.expectRefusal({
                   person: key,
