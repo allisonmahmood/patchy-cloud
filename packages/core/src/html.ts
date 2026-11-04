@@ -1050,6 +1050,7 @@ export function htmlPage(options: {
     @supports (position-area: bottom) {
       .tell-patchy { position-anchor: auto; }
     }
+    .tell-patchy { overflow-wrap: anywhere; }
     .tell-patchy-kinds { display: flex; gap: 20px; min-width: 0; margin: 0 0 6px; padding: 0; border: 0; }
     .tell-patchy-foot { margin: 10px 0 0; text-align: center; font-size: .9rem; }
     .tell-patchy-match { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: start; }
