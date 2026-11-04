@@ -156,7 +156,8 @@ the hotkeys inside it fire. Patchy keeps `Mod+Shift+K` for its own shortcuts.
 _Avoid_: keybinding, shortcut key, accelerator
 
 **Shortcuts sheet**:
-The dialog that lists a page's labelled hotkeys under their groups, opened by `?`.
+The dialog that lists a page's labelled hotkeys under their groups, opened by `?` or from
+the page's own controls.
 `HotkeySheet` is the ready-made one, drawn in the company look; a builder can build
 another from `useHotkeyList`.
 _Avoid_: cheat sheet, help overlay, keyboard help
