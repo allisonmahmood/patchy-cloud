@@ -111,16 +111,28 @@ export const checkRepoRelease = Effect.fn("checkRepoRelease")(function* (
   return release.toolchain;
 });
 
+/**
+ * What a repo publish refuses first, and its dry run too: an installed release that doesn't match
+ * the instance's, then TypeScript the release can't build with. Reads only; returns the toolchain.
+ */
+export const checkRepoToolchain = Effect.fn("checkRepoToolchain")(function* (
+  cwd: string,
+  token: Redacted.Redacted
+) {
+  const toolchain = yield* checkRepoRelease(cwd, token);
+  const typescript = yield* typescriptRefusal(cwd, toolchain);
+  if (typescript !== undefined)
+    return yield* new LocalError({ message: typescript, code: "toolchain_unsupported" });
+  return toolchain;
+});
+
 /** Recovery belongs to the caller and must finish before this starts any fresh work. */
 export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   cwd: string,
   token: Redacted.Redacted
 ) {
-  const toolchain = yield* checkRepoRelease(cwd, token);
   // Before any fresh work, so a refused repo's description and config stay untouched.
-  const typescript = yield* typescriptRefusal(cwd, toolchain);
-  if (typescript !== undefined)
-    return yield* new LocalError({ message: typescript, code: "toolchain_unsupported" });
+  const toolchain = yield* checkRepoToolchain(cwd, token);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);

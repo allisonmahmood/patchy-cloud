@@ -143,7 +143,7 @@ describe("repo publish checks", () => {
     expect(report).toMatchObject({
       ok: true,
       dryRun: true,
-      note: "Checks the repo snapshot, version and description without building or sending; publish still runs the build.",
+      note: "Checks the release, TypeScript, version, description and repo snapshot without building or sending; publish still runs the build.",
       repo: { limits: { files: 2000, bytes: 10 * 1024 * 1024 } },
       warnings: []
     });
