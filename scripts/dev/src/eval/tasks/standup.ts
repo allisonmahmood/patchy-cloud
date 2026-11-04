@@ -303,20 +303,45 @@ const seenBy = async (
   return seen;
 };
 
+/**
+ * Whether a person finds their own entry holding `text`: in a field the page
+ * fills with it to edit, as a page that lists only the others' entries
+ * does, or shown on the page or behind its views.
+ */
+const findsOwn = async (view: Opened, text: string) => {
+  await settle(view);
+  const inField = await view.frame
+    .locator("input:visible, textarea:visible")
+    .evaluateAll(
+      (fields, text) =>
+        fields.some(
+          (field) =>
+            (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) &&
+            field.value.trim() === text
+        ),
+      text
+    )
+    .catch(() => false);
+  return inField || (await reveal(view, text));
+};
+
 /** `key` posts `entry` from a page of their own: the check's failure when they couldn't, or it never showed for them. */
 const posted = async (ctx: CheckContext, key: string, entry: Entry) => {
   const view = await ctx.open(key);
   const who = ctx.person(key).name;
   const write = await posting(view, entry);
   const refused = typeof write === "string" ? write : await view.barrier.deliberately(write);
-  const shown = refused === null && (await reveal(view, entry.today));
   await view.close();
   if (refused !== null) return { ok: false, reason: `${who} ${refused}.` } as const;
-  return shown
+  // From a fresh page, so words typed but never saved don't count.
+  const again = await ctx.open(key);
+  const found = await findsOwn(again, entry.today);
+  await again.close();
+  return found
     ? null
     : ({
         ok: false,
-        reason: `${who} posted an entry, but it never showed up for them on their starting view or behind its tabs and view toggles.`
+        reason: `${who} posted an entry, but a fresh page never showed it to them, on its starting view, behind its tabs and view toggles, or in a field to edit.`
       } as const);
 };
 
@@ -422,7 +447,7 @@ export default {
         if (refused !== null) return refused;
         const fixed = `Pairing on the checkout flow instead ${ctx.code}`;
         const cleo = await ctx.open("cleo");
-        if (!(await reveal(cleo, entry.today)))
+        if (!(await findsOwn(cleo, entry.today)))
           return { ok: false, reason: "Cleo can't find the entry she posted." };
         const write = await fixing(cleo, entry, fixed);
         if (typeof write === "string") return { ok: false, reason: `Cleo ${write}.` };
@@ -459,7 +484,7 @@ export default {
             reason: `Before Ada fixed anything, Ben sees her entry ${SAID[before]}.`
           };
         const view = await ctx.open("ada");
-        if (!(await reveal(view, entry.today)))
+        if (!(await findsOwn(view, entry.today)))
           return { ok: false, reason: "Ada can't find the entry she posted." };
         const write = await fixing(view, entry, fixed);
         if (typeof write === "string") return { ok: false, reason: `Ada ${write}.` };
