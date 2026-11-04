@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { releases } from "./whatsNew.js";
+import { patchChangesBetween, releases } from "./whatsNew.js";
 
 // The deploying agent edits the release list by hand; these are the rules a seen marker relies on.
 describe("What's new releases", () => {
@@ -32,6 +32,17 @@ describe("What's new releases", () => {
         for (const pr of change.prs) expect(Number.isSafeInteger(pr) && pr > 0).toBe(true);
       }
       for (const line of release.behindTheScenes) expect(line.trim()).not.toBe("");
+      for (const line of release.patchChanges) expect(line.trim()).not.toBe("");
     }
+  });
+
+  it("give a refresh the patch changes of the releases it crosses, oldest first", () => {
+    const of = (id: number) => releases.find((release) => release.id === id)!.patchChanges;
+    expect(patchChangesBetween(29, 31)).toEqual([
+      ...of(30).map((change) => ({ release: 30, change })),
+      ...of(31).map((change) => ({ release: 31, change }))
+    ]);
+    expect(patchChangesBetween(31, 31)).toEqual([]);
+    expect(patchChangesBetween(31, 29)).toEqual([]);
   });
 });

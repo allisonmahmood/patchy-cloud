@@ -24,6 +24,11 @@
       "development": "./src/look.ts",
       "types": "./dist/look.d.ts",
       "import": "./dist/look.js"
+    },
+    "./whatsNew": {
+      "development": "./src/whatsNew.ts",
+      "types": "./dist/whatsNew.d.ts",
+      "import": "./dist/whatsNew.js"
     }
   },
   "files": [
