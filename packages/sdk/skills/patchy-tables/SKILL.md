@@ -77,7 +77,7 @@ Each row has reserved `id`, `createdAt` and `updatedAt`. Patchy supplies and mai
 
 - Insert: required fields must be supplied; omitted optional fields become null; omitted defaulted fields take their default. Defaulted is not nullable. Explicit null is accepted only for optional fields. Unknown fields are refused.
 - Update: omitted fields stay unchanged; null clears an optional field; required/defaulted null is refused. `update(id, patch)` returns the updated row or `row_not_found`.
-- `get(id)` returns a row or null. `getMany(ids)` preserves input order with null for each missing or dangling id.
+- `get(id)` returns a row or null; an empty id is refused with `invalid_request`. `getMany(ids)` preserves input order with null for each missing or dangling id.
 - `insert(row)` returns the inserted row. `insertMany(rows)` returns the inserted rows and is all-or-nothing.
 - `delete(id)` is idempotent, returning null even when already absent. Tier 1 direct writes are last-write-wins; they have no cross-table transaction or automatic mutation retry. Tier 2 mutation handlers group their owned-table operations into one `SERIALIZABLE` transaction, with up to three whole-handler attempts. See `patchy-server` for `write_conflict` and keyed `retry()`.
 

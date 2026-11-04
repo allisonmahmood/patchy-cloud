@@ -9,6 +9,11 @@ Read `../patchy-loop/SKILL.md` first. Patchy provides Preact with compat semanti
 not React. This skill and the installed types describe Patchy's supported API;
 do not link to upstream Preact documentation as the Patchy contract.
 
+Pages run in Patchy's sandboxed frame, which drops form submissions: a
+`<form>`'s `submit` event never fires, from a submit button or Enter, so an
+`onSubmit` handler never runs, `preventDefault` or not. A `type="button"`
+button's `onClick` runs.
+
 ## Imports and rendering
 
 Import components, hooks and signals from `patchy/preact`. Never import `react`,
