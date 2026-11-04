@@ -142,7 +142,10 @@ export async function startProxy() {
       headers: { cookie: session.cookie, "accept-encoding": "identity" }
     });
     const body = await access.text();
-    if (!access.ok || !body.includes('id="patch"')) end(session, "Patch access ended");
+    if (!access.ok || !body.includes('id="patch"')) {
+      process.stderr.write(`Prototype patch-door recheck ended access: HTTP ${access.status}\n`);
+      end(session, "Patch access ended");
+    }
     return session.ended === undefined;
   };
   const framePolicy = (response: Response, ancestors: string, shell = false) => {
