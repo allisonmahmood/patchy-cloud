@@ -841,7 +841,8 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
   }>(undefined);
   const [said, setSaid] = useState<{ readonly label: string; readonly count: number }>();
   // Where the live region lives: the modal dialog around where the viewer was, or the body. It
-  // moves there as the sheet opens, so it is in place before a command runs.
+  // moves there as the sheet opens, so it is in place before a command runs, and again after one
+  // that moves focus to another modal context.
   const [home, setHome] = useState<Element>(() => document.body);
   const own = (props.hotkey === undefined ? ["?", "Mod+/"] : [props.hotkey]).map((hotkey) => ({
     hotkey,
@@ -882,11 +883,13 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
     command.run(last.event ?? pressed(command.hotkey));
     setSaid((before) => ({ label: command.label, count: (before?.count ?? 0) + 1 }));
     // Once the page has rendered: a command that removed the element leaves focus with its
-    // dialog, and one that closed the dialog the live region was in moves it out to say it there.
+    // dialog. Where focus settled decides where the live region is heard: a command that closed
+    // a modal dialog, opened one or took the region's away moves it there to say it again.
     setTimeout(() => {
       rescue(last.from);
-      if (home.isConnected) return;
-      setHome(modalAround(document.activeElement));
+      const settled = modalAround(document.activeElement);
+      if (settled === home) return;
+      setHome(settled);
       setSaid((before) => before && { ...before, count: before.count + 1 });
     }, 0);
   }, [from]);

@@ -313,8 +313,8 @@ function CreateTask(props: { close: () => void }) {
   </div>;
 }
 
-// A native modal dialog: everything outside it is inert while it is open.
-function Rename(props: { close: () => void }) {
+// A native modal dialog over another: everything outside the top one is inert while it is open.
+function Confirm(props: { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const field = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
@@ -323,10 +323,33 @@ function Rename(props: { close: () => void }) {
     field.current?.focus();
     return () => element.close();
   }, []);
-  useHotkey("S", log("native S"), { label: "Star", group: "Rename" });
-  return <dialog id="native" ref={dialog} aria-label="Rename" onCancel={props.close}>
-    <input id="native-field" ref={field} aria-label="Name" />
+  return <dialog id="confirm" ref={dialog} aria-label="Confirm" onCancel={props.close}>
+    <input id="confirm-field" ref={field} aria-label="Reason" />
   </dialog>;
+}
+
+// A native modal dialog: everything outside it is inert while it is open. Hide closes it but
+// leaves it mounted, Open another opens a second modal over it, and Q takes it away.
+function Rename(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const [confirming, setConfirming] = useState(false);
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    field.current?.focus();
+    return () => element.close();
+  }, []);
+  useHotkey("S", log("native S"), { label: "Star", group: "Rename" });
+  useHotkey("O", () => setConfirming(true), { label: "Open another", group: "Rename" });
+  useHotkey("H", () => dialog.current!.close(), { label: "Hide", group: "Rename" });
+  useHotkey("Q", props.close);
+  return <>
+    <dialog id="native" ref={dialog} aria-label="Rename" onCancel={props.close}>
+      <input id="native-field" ref={field} aria-label="Name" />
+    </dialog>
+    {confirming && <Confirm close={() => setConfirming(false)} />}
+  </>;
 }
 
 function App() {
@@ -1296,7 +1319,25 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, ["native S"]);
     // A modal dialog makes the rest of the page inert, which only the browser's own tree shows.
     await expect.poll(statuses).toEqual(["Star"]);
+  });
+
+  await test.step("a command that opens another modal, or closes its own and leaves it mounted, is still announced", async () => {
+    const field = view.locator("#native-field");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("o");
+    await expect(view.locator("#confirm-field")).toBeFocused();
+    await expect.poll(statuses).toEqual(["Open another"]);
     await page.keyboard.press("Escape");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("h");
+    await expect(view.locator("#native")).toBeHidden();
+    await expect(view.locator("#native")).toHaveCount(1);
+    await expect.poll(statuses).toEqual(["Hide"]);
+    await page.keyboard.press("q");
     await expect(view.locator("#native")).toHaveCount(0);
+    await firedNext(frame, []);
   });
 });
