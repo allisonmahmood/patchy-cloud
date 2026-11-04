@@ -1,4 +1,4 @@
-import type { Locator, Request } from "@playwright/test";
+import type { Locator, Page, Request } from "@playwright/test";
 import {
   type CheckContext,
   type CheckOutcome,
@@ -55,6 +55,8 @@ const POSTS = [
 const SAVES = [/save/i, /update/i, /done/i, /submit/i, /post/i, /confirm/i, /send/i];
 /** What opens one's own entry to fix it: Edit first, then the other verbs. */
 const EDITS = [/edit|✎|✏/i, /^\s*(change|fix|update|modify)\b/i];
+/** What opens an entry's own view from a list: Details, View, Open, More. */
+const DETAILS = /detail|\bview\b|\bopen\b|\bmore\b|expand/i;
 
 /** How long a field a press opens, or the call a press sends, may take to come. */
 const OPENS_MS = 5_000;
@@ -85,36 +87,49 @@ const firstUsable = async (candidates: ReadonlyArray<Locator>) => {
 };
 
 /**
- * Sends what the person wrote: presses the button of the form around the
- * fields they chose, once anything else it holds is filled in, or with no
- * such button leaves the field, as an autosaving page saves. Why it couldn't,
- * or null once the page has sent Patchy something.
+ * Writes in `fields` as a person types, then sends it: counts every call the
+ * page sends Patchy from the first keystroke, so a page that saves as they
+ * type has saved before any button. Presses the button of the form around
+ * the fields, once anything else it holds is filled in, or with no such
+ * button leaves the field. Why it couldn't, or null once the page has sent
+ * Patchy something.
  */
-const send = async (view: Opened, names: ReadonlyArray<RegExp>) => {
+const writeAndSend = async (
+  view: Opened,
+  fields: ReadonlyArray<readonly [Locator, string]>,
+  names: ReadonlyArray<RegExp>
+) => {
   const { frame, page } = view;
-  const form = await formAround(frame, names);
-  const pressed =
-    form === undefined ? "" : (await form.send.innerText().catch(() => "")).trim() || "send";
-  let sent = 0;
-  const count = (request: Request) => {
-    if (request.url().includes("/api/runtime/call")) sent++;
-  };
-  page.on("request", count);
+  const calls = callsFrom(page);
   try {
+    for (const [field, words] of fields) await field.fill(words);
+    const form = await formAround(frame, names);
+    const pressed =
+      form === undefined ? "" : (await form.send.innerText().catch(() => "")).trim() || "send";
     if (form === undefined) await page.keyboard.press("Tab");
     else {
       await fillRest(form.scope);
       await form.send.click();
     }
-    for (let waited = 0; sent === 0 && waited < OPENS_MS; waited += POLL_MS)
+    for (let waited = 0; calls.sent() === 0 && waited < OPENS_MS; waited += POLL_MS)
       await page.waitForTimeout(POLL_MS);
+    if (calls.sent() > 0) return null;
+    return form === undefined
+      ? "found no button to save with, and writing and leaving the field saved nothing"
+      : `pressed ${pressed}, but the page sent Patchy nothing`;
   } finally {
-    page.off("request", count);
+    calls.stop();
   }
-  if (sent > 0) return null;
-  return form === undefined
-    ? "found no button to save with, and leaving the field saved nothing"
-    : `pressed ${pressed}, but the page sent Patchy nothing`;
+};
+
+/** Counts the calls `page` sends Patchy from now until `stop`. */
+const callsFrom = (page: Page) => {
+  let sent = 0;
+  const count = (request: Request) => {
+    if (request.url().includes("/api/runtime/call")) sent++;
+  };
+  page.on("request", count);
+  return { sent: () => sent, stop: () => void page.off("request", count) };
 };
 
 /**
@@ -147,13 +162,14 @@ const posting = async (view: Opened, entry: Entry): Promise<Write | string> => {
   if (today === undefined) return "found no field for what they're doing today";
   const blockers = await firstField(frame, BLOCKERS);
   if (blockers === undefined) return "found no field for what's blocking them";
-  const fields = [yesterday, today, blockers] as const;
+  const fields = [
+    [yesterday, entry.yesterday],
+    [today, entry.today],
+    [blockers, entry.blockers]
+  ] as const;
   return async () => {
     await settle(view);
-    await fields[0].fill(entry.yesterday);
-    await fields[1].fill(entry.today);
-    await fields[2].fill(entry.blockers);
-    return send(view, POSTS);
+    return writeAndSend(view, fields, POSTS);
   };
 };
 
@@ -178,29 +194,64 @@ const ownEdit = async (view: Opened, text: string) => {
 };
 
 /**
+ * The field that edits the entry holding `text`, holding its words: shown
+ * already, or once the entry's own Edit opens it. Only looking.
+ */
+const editField = async (view: Opened, text: string) => {
+  const shown = await chooseFieldHolding(view.frame, text);
+  if (shown !== undefined) return shown;
+  const edit = await ownEdit(view, text);
+  if (edit === undefined) return undefined;
+  await edit.click({ timeout: 5_000 }).catch(() => undefined);
+  for (let waited = 0; waited < OPENS_MS; waited += POLL_MS) {
+    await view.page.waitForTimeout(POLL_MS);
+    const opened = await chooseFieldHolding(view.frame, text);
+    if (opened !== undefined) return opened;
+  }
+  return undefined;
+};
+
+/**
+ * Opens the entry holding `text` on its own, as a person looking for its
+ * Edit does: the one Details, View or Open control in the entry's own part,
+ * or else the entry itself. Only looking.
+ */
+const openEntry = async (view: Opened, text: string) => {
+  const { frame } = view;
+  const controls = (scope: Opened["frame"] | Locator) =>
+    scope.getByRole("button", { name: DETAILS }).or(scope.getByRole("link", { name: DETAILS }));
+  const part = around(frame, text, { has: controls(frame) });
+  const own = controls(part);
+  const opener =
+    (await part.count()) > 0 &&
+    (await part.getByRole("textbox").count()) === 0 &&
+    (await own.count()) === 1
+      ? own
+      : frame.getByText(text).first();
+  await opener.click({ timeout: 5_000 }).catch(() => undefined);
+  await settle(view);
+};
+
+/**
  * How a person fixes their entry to say `today` instead: in the field
- * holding its words, wherever the page shows it or once the entry's own
- * Edit opens it; with nothing to edit, by posting the entry again, as a page
- * that keeps one a person a day takes it. The write, or why they can't.
+ * holding its words, wherever the page shows it, once the entry's own Edit
+ * opens it, or once opening the entry shows its Edit; with nothing to edit,
+ * by posting the entry again, as a page that keeps one a person a day takes
+ * it. The write, or why they can't.
  */
 const fixing = async (view: Opened, entry: Entry, today: string): Promise<Write | string> => {
-  let field = await chooseFieldHolding(view.frame, entry.today);
+  let field = await editField(view, entry.today);
   if (field === undefined) {
-    const edit = await ownEdit(view, entry.today);
-    if (edit !== undefined) {
-      await edit.click({ timeout: 5_000 }).catch(() => undefined);
-      for (let waited = 0; field === undefined && waited < OPENS_MS; waited += POLL_MS) {
-        await view.page.waitForTimeout(POLL_MS);
-        field = await chooseFieldHolding(view.frame, entry.today);
-      }
-    }
+    await openEntry(view, entry.today);
+    field = await editField(view, entry.today);
   }
-  if (field === undefined) return posting(view, { ...entry, today });
+  if (field === undefined) {
+    // Whatever opening the entry showed, a dialog included, closes before posting again.
+    await view.page.keyboard.press("Escape");
+    return posting(view, { ...entry, today });
+  }
   const chosen = field;
-  return async () => {
-    await chosen.fill(today);
-    return send(view, SAVES);
-  };
+  return () => writeAndSend(view, [[chosen, today]], SAVES);
 };
 
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -216,13 +267,58 @@ export const namePattern = (person: Pick<RunPerson, "name" | "email">) =>
 
 /**
  * Whose each showing of `text` is, as a reader tells: for every innermost
- * visible element holding it, the keys of the run's people named in its
- * nearest ancestor that names anyone, the card, row or section it sits in.
- * A showing nobody is named around has none.
+ * visible element holding it, the keys of the run's people its table cell's
+ * headers name (its `headers`, else the header cells across its row and
+ * above it in its column), or else those named in its nearest ancestor that
+ * names anyone, by its text or its `aria-labelledby` or `aria-label`: the
+ * column, card, row or section it sits in. A showing nobody is named around
+ * has none.
  */
 const whose = (view: Opened, text: string, people: ReadonlyArray<RunPerson>) =>
   view.frame.locator("body").evaluate(
     (body, { text, names }) => {
+      const named = (words: string) =>
+        names.flatMap(([key, pattern]) => (new RegExp(pattern).test(words) ? [key] : []));
+      const byIds = (ids: string | null) =>
+        (ids ?? "")
+          .split(/\s+/)
+          .map((id) =>
+            id === "" ? "" : (body.ownerDocument.getElementById(id)?.textContent ?? "")
+          )
+          .join(" ");
+      const labelOf = (element: Element) =>
+        `${byIds(element.getAttribute("aria-labelledby"))} ${element.getAttribute("aria-label") ?? ""}`;
+      const headersOf = (cell: HTMLTableCellElement) => {
+        const explicit = byIds(cell.getAttribute("headers"));
+        if (explicit.trim() !== "") return explicit;
+        const row = cell.parentElement;
+        const table = cell.closest("table");
+        if (!(row instanceof HTMLTableRowElement) || table === null) return "";
+        let column = 0;
+        for (const each of row.cells) {
+          if (each === cell) break;
+          column += each.colSpan;
+        }
+        const words: Array<string> = [];
+        for (const each of row.cells)
+          if (each !== cell && each.tagName === "TH" && each.scope !== "col")
+            words.push(each.textContent ?? "");
+        for (const above of table.rows) {
+          if (above === row) break;
+          let at = 0;
+          for (const each of above.cells) {
+            if (
+              each.tagName === "TH" &&
+              each.scope !== "row" &&
+              at <= column &&
+              column < at + each.colSpan
+            )
+              words.push(each.textContent ?? "");
+            at += each.colSpan;
+          }
+        }
+        return words.join(" ");
+      };
       const holders = [...body.querySelectorAll("*")].filter(
         (element) =>
           !/^(SCRIPT|STYLE|TEMPLATE|TEXTAREA|INPUT|SELECT|OPTION)$/.test(element.tagName) &&
@@ -235,11 +331,11 @@ const whose = (view: Opened, text: string, people: ReadonlyArray<RunPerson>) =>
             element.checkVisibility()
         )
         .map((element) => {
+          const cell = element.closest("td, th");
+          const headed = cell instanceof HTMLTableCellElement ? named(headersOf(cell)) : [];
+          if (headed.length > 0) return headed;
           for (let at: Element | null = element; at !== null; at = at.parentElement) {
-            const words = at.textContent ?? "";
-            const keys = names.flatMap(([key, pattern]) =>
-              new RegExp(pattern).test(words) ? [key] : []
-            );
+            const keys = named(`${at.textContent ?? ""} ${labelOf(at)}`);
             if (keys.length > 0) return keys;
           }
           return [];
@@ -368,12 +464,17 @@ const entryOf = (key: "ben" | "cleo" | "ada", code: string): Entry =>
     }
   })[key];
 
+/** How a check names someone trying a change, their role included when it's an admin's. */
+const trier = (person: RunPerson) =>
+  person.role === "admin" ? `${person.name}, an admin,` : person.name;
+
 /**
  * A written standup with a rule no page can keep alone: each entry is its
- * author's to fix, and nobody else's. Ben posts and Cleo sees all of it as
- * his; Cleo fixes hers and Ben sees the fix; then Ada fixes hers while each
- * call her fix sends is held and sent as Ben and as Cleo first, from their
- * own pages, and her entry must not change until her own call goes through.
+ * author's to fix, and nobody else's, admins included. Ada posts and Ben
+ * sees all of it as hers; Cleo fixes hers and Ben sees the fix; then Ben
+ * fixes his while each call his fix sends is held and sent as Ada, an
+ * admin, and as Cleo first, from their own pages, and his entry must not
+ * change until his own call goes through.
  */
 export default {
   id: "standup",
@@ -385,57 +486,57 @@ export default {
   minutes: 30,
   heldOut: true,
   rubric: [
-    "Tier 2: an entry is its author's to change, a rule kept against the viewer, which only server handlers can do; at tier 1 every viewer's page can write every row, so hiding Edit on other people's entries protects nothing.",
-    "One owned table of entries: the author from `ctx.viewer` (never an argument), the day it is for, what they did yesterday, what they're doing today and what's blocking them, and when it was last changed. One entry per person per day, kept by a unique index on author and day, so posting again or editing changes that entry rather than adding another.",
-    "A mutation saves the viewer's own entry for today, validating its parts and refusing with declared errors; any change finds the entry by its author being the viewer, so nobody, admins included, can change someone else's. 'Today' means the same day to the page and the server.",
+    "Tier 2: an entry is its author's alone to change, a rule kept against the viewer, which only server handlers can do; at tier 1 every viewer's page can write every row, so hiding Edit on other people's entries protects nothing.",
+    "Today's entries are visible to the whole team, each its author's alone to change. An owned table of entries: the author from `ctx.viewer` (never an argument), the day it is for, what they did yesterday, what they're doing today and what's blocking them, and when it was last changed. Either entry model fits the request: one per person per day (a unique index on author and day, so posting again changes it) or several a day, each changed through its own edit.",
+    "Mutations save and change entries, validating their parts and refusing with declared errors; a change to an existing entry checks that its author is the viewer, so nobody, admins included, can change someone else's. 'Today' means the same day to the page and the server.",
     "The page reads today's entries with a live query and shows the whole team's, each with whose it is, blockers easy to spot, and Edit only on the viewer's own; who hasn't posted yet is a plus.",
     "Clear empty states and errors, in the company look; no extra dependencies."
   ].join("\n"),
   checks: [
     {
-      name: "Ben posts his standup, and Cleo sees all of it as his",
+      name: "Ada posts her standup, and Ben sees all of it as hers",
       run: async (ctx) => {
-        const entry = entryOf("ben", ctx.code);
-        const refused = await posted(ctx, "ben", entry);
+        const entry = entryOf("ada", ctx.code);
+        const refused = await posted(ctx, "ada", entry);
         if (refused !== null) return refused;
-        const cleo = await ctx.open("cleo");
-        if (!(await reveal(cleo, entry.today)))
+        const ben = await ctx.open("ben");
+        if (!(await reveal(ben, entry.today)))
           return {
             ok: false,
             reason:
-              "Cleo doesn't see Ben's entry on her starting view or behind its tabs and view toggles."
+              "Ben doesn't see Ada's entry on his starting view or behind its tabs and view toggles."
           };
         const missing = async () => {
-          const text = await visibleText(cleo);
+          const text = await visibleText(ben);
           return [
-            { words: entry.yesterday, said: "what Ben did yesterday" },
-            { words: entry.blockers, said: "what's blocking Ben" }
+            { words: entry.yesterday, said: "what Ada did yesterday" },
+            { words: entry.blockers, said: "what's blocking Ada" }
           ].flatMap(({ words, said }) => (text.includes(words) ? [] : [said]));
         };
         // A list can show a summary that opens on a click; opening it only looks.
         if ((await missing()).length > 0) {
-          await cleo.frame
+          await ben.frame
             .getByText(entry.today)
             .first()
             .click({ timeout: 5_000 })
             .catch(() => undefined);
-          await cleo.page.waitForTimeout(1_500);
+          await ben.page.waitForTimeout(1_500);
         }
         const unseen = await missing();
         if (unseen.length > 0)
           return {
             ok: false,
-            reason: `Cleo sees what Ben is doing today, but not ${unseen.join(" or ")}.`
+            reason: `Ben sees what Ada is doing today, but not ${unseen.join(" or ")}.`
           };
-        const owners = await whose(cleo, entry.today, ctx.people);
-        if (owners.some((keys) => keys.length === 1 && keys[0] === "ben")) return { ok: true };
+        const owners = await whose(ben, entry.today, ctx.people);
+        if (owners.some((keys) => keys.length === 1 && keys[0] === "ada")) return { ok: true };
         const named = [...new Set(owners.flat())].map((key) => ctx.person(key).name);
         return {
           ok: false,
           reason:
             named.length === 0
-              ? "Cleo sees Ben's entry, but nothing beside it says it's his."
-              : `Cleo sees Ben's entry, but beside ${named.join(" and ")}, not as Ben's alone.`
+              ? "Ben sees Ada's entry, but nothing beside it says it's hers."
+              : `Ben sees Ada's entry, but beside ${named.join(" and ")}, not as Ada's alone.`
         };
       }
     },
@@ -467,35 +568,36 @@ export default {
       }
     },
     {
-      name: "only Ada can change her entry, even when others call the patch directly",
+      name: "only Ben can change his entry, even when an admin or a teammate calls the patch directly",
       run: async (ctx): Promise<CheckOutcome> => {
-        const ada = ctx.person("ada");
-        const entry = entryOf("ada", ctx.code);
-        const refused = await posted(ctx, "ada", entry);
+        const ben = ctx.person("ben");
+        const entry = entryOf("ben", ctx.code);
+        const refused = await posted(ctx, "ben", entry);
         if (refused !== null) return refused;
-        const fixed = `Moved to hiring, roadmap is on Friday ${ctx.code}`;
-        const benWay: ViewMemo = {};
-        /** What Ben sees of Ada's entry, from a fresh page. */
-        const benSees = () => seenBy(ctx, "ben", ada, entry, fixed, benWay);
-        const before = await benSees();
+        const fixed = `Fixing the export timeout first ${ctx.code}`;
+        const cleoWay: ViewMemo = {};
+        /** What Cleo sees of Ben's entry, from a fresh page. */
+        const cleoSees = () => seenBy(ctx, "cleo", ben, entry, fixed, cleoWay);
+        const before = await cleoSees();
         if (before !== "first")
           return {
             ok: false,
-            reason: `Before Ada fixed anything, Ben sees her entry ${SAID[before]}.`
+            reason: `Before Ben fixed anything, Cleo sees his entry ${SAID[before]}.`
           };
-        const view = await ctx.open("ada");
+        const view = await ctx.open("ben");
         if (!(await findsOwn(view, entry.today)))
-          return { ok: false, reason: "Ada can't find the entry she posted." };
+          return { ok: false, reason: "Ben can't find the entry he posted." };
         const write = await fixing(view, entry, fixed);
-        if (typeof write === "string") return { ok: false, reason: `Ada ${write}.` };
+        if (typeof write === "string") return { ok: false, reason: `Ben ${write}.` };
         let seen: Shown = before;
         const outcome = await holdWhile(view, write, {
           probe: async (call) => {
-            // What Ben sees with Ada's call held: her earlier calls may already have made the fix.
-            seen = await benSees();
+            // What Cleo sees with Ben's call held: his earlier calls may already have made the fix.
+            seen = await cleoSees();
             if (seen !== "first")
-              return `Ben saw Ada's entry ${SAID[seen]} before her last call: her fix went through something the grader couldn't hold, so it couldn't try it as anyone else.`;
-            for (const key of ["ben", "cleo"]) {
+              return `Cleo saw Ben's entry ${SAID[seen]} before his last call: his fix went through something the grader couldn't hold, so it couldn't try it as anyone else.`;
+            // Ada is an admin: nobody else may change his entry, admins included.
+            for (const key of ["ada", "cleo"]) {
               const other = await ctx.open(key);
               const answer = await call.tryAs(other, ctx.person(key));
               await other.close();
@@ -504,9 +606,9 @@ export default {
                 throw new GraderTrouble({
                   what: `Patchy itself refused the grader's try as ${ctx.person(key).name} (${answer.code}).`
                 });
-              const after = await benSees();
+              const after = await cleoSees();
               if (after !== seen)
-                return `${ctx.person(key).name} sent Ada's fix${call.handler === null ? "" : ` (${call.handler})`} as their own, ${answer.ok ? "and" : "and was refused, but"} before Ada's own call went through, her entry showed ${SAID[after]}.`;
+                return `${trier(ctx.person(key))} sent Ben's fix${call.handler === null ? "" : ` (${call.handler})`} as their own, ${answer.ok ? "and" : "and was refused, but"} before Ben's own call went through, his entry showed ${SAID[after]}.`;
               if (!answer.ok && answer.byHandler && call.handler !== null)
                 ctx.expectRefusal({
                   person: key,
@@ -517,9 +619,9 @@ export default {
             }
             return null;
           },
-          took: async () => (seen = await benSees()) === "fixed"
+          took: async () => (seen = await cleoSees()) === "fixed"
         });
-        if ("refused" in outcome) return { ok: false, reason: `Ada ${outcome.refused}.` };
+        if ("refused" in outcome) return { ok: false, reason: `Ben ${outcome.refused}.` };
         if (outcome.objection !== null) return { ok: false, reason: outcome.objection };
         await view.close();
         if (outcome.took) return { ok: true };
@@ -527,8 +629,8 @@ export default {
           ok: false,
           reason:
             outcome.held === 0
-              ? `Ada's fix sent Patchy nothing, and Ben sees her entry ${SAID[seen]}.`
-              : `Ada's fix never took effect through a call the grader could try as someone else: Ben sees her entry ${SAID[seen]}.`
+              ? `Ben's fix sent Patchy nothing, and Cleo sees his entry ${SAID[seen]}.`
+              : `Ben's fix never took effect through a call the grader could try as someone else: Cleo sees his entry ${SAID[seen]}.`
         };
       }
     }
