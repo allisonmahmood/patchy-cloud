@@ -88,7 +88,9 @@ describe("htmlPage app body", () => {
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(html).toContain("R&amp;D &lt;script&gt;alert(2)&lt;/script&gt;");
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;@example.com");
-    expect(html).not.toMatch(/<(img|script|b)\b/);
+    expect(html.replace('<script defer src="/feedback/tell.js"></script>', "")).not.toMatch(
+      /<(img|script|b)\b/
+    );
     expect(html).toContain('<a class="app-place" href="/company" aria-current="page">');
   });
 
@@ -116,7 +118,41 @@ describe("htmlPage app body", () => {
     expect(caughtUp).not.toContain('class="whats-new-dot"');
     expect(caughtUp).toContain("You’re all caught up.");
     expect(caughtUp).toContain('href="/whats-new">See all changes</a>');
-    expect(caughtUp).not.toMatch(/<script\b/);
+    expect(caughtUp).not.toContain("/whats-new/bell.js");
+  });
+
+  it("opens Tell Patchy beside What's new, from a panel outside the menu a phone folds away", () => {
+    const html = htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "" });
+    const foot = html.slice(html.indexOf('<div class="app-foot">'));
+    expect(foot.indexOf('popovertarget="whats-new"')).toBeLessThan(
+      foot.indexOf('popovertarget="tell-patchy">Tell Patchy</button>')
+    );
+    expect(foot.indexOf('popovertarget="tell-patchy"')).toBeLessThan(
+      foot.indexOf('popovertarget="account-menu"')
+    );
+    const menu = html.slice(html.indexOf('id="app-menu"'), html.indexOf('id="tell-patchy" '));
+    expect(menu).toContain('<div class="app-foot">');
+    expect(html).toMatch(
+      /<\/div><\/div><div id="tell-patchy" class="whats-new-panel tell-patchy" popover role="dialog"/
+    );
+    expect(html).toContain(
+      '<form class="tell-patchy-form" method="post" action="/feedback" novalidate>'
+    );
+    expect(html).toContain('name="kind" value="request" checked>Request</label>');
+    expect(html).toContain('<a href="/feedback">What you sent</a>');
+    // No maxlength: it counts UTF-16 units and would cut an emoji the store accepts.
+    expect(html).toContain('<textarea class="field" id="tell-patchy-text" name="text" aria-label=');
+    // Shown only when the script can't tell whether a send was saved, which it never resends.
+    expect(html).toContain('class="note note-warn tell-patchy-unsure" hidden>');
+    expect(html.slice(html.indexOf("<body>"))).not.toContain('role="alert"');
+    expect(html).toContain('<script defer src="/feedback/tell.js"></script>');
+    // What you sent lights no place: the button opens the panel, not the page.
+    const sent = htmlPage({
+      title: "What you sent",
+      app: { viewer, section: "feedback" },
+      body: ""
+    });
+    expect(sent.slice(sent.indexOf("<body>"))).not.toContain('aria-current="page"');
   });
 
   it("lights What's new, not a place, on the What's new page", () => {

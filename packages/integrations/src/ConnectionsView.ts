@@ -196,9 +196,9 @@ const catalogue = (offers: ReadonlyArray<Offer>, rows: ReadonlyArray<Row>, admin
       return `<li class="list-row connections-offer"><div><p><strong>${escapeHtml(offer.integration.label)}</strong>${count > 0 ? ` ${muted(`· ${plural(count, "connection")}`)}` : ""}</p><p class="supporting-text">${escapeHtml(offer.reads)}</p><p class="supporting-text">${escapeHtml(offer.mode)}</p></div>${admin ? `<a class="btn" href="${escapeAttribute(connectPath(offer.integration.key))}">Connect ${escapeHtml(offer.integration.label)}</a>` : ""}</li>`;
     })
     .join("")}</ul>`;
-/** Where a company tells Patchy what it would use; the company's contact for now. */
-const contact = "mailto:allison@patchyhq.com";
-const onRequest = `<p class="supporting-text"><a href="${contact}">Request an integration</a></p>`;
+/** Where a company tells Patchy what it would use: the shell's Tell Patchy panel, Request picked. */
+const onRequest =
+  '<p class="supporting-text"><button class="btn btn-quiet" type="button" popovertarget="tell-patchy" data-kind="request">Request an integration</button></p>';
 
 /** Rows the filters keep; a member's view never narrows to Unused. */
 const matches = (row: Row, filters: Filters) =>

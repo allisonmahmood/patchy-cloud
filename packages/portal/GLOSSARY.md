@@ -65,7 +65,7 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, the places, What's new and the account menu, beside the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
+The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, the places, What's new, Tell Patchy and the account menu, beside the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:
@@ -75,3 +75,11 @@ _Avoid_: design system (there is one theme and no library), component library, u
 **What's new**:
 Patchy's changelog for the people using it, at `/whats-new` and behind What's new at the foot of the sidebar: one **release** per deploy, written before it from the PRs merged since the last, each holding **changes** tagged New, Improved or Fixed and a few behind-the-scenes lines. A person's **seen marker** is the newest release they have looked at; opening its panel or the page raises it, and a new member starts at the newest. The list ships with the server in `@patchy/core`, so a rollback shows the older one. Its New and Improved changes are public at `/whats-new.json`, which patchyhq.com reads; Fixed changes and behind-the-scenes lines stay in the app.
 _Avoid_: notifications (nothing is addressed to one person), release notes (the notes are what the deploying agent writes, not the page), updates
+
+**Tell Patchy**:
+The sidebar foot's panel, beside What's new and in its frame, for sending Patchy a [request or feedback](../feedback/GLOSSARY.md) from the dashboard: Request or Feedback, one text field, then the receipt and, for a request, its similar requests with **Same need** and Unlink. A long request's first line or opening words are its title and the whole text its why. A page's own button opens it beside itself, as Integrations' Request an integration does with Request picked.
+_Avoid_: feedback form, contact, support
+
+**What you sent**:
+The table at `/feedback` of everything the person and their agents sent Patchy, newest first and paged: when, what, from whom through which surface, and a request's status, with Unlink and Withdraw… in each row's menu. It is how a person sees and takes back what an agent sent, and where Patchy MCP's answers point.
+_Avoid_: inbox, history, my requests, submissions (the store's word)

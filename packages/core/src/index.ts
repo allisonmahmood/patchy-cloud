@@ -5,6 +5,7 @@ export {
   framedDocument,
   htmlPage,
   sentenceList,
+  tellPatchyScriptPath,
   whatsNewKind
 } from "./html.js";
 export type { AppShell } from "./html.js";
