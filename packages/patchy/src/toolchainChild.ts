@@ -9,6 +9,7 @@ import { runToolchain } from "./toolchain.js";
 import { buildServer } from "./serverBuild.js";
 import { crossedPatchChanges } from "./releaseChanges.js";
 import { typescriptManifest, typescriptNotice } from "./typescriptNotice.js";
+import { withWorkerdBuildDeclined } from "./workerdBuild.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const decodeModules = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -95,10 +96,20 @@ try {
         ...(await crossedPatchChanges(process.cwd()))
       ].filter((notice) => notice !== undefined)
     : [];
+  // Refresh inspects after generation, which edits the files it can: every CLI relays this reply.
+  const workspace = inspect
+    ? withWorkerdBuildDeclined(
+        await readFile(path.join(process.cwd(), "pnpm-workspace.yaml"), "utf8").catch(() => "")
+      )
+    : undefined;
   output(
     JSON.stringify({
       ok: true,
-      warnings: [...loaded.warnings, ...refreshNotices],
+      warnings: [
+        ...loaded.warnings,
+        ...refreshNotices,
+        ...(workspace !== undefined && "notice" in workspace ? [workspace.notice] : [])
+      ],
       sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
       agentTools: server?.agentTools ?? {}
     })
