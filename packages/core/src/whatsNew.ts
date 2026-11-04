@@ -60,6 +60,16 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 37,
+    date: "2026-11-04",
+    through: "dc89c7008196471b9e1c6bf51d2ef3ea7858088b",
+    changes: [],
+    behindTheScenes: [
+      "Patchy can now give reviewers a sign-in link to a demo account, for people nobody can invite by email."
+    ],
+    patchChanges: []
+  },
+  {
     id: 36,
     date: "2026-11-04",
     through: "1acc968501baa46c16fb699a34cbb3fc303751b3",
