@@ -7,6 +7,7 @@ import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { runToolchain } from "./toolchain.js";
 import { buildServer } from "./serverBuild.js";
+import { crossedPatchChanges } from "./releaseChanges.js";
 import { typescriptManifest, typescriptNotice } from "./typescriptNotice.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
@@ -81,17 +82,23 @@ try {
       : undefined;
   if (server !== undefined)
     await writeFile(path.join(process.argv[3]!, "server.js"), server.server);
-  // Refresh inspects; dev and publish check TypeScript before they build.
-  const typescript = inspect
-    ? typescriptNotice(
-        await readFile(path.join(process.cwd(), typescriptManifest), "utf8").catch(() => undefined),
-        toolchain
-      )
-    : undefined;
+  // Only refresh inspects: dev and publish check TypeScript before they build, and only refresh
+  // moves a repo across releases.
+  const refreshNotices = inspect
+    ? [
+        typescriptNotice(
+          await readFile(path.join(process.cwd(), typescriptManifest), "utf8").catch(
+            () => undefined
+          ),
+          toolchain
+        ),
+        ...(await crossedPatchChanges(process.cwd()))
+      ].filter((notice) => notice !== undefined)
+    : [];
   output(
     JSON.stringify({
       ok: true,
-      warnings: typescript === undefined ? loaded.warnings : [...loaded.warnings, typescript],
+      warnings: [...loaded.warnings, ...refreshNotices],
       sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
       agentTools: server?.agentTools ?? {}
     })
