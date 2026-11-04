@@ -888,8 +888,14 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       expect(readFileSync(path.join(dir, file), "utf8")).not.toBe("previous generation\n");
   }, 30_000); // One isolated pnpm install of the real release archive.
 
-  it("checks the toolchain with the newly installed release, whichever CLI refreshes across a digest change", async () => {
-    const required = { ...toolchain, vite: { testedAgainst: "99.0.0", accepted: "^99.0.0" } };
+  // The refreshing CLI checks nothing itself: an older release's pinned CLI that relays the
+  // installed release's toolchain reply, as every release's refresh does, hears the same warnings.
+  it("warns with the newly installed release's toolchain check, TypeScript included, whichever CLI refreshes from an older release", async () => {
+    const required = {
+      ...toolchain,
+      vite: { testedAgainst: "99.0.0", accepted: "^99.0.0" },
+      typescript: { testedAgainst: "99.0.0", accepted: "^99.0.0" }
+    };
     const instance = await stubInstance(
       projectHandler,
       () => CURRENT_RELEASE,
@@ -898,8 +904,9 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       ),
       required
     );
-    const previousPin = `${instance.url}/sdk/patchy-${CURRENT_RELEASE}-${"1".repeat(64)}.tgz`;
-    const vite = path.dirname(require.resolve("vite/package.json", { paths: [packageDir] }));
+    const previousPin = `${instance.url}/sdk/patchy-0.21.0-${"1".repeat(64)}.tgz`;
+    const linked = (name: string) =>
+      `link:${path.dirname(require.resolve(`${name}/package.json`, { paths: [packageDir] }))}`;
     const store = tempDir();
     const pnpm = {
       pnpm_config_registry: instance.url,
@@ -916,7 +923,11 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
           name: "cli-project",
           private: true,
           type: "module",
-          devDependencies: { patchy: previousPin, vite: `link:${vite}` }
+          devDependencies: {
+            patchy: previousPin,
+            vite: linked("vite"),
+            typescript: linked("typescript")
+          }
         }) + "\n"
       );
       await exec(
@@ -942,9 +953,13 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
     const installed = await refreshed("installed");
     expect(installed).toMatchObject({
       ok: true,
+      release: { from: "0.21.0", to: CURRENT_RELEASE },
       changed: { pin: true },
       warnings: expect.arrayContaining([
-        expect.stringContaining(`Loaded vite ${toolchain.vite.testedAgainst} is unsupported`)
+        expect.stringContaining(`Loaded vite ${toolchain.vite.testedAgainst} is unsupported`),
+        expect.stringContaining(
+          `This repo has TypeScript ${toolchain.typescript.testedAgainst}; this release publishes only TypeScript ^99.0.0`
+        )
       ])
     });
     expect(await refreshed("workspace")).toEqual(installed);

@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the isolated builder-toolchain process entrypoint.
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import * as Schema from "effect/Schema";
@@ -7,6 +7,7 @@ import { ReleaseToolchain } from "@patchy/api";
 import { LocalError } from "./CliError.js";
 import { runToolchain } from "./toolchain.js";
 import { buildServer } from "./serverBuild.js";
+import { typescriptManifest, typescriptNotice } from "./typescriptNotice.js";
 
 const decodeToolchain = Schema.decodeUnknownSync(Schema.fromJsonString(ReleaseToolchain));
 const decodeModules = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -80,10 +81,17 @@ try {
       : undefined;
   if (server !== undefined)
     await writeFile(path.join(process.argv[3]!, "server.js"), server.server);
+  // Refresh inspects; dev and publish check TypeScript before they build.
+  const typescript = inspect
+    ? typescriptNotice(
+        await readFile(path.join(process.cwd(), typescriptManifest), "utf8").catch(() => undefined),
+        toolchain
+      )
+    : undefined;
   output(
     JSON.stringify({
       ok: true,
-      warnings: loaded.warnings,
+      warnings: typescript === undefined ? loaded.warnings : [...loaded.warnings, typescript],
       sdkImports: [...new Set([...loaded.sdkImports, ...(server?.sdkImports ?? [])])].sort(),
       agentTools: server?.agentTools ?? {}
     })
