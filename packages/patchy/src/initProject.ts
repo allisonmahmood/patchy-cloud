@@ -62,7 +62,8 @@ import { App } from "./App.js";
 
 render(<App />, document.getElementById("root")!);
 `,
-    "src/App.tsx": `import { useEffect, useState } from "patchy/preact";
+    "src/App.tsx": `import { useEffect, useRef, useState } from "patchy/preact";
+import { useHotkey } from "patchy/hotkeys";
 import { patchy } from "../patchy/_generated/client.js";
 
 export function App() {
@@ -70,6 +71,7 @@ export function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -82,8 +84,9 @@ export function App() {
     return () => { active = false; };
   }, []);
 
-  function save(form: HTMLFormElement) {
-    if (loading || saving || !form.reportValidity()) return;
+  function save() {
+    const form = field.current?.form;
+    if (!form || loading || saving || !form.reportValidity()) return;
     const title = String(new FormData(form).get("title") ?? "").trim();
     if (!title) return;
     setSaving(true);
@@ -102,18 +105,15 @@ ${
       .finally(() => setSaving(false));
   }
 
-  // The sandbox blocks native form submission; save through the broker instead.
+  // The sandbox blocks native form submission; Enter in the title saves through the broker instead.
+  useHotkey("Enter", save, { within: field });
+
   return (
     <main>
       <h1>Notes</h1>
-      <form id="notes" onKeyDown={(event) => {
-        if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.isComposing) {
-          event.preventDefault();
-          save(event.currentTarget);
-        }
-      }}>
-        <label>Title <input name="title" required disabled={loading || saving} /></label>
-        <button type="button" disabled={loading || saving} onClick={(event) => save(event.currentTarget.form!)}>Add note</button>
+      <form id="notes">
+        <label>Title <input ref={field} name="title" required disabled={loading || saving} /></label>
+        <button type="button" disabled={loading || saving} onClick={save}>Add note</button>
       </form>
       <p role="status">{loading ? "Loading notes..." : saving ? "Saving note..." : ""}</p>
       <p id="error" role="alert">{error}</p>

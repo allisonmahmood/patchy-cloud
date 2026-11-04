@@ -21,6 +21,13 @@ const shifted: Chord[] = ["~", "!", "@", "#", "$", "%", "^", "&", "*", "(", ")",
 for (const hotkey of shifted) useHotkey(hotkey, run);
 useHotkey("G H", run, { label: "Go home", group: "Navigation" });
 useHotkey("Alt+ArrowUp", run);
+const list: { current: HTMLUListElement | null } = { current: null };
+const chart: { current: SVGSVGElement | null } = { current: null };
+const anything: { readonly current: Element | null } = { current: null };
+useHotkey("Enter", run, { within: list, label: "Open task" });
+useHotkey("ArrowRight", run, { within: chart });
+useHotkey("Escape", run, { within: anything, whileTyping: false });
+useHotkeys([{ hotkey: "ArrowDown", run, within: list }, { hotkey: "G H", run, within: chart }]);
 const digits: Chord[] = ["1", "2"];
 useHotkeys(digits.map((hotkey) => ({ hotkey, run })));
 for (const hotkey of digits) useHotkey(hotkey, run);
@@ -31,6 +38,22 @@ HotkeySheet({ title: "Tracker shortcuts", hotkey: "Mod+/", group: "Help" });
 openHotkeySheet();
 `;
   expect(typecheck({ "consumer.ts": source })).toEqual([]);
+});
+
+it("refuses a within that isn't an element's ref", () => {
+  const source = `import { useHotkey } from "patchy/hotkeys";
+const page: { current: Document | null } = { current: null };
+useHotkey("Enter", () => {}, { within: page });
+useHotkey("Enter", () => {}, { within: document.body });
+`;
+  // Each error's first line; the lines after it explain the mismatch.
+  const lines = typecheck({ "consumer.ts": source })
+    .filter((line) => line.includes("consumer.ts("))
+    .map((line) => line.slice(line.indexOf("consumer.ts")));
+  expect(lines).toEqual([
+    "consumer.ts(3,32): error TS2322: Type '{ current: Document | null; }' is not assignable to type '{ readonly current: Element | null; }'.",
+    "consumer.ts(4,32): error TS2741: Property 'current' is missing in type 'HTMLElement' but required in type '{ readonly current: Element | null; }'."
+  ]);
 });
 
 it("refuses each string that isn't a hotkey, saying what to write instead", () => {
@@ -78,21 +101,24 @@ HotkeySheet({ hotkey: "Ctrl+/" });
   ]);
 });
 
-it("shows Enter, Space, Backspace and Delete as words off a Mac, and as symbols on one", () => {
+it("shows Enter, Space, Backspace, Delete and Tab as words off a Mac, and as symbols on one", () => {
   for (const platform of ["Win32", "Linux x86_64"]) {
     on(platform);
     expect(formatHotkey("Mod+Enter")).toBe("Ctrl+Enter");
     expect(formatHotkey("Mod")).toBe("Ctrl");
-    expect(hotkeyKeys("Space Shift+Backspace Delete")).toEqual([
+    expect(formatHotkey("Shift+Tab")).toBe("Shift+Tab");
+    expect(hotkeyKeys("Space Shift+Backspace Delete Tab")).toEqual([
       ["Space"],
       ["Shift", "Backspace"],
-      ["Delete"]
+      ["Delete"],
+      ["Tab"]
     ]);
   }
   on("MacIntel");
   expect(formatHotkey("Mod+Enter")).toBe("⌘ ↵");
   expect(formatHotkey("Mod")).toBe("⌘");
-  expect(hotkeyKeys("Space Shift+Backspace Delete")).toEqual([["␣"], ["⇧", "⌫"], ["⌦"]]);
+  expect(formatHotkey("Shift+Tab")).toBe("⇧ ⇥");
+  expect(hotkeyKeys("Space Shift+Backspace Delete Tab")).toEqual([["␣"], ["⇧", "⌫"], ["⌦"], ["⇥"]]);
 });
 
 it("checks what formatHotkey and hotkeyKeys show, allowing modifiers alone and listed hotkeys", () => {
