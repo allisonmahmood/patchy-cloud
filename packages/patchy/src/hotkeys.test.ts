@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { typecheck } from "../../../test/typescript.js";
 
 it("accepts chords, sequences, data-built chords and a sheet against the published types", () => {
-  const source = `import { HotkeySheet, useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
+  const source = `import { HotkeySheet, openHotkeySheet, useHotkey, useHotkeys, type Chord } from "patchy/hotkeys";
 const run = () => {};
 useHotkey("Mod+K", run);
 useHotkey("?", run);
@@ -17,7 +17,8 @@ const digits: Chord[] = ["1", "2"];
 useHotkeys(digits.map((hotkey) => ({ hotkey, run })));
 for (const hotkey of digits) useHotkey(hotkey, run);
 HotkeySheet({});
-HotkeySheet({ title: "Tracker shortcuts", hotkey: "Mod+/" });
+HotkeySheet({ title: "Tracker shortcuts", hotkey: "Mod+/", group: "Help" });
+openHotkeySheet();
 `;
   expect(typecheck({ "consumer.ts": source })).toEqual([]);
 });

@@ -2,18 +2,32 @@
  * What `HotkeySheet` draws from: its sections and its default styles. Internal: `hotkeys.ts`
  * exports the component.
  */
+import { normalizeHotkey } from "@tanstack/preact-hotkeys";
+import { steps } from "./hotkeyRules.js";
 import type { ListedHotkey } from "./hotkeys.js";
+
+// A hotkey as its registration lists it: `"j"` is `"J"`, a sequence's steps joined by spaces.
+const canonical = (hotkey: string): string =>
+  steps(hotkey)
+    .map((step) => normalizeHotkey(step))
+    .join(" ");
 
 /**
  * The sheet's sections: named groups in the order they are first seen, then the ungrouped under
- * General. When no hotkey has a group, one section with no name.
+ * General. When no hotkey has a group, one section with no name. The sheet's `own` row lists
+ * after the page's, wherever it sits: as a child of the page's component, it registers first.
  */
 export const sections = (
-  list: ReadonlyArray<ListedHotkey>
+  list: ReadonlyArray<ListedHotkey>,
+  own?: Pick<ListedHotkey, "hotkey" | "label">
 ): Array<[name: string | undefined, rows: ListedHotkey[]]> => {
+  const isOwn = (item: ListedHotkey) =>
+    own !== undefined &&
+    item.label === own.label &&
+    canonical(item.hotkey) === canonical(own.hotkey);
   const groups = new Map<string, ListedHotkey[]>();
   const ungrouped: ListedHotkey[] = [];
-  for (const item of list) {
+  for (const item of [...list.filter((item) => !isOwn(item)), ...list.filter(isOwn)]) {
     if (item.group === undefined) ungrouped.push(item);
     else groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
   }
