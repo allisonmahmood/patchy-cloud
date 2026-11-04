@@ -122,9 +122,10 @@ also drops off a shortcuts sheet.
 ## The shortcuts sheet
 
 `<HotkeySheet />` renders a `?` button where it is mounted. The button and the `?` key open a
-sheet that lists every labelled hotkey, drawn with the company look's tokens. While it is open,
-the page's hotkeys wait. Escape, its close button or a tap outside it closes it, and focus goes
-back to where it was.
+sheet that lists every labelled hotkey, drawn with the company look's tokens. The sheet opens
+over the whole page wherever the button is, even in a sidebar hidden at the viewer's width, so
+mount it once. While it is open, the page's hotkeys wait. Escape, its close button or a tap
+outside it closes it, and focus goes back to where it was.
 
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
   the key that opens it, `"?"` by default, checked like `useHotkey`'s.
@@ -132,7 +133,9 @@ back to where it was.
   first registered, and ungrouped hotkeys, the sheet's own included, come last under General.
   With no groups at all, the sheet is one list.
 - Its parts have `hotkey-*` classes, styled inside `@layer patchy-hotkeys`, so the patch's own
-  unlayered CSS restyles any of them.
+  unlayered CSS restyles any of them. The sheet renders in the page's `<body>`, outside the
+  patch's root element, so restyle it with selectors that don't depend on where it's mounted,
+  such as `.hotkey-sheet …`, and set `--look-*` overrides on `:root` or `body`.
 - A different sheet is built from `useHotkeyList` and `hotkeyKeys` inside a `HotkeyScope`.
 
 ## Showing hotkeys

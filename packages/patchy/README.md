@@ -178,7 +178,10 @@ Escape, its close button or a click outside closes it, and focus returns. It
 draws with `--look-*` tokens in `hotkey-*` classes. The first one mounted adds
 one `<style>` with those defaults inside `@layer patchy-hotkeys`, after the
 look's styles, so it beats the look's element styles and the patch's own
-unlayered CSS beats it.
+unlayered CSS beats it. Its dialog renders in the page's `<body>`, outside the
+patch's root element, so restyle it with selectors that don't depend on where
+it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
+`:root` or `body`.
 
 ### Generated downloads and printing
 
