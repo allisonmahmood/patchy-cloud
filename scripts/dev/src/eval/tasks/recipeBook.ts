@@ -1,6 +1,6 @@
-import type { ConsoleMessage, Locator, Request } from "@playwright/test";
+import type { ConsoleMessage, FrameLocator, Locator, Request } from "@playwright/test";
 import type { CheckContext, CheckOutcome, Opened, Task } from "../task.js";
-import { chooseField, fillRest, formAround, reveal, settle, shows, visibleText } from "./page.js";
+import { around, chooseField, fillRest, formAround, reveal, settle } from "./page.js";
 
 /** A recipe a check adds. Its last step is the words that tell its page from any other's. */
 interface Recipe {
@@ -10,6 +10,59 @@ interface Recipe {
 }
 
 const lastStep = (recipe: Recipe) => recipe.steps.at(-1)!;
+
+const POLL_MS = 500;
+
+/**
+ * The `items` the patch's frame doesn't show within `ms`, as visible text;
+ * case aside, since a page's styles can change it.
+ */
+const unseen = async (view: Opened, items: ReadonlyArray<string>, ms = 10_000) => {
+  for (let waited = 0; ; waited += POLL_MS) {
+    const text = (
+      await view.frame
+        .locator("body")
+        .innerText({ timeout: POLL_MS })
+        .catch(() => "")
+    ).toLowerCase();
+    const missing = items.filter((item) => !text.includes(item.toLowerCase()));
+    if (missing.length === 0 || waited >= ms) return missing;
+    await view.page.waitForTimeout(POLL_MS);
+  }
+};
+
+const showsSteps = async (view: Opened, recipe: Recipe, ms?: number) =>
+  (await unseen(view, [lastStep(recipe)], ms)).length === 0;
+
+/**
+ * Whether each rendered element showing `words` is on screen: in view, as an
+ * intersection observer in the frame sees it, so inside the frame's own
+ * viewport and any scrolling part that clips it. Empty when none is rendered.
+ */
+const onScreen = (view: Opened, words: string) =>
+  view.frame
+    .getByText(words)
+    .filter({ visible: true })
+    .evaluateAll((elements) =>
+      Promise.all(
+        elements.map(
+          (element) =>
+            new Promise<boolean>((resolve) => {
+              const observer = new IntersectionObserver(([entry]) => {
+                observer.disconnect();
+                resolve(entry?.isIntersecting ?? false);
+              });
+              observer.observe(element);
+              // This runs in the patch's frame, not in Effect: a fallback should the observer never answer.
+              // @effect-diagnostics-next-line globalTimers:off
+              setTimeout(() => {
+                observer.disconnect();
+                resolve(false);
+              }, 2_000);
+            })
+        )
+      )
+    );
 
 /** What a recipe's own fields go by; a title is looked for by name before by "recipe". */
 const TITLES = [/title|name|dish|called/i, /recipe/i];
@@ -129,16 +182,38 @@ const added = async (ctx: CheckContext, key: string, recipe: Recipe) => {
     : ({ ok: false, reason: `${ctx.person(key).name} ${refused}.` } as const);
 };
 
+/** What a card's own control for opening its recipe goes by, beside the recipe's name. */
+const OPENS = /\b(view|open|see|read|show)\b/i;
+
+/** The buttons and links in `scope` that open `recipe`: named for opening, or for the recipe. */
+const openersOf = (scope: FrameLocator | Locator, recipe: Recipe) => {
+  const titled = new RegExp(recipe.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  return scope
+    .getByRole("button", { name: OPENS })
+    .or(scope.getByRole("link", { name: OPENS }))
+    .or(scope.getByRole("button", { name: titled }))
+    .or(scope.getByRole("link", { name: titled }));
+};
+
 /**
  * Opens the recipe holding `recipe.title` in `view` as a person would, only
- * looking: finds it in the book, clicks its title and waits for its steps.
- * Whether it found the recipe, and what the address was just before the click.
+ * looking: finds it in the book and clicks its title, or, when that doesn't
+ * show its steps, the control in its card that opens it (View recipe, Open,
+ * or one named for it). Whether its steps showed, and what the address was
+ * just before the first click.
  */
 const openRecipe = async (view: Opened, recipe: Recipe) => {
   if (!(await reveal(view, recipe.title))) return { found: false, before: "" } as const;
   const before = view.page.url();
   await view.frame.getByText(recipe.title).filter({ visible: true }).first().click();
-  return { found: await shows(view, lastStep(recipe)), before } as const;
+  if (await showsSteps(view, recipe)) return { found: true, before } as const;
+  // The innermost part of the page holding the title and such a control: the recipe's card.
+  const card = around(view.frame, recipe.title, { has: openersOf(view.frame, recipe) });
+  const opener = openersOf(card, recipe).filter({ visible: true }).first();
+  if ((await card.count()) === 0 || (await opener.count()) === 0)
+    return { found: false, before } as const;
+  await opener.click();
+  return { found: await showsSteps(view, recipe), before } as const;
 };
 
 /** How long the address may take to follow the recipe a page opened. */
@@ -147,7 +222,8 @@ const ROUTE_MS = 5_000;
 /**
  * The link `key` would paste for `recipe`: what their address bar shows once
  * they open it from a fresh look at the book, as a path under the patch's
- * address; or the check's failure.
+ * address; or the check's failure. A recipe the page had already put forward,
+ * such as the newest on a book that opens on it, leaves the address as it was.
  */
 const linkTo = async (
   ctx: CheckContext,
@@ -168,11 +244,6 @@ const linkTo = async (
     // A page can refine the path a moment later, such as adding the recipe's name.
     await view.page.waitForTimeout(1_000);
     now = view.page.url();
-    if (now === before)
-      return {
-        ok: false,
-        reason: `Opening ${recipe.title} left ${who}'s address as it was: the recipe has no link of its own.`
-      };
     if (!now.startsWith(ctx.target.address))
       return {
         ok: false,
@@ -185,9 +256,12 @@ const linkTo = async (
 };
 
 /**
- * Whether `key`, opening `link` in a fresh browser, lands on `recipe` alone:
- * its steps show, and `other`'s never do, so the book with every recipe in
- * it doesn't pass for the recipe's own page. The check's failure, or null.
+ * Whether `key`, opening `link` in a fresh browser, lands on `recipe`: its
+ * steps show, and either `other`'s aren't rendered at all, or the page puts
+ * `recipe`'s last step in view and `other`'s out of it, as a book that keeps
+ * every recipe and scrolls to the linked one does. A page that shows the same
+ * whatever its link can't do that for both recipes, so the whole book never
+ * passes for a recipe's page. The check's failure, or null.
  */
 const landsOn = async (
   ctx: CheckContext,
@@ -197,20 +271,24 @@ const landsOn = async (
   other: Recipe
 ): Promise<Extract<CheckOutcome, { ok: false }> | null> => {
   const who = ctx.person(key).name;
+  const opened = `${who} opened the link to ${recipe.title} (${link})`;
   const view = await ctx.open(key, link);
   try {
-    if (!(await shows(view, lastStep(recipe))))
-      return {
-        ok: false,
-        reason: `${who} opened the link to ${recipe.title} (${link}), and its steps never showed.`
-      };
+    if (!(await showsSteps(view, recipe)))
+      return { ok: false, reason: `${opened}, and its steps never showed.` };
     await settle(view);
-    return (await visibleText(view)).includes(lastStep(other))
-      ? {
-          ok: false,
-          reason: `${who} opened the link to ${recipe.title} (${link}), and saw ${other.title}'s steps too: it opens the book, not the recipe.`
-        }
-      : null;
+    // A page can scroll to the recipe it opens on smoothly.
+    await view.page.waitForTimeout(1_000);
+    const others = await onScreen(view, lastStep(other));
+    if (others.length === 0) return null;
+    const mine = await onScreen(view, lastStep(recipe));
+    if (mine.includes(true) && !others.includes(true)) return null;
+    return {
+      ok: false,
+      reason: mine.includes(true)
+        ? `${opened}, and saw ${other.title}'s steps in view beside it: it opens the book, not the recipe.`
+        : `${opened}: its steps are on the page but out of view, and ${other.title}'s are there too. It opens the book, not the recipe.`
+    };
   } finally {
     await view.close();
   }
@@ -220,9 +298,10 @@ const landsOn = async (
  * A team recipe book where every recipe has a link of its own: nothing to
  * keep against the viewer, so a page and its own table do it all, and the
  * reference task for a page's own routes. Ben adds a recipe and Cleo opens
- * it, ingredients and steps. Then Ada adds two, opens each and takes the
- * address her browser shows, and Cleo, opening each link fresh, must land
- * on that recipe and not the other.
+ * it, with every ingredient and step he wrote. Then Ada adds two, opens each
+ * and takes the address her browser shows. The two must differ, and Cleo,
+ * opening each link fresh, must land on that recipe: the other's steps
+ * aren't shown, or are out of view while the linked one's are in it.
  */
 export default {
   id: "recipe-book",
@@ -261,9 +340,14 @@ export default {
               ? "Cleo finds Ben's recipe, but not its steps."
               : "Cleo never sees the recipe Ben added."
           };
-        return (await shows(cleo, "zest of 2 lemons"))
+        // Every ingredient and step Ben wrote, so a recipe that lost any of them doesn't pass.
+        const missing = await unseen(cleo, [...recipe.ingredients, ...recipe.steps], 2_000);
+        return missing.length === 0
           ? { ok: true }
-          : { ok: false, reason: "Cleo sees Ben's recipe and its steps, but not its ingredients." };
+          : {
+              ok: false,
+              reason: `Cleo opens Ben's recipe, but it's missing ${missing.map((item) => `"${item}"`).join(", ")}.`
+            };
       }
     },
     {
@@ -298,10 +382,11 @@ export default {
           links.push(link.path);
         }
         const [toRisotto, toCurry] = links as [string, string];
+        // Opening each recipe has to leave its own address: the book's, twice, is no link at all.
         if (toRisotto === toCurry)
           return {
             ok: false,
-            reason: `Both recipes Ada opened left the same address (${toRisotto}).`
+            reason: `Ada opened each recipe, and her address showed ${toRisotto === "" || toRisotto === "/" ? "the book's own" : toRisotto} both times: the recipes have no links of their own.`
           };
         return (
           (await landsOn(ctx, "cleo", toRisotto, risotto, curry)) ??
