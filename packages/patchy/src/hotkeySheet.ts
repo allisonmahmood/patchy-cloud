@@ -1,33 +1,40 @@
 /**
- * What `HotkeySheet` draws from: its sections and its default styles. Internal: `hotkeys.ts`
- * exports the component.
+ * What `HotkeySheet` draws from: the commands it lists, its sections and its default styles.
+ * Internal: `hotkeys.ts` exports the component.
  */
-import { normalizeHotkey } from "@tanstack/preact-hotkeys";
-import { steps } from "./hotkeyRules.js";
 import type { ListedHotkey } from "./hotkeys.js";
 
-// A hotkey as its registration lists it: `"j"` is `"J"`, a sequence's steps joined by spaces.
-const canonical = (hotkey: string): string =>
-  steps(hotkey)
-    .map((step) => normalizeHotkey(step))
-    .join(" ");
+/** A labelled hotkey that works where focus was, and how deep its element sits: -1 for the page. */
+export interface Placed extends ListedHotkey {
+  readonly depth: number;
+}
+
+/**
+ * The commands for the current context, from the labelled hotkeys that work where focus was: of
+ * those sharing a hotkey, the narrowest, the first registered among equals. Narrowest first, so
+ * an element's commands come before the page's or the dialog's.
+ */
+export const narrowest = <T extends Placed>(placed: ReadonlyArray<T>): T[] => {
+  const kept = new Map<string, T>();
+  for (const row of placed) {
+    const other = kept.get(row.hotkey);
+    if (other === undefined || row.depth > other.depth) kept.set(row.hotkey, row);
+  }
+  return [...kept.values()].sort((a, b) => b.depth - a.depth);
+};
 
 /**
  * The sheet's sections: named groups in the order they are first seen, then the ungrouped under
- * General. When no hotkey has a group, one section with no name. The sheet's `own` row lists
- * after the page's, wherever it sits: as a child of the page's component, it registers first.
+ * General. When no hotkey has a group, one section with no name. The sheet's `own` rows list after
+ * the others, in whichever section their group puts them.
  */
-export const sections = (
-  list: ReadonlyArray<ListedHotkey>,
-  own?: Pick<ListedHotkey, "hotkey" | "label">
-): Array<[name: string | undefined, rows: ListedHotkey[]]> => {
-  const isOwn = (item: ListedHotkey) =>
-    own !== undefined &&
-    item.label === own.label &&
-    canonical(item.hotkey) === canonical(own.hotkey);
-  const groups = new Map<string, ListedHotkey[]>();
-  const ungrouped: ListedHotkey[] = [];
-  for (const item of [...list.filter((item) => !isOwn(item)), ...list.filter(isOwn)]) {
+export const sections = <T extends ListedHotkey>(
+  list: ReadonlyArray<T>,
+  own: ReadonlyArray<T> = []
+): Array<[name: string | undefined, rows: T[]]> => {
+  const groups = new Map<string, T[]>();
+  const ungrouped: T[] = [];
+  for (const item of [...list, ...own]) {
     if (item.group === undefined) ungrouped.push(item);
     else groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
   }
@@ -187,16 +194,33 @@ const styles = `@layer look.patchy-hotkeys {
     padding: 0;
     list-style: none;
   }
-  .hotkey-row {
+  .hotkey-row,
+  .hotkey-command {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: calc(var(--look-space, 8px) * 2);
+  }
+  .hotkey-row {
     min-height: 2.6rem;
     border-bottom: 1px solid color-mix(in srgb, var(--look-border, currentColor) 22%, transparent);
   }
   .hotkey-row:last-child {
     border-bottom: 0;
+  }
+  /* A command is a button the width and height of its row, drawn as the row. */
+  .hotkey-command {
+    flex: 1;
+    align-self: stretch;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: start;
+    cursor: pointer;
   }
   .hotkey-label {
     font-size: 0.94rem;
@@ -234,6 +258,16 @@ const styles = `@layer look.patchy-hotkeys {
   .hotkey-sheet-dialog kbd.hotkey-symbol {
     font-size: 0.95rem;
     font-weight: 600;
+  }
+
+  /* Read by screen readers, never drawn. */
+  .hotkey-announce {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   /* A phone: the sheet rises from the bottom edge, and its close button is a word to tap. */
@@ -284,6 +318,7 @@ const styles = `@layer look.patchy-hotkeys {
 // `<head>` wholesale drops it until the sheet next opens. `all` leaves out `direction` and
 // `unicode-bidi`, so the sheet and its parts take their direction from the page instead.
 const reset = `.hotkey-opener,
+.hotkey-announce,
 .hotkey-sheet-dialog,
 .hotkey-sheet-dialog *,
 .hotkey-sheet-dialog::backdrop {

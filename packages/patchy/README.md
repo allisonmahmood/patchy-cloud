@@ -153,7 +153,8 @@ version with Preact external; none of TanStack's names or types are exported.
 import { HotkeyScope, formatHotkey, useHotkey, useHotkeyList } from "patchy/hotkeys";
 
 useHotkey("G H", () => patchy.route.set("/"), { label: "Go home" });
-useHotkey("Mod+K", openSearch, { label: "Search", whileTyping: true, repeat: false });
+useHotkey("Mod+K", openSearch, { label: "Search", repeat: false });
+useHotkey("Enter", saveTitle, { within: titleField });
 ```
 
 A hotkey is a chord such as `"Mod+K"`, `"?"` or `"Alt+ArrowUp"`, or a sequence
@@ -166,23 +167,40 @@ built from data, and `HotkeyBinding<Chord | "G H">[]` a table of them that
 names its sequences. Patchy keeps `"Mod+Shift+K"`: the types
 refuse it, and one cast past them is skipped with a console warning. Two enabled
 hotkeys with the same keys in one scope both fire, and the console warns once
-naming both. While a `<HotkeyScope>` is mounted, only the hotkeys registered by
-components it renders fire; the component that renders it is outside it. A held
-hotkey doesn't block its keys, so the browser still acts on them.
+naming both. `within: ref` ties a hotkey to one element, any element including
+SVG: it fires only while focus is on it or inside it, as `:focus-within` reads
+it. The narrowest place wins, the element's hotkey, then the dialog's, then the
+page's, even over a sequence further out that is under way, and a key a
+narrower sequence takes as a step is no step for one further out; a key the
+narrower place doesn't take goes on to the next. While a `<HotkeyScope>` is mounted, only
+the hotkeys registered by components it renders fire; the component that renders
+it is outside it. A held hotkey doesn't block its keys, so the browser still
+acts on them. A text field keeps the keys that type, compose or edit text,
+whatever a hotkey's options say; Mod chords that don't edit, Escape, and a
+one-line field's own Enter and arrows for a hotkey within it leave it, and none
+does for a hotkey with `whileTyping: false`. A key the
+page already handled with `preventDefault()` fires no hotkey and steps no
+sequence.
 `formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer:
-⌘ and ↵ ␣ ⌫ ⌦ on a Mac, Ctrl and words such as `Ctrl+Enter` elsewhere. The two
+⌘ and ↵ ␣ ⌫ ⌦ ⇥ on a Mac, Ctrl and words such as `Ctrl+Enter` and `Tab` elsewhere. The two
 helpers check a literal like `useHotkey` does, and also take modifiers alone,
 such as `"Mod"`.
 The `patchy-hotkeys` project skill states the text-field, propagation, native
 `<dialog>`, composition, layout and repeat rules.
 
-`<HotkeySheet />` is a ready-made shortcuts sheet: a `?` button where it is
-mounted, and a modal dialog that it and `?` open, listing every labelled hotkey
-under its `group` option. `title` and `hotkey` change its heading and the key
-that opens it, and `group` the heading its own row lists under, after the page's
-hotkeys. `openHotkeySheet()` opens the mounted one from a control of the page's
-own, such as a menu item. While it is open, its `HotkeyScope` holds the page's
-hotkeys back; Escape, its close button or a click outside closes it, and focus
+`<HotkeySheet />` is a ready-made shortcuts sheet, one per page: a `?` button
+where it is mounted, and a modal dialog that it, `?` and Mod+/ open, over
+dialogs and from text fields too. It lists the commands for the current context,
+the labelled hotkeys that work where focus was, the narrower of two with the
+same keys, under their `group` option, and its own openers last. Each command
+is a button, and its keys run it too, unless a step of them is the sheet's own
+Escape or Tab: the sheet closes, focus and the text selection go back, then the
+command runs, and a polite live region announces it, inside a modal dialog
+where focus is in one. `title` and `hotkey` change its heading and the key that opens it, and
+`group` the heading its own rows list under. `openHotkeySheet()` opens the
+mounted one from a control of the page's own, such as a menu item or a dialog's
+button. While it is open, its `HotkeyScope` holds every other hotkey back;
+Escape, its close button or a click outside closes it alone, and focus
 returns. It draws with `--look-*` tokens in `hotkey-*` classes, and in the
 page's font and text colour without a look. The first one mounted adds its
 defaults after the page's styles: the button's in `@layer look.patchy-hotkeys`,

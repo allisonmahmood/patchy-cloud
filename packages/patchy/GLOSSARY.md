@@ -152,12 +152,16 @@ _Avoid_: utility, plugin, extension
 A keyboard shortcut a page registers through `patchy/hotkeys`: one chord such as
 `Mod+K`, where Mod is ⌘ on a Mac and Ctrl elsewhere, or a sequence of chords such as
 `G H`. It fires while its component is mounted; while a `HotkeyScope` is mounted, only
-the hotkeys inside it fire. Patchy keeps `Mod+Shift+K` for its own shortcuts.
+the hotkeys inside it fire. One `within` an element fires only while focus is inside it,
+and the narrowest place wins: element, then dialog, then page. A text field keeps the
+keys that type or edit text, whatever a hotkey asks. Patchy keeps `Mod+Shift+K` for its own
+shortcuts.
 _Avoid_: keybinding, shortcut key, accelerator
 
 **Shortcuts sheet**:
-The dialog that lists a page's labelled hotkeys under their groups, opened by `?` or from
-the page's own controls.
+The dialog that lists the commands for the current context, the labelled hotkeys that work
+where focus was, under their groups, and runs them, opened by `?`, Mod+/ or from the page's
+own controls. It is how a viewer reaches a dialog's single keys from its text fields.
 `HotkeySheet` is the ready-made one, drawn in the company look; a builder can build
 another from `useHotkeyList`.
 _Avoid_: cheat sheet, help overlay, keyboard help

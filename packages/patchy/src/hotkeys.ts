@@ -1,26 +1,37 @@
-// @effect-diagnostics globalConsole:off — Page code has no Effect runtime; warnings are for the builder's console.
+// @effect-diagnostics globalConsole:off globalTimers:off — Page code has no Effect runtime; warnings are for the builder's console.
 /**
  * Keyboard shortcuts for Patchy pages.
  *
  * Patchy's own API. Pages write `"Mod+K"`, `"?"` or `"G H"` and never see TanStack Hotkeys,
  * which does the matching underneath; an upstream change is absorbed here, not in patches.
  */
-import { createHotkeyBindings, prepareHotkeyDefinitions } from "@tanstack/hotkeys/adapter";
+import {
+  createHotkeyBindings,
+  prepareHotkeyDefinitions,
+  type AdapterHotkeyDefinition
+} from "@tanstack/hotkeys/adapter";
 import {
   HotkeysProvider,
   detectPlatform,
   formatForDisplay,
   getHotkeyManager,
+  parseHotkey,
   useDefaultHotkeysOptions,
   useHotkeyRegistrations,
   type HotkeyChord,
-  type HotkeyRegistration,
-  type UseHotkeyDefinition
+  type HotkeyRegistrationView
 } from "@tanstack/preact-hotkeys";
 import { Fragment, createElement, createPortal, type ComponentChildren, type JSX } from "preact";
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { duplicateWarnings, permitted, steps, type Mounted } from "./hotkeyRules.js";
-import { addSheetStyles, sections } from "./hotkeySheet.js";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  duplicateWarnings,
+  fieldKeeps,
+  focusedField,
+  permitted,
+  steps,
+  type Mounted
+} from "./hotkeyRules.js";
+import { addSheetStyles, narrowest, sections, type Placed } from "./hotkeySheet.js";
 
 type Letter =
   | "A"
@@ -159,8 +170,9 @@ export interface HotkeyOptions {
   /** While false, the hotkey stays mounted but doesn't fire or list. Defaults to true. */
   readonly enabled?: boolean;
   /**
-   * Fire while the viewer types in a text field, and on the keys a focused control uses, such
-   * as a button's Enter. By default Mod chords and Escape do; other keys wait.
+   * Fire on the keys a focused control uses, such as a button's Enter or a checkbox's Space. In
+   * text fields true changes nothing: by default Mod chords and Escape fire there and other keys
+   * wait. False makes the hotkey wait in every text field, even one it is `within`.
    */
   readonly whileTyping?: boolean;
   /**
@@ -168,6 +180,16 @@ export interface HotkeyOptions {
    * press. A sequence fires once per completion either way. Defaults to true.
    */
   readonly repeat?: boolean;
+  /**
+   * Fire only while focus is on this element or inside it, as CSS `:focus-within` reads it, for
+   * keys that belong to one part of the page: arrows in a list, Enter in an inline editor. The
+   * narrowest place wins: an element's hotkey beats the same keys in a dialog or on the page,
+   * and a key it doesn't take goes on to them. Pass the element's ref; until the element
+   * renders, the hotkey isn't registered. The ref is read after each render of the component
+   * that registers the hotkey, so an element that changes because only a child re-rendered is
+   * picked up at this component's next render.
+   */
+  readonly within?: { readonly current: Element | null };
 }
 
 export interface HotkeyBinding<S extends string> extends HotkeyOptions {
@@ -181,36 +203,101 @@ type Checked = HotkeyOptions & {
   readonly run: (event: KeyboardEvent) => void;
 };
 
+type Within = NonNullable<HotkeyOptions["within"]>;
+
 // Our Chord type is the contract; TanStack parses the same names at runtime.
 const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> => {
   const split = steps(hotkey) as HotkeyChord[];
   return split.length === 1 ? split[0]! : split;
 };
 
+// Keys a hotkey of Patchy's took. One something else already prevented stands every hotkey down;
+// one Patchy took doesn't, so `G` beside `G H` fires on every `G H`.
+const consumed = new WeakSet<Event>();
+
+/**
+ * Whether a hotkey listening on `target` may take this key: not one something else already
+ * handled, and not one the focused field keeps from it. Chords ask in their callback; TanStack
+ * asks for each sequence step, as `allowStep`, also while it works out which sequence a key
+ * continues, so this only looks.
+ */
+const eligible = (
+  event: KeyboardEvent,
+  target: EventTarget | null,
+  whileTyping: boolean | undefined
+): boolean => {
+  if (event.defaultPrevented && !consumed.has(event)) return false;
+  const focused = focusedField(document);
+  return (
+    focused === undefined ||
+    !fieldKeeps(
+      event,
+      focused.field,
+      { within: target === focused.element, whileTyping },
+      detectPlatform() === "mac"
+    )
+  );
+};
+
+// A hotkey takes the key: the browser's own action for it stops, and it is marked as Patchy's. A
+// chord does this in its callback, and a sequence for each step it takes, as `onStep`.
+const consume = (event: KeyboardEvent) => {
+  consumed.add(event);
+  event.preventDefault();
+};
+
+// From the metadata TanStack keeps for a labelled registration to the binding's `run` as last
+// rendered, so the sheet can run what it lists. TanStack keeps an older metadata object while a
+// newer one is equal to it; both lead to the same `run`.
+const runs = new WeakMap<object, (event: KeyboardEvent) => void>();
+
 // What a binding registers. Its callback runs `current()`, the binding as last rendered, so a
 // render that changes only `run` or `repeat` leaves the registration as it is. `shape` names
-// every field read here besides those two.
-const definition = (binding: Checked, current: () => Checked): UseHotkeyDefinition => ({
-  hotkey: toTanStack(binding.hotkey),
-  // TanStack has already kept each repeat of a held key from the page. Whether this keydown is
-  // one is the event's to say: TanStack's `requireReset` is per registration, and a component
-  // that remounts while the key is held registers afresh.
-  callback: (event) => {
-    const { run, repeat } = current();
-    if (repeat === false && event.repeat) return;
-    run(event);
-  },
-  options: {
-    enabled: binding.enabled ?? true,
-    ignoreInputs: binding.whileTyping === undefined ? "auto" : !binding.whileTyping,
-    // TanStack's own warning names options this API doesn't have; ours follows registration.
-    conflictBehavior: "allow",
-    ...(binding.label === undefined ? {} : { meta: { name: binding.label, group: binding.group } })
-  }
-});
+// every field read here besides those two and `within`, whose element is compared on its own.
+const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefinition<Within> => {
+  const sequence = steps(binding.hotkey).length > 1;
+  const meta =
+    binding.label === undefined ? undefined : { name: binding.label, group: binding.group };
+  if (meta !== undefined) runs.set(meta, (event) => current().run(event));
+  return {
+    hotkey: toTanStack(binding.hotkey),
+    callback: (event) => {
+      // Patchy consumes a chord itself, once it knows the key is the hotkey's to take; TanStack's
+      // own consume would come too late to leave a key to a field. A sequence's steps are
+      // consumed as TanStack takes each one, and its last stops propagation there.
+      if (!sequence) {
+        if (!eligible(event, event.currentTarget, binding.whileTyping)) return;
+        consume(event);
+        event.stopPropagation();
+      }
+      // Each repeat of a held key is kept from the page either way. Whether this keydown is one
+      // is the event's to say: TanStack's `requireReset` is per registration, and a component
+      // that remounts while the key is held registers afresh.
+      const { run, repeat } = current();
+      if (repeat === false && event.repeat) return;
+      run(event);
+    },
+    options: {
+      enabled: binding.enabled ?? true,
+      ignoreInputs: binding.whileTyping === undefined ? "auto" : !binding.whileTyping,
+      preventDefault: false,
+      ...(sequence
+        ? {
+            allowStep: (event: KeyboardEvent, target: EventTarget) =>
+              eligible(event, target, binding.whileTyping),
+            onStep: consume
+          }
+        : { stopPropagation: false }),
+      // TanStack's own warning names options this API doesn't have; ours follows registration.
+      conflictBehavior: "allow",
+      ...(binding.within === undefined ? {} : { target: binding.within }),
+      ...(meta === undefined ? {} : { meta })
+    }
+  };
+};
 
-// Everything `definition` registers apart from the callback. While it holds, so does each
-// registration.
+// Everything `definition` registers apart from the callback and the element. While it and the
+// element hold, so does each registration.
 const shape = (bindings: ReadonlyArray<Checked>): string =>
   JSON.stringify(
     bindings.map(({ hotkey, label, group, enabled, whileTyping }) => [
@@ -222,9 +309,26 @@ const shape = (bindings: ReadonlyArray<Checked>): string =>
     ])
   );
 
-// A TanStack registration, or its view, as the duplicate check and `useHotkeyList` read it.
-const mounted = ({ hotkey, options }: Pick<HotkeyRegistration, "hotkey" | "options">): Mounted => ({
+type Target = HotkeyRegistrationView["target"];
+
+let places = 0;
+const placeNames = new WeakMap<Element, string>();
+// The page, or a name for the element a hotkey is `within`.
+const placeOf = (target: Target): string => {
+  if (!(target instanceof Element)) return "page";
+  let name = placeNames.get(target);
+  if (name === undefined) placeNames.set(target, (name = `element ${++places}`));
+  return name;
+};
+
+// A TanStack registration, or its view, as the duplicate check, `useHotkeyList` and the sheet read it.
+const mounted = ({
+  hotkey,
+  options,
+  target
+}: Pick<HotkeyRegistrationView, "hotkey" | "options" | "target">): Mounted => ({
   scope: options.scope ?? "global",
+  place: placeOf(target),
   hotkey: typeof hotkey === "string" ? hotkey : hotkey.join(" "),
   label: options.meta?.name,
   enabled: options.enabled !== false
@@ -248,28 +352,46 @@ const checkDuplicates = () => {
 
 // Layout effects keep a component's hotkeys live from the commit that mounts it to the one that
 // removes it. TanStack's `useHotkeys` uses passive effects, which miss a key pressed before the
-// next paint and, on Preact 11, outlive the component until that paint. A render that changes a
-// binding's shape updates the same registrations in place, so it doesn't restart a sequence; one
-// that doesn't, such as a whiteboard's on each collaborator's move, leaves them alone, since
-// TanStack parses every hotkey again on each update.
-function useBindings(bindings: ReadonlyArray<Checked>): void {
+// next paint and, on Preact 11, outlive the component until that paint. Each commit reads the
+// `within` refs, which Preact has set by then. A commit that changes a binding's shape or element
+// updates the same registrations in place, so it doesn't restart a sequence; one that doesn't,
+// such as a whiteboard's on each collaborator's move, leaves them alone, since TanStack parses
+// every hotkey again on each update. `scope` puts the hotkeys in a scope of Patchy's own instead
+// of the enclosing `HotkeyScope`'s.
+function useBindings(bindings: ReadonlyArray<Checked>, scope?: string): void {
   const kept = permitted(bindings);
   // A `HotkeyScope` above puts its scope here.
-  const defaults = useDefaultHotkeysOptions().hotkey;
+  const enclosing = useDefaultHotkeysOptions().hotkey?.scope;
+  const placed = scope ?? enclosing;
   const [registered] = useState(createHotkeyBindings);
   const latest = useRef(kept);
+  const last = useRef<{ readonly shape: string; readonly elements: ReadonlyArray<unknown> }>(
+    undefined
+  );
   useLayoutEffect(() => {
     latest.current = kept;
-  });
-  useLayoutEffect(() => {
+    const now = {
+      shape: JSON.stringify([placed, shape(kept)]),
+      elements: kept.map((binding) => binding.within?.current)
+    };
+    const before = last.current;
+    if (
+      before?.shape === now.shape &&
+      before.elements.every((element, index) => element === now.elements[index])
+    )
+      return;
+    last.current = now;
     registered.update(
       prepareHotkeyDefinitions(
         kept.map((binding, index) => definition(binding, () => latest.current[index]!)),
-        { defaults }
+        {
+          ...(placed === undefined ? {} : { defaults: { scope: placed } }),
+          resolveTarget: (within: Within) => within.current
+        }
       )
     );
     checkDuplicates();
-  }, [shape(kept), defaults?.scope]);
+  });
   useLayoutEffect(() => () => registered.destroy(), [registered]);
 }
 
@@ -279,6 +401,7 @@ function useBindings(bindings: ReadonlyArray<Checked>): void {
  * ```tsx
  * useHotkey("G H", () => patchy.route.set("/"), { label: "Go home" });
  * useHotkey("Mod+K", openSearch, { label: "Search" });
+ * useHotkey("Enter", save, { within: field });
  * ```
  */
 export function useHotkey<const S extends string>(
@@ -296,9 +419,13 @@ export function useHotkeys<const T extends readonly string[]>(bindings: {
   useBindings(bindings as ReadonlyArray<Checked>);
 }
 
+// The shortcuts sheet's openers listen in this scope, which every `HotkeyScope` lets through, so
+// the sheet opens over a dialog and lists the dialog's commands.
+const sheetOpener = "patchy-hotkey-sheet";
+
 /**
  * While mounted, only the hotkeys registered inside it fire, for a dialog: the rest of the
- * page's hotkeys, sequences included, wait until it unmounts.
+ * page's hotkeys, sequences included, wait until it unmounts. The shortcuts sheet still opens.
  */
 export function HotkeyScope(props: { readonly children: ComponentChildren }): JSX.Element {
   const scope = useId();
@@ -307,7 +434,7 @@ export function HotkeyScope(props: { readonly children: ComponentChildren }): JS
   // the next paint, so the page's hotkeys would stay held for a frame after the scope unmounts.
   // A layout effect holds them from the commit that mounts the scope to the one that removes it.
   useLayoutEffect(
-    () => getHotkeyManager().activateScope(scope, { exclusive: true, parent }),
+    () => getHotkeyManager().activateScope(scope, { exclusive: { allow: [sheetOpener] }, parent }),
     [scope, parent]
   );
   // Without a `scope` prop the provider activates nothing; it only puts its hotkeys in ours.
@@ -315,8 +442,14 @@ export function HotkeyScope(props: { readonly children: ComponentChildren }): JS
   return createElement(HotkeysProvider, { defaultOptions, children: props.children });
 }
 
-// Their symbols, ↵ ␣ ⌫ ⌦, are a Mac's; elsewhere these keys read as words, as in "Ctrl+Enter".
-const words = { Enter: "Enter", Space: "Space", Backspace: "Backspace", Delete: "Delete" };
+// Their symbols, ↵ ␣ ⌫ ⌦ ⇥, are a Mac's; elsewhere these keys read as words, as in "Ctrl+Enter".
+const words = {
+  Enter: "Enter",
+  Space: "Space",
+  Backspace: "Backspace",
+  Delete: "Delete",
+  Tab: "Tab"
+};
 
 const display = () => {
   const platform = detectPlatform();
@@ -348,8 +481,9 @@ export interface ListedHotkey {
 }
 
 /**
- * Every labelled, enabled hotkey that is mounted, for a shortcuts sheet behind `"?"`.
- * It includes hotkeys a `HotkeyScope` is holding back, such as the page's under the sheet's own.
+ * Every labelled, enabled hotkey that is mounted, for a shortcuts sheet of the page's own. It
+ * includes hotkeys a `HotkeyScope` is holding back, such as the page's under a dialog's, and
+ * those `within` an element that doesn't have focus.
  */
 export function useHotkeyList(): ReadonlyArray<ListedHotkey> {
   return useHotkeyRegistrations().flatMap((registration) => {
@@ -378,6 +512,164 @@ const keycaps = (hotkey: string) =>
     ])
   );
 
+/** A command the sheet lists: a labelled hotkey that works where focus was, and its `run`. */
+interface Command extends ListedHotkey {
+  readonly run: (event: KeyboardEvent) => void;
+}
+
+// What the text selection was in the focused element: a text field's range, or the page's.
+type Selected =
+  | {
+      readonly start: number;
+      readonly end: number;
+      readonly direction: "forward" | "backward" | "none";
+    }
+  | {
+      readonly anchor: Node;
+      readonly anchorOffset: number;
+      readonly focus: Node;
+      readonly focusOffset: number;
+    };
+
+/** Where the viewer was as the sheet opened: what had focus, its selection, its dialog. */
+interface From {
+  readonly focus: Element | null;
+  readonly selection: Selected | undefined;
+  readonly dialog: Element | null;
+  /** The scopes held back before the sheet's own: the page's, under a dialog. */
+  readonly heldBack: ReadonlySet<string>;
+}
+
+const selectionOf = (focus: Element | null): Selected | undefined => {
+  if (focus instanceof HTMLInputElement || focus instanceof HTMLTextAreaElement) {
+    const { selectionStart: start, selectionEnd: end, selectionDirection } = focus;
+    return start === null || end === null
+      ? undefined
+      : { start, end, direction: selectionDirection ?? "none" };
+  }
+  // Only a selection inside it: putting back one elsewhere, as in an editor beside a toolbar
+  // button, would take focus from the button.
+  const selection = document.getSelection();
+  return focus !== null &&
+    selection?.anchorNode &&
+    selection.focusNode &&
+    focus.contains(selection.anchorNode) &&
+    focus.contains(selection.focusNode)
+    ? {
+        anchor: selection.anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focus: selection.focusNode,
+        focusOffset: selection.focusOffset
+      }
+    : undefined;
+};
+
+const where = (): From => {
+  const focus = document.activeElement;
+  return {
+    focus,
+    selection: selectionOf(focus),
+    dialog: focus?.closest("dialog, [role=dialog], [role=alertdialog]") ?? null,
+    heldBack: new Set(getHotkeyManager().scopes.state.suspended)
+  };
+};
+
+// The modal `<dialog>` around an element, or the page's body outside one. A modal dialog makes the
+// rest of the page inert, so a live region outside it goes unheard.
+const modalAround = (element: Element | null): Element =>
+  element?.closest("dialog:modal") ?? document.body;
+
+const focusable = (element: Element | null): element is HTMLElement | SVGElement =>
+  element instanceof HTMLElement || element instanceof SVGElement;
+
+// Focus and the selection back where the viewer was, or `rescue` when that element is gone.
+const restore = (from: From): void => {
+  const { focus, selection } = from;
+  if (!focusable(focus) || !focus.isConnected) return rescue(from);
+  focus.focus({ preventScroll: true });
+  if (selection === undefined) return;
+  if ("start" in selection) {
+    if (focus instanceof HTMLInputElement || focus instanceof HTMLTextAreaElement)
+      focus.setSelectionRange(selection.start, selection.end, selection.direction);
+  } else if (selection.anchor.isConnected && selection.focus.isConnected)
+    document
+      .getSelection()
+      ?.setBaseAndExtent(
+        selection.anchor,
+        selection.anchorOffset,
+        selection.focus,
+        selection.focusOffset
+      );
+};
+
+// While the element the viewer was on is gone and focus fell to the page's body, focus goes to its
+// dialog, made focusable for it. With no dialog, it stays on the body, the page's root.
+const rescue = (from: From): void => {
+  const { focus, dialog } = from;
+  const lost = document.activeElement === null || document.activeElement === document.body;
+  if (focus?.isConnected || !lost || !focusable(dialog) || !dialog.isConnected) return;
+  if (!dialog.hasAttribute("tabindex")) dialog.setAttribute("tabindex", "-1");
+  dialog.focus({ preventScroll: true });
+};
+
+// A keydown for a hotkey's last step, for a command run from its button.
+const pressed = (hotkey: string): KeyboardEvent => {
+  const { key, ctrl, shift, alt, meta } = parseHotkey(steps(hotkey).at(-1) as HotkeyChord);
+  return new KeyboardEvent("keydown", {
+    key,
+    ctrlKey: ctrl,
+    shiftKey: shift,
+    altKey: alt,
+    metaKey: meta,
+    cancelable: true
+  });
+};
+
+// How deep an element sits, for which of two around focus is the narrower.
+const depth = (element: Element): number => {
+  let count = 0;
+  for (let node = element.parentNode; node !== null; node = node.parentNode) count++;
+  return count;
+};
+
+/**
+ * The commands for the current context: the labelled hotkeys that work where the viewer was, so
+ * not held back there, on the page or `within` an element around focus, the narrowest for each
+ * hotkey. Neither the sheet's own scope nor its openers are commands.
+ */
+const commandsFor = (
+  registrations: ReadonlyArray<HotkeyRegistrationView>,
+  from: From,
+  own: string | undefined
+): Command[] =>
+  narrowest(
+    registrations.flatMap((registration): Array<Command & Placed> => {
+      const { hotkey, label, enabled, scope } = mounted(registration);
+      const meta = registration.options.meta;
+      const run = meta === undefined ? undefined : runs.get(meta);
+      const { target } = registration;
+      const element = target instanceof Element ? target : undefined;
+      if (
+        !enabled ||
+        label === undefined ||
+        run === undefined ||
+        scope === own ||
+        scope === sheetOpener ||
+        from.heldBack.has(scope) ||
+        (element !== undefined && !element.contains(from.focus))
+      )
+        return [];
+      const group = meta?.group;
+      const placed = { hotkey, label, run, depth: element === undefined ? -1 : depth(element) };
+      return [group === undefined ? placed : { ...placed, group }];
+    })
+  );
+
+// Whether a hotkey uses the sheet's own keys at any step: Escape closes the sheet, and Tab moves
+// through its buttons. While it is open, such a command runs from its button alone.
+const usesSheetKeys = (hotkey: string): boolean =>
+  steps(hotkey).some((step) => /(^|\+)(Escape|Tab)$/.test(step));
+
 // A modal dialog: the page behind it is inert and Escape asks it to close. Its state is the
 // sheet's: the dialog closes as it unmounts, which returns focus to where it was. Chrome fires
 // the dialog's own close event late, after the next key, so nothing waits on it. It opens and
@@ -386,13 +678,27 @@ const keycaps = (hotkey: string) =>
 // nowhere.
 function Sheet(props: {
   readonly title: string;
-  readonly own: Pick<ListedHotkey, "hotkey" | "label">;
+  readonly from: From;
+  readonly own: ReadonlyArray<ListedHotkey>;
   readonly onClose: () => void;
+  readonly onRun: (command: Command, event?: KeyboardEvent) => void;
 }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
   const title = useId();
-  const list = useHotkeyList();
+  const commands = commandsFor(
+    useHotkeyRegistrations(),
+    props.from,
+    useDefaultHotkeysOptions().hotkey?.scope
+  );
+  // A command's keys run it here too, unless a step of them is the sheet's own Escape or Tab.
+  useBindings(
+    commands
+      .filter((command) => !usesSheetKeys(command.hotkey))
+      .map((command) => ({
+        hotkey: command.hotkey,
+        run: (event: KeyboardEvent) => props.onRun(command, event)
+      }))
+  );
   useLayoutEffect(() => {
     const element = dialog.current;
     // Its reset back first in `<head>`, ahead of any stylesheet prepended since it last opened.
@@ -411,11 +717,14 @@ function Sheet(props: {
       onClick: (event: MouseEvent) => {
         if (event.target === event.currentTarget) props.onClose();
       },
-      // The close button is the only stop; Tab would otherwise leave the frame for Patchy's bar.
+      // Tab goes round the sheet's buttons; past the last it would leave the frame for Patchy's bar.
       onKeyDown: (event: KeyboardEvent) => {
         if (event.key !== "Tab") return;
+        const stops = [...(dialog.current?.querySelectorAll("button") ?? [])];
+        const [first, last] = [stops[0], stops.at(-1)];
+        if (document.activeElement !== (event.shiftKey ? first : last)) return;
         event.preventDefault();
-        close.current?.focus();
+        (event.shiftKey ? last : first)?.focus();
       }
     },
     createElement(
@@ -428,7 +737,6 @@ function Sheet(props: {
         createElement(
           "button",
           {
-            ref: close,
             type: "button",
             class: "hotkey-sheet-close",
             "aria-label": "Close",
@@ -441,24 +749,38 @@ function Sheet(props: {
       createElement(
         "div",
         { class: "hotkey-groups" },
-        sections(list, props.own).map(([name, rows]) =>
-          createElement(
-            "section",
-            { class: "hotkey-group", key: name },
-            name !== undefined && createElement("h3", null, name),
+        sections<ListedHotkey & { readonly run?: Command["run"] }>(commands, props.own).map(
+          ([name, rows]) =>
             createElement(
-              "ul",
-              null,
-              rows.map((row) =>
-                createElement(
-                  "li",
-                  { class: "hotkey-row", key: `${row.hotkey}\n${row.label}` },
-                  createElement("span", { class: "hotkey-label" }, row.label),
-                  keycaps(row.hotkey)
-                )
+              "section",
+              { class: "hotkey-group", key: name },
+              name !== undefined && createElement("h3", null, name),
+              createElement(
+                "ul",
+                null,
+                rows.map((row) => {
+                  const label = createElement("span", { class: "hotkey-label" }, row.label);
+                  const { run } = row;
+                  return createElement(
+                    "li",
+                    { class: "hotkey-row", key: `${row.hotkey}\n${row.label}` },
+                    // The sheet's own rows are what opened it, listed so the viewer learns them.
+                    run === undefined
+                      ? [label, keycaps(row.hotkey)]
+                      : createElement(
+                          "button",
+                          {
+                            type: "button",
+                            class: "hotkey-command",
+                            onClick: () => props.onRun({ ...row, run })
+                          },
+                          label,
+                          keycaps(row.hotkey)
+                        )
+                  );
+                })
               )
             )
-          )
         )
       )
     )
@@ -468,9 +790,12 @@ function Sheet(props: {
 export interface HotkeySheetProps<S extends string> {
   /** The sheet's heading and accessible name. Defaults to "Keyboard shortcuts". */
   readonly title?: string;
-  /** The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"`. */
+  /**
+   * The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"` and `"Mod+/"`, which
+   * opens it from a text field too.
+   */
   readonly hotkey?: Hotkey<S>;
-  /** The heading its "Show shortcuts" row lists under, after the page's hotkeys either way. */
+  /** The heading its "Show shortcuts" rows list under, after the commands either way. */
   readonly group?: string;
 }
 
@@ -478,8 +803,9 @@ export interface HotkeySheetProps<S extends string> {
 let openMounted: (() => void) | undefined;
 
 /**
- * Opens the mounted `HotkeySheet` from a control of the page's own, such as a menu item. Focus
- * moves into the sheet and goes back to where it was when it closes, as with its `?` button.
+ * Opens the mounted `HotkeySheet` from a control of the page's own, such as a menu item or a
+ * dialog's button. It lists the commands where focus is, and focus goes back there when it closes,
+ * as with its `?` button.
  */
 export function openHotkeySheet(): void {
   if (openMounted) openMounted();
@@ -488,11 +814,14 @@ export function openHotkeySheet(): void {
 }
 
 /**
- * A `?` button where it is mounted, and a sheet that it and `hotkey` open over the whole page,
- * listing every labelled hotkey under its group. While the sheet is open the page's hotkeys wait.
- * Escape, its close button and a click outside it close it, and focus goes back. It draws in the
- * company look, its button one of the look's, or in the page's font and text colour without one.
- * The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules in its
+ * A `?` button where it is mounted, and a sheet that it, `?` and Mod+/ open over the whole page,
+ * dialogs included. It lists the commands for the current context: the labelled hotkeys that work
+ * where focus was, under their groups. Each is a button, and its keys run it too, unless a step of
+ * them is the sheet's own Escape or Tab: the sheet closes, focus and the selection go back, then
+ * the command runs, and a polite live region announces its label. Other hotkeys wait while it is
+ * open. Escape, its close button and a click outside close it alone. Mount one per page. It draws
+ * in the company look, its button one of the look's, or in the page's font and text colour without
+ * one. The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules in its
  * stylesheets, layered or not, don't reach it.
  *
  * ```tsx
@@ -502,18 +831,77 @@ export function openHotkeySheet(): void {
  */
 export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProps<S>): JSX.Element {
   const title = props.title ?? "Keyboard shortcuts";
-  const [open, setOpen] = useState(false);
-  const own = { hotkey: props.hotkey ?? "?", label: "Show shortcuts" };
+  // Where the viewer was while the sheet is open, and nothing while it is closed.
+  const [from, setFrom] = useState<From>();
+  // How it last closed, for the commit that removes it: where to put focus back, and what to run.
+  const closed = useRef<{
+    readonly from: From;
+    readonly command?: Command;
+    readonly event?: KeyboardEvent;
+  }>(undefined);
+  const [said, setSaid] = useState<{ readonly label: string; readonly count: number }>();
+  // Where the live region lives: the modal dialog around where the viewer was, or the body. It
+  // moves there as the sheet opens, so it is in place before a command runs, and again after one
+  // that moves focus to another modal context.
+  const [home, setHome] = useState<Element>(() => document.body);
+  const own = (props.hotkey === undefined ? ["?", "Mod+/"] : [props.hotkey]).map((hotkey) => ({
+    hotkey,
+    label: "Show shortcuts",
+    ...(props.group === undefined ? {} : { group: props.group })
+  }));
+  const close = (command?: Command, event?: KeyboardEvent) => {
+    if (from === undefined) return;
+    closed.current = {
+      from,
+      ...(command === undefined ? {} : { command }),
+      ...(event === undefined ? {} : { event })
+    };
+    setFrom(undefined);
+  };
   useLayoutEffect(addSheetStyles, []);
+  useLayoutEffect(() => getHotkeyManager().activateScope(sheetOpener), []);
+  // Reads where the viewer is as it opens, before the sheet takes focus or holds anything back.
+  const show = useCallback(() => {
+    const opened = where();
+    setFrom((open) => open ?? opened);
+    setHome(modalAround(opened.focus));
+  }, []);
   useLayoutEffect(() => {
-    const show = () => setOpen(true);
     openMounted = show;
     return () => {
       if (openMounted === show) openMounted = undefined;
     };
-  }, []);
-  // Registered outside the sheet's scope: it fires while the sheet is closed and lists with the page's.
-  useBindings([{ ...own, group: props.group, run: () => setOpen(true) }]);
+  }, [show]);
+  // Once the sheet has left the page, focus goes back, then the command runs: its own focus wins.
+  useLayoutEffect(() => {
+    const last = closed.current;
+    if (from !== undefined || last === undefined) return;
+    closed.current = undefined;
+    restore(last.from);
+    const { command } = last;
+    if (command === undefined) return;
+    command.run(last.event ?? pressed(command.hotkey));
+    setSaid((before) => ({ label: command.label, count: (before?.count ?? 0) + 1 }));
+    // Once the page has rendered: a command that removed the element leaves focus with its
+    // dialog. Where focus settled decides where the live region is heard: a command that closed
+    // a modal dialog, opened one or took the region's away moves it there to say it again.
+    setTimeout(() => {
+      rescue(last.from);
+      const settled = modalAround(document.activeElement);
+      if (settled === home) return;
+      setHome(settled);
+      setSaid((before) => before && { ...before, count: before.count + 1 });
+    }, 0);
+  }, [from]);
+  // In the openers' scope, which every `HotkeyScope` lets through. Mod+/ opens it from a text field,
+  // where `?` is typed. Pressed again while it is open, either closes it.
+  useBindings(
+    own.map((row) => ({
+      ...row,
+      run: () => (from === undefined ? show() : close())
+    })),
+    sheetOpener
+  );
   return createElement(
     Fragment,
     null,
@@ -524,16 +912,30 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
         class: "hotkey-opener",
         "aria-label": title,
         "aria-haspopup": "dialog",
-        onClick: () => setOpen(true)
+        onClick: show
       },
       "?"
     ),
-    // In the page's body, not beside the button: a dialog under a container the page hides at
-    // this width would open modal with nothing drawn.
-    open &&
+    // Not beside the button: a live region in a container the page hides at this width would say
+    // nothing, and the sheet's dialog there would open modal with nothing drawn.
+    createPortal(
+      createElement(
+        "div",
+        { class: "hotkey-announce", role: "status", "aria-live": "polite" },
+        said && createElement("span", { key: said.count }, said.label)
+      ),
+      home
+    ),
+    from !== undefined &&
       createPortal(
         createElement(HotkeyScope, {
-          children: createElement(Sheet, { title, own, onClose: () => setOpen(false) })
+          children: createElement(Sheet, {
+            title,
+            from,
+            own,
+            onClose: () => close(),
+            onRun: close
+          })
         }),
         document.body
       )

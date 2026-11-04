@@ -1,13 +1,14 @@
 ---
 name: patchy-hotkeys
-description: Add keyboard shortcuts to a Patchy page, such as Mod+K or G then H sequences, a shortcuts sheet or dialog-only keys; show a hotkey's keys; diagnose a hotkey that doesn't fire.
+description: Add keyboard shortcuts to a Patchy page, such as Mod+K or G then H sequences, keys for one list or editor, a shortcuts sheet or dialog-only keys; show a hotkey's keys; diagnose a hotkey that doesn't fire.
 ---
 
 # Hotkeys
 
 Read `../patchy-preact/SKILL.md` first. `patchy/hotkeys` gives tier 1 and 2 Preact pages
-keyboard shortcuts. It is Patchy's API, and every shortcut registers through it: it
-handles typing in fields, dialogs, keyboard layouts and ⌘ versus Ctrl.
+keyboard shortcuts. It is Patchy's API, and every key a page handles registers through it,
+keys for one element included: it handles typing in fields, dialogs, keyboard layouts and ⌘
+versus Ctrl.
 
 ```tsx
 import { useHotkey } from "patchy/hotkeys";
@@ -16,6 +17,7 @@ import { patchy } from "../patchy/_generated/client.js";
 useHotkey("G H", () => patchy.route.set("/"), { label: "Go home" });
 useHotkey("Mod+K", openSearch, { label: "Search" });
 useHotkey("Escape", closePanel, { enabled: panelOpen });
+useHotkey("Enter", saveTitle, { within: titleField });
 ```
 
 ## Writing a hotkey
@@ -68,29 +70,142 @@ useHotkey("Escape", closePanel, { enabled: panelOpen });
   makes its row come and go. To keep it listed, check the condition in `run` instead.
 - Patchy focuses the page when it opens. If the viewer clicks Patchy's own bar or a download
   card, keys go there until they click back into the page.
-- While the viewer types in a text field, single keys, Shift chords and Alt chords wait; Mod
-  chords and Escape fire. A text field is a text `<input>` or `<textarea>` that isn't
-  read-only, a `<select>`, a contenteditable element, or an element with `role="textbox"` or
-  `role="searchbox"`. A read-only input isn't a text field, but it keeps its arrow keys for
-  moving the caret. Checkboxes, radios and ranges aren't text fields: single keys fire
-  there, and the control keeps Space and the arrow keys. A focused button keeps Enter and
-  Space, and a focused link keeps Enter.
-- `whileTyping: true` fires in text fields and on a focused control's own keys, so a button's
-  Enter or a checkbox's Space runs the hotkey instead. `whileTyping: false` makes Mod chords
-  and Escape wait in text fields too.
-- While an input method composes text, as for Japanese or Chinese, no hotkey fires: its
-  keys, Enter, Escape and the arrows included, are the input method's.
-- A hotkey that fires stops the browser's own action for those keys, so a `whileTyping: true`
-  letter isn't typed. Keys the browser keeps, such as Mod+T, Mod+W, Mod+N and Mod+L, never
-  reach the page.
-- Hotkeys listen on the document, in the bubble phase, and one that fires stops the key's
-  propagation there: bubble-phase `window` listeners never see it. Listeners that already
-  ran, such as a field's own `onKeyDown` or a `window` capture listener, and other document
-  listeners still do. A field that stops a key's propagation keeps every hotkey from
-  seeing it.
+- In a text field, the field keeps its keys, whatever a hotkey's options say. A text field is
+  a text `<input>` or `<textarea>` that isn't read-only, a `<select>`, a contenteditable
+  element, or an element with `role="textbox"` or `role="searchbox"`. It keeps:
+  - every key that types a character, Shift and Alt chords included;
+  - an input method's composition and dead keys: while one composes, as for Japanese or
+    Chinese, its keys, Enter, Escape and the arrows included, are the input method's;
+  - Backspace, Delete, ← → Home and End, with any modifiers;
+  - ↑ ↓ Page Up and Page Down, with a modifier, or bare in a field of lines (a `<textarea>` or
+    contenteditable);
+  - plain Enter in a field of lines;
+  - Mod with A, C, X, V, Z or Y, Mod+Shift with Z or V, and in contenteditable Mod with B, I
+    or U.
+- So a page's `"Mod+A"` "Select all" or `"Mod+Z"` "Undo" needs no guard for fields. From a
+  text field, other Mod chords fire, `"Mod+Enter"`, `"Mod+K"` and `"Mod+S"` included,
+  and so does Escape. A hotkey `within` a one-line field takes its plain Enter, Escape, ↑ and ↓,
+  as a combobox or an inline editor needs; a field of lines keeps its plain Enter. Every other
+  key waits.
+- A read-only `<input>` or `<textarea>` isn't a text field: single keys fire there. It keeps its
+  caret and selection keys, the arrows, Home, End, Page Up and Page Down with or without Shift,
+  and Mod with A and C.
+- Checkboxes, radios and ranges aren't text fields: single keys fire there, and the control
+  keeps Space and the arrow keys. A focused button keeps Enter and Space, a focused link keeps
+  Enter, and a focused `role="listbox"`, `menu`, `tree` or non-editable `combobox` keeps its
+  arrows, Home and End, and every printable key for typeahead.
+- `whileTyping: true` fires on a focused control's own keys, so a button's Enter or a
+  checkbox's Space runs the hotkey instead. In text fields it changes nothing.
+  `whileTyping: false` makes a hotkey wait in every text field, Mod chords and Escape included,
+  even one it is `within`.
+- A key something on the page already handled with `preventDefault()`, such as a date picker's
+  Escape or a form's own Enter, fires no hotkey and steps no sequence. A widget handles its key
+  before Patchy sees it: in a listener on its element, in its own `onKeyDown`, or in the capture
+  phase. Keys Patchy took don't count, so `"G"` beside `"G H"` fires on every `G H`.
+- A hotkey that fires stops the browser's own action for those keys. Keys the browser keeps,
+  such as Mod+T, Mod+W, Mod+N and Mod+L, never reach the page.
+- Hotkeys listen on the document, or on their element for `within`, in the bubble phase, and
+  one that fires stops the key's propagation there: bubble-phase `window` listeners never see
+  it. Listeners that already ran, such as a field's own `onKeyDown` or a `window` capture
+  listener, still do. A field that stops a key's propagation keeps every hotkey from seeing it.
 - Holding a chord fires it again with each key repeat; `repeat: false` fires it once per
   press. `repeat` only matters for a chord that can be held: a sequence fires once per
   completion.
+
+## Keys for one element
+
+`within: ref` makes a hotkey fire only while focus is on that element or inside it, as CSS
+`:focus-within` reads it. Use it for keys that belong to one part of the page: arrows in a list
+or a chart, Enter and Escape in an inline editor, Enter in a quick-add field. Write these as
+hotkeys, not `onKeyDown`, and don't fake them with `enabled`.
+
+A keyboard list keeps focus on the list and draws the active row from state:
+
+```tsx
+import { useRef, useState } from "patchy/preact";
+import { useHotkeys } from "patchy/hotkeys";
+
+function TaskList(props: {
+  tasks: readonly { id: string; title: string }[];
+  open: (id: string) => void;
+}) {
+  const list = useRef<HTMLUListElement>(null);
+  const [active, setActive] = useState(0);
+  const current = props.tasks[active];
+  const group = "Tasks";
+  useHotkeys([
+    {
+      hotkey: "ArrowDown",
+      run: () => setActive((at) => Math.min(at + 1, props.tasks.length - 1)),
+      within: list,
+      label: "Next task",
+      group
+    },
+    {
+      hotkey: "ArrowUp",
+      run: () => setActive((at) => Math.max(at - 1, 0)),
+      within: list,
+      label: "Previous task",
+      group
+    },
+    {
+      hotkey: "Enter",
+      run: () => current && props.open(current.id),
+      within: list,
+      label: "Open task",
+      group
+    }
+  ]);
+  return (
+    <ul
+      ref={list}
+      role="listbox"
+      tabIndex={0}
+      aria-label="Tasks"
+      aria-activedescendant={current && `task-${current.id}`}
+    >
+      {props.tasks.map((task, at) => (
+        <li key={task.id} id={`task-${task.id}`} role="option" aria-selected={at === active}>
+          {task.title}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+An inline editor's keys are within its field:
+
+```tsx
+const field = useRef<HTMLInputElement>(null);
+useHotkey("Enter", save, { within: field, label: "Save title" });
+useHotkey("Escape", cancel, { within: field, label: "Cancel" });
+return <input ref={field} aria-label="Title" />;
+```
+
+- The narrowest place wins: an element's hotkey, then the dialog's, then the page's. A key the
+  element doesn't take, because its hotkey is disabled or the key is the field's, goes on to the
+  next place out. An element's key also beats a sequence further out that is under way: with
+  `"H"` within a list, the page's `"G H"` doesn't take H from the list.
+- A key an element's sequence takes as a step, its first included, is no step for a sequence
+  further out. With `"H X"` within a panel, the page's `"G H"` doesn't complete on H there; with
+  `"G H"` within a chart, the page's `"G T"` can't start there. Chords further out still fire,
+  so the page's `"G"` fires on that G.
+- `within` follows the DOM, not the component tree: a popup portalled to `<body>` isn't inside
+  its trigger.
+- A focused `role="listbox"` keeps every printable key for typeahead, `?` included, so the
+  page's single-key hotkeys, such as `"C T"` and the sheet's `?`, wait while it has focus;
+  hotkeys within it get them, and Mod+/ still opens the sheet. Keep the listbox role: it is
+  what screen readers announce as the list.
+- The ref can hold any element, SVG included, for a keyboard chart. Preact writes an SVG
+  element's attributes as given, so make one focusable with a lowercase `tabindex`:
+  `<svg tabindex={0}>`.
+- Inside a `HotkeyScope`, an element's hotkeys belong to the dialog.
+- Until the element renders, the hotkey isn't registered. The ref is read after each render of
+  the component that registers the hotkey, so an element that changes because only a child
+  re-rendered is picked up at that component's next render.
+- Two enabled hotkeys with the same keys within one element both fire, and the console warns.
+  The same keys on the page and on an element don't warn: the element's wins there.
 
 ## Dialogs and scopes
 
@@ -138,6 +253,15 @@ A held hotkey doesn't block its keys, so the browser acts on them: with a dialog
 Ctrl+K reaches the browser's address bar. A hotkey registered inside the scope keeps its
 keys from the browser.
 
+### A dialog's keys from its fields
+
+A dialog's single keys, such as `"P 5"` or `"A"`, wait while the viewer types in its fields.
+The viewer reaches them through the shortcuts sheet: from a field, Mod+/ opens it over the
+dialog, listing the dialog's commands, and a command's keys pressed there run it and put the
+caret back. Label a dialog's keys and give them its group, so the sheet lists them. A button in
+the dialog that shows its shortcuts calls `openHotkeySheet()`. Mod chords, such as `"Mod+Enter"`
+to create, fire from the field directly; don't add chords for the dialog's other keys.
+
 ### Native `<dialog>`
 
 A `<dialog>` opened with `showModal()` closes itself on Escape and fires `cancel`. A live
@@ -174,24 +298,40 @@ returning; a passive effect's cleanup runs after the dialog has left the page.
 
 ## The shortcuts sheet
 
-`<HotkeySheet />` renders a `?` button where it is mounted. The button and the `?` key open a
-sheet that lists every labelled hotkey, drawn with the company look's tokens. The sheet opens
-over the whole page wherever the button is, even in a sidebar hidden at the viewer's width, so
-mount it once. While it is open, the page's hotkeys wait. Escape, its close button or a tap
-outside it closes it, and focus goes back to where it was.
+Mount one `<HotkeySheet />` per page. It renders a `?` button where it is mounted. The button,
+`?` and Mod+/ open a sheet over the whole page, inside dialogs too, drawn with the company
+look's tokens, even where the button sits in a sidebar hidden at the viewer's width. Mod+/
+opens it from a text field, where `?` is typed.
 
+The sheet lists the commands for the current context: the labelled hotkeys that work where
+focus was. In a dialog, the dialog's; in a list with `within` keys, the list's, then the
+page's; where two share keys, the narrower one. Its openers list last, as "Show shortcuts", so a
+viewer who finds it once learns Mod+/.
+
+- Each command is a button: Tab moves through them, and Enter, Space or a click runs one.
+  Pressing a command's keys while the sheet is open does the same. The sheet closes, focus and
+  the text selection go back where they were, caret included, then the command runs. A command
+  that moves focus, such as by opening another dialog, keeps it there. A command that removes
+  the focused element leaves focus with its dialog, or on the page. A polite live region
+  announces the command's label.
+- Escape and Tab are the sheet's while it is open, at every step: Escape closes it and Tab
+  moves through its buttons. A command whose keys use either, such as `"G Escape"` or
+  `"Tab A"`, runs from its button alone there.
+- Other hotkeys wait while it is open. Escape, its close button or a tap outside it closes the
+  sheet alone, never a dialog under it, and focus goes back to where it was.
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
-  the key that opens it, `"?"` by default, checked like `useHotkey`'s.
+  the key that opens it, checked like `useHotkey`'s, in place of `?` and Mod+/.
 - A hotkey's `group` option lists it under that heading. Groups appear in the order they are
-  first registered, and ungrouped hotkeys come last under General. With no groups at all, the
+  first registered, an element's before the page's, and ungrouped hotkeys come last under
+  General. With no groups at all, the
   sheet is one list.
-- The sheet's own "Show shortcuts" row lists after the page's hotkeys, wherever it sits. Its
-  `group` prop puts it in one of the page's groups, `<HotkeySheet group="Navigation" />`, so
-  grouped keys don't leave it a General column of its own.
+- The sheet's own "Show shortcuts" rows list after the commands, wherever they sit. Its `group`
+  prop puts them in one of the page's groups, `<HotkeySheet group="Navigation" />`, so grouped
+  keys don't leave them a General column of their own.
 - `openHotkeySheet()` opens the mounted sheet from a control of the page's own, such as a menu
-  item. Focus moves into the sheet and goes back to where it was when it closes, as with the
-  `?` button. A menu that closes on selection takes its item away, so focus the menu's
-  trigger before calling it, and focus returns there.
+  item or a dialog's Shortcuts button. It lists the commands where that control is, and focus
+  goes back there when it closes, as with the `?` button. A menu that closes on selection takes
+  its item away, so focus the menu's trigger before calling it, and focus returns there.
 - With the company look, the `?` button is one of the look's buttons, square. Without a look,
   the sheet and button take the page's font and text colour.
 - Element rules in the page's stylesheets, layered or not, don't reach the sheet. Its unlayered
@@ -208,12 +348,12 @@ outside it closes it, and focus goes back to where it was.
 
 - `formatHotkey("Mod+K")` is `"⌘ K"` on a Mac and `"Ctrl+K"` elsewhere.
 - `hotkeyKeys("G H")` returns each step's keys, `[["G"], ["H"]]`, for drawing keycaps.
-- A Mac shows Enter, Space, Backspace and Delete as ↵ ␣ ⌫ ⌦. Elsewhere they are words:
+- A Mac shows Enter, Space, Backspace, Delete and Tab as ↵ ␣ ⌫ ⌦ ⇥. Elsewhere they are words:
   `formatHotkey("Mod+Enter")` is `"⌘ ↵"` on a Mac and `"Ctrl+Enter"` elsewhere.
 - Both take a hotkey, checked like `useHotkey`'s, or modifiers alone, such as `"Mod"` or
   `"Mod+Shift"`, for a hint like "⌘ scroll". A value typed as plain `string`, such as a
   `useHotkeyList` row's `hotkey`, isn't checked. A template such as `` `Mod+${n}` `` is
   checked like a literal, so type the pieces as `Chord` or `Key`.
 - `useHotkeyList()` returns `{ hotkey, label, group }` for every labelled, enabled hotkey that
-  is mounted, including those a `HotkeyScope` holds back. Hotkeys of a dialog that isn't open
-  aren't mounted, so they aren't listed.
+  is mounted, including those a `HotkeyScope` holds back and those `within` an element without
+  focus. Hotkeys of a dialog that isn't open aren't mounted, so they aren't listed.

@@ -55,6 +55,8 @@ export const permitted = <T extends { readonly hotkey: string }>(bindings: Reado
 /** A mounted hotkey as the duplicate check sees it. A sequence's steps are joined by a space. */
 export interface Mounted {
   readonly scope: string;
+  /** Where it listens: `"page"`, or a name for the one element it is `within`. */
+  readonly place: string;
   readonly hotkey: string;
   readonly label?: string | undefined;
   readonly enabled: boolean;
@@ -64,15 +66,15 @@ const name = (hotkey: Mounted) =>
   hotkey.label === undefined ? "an unlabelled hotkey" : `"${hotkey.label}"`;
 
 /**
- * A warning for each enabled hotkey that shares its hotkey and scope with an earlier one, since
- * both fire. Pairs already in `warned` are skipped; the returned ones are added to it.
+ * A warning for each enabled hotkey that shares its hotkey, scope and place with an earlier one,
+ * since both fire. Pairs already in `warned` are skipped; the returned ones are added to it.
  */
 export const duplicateWarnings = (mounted: Iterable<Mounted>, warned: Set<string>): string[] => {
   const first = new Map<string, Mounted>();
   const warnings: string[] = [];
   for (const hotkey of mounted) {
     if (!hotkey.enabled) continue;
-    const key = `${hotkey.scope}\n${hotkey.hotkey}`;
+    const key = `${hotkey.scope}\n${hotkey.place}\n${hotkey.hotkey}`;
     const earlier = first.get(key);
     if (earlier === undefined) {
       first.set(key, hotkey);
@@ -81,9 +83,145 @@ export const duplicateWarnings = (mounted: Iterable<Mounted>, warned: Set<string
     const pair = `${key}\n${earlier.label}\n${hotkey.label}`;
     if (warned.has(pair)) continue;
     warned.add(pair);
+    const where = hotkey.place === "page" ? "in the same scope" : "within the same element";
     warnings.push(
-      `patchy/hotkeys: ${name(earlier)} and ${name(hotkey)} both use ${hotkey.hotkey} in the same scope, so both fire on each press.`
+      `patchy/hotkeys: ${name(earlier)} and ${name(hotkey)} both use ${hotkey.hotkey} ${where}, so both fire on each press.`
     );
   }
   return warnings;
+};
+
+/**
+ * The kind of field focus is in, for the keys it keeps: a one-line text field (a text
+ * `<input>`, a `<select>`, a textbox or searchbox role), a field of lines (a `<textarea>` or
+ * a multi-line textbox), rich text (contenteditable), or a read-only text input or textarea.
+ */
+export type Field = "line" | "lines" | "rich" | "read-only";
+
+/** What `fieldKeeps` reads of a keydown. */
+export type Press = Pick<
+  KeyboardEvent,
+  | "key"
+  | "code"
+  | "ctrlKey"
+  | "metaKey"
+  | "altKey"
+  | "shiftKey"
+  | "isComposing"
+  | "keyCode"
+  | "getModifierState"
+>;
+
+// The keys that move the caret, and with Shift the selection.
+const caret = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown"
+]);
+
+// The letter a Mod chord names: what the layout types, or the key's US position when that isn't
+// a Latin letter, as on a Russian layout. Text editing follows the same rule.
+const letterOf = (press: Press) =>
+  /^[a-z]$/i.test(press.key)
+    ? press.key.toLowerCase()
+    : /^Key[A-Z]$/.test(press.code)
+      ? press.code.slice(3).toLowerCase()
+      : "";
+
+/** What `fieldKeeps` reads of a hotkey: whether it listens on the field itself, and its option. */
+export interface Asking {
+  readonly within: boolean;
+  readonly whileTyping?: boolean | undefined;
+}
+
+/**
+ * Whether the focused field keeps a key from a hotkey, so the hotkey doesn't take it. On a Mac,
+ * Mod is ⌘.
+ *
+ * A text field keeps every key that types, Shift and Alt chords included, the keys of an input
+ * method's composition and dead keys, and the keys that edit text: Backspace, Delete, the arrows,
+ * Home, End, Page Up and Page Down with any modifiers; Mod with A, C, X, V, Z or Y; Mod+Shift with
+ * Z or V; Mod with B, I or U in rich text. Only these leave it: other Mod chords, Escape, and, for
+ * a hotkey within a one-line field, its plain Enter, ↑ and ↓. A hotkey with `whileTyping: false`
+ * takes none of them, even within the field. No other option changes this.
+ *
+ * A read-only field keeps its caret and selection keys, with or without Shift, and Mod with A and
+ * C; the rest leave it.
+ */
+export const fieldKeeps = (press: Press, field: Field, hotkey: Asking, mac: boolean): boolean => {
+  const mod = mac ? press.metaKey : press.ctrlKey;
+  const letter = letterOf(press);
+  if (field === "read-only")
+    return caret.has(press.key)
+      ? !(press.ctrlKey || press.metaKey || press.altKey)
+      : mod && !press.altKey && !press.shiftKey && (letter === "a" || letter === "c");
+  const composing =
+    press.isComposing ||
+    press.keyCode === 229 ||
+    press.key === "Process" ||
+    press.key === "Unidentified" ||
+    press.key === "Dead";
+  const types =
+    [...press.key].length === 1 &&
+    (!(press.ctrlKey || press.metaKey) || press.getModifierState("AltGraph"));
+  if (composing || types || hotkey.whileTyping === false) return true;
+  if (mod)
+    return (
+      press.key === "Backspace" ||
+      press.key === "Delete" ||
+      caret.has(press.key) ||
+      (!press.altKey &&
+        letter !== "" &&
+        (press.shiftKey
+          ? letter === "z" || letter === "v"
+          : "acxvzy".includes(letter) || (field === "rich" && "biu".includes(letter))))
+    );
+  if (press.key === "Escape") return false;
+  const bare = !(press.ctrlKey || press.metaKey || press.altKey || press.shiftKey);
+  return !(
+    hotkey.within &&
+    field === "line" &&
+    bare &&
+    (press.key === "Enter" || press.key === "ArrowUp" || press.key === "ArrowDown")
+  );
+};
+
+// Input types that aren't for text, as TanStack's typing rule lists them.
+const notText = new Set([
+  "button",
+  "submit",
+  "reset",
+  "image",
+  "color",
+  "file",
+  "checkbox",
+  "radio",
+  "range"
+]);
+
+/** The field focus is in, looking inside open shadow roots, and its kind; none outside one. */
+export const focusedField = (
+  doc: Document
+): { readonly element: Element; readonly field: Field } | undefined => {
+  let focused = doc.activeElement;
+  while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+  if (!focused) return undefined;
+  const field = fieldOf(focused);
+  return field === undefined ? undefined : { element: focused, field };
+};
+
+const fieldOf = (element: Element): Field | undefined => {
+  if (element instanceof HTMLInputElement)
+    return notText.has(element.type) ? undefined : element.readOnly ? "read-only" : "line";
+  if (element instanceof HTMLTextAreaElement) return element.readOnly ? "read-only" : "lines";
+  if (element instanceof HTMLSelectElement) return "line";
+  if (element instanceof HTMLElement && element.isContentEditable) return "rich";
+  const role = element.getAttribute("role")?.trim().split(/\s+/)[0];
+  if (role !== "textbox" && role !== "searchbox") return undefined;
+  return element.getAttribute("aria-multiline") === "true" ? "lines" : "line";
 };

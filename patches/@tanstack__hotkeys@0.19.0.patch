@@ -1,7 +1,8 @@
 diff --git a/dist/_keyboard-event.js b/dist/_keyboard-event.js
+index 2a0b80bd9881a2478b6a43ab791a939bd3615935..7a6ba6d370502bb8250503acff3a62f121e0386b 100644
 --- a/dist/_keyboard-event.js
 +++ b/dist/_keyboard-event.js
-@@ -22,6 +22,6 @@
+@@ -22,7 +22,7 @@ function normalizeKeyboardEvent(event, platform) {
  		meta: Boolean(event.metaKey),
  		altGraph: altGraph && !controlAlt,
  		location: event.location,
@@ -9,10 +10,12 @@ diff --git a/dist/_keyboard-event.js b/dist/_keyboard-event.js
 +		isComposing: Boolean(event.isComposing) || event.keyCode === 229 || key === "Process" || key === "Unidentified"
  	};
  }
+ /**
 diff --git a/dist/_match.js b/dist/_match.js
+index 99c83fccd6dd4460768612d550107e7cd637acf7..47a6160df241c9ad9be7f93b958acc12480fda6d 100644
 --- a/dist/_match.js
 +++ b/dist/_match.js
-@@ -11,7 +11,7 @@
+@@ -11,7 +11,7 @@ function matchKeyboardEvent(event, hotkey, platform = detectPlatform()) {
  		matched: false,
  		score: 0
  	};
@@ -21,3 +24,163 @@ diff --git a/dist/_match.js b/dist/_match.js
  	if (normalized.altGraph && (parsed.ctrl || parsed.alt)) return noMatch;
  	if (normalized.altGraph && !altGraphTypedCharacter(normalized)) return noMatch;
  	if (parsed.code !== void 0) {
+diff --git a/dist/hotkey-manager.d.ts b/dist/hotkey-manager.d.ts
+index 8e86b5ed9d9b5a3fbc0be8fc45d8d5ecfdbd84b7..54e5541997eeef0e25b4fe5d7efb09d960cced35 100644
+--- a/dist/hotkey-manager.d.ts
++++ b/dist/hotkey-manager.d.ts
+@@ -3,7 +3,7 @@ import { AppHotkey, AppHotkeysStore } from "./app-hotkeys.js";
+ import { Store } from "@tanstack/store";
+ //#region src/hotkey-manager.d.ts
+ /** An element, document, or window that hotkeys can listen on. */
+-export type Target = HTMLElement | Document | Window;
++export type Target = Element | Document | Window;
+ /**
+  * Options shared by chords and sequences.
+  */
+@@ -56,6 +56,19 @@ export interface HotkeyOptions {
+   stopPropagation?: boolean;
+   /** The DOM element to attach the event listener to. Defaults to document. */
+   target?: Target | null;
++  /**
++   * Whether a sequence may take this event for a step that matched: advance,
++   * continue or complete on it. Returning false leaves the key to everything
++   * else, as if the step hadn't matched. Asked before any step is taken, so it
++   * mustn't act on the event. Defaults to always.
++   */
++  allowStep?: (event: KeyboardEvent, target: Target) => boolean;
++  /**
++   * Called as a sequence takes a step on this event, advancing or completing,
++   * before its own `preventDefault` and callback. A step a sequence takes
++   * isn't taken by sequences on targets further out.
++   */
++  onStep?: (event: KeyboardEvent) => void;
+   /** Optional metadata (name, description, custom fields via declaration merging) */
+   meta?: HotkeyMeta;
+   /**
+diff --git a/dist/hotkey-manager.js b/dist/hotkey-manager.js
+index f4f4c158f4787988739e47790066991b1f415df5..08025aa35cc58c31e31befd98bdd0d9e30a36bf5 100644
+--- a/dist/hotkey-manager.js
++++ b/dist/hotkey-manager.js
+@@ -148,12 +148,14 @@ var HotkeyManager = class HotkeyManager {
+ 	/** Scopes that can fire while a scope is exclusive, or `null` when none is. */
+ 	#liveScopes = null;
+ 	#listeners = new TargetListeners((...args) => this.#processTargetEvent(...args));
+-	/** Events that continue a sequence in progress, decided before any listener runs. */
++	/** Events that continue a sequence in progress, decided before any listener runs: the event path index of the innermost target whose sequence continues, or -1. */
+ 	#sequenceOwned = /* @__PURE__ */ new WeakMap();
+-	/** Physical keys whose keydown a sequence owned, so their repeats and keyup are owned too. */
+-	#sequenceOwnedKeys = /* @__PURE__ */ new Set();
++	/** Physical keys whose keydown a sequence owned, so their repeats and keyup are owned too, at that keydown's index. */
++	#sequenceOwnedKeys = /* @__PURE__ */ new Map();
+ 	/** Timers that clear a sequence's progress once its timeout passes. */
+ 	#sequenceResetTimers = /* @__PURE__ */ new Map();
++	/** Events a sequence took a step on: the event path index of the innermost such target. Sequences further out don't take them. */
++	#sequenceTaken = /* @__PURE__ */ new WeakMap();
+ 	constructor() {
+ 		this.#platform = detectPlatform();
+ 	}
+@@ -457,7 +459,8 @@ var HotkeyManager = class HotkeyManager {
+ 	/**
+ 	* Processes keyboard events for a specific target and event type.
+ 	* A key that continues a sequence in progress belongs to that sequence, so
+-	* chords skip it. Chords and first steps of sequences may both fire.
++	* chords on its target or further out skip it; chords on a target inside it
++	* take it first. Chords and first steps of sequences may both fire.
+ 	*/
+ 	#processTargetEvent(event, target, eventType, capture, ids, first) {
+ 		if (first) this.#sequenceOwned.set(event, this.#isOwnedBySequence(event, eventType));
+@@ -471,7 +474,8 @@ var HotkeyManager = class HotkeyManager {
+ 				registration.activeMatch = void 0;
+ 			}
+ 		}
+-		if (isRecordingEvent(event) || this.#sequenceOwned.get(event)) return;
++		const owner = this.#sequenceOwned.get(event) ?? -1;
++		if (isRecordingEvent(event) || owner >= 0 && owner <= event.composedPath().indexOf(isDocumentLevel(target) ? getTargetDocument(target) : target)) return;
+ 		const matches = /* @__PURE__ */ new Map();
+ 		let bestScore = 0;
+ 		let reserved = false;
+@@ -510,32 +514,36 @@ var HotkeyManager = class HotkeyManager {
+ 		}
+ 	}
+ 	/**
+-	* Whether the event continues or completes a sequence in progress whose
+-	* target the event reaches. The repeats and keyup of a keydown that a
+-	* sequence owns belong to the sequence too.
++	* Where on its path the event continues or completes a sequence in progress:
++	* the index of the innermost such target, or -1. The repeats and keyup of a
++	* keydown that a sequence owns belong to the sequence too.
+ 	*/
+ 	#isOwnedBySequence(event, eventType) {
+ 		const key = event.code || normalizeKeyName(event.key);
+ 		if (eventType === "keyup") {
+-			const ownedKeydown = this.#sequenceOwnedKeys.delete(key);
+-			return this.#continuesSequence(event, eventType) || ownedKeydown;
++			const ownedKeydown = this.#sequenceOwnedKeys.get(key) ?? -1;
++			this.#sequenceOwnedKeys.delete(key);
++			const owner = this.#continuesSequence(event, eventType);
++			return owner >= 0 ? owner : ownedKeydown;
+ 		}
+-		if (event.repeat) return this.#sequenceOwnedKeys.has(key);
+-		const owned = this.#continuesSequence(event, eventType);
+-		if (owned) this.#sequenceOwnedKeys.add(key);
++		if (event.repeat) return this.#sequenceOwnedKeys.get(key) ?? -1;
++		const owner = this.#continuesSequence(event, eventType);
++		if (owner >= 0) this.#sequenceOwnedKeys.set(key, owner);
+ 		else this.#sequenceOwnedKeys.delete(key);
+-		return owned;
++		return owner;
+ 	}
+ 	#continuesSequence(event, eventType) {
+-		if (isRecordingEvent(event) || normalizeKeyboardEvent(event).isComposing || isModifierKey(normalizeKeyName(event.key))) return false;
++		if (isRecordingEvent(event) || normalizeKeyboardEvent(event).isComposing || isModifierKey(normalizeKeyName(event.key))) return -1;
+ 		const path = event.composedPath();
+ 		const now = Date.now();
++		let owner = -1;
+ 		for (const registration of this.registrations.state.values()) {
+ 			if (registration.kind !== "sequence" || registration.currentIndex === 0 || !this.#isLive(registration) || registration.options.eventType !== eventType || now - registration.lastKeyTime > (registration.options.timeout ?? 1e3)) continue;
+ 			const target = registration.target;
+-			if (path.includes(isDocumentLevel(target) ? getTargetDocument(target) : target) && !(ignoresInputs(registration) && shouldIgnoreInputEvent(event, target)) && matchKeyboardEvent(event, registration.parsedSequence[registration.currentIndex], registration.options.platform).matched) return true;
++			const at = path.indexOf(isDocumentLevel(target) ? getTargetDocument(target) : target);
++			if (at >= 0 && (owner < 0 || at < owner) && !(ignoresInputs(registration) && shouldIgnoreInputEvent(event, target)) && matchKeyboardEvent(event, registration.parsedSequence[registration.currentIndex], registration.options.platform).matched && registration.options.allowStep?.(event, target) !== false) owner = at;
+ 		}
+-		return false;
++		return owner;
+ 	}
+ 	#processSequences(event, target, eventType, capture, registrations) {
+ 		if (registrations.length === 0) return;
+@@ -554,14 +562,17 @@ var HotkeyManager = class HotkeyManager {
+ 		const now = Date.now();
+ 		let changed = false;
+ 		const candidates = /* @__PURE__ */ new Map();
++		const at = event.composedPath().indexOf(isDocumentLevel(target) ? getTargetDocument(target) : target);
++		const outer = (this.#sequenceTaken.get(event) ?? at) < at;
+ 		let bestScore = 0;
+ 		for (const registration of registrations) {
+ 			if (!this.#isLive(registration) || ignoresInputs(registration) && shouldIgnoreInputEvent(event, target) || registration.options.eventType !== eventType) continue;
+ 			const timeout = registration.options.timeout ?? 1e3;
+-			if (registration.currentIndex > 0 && now - registration.lastKeyTime > timeout) {
++			if (registration.currentIndex > 0 && (outer || now - registration.lastKeyTime > timeout)) {
+ 				registration.currentIndex = 0;
+ 				changed = true;
+ 			}
++			if (outer) continue;
+ 			const expected = registration.parsedSequence[registration.currentIndex];
+ 			if (!expected) continue;
+ 			let match = matchKeyboardEvent(event, expected, registration.options.platform);
+@@ -570,6 +581,7 @@ var HotkeyManager = class HotkeyManager {
+ 				match = matchKeyboardEvent(event, registration.parsedSequence[0], registration.options.platform);
+ 				nextIndex = 1;
+ 			}
++			if (match.matched && registration.options.allowStep?.(event, registration.target) === false) continue;
+ 			candidates.set(registration.id, {
+ 				score: match.score,
+ 				nextIndex
+@@ -584,6 +596,8 @@ var HotkeyManager = class HotkeyManager {
+ 				registration.lastKeyTime = now;
+ 				registration.currentIndex = candidate.nextIndex;
+ 				changed = true;
++				this.#sequenceTaken.set(event, Math.min(this.#sequenceTaken.get(event) ?? at, at));
++				registration.options.onStep?.(event);
+ 				if (registration.currentIndex >= registration.parsedSequence.length) {
+ 					this.#consume(registration, event);
+ 					registration.currentIndex = 0;

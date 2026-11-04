@@ -157,6 +157,9 @@ function App() {
   useHotkey("C T", log("C T"), { label: "Create task", group: "Tasks" });
   useHotkey("G T", log("G T"), { label: "Go to timeline", group: "Navigation" });
   useHotkey("L", log("L"), { label: "Next" });
+  // A step of the sheet's own Tab: listed, run from its button alone while the sheet is open.
+  useHotkey("Tab A", log("Tab A"), { label: "Tab then A" });
+  useHotkey("J", log("J"));
   useHotkey("Escape", log("Escape"));
   return <main>
     <button id="search">Search</button>
@@ -204,6 +207,184 @@ Object.assign(window, { addLook, css });
 function App() {
   useHotkey("G H", () => {}, { label: "Go home" });
   return <main><HotkeySheet /></main>;
+}
+render(<App />, document.getElementById("app")!);
+`;
+
+// The same keys on the page, a list, an editor inside the list, a chart and a dialog; a raw widget
+// that handles Escape and T itself; fields beside page hotkeys that ask for their keys. The window
+// records each key that reaches it, so one a hotkey left alone shows untouched.
+const local = `import { render, useEffect, useLayoutEffect, useRef, useState } from "patchy/preact";
+import { HotkeyScope, HotkeySheet, openHotkeySheet, useHotkey } from "patchy/hotkeys";
+
+const fired: string[] = [];
+const log = (name: string) => () => { fired.push(name); };
+const arrived: string[] = [];
+window.addEventListener("keydown", (event) => {
+  if (!["Control", "Meta", "Alt", "Shift"].includes(event.key))
+    arrived.push(\`\${event.key} \${event.defaultPrevented ? "prevented" : "untouched"}\`);
+});
+Object.assign(window, { fired, arrived });
+
+function Editor() {
+  const field = useRef<HTMLInputElement>(null);
+  useHotkey("Enter", log("editor Enter"), { within: field });
+  useHotkey("Escape", log("editor Escape"), { within: field });
+  useHotkey("ArrowDown", log("editor ArrowDown"), { within: field });
+  // Keys that type or edit, which a hotkey within the field never takes.
+  useHotkey("A", log("editor A"), { within: field, whileTyping: true });
+  useHotkey("Shift+Enter", log("editor Shift+Enter"), { within: field });
+  useHotkey("Home", log("editor Home"), { within: field });
+  // Waits while typing, though it is within the field it would type in.
+  useHotkey("Mod+K", log("editor Mod+K"), { within: field, whileTyping: false });
+  return <input id="editor" ref={field} aria-label="Editor" />;
+}
+
+function List() {
+  const list = useRef<HTMLUListElement>(null);
+  useHotkey("Enter", log("list Enter"), { within: list, label: "Open task", group: "Tasks" });
+  useHotkey("ArrowDown", log("list ArrowDown"), { within: list, label: "Next task", group: "Tasks" });
+  useHotkey("H", log("list H"), { within: list });
+  return <ul id="list" ref={list} tabIndex={0}><li><Editor /></li></ul>;
+}
+
+function Chart() {
+  const chart = useRef<SVGSVGElement>(null);
+  useHotkey("G H", log("chart G H"), { within: chart });
+  useHotkey("ArrowRight", log("chart ArrowRight"), { within: chart });
+  return <svg id="chart" ref={chart} tabindex={0} width="40" height="40" aria-label="Chart"><rect width="40" height="40" /></svg>;
+}
+
+// A panel whose own sequence starts with the last step of the page's G H.
+function Panel() {
+  const panel = useRef<HTMLDivElement>(null);
+  useHotkey("H X", log("panel H X"), { within: panel });
+  return <div id="panel" ref={panel} tabIndex={0}>panel</div>;
+}
+
+function WidgetPart() {
+  const part = useRef<HTMLSpanElement>(null);
+  useHotkey("L", log("widget part L"), { within: part });
+  return <span id="widget-part" ref={part} tabIndex={0}>part</span>;
+}
+
+// Stands in for a third-party widget: a raw listener that handles Escape, T and H, around a part
+// with a hotkey of its own.
+function Widget() {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current!;
+    const handle = (event: KeyboardEvent) => {
+      if (["Escape", "t", "h"].includes(event.key)) event.preventDefault();
+    };
+    element.addEventListener("keydown", handle);
+    return () => element.removeEventListener("keydown", handle);
+  }, []);
+  return <div id="widget" ref={box} tabIndex={0}>widget <WidgetPart /></div>;
+}
+
+function DatePicker(props: { close: () => void }) {
+  const field = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => field.current?.focus(), []);
+  useHotkey("Escape", props.close, { label: "Close date" });
+  return <div role="dialog" aria-label="Pick a date"><input id="date" ref={field} aria-label="Date" /></div>;
+}
+
+function CreateTask(props: { close: () => void }) {
+  const notes = useRef<HTMLTextAreaElement>(null);
+  const [priority, setPriority] = useState(0);
+  const [assigned, setAssigned] = useState(false);
+  const [notesShown, setNotesShown] = useState(true);
+  const [picking, setPicking] = useState(false);
+  useLayoutEffect(() => notes.current?.focus(), []);
+  const group = "Create task";
+  useHotkey("Escape", () => { fired.push("dialog Escape"); props.close(); }, { label: "Close", group });
+  useHotkey("P 5", () => { fired.push("dialog P 5"); setPriority(5); }, { label: "Priority 5", group });
+  useHotkey("A", () => { fired.push("dialog A"); setAssigned(true); }, { label: "Assign to me", group });
+  useHotkey("D", () => setNotesShown(false), { label: "Discard notes", group });
+  useHotkey("T", () => setPicking(true), { label: "Pick a date", group });
+  useHotkey("G Escape", () => { fired.push("dialog G Escape"); props.close(); }, { label: "Leave", group });
+  return <div id="create" role="dialog" aria-label="Create task">
+    {notesShown && <textarea id="notes" ref={notes} aria-label="Notes" />}
+    <p id="priority">{priority}</p>
+    <p id="assigned">{assigned ? "me" : "nobody"}</p>
+    <button id="dialog-shortcuts" type="button" onClick={() => openHotkeySheet()}>Shortcuts</button>
+    {picking && <HotkeyScope><DatePicker close={() => setPicking(false)} /></HotkeyScope>}
+  </div>;
+}
+
+// A native modal dialog over another: everything outside the top one is inert while it is open.
+function Confirm(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    field.current?.focus();
+    return () => element.close();
+  }, []);
+  return <dialog id="confirm" ref={dialog} aria-label="Confirm" onCancel={props.close}>
+    <input id="confirm-field" ref={field} aria-label="Reason" />
+  </dialog>;
+}
+
+// A native modal dialog: everything outside it is inert while it is open. Hide closes it but
+// leaves it mounted, Open another opens a second modal over it, and Q takes it away.
+function Rename(props: { close: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const [confirming, setConfirming] = useState(false);
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    field.current?.focus();
+    return () => element.close();
+  }, []);
+  useHotkey("S", log("native S"), { label: "Star", group: "Rename" });
+  useHotkey("O", () => setConfirming(true), { label: "Open another", group: "Rename" });
+  useHotkey("H", () => dialog.current!.close(), { label: "Hide", group: "Rename" });
+  useHotkey("Q", props.close);
+  return <>
+    <dialog id="native" ref={dialog} aria-label="Rename" onCancel={props.close}>
+      <input id="native-field" ref={field} aria-label="Name" />
+    </dialog>
+    {confirming && <Confirm close={() => setConfirming(false)} />}
+  </>;
+}
+
+function App() {
+  const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  useHotkey("R", () => setRenaming(true));
+  useHotkey("Enter", log("page Enter"), { label: "Open", whileTyping: true });
+  useHotkey("Escape", log("page Escape"));
+  useHotkey("G H", log("page G H"), { label: "Go home" });
+  useHotkey("G T", log("page G T"));
+  useHotkey("G", log("page G"));
+  // Keys that ask for text fields too, which keep them.
+  useHotkey("Mod+A", log("page Mod+A"), { label: "Select all", whileTyping: true });
+  useHotkey("Mod+Z", log("page Mod+Z"), { whileTyping: true });
+  useHotkey("Mod+Backspace", log("page Mod+Backspace"), { whileTyping: true });
+  useHotkey("Mod+ArrowLeft", log("page Mod+ArrowLeft"), { whileTyping: true });
+  useHotkey("Shift+Home", log("page Shift+Home"), { whileTyping: true });
+  useHotkey("ArrowRight", log("page ArrowRight"), { whileTyping: true });
+  useHotkey("L", log("page L"), { whileTyping: true });
+  useHotkey("Mod+K", log("page Mod+K"));
+  useHotkey("C", () => setCreating(true));
+  return <main>
+    <input id="field" aria-label="Field" />
+    <textarea id="text" aria-label="Text" />
+    <input id="readonly" aria-label="Read-only" readOnly value="abc" />
+    <div id="rich" contentEditable aria-label="Rich">hello world</div>
+    <List />
+    <Chart />
+    <Panel />
+    <Widget />
+    <p id="body" tabIndex={-1}>body</p>
+    <HotkeySheet />
+    {creating && <HotkeyScope><CreateTask close={() => setCreating(false)} /></HotkeyScope>}
+    {renaming && <HotkeyScope><Rename close={() => setRenaming(false)} /></HotkeyScope>}
+  </main>;
 }
 render(<App />, document.getElementById("app")!);
 `;
@@ -486,7 +667,7 @@ test("a conflict warning waits for every hook's update, so siblings swapping key
   ]);
 });
 
-test("the sheet opens by ? or its button, lists by group with its own row last, holds the page's hotkeys and closes like a dialog", async ({
+test("the sheet opens by ? or its button, lists by group with its own rows last, runs what it lists and closes like a dialog", async ({
   page,
   instance
 }) => {
@@ -514,19 +695,34 @@ test("the sheet opens by ? or its button, lists by group with its own row last, 
       ])
     );
     expect(listed).toEqual([
-      ["Navigation", ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?"]],
+      [
+        "Navigation",
+        ["Go home: G H", "Go to timeline: G T", "Show shortcuts: ?", "Show shortcuts: Ctrl /"]
+      ],
       ["Tasks", ["Create task: C T"]],
-      ["General", ["Next: L"]]
+      ["General", ["Next: L", "Tab then A: Tab A"]]
     ]);
   });
 
-  await test.step("while it is open the page's hotkeys wait, and Tab stays on its close button", async () => {
-    await page.keyboard.press("l");
-    await page.keyboard.press("g");
-    await page.keyboard.press("h");
+  await test.step("while it is open unlisted hotkeys wait, and Tab goes round its buttons, past a command that starts with Tab", async () => {
+    await page.keyboard.press("j");
+    const commands = dialog.locator(".hotkey-command");
+    await expect(commands).toHaveText([
+      "Go homeGthenH",
+      "Go to timelineGthenT",
+      "Create taskCthenT",
+      "NextL",
+      "Tab then ATabthenA"
+    ]);
+    for (const command of await commands.all()) {
+      await page.keyboard.press("Tab");
+      await expect(command).toBeFocused();
+    }
     await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
     await page.keyboard.press("Shift+Tab");
+    await expect(commands.last()).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
   });
 
@@ -536,8 +732,18 @@ test("the sheet opens by ? or its button, lists by group with its own row last, 
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(view.locator("#search")).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
+  });
+
+  await test.step("a listed hotkey pressed in it closes it and runs, once, where focus was", async () => {
+    await page.keyboard.press("?");
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await expect(dialog).toBeHidden();
+    await expect(view.locator("#search")).toBeFocused();
+    await firedNext(frame, ["G H"]);
   });
 
   await test.step("its button opens it, and its close button or a click outside closes it", async () => {
@@ -546,16 +752,16 @@ test("the sheet opens by ? or its button, lists by group with its own row last, 
     await close.click();
     await expect(dialog).toBeHidden();
     await expect(opener).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
     await opener.click();
     await expect(dialog).toBeVisible();
     // The dialog is the scrim around the card; its corner is outside the card.
     await dialog.click({ position: { x: 4, y: 4 } });
     await expect(dialog).toBeHidden();
     await expect(opener).toBeFocused();
-    await page.keyboard.press("l");
-    await firedNext(frame, ["L"]);
+    await page.keyboard.press("j");
+    await firedNext(frame, ["J"]);
   });
 
   // A key dispatched as the dialog's `open` appears lands before anything else can run, so it
@@ -567,7 +773,7 @@ test("the sheet opens by ? or its button, lists by group with its own row last, 
         observer.disconnect();
         for (const type of ["keydown", "keyup"])
           document.activeElement?.dispatchEvent(
-            new KeyboardEvent(type, { key: "l", code: "KeyL", bubbles: true, cancelable: true })
+            new KeyboardEvent(type, { key: "j", code: "KeyJ", bubbles: true, cancelable: true })
           );
       }).observe(document.body, { attributes: true, attributeFilter: ["open"], subtree: true });
     });
@@ -758,5 +964,380 @@ test("a page's element rules don't reach the sheet, which takes the page's font 
       "border-top-width": "2px",
       "box-shadow": "rgb(0, 0, 0) 4px 4px 0px 0px"
     });
+  });
+});
+
+test("local hotkeys: the narrowest place wins, fields keep their keys, handled keys stand down, and the sheet runs a dialog's commands", async ({
+  page,
+  context,
+  instance
+}) => {
+  const patch = await publish(instance, local);
+  expect((await page.goto(patch.address))?.status()).toBe(200);
+  const frame = contentFrame(page);
+  const view = page.frameLocator("#patch");
+  await expect(view.locator("#list")).toBeVisible();
+  type Arrived = { arrived: string[] };
+  const arrivedNext = async (expected: string[]) => {
+    expect(await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0))).toEqual(
+      expected
+    );
+  };
+  const sheet = view.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const announced = view.locator(".hotkey-announce");
+  // The text of each status region Chromium exposes in the patch's frame, leaving out the ones a
+  // modal dialog makes inert.
+  const statuses = async () => {
+    type Node = {
+      nodeId: string;
+      ignored: boolean;
+      role?: { value: string };
+      name?: { value: string };
+      childIds?: string[];
+    };
+    type Tree = { frame: { id: string; url: string }; childFrames?: Tree[] };
+    const session = await context.newCDPSession(page);
+    const { frameTree } = (await session.send("Page.getFrameTree")) as { frameTree: Tree };
+    const content = (tree: Tree): Tree | undefined =>
+      tree.frame.url.includes("/~content/")
+        ? tree
+        : (tree.childFrames ?? []).map(content).find((found) => found !== undefined);
+    const { nodes } = (await session.send("Accessibility.getFullAXTree", {
+      frameId: content(frameTree)!.frame.id
+    })) as { nodes: Node[] };
+    await session.detach();
+    const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+    const text = (node: Node): string =>
+      node.role?.value === "StaticText"
+        ? (node.name?.value ?? "")
+        : (node.childIds ?? [])
+            .map((id) => byId.get(id))
+            .map((child) => (child && !child.ignored ? text(child) : ""))
+            .join("");
+    return nodes.filter((node) => !node.ignored && node.role?.value === "status").map(text);
+  };
+  // Trusted key events carrying the key and code each layout reports.
+  const cdp = await context.newCDPSession(page);
+  const press = async (key: string, code: string, keyCode: number, modifiers: number) => {
+    const event = { key, code, windowsVirtualKeyCode: keyCode, modifiers };
+    await cdp.send("Input.dispatchKeyEvent", { ...event, type: "rawKeyDown" });
+    await cdp.send("Input.dispatchKeyEvent", { ...event, type: "keyUp" });
+  };
+
+  await test.step("an editor inside a list inside the page: each place's Enter and Escape fire only there", async () => {
+    await view.locator("#editor").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ArrowDown");
+    // Keys that type or edit stay the field's, even for hotkeys within the field itself.
+    await page.keyboard.press("a");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Home");
+    await expect(view.locator("#editor")).toHaveValue("a");
+    // whileTyping: false holds the editor's own Mod+K back, so the page's takes it.
+    await page.keyboard.press("Control+k");
+    await firedNext(frame, ["editor Enter", "editor Escape", "editor ArrowDown", "page Mod+K"]);
+    await view.locator("#list").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    await view.locator("#body").focus();
+    await page.keyboard.press("Enter");
+    await firedNext(frame, ["list Enter", "list ArrowDown", "page Escape", "page Enter"]);
+  });
+
+  await test.step("an element's key or sequence step beats the page's sequences, and a key it doesn't take goes on", async () => {
+    // The page's G fires on every G, wherever G H is under way.
+    await view.locator("#list").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await firedNext(frame, ["page G", "list H"]);
+    await view.locator("#chart").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await firedNext(frame, ["page G", "chart G H"]);
+    // The panel's H X takes H, so the page's G H under way doesn't complete on it.
+    await view.locator("#panel").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await page.keyboard.press("x");
+    await firedNext(frame, ["page G", "panel H X"]);
+    await view.locator("#chart").focus();
+    // The chart's G H takes G, so the page's G T can't start there.
+    await page.keyboard.press("g");
+    await page.keyboard.press("t");
+    await page.keyboard.press("ArrowRight");
+    await firedNext(frame, ["page G", "chart ArrowRight"]);
+    await view.locator("#body").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await firedNext(frame, ["page G", "page G H"]);
+  });
+
+  await test.step("text fields keep typing and editing keys whatever a hotkey asks, Mod+K fires, and a read-only field keeps its caret keys", async () => {
+    await view.locator("#field").fill("abc");
+    await view.locator("#field").focus();
+    await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0));
+    for (const key of [
+      "Control+a",
+      "Control+z",
+      "Control+Backspace",
+      "Control+ArrowLeft",
+      "Shift+Home",
+      "l",
+      "Enter"
+    ])
+      await page.keyboard.press(key);
+    await page.keyboard.press("Control+k");
+    await firedNext(frame, ["page Mod+K"]);
+    await arrivedNext([
+      "a untouched",
+      "z untouched",
+      "Backspace untouched",
+      "ArrowLeft untouched",
+      "Home untouched",
+      "l untouched",
+      "Enter untouched"
+    ]);
+    // A field of lines keeps its plain Enter and arrows.
+    await view.locator("#text").focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowUp");
+    await expect(view.locator("#text")).toHaveValue("\n");
+    await arrivedNext(["Enter untouched", "ArrowUp untouched"]);
+    await view.locator("#readonly").focus();
+    await page.keyboard.press("l");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+k");
+    await firedNext(frame, ["page L", "page Mod+K"]);
+    await arrivedNext(["ArrowRight untouched", "a untouched"]);
+    await view.locator("#body").focus();
+    for (const key of ["Control+a", "Control+z", "Control+Backspace", "ArrowRight"])
+      await page.keyboard.press(key);
+    await firedNext(frame, ["page Mod+A", "page Mod+Z", "page Mod+Backspace", "page ArrowRight"]);
+    await frame.evaluate(() => (window as unknown as Arrived).arrived.splice(0));
+  });
+
+  await test.step("on a Mac, ⌘A stays with the field and ⌘K fires", async () => {
+    const mac = await context.newPage();
+    await mac.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" });
+    });
+    await mac.goto(patch.address);
+    const macView = mac.frameLocator("#patch");
+    await macView.locator("#field").focus();
+    await mac.keyboard.press("Meta+a");
+    await mac.keyboard.press("Meta+k");
+    await firedNext(contentFrame(mac), ["page Mod+K"]);
+    await macView.locator("#body").focus();
+    await mac.keyboard.press("Meta+a");
+    await firedNext(contentFrame(mac), ["page Mod+A"]);
+    await mac.close();
+  });
+
+  await test.step("a key a widget already handled neither fires a hotkey nor steps a sequence", async () => {
+    await view.locator("#widget").focus();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("g");
+    await page.keyboard.press("t");
+    await view.locator("#body").focus();
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["page G", "page Escape"]);
+    // A part with a hotkey of its own inside the widget, which handles H after the part's
+    // listener has seen it: the page's G H still doesn't complete.
+    await view.locator("#widget-part").focus();
+    await page.keyboard.press("g");
+    await page.keyboard.press("h");
+    await view.locator("#body").focus();
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["page G", "page Escape"]);
+  });
+
+  await test.step("Mod+/ opens the sheet from a field on German and French layouts; AZERTY's = isn't Mod+/", async () => {
+    await view.locator("#field").focus();
+    // German types / with Shift+7, French with Shift on the key in the US . position.
+    for (const [code, keyCode] of [
+      ["Digit7", 55],
+      ["Period", 190]
+    ] as const) {
+      await press("/", code, keyCode, 2 | 8);
+      await expect(sheet).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(sheet).toBeHidden();
+      await expect(view.locator("#field")).toBeFocused();
+    }
+    await press("=", "Slash", 187, 2);
+    await expect(sheet).toBeHidden();
+    await firedNext(frame, []);
+  });
+
+  await test.step("from rich text, the sheet puts focus and the selection back as it closes", async () => {
+    const rich = view.locator("#rich");
+    await rich.focus();
+    await page.keyboard.press("End");
+    for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await expect(rich).toBeFocused();
+    expect(
+      await frame.evaluate(() => {
+        const selection = document.getSelection()!;
+        return [String(selection), selection.anchorOffset, selection.focusOffset];
+      })
+    ).toEqual(["world", 11, 6]);
+    await firedNext(frame, []);
+  });
+
+  await test.step("from a dialog's field, Mod+/ lists the dialog's commands; P 5 runs by key, and the caret and selection come back", async () => {
+    await view.locator("#body").focus();
+    await page.keyboard.press("c");
+    const notes = view.locator("#notes");
+    await expect(notes).toBeFocused();
+    await page.keyboard.type("hello world");
+    for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    const listed = await frame.evaluate(() =>
+      [...document.querySelectorAll(".hotkey-group")].map((group) => [
+        group.querySelector("h3")?.textContent,
+        [...group.querySelectorAll(".hotkey-row")].map(
+          (row) =>
+            `${row.querySelector(".hotkey-command") ? "button" : "row"} ${row.querySelector(".hotkey-label")?.textContent}`
+        )
+      ])
+    );
+    expect(listed).toEqual([
+      [
+        "Create task",
+        [
+          "button Close",
+          "button Priority 5",
+          "button Assign to me",
+          "button Discard notes",
+          "button Pick a date",
+          "button Leave"
+        ]
+      ],
+      ["General", ["row Show shortcuts", "row Show shortcuts"]]
+    ]);
+    await page.keyboard.press("p");
+    await page.keyboard.press("5");
+    await expect(sheet).toBeHidden();
+    await expect(notes).toBeFocused();
+    expect(
+      await notes.evaluate((field: HTMLTextAreaElement) => [
+        field.value,
+        field.selectionStart,
+        field.selectionEnd,
+        field.selectionDirection
+      ])
+    ).toEqual(["hello world", 6, 11, "backward"]);
+    await expect(view.locator("#priority")).toHaveText("5");
+    await expect(announced).toHaveText("Priority 5");
+    await expect(announced).toHaveAttribute("aria-live", "polite");
+    await firedNext(frame, ["dialog P 5"]);
+  });
+
+  await test.step("Tab goes through the sheet's commands, which run by Space or a click", async () => {
+    const notes = view.locator("#notes");
+    await page.keyboard.press("Control+/");
+    await expect(sheet.getByRole("button", { name: "Close", exact: true })).toBeFocused();
+    const commands = sheet.locator(".hotkey-command");
+    for (const index of [0, 1]) {
+      await page.keyboard.press("Tab");
+      await expect(commands.nth(index)).toBeFocused();
+    }
+    await page.keyboard.press("Space");
+    await expect(sheet).toBeHidden();
+    await expect(notes).toBeFocused();
+    expect(
+      await notes.evaluate((field: HTMLTextAreaElement) => [
+        field.selectionStart,
+        field.selectionEnd
+      ])
+    ).toEqual([6, 11]);
+    await firedNext(frame, ["dialog P 5"]);
+    await page.keyboard.press("Control+/");
+    await sheet.locator(".hotkey-command", { hasText: "Assign to me" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(notes).toBeFocused();
+    await expect(view.locator("#assigned")).toHaveText("me");
+    await expect(announced).toHaveText("Assign to me");
+    await firedNext(frame, ["dialog A"]);
+  });
+
+  await test.step("Escape closes only the sheet, even as a command's step, and a dialog's own button opens it", async () => {
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    // G Escape is Leave's, but in the sheet Escape is the sheet's at every step.
+    await page.keyboard.press("g");
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await expect(view.locator("#create")).toBeVisible();
+    await expect(view.locator("#notes")).toBeFocused();
+    await view.locator("#dialog-shortcuts").click();
+    await expect(sheet.locator(".hotkey-group h3").first()).toHaveText("Create task");
+    await page.keyboard.press("Escape");
+    await expect(view.locator("#dialog-shortcuts")).toBeFocused();
+    await firedNext(frame, []);
+  });
+
+  await test.step("a command that opens another dialog keeps the focus it gives", async () => {
+    await view.locator("#notes").focus();
+    await page.keyboard.press("Control+/");
+    await page.keyboard.press("t");
+    await expect(view.locator("#date")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(view.locator("#date")).toHaveCount(0);
+  });
+
+  await test.step("a command that removes the focused field leaves focus with its dialog", async () => {
+    await view.locator("#notes").focus();
+    await page.keyboard.press("Control+/");
+    await page.keyboard.press("d");
+    await expect(view.locator("#notes")).toHaveCount(0);
+    await expect(view.locator("#create")).toBeFocused();
+    await expect(announced).toHaveText("Discard notes");
+    // The dialog's keys work from there.
+    await page.keyboard.press("Escape");
+    await expect(view.locator("#create")).toHaveCount(0);
+    await firedNext(frame, ["dialog Escape"]);
+  });
+  await test.step("over a native modal dialog, the command's announcement is in the accessibility tree", async () => {
+    await view.locator("#body").focus();
+    await page.keyboard.press("r");
+    const field = view.locator("#native-field");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("s");
+    await expect(sheet).toBeHidden();
+    await expect(field).toBeFocused();
+    await firedNext(frame, ["native S"]);
+    // A modal dialog makes the rest of the page inert, which only the browser's own tree shows.
+    await expect.poll(statuses).toEqual(["Star"]);
+  });
+
+  await test.step("a command that opens another modal, or closes its own and leaves it mounted, is still announced", async () => {
+    const field = view.locator("#native-field");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("o");
+    await expect(view.locator("#confirm-field")).toBeFocused();
+    await expect.poll(statuses).toEqual(["Open another"]);
+    await page.keyboard.press("Escape");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("h");
+    await expect(view.locator("#native")).toBeHidden();
+    await expect(view.locator("#native")).toHaveCount(1);
+    await expect.poll(statuses).toEqual(["Hide"]);
+    await page.keyboard.press("q");
+    await expect(view.locator("#native")).toHaveCount(0);
+    await firedNext(frame, []);
   });
 });
