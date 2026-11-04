@@ -143,7 +143,7 @@ describe("repo publish checks", () => {
     expect(report).toMatchObject({
       ok: true,
       dryRun: true,
-      note: "Checks the repo snapshot and version without building or sending; publish still runs the build.",
+      note: "Checks the repo snapshot, version and description without building or sending; publish still runs the build.",
       repo: { limits: { files: 2000, bytes: 10 * 1024 * 1024 } },
       warnings: []
     });
@@ -239,6 +239,36 @@ describe("repo publish checks", () => {
       "The description was changed in the portal to 'New portal text'; check it."
     ]);
     expect(await dryRunWith({ description: "New portal text" })).toEqual([]);
+  });
+
+  it("refuses a dry run as publish does when patchy.json has no description and the portal's isn't newer", async () => {
+    const instance = await stubInstance((request, respond, disconnect) => {
+      if (request.url === "/api/patches/abcdefghijkl?state=all")
+        return respond(200, {
+          ...projectSource,
+          description: "Portal text",
+          descriptionUpdatedAt: "2026-09-17T00:00:00.000Z"
+        });
+      projectHandler(request, respond, disconnect);
+    });
+    const dir = publishTree(instance.url);
+    const options = { cwd: dir, stateDir: tempDir(), env: { PATCHY_API_TOKEN: "pp_owner" } };
+    expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
+    writeFileSync(
+      path.join(dir, "patchy.json"),
+      JSON.stringify({
+        instance: instance.url,
+        patch: "abcdefghijkl",
+        version: 1,
+        descriptionSyncedAt: "2026-09-18T00:00:00.000Z"
+      })
+    );
+    const dry = await runCli(["publish", "--dry-run", "--json"], options);
+    expect(dry).toMatchObject({ status: 1, stdout: "" });
+    const real = await runCli(["publish", "--json"], options);
+    expect(real).toMatchObject({ status: 1, stdout: "" });
+    expect(JSON.parse(dry.stderr)).toEqual(JSON.parse(real.stderr));
+    expect(JSON.parse(dry.stderr)).toMatchObject({ kind: "local", code: "invalid_manifest" });
   });
 
   /**

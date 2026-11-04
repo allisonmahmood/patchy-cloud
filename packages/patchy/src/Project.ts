@@ -215,6 +215,18 @@ export const normalizeDescription = Effect.fn("Project.normalizeDescription")(fu
   );
 });
 
+/** The description a repo publish sends: patchy.json's after the sync, which must be there. */
+export const publishDescription = Effect.fn("Project.publishDescription")(function* (
+  description: string | undefined
+) {
+  if (description === undefined)
+    return yield* new LocalError({
+      message: "patchy.json must contain a nonempty description before publishing.",
+      code: "invalid_manifest"
+    });
+  return yield* normalizeDescription(description, "patchy.json description", "invalid_manifest");
+});
+
 /** Swap a repo file in whole, so an interrupted write never leaves it half written. */
 const replaceFile = Effect.fn("Project.replaceFile")(function* (
   cwd: string,
@@ -361,11 +373,16 @@ export const previewDescriptionSync = Effect.fn("Project.previewDescriptionSync"
   token: Redacted.Redacted
 ) {
   const repo = yield* readRepo(cwd);
-  if (repo.patch === undefined) return { text: undefined, warnings: noWarnings };
+  const unchanged = { text: undefined, description: repo.description, warnings: noWarnings };
+  if (repo.patch === undefined) return unchanged;
   const synced = portalSync(repo, yield* readPortalDescription(repo.patch, token, true));
-  if (synced === undefined) return { text: undefined, warnings: noWarnings };
+  if (synced === undefined) return unchanged;
   yield* Output.rememberWarnings(synced.warnings);
-  return { text: json(synced.repo), warnings: synced.warnings };
+  return {
+    text: json(synced.repo),
+    description: synced.repo.description,
+    warnings: synced.warnings
+  };
 });
 
 /**

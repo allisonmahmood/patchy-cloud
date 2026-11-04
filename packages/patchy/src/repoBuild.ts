@@ -124,16 +124,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { repo, warnings: syncWarnings } = yield* Project.syncDescription(cwd, token, true);
-  if (repo.description === undefined)
-    return yield* new LocalError({
-      message: "patchy.json must contain a nonempty description before publishing.",
-      code: "invalid_manifest"
-    });
-  const description = yield* Project.normalizeDescription(
-    repo.description,
-    "patchy.json description",
-    "invalid_manifest"
-  );
+  const description = yield* Project.publishDescription(repo.description);
   const configured = yield* Effect.tryPromise({
     try: async () =>
       decodeManifest({

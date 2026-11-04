@@ -597,13 +597,13 @@ const checkRepoPublish = Effect.fn("checkRepoPublish")(function* (
 
 /** What `publish --dry-run` checks, said wherever it reports. */
 const dryRunScope =
-  "Checks the repo snapshot and version without building or sending; publish still runs the build.";
+  "Checks the repo snapshot, version and description without building or sending; publish still runs the build.";
 
 /**
- * `publish --dry-run`: the refusals a repo publish makes before any work, then the snapshot it
- * would keep, with patchy.json measured as the description sync would leave it. It builds, sends
- * and writes nothing, and leaves a pending publish for the next real one. Each notice is
- * remembered as found, so a later refusal still carries it.
+ * `publish --dry-run`: the refusals a repo publish makes before any work, a missing description
+ * included, then the snapshot it would keep, with patchy.json measured as the description sync
+ * would leave it. It builds, sends and writes nothing, and leaves a pending publish for the next
+ * real one. Each notice is remembered as found, so a later refusal still carries it.
  */
 const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   repo: string,
@@ -624,6 +624,7 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
     `Checking a publish to ${instance.apiUrl} (target came from ${Instance.describeSource(instance.source)}).`
   );
   const synced = yield* Project.previewDescriptionSync(repo, token);
+  yield* Project.publishDescription(synced.description);
   const snapshot = yield* RepoSnapshot.survey(repo, synced.text);
   const warnings = [...pending, ...synced.warnings, ...snapshot.warnings];
   yield* Output.report(
@@ -681,7 +682,7 @@ const publish = Command.make(
     ),
     dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription(
-        "Check the repo snapshot and version without building or sending, and list what the version would keep; publish still runs the build"
+        "Check the repo snapshot, version and description without building or sending, and list what the version would keep; publish still runs the build"
       ),
       Flag.withDefault(false)
     )
