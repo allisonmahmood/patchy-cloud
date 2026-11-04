@@ -25,6 +25,31 @@ test("a patch hears the keyboard once its frame loads", async ({ page, instance 
   await expect(keys(page)).toHaveText("1");
 });
 
+test("a key pressed before the frame's load event still reaches the patch", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", counter, undefined, {
+    tier: 1,
+    tables: {},
+    files: {}
+  });
+  // A patch can be on screen and listening before its frame's load event, which waits on the
+  // patch's last subresource. Withholding that event from the shell holds the gap open.
+  await page.addInitScript(() => {
+    document.addEventListener(
+      "load",
+      (event) => {
+        if (event.target instanceof HTMLIFrameElement) event.stopImmediatePropagation();
+      },
+      true
+    );
+  });
+  await page.goto(patch.address);
+  await page.keyboard.press("ArrowDown");
+  await expect(keys(page)).toHaveText("1");
+});
+
 test("shell UI that holds focus before the frame loads keeps it", async ({ page, instance }) => {
   const patch = await instance.publish("company", counter, undefined, {
     tier: 1,

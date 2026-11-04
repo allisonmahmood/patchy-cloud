@@ -792,6 +792,12 @@ function mount(frame: HTMLIFrameElement): void {
       release(reserved);
     }
   };
+  // Keys go to the focused document. The frame takes focus as its patch starts loading, so the
+  // patch hears a key once it is on screen, before its load event. Shell UI that holds focus,
+  // such as the starting cover, keeps it.
+  const handOffKeys = () => {
+    if (document.activeElement === null || document.activeElement === document.body) frame.focus();
+  };
   frame.addEventListener("load", () => {
     if (closed) return;
     if (issued) return stop();
@@ -818,9 +824,8 @@ function mount(frame: HTMLIFrameElement): void {
     } catch {
       notice("bootstrap_failed");
     }
-    // Keys go to the focused document. Hand the patch the keyboard on load, unless the
-    // shell's own UI, such as the starting cover, already holds focus.
-    if (document.activeElement === null || document.activeElement === document.body) frame.focus();
+    // Again on load, in case focus fell back to the shell's body while the frame loaded.
+    handOffKeys();
   });
   window.addEventListener("popstate", announceRoute);
   window.addEventListener("pagehide", stop, { once: true });
@@ -852,6 +857,7 @@ function mount(frame: HTMLIFrameElement): void {
     // Tier 2's stream carries the cold start, so it binds the company while the frame loads.
     if (tier === 2) startStream();
   }
+  handOffKeys();
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;
 }
