@@ -140,6 +140,8 @@ describe("htmlPage app body", () => {
     );
     expect(html).toContain('name="kind" value="request" checked>Request</label>');
     expect(html).toContain('<a href="/feedback">What you sent</a>');
+    // No maxlength: it counts UTF-16 units and would cut an emoji the store accepts.
+    expect(html).toContain('<textarea class="field" id="tell-patchy-text" name="text" aria-label=');
     // Shown only when the script can't tell whether a send was saved, which it never resends.
     expect(html).toContain('class="note note-warn tell-patchy-unsure" hidden>');
     expect(html.slice(html.indexOf("<body>"))).not.toContain('role="alert"');

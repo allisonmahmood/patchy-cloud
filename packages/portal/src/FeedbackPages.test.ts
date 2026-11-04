@@ -14,7 +14,7 @@ import { Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import * as Testing from "@patchy/company-database/testing";
-import { htmlPage, NodeCryptography, WhatsNew } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
 import { Feedback } from "@patchy/feedback";
 import { Limits, OperatingLimits } from "@patchy/limits";
 import * as FeedbackPages from "./FeedbackPages.js";
@@ -90,7 +90,7 @@ const submissions = (who: Person) =>
   );
 
 describe("a dashboard request's title and why", () => {
-  const { TITLE_MAX, TEXT_MAX } = Feedback;
+  const { TITLE_MAX } = Feedback;
   /** Words "w0 w1 w2 …" running to at least `length` characters. */
   const words = (length: number) => {
     let text = "w0";
@@ -139,22 +139,6 @@ describe("a dashboard request's title and why", () => {
     // With no word boundary, it cuts mid-word, counting characters rather than UTF-16 units.
     const unbroken = FeedbackPages.requestOf("🙂".repeat(TITLE_MAX + 50)).title;
     assert.strictEqual(unbroken, `${"🙂".repeat(TITLE_MAX - 1)}…`);
-  });
-
-  it("caps the panel's field at the longest text the store keeps", () => {
-    const shell = htmlPage({
-      title: "Home",
-      body: "",
-      app: {
-        viewer: {
-          user: { name: "Ada Park", email: "ada@acme.example" },
-          company: { name: "Acme Co" },
-          whatsNewSeen: WhatsNew.latestRelease
-        },
-        section: "home"
-      }
-    });
-    assert.include(shell, `name="text" maxlength="${TEXT_MAX}"`);
   });
 });
 
@@ -228,15 +212,27 @@ it.layer(layer)("Feedback pages", (it) => {
           why: paragraph.trim()
         });
 
-        for (const [text, refusal] of [
-          ["Hi", "A request is at least 3 characters"],
-          ["x".repeat(Feedback.TEXT_MAX + 1), "Your request is longer than 4,000 characters"]
+        // The cap counts characters, as the store does: an emoji is one, though it is two UTF-16 units.
+        const longest = `${"x".repeat(Feedback.TEXT_MAX - 1)}🙂`;
+        for (const kind of ["request", "feedback"] as const)
+          assert.strictEqual(
+            (yield* request(ada, post("/feedback", { kind, text: longest }))).status,
+            200,
+            kind
+          );
+        assert.deepInclude((yield* submissions(ada))[1], { why: longest });
+        assert.deepInclude((yield* submissions(ada))[2], { text: longest });
+
+        for (const [kind, text, refusal] of [
+          ["request", "Hi", "A request is at least 3 characters"],
+          ["request", `x${longest}`, "Your request is longer than 4,000 characters"],
+          ["feedback", `x${longest}`, "Your feedback is longer than 4,000 characters"]
         ] as const) {
-          const refused = yield* request(ada, post("/feedback", { kind: "request", text }));
+          const refused = yield* request(ada, post("/feedback", { kind, text }));
           assert.strictEqual(refused.status, 422);
           assert.include(yield* refused.text, refusal);
         }
-        assert.lengthOf(yield* submissions(ada), 1);
+        assert.lengthOf(yield* submissions(ada), 3);
       })
   );
 
