@@ -130,6 +130,12 @@ const decodeName = Schema.decodeUnknownSync(PatchName);
 const decodeDescription = Schema.decodeUnknownEffect(DescriptionText.check(Schema.isMinLength(1)));
 const isDefinitionName = Schema.is(DefinitionName);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+const encodeManifest = Schema.encodeSync(Manifest);
+/**
+ * The bytes of `patchy/_generated/manifest.json`. Init, refresh, dev and publish all write
+ * through this, so switching commands leaves nothing to commit.
+ */
+export const manifestFile = (manifest: typeof Manifest.Type) => json(encodeManifest(manifest));
 type Change = typeof changeSchema.Type;
 
 /** The integrations `patchy add <integration>/<handle>` declares, as their pages name them. */
@@ -766,7 +772,7 @@ const refreshRepo = Effect.fn("Project.refreshRepo")(function* (
           const changed = yield* localIO("Activate generated files", () =>
             transaction.activate(
               result.generated.files,
-              json(result.manifest),
+              manifestFile(result.manifest),
               result.removedSkills,
               result.configEdit
             )
@@ -1108,7 +1114,7 @@ export const init = Effect.fn("Project.init")(function* (
           yield* install(staging, pin);
         }
         const changed = yield* localIO("Write initial generation", () =>
-          writeInitialGeneration(staging, result.generated.files, json(result.manifest))
+          writeInitialGeneration(staging, result.generated.files, manifestFile(result.manifest))
         );
         yield* localIO("Activate the completed project", () => activateStarter(staging, dir)).pipe(
           Effect.uninterruptible

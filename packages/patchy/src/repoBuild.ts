@@ -40,7 +40,6 @@ const decodePackage = Schema.decodeUnknownSync(
 );
 const decodeRuntime = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
 const decodeManifest = Schema.decodeUnknownSync(Manifest, { onExcessProperty: "error" });
-const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Manifest));
 const isLocalError = Schema.is(LocalError);
 const decodeServerPackage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -169,7 +168,7 @@ export const prepareRepoPublish = Effect.fn("prepareRepoPublish")(function* (
     catch: (cause) =>
       new LocalError({ message: "Could not resolve the managed manifest path.", cause })
   });
-  yield* fs.writeFileString(destination, `${encodeManifest(configured)}\n`).pipe(
+  yield* fs.writeFileString(destination, Project.manifestFile(configured)).pipe(
     Effect.mapError(
       (cause) =>
         new LocalError({
