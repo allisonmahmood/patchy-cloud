@@ -57,7 +57,7 @@ export const VIEW_NOUNS =
  * review"; one is pressed only where it is plainly a filter (`inFilterBar`).
  */
 export const VIEW_STATUSES =
-  /^(open|pending|waiting|in review|review|reviews|to review|to approve|needs? (my )?(approval|review)|awaiting( my)? (approval|review)|approved|rejected|declined|decided|paid|done|closed|completed|archived|submitted|sent|received|active)$/u;
+  /^(open|pending|waiting|in review|review|reviews|to review|to approve|needs? (my )?(approval|review)|awaiting( my)? (approval|review)|approved|rejected|declined|decided|paid|done|closed|resolved|completed|archived|submitted|sent|received|active)$/u;
 
 /**
  * Whether a name says to do something rather than which view to show: it
@@ -354,15 +354,38 @@ export const around = (
   also: { readonly has?: Locator; readonly hasText?: RegExp | string } = {}
 ) => frame.locator("body *").filter({ hasText: text }).filter(also).last();
 
-const typed = (field: Locator) =>
-  field.evaluate(
+/**
+ * Whether a field is a search box or a filter, however its label words it
+ * ("Search title, impact or commander", "Find commander"). It only changes
+ * what the page shows, and typing in one can clear a choice the form made
+ * from it, so a person filling in a form leaves it be.
+ */
+const searchBox = (field: Locator) =>
+  field.evaluate((element) => {
+    if (element instanceof HTMLInputElement && element.type === "search") return true;
+    const labels =
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement
+        ? Array.from(element.labels ?? [], (label) => label.textContent)
+        : [];
+    return [
+      element.getAttribute("aria-label"),
+      element.getAttribute("placeholder"),
+      ...labels
+    ].some((words) => /^\s*(search|filter|find)\b/i.test(words ?? ""));
+  });
+
+/** Whether a field takes typed words as an answer: a textarea or a text-like input, not a search box. */
+const typed = async (field: Locator) =>
+  (await field.evaluate(
     (element) =>
       element instanceof HTMLTextAreaElement ||
       (element instanceof HTMLInputElement &&
         !["file", "checkbox", "radio", "hidden", "submit", "button", "date", "range"].includes(
           element.type
         ))
-  );
+  )) && !(await searchBox(field));
 
 /** Marks a field a check has chosen, so it isn't chosen twice. */
 const CHOSEN = "data-eval-chosen";
@@ -393,15 +416,18 @@ export const chooseField = async (frame: FrameLocator, words: RegExp) => {
   return undefined;
 };
 
+/** What a form's send button goes by, most specific first. */
+const SENDS = [/submit/i, /send/i, /save/i, /create/i, /request/i, /add/i, /done/i];
+
 /**
  * The part of the page a form lives in, the innermost one holding every field
  * the check chose and a button that sends it, and that button: its most
- * specific name first, the last of them, since a dialog's comes after the
- * page's own.
+ * specific name first (`names`, or the usual ones), the last of them, since a
+ * dialog's comes after the page's own.
  */
-export const formAround = async (frame: FrameLocator) => {
+export const formAround = async (frame: FrameLocator, names: ReadonlyArray<RegExp> = SENDS) => {
   const chosen = await frame.locator(`[${CHOSEN}]`).count();
-  for (const name of [/submit/i, /send/i, /save/i, /create/i, /request/i, /add/i, /done/i]) {
+  for (const name of names) {
     const holders = frame
       .locator("body *")
       .filter({ has: frame.getByRole("button", { name }) })
@@ -423,7 +449,8 @@ export const formAround = async (frame: FrameLocator) => {
 /**
  * Fills whatever else a form holds and is still empty, with plain values, as
  * a person in a hurry would: a choice's first option, a date, a number, some
- * words, and the first of any choices nothing is picked from.
+ * words, and the first of any choices nothing is picked from. Search boxes
+ * and filters are left be.
  */
 export const fillRest = async (scope: Locator) => {
   for (const field of await scope
@@ -434,7 +461,8 @@ export const fillRest = async (scope: Locator) => {
     if (
       !(await field.isVisible()) ||
       !(await field.isEditable().catch(() => false)) ||
-      (await field.inputValue().catch(() => "-")) !== ""
+      (await field.inputValue().catch(() => "-")) !== "" ||
+      (await searchBox(field).catch(() => true))
     )
       continue;
     const kind = await field.evaluate((element) =>
@@ -461,7 +489,7 @@ export const fillRest = async (scope: Locator) => {
             ? "1"
             : kind === "email"
               ? "someone@example.com"
-              : "For the team"
+              : "For the team, as we agreed this week"
       );
   }
   for (const group of await scope.getByRole("radiogroup").all()) {
@@ -644,8 +672,16 @@ const holding = (owner: Opened, route: Route): HeldCall | undefined => {
 
 const DECISION_BUTTONS = {
   approve: /^\s*approve\b/i,
-  reject: /^\s*(reject|decline|deny)\b/i
+  reject: /^\s*(reject|decline|deny)\b/i,
+  resolve: /^\s*(resolve|mark (as )?resolved|close incident)\b/i
 } as const;
+
+/** How long what a click on a request opens may take to show its decision's button. */
+const OPEN_MS = 8_000;
+/** Marks the buttons a decision's press found already there. */
+const SEEN = "data-eval-seen";
+/** A disclosure's summary while it's closed: what it holds is hidden, its buttons too. */
+const CLOSED = "details:not([open]) > summary";
 
 /** How long a press may take, from the click, to make its decision take effect. */
 const DECISION_MS = 60_000;
@@ -669,8 +705,9 @@ export interface DecisionWatch {
 /**
  * Decides on the request holding `text` the way a person would: fills in
  * any words its part of the page asks for, such as why, presses its own
- * Approve (or Reject), or the one in whatever opens when they click it, and
- * answers every dialog the press opens, filling in any words it wants. A
+ * Approve, Reject or Resolve, or the one in whatever opens when they click it
+ * or a disclosure named for it, and answers every dialog the press opens, or
+ * a confirmation it brings up in place, filling in any words it wants. A
  * part holding more than one such button isn't the request's own.
  *
  * With `watch`, every call the press sends Patchy, other than plain reads,
@@ -697,17 +734,31 @@ export const decide = async (
     const buttons = part.getByRole("button", { name });
     return (await part.count()) > 0 && (await buttons.count()) === 1 ? buttons : undefined;
   };
+  /** Opens the request's closed disclosure named for the decision, such as a "Resolve incident" summary. */
+  const disclose = async () => {
+    const closed = around(frame, text, { has: frame.locator(CLOSED).filter({ hasText: name }) })
+      .locator(CLOSED)
+      .filter({ hasText: name });
+    if ((await closed.count()) !== 1) return false;
+    await closed.click();
+    return true;
+  };
+  const find = async () => (await own()) ?? ((await disclose()) ? await own() : undefined);
   // Finding the button, and writing why, only look, behind the barrier: nothing writes before the decision.
-  let button = await own();
+  let button = await find();
   if (button === undefined) {
     await frame.getByText(text).first().click();
-    await page.waitForTimeout(1_000);
-    button = await own();
+    // What opens can load a moment before it shows its buttons.
+    for (let waited = 0; button === undefined && waited < OPEN_MS; waited += POLL_MS) {
+      await page.waitForTimeout(POLL_MS);
+      button = await find();
+    }
   }
-  if (button === undefined || !(await button.isVisible()) || !(await button.isEnabled()))
-    return null;
-  // A person deciding writes why where the request asks, such as a note a rejection needs.
+  if (button === undefined || !(await button.isVisible())) return null;
+  // A person deciding writes why where the request asks, such as a note a rejection needs,
+  // which can be what enables the button.
   await fillRest(around(frame, text, { has: frame.getByRole("button", { name }) }));
+  if (!(await button.isEnabled())) return null;
   const pressing = button;
   // The decision is deliberate: the barrier is down for the press and its calls, and up again after.
   return view.barrier.deliberately(async () => {
@@ -731,6 +782,29 @@ export const decide = async (
     };
     const dialogs = await frame.getByRole("dialog").count();
     let answered = 0;
+    const follow = new RegExp(`${name.source}|^\\s*(confirm|yes)\\b`, "i");
+    // The buttons there before the press, so one it brings up in place can be told from them.
+    await frame.getByRole("button", { name: follow }).evaluateAll((all, seen) => {
+      for (const each of all) each.setAttribute(seen, "");
+    }, SEEN);
+    let inline = false;
+    /**
+     * Answers a confirmation the press brought up in place rather than in a
+     * dialog, such as a root cause with a Resolve of its own: fills the form
+     * it sits in and presses it. Only while the press has sent nothing, so a
+     * list that redraws its other requests' buttons is never pressed.
+     */
+    const answerInline = async () => {
+      if (inline || answered > 0) return;
+      for (const next of await frame.getByRole("button", { name: follow }).all()) {
+        if ((await next.getAttribute(SEEN).catch(() => "")) !== null) continue;
+        if (!(await next.isVisible().catch(() => false))) continue;
+        inline = true;
+        await fillRest(next.locator("xpath=ancestor::*[.//textarea or .//input or .//select][1]"));
+        if (await next.isEnabled().catch(() => false)) await next.click();
+        return;
+      }
+    };
     /** Answers a dialog the press opened since, asking for a reason or a confirmation. */
     const answerDialog = async () => {
       const open = await frame.getByRole("dialog").count();
@@ -746,6 +820,7 @@ export const decide = async (
     await pressing.click();
     await page.waitForTimeout(1_000);
     await answerDialog();
+    if (held.length === 0) await answerInline();
     if (watch === undefined) return { held: 0, took: true, objection: null };
     let count = 0;
     let took = false;
@@ -758,20 +833,31 @@ export const decide = async (
           await page.waitForTimeout(POLL_MS);
           waited += POLL_MS;
           await answerDialog();
+          if (count === 0) await answerInline();
           continue;
         }
         count++;
         const { route, at } = next;
         const call = holding(view, route);
-        const objection = call === undefined ? null : await watch.probe(call);
+        // A probe that throws leaves this call out of `held`, so it's aborted here, or the
+        // step would wait on it and its own error would hide the probe's.
+        const objection =
+          call === undefined
+            ? null
+            : await watch.probe(call).catch(async (error: unknown) => {
+                await route.abort().catch(() => undefined);
+                throw error;
+              });
         if (objection !== null) {
           await route.abort().catch(() => undefined);
           return { held: count, took: false, objection };
         }
-        if (performance.now() - at > HELD_MS)
+        if (performance.now() - at > HELD_MS) {
+          await route.abort().catch(() => undefined);
           throw new GraderTrouble({
             what: "Trying one of Ada's calls as members took longer than her browser waits for it."
           });
+        }
         await route.continue();
         // Its answer, so the decision it makes has happened before `took` looks.
         await route

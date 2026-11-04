@@ -125,6 +125,13 @@ const POLL_MS = 100;
 /** How soon after a held write timed out an error the page logs is reported as following it. */
 const AFTER_MS = 2_000;
 
+/** A pending request for the grader's message: its method, endpoint and operation, never its body. */
+const described = (request: Sent) => {
+  const endpoint = new URL(request.url()).pathname.replace(/^.*\/api\/runtime\//, "");
+  const call = endpoint === "call" ? callOf(request.postData() ?? "") : undefined;
+  return [request.method(), endpoint, call?.op, call?.handler].filter(Boolean).join(" ");
+};
+
 /** A request as the barrier reads it. */
 export interface Sent {
   url(): string;
@@ -212,10 +219,15 @@ export const raiseBarrier = async (
       await quietened();
       const pending = new Set<Sent>();
       let last = performance.now();
-      // A write held while looking is never answered, so it isn't the step's to wait for.
+      // Only the step's writes are waited for: reads go through the barrier anyway, and a page
+      // that keeps re-reading would never fall quiet. A write held while looking is never
+      // answered, so it isn't the step's either.
       const counts = (request: Sent) =>
         request.url().includes("/api/runtime/") &&
-        request.method() !== "GET" &&
+        requestWrites(
+          { url: request.url(), method: request.method(), body: request.postData() ?? "" },
+          handlers
+        ) &&
         !holding.has(request);
       const started = (request: Sent) => {
         if (!counts(request)) return;
@@ -234,7 +246,7 @@ export const raiseBarrier = async (
         while (pending.size > 0 || performance.now() - last < QUIET_MS) {
           if (performance.now() - from > DELIBERATE_MS)
             throw new GraderTrouble({
-              what: "A deliberate step's writes were still unanswered past an action's deadline, so the grader stopped rather than look on beside them."
+              what: `A deliberate step's writes were still unanswered past an action's deadline${pending.size === 0 ? "" : ` (${[...pending].map(described).join(", ")})`}, so the grader stopped rather than look on beside them.`
             });
           await page.waitForTimeout(POLL_MS);
         }

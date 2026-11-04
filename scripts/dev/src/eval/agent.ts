@@ -217,7 +217,7 @@ export interface Meaning {
 }
 
 const PERSON_NAME =
-  /recipient|colleague|person|people|member|user|teammate|employee|assignee|who|^to$|^to[A-Z_]|^for$/i;
+  /recipient|colleague|person|people|member|user|teammate|employee|assignee|commander|who|^to$|^to[A-Z_]|^for$/i;
 const PERSON_SAID =
   /recipient|colleague|teammate|employee|assignee|\bperson\b|\bmember\b|\buser\b/i;
 const TEXT = /message|note|reason|text|body|comment|why|description|thanks|content|shout/i;

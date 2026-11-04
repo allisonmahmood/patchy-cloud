@@ -40,7 +40,7 @@ import { realNode } from "../runtimes.js";
 import { installToolchain, type SignIns, signInHarness } from "./home.js";
 import { type Network, openNetwork } from "./network.js";
 import { HOME, runSandboxed, type SandboxSpec, type Toolchain } from "./sandbox.js";
-import type { Task } from "./task.js";
+import { type Task, wordsFor } from "./task.js";
 
 export const JUDGES = {
   opus: { id: "opus", harness: "claude-code", model: "claude-opus-5-5", effort: "xhigh" },
@@ -195,7 +195,7 @@ export const taskBrief = (task: Task) =>
   [
     "# The request",
     "",
-    task.words,
+    wordsFor(task),
     "",
     "# What good looks like",
     "",

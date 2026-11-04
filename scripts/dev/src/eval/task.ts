@@ -100,6 +100,7 @@ export interface Agent {
 
 export interface CheckContext {
   readonly target: Target;
+  /** The run's people, then its guests at the scenario's other companies. */
   readonly people: ReadonlyArray<RunPerson>;
   /** The run's person with this key; the check fails when there is none. */
   readonly person: (key: string) => RunPerson;
@@ -155,7 +156,10 @@ export interface Task {
   readonly id: string;
   /** A folder under `scenarios/`: whose company and people the run gets. */
   readonly scenario: string;
-  /** The request, as a person would make it. The runner adds the same unattended line to every task. */
+  /**
+   * The request, as a person would make it, `{email:<key>}` naming a run's
+   * person's address (`wordsFor`). The runner adds the same unattended line to every task.
+   */
   readonly words: string;
   readonly target: TaskTarget;
   /**
@@ -183,7 +187,19 @@ export const visibleRepos = (task: Pick<Task, "target" | "visible">): ReadonlyAr
 export const UNATTENDED =
   "I'm away until this is done, so don't wait on me: make reasonable calls and tell me what you assumed.";
 
-export const taskPrompt = (task: Task) => `${task.words}\n\n${UNATTENDED}\n`;
+/**
+ * A task's words with the run's people filled in: `{email:taylor}` is the
+ * run's own address for Taylor, since a builder can't find someone at another
+ * company by name. Without people, as judges read the words, it says whose.
+ */
+export const wordsFor = (task: Pick<Task, "words">, people: ReadonlyArray<RunPerson> = []) =>
+  task.words.replace(
+    /\{email:([a-z]+)\}/g,
+    (_, key: string) => people.find((person) => person.key === key)?.email ?? `${key}'s email`
+  );
+
+export const taskPrompt = (task: Task, people: ReadonlyArray<RunPerson> = []) =>
+  `${wordsFor(task, people)}\n\n${UNATTENDED}\n`;
 
 /**
  * The numbers a page shows as a count of `word`, in reading order: one just
