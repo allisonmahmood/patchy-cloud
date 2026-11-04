@@ -166,7 +166,10 @@ refuse it, and one cast past them is skipped with a console warning. Two enabled
 hotkeys with the same keys in one scope both fire, and the console warns once
 naming both. While a `<HotkeyScope>` is mounted, only the hotkeys registered by
 components it renders fire; the component that renders it is outside it.
-`formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer.
+`formatHotkey`, `hotkeyKeys` and `useHotkeyList` show hotkeys to the viewer:
+⌘ and ↵ ␣ ⌫ ⌦ on a Mac, Ctrl and words such as `Ctrl+Enter` elsewhere. The two
+helpers check a literal like `useHotkey` does, and also take modifiers alone,
+such as `"Mod"`.
 The `patchy-hotkeys` project skill states the typing, composition, layout and
 repeat rules.
 
