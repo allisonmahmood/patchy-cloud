@@ -178,19 +178,20 @@ const added = async (ctx: CheckContext, key: string, recipe: Recipe): Promise<Fa
 
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Words that name another action than opening, or a part of the recipe a control only shows. */
+const NOT_OPENING = String.raw`(?!.*\b(copy|share|edit|delete|remove|print|download|save|like|favou?rite|ingredients?|steps?|method)\b)`;
+
 /**
  * What a control that opens `recipe` is named, best first: the recipe's
- * name alone, exactly View, Open or Read (recipe), or the recipe's name with
- * more words that aren't another action, such as a whole card that is a
- * button. "Show ingredients" or "Copy link to …" never is.
+ * name alone, a name starting with View, Open, Read or See (View full recipe,
+ * See recipe), or the recipe's name with more words, such as a whole card
+ * that is a button. Never one for another action or a part of the recipe:
+ * "Show ingredients", "View steps" or "Copy link to …".
  */
 const opensNames = (recipe: Recipe) => [
   new RegExp(`^\\W*${escaped(recipe.title)}\\W*$`, "i"),
-  /^\W*(view|open|read)( recipe)?\W*$/i,
-  new RegExp(
-    `^(?!.*\\b(copy|share|edit|delete|remove|print|download|save|like|favou?rite)\\b).*${escaped(recipe.title)}`,
-    "i"
-  )
+  new RegExp(`^\\W*(view|open|read|see)\\b${NOT_OPENING}`, "i"),
+  new RegExp(`^${NOT_OPENING}.*${escaped(recipe.title)}`, "i")
 ];
 
 const opens = (scope: FrameLocator | Locator, name: RegExp) =>
@@ -312,9 +313,10 @@ const inView = async (view: Opened, items: ReadonlyArray<string>): Promise<boole
 
 /**
  * What a landing looks like, to tell two apart: how many times each recipe's
- * last step is rendered, and every scroll offset in the frame and the page
- * around it. A whole book shown the same way whatever its link looks the same
- * on every link; text that shifts a little as it loads doesn't move a scroll.
+ * last step is rendered, and every scroll offset, down and across, in the
+ * frame and the page around it, so a deck swiped to the linked recipe counts
+ * too. A whole book shown the same way whatever its link looks the same on
+ * every link; text that shifts a little as it loads doesn't move a scroll.
  */
 const lookOf = async (view: Opened, recipes: ReadonlyArray<Recipe>) => {
   const counts = await Promise.all(
@@ -325,11 +327,14 @@ const lookOf = async (view: Opened, recipes: ReadonlyArray<Recipe>) => {
   const inside = await view.frame
     .locator("body")
     .evaluate((body) =>
-      Array.from(body.ownerDocument.querySelectorAll("*"), (element) =>
-        Math.round(element.scrollTop)
-      ).filter((top) => top > 0)
+      Array.from(
+        body.ownerDocument.querySelectorAll("*"),
+        (element) => `${Math.round(element.scrollTop)}:${Math.round(element.scrollLeft)}`
+      ).filter((offsets) => offsets !== "0:0")
     );
-  const outside = await view.page.evaluate(() => Math.round(window.scrollY));
+  const outside = await view.page.evaluate(
+    () => `${Math.round(window.scrollY)}:${Math.round(window.scrollX)}`
+  );
   return `${counts.join(",")}|${inside.join(",")}|${outside}`;
 };
 
