@@ -40,6 +40,10 @@ _Avoid_: header validation
 The browser's sign-in held by Clerk and kept fresh while a person reads a first-party page or company patch. A session can exist before a company is chosen or after deactivation, so signing out remains available even when company access is refused. Tier 2 viewer callbacks trust the admission JWT until its expiry, then share one backend session check for the rest of the invocation. Database membership, role and deactivation are still checked on every callback.
 _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 
+**Demo link**:
+The address `/signin/<secret>` that signs whoever opens it in as one configured account until its end date, minting a one-use Clerk sign-in token per visit. Only the secret's digest is configured; any other secret is an unknown address. It is for reviewers nobody can invite by email, and every open is reported.
+_Avoid_: magic link (Clerk's emailed link), guest access (a patch's guests), backdoor
+
 **Viewer**:
 The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal

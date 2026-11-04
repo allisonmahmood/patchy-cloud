@@ -8,6 +8,7 @@ export { confirmForm } from "./DevicePages.js";
 export { migrations } from "./migrations.js";
 export * as Session from "./Session.js";
 export * as DevPersonas from "./DevPersonas.js";
+export * as DemoLink from "./DemoLink.js";
 export * as Receipt from "./Receipt.js";
 export * as RequireSession from "./RequireSession.js";
 export * as SetupLinks from "./SetupLinks.js";
