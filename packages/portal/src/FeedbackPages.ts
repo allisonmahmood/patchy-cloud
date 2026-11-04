@@ -291,55 +291,77 @@ export const renderWithdraw = (sent: Sent, now: number): string => {
 /**
  * The panel's script: it sends each of the panel's forms in place and shows the answer. A
  * request's receipt and matches replace the form; a refusal sits under the field; Same need and
- * Unlink swap which buttons show. Anything that isn't the panel's own answer, such as a sign-in,
- * takes the plain form's way. Closing the panel after a send readies it for the next one.
+ * Unlink swap which buttons show. One form is in flight at a time across the panel, so two links
+ * never race, and an answer for a panel reset since it was sent is dropped. An answer that isn't
+ * the panel's own, or none at all, may still have been saved, so nothing is ever sent again on
+ * its own: the draft stays, and a note points to What you sent. Closing the panel after a send
+ * readies it for the next one.
  */
 const tellScript = `(() => {
   const panel = document.getElementById("tell-patchy");
   if (!panel) return;
   const compose = panel.querySelector(".tell-patchy-form");
   const answer = panel.querySelector(".tell-patchy-answer");
+  const unsure = panel.querySelector(".tell-patchy-unsure");
   const text = compose.elements.namedItem("text");
   answer.tabIndex = -1;
+  let busy = false;
+  let state = 0;
   document.addEventListener("click", (event) => {
     const opener = event.target instanceof Element && event.target.closest('[popovertarget="tell-patchy"][data-kind]');
     if (opener) compose.elements.namedItem("kind").value = opener.dataset.kind;
   });
   const clear = () => {
     panel.querySelectorAll(".note-refused").forEach((note) => note.remove());
+    unsure.hidden = true;
+    unsure.removeAttribute("role");
     text.removeAttribute("aria-invalid");
     text.removeAttribute("aria-describedby");
   };
-  panel.addEventListener("submit", async (event) => {
-    const form = event.target;
-    event.preventDefault();
-    if (form.dataset.busy) return;
-    form.dataset.busy = "1";
-    let response = null;
+  const post = async (form) => {
     try {
-      response = await fetch(form.action, {
+      const response = await fetch(form.action, {
         method: "POST",
         body: new URLSearchParams(new FormData(form)),
         headers: { "${PANEL}": "tell" }
       });
-    } catch {}
-    delete form.dataset.busy;
-    if (response === null || response.headers.get("${PANEL}") !== "tell") return form.submit();
-    const html = await response.text();
+      if (response.headers.get("${PANEL}") !== "tell") return null;
+      return { ok: response.ok, html: await response.text() };
+    } catch {
+      return null;
+    }
+  };
+  panel.addEventListener("submit", async (event) => {
+    const form = event.target;
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    panel.setAttribute("aria-busy", "true");
+    const sentAt = state;
+    const answered = await post(form);
+    busy = false;
+    panel.removeAttribute("aria-busy");
+    if (sentAt !== state) return;
     clear();
+    if (answered === null) {
+      unsure.setAttribute("role", "alert");
+      unsure.hidden = false;
+      return;
+    }
     if (form === compose) {
-      if (!response.ok) {
-        text.insertAdjacentHTML("afterend", html);
+      if (!answered.ok) {
+        text.insertAdjacentHTML("afterend", answered.html);
         text.setAttribute("aria-invalid", "true");
         text.setAttribute("aria-describedby", "tell-patchy-refused");
         return text.focus();
       }
+      state++;
       compose.hidden = true;
-      answer.innerHTML = html;
+      answer.innerHTML = answered.html;
       answer.hidden = false;
       return answer.focus({ preventScroll: true });
     }
-    if (!response.ok) return answer.querySelector(".tell-patchy-done").insertAdjacentHTML("beforebegin", html);
+    if (!answered.ok) return answer.querySelector(".tell-patchy-done").insertAdjacentHTML("beforebegin", answered.html);
     const linked = form.classList.contains("tell-patchy-same") ? form.closest("li") : null;
     for (const row of answer.querySelectorAll(".tell-patchy-match")) {
       row.querySelector(".tell-patchy-same").hidden = linked !== null;
@@ -360,6 +382,7 @@ const tellScript = `(() => {
       return;
     }
     if (!compose.hidden) return;
+    state++;
     clear();
     compose.reset();
     compose.hidden = false;

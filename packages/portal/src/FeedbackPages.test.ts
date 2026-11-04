@@ -307,6 +307,26 @@ it.layer(layer)("Feedback pages", (it) => {
       assert.notInclude(html, "which file broke the rule");
       assert.notInclude(html, "Lovely");
 
+      // Someone else can't see, withdraw, link or unlink it while it stands.
+      const other = yield* person();
+      for (const [method, act, panel] of [
+        ["GET", "withdraw", false],
+        ["POST", "withdraw", false],
+        ["POST", "link", true],
+        ["POST", "unlink", true]
+      ] as const) {
+        const path = `/feedback/${filed.id}/${act}`;
+        const tried = yield* request(
+          other,
+          method === "GET" ? HttpClientRequest.get(path) : post(path, { to: filed.id }, panel)
+        );
+        assert.strictEqual(tried.status, 404, `${method} ${act}`);
+      }
+      assert.include(
+        (yield* submissions(ada)).map(({ id }) => id),
+        filed.id
+      );
+
       const asked = yield* request(ada, HttpClientRequest.get(`/feedback/${filed.id}/withdraw`));
       assert.strictEqual(asked.status, 200);
       const confirm = yield* asked.text;
@@ -327,10 +347,9 @@ it.layer(layer)("Feedback pages", (it) => {
         (yield* submissions(ada)).map(({ id }) => id),
         filed.id
       );
-      // Someone else's id, or one already withdrawn, is not theirs to see.
-      const other = yield* person();
+      // Once withdrawn, it is gone for its sender too.
       assert.strictEqual(
-        (yield* request(other, HttpClientRequest.get(`/feedback/${filed.id}/withdraw`))).status,
+        (yield* request(ada, HttpClientRequest.get(`/feedback/${filed.id}/withdraw`))).status,
         404
       );
     })

@@ -140,6 +140,9 @@ describe("htmlPage app body", () => {
     );
     expect(html).toContain('name="kind" value="request" checked>Request</label>');
     expect(html).toContain('<a href="/feedback">What you sent</a>');
+    // Shown only when the script can't tell whether a send was saved, which it never resends.
+    expect(html).toContain('class="note note-warn tell-patchy-unsure" hidden>');
+    expect(html.slice(html.indexOf("<body>"))).not.toContain('role="alert"');
     expect(html).toContain('<script defer src="/feedback/tell.js"></script>');
     // What you sent lights no place: the button opens the panel, not the page.
     const sent = htmlPage({
