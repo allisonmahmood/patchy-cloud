@@ -92,7 +92,8 @@ useHotkey("Enter", saveTitle, { within: titleField });
   and Mod with A and C.
 - Checkboxes, radios and ranges aren't text fields: single keys fire there, and the control
   keeps Space and the arrow keys. A focused button keeps Enter and Space, a focused link keeps
-  Enter, and a focused `role="listbox"` keeps its arrows and letters for typeahead.
+  Enter, and a focused `role="listbox"`, `menu`, `tree` or non-editable `combobox` keeps its
+  arrows, Home and End, and every printable key for typeahead.
 - `whileTyping: true` fires on a focused control's own keys, so a button's Enter or a
   checkbox's Space runs the hotkey instead. In text fields it changes nothing.
   `whileTyping: false` makes a hotkey wait in every text field, Mod chords and Escape included,
@@ -192,9 +193,10 @@ return <input ref={field} aria-label="Title" />;
   so the page's `"G"` fires on that G.
 - `within` follows the DOM, not the component tree: a popup portalled to `<body>` isn't inside
   its trigger.
-- A focused `role="listbox"` keeps letters for typeahead, so the page's single-letter hotkeys,
-  such as `"C T"`, wait while it has focus; hotkeys within it get them. Keep the listbox role:
-  it is what screen readers announce as the list.
+- A focused `role="listbox"` keeps every printable key for typeahead, `?` included, so the
+  page's single-key hotkeys, such as `"C T"` and the sheet's `?`, wait while it has focus;
+  hotkeys within it get them, and Mod+/ still opens the sheet. Keep the listbox role: it is
+  what screen readers announce as the list.
 - The ref can hold any element, SVG included, for a keyboard chart. Preact writes an SVG
   element's attributes as given, so make one focusable with a lowercase `tabindex`:
   `<svg tabindex={0}>`.
