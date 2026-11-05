@@ -289,7 +289,10 @@ visible, with a deliberate repair path. Never claim the file write rolled back.
 
 Declare business error codes in `errors`, then throw `new HandlerError(code,
 details)`. The client exposes `isHandlerError(error, code)` for narrowing declared
-codes. An undeclared code or an invalid result becomes `handler_failed`.
+codes. An undeclared code or an invalid result becomes `handler_failed`, and
+so does anything else a handler throws, a plain `Error` included: the page and
+agents get only "The handler failed. Use the correlation id to find its log.",
+and the thrown message stays in the patch's log.
 Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
@@ -422,7 +425,9 @@ it. Page imports from `agent/` are refused, and `agent/` below tier 2 is
 `tier_mismatch`.
 
 Descriptions and schemas are all an agent knows about a tool: what it does, what
-it changes, and when and why it refuses. A refusal reaches the agent with its
+it changes, and when and why it refuses. `t.enum(values)` puts its values in the
+schema; a `t.text()` argument tells the agent nothing about which strings the
+handler accepts. A refusal reaches the agent with its
 code and details only as a `HandlerError` whose code is in `errors`; anything
 else a tool throws is `handler_failed`, with its message left in the patch's
 log. The ids it holds come from earlier results or from the person. The agent
