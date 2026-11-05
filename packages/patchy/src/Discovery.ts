@@ -124,6 +124,22 @@ const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
       `Taken at: ${snapshot.takenAt}`
     ];
   }
+  if (connection.integration === "imap") {
+    const snapshot = connection.snapshot;
+    return [
+      ...lines,
+      `Mailbox: ${snapshot.username} at ${snapshot.host}, port ${snapshot.port} (${snapshot.security === "tls" ? "TLS" : "STARTTLS"})`,
+      `Snapshot revision: ${snapshot.revision}`,
+      `Taken at: ${snapshot.takenAt}`,
+      `Capabilities: ${snapshot.capabilities.join(" ") || "none"}`,
+      "Folders:",
+      ...snapshot.folders.map(
+        (folder) =>
+          `  ${Output.toJson(folder.path)}${folder.specialUse.length === 0 ? "" : ` ${folder.specialUse.join(" ")}`}${folder.selectable ? "" : " holds folders only"}`
+      ),
+      ...(snapshot.truncated ? ["  …and more the snapshot doesn't keep"] : [])
+    ];
+  }
   if (connection.integration === "attio") {
     const snapshot = connection.snapshot;
     const attributes = (items: (typeof snapshot.objects)[number]["attributes"]) =>

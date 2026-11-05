@@ -37,7 +37,7 @@ const harness = Effect.fn("test.preparation.harness")(function* ({
   uses = "{}",
   generatedServer,
   generatedFiles = [],
-  metadata = { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, shared: {} },
+  metadata = { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, imap: {}, shared: {} },
   duringGeneration = () => Effect.void
 }: {
   readonly index: unknown;
@@ -111,6 +111,7 @@ const shared = (declaration: typeof contacts | { revision: number }) => ({
   posthog: {},
   pidgeon: {},
   attio: {},
+  imap: {},
   shared: { contacts: { declaration: { ...contacts, ...declaration }, tables: {}, uses: {} } }
 });
 
@@ -269,6 +270,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           shared: {},
           pidgeon: {},
           attio: {},
+          imap: {},
           posthog: {
             analytics: {
               declaration: { ...analytics, ...declaration },
@@ -341,6 +343,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
         posthog: {},
         pidgeon: {},
         attio: {},
+        imap: {},
         shared: {}
       });
     })
@@ -367,6 +370,7 @@ it.layer(NodeServices.layer)("DevPreparation.prepare", (it) => {
           posthog: {},
           pidgeon: {},
           attio: {},
+          imap: {},
           shared: {
             assets: { declaration, definition: { description: "Source documents", shared: true } }
           }

@@ -49,7 +49,7 @@ const prepared: Prepared = {
     files: { documents: { description: "Locally adopted documents" } },
     uses: {}
   },
-  metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, shared: {} }
+  metadata: { postgres: {}, posthog: {}, pidgeon: {}, attio: {}, imap: {}, shared: {} }
 };
 /** A guest built from `contents` against this package's `patchy/server`, and its handlers. */
 const compile = Effect.fn("test.devCompile")(function* (contents: string) {
@@ -147,6 +147,7 @@ it.live(
             posthog: {},
             pidgeon: {},
             attio: {},
+            imap: {},
             shared: {
               contacts: {
                 declaration: shared,
@@ -361,6 +362,7 @@ it.live(
             shared: {},
             pidgeon: {},
             attio: {},
+            imap: {},
             posthog: {
               analytics: {
                 declaration,
@@ -511,6 +513,7 @@ it.live(
             shared: {},
             posthog: {},
             attio: {},
+            imap: {},
             pidgeon: {
               support: {
                 declaration,
@@ -657,6 +660,7 @@ it.live(
             postgres: {},
             shared: {},
             posthog: {},
+            imap: {},
             pidgeon: {},
             attio: {
               crm: {

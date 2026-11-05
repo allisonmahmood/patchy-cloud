@@ -81,6 +81,12 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
               integration: kept.integration,
               snapshot: { ...kept.snapshot, ...stamp }
             });
+          case "imap":
+            return Effect.succeed({
+              ...base,
+              integration: kept.integration,
+              snapshot: { ...kept.snapshot, ...stamp }
+            });
         }
       },
       snapshot: (companyId, id, revision) => {
@@ -139,7 +145,9 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
           sends.set(key, count + 1);
           return true;
         }),
-      sends: (companyId, id, day) => Effect.sync(() => sends.get(sendKey(companyId, id, day)) ?? 0)
+      sends: (companyId, id, day) => Effect.sync(() => sends.get(sendKey(companyId, id, day)) ?? 0),
+      // Dev reads a real mailbox through the instance's dev door, whose own store pauses it.
+      pauseLogin: () => Effect.void
     })
   );
 };

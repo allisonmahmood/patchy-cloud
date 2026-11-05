@@ -16,7 +16,9 @@ export const layout = (plan: Plan, path: Path.Path) => ({
   envFile: path.join(plan.stateDir, "env"),
   logFile: path.join(plan.stateDir, "dev.log"),
   postgresDir: path.join(plan.stateDir, "postgres"),
-  storageDir: path.join(plan.stateDir, "storage")
+  storageDir: path.join(plan.stateDir, "storage"),
+  /** The mail servers `up` started on this machine, which the server reaches on loopback. */
+  mailboxes: path.join(plan.stateDir, "mailboxes.json")
 });
 
 /** Starts the supervisor's `[dev]` line in `dev.log` that says why it stopped. */

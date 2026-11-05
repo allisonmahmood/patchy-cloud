@@ -260,7 +260,7 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
   const server = yield* spawner.spawn(
     ChildProcess.make(
       bun,
-      ["--conditions=development", path.join(plan.worktree, "apps", "server", "src", "start.ts")],
+      ["--conditions=development", path.join(plan.worktree, "scripts", "dev", "src", "server.ts")],
       {
         cwd: plan.worktree,
         env: {
@@ -273,7 +273,8 @@ export const supervise = Effect.fn("supervise")(function* (plan: Plan) {
           PATCHY_COMPANY_DB_ADMIN_URL: plan.databaseUrl,
           PATCHY_COMPANY_DB_URL: plan.databaseUrl,
           PATCHY_STORAGE_DIR: files.storageDir,
-          PATCHY_PUBLIC_BASE_URL: plan.apiUrl
+          PATCHY_PUBLIC_BASE_URL: plan.apiUrl,
+          PATCHY_DEV_MAILBOXES: files.mailboxes
         },
         extendEnv: false,
         stdin: "ignore",

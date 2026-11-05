@@ -1811,7 +1811,8 @@ export const make = Effect.gen(function* () {
         declaration.kind === "postgres" ||
         declaration.kind === "posthog" ||
         declaration.kind === "pidgeon" ||
-        declaration.kind === "attio"
+        declaration.kind === "attio" ||
+        declaration.kind === "imap"
       ) {
         yield* connections.resolve(companyId, declaration);
         continue;

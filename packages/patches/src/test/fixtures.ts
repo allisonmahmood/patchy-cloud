@@ -35,6 +35,8 @@ import {
   PostgresSource,
   PostHogSource,
   AttioSource,
+  ImapNetwork,
+  ImapSource,
   PidgeonSource
 } from "@patchy/integrations";
 import { RuntimeLog, Wakes } from "@patchy/runtime";
@@ -249,6 +251,7 @@ export const integrations = SqlConnectionStore.layer.pipe(
       PostHogSource.layer,
       PidgeonSource.layer,
       AttioSource.layer,
+      ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer)),
       RuntimeLog.layer
     )
   )

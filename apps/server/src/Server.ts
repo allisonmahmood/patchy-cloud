@@ -5,9 +5,10 @@
  * and the deletion sweep forked in the same scope. Wiring only; every rule
  * lives in the package that owns it.
  *
- * Needs a `SqlClient`, an `HttpServer` and the client document network from
- * whoever launches it: `start.ts` brings Postgres from `DATABASE_URL`, a Node
- * server on `PORT` and the pinned network; a test brings a fresh database,
+ * Needs a `SqlClient`, an `HttpServer`, the client document network and the
+ * mail network from whoever launches it: `start.ts` brings Postgres from
+ * `DATABASE_URL`, a Node server on `PORT` and production's networks; the dev
+ * runner the same with its loopback mailboxes; a test brings a fresh database,
  * `NodeHttpServer.layerTest` and, when it connects agents, fixture documents.
  */
 import * as Cause from "effect/Cause";
@@ -63,6 +64,8 @@ import {
   PidgeonSource,
   AttioSource,
   AttioOperations,
+  ImapSource,
+  type ImapNetwork,
   PidgeonOperations
 } from "@patchy/integrations";
 import { Limits, OperatingLimits } from "@patchy/limits";
@@ -106,6 +109,11 @@ import * as SetupPickup from "./SetupPickup.js";
 
 /** Where client documents come from, which the launcher brings: the pinned network, or fixtures. */
 export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
+/**
+ * Where mailboxes are reached, which the launcher brings too: production's network, or the
+ * loopback one only the dev runner and tests provide.
+ */
+export type MailNetwork = ImapNetwork.Network;
 
 /** The port the server listens on. */
 export const port = Config.Int("PORT").pipe(Config.withDefault(3000));
@@ -285,14 +293,15 @@ const services = Layer.mergeAll(
       Looks.layer,
       identity
     ).pipe(
-      // One PostHog, Pidgeon and Attio source each, so connection administration and patches
-      // share each project's, address's and workspace's slots.
+      // One PostHog, Pidgeon, Attio and IMAP source each, so connection administration and
+      // patches share each project's, address's, workspace's and mailbox's slots.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
-          Layer.provideMerge(AttioSource.layer)
+          Layer.provideMerge(AttioSource.layer),
+          Layer.provideMerge(ImapSource.layer)
         )
       ),
       Layer.provideMerge(Tables.layer),

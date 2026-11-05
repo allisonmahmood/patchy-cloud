@@ -22,4 +22,5 @@ export * as AttioSource from "./attio/Source.js";
 export * as AttioOperations from "./attio/Operations.js";
 export * as Imap from "./imap/index.js";
 export * as ImapSource from "./imap/Source.js";
+export * as ImapNetwork from "./imap/Network.js";
 export { migrations } from "./migrations.js";

@@ -14,6 +14,7 @@ import { Snapshot } from "./postgresSnapshot.js";
 import { PostHogSnapshot } from "./posthogSnapshot.js";
 import { PidgeonSnapshot } from "./pidgeonSnapshot.js";
 import { AttioSnapshot } from "./attioSnapshot.js";
+import { ImapSnapshot } from "./imapSnapshot.js";
 import { RepoKind, RepoSnapshot, RepoSummary } from "./repo.js";
 import {
   HandlerDescriptors,
@@ -527,7 +528,8 @@ export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
   PostHogDeclaration,
   PidgeonDeclaration,
-  AttioDeclaration
+  AttioDeclaration,
+  ImapDeclaration
 ]);
 export type ConnectionDeclaration = typeof ConnectionDeclaration.Type;
 /** Stable shared-table identity; a patch name never participates in resolution. */
@@ -618,6 +620,7 @@ export const Manifest = Schema.Struct({
       PostHogDeclaration,
       PidgeonDeclaration,
       AttioDeclaration,
+      ImapDeclaration,
       SharedTableDeclaration,
       SharedStoreDeclaration,
       MembersDeclaration
@@ -664,6 +667,11 @@ export const GenerationManifest = Schema.Struct({
         revision: Schema.optionalKey(Revision)
       }),
       Schema.Struct({
+        ...ImapDeclaration.fields,
+        id: Schema.optionalKey(NonEmptyText),
+        revision: Schema.optionalKey(Revision)
+      }),
+      Schema.Struct({
         ...SharedTableDeclaration.fields,
         id: Schema.optionalKey(NonEmptyText),
         revision: Schema.optionalKey(Revision)
@@ -678,7 +686,7 @@ export const GenerationManifest = Schema.Struct({
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
 /** Every integration Patchy ships; a connection's handle is unique within its integration. */
-export const integrations = ["postgres", "posthog", "pidgeon", "attio"] as const;
+export const integrations = ["postgres", "posthog", "pidgeon", "attio", "imap"] as const;
 export const Integration = Schema.Literals(integrations);
 export type Integration = typeof Integration.Type;
 
@@ -719,12 +727,14 @@ export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
 export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
 export const AttioConnectionDetail = detail("attio", AttioSnapshot.fields);
+export const ImapConnectionDetail = detail("imap", ImapSnapshot.fields);
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,
   PostHogConnectionDetail,
   PidgeonConnectionDetail,
-  AttioConnectionDetail
+  AttioConnectionDetail,
+  ImapConnectionDetail
 ]);
 export type ConnectionDetail = typeof ConnectionDetail.Type;
 
@@ -774,6 +784,11 @@ export const DeclarationMetadata = Schema.Struct({
   attio: Schema.Record(
     Schema.String,
     Schema.Struct({ declaration: AttioDeclaration, snapshot: AttioSnapshot })
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  // As for Pidgeon: a release before IMAP generates none.
+  imap: Schema.Record(
+    Schema.String,
+    Schema.Struct({ declaration: ImapDeclaration, snapshot: ImapSnapshot })
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   shared: Schema.Record(
     Schema.String,

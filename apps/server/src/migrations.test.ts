@@ -5,6 +5,8 @@ import {
   PostHogSource,
   PidgeonSource,
   AttioSource,
+  ImapNetwork,
+  ImapSource,
   SqlConnectionStore
 } from "@patchy/integrations";
 import { RuntimeLog } from "@patchy/runtime";
@@ -60,10 +62,12 @@ const services = Layer.mergeAll(
       inspect: () => Effect.die("discovery is not part of the upgrade")
     })
   ),
-  // Never called: the upgrade reads no PostHog project, Pidgeon address or Attio workspace.
+  // Never called: the upgrade reads no PostHog project, Pidgeon address, Attio workspace or
+  // mailbox.
   PostHogSource.layer,
   PidgeonSource.layer,
-  AttioSource.layer
+  AttioSource.layer,
+  ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer))
 ).pipe(Layer.provideMerge(NodeCryptography.layer));
 
 it.layer(Testing.emptyLayer(beforeIntegrations))(

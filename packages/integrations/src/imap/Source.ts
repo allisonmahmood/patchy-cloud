@@ -1,11 +1,29 @@
-import { ImapPort, ImapSecurity, type ImapSnapshot } from "@patchy/api";
+// @effect-diagnostics nodeBuiltinImport:off -- TLS sockets, certificate checks and IP classification are the native transport boundary.
+import { connect as connectTcp, isIP, type Socket } from "node:net";
+import {
+  checkServerIdentity,
+  connect as connectTls,
+  type PeerCertificate,
+  rootCertificates,
+  type TLSSocket
+} from "node:tls";
+import {
+  ImapPort,
+  ImapSecurity,
+  type ImapFolder,
+  type ImapSnapshot,
+  imapSpecialUses
+} from "@patchy/api";
+import { ContractLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import type { ImapFlow } from "imapflow";
+import { ImapFlow, type ImapFlowError, type ImapTransport, type ListResponse } from "imapflow";
+import * as Network from "./Network.js";
 
 /**
  * One IMAP mailbox, read through a login an admin typed: host, port, security, username and
@@ -345,3 +363,436 @@ export class Source extends Context.Service<
     readonly open: (settings: Settings) => Effect.Effect<ImapFlow, OpenError, Scope.Scope>;
   }
 >()("@patchy/integrations/imap/Source") {}
+
+// ---------- one session's mechanics ----------
+
+declare module "imapflow" {
+  interface ImapFlow {
+    /** ImapFlow's own login step, run once CAPABILITY and STARTTLS are done. */
+    authenticate(): Promise<boolean>;
+  }
+}
+
+/** How far a session got, and what stopped it: the classifier reads only this. */
+interface Progress {
+  /** The TCP connection to the checked address opened. */
+  connected: boolean;
+  /** The TLS handshake finished, at once on 993 or after STARTTLS on 143. */
+  secured: boolean;
+  /** What broke the handshake, and the names a trusted certificate carried instead of the host. */
+  tlsError?: unknown;
+  mismatch?: ReadonlyArray<string>;
+  /** CAPABILITY came back without what Patchy needs, so nothing was sent after it. */
+  refused?: "not_imap4" | "login_disabled";
+  /** LOGIN or AUTHENTICATE was sent, and what it failed with if it did. */
+  loginStarted: boolean;
+  loginError?: unknown;
+  /** A bound the session passed, after which it was destroyed. */
+  overflow?: Overflow["limitId"];
+  /** Bytes received from the mail server so far. */
+  received: number;
+}
+
+const parserBounds: Readonly<Record<string, Overflow["limitId"]>> = {
+  LineTooLarge: "imap.parser.line",
+  LiteralTooLarge: "imap.parser.literal",
+  ResponseTooLarge: "imap.parser.response",
+  TooManyTokens: "imap.parser.response",
+  TooManyResponses: "imap.parser.response"
+};
+
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+const imapError = (error: unknown): ImapFlowError | undefined =>
+  error instanceof Error ? error : undefined;
+
+/**
+ * ImapFlow with one step added: before LOGIN or AUTHENTICATE, the server must advertise IMAP4rev1
+ * or IMAP4rev2 and take a password login at all. A server that doesn't is refused with nothing
+ * sent, and any failure once the step begins is the login's, never a later command's.
+ */
+class CheckedImapFlow extends ImapFlow {
+  readonly #progress: Progress;
+  constructor(options: ConstructorParameters<typeof ImapFlow>[0], progress: Progress) {
+    super(options);
+    this.#progress = progress;
+  }
+  override async authenticate() {
+    const capabilities = this.capabilities;
+    if (!capabilities.has("IMAP4rev1") && !capabilities.has("IMAP4rev2")) {
+      this.#progress.refused = "not_imap4";
+      throw new Error("The server advertises neither IMAP4rev1 nor IMAP4rev2.");
+    }
+    if (
+      capabilities.has("LOGINDISABLED") &&
+      !capabilities.has("AUTH=PLAIN") &&
+      !capabilities.has("AUTH=LOGIN")
+    ) {
+      this.#progress.refused = "login_disabled";
+      throw new Error("The server takes no password login.");
+    }
+    this.#progress.loginStarted = true;
+    try {
+      return await super.authenticate();
+    } catch (error) {
+      this.#progress.loginError = error;
+      throw error;
+    }
+  }
+}
+
+/** The DNS names a certificate carries, from its subjectAltName, else its common name. */
+export const certificateNames = (certificate: PeerCertificate | undefined): string[] => {
+  const names = (certificate?.subjectaltname ?? "")
+    .split(/,\s*/)
+    .flatMap((entry) => (entry.startsWith("DNS:") ? [entry.slice(4)] : []));
+  const common = certificate?.subject?.CN;
+  return names.length > 0 ? names : typeof common === "string" && common !== "" ? [common] : [];
+};
+
+/**
+ * The transport ImapFlow opens its session through: TCP to the checked address only, then TLS 1.2
+ * or later with SNI and certificate verification against the typed host, with no switch to skip
+ * it. Bytes received count against `budget`; past it the socket is destroyed.
+ */
+const transport = (input: {
+  readonly host: string;
+  readonly destination: { readonly address: string; readonly port: number };
+  readonly ca: ReadonlyArray<string> | undefined;
+  readonly budget: number;
+  readonly progress: Progress;
+}): ImapTransport => {
+  const { host, destination, progress } = input;
+  const ca = input.ca === undefined ? undefined : [...rootCertificates, ...input.ca];
+  let unmeter = () => {};
+  const meter = (socket: Socket) => {
+    const count = (chunk: Buffer) => {
+      progress.received += chunk.byteLength;
+      if (progress.received > input.budget) {
+        progress.overflow ??= "imap.session.bytes";
+        socket.destroy(new Error("The IMAP session passed its byte budget."));
+      }
+    };
+    socket.on("data", count);
+    unmeter = () => socket.off("data", count);
+  };
+  const secure = (over: Socket | undefined, onSecure: () => void): TLSSocket => {
+    const tls = connectTls({
+      ...(over === undefined
+        ? { host: destination.address, port: destination.port }
+        : { socket: over }),
+      servername: host,
+      minVersion: "TLSv1.2",
+      rejectUnauthorized: true,
+      ...(ca === undefined ? {} : { ca }),
+      checkServerIdentity: (_name, certificate) => {
+        const error = checkServerIdentity(host, certificate);
+        if (error !== undefined) progress.mismatch = certificateNames(certificate);
+        return error;
+      }
+    });
+    if (over === undefined)
+      tls.once("connect", () => {
+        progress.connected = true;
+      });
+    tls.once("error", (error) => {
+      if (progress.secured) return;
+      progress.tlsError = error;
+      // A runtime that checks the name itself reports it by code; the names come from the peer.
+      if (progress.mismatch === undefined && errorCode(error) === "ERR_TLS_CERT_ALTNAME_INVALID")
+        progress.mismatch = certificateNames(tls.getPeerCertificate());
+    });
+    tls.once("secureConnect", () => {
+      progress.secured = true;
+      progress.connected = true;
+      onSecure();
+      meter(tls);
+    });
+    return tls;
+  };
+  return {
+    connect: (options, onConnect) => {
+      if (options.secure) return secure(undefined, onConnect);
+      const socket = connectTcp({ host: destination.address, port: destination.port });
+      socket.once("connect", () => {
+        progress.connected = true;
+        onConnect();
+        meter(socket);
+      });
+      return socket;
+    },
+    // STARTTLS: the cleartext socket stops being counted, and the TLS socket over it is.
+    upgrade: (socket, _options, onSecure) => {
+      unmeter();
+      return secure(socket as Socket, onSecure);
+    }
+  };
+};
+
+const untrusted: ReadonlyArray<readonly [RegExp, string]> = [
+  [/EXPIRED|NOT_YET_VALID/, "it isn't valid now"],
+  [/SELF_SIGNED/, "it's self-signed"],
+  [/ISSUER|UNABLE_TO_VERIFY|UNTRUSTED/, "its issuer isn't a known authority"],
+  [/REVOKED/, "it's been revoked"],
+  [/CERT|SIGNATURE/, "it couldn't be verified"]
+];
+
+/**
+ * Whether a login's failure pauses the connection: a NO answering LOGIN or AUTHENTICATE whose code
+ * is AUTHENTICATIONFAILED, AUTHORIZATIONFAILED or EXPIRED, or which has none. Never a BAD, a
+ * throttle, another code such as UNAVAILABLE, REFERRAL or LIMIT, or a network failure. ImapFlow's
+ * own `authenticationFailed` is never read: it's set for far more than a refused password.
+ */
+export const pausingReply = (error: unknown): { readonly reply: Paused["reply"] } | undefined => {
+  const failure = imapError(error);
+  if (failure?.responseStatus !== "NO" || failure.code === "ETHROTTLE") return undefined;
+  const reply = failure.serverResponseCode;
+  if (reply === undefined) return { reply: null };
+  const known = pausingReplies.find((item) => item === reply);
+  return known === undefined ? undefined : { reply: known };
+};
+
+/** What stopped a session before or at login, as the refusal naming the requirement it missed. */
+const classify = (host: string, progress: Progress, error: unknown): OpenError => {
+  if (progress.overflow !== undefined) return new Overflow({ host, limitId: progress.overflow });
+  const bound = parserBounds[errorCode(error) ?? ""];
+  if (bound !== undefined) return new Overflow({ host, limitId: bound });
+  if (progress.refused === "not_imap4") return new NotImap4({ host });
+  if (progress.refused === "login_disabled") return new LoginDisabled({ host });
+  if (progress.connected && !progress.secured && progress.tlsError !== undefined) {
+    if (progress.mismatch !== undefined)
+      return new CertificateMismatch({ host, names: progress.mismatch });
+    const tlsCode = errorCode(progress.tlsError) ?? "";
+    const reason = untrusted.find(([pattern]) => pattern.test(tlsCode));
+    if (reason !== undefined && tlsCode !== "ERR_TLS_CERT_ALTNAME_INVALID")
+      return new CertificateUntrusted({ host, reason: reason[1] });
+    return new TlsFailed({ host, cause: Redacted.make(progress.tlsError) });
+  }
+  const failure = imapError(error);
+  // ImapFlow marks a required STARTTLS it couldn't start, and data injected before the handshake.
+  if (!progress.secured && failure !== undefined && "tlsFailed" in failure)
+    return errorCode(error) === "STARTTLS_INJECTION"
+      ? new TlsFailed({ host, cause: Redacted.make(error) })
+      : new StartTlsUnavailable({ host });
+  if (progress.loginStarted && progress.loginError !== undefined) {
+    const login = imapError(progress.loginError);
+    if (login?.code === "ETHROTTLE") return new Throttled({ host });
+    const pausing = pausingReply(progress.loginError);
+    if (pausing !== undefined) return new LoginRefused({ host, reply: pausing.reply });
+    if (login?.responseStatus === "NO" || login?.responseStatus === "BAD")
+      return new Unavailable({
+        host,
+        stage: "login",
+        reply: login.responseStatus === "BAD" ? "BAD" : (login.serverResponseCode ?? "NO")
+      });
+    return new Unavailable({ host, stage: "login", cause: Redacted.make(progress.loginError) });
+  }
+  const code = errorCode(error);
+  return new Unavailable({
+    host,
+    stage:
+      code === "GREETING_TIMEOUT"
+        ? "greeting"
+        : !progress.connected || code === "CONNECT_TIMEOUT"
+          ? "connect"
+          : progress.loginStarted
+            ? "session"
+            : "greeting",
+    cause: Redacted.make(error)
+  });
+};
+
+/** A command's failure after login, at `stage`; a NO there is the caller's to name. */
+const afterLogin = (
+  host: string,
+  progress: Progress,
+  stage: "list" | "examine",
+  error: unknown
+): Overflow | Unavailable => {
+  if (progress.overflow !== undefined) return new Overflow({ host, limitId: progress.overflow });
+  const bound = parserBounds[errorCode(error) ?? ""];
+  if (bound !== undefined) return new Overflow({ host, limitId: bound });
+  return new Unavailable({ host, stage, cause: Redacted.make(error) });
+};
+
+const capabilityName = /^[\x21-\x7e]{1,128}$/;
+const MAX_CAPABILITIES = 256;
+const MAX_PATH = 1024;
+
+/** One LIST entry as the snapshot keeps it: only the special-use flags the server sent. */
+const folderOf = (entry: ListResponse): ImapFolder => {
+  const flags = new Set([...entry.flags].map((flag) => flag.toLowerCase()));
+  return {
+    path: entry.path,
+    delimiter: entry.delimiter === "" ? null : (entry.delimiter ?? null),
+    specialUse: imapSpecialUses.filter((flag) => flags.has(flag.toLowerCase())),
+    selectable: !flags.has("\\noselect") && !flags.has("\\nonexistent")
+  };
+};
+
+export const make = Effect.gen(function* () {
+  const network = yield* Network.Network;
+
+  /** The address to dial: the host resolves, and every address it resolves to is admitted. */
+  const admit = Effect.fn("Imap.admit")(function* (settings: Settings) {
+    if (!(
+      (settings.port === 993 && settings.security === "tls") ||
+      (settings.port === 143 && settings.security === "starttls")
+    ))
+      return yield* new PortNotAllowed({ port: settings.port });
+    const addresses = yield* network
+      .resolve(settings.host)
+      .pipe(
+        Effect.mapError((error) =>
+          error.reason === "EAI_AGAIN"
+            ? new Unavailable({ host: settings.host, stage: "connect" })
+            : new HostNotFound({ host: settings.host })
+        )
+      );
+    if (addresses.length === 0) return yield* new HostNotFound({ host: settings.host });
+    const refused = addresses.find((address) => !network.admits(settings.host, address));
+    if (refused !== undefined)
+      return yield* new PrivateAddress({ host: settings.host, address: refused });
+    // IPv4 first, so a host without IPv6 egress still reaches a dual-stack server.
+    return [...addresses].sort((a, b) => Number(isIP(a) !== 4) - Number(isIP(b) !== 4))[0]!;
+  });
+
+  /** A logged-in session and how it got there, closed with its scope. */
+  const session = Effect.fn("Imap.session")(function* (settings: Settings) {
+    const address = yield* admit(settings);
+    const bounds = yield* Effect.all({
+      connect: ContractLimits.get("imap.session.connect"),
+      bytes: ContractLimits.get("imap.session.bytes"),
+      line: ContractLimits.get("imap.parser.line"),
+      literal: ContractLimits.get("imap.parser.literal"),
+      response: ContractLimits.get("imap.parser.response")
+    });
+    const progress: Progress = {
+      connected: false,
+      secured: false,
+      loginStarted: false,
+      received: 0
+    };
+    const target: Network.Target = { host: settings.host, address, port: settings.port };
+    const client = new CheckedImapFlow(
+      {
+        host: settings.host,
+        port: settings.port,
+        servername: settings.host,
+        secure: settings.security === "tls",
+        // STARTTLS is required on 143: a server without it never sees the password.
+        ...(settings.security === "starttls" ? { doSTARTTLS: true } : {}),
+        auth: { user: settings.username, pass: Redacted.value(settings.password) },
+        transport: transport({
+          host: settings.host,
+          destination: network.destination(target),
+          ca: network.ca(settings.host),
+          budget: bounds.bytes,
+          progress
+        }),
+        logger: false,
+        clientInfo: { name: "Patchy", vendor: "Patchy", "support-url": "https://patchyhq.com" },
+        disableAutoIdle: true,
+        disableCompression: true,
+        connectionTimeout: bounds.connect,
+        greetingTimeout: bounds.connect,
+        maxLineLength: bounds.line,
+        maxLiteralSize: bounds.literal,
+        maxResponseSize: bounds.response
+      },
+      progress
+    );
+    // A session's errors arrive as events too; one with no listener would throw.
+    client.on("error", (error: unknown) => {
+      const bound = parserBounds[errorCode(error) ?? ""];
+      if (bound !== undefined) progress.overflow ??= bound;
+    });
+    yield* Effect.acquireRelease(
+      Effect.callback<void, OpenError>((resume) => {
+        client.connect().then(
+          () => resume(Effect.void),
+          (error: unknown) => resume(Effect.fail(classify(settings.host, progress, error)))
+        );
+        return Effect.sync(() => client.close());
+      }),
+      () =>
+        Effect.tryPromise(() => client.logout()).pipe(
+          Effect.timeoutOrElse({ duration: "2 seconds", orElse: () => Effect.void }),
+          Effect.ignore,
+          Effect.ensuring(Effect.sync(() => client.close()))
+        )
+    );
+    return { client, progress };
+  });
+
+  const open = (settings: Settings) =>
+    Effect.map(session(settings), ({ client }): ImapFlow => client);
+
+  const inspect = Effect.fn("Imap.inspect")(function* (settings: Settings) {
+    const deadline = yield* ContractLimits.get("imap.test.deadline");
+    const folders = yield* ContractLimits.get("imap.snapshot.folders");
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { client, progress } = yield* session(settings);
+        const capabilities = [...client.capabilities.keys()]
+          .filter((name) => capabilityName.test(name))
+          .sort()
+          .slice(0, MAX_CAPABILITIES);
+        const listed = yield* Effect.tryPromise({
+          try: () => client.list({ listOnly: true }),
+          catch: (error) => afterLogin(settings.host, progress, "list", error)
+        });
+        yield* Effect.tryPromise({
+          try: () => client.mailboxOpen("INBOX", { readOnly: true }),
+          catch: (error) =>
+            imapError(error)?.responseStatus === "NO"
+              ? new NoInbox({ host: settings.host })
+              : afterLogin(settings.host, progress, "examine", error)
+        });
+        const kept = listed.filter((entry) => entry.path.length <= MAX_PATH);
+        return {
+          version: 1,
+          host: settings.host,
+          port: settings.port,
+          security: settings.security,
+          username: settings.username,
+          capabilities,
+          folders: kept.slice(0, folders).map(folderOf),
+          truncated: kept.length > folders || kept.length < listed.length
+        } satisfies ImapSnapshot;
+      })
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: deadline,
+        orElse: () => Effect.fail(new Timeout({ host: settings.host, milliseconds: deadline }))
+      })
+    );
+  });
+
+  return Source.of({ inspect, open });
+});
+
+/** Needs the network from whoever launches it: production's, or dev's and tests' loopback. */
+export const layer = Layer.effect(Source, make);
+
+const credentialsJson = Schema.fromJsonString(Credentials);
+const decodeCredentials = Schema.decodeUnknownEffect(credentialsJson, {
+  onExcessProperty: "error"
+});
+const encodeCredentials = Schema.encodeSync(credentialsJson);
+
+/** The sealed form of a login: the endpoint and the password together. */
+export const credentials = (value: Credentials): Redacted.Redacted<string> =>
+  Redacted.make(encodeCredentials(value));
+
+export const parseCredentials = Effect.fn("Imap.parseCredentials")(function* (
+  secret: Redacted.Redacted<string>
+) {
+  return yield* decodeCredentials(Redacted.value(secret)).pipe(
+    Effect.mapError(
+      (cause) => new InvalidCredentials({ field: "password", cause: Redacted.make(cause) })
+    )
+  );
+});

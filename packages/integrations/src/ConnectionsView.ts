@@ -55,7 +55,19 @@ export interface Notice {
 
 /** The connection forms' fields a refusal can sit at; an integration names its own credential fields. */
 export type Field =
-  "handle" | "description" | "credentials" | "region" | "project" | "key" | "address" | "access";
+  | "handle"
+  | "description"
+  | "credentials"
+  | "region"
+  | "project"
+  | "key"
+  | "address"
+  | "access"
+  | "host"
+  | "port"
+  | "security"
+  | "username"
+  | "password";
 
 export type View = "all" | "attention" | "unused";
 export interface Filters {

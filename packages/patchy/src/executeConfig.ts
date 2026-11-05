@@ -16,6 +16,7 @@ import {
   PostHogDeclaration,
   PidgeonDeclaration,
   AttioDeclaration,
+  ImapDeclaration,
   SharedTableDeclaration,
   SharedStoreDeclaration,
   sharedStoreId,
@@ -115,6 +116,10 @@ const configSchema = Schema.Struct({
         handle: AttioDeclaration.fields.handle
       }),
       Schema.Struct({
+        kind: ImapDeclaration.fields.kind,
+        handle: ImapDeclaration.fields.handle
+      }),
+      Schema.Struct({
         kind: SharedStoreDeclaration.fields.kind,
         patchId: SharedStoreDeclaration.fields.patchId,
         store: SharedStoreDeclaration.fields.store
@@ -139,6 +144,7 @@ const generatedIndexSchema = Schema.Struct({
         PostHogDeclaration,
         PidgeonDeclaration,
         AttioDeclaration,
+        ImapDeclaration,
         SharedTableDeclaration,
         SharedStoreDeclaration
       ]),
@@ -388,6 +394,8 @@ export const resolveStamps = (config: UnresolvedManifest, source: string): Execu
         (generated.kind !== "pidgeon" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "attio" &&
         (generated.kind !== "attio" || declaration.handle !== generated.handle)) ||
+      (declaration.kind === "imap" &&
+        (generated.kind !== "imap" || declaration.handle !== generated.handle)) ||
       (declaration.kind === "sharedStore" &&
         (generated.kind !== "sharedStore" ||
           declaration.patchId !== generated.patchId ||

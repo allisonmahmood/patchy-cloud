@@ -51,6 +51,7 @@ import { generate as generatePostgres } from "../../../integrations/src/postgres
 import { generate as generatePostHog } from "../../../integrations/src/posthog/Generate.js";
 import { generate as generatePidgeon } from "../../../integrations/src/pidgeon/Generate.js";
 import { generate as generateAttio } from "../../../integrations/src/attio/Generate.js";
+import { generate as generateImap } from "../../../integrations/src/imap/Generate.js";
 import { starterFiles } from "../initProject.js";
 import toolchain from "../toolchain.json" with { type: "json" };
 import { embeddedFontFace, lookRevision, readLookFixture } from "../../../../test/look-fixtures.js";
@@ -370,6 +371,14 @@ export const projectConnections = {
       description: "Synthetic CRM",
       status: "connected",
       hint: "patchy add attio/crm"
+    },
+    {
+      id: "conn-invoices",
+      handle: "invoices",
+      integration: "imap",
+      description: "Synthetic invoices mailbox",
+      status: "connected",
+      hint: "patchy add imap/invoices"
     }
   ]
 };
@@ -447,6 +456,7 @@ export const generateProjectResponse = (
   const posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]> = {};
   const pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]> = {};
   const attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]> = {};
+  const imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]> = {};
   const sharedMetadata: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]> = {};
   const shared: Record<string, string> = {};
   const connections: Record<string, string> = {};
@@ -572,6 +582,32 @@ export const generateProjectResponse = (
       skills.add("patchy-attio");
       continue;
     }
+    if (declaration.kind === "imap") {
+      const stamp = { ...declaration, id: "conn-invoices", revision: 1 };
+      const snapshot = {
+        version: 1 as const,
+        host: "imap.example.com",
+        port: 993 as const,
+        security: "tls" as const,
+        username: "invoices@acme.example",
+        capabilities: ["IMAP4rev1", "SPECIAL-USE"],
+        folders: [
+          { path: "INBOX", delimiter: "/", specialUse: [], selectable: true },
+          { path: "Sent", delimiter: "/", specialUse: ["\\Sent" as const], selectable: true }
+        ],
+        truncated: false
+      };
+      imap[alias] = { declaration: stamp, snapshot };
+      const generated = generateImap(stamp, snapshot);
+      files.push(
+        { path: `patchy/_generated/uses/${alias}.ts`, contents: generated.client },
+        { path: `patchy/_generated/context/${alias}.md`, contents: generated.context }
+      );
+      connections[alias] = `./uses/${alias}.js`;
+      uses.push({ alias, id: stamp.id, revision: stamp.revision, declaration: stamp });
+      skills.add("patchy-imap");
+      continue;
+    }
     if (declaration.kind !== "postgres") throw new Error("Unexpected fixture declaration.");
     const stamp = { ...declaration, id: "conn-sales", revision: 1 };
     const snapshot = {
@@ -625,7 +661,7 @@ export const generateProjectResponse = (
   return {
     ok: true,
     files,
-    metadata: { postgres, posthog, pidgeon, attio, shared: sharedMetadata },
+    metadata: { postgres, posthog, pidgeon, attio, imap, shared: sharedMetadata },
     uses
   };
 };

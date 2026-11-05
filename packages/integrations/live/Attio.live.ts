@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as CredentialKeys from "../src/CredentialKeys.js";
 import * as PidgeonSource from "../src/pidgeon/Source.js";
+import * as ImapTest from "../src/test/imap.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
@@ -44,6 +45,7 @@ const services = Layer.mergeAll(
   ),
   PostHogSource.layer,
   PidgeonSource.layer,
+  ImapTest.offline,
   Live.layer
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 

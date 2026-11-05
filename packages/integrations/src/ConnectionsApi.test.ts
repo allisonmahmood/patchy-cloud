@@ -20,6 +20,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as ImapTest from "./test/imap.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PidgeonTest from "./test/pidgeon.js";
 import { NodeCryptography } from "@patchy/core";
@@ -93,6 +94,7 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
         Source.layer,
         PostHogSource.layer,
         AttioSource.layer,
+        ImapTest.offline,
         PidgeonSource.layer,
         CredentialKeys.layerFromKeys(
           Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
