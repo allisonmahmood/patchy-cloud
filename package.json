@@ -11,6 +11,7 @@
   "packageManager": "pnpm@12.9.1",
   "scripts": {
     "build": "turbo run build",
+    "beta-links": "bun --conditions=development packages/auth/scripts/beta-links.ts",
     "dev": "bun --conditions=development scripts/dev/src/main.ts",
     "patchy": "node --import tsx --conditions=development packages/patchy/src/index.ts",
     "seed:dev": "bun scripts/seed-dev.mjs",

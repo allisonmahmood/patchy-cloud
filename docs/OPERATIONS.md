@@ -466,6 +466,30 @@ to the app's host and keeps the Clerk domain and keys.
   that person, because Clerk keeps one session; try the link in a private
   window. To end it early, empty the setting and deploy, or deactivate the
   account.
+- **Beta links** let one person each past the waitlist when nobody knows their
+  email yet. They live in the `beta_links` table, and `pnpm beta-links` makes
+  and follows them against the database in `DATABASE_URL`:
+  `create --for "<company name>" [--days N]` prints the link,
+  `<origin>/join/<secret>`, once (its secret is stored only as a SHA-256);
+  `list` shows each link's state, the email it was kept for, when it was
+  invited and signed in, and its person's company; `resend <id>` withdraws a
+  lost invitation and emails a new one; `revoke <id>` ends the link and
+  withdraws its invitation, and running it again retries a withdrawal Clerk
+  didn't answer. Each takes `--json` and exits 1 on failure. Create also reads
+  `PATCHY_PUBLIC_BASE_URL`, for the address; resend and revoke read
+  `CLERK_SECRET_KEY`. The script never migrates: the release that adds the
+  table must be deployed first. The email a person enters keeps the link, and
+  Clerk invites it as `/company` invitations are invited, with no redirect, so
+  the Account Portal's sign-up takes the terms; create-or-join then marks the
+  link used. If Clerk fails, the page offers Try again for that address only,
+  five attempts in all, then tells the person to ask whoever sent the link. A
+  reply Clerk sent but Patchy never received can leave an invitation Patchy
+  doesn't know: revoking such a link reports `unconfirmed`, and only the Clerk
+  dashboard can withdraw it (it admits only the link's own address).
+  A person who already has an account signs in as usual, so their link stays
+  "sent"; `list` still shows their company. Every send counts against Clerk's
+  instance-wide limit of 100 invitations an hour, shared with company
+  invitations.
 - **Keys** come from
   `clerk env pull --app app_3ImZuFeZJb8038U0oFds84rupA2 --instance prod --file <file>`.
   Keep them out of output, chat and git.

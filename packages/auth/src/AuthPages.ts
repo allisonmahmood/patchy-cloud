@@ -10,6 +10,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
 import type * as AgentConnections from "./AgentConnections.js";
+import * as BetaLinks from "./BetaLinks.js";
 import * as DevicePages from "./DevicePages.js";
 import type * as DeviceLogins from "./DeviceLogins.js";
 import * as MachinesPage from "./MachinesPage.js";
@@ -31,6 +32,11 @@ const join = Effect.gen(function* () {
     requestedReturn && new URL(requestedReturn, session.publicBaseUrl).pathname !== "/join"
       ? requestedReturn
       : null;
+  // A person a beta link let in starts their company with the name the link was made for.
+  const suggested =
+    membership === null
+      ? yield* BetaLinks.arrive({ clerkUserId: claims.sub, email: claims.email })
+      : Option.none();
   const page: Join.JoinPage = yield* Join.handle(
     {
       clerkUserId: claims.sub,
@@ -38,7 +44,8 @@ const join = Effect.gen(function* () {
       name: claims.name
     },
     membership,
-    { returnTo: target, publicBaseUrl: session.publicBaseUrl }
+    { returnTo: target, publicBaseUrl: session.publicBaseUrl },
+    Option.getOrUndefined(suggested)
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })

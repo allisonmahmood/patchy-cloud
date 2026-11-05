@@ -44,6 +44,10 @@ _Avoid_: token (a machine's credential, not a browser's), cookie (how, not what)
 The address `/signin/<secret>` that signs whoever opens it in as one configured account until its end date, minting a one-use Clerk sign-in token per visit. Only the secret's digest is configured; any other secret is an unknown address. It is for reviewers nobody can invite by email, and every open is reported.
 _Avoid_: magic link (Clerk's emailed link), guest access (a patch's guests), backdoor
 
+**Beta link**:
+The address `/join/<secret>` that lets one person past the waitlist when nobody knows their email yet, made by the operator for a company's name. The first email entered on it keeps it for good, and Clerk emails that address an ordinary invitation; the person's first create-or-join marks it used and starts their company with its name. It takes an email until its end date, 30 days unless made otherwise. Only the secret's SHA-256 is stored, and one live link holds an address. Revoking withdraws its invitation.
+_Avoid_: invite code, invitation (Clerk's, which a beta link asks for), pass, demo link (one shared account)
+
 **Viewer**:
 The signed-in user, their company and role on a first-party page or at a company patch's login door, without a machine credential. A viewer exists only after create-or-join and while the user is active; their email and name follow their current sign-in.
 _Avoid_: bearer, machine, principal

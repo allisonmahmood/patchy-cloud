@@ -263,7 +263,8 @@ it.layer(
         InviteMail.InviteMail,
         InviteMail.InviteMail.of({
           create: mail.create,
-          revoke: (id) => Effect.fail(new InviteMail.InvitationNotPending({ invitationId: id }))
+          revoke: (id) =>
+            Effect.fail(new InviteMail.InvitationNotPending({ invitationId: id, state: "revoked" }))
         })
       );
       const recovered = yield* Invitations.resend(reference).pipe(Effect.provide(alreadyRevoked));

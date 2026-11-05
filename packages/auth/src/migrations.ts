@@ -4,7 +4,7 @@
  * before launch; id 19 records when a person's credentials ended and when each
  * device login was confirmed, id 22 adds agent connections and their tokens, id 23 the
  * codes a consent's approval issues, id 26 the sign-ins Home has seen for the Final step
- * panel, and id 27 the setup links that tie an agent's setup to that panel.
+ * panel, id 27 the setup links that tie an agent's setup to that panel, and id 34 beta links.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -134,5 +134,29 @@ export const migrations: Migrations = {
     `CREATE INDEX setup_links_user_id_idx ON setup_links(user_id)`,
     `ALTER TABLE device_logins
     ADD COLUMN setup_link_id TEXT REFERENCES setup_links(id) ON DELETE SET NULL`
+  ),
+  // A beta link lets one person past the waitlist without anyone knowing their email first. Only
+  // the secret's SHA-256 is kept. The first email entered reserves the link for good, and Clerk
+  // invites that address; `signed_in_at` and `clerk_user_id` record its person reaching
+  // create-or-join. Nothing here is overwritten once set, except `clerk_invitation_id` and
+  // `invited_at` on a resend. One live link per address, so an arrival names one link.
+  // `invite_attempts` counts the link's calls to Clerk, which bounds its page's Try again.
+  "0034_beta_links": ddl(
+    `CREATE TABLE beta_links (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL CHECK (char_length(label) BETWEEN 1 AND 100),
+    secret_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    email TEXT CHECK (email = lower(email)),
+    clerk_invitation_id TEXT CHECK (clerk_invitation_id IS NULL OR email IS NOT NULL),
+    invited_at TIMESTAMPTZ CHECK ((invited_at IS NULL) = (clerk_invitation_id IS NULL)),
+    signed_in_at TIMESTAMPTZ CHECK (signed_in_at IS NULL OR email IS NOT NULL),
+    clerk_user_id TEXT CHECK ((clerk_user_id IS NULL) = (signed_in_at IS NULL)),
+    invite_attempts INT NOT NULL DEFAULT 0
+    )`,
+    `CREATE UNIQUE INDEX beta_links_live_email_idx ON beta_links(email)
+    WHERE revoked_at IS NULL AND email IS NOT NULL`
   )
 };
