@@ -58,3 +58,21 @@ export const uidRange = (low: number, high: number): UidRange | undefined => {
 /** The range as an IMAP sequence set, such as `120:239`. Never `*`. */
 export const sequenceSet = (range: UidRange): string =>
   range.low === range.high ? `${range.low}` : `${range.low}:${range.high}`;
+
+/**
+ * UIDs as one IMAP sequence set for `UID FETCH`, in ascending runs such as `3:5,9`. Never `*`;
+ * `undefined` when there is no valid UID to name.
+ */
+export const uidSet = (uids: ReadonlyArray<number>): string | undefined => {
+  const sorted = [...new Set(uids)]
+    .filter((uid) => Number.isInteger(uid) && uid >= 1 && uid <= MAX_UID)
+    .sort((a, b) => a - b);
+  const runs: string[] = [];
+  for (let start = 0; start < sorted.length;) {
+    let end = start;
+    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end]! + 1) end += 1;
+    runs.push(sequenceSet({ low: sorted[start]!, high: sorted[end]! }));
+    start = end + 1;
+  }
+  return runs.length === 0 ? undefined : runs.join(",");
+};
