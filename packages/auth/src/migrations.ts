@@ -140,6 +140,7 @@ export const migrations: Migrations = {
   // invites that address; `signed_in_at` and `clerk_user_id` record its person reaching
   // create-or-join. Nothing here is overwritten once set, except `clerk_invitation_id` and
   // `invited_at` on a resend. One live link per address, so an arrival names one link.
+  // `invite_attempts` counts the link's calls to Clerk, which bounds its page's Try again.
   "0034_beta_links": ddl(
     `CREATE TABLE beta_links (
     id TEXT PRIMARY KEY,
@@ -152,7 +153,8 @@ export const migrations: Migrations = {
     clerk_invitation_id TEXT CHECK (clerk_invitation_id IS NULL OR email IS NOT NULL),
     invited_at TIMESTAMPTZ CHECK ((invited_at IS NULL) = (clerk_invitation_id IS NULL)),
     signed_in_at TIMESTAMPTZ CHECK (signed_in_at IS NULL OR email IS NOT NULL),
-    clerk_user_id TEXT CHECK ((clerk_user_id IS NULL) = (signed_in_at IS NULL))
+    clerk_user_id TEXT CHECK ((clerk_user_id IS NULL) = (signed_in_at IS NULL)),
+    invite_attempts INT NOT NULL DEFAULT 0
     )`,
     `CREATE UNIQUE INDEX beta_links_live_email_idx ON beta_links(email)
     WHERE revoked_at IS NULL AND email IS NOT NULL`

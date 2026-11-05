@@ -70,7 +70,9 @@ const statePage = (
       return pageResponse({
         title: "We couldn't send your invitation",
         heading: `${kicker}<h1 class="page-heading">We couldn't send your invitation</h1>`,
-        body: `<p>It's for ${email}.</p><form method="post"><input type="hidden" name="action" value="retry"><div class="actions"><button class="btn btn-primary" type="submit">Try again</button></div></form>`
+        body: BetaLinks.canRetry(link)
+          ? `<p>It's for ${email}.</p><form method="post"><input type="hidden" name="action" value="retry"><div class="actions"><button class="btn btn-primary" type="submit">Try again</button></div></form>`
+          : `<p>It's for ${email}. Ask the person who sent you this link.</p>`
       });
     case "used":
       return pageResponse({

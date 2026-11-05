@@ -61,7 +61,8 @@ export class BetaLink extends Schema.Class<BetaLink>("BetaLink")({
   clerkInvitationId: Schema.NullOr(Schema.String),
   invitedAt: Schema.NullOr(Schema.Date),
   signedInAt: Schema.NullOr(Schema.Date),
-  clerkUserId: Schema.NullOr(Schema.String)
+  clerkUserId: Schema.NullOr(Schema.String),
+  inviteAttempts: Schema.Number
 }) {}
 
 /**
@@ -86,13 +87,26 @@ export const state = (link: BetaLink, now: number): State =>
             : "open";
 
 /**
+ * How many times a link may ask Clerk for its invitation from its own page: Continue and then
+ * Try again. Plenty for an outage, and it keeps a link Clerk keeps refusing, such as one held for
+ * an address Clerk won't invite, from spending the instance's hourly invitation allowance. The
+ * operator's resend is not counted against it.
+ */
+export const MAX_ATTEMPTS = 5;
+
+/** Whether a failed link's page still offers Try again. */
+export const canRetry = (link: BetaLink) => link.inviteAttempts < MAX_ATTEMPTS;
+
+/**
  * An operator's resend or revoke: the link after it, and its emailed invitation's fate. `sent`
  * is a new one; `withdrawn` is gone at Clerk; `accepted` means its person already signed up;
- * `none` means there was nothing to send or withdraw; `failed` means Clerk didn't answer.
+ * `none` means there was nothing to send or withdraw; `unconfirmed` means Clerk never confirmed
+ * one, but may hold one whose answer was lost, which Patchy can't name to withdraw; `failed`
+ * means Clerk didn't answer.
  */
 export interface Outcome {
   readonly link: BetaLink;
-  readonly invitation: "sent" | "withdrawn" | "accepted" | "none" | "failed";
+  readonly invitation: "sent" | "withdrawn" | "accepted" | "none" | "unconfirmed" | "failed";
 }
 
 /** A link as `list` shows it, with the handle of the company its person is in, if any. */
@@ -109,7 +123,8 @@ const decodeLabels = Schema.decodeUnknownEffect(
 const columns = (sql: SqlClient.SqlClient) => sql`
   b.id, b.label, b.created_at AS "createdAt", b.expires_at AS "expiresAt",
   b.revoked_at AS "revokedAt", b.email, b.clerk_invitation_id AS "clerkInvitationId",
-  b.invited_at AS "invitedAt", b.signed_in_at AS "signedInAt", b.clerk_user_id AS "clerkUserId"`;
+  b.invited_at AS "invitedAt", b.signed_in_at AS "signedInAt", b.clerk_user_id AS "clerkUserId",
+  b.invite_attempts AS "inviteAttempts"`;
 
 const first = (rows: ReadonlyArray<unknown>) =>
   decodeLinks(rows).pipe(
@@ -137,9 +152,10 @@ const lockById = Effect.fn("BetaLinks.lockById")(function* (id: string) {
   return link.value;
 });
 
-/** Asks Clerk to invite the link's reserved address. A failure leaves the link failed. */
+/** Asks Clerk to invite the link's reserved address, counting the attempt. A failure leaves the link failed. */
 const deliver = Effect.fn("BetaLinks.deliver")(function* (id: string, email: string) {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE beta_links SET invite_attempts = invite_attempts + 1 WHERE id = ${id}`;
   const invitationId = yield* (yield* InviteMail.InviteMail)
     .create(email)
     .pipe(Effect.catchTags({ InviteMailError: () => Effect.succeed(null) }));
@@ -182,36 +198,54 @@ export const find = Effect.fn("BetaLinks.find")(function* (secret: string) {
 /** A shape check only; Clerk validates the address when it invites it. */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
+/** Another claim for the same address won the race to the live-email index first. */
+const isLiveEmailTaken = (error: SqlError) =>
+  error.reason._tag === "UniqueViolation" &&
+  error.reason.constraint === "beta_links_live_email_idx";
+
 /**
  * Reserves an open link for `entered` and asks Clerk to invite it. A link that is no longer open
- * is left as it is, for its page to show. Clerk failing keeps the reservation, so only the same
- * address can be retried: Clerk may have made an invitation whose answer never reached us.
+ * is left as it is, whatever was entered, for its page to show. Clerk failing keeps the
+ * reservation, so only the same address can be retried: Clerk may have made an invitation whose
+ * answer never reached us.
  */
 export const claim = Effect.fn("BetaLinks.claim")(function* (secret: string, entered: string) {
   const email = entered.trim().toLowerCase();
-  if (email.length > 254 || !EMAIL.test(email)) return yield* new InvalidEmail({});
   const sql = yield* SqlClient.SqlClient;
-  return yield* sql.withTransaction(
-    Effect.gen(function* () {
-      const link = yield* lockBySecret(secret);
-      if (state(link, yield* Clock.currentTimeMillis) !== "open") return;
-      // The live-email index refuses a claim that races this check, as a failed statement.
-      const held = yield* sql`SELECT 1 FROM beta_links
+  return yield* sql
+    .withTransaction(
+      Effect.gen(function* () {
+        const link = yield* lockBySecret(secret);
+        if (state(link, yield* Clock.currentTimeMillis) !== "open") return;
+        if (email.length > 254 || !EMAIL.test(email)) return yield* new InvalidEmail({});
+        const held = yield* sql`SELECT 1 FROM beta_links
           WHERE email = ${email} AND revoked_at IS NULL`;
-      if (held.length > 0) return yield* new EmailAlreadyReserved({});
-      yield* sql`UPDATE beta_links SET email = ${email} WHERE id = ${link.id}`;
-      yield* deliver(link.id, email);
-    })
-  );
+        if (held.length > 0) return yield* new EmailAlreadyReserved({});
+        // A claim racing this one for the same address waits here on the index, before it asks
+        // Clerk anything, and fails once the first commits.
+        yield* sql`UPDATE beta_links SET email = ${email} WHERE id = ${link.id}`;
+        yield* deliver(link.id, email);
+      })
+    )
+    .pipe(
+      Effect.catchTags({
+        SqlError: (error) =>
+          isLiveEmailTaken(error) ? Effect.fail(new EmailAlreadyReserved({})) : Effect.fail(error)
+      })
+    );
 }, Effect.uninterruptible);
 
-/** Asks Clerk again for a failed link's reserved address; any other link is left as it is. */
+/**
+ * Asks Clerk again for a failed link's reserved address, while it has attempts left; any other
+ * link is left as it is.
+ */
 export const retry = Effect.fn("BetaLinks.retry")(function* (secret: string) {
   const sql = yield* SqlClient.SqlClient;
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       const link = yield* lockBySecret(secret);
-      if (state(link, yield* Clock.currentTimeMillis) !== "failed" || link.email === null) return;
+      const now = yield* Clock.currentTimeMillis;
+      if (state(link, now) !== "failed" || link.email === null || !canRetry(link)) return;
       yield* deliver(link.id, link.email);
     })
   );
@@ -259,7 +293,7 @@ export const list = Effect.gen(function* () {
 const withdraw = Effect.fn("BetaLinks.withdraw")(function* (
   link: BetaLink
 ): Effect.fn.Return<Outcome["invitation"], never, InviteMail.InviteMail> {
-  if (link.clerkInvitationId === null) return "none";
+  if (link.clerkInvitationId === null) return link.email === null ? "none" : "unconfirmed";
   return yield* (yield* InviteMail.InviteMail).revoke(link.clerkInvitationId).pipe(
     Effect.as<Outcome["invitation"]>("withdrawn"),
     Effect.catchTags({

@@ -8,7 +8,8 @@
  *   pnpm beta-links resend <id>                                 a new invitation for a lost one
  *   pnpm beta-links revoke <id>                                 end a link, withdraw its invitation
  *
- * Each takes `--json`: `{ "ok": true, ... }` or `{ "ok": false, "error" }`, exit 0 or 1. All
+ * Each takes `--json`: `{ "ok": true, ... }` or `{ "ok": false, "error" }`, exit 0 or 1; a flag
+ * the parser refuses prints usage and the error instead, and exits 1. All
  * read `DATABASE_URL`; create reads `PATCHY_PUBLIC_BASE_URL` for the address, and resend and
  * revoke read `CLERK_SECRET_KEY`, since they ask Clerk.
  */
@@ -161,6 +162,8 @@ const invitationText: Record<BetaLinks.Outcome["invitation"], string> = {
   withdrawn: "its invitation is withdrawn",
   accepted: "its person already accepted the invitation and has an account",
   none: "it had no invitation to change",
+  unconfirmed:
+    "Clerk never confirmed an invitation for it, but may hold one whose answer was lost; to be sure, revoke any pending invitation for its email in Clerk's dashboard",
   failed: "Clerk didn't answer"
 };
 

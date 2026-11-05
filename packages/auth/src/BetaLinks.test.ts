@@ -158,8 +158,9 @@ it.layer(services)("beta links", (it) => {
       assert.notInclude(sent.html, "jane@");
       assert.notInclude(sent.html, "<form method");
 
-      // The link is taken: another address changes nothing and invites no one.
+      // The link is taken: another address, or none, changes nothing and invites no one.
       assert.strictEqual((yield* claim(path, "sam@acme.test")).status, 303);
+      assert.strictEqual((yield* claim(path, "")).status, 303);
       assert.lengthOf(yield* invites, 1);
       assert.include((yield* send(path)).html, "j•••@acme.test");
     })
@@ -203,6 +204,48 @@ it.layer(services)("beta links", (it) => {
     })
   );
 
+  it.effect(
+    "stops Try again after its attempts, and says Patchy can't vouch for a lost reply",
+    () =>
+      Effect.gen(function* () {
+        const { id, path } = yield* newLink("Vandelay");
+        yield* claim(path, "art@vandelay.test").pipe(clerkDown);
+        for (let attempt = 0; attempt < BetaLinks.MAX_ATTEMPTS + 2; attempt++)
+          yield* send(path, post({ action: "retry" })).pipe(clerkDown);
+        assert.strictEqual((yield* listed(id)).inviteAttempts, BetaLinks.MAX_ATTEMPTS);
+        const spent = yield* send(path);
+        assert.include(spent.html, "Ask the person who sent you this link.");
+        assert.notInclude(spent.html, 'value="retry"');
+        const before = (yield* invites).length;
+        yield* send(path, post({ action: "retry" }));
+        assert.lengthOf(yield* invites, before);
+
+        // Clerk may have made an invitation whose answer was lost: revoke can't name it.
+        assert.strictEqual((yield* BetaLinks.revoke(id)).invitation, "unconfirmed");
+      })
+  );
+
+  it.effect("refuses an address another link is claiming at the same moment", () =>
+    Effect.gen(function* () {
+      const first = yield* newLink("Pendant");
+      const second = yield* newLink("Pendant again");
+      const sending = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const claiming = yield* Effect.forkChild(
+        claim(first.path, "kel@pendant.test").pipe(slowClerk(sending, release))
+      );
+      yield* Deferred.await(sending);
+      const racing = yield* Effect.forkChild(claim(second.path, "kel@pendant.test"));
+      yield* someoneWaits;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(claiming);
+      const refused = yield* Fiber.join(racing);
+      assert.strictEqual(refused.status, 409);
+      assert.include(refused.html, "That email already has an invitation.");
+      assert.isNull((yield* listed(second.id)).email);
+    })
+  );
+
   it.effect("ends an open link at its end date, while a sent invitation stays sent", () =>
     Effect.gen(function* () {
       const open = yield* newLink("Umbrella");
@@ -213,6 +256,7 @@ it.layer(services)("beta links", (it) => {
       assert.strictEqual(ended.status, 410);
       assert.include(ended.html, "This link no longer works");
       assert.strictEqual((yield* claim(open.path, "late@umbrella.test")).status, 303);
+      assert.strictEqual((yield* claim(open.path, "not an email")).status, 303);
       assert.isNull((yield* listed(open.id)).email);
       assert.include((yield* send(sent.path)).html, "Check your email");
     })

@@ -481,7 +481,11 @@ to the app's host and keeps the Clerk domain and keys.
   table must be deployed first. The email a person enters keeps the link, and
   Clerk invites it as `/company` invitations are invited, with no redirect, so
   the Account Portal's sign-up takes the terms; create-or-join then marks the
-  link used. If Clerk fails, the page offers Try again for that address only.
+  link used. If Clerk fails, the page offers Try again for that address only,
+  five attempts in all, then tells the person to ask whoever sent the link. A
+  reply Clerk sent but Patchy never received can leave an invitation Patchy
+  doesn't know: revoking such a link reports `unconfirmed`, and only the Clerk
+  dashboard can withdraw it (it admits only the link's own address).
   A person who already has an account signs in as usual, so their link stays
   "sent"; `list` still shows their company. Every send counts against Clerk's
   instance-wide limit of 100 invitations an hour, shared with company
