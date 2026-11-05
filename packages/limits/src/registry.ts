@@ -401,6 +401,74 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "imap.test.deadline": {
+    kind: "contract",
+    default: 30000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Connecting, testing, reconnecting, replacing the password of or refreshing an IMAP mailbox: one fresh session's TLS, CAPABILITY, login, LIST and EXAMINE INBOX",
+    refusal: "timeout",
+    overridable: false
+  },
+  "imap.session.connect": {
+    kind: "contract",
+    default: 10000,
+    unit: "milliseconds",
+    scope: "company",
+    measure:
+      "Opening one IMAP session: the TCP connection and TLS handshake, then separately the server's greeting",
+    refusal: "timeout",
+    overridable: false
+  },
+  "imap.session.bytes": {
+    kind: "contract",
+    default: 16777216,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "Bytes one IMAP Test session receives from the mail server, from the greeting to LOGOUT; past it the session is destroyed",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.parser.line": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "company",
+    measure: "One IMAP response line without a literal; past it the session is destroyed",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.parser.literal": {
+    kind: "contract",
+    default: 4194304,
+    unit: "bytes",
+    scope: "company",
+    measure: "One IMAP literal in a response; past it the session is destroyed",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.parser.response": {
+    kind: "contract",
+    default: 8388608,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "One whole IMAP response, its lines and literals together; past it the session is destroyed",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.snapshot.folders": {
+    kind: "contract",
+    default: 5000,
+    unit: "folders",
+    scope: "company",
+    measure:
+      "Folders one IMAP snapshot keeps, in the order LIST names them; past it the snapshot is marked truncated",
+    refusal: null,
+    overridable: false
+  },
   "tier2.query.deadline": {
     kind: "contract",
     default: 3000,

@@ -20,4 +20,6 @@ export * as PidgeonOperations from "./pidgeon/Operations.js";
 export * as Attio from "./attio/index.js";
 export * as AttioSource from "./attio/Source.js";
 export * as AttioOperations from "./attio/Operations.js";
+export * as Imap from "./imap/index.js";
+export * as ImapSource from "./imap/Source.js";
 export { migrations } from "./migrations.js";

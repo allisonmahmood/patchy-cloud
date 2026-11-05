@@ -517,6 +517,11 @@ export const AttioDeclaration = Schema.Struct({
   ...PostgresDeclaration.fields,
   kind: Schema.Literal("attio")
 });
+/** One IMAP mailbox login, read-only. */
+export const ImapDeclaration = Schema.Struct({
+  ...PostgresDeclaration.fields,
+  kind: Schema.Literal("imap")
+});
 /** A company connection a version declares, bound to its identity and metadata revision. */
 export const ConnectionDeclaration = Schema.Union([
   PostgresDeclaration,
