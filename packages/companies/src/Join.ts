@@ -149,11 +149,16 @@ const render = Effect.fn("Join.render")(function* (
   };
 });
 
-/** Auth supplies verified claims and membership; Companies owns the page and its transactions. */
+/**
+ * Auth supplies verified claims and membership; Companies owns the page and its transactions.
+ * `suggestedName` replaces the "<name>'s company" the create form otherwise starts with, such as
+ * the name a beta link was made for; the person can still change it.
+ */
 export const handle = Effect.fn("Join.handle")(function* (
   claims: Claims,
   membership: { readonly company: { readonly name: string } } | null,
-  door: Door
+  door: Door,
+  suggestedName?: string
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (membership) {
@@ -164,7 +169,14 @@ export const handle = Effect.fn("Join.handle")(function* (
       ...(request.method !== "POST" ? { redirect: door.returnTo ?? "/company" } : {})
     } satisfies JoinPage;
   }
-  if (request.method !== "POST") return yield* render(claims, door);
+  if (request.method !== "POST")
+    return yield* render(
+      claims,
+      door,
+      suggestedName === undefined
+        ? undefined
+        : { name: suggestedName, handle: suggestedHandle(suggestedName) }
+    );
   const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
   const entered = { name: (fields.name ?? "").trim(), handle: fields.handle ?? "" };
   const companies = yield* Companies.Companies;

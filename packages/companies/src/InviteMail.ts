@@ -22,14 +22,21 @@ export class InviteMailError extends Schema.TaggedError<InviteMailError>()("Invi
 /** Clerk has nothing left to revoke: the emailed invitation was revoked, or accepted at sign-up. */
 export class InvitationNotPending extends Schema.TaggedError<InvitationNotPending>()(
   "InvitationNotPending",
-  { invitationId: Schema.String, cause: Schema.optional(Schema.Defect()) }
+  {
+    invitationId: Schema.String,
+    state: Schema.Literals(["accepted", "revoked"]),
+    cause: Schema.optional(Schema.Defect())
+  }
 ) {
   override get message() {
-    return "The emailed invitation is already revoked or accepted.";
+    return `The emailed invitation is already ${this.state}.`;
   }
 }
 
-const notPendingCodes = new Set(["invitation_already_revoked", "invitation_already_accepted"]);
+const notPendingStates = new Map<string, InvitationNotPending["state"]>([
+  ["invitation_already_revoked", "revoked"],
+  ["invitation_already_accepted", "accepted"]
+]);
 
 export class InviteMail extends Context.Service<
   InviteMail,
@@ -66,13 +73,16 @@ export const make = Effect.gen(function* () {
   const revoke = Effect.fn("InviteMail.revoke")((id: string) =>
     Effect.tryPromise({
       try: () => client.invitations.revokeInvitation(id),
-      catch: (cause) =>
-        isClerkAPIResponseError(cause) &&
-        cause.status === 400 &&
-        cause.errors.length > 0 &&
-        cause.errors.every((error) => notPendingCodes.has(error.code))
-          ? new InvitationNotPending({ invitationId: id, cause })
-          : new InviteMailError({ operation: "revoke", invitationId: id, cause })
+      catch: (cause) => {
+        const states =
+          isClerkAPIResponseError(cause) && cause.status === 400
+            ? cause.errors.map((error) => notPendingStates.get(error.code))
+            : [];
+        const [state] = states;
+        return state !== undefined && states.every((each) => each === state)
+          ? new InvitationNotPending({ invitationId: id, state, cause })
+          : new InviteMailError({ operation: "revoke", invitationId: id, cause });
+      }
     }).pipe(Effect.asVoid)
   );
   return InviteMail.of({ create, revoke });

@@ -253,6 +253,14 @@ redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
 `error=access_denied`. The page and its answers are limited to 10 a minute per
 address once signed in.
 
+**Beta links.** With the env loaded,
+`PATCHY_PUBLIC_BASE_URL=$PATCHY_API_URL pnpm beta-links create --for Acme` prints
+a link on this instance, and `pnpm beta-links list` follows it. Entering an
+email on its page records the invitation instead of mailing it; sign in as that
+email (`/dev/sign-in?as=<it>`) to reach create-or-join with Acme filled in.
+`resend` and `revoke` ask Clerk with `CLERK_SECRET_KEY`, so they exercise only
+on a `--clerk` instance, where the page's invitations are real too.
+
 The seed holds identity rows only; a fresh portal shows the guide to a first patch.
 `pnpm seed:dev` publishes two single-file pages, one with a script.
 

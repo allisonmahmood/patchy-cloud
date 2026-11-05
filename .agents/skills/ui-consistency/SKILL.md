@@ -15,7 +15,7 @@ First-party pages compose the server-rendered shell and inline `<style>` block i
 Three page kinds:
 
 - **App shell**: the portal, People, Integrations, Agent access and Your agents pages. `htmlPage` renders one sidebar from its typed `places`: the brand (the company's name, a link Home), the patch search, Home, All patches, Your agents, then a Company group with People, Integrations and Agent access, and at its foot What's new and the account menu (name, email, Sign out). Every role sees the same places; what a member can't change is read-only on its page. The page's place is lit with `aria-current`. Below 900px the sidebar folds into a bar whose Menu button opens the same markup as a popover, so there is one nav and no script. Auth's `pageResponse` takes the viewer and section in app mode. Portal not-found pages also keep this shell.
-- **First-party doors and static pages**: sign-in, create-or-join, device-login confirmation, consent, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door whose `supporting-text` also gives an agent the setup line, plain text rather than a third action. All compose `htmlPage`.
+- **First-party doors and static pages**: sign-in, create-or-join, a beta link's page, device-login confirmation, consent, deactivated and error doors keep the card rather than app navigation. The signed-out root is a sign-in door whose `supporting-text` also gives an agent the setup line, plain text rather than a third action. All compose `htmlPage`.
 - **Served patches**: `renderPatchWrapper` is user content and deliberately does not compose `htmlPage`.
 
 ## The shell and its one exception
