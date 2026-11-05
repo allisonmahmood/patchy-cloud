@@ -92,9 +92,9 @@ Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,
 `t.array(element)`, `t.enum(values)` and `t.nullable(value)`. `t.row("table")`
 validates the full row, including its columns and system fields, not just its id.
-Results are readonly. A row id argument is `t.text()`; table methods take
-`Id<"table">`, a branded string type from `patchy/config`, so a handler passes
-`args.id as Id<"requests">` after `import type { Id } from "patchy/config"`.
+Results are readonly. A row id argument is `t.text()`, a plain `string`; table
+methods take `Id<"table">`, a branded string type that `patchy/config` exports,
+so a `string` reaches them only through a cast such as `as Id<"table">`.
 
 A handler's `description` says what it does, and any handler value takes
 `.describe(text)`, such as `t.text().describe("The customer's legal name.")`.
@@ -290,9 +290,10 @@ visible, with a deliberate repair path. Never claim the file write rolled back.
 Declare business error codes in `errors`, then throw `new HandlerError(code,
 details)`. The client exposes `isHandlerError(error, code)` for narrowing declared
 codes. An undeclared code or an invalid result becomes `handler_failed`, and
-so does anything else a handler throws, a plain `Error` included: the page and
-agents get only "The handler failed. Use the correlation id to find its log.",
-and the thrown message stays in the patch's log.
+so does anything else a handler throws, a plain `Error` included, except
+Patchy's own refusals, which keep their codes. The page gets only "The handler
+failed. Use the correlation id to find its log.", an agent the same with the
+correlation id, and the thrown message stays in the patch's log.
 Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
