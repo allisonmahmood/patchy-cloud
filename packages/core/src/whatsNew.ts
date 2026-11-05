@@ -60,6 +60,16 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 38,
+    date: "2026-11-05",
+    through: "1d59c40877c532357904972954c18a35f05d762a",
+    changes: [],
+    behindTheScenes: [
+      "Patchy can now give a prospect a link that lets one person on their team skip the waitlist, for someone whose email nobody knows yet."
+    ],
+    patchChanges: []
+  },
+  {
     id: 37,
     date: "2026-11-04",
     through: "dc89c7008196471b9e1c6bf51d2ef3ea7858088b",
