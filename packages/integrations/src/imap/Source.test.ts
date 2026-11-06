@@ -108,7 +108,10 @@ it.layer(certs)("IMAP source", (it) => {
             Network.Network.of({
               resolve: () => answer,
               admits: (_host, address) => isPublicAddress(address),
-              destination: () => ({ address: "127.0.0.1", port: served.tls }),
+              destination: ({ address }) => {
+                served.dials.push(address);
+                return { address: "127.0.0.1", port: served.tls };
+              },
               ca: () => [mail.ca]
             })
           );
@@ -126,7 +129,7 @@ it.layer(certs)("IMAP source", (it) => {
           security: "tls"
         }).pipe(Effect.flip);
         assert.instanceOf(paired, Source.PortNotAllowed);
-        assert.strictEqual(served.connections(), 0);
+        assert.deepStrictEqual(served.dials, []);
       })
   );
 
@@ -160,7 +163,7 @@ it.layer(certs)("IMAP source", (it) => {
         assert.deepStrictEqual([lookups, dialed], [1, ["93.184.216.34"]]);
         const second = yield* inspect(rebinding).pipe(Effect.flip);
         assert.instanceOf(second, Source.PrivateAddress);
-        assert.deepStrictEqual([lookups, dialed, served.connections()], [2, ["93.184.216.34"], 1]);
+        assert.deepStrictEqual([lookups, dialed], [2, ["93.184.216.34"]]);
       })
   );
 
@@ -261,7 +264,7 @@ it.layer(certs)("IMAP source", (it) => {
           assert.instanceOf(refused, Source.Unavailable, reply);
           if (refused instanceof Source.Unavailable) assert.strictEqual(refused.reply, expected);
           // A referral is never followed: the one connection is the typed host's.
-          assert.strictEqual(served.connections(), 1);
+          assert.deepStrictEqual(served.dials, ["127.0.0.1"]);
         }
         const throttled = yield* against({
           login: () => "BAD Request is throttled. Suggested Backoff Time: 20 milliseconds"
@@ -272,7 +275,7 @@ it.layer(certs)("IMAP source", (it) => {
           login: () => "OK [REFERRAL imap://invoices@other.example.test/] Logged in."
         });
         assert.strictEqual(referred.result._tag, "Success");
-        assert.strictEqual(referred.served.connections(), 1);
+        assert.deepStrictEqual(referred.served.dials, ["127.0.0.1"]);
       })
   );
 

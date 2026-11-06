@@ -122,8 +122,11 @@ export interface Served {
   readonly plain: number;
   /** Every command by its name and first argument; a password is never kept. */
   readonly commands: Array<string>;
-  /** TCP connections accepted, whatever became of them. */
-  readonly connections: () => number;
+  /**
+   * The checked address of every session Patchy dialled through `network`. Counted at the seam,
+   * not the socket: anything else on this machine may connect to a loopback port too.
+   */
+  readonly dials: Array<string>;
 }
 
 const defaults = ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE", "SPECIAL-USE"];
@@ -135,7 +138,7 @@ const defaults = ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE", "SPECIAL-USE"];
 export const serve = (certs: Certificates, script: Script = {}) =>
   Effect.gen(function* () {
     const commands: string[] = [];
-    let accepted = 0;
+    const dials: string[] = [];
     const capabilities = (secure: boolean) =>
       [
         ...(script.capabilities ?? defaults),
@@ -255,7 +258,6 @@ export const serve = (certs: Certificates, script: Script = {}) =>
       );
     const open = new Set<Socket>();
     const track = (socket: Socket) => {
-      accepted += 1;
       open.add(socket);
       socket.once("close", () => open.delete(socket));
     };
@@ -271,16 +273,35 @@ export const serve = (certs: Certificates, script: Script = {}) =>
       tls: yield* listen(implicit),
       plain: yield* listen(plain),
       commands,
-      connections: () => accepted
+      dials
     } satisfies Served;
   });
 
-/** A network that resolves `hosts` to loopback and dials the scripted server for them. */
+/**
+ * A network that resolves `hosts` to loopback and dials the scripted server for them, recording
+ * each dial in `served.dials`.
+ */
 export const network = (
   served: Served,
   certs: Certificates,
   hosts: ReadonlyArray<string> = ["mail.example.test"]
 ) =>
-  ImapNetwork.loopback(() =>
-    hosts.map((host) => ({ host, ports: { 993: served.tls, 143: served.plain }, ca: certs.ca }))
+  Layer.effect(
+    ImapNetwork.Network,
+    Effect.gen(function* () {
+      const loopback = yield* ImapNetwork.Network;
+      return ImapNetwork.Network.of({
+        ...loopback,
+        destination: (target) => {
+          served.dials.push(target.address);
+          return loopback.destination(target);
+        }
+      });
+    })
+  ).pipe(
+    Layer.provide(
+      ImapNetwork.loopback(() =>
+        hosts.map((host) => ({ host, ports: { 993: served.tls, 143: served.plain }, ca: certs.ca }))
+      )
+    )
   );
