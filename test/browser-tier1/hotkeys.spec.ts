@@ -1191,6 +1191,36 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await firedNext(frame, []);
   });
 
+  // A drag that starts or ends on the scrim clicks the dialog itself, as a tap on the scrim does.
+  await test.step("a drag selecting a label out onto the scrim, or one from the scrim into the card, leaves the sheet open", async () => {
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    const label = (await sheet.locator("li.hotkey-row > .hotkey-label").last().boundingBox())!;
+    const scrim = (await sheet.boundingBox())!;
+    const card = { x: label.x + 2, y: label.y + label.height / 2 };
+    const corner = { x: scrim.x + 4, y: scrim.y + 4 };
+    for (const [start, end] of [
+      [card, corner],
+      [corner, card]
+    ] as const) {
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 4 });
+      await page.mouse.up();
+      await expect(sheet).toBeVisible();
+    }
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await expect(view.locator("#rich")).toBeFocused();
+    expect(
+      await frame.evaluate(() => {
+        const selection = document.getSelection()!;
+        return [String(selection), selection.anchorOffset, selection.focusOffset];
+      })
+    ).toEqual(["world", 11, 6]);
+    await firedNext(frame, []);
+  });
+
   await test.step("from a dialog's field, Mod+/ lists the dialog's commands; P 5 runs by key, and the caret and selection come back", async () => {
     await view.locator("#body").focus();
     await page.keyboard.press("c");
