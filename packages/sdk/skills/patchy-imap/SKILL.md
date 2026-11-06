@@ -39,6 +39,26 @@ const [message] = await mail.getMessages([page.messages[0]!.ref]);
 - A message is its summary plus `replyTo`, `text`, `truncated`, `parts` and `encrypted`. `text` is at most 256 KiB, with `truncated` when the bound or the fetch left any out. `parts` lists every part, `{ part, contentType, filename, encodedSize, disposition, contentId }`, a forwarded message's own parts included; `encodedSize` is the size on the wire, about a third over the bytes for base64. `encrypted` is `"smime"` or `"pgp"` for an encrypted body, whose text is then empty: Patchy never decrypts.
 - `text` is the body made plain and cleaned, lossily: plain text where the message has it, else its HTML as text, links kept as `text (url)`; script, style and hidden content dropped on a best-effort basis; Unicode tag characters and bidi overrides removed. No raw source, raw headers or HTML leave Patchy.
 
+## Saving attachments
+
+An attachment's bytes go into one of the patch's own file stores, read `../patchy-files/SKILL.md`, and never through the action itself:
+
+```ts
+const staged = await mail.stageAttachment({ ref: message.ref, part: "2" });
+const { folder, uidValidity, uid } = message.ref;
+await ctx.files.documents.put(
+  `${encodeURIComponent(folder)}.${uidValidity}/${uid}/2`,
+  staged.upload
+);
+```
+
+- `stageAttachment({ ref, part })` takes a part from the message's `parts`, such as `2`, or `3.1` inside a forwarded message, and answers `{ upload, size, sha256, contentType, filename }`. Patchy downloads the part, decoded from its transfer encoding, and stages it for this viewer and this version; the action gets only the Upload, which `ctx.files.<store>.put(name, upload)` adopts once without copying the bytes. `size` is the file's true size and `sha256` its digest, not the part's `encodedSize`.
+- A forwarded message's own part, `message/rfc822`, is a container: it fails `invalid_request` with `details.part`; stage its parts. A part the message doesn't have fails `not_found` with `details.part`, and a message gone from its folder `not_found` alone.
+- A part past 20 MiB fails `too_large`, nothing staged: keep its `filename` and `encodedSize` from `parts` instead.
+- Each viewer has at most 16 staged uploads, 100 MiB in all, per patch, the page's included; past either a stage fails `limit_exceeded`. Adopt each upload as soon as it's staged, before staging the next. An Upload not adopted within the hour is gone: adopting it then fails `not_found`.
+- Name each stored file by the ref and the part, which name the bytes for good. `filename` is the sender's: display text only, at most 255 characters, cleaned of controls and bidi marks. Escape it wherever it's shown, and never build a store name or a path from it.
+- Adopting writes the file at once, whether or not the action goes on to finish: a table write that fails after it leaves the file stored and its row missing. Write files under names a repeated run writes again, as below, so running again fixes it.
+
 ## Refs, cursors and checkpoints
 
 - A ref is `{ connection, folder, uidValidity, uid }`: a message's UID within its folder under one UIDVALIDITY. Store refs to read messages later. A password change keeps refs valid; deleting and recreating the connection doesn't. Message-ID is threading metadata, never identity.
@@ -54,6 +74,169 @@ const [message] = await mail.getMessages([page.messages[0]!.ref]);
 - A mailbox holding years of mail can't be imported in one sitting. Import a window, `since` a recent day, and resume from the stored checkpoint each time someone opens the patch or asks their agent. Older mail is reached live with `searchMessages` and `getMessages`. A full backfill without a viewer waits for tier 3.
 - A `getMessages` answer past 8 MiB fails `too_large`: ask for fewer refs. One message answers `{ error: "too_large" }` in its place only when what Patchy returns for it, its summary, text and parts list, passes 1 MiB encoded, so each answer fits a row of the patch's own tables. Its size on the mail server doesn't count: attachments' bytes are never returned, so mail with a large attachment reads normally.
 - `busy` means Patchy's calls to the mailbox, its server or this host stayed full and nothing was sent: two reads run at once per mailbox. Try again shortly.
+
+## A reference importer
+
+One action that brings a date window of a folder into tables and files, and on every later run carries on from the checkpoint of the last page it finished. Each page's rows go in before its checkpoint, so a run that stops anywhere, from a refusal, a failed write or the action's 60 seconds, loses nothing; files are named by ref and part, so a page read again writes the same rows and files rather than new ones.
+
+- A message gone between its page and `getMessages` answers `not_found`: there's nothing to keep.
+- An attachment past 20 MiB is kept by its filename and its size on the wire, without the file.
+- A stage refused `limit_exceeded` ends the run before the page's checkpoint: the next run reads the page again.
+- A write that fails after its file was adopted fails the run before the checkpoint: the next run stages the file again, writes it over the same name, and writes the row.
+
+`patchy.config.ts`:
+
+```ts
+import { defineConfig, files, table, t } from "patchy/config";
+
+export default defineConfig({
+  name: "invoice-inbox",
+  tier: 2,
+  tables: {
+    messages: table(
+      "One imported message per mailbox ref. key is the folder, UIDVALIDITY and UID joined by slashes; subject, sender and received (ISO timestamp) are its summary as imported.",
+      {
+        key: t.text(),
+        folder: t.text(),
+        uid: t.integer(),
+        subject: t.text().optional(),
+        sender: t.text().optional(),
+        received: t.timestamp().optional()
+      },
+      { indexes: { byKey: { columns: ["key"], unique: true } } }
+    ),
+    attachments: table(
+      "One attachment per imported message key and part. size is in bytes; file is its name in the documents store, or null when it was past 20 MiB and kept by filename and size alone. filename is the sender's, display text only.",
+      {
+        message: t.text(),
+        part: t.text(),
+        filename: t.text().optional(),
+        size: t.integer(),
+        sha256: t.text().optional(),
+        file: t.text().optional()
+      },
+      { indexes: { byMessagePart: { columns: ["message", "part"], unique: true } } }
+    ),
+    imports: table(
+      "One per imported folder: the checkpoint of the last page whose rows are all stored.",
+      { folder: t.text(), checkpoint: t.text() },
+      { indexes: { byFolder: { columns: ["folder"], unique: true } } }
+    )
+  },
+  files: {
+    documents: files(
+      "Imported attachments keyed by <folder, URI-encoded>.<UIDVALIDITY>/<UID>/<part>; the bytes as the sender attached them."
+    )
+  },
+  uses: { mail: { kind: "imap", handle: "invoices" } }
+});
+```
+
+`server/importer.ts`:
+
+```ts
+// Imports a folder's mail from a day on into `messages` and `attachments`, and the files into the
+// `documents` store. Each page's rows go in before its checkpoint, so a run that stops anywhere
+// resumes from the last page it finished; files are named by ref and part, so a page read again
+// writes the same rows and files rather than duplicates.
+import { action, t } from "../patchy/_generated/server.js";
+
+type Ref = {
+  readonly connection: string;
+  readonly folder: string;
+  readonly uidValidity: number;
+  readonly uid: number;
+};
+/** The code Patchy refused a call with, such as `too_large`; undefined for anything else. */
+const codeOf = (error: unknown) =>
+  typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+const keyOf = (ref: Ref) => `${ref.folder}/${ref.uidValidity}/${ref.uid}`;
+/** A store name from the ref and part alone: the sender's filename is display text. */
+const fileOf = (ref: Ref, part: string) =>
+  `${encodeURIComponent(ref.folder)}.${ref.uidValidity}/${ref.uid}/${part}`;
+
+export const importFolder = action({
+  description:
+    "Imports a folder's mail received since a day (YYYY-MM-DD) into the patch's messages and attachments, saving each attachment's file, and carries on from where the last run stopped.",
+  args: { folder: t.text(), since: t.text() },
+  result: t.object({ imported: t.integer(), done: t.boolean(), stopped: t.nullable(t.text()) }),
+  handler: async (ctx, { folder, since }) => {
+    const mail = ctx.connections.mail;
+    const state = (await ctx.tables.imports.list({ index: "byFolder", eq: { folder } })).rows[0];
+    let stateId = state?.id;
+    // From the stored checkpoint, or from `since` the first time. A cursor goes back with the
+    // same arguments its scan started with.
+    const start = state === undefined ? { folder, since } : { folder, after: state.checkpoint };
+    let cursor: string | undefined;
+    let imported = 0;
+    do {
+      const page = await mail.scanMessages({
+        ...start,
+        ...(cursor === undefined ? {} : { cursor })
+      });
+      const read =
+        page.messages.length === 0 ? [] : await mail.getMessages(page.messages.map((m) => m.ref));
+      for (const message of read) {
+        // Gone since the page was read: deleted or moved, so nothing to keep.
+        if ("error" in message) continue;
+        const key = keyOf(message.ref);
+        for (const part of message.parts) {
+          if (part.disposition !== "attachment" || part.contentType === "message/rfc822") continue;
+          const file = fileOf(message.ref, part.part);
+          let stored: { readonly size: number; readonly sha256: string } | null = null;
+          try {
+            const staged = await mail.stageAttachment({ ref: message.ref, part: part.part });
+            // Adopt each upload at once: staged ones count against the viewer until adopted.
+            await ctx.files.documents.put(file, staged.upload);
+            stored = staged;
+          } catch (error) {
+            // Staged uploads are full: stop before this page's checkpoint, and pick the page up
+            // again on the next run.
+            if (codeOf(error) === "limit_exceeded")
+              return { imported, done: false, stopped: "limit_exceeded" };
+            // Past 20 MiB: kept below by its filename and its size on the wire, without the file.
+            if (codeOf(error) !== "too_large") throw error;
+          }
+          const kept = {
+            message: key,
+            part: part.part,
+            filename: part.filename,
+            size: stored?.size ?? part.encodedSize,
+            sha256: stored?.sha256 ?? null,
+            file: stored === null ? null : file
+          };
+          const found = (
+            await ctx.tables.attachments.list({
+              index: "byMessagePart",
+              eq: { message: key, part: part.part }
+            })
+          ).rows[0];
+          if (found === undefined) await ctx.tables.attachments.insert(kept);
+          else await ctx.tables.attachments.update(found.id, kept);
+        }
+        const row = {
+          key,
+          folder,
+          uid: message.ref.uid,
+          subject: message.subject,
+          sender: message.from[0]?.address ?? null,
+          received: message.internalDate
+        };
+        const found = (await ctx.tables.messages.list({ index: "byKey", eq: { key } })).rows[0];
+        if (found === undefined) await ctx.tables.messages.insert(row);
+        else await ctx.tables.messages.update(found.id, row);
+        imported++;
+      }
+      // Every row of this page is stored: only now does the checkpoint cover it.
+      if (stateId === undefined)
+        stateId = (await ctx.tables.imports.insert({ folder, checkpoint: page.checkpoint })).id;
+      else await ctx.tables.imports.update(stateId, { checkpoint: page.checkpoint });
+      cursor = page.cursor ?? undefined;
+    } while (cursor !== undefined);
+    return { imported, done: true, stopped: null };
+  }
+});
+```
 
 ## Nothing can be changed
 

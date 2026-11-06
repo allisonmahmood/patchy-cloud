@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a scripted IMAP server over real sockets, TLS and OpenSSL certificates.
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createTcpServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,6 +14,18 @@ import * as Layer from "effect/Layer";
 import * as ImapNetwork from "../imap/Network.js";
 import * as ImapSessions from "../imap/Sessions.js";
 import * as ImapSource from "../imap/Source.js";
+
+const repo = new URL("../../../../", import.meta.url);
+/** A file of this repo, from its root. */
+export const repoFile = (path: string) => readFileSync(new URL(path, repo), "utf8");
+/** The fenced block of the `patchy-imap` skill that follows the line `label`, such as "`server/importer.ts`:". */
+export const skillBlock = (label: string) => {
+  const skill = repoFile("packages/sdk/skills/patchy-imap/SKILL.md");
+  const at = skill.indexOf(`\n${label}\n`);
+  if (at === -1) throw new Error(`The patchy-imap skill has no block after ${label}.`);
+  const open = skill.indexOf("```ts\n", at);
+  return skill.slice(open + "```ts\n".length, skill.indexOf("\n```", open + 1));
+};
 
 /** What a test's host staging was handed: the bytes, as an action would adopt them. */
 export interface Staged {
