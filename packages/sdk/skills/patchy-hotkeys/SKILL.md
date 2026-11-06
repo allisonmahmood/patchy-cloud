@@ -272,6 +272,9 @@ way:
 - Register no Escape inside, and close from `onCancel`, as `HotkeySheet` does.
 - Or register Escape inside, and close from its `run`.
 
+The example shows opening and Escape. A dialog in a patch also keeps Tab inside, as the end
+of this section says.
+
 ```tsx
 function Dialog(props: { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -292,17 +295,17 @@ function Dialog(props: { close: () => void }) {
 }
 ```
 
-The open state is the parent's: the dialog opens as it mounts and closes as it unmounts,
-which returns focus to where it was while that element is still in the page; if it has gone,
-focus falls to the page's body. Opening and closing in a layout effect keeps focus returning; a
-passive effect's cleanup runs after the dialog has left the page.
+The open state is the parent's: the dialog opens as it mounts and closes as it unmounts, which
+returns focus to where it was if that element can still take focus; if it has gone or is
+disabled, focus falls to the page's body. Opening and closing in a layout effect keeps focus
+returning; a passive effect's cleanup runs after the dialog has left the page.
 
-`showModal()` makes the patch's page inert, not Patchy's page around its frame. Tab past a modal
-dialog's last tabbable element, Shift+Tab before its first, or either in a dialog with none,
-leaves the frame for the shell's controls or the browser's. Keys then go where focus went, so
-Escape can stop reaching the dialog, which stays open. So a modal dialog in a patch keeps Tab
-and Shift+Tab among the tabbable elements it has when the key is pressed, and on the dialog
-itself while it has none.
+`showModal()` makes the patch's page inert, not Patchy's page around its frame. Without more,
+Tab past a modal dialog's last tabbable element, Shift+Tab before its first, or either in a
+dialog with none, can leave the frame for the shell's controls or the browser's. Keys then go
+where focus went, so Escape can stop reaching the dialog, which stays open. So a modal dialog in
+a patch keeps Tab and Shift+Tab among the tabbable elements it has when the key is pressed, and
+on the dialog itself while it has none.
 
 ## The shortcuts sheet
 
