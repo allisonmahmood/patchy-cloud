@@ -837,9 +837,9 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
     }).annotateMerge(
       describe(
         "`patchy dev` reads a connection whose integration reads live in development, as the " +
-          "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read` and Attio's six reads. The machine token is " +
+          "bearer: PostHog's `posthog.query`, Pidgeon's `pidgeon.read`, Attio's six reads and IMAP's six. The machine token is " +
           "the only authority: its person, company and machine are read from the token on every " +
-          "call and again after any wait for one of the project's, address's or workspace's slots, which " +
+          "call and again after any wait for one of the project's, address's, workspace's or mailbox's slots, which " +
           "answers 401 when the token stopped working meanwhile. `connection` only selects: it " +
           "must name a connected connection of the operation's integration in the token's " +
           "company, which any active member reads through. Other operations, including every " +
@@ -848,10 +848,10 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "without its `connection` alias. The runtime's bounds apply: a body over the largest " +
           "live bound, `runtime.pidgeon.bytes`, answers 413 `too_large` as it streams, and each " +
           "operation's arguments keep their own (`runtime.posthog.bytes`, " +
-          "`runtime.pidgeon.bytes`, `runtime.attio.bytes`); each call has the 15-second `integration.deadline` " +
+          "`runtime.pidgeon.bytes`, `runtime.attio.bytes`, `runtime.imap.bytes`); each call has the 15-second `integration.deadline` " +
           "(`timeout`, 504), results keep the operation's own bounds and `runtime.result.bytes`, " +
           "and published patches share the process's slots per PostHog project, per Pidgeon " +
-          "address and per Attio workspace (`busy`). A Pidgeon read checks what comes back against the address and " +
+          "address, per Attio workspace and per IMAP mailbox (`busy`), and IMAP's pool of sessions. A Pidgeon read checks what comes back against the address and " +
           "keeps held mail empty, as a published read does. An Attio read's `connection.revision` names the " +
           "snapshot the repo was generated from: the instance decodes by that snapshot of that connection, " +
           "and a revision it doesn't have answers 403 as an unknown connection does. Calls are limited to " +
@@ -986,6 +986,26 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "Attio's words or a supplied value. Arguments are bounded by `runtime.attio.bytes`, raw answers by " +
           "`attio.call.bytes`, results by `runtime.result.bytes`. Recent calls name the object or list and the " +
           "row count, never a filter, an id or a value. " +
+          "`imap.listFolders { connection }`, `imap.folderStatus { connection, folder }`, " +
+          "`imap.scanMessages { connection, folder, since?, after?, cursor? }`, `imap.listMessages { connection, folder, cursor? }`, " +
+          "`imap.searchMessages { connection, folder, from?, to?, subject?, text?, since?, before?, unseen?, cursor? }` and " +
+          "`imap.getMessages { connection, refs }` read one declared mailbox and never change it: Patchy builds every " +
+          "command, opens folders with EXAMINE and fetches with BODY.PEEK. Folders answer `{ ok, folders, truncated }`; " +
+          "a folder's status `{ ok, messages, unseen, uidValidity, uidNext }`. Pages answer `{ ok, messages, cursor, done }` " +
+          "of at most `imap.page.messages` summaries, a scan also its `checkpoint`; a scan runs oldest first from `since` " +
+          "or past `after` (a checkpoint) under a bound fixed by its first page, lists and searches newest first, each in " +
+          "UID windows within `imap.scan.windows` and `imap.scan.milliseconds`, so a page can be empty and not `done`. " +
+          "A cursor binds its call (`invalid_cursor`). `getMessages` takes 1 to `imap.getMessages.refs` refs " +
+          "`{ connection, folder, uidValidity, uid }` and answers one per ref in order: a message with its text, parts and " +
+          'encryption, or `{ error: "not_found" | "malformed" | "too_large" }`, a message over `runtime.row.bytes` ' +
+          "being `too_large`; past `runtime.result.bytes` in all it refuses `too_large`. A ref, cursor or checkpoint made " +
+          "under another UIDVALIDITY fails `mailbox_reset` with `details.folder`; a ref of another connection " +
+          "`invalid_request`; a folder that can't be opened `not_found` with `details.folder`. A login the mail server " +
+          "refuses pauses the connection, and it and every later call fail `auth_failed` without contacting the server until " +
+          "an admin's Test or Replace password succeeds. Calls wait for `imap.calls.concurrent` per mailbox, " +
+          "`imap.server.concurrent` per mail server and `imap.host.concurrent` per process (`busy`); raw answers are bounded " +
+          "by `imap.call.bytes`, arguments by `runtime.imap.bytes`. Recent calls name the operation and a count, never a " +
+          "subject, a body, an address or a search value. " +
           "`server.call { handler, args, mutationKey? }` names a one-level `module.export`. " +
           'Its declared business refusal is HTTP 200 `{ ok: false, source: "handler", code, details? }`; ' +
           "successful handler data stays inside `{ ok: true, value }`, even when the value resembles a refusal. " +

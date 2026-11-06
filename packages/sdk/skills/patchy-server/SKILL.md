@@ -28,8 +28,8 @@ operating capacity does not. PGlite cannot prove hosted `busy` or `write_conflic
 behavior. Production hosting requires the fleet executor.
 
 Fill `fixtures/shared-<alias>.sql` and `fixtures/postgres-<handle>.sql` with invented
-rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog, Pidgeon and
-Attio have no fixture, and actions read the real project, address or workspace
+rows for `ctx.shared` tables and Postgres `ctx.connections`; PostHog, Pidgeon, Attio
+and IMAP have no fixture, and actions read the real project, address, workspace or mailbox
 through the instance, as the publishing key's person for either viewer. Pidgeon's sends,
 replies and triage are simulated in dev and never sent. Put invented shared files
 in `fixtures/shared-<alias>/`; restart after fixture or config edits.
@@ -38,7 +38,7 @@ output, each thrown error's message and stack, which browsers never receive, and
 each simulated Pidgeon write with its recipients and subject.
 Starting with `--json` records full wide events, invocation JSON and simulated
 writes; `dev logs --json` returns `{ ok, log, text }`. No local runtime log rows
-are written; the instance logs PostHog, Pidgeon and Attio dev reads.
+are written; the instance logs PostHog, Pidgeon, Attio and IMAP dev reads.
 
 When someone says a published patch is broken, read its log before guessing:
 `pnpm patchy logs --failed --json`, or without `--failed` to see what led up to
@@ -131,7 +131,7 @@ options?)` accepts `Uint8Array`, `ArrayBuffer` or `Blob`; `put(name, upload)`
   forced past the types with `access_denied`. Only actions take the flag.
 
 Queries and read-only actions are reads; every other mutation or action is a
-change, even one that writes nothing. So Postgres, PostHog, Pidgeon and Attio reads
+change, even one that writes nothing. So Postgres, PostHog, Pidgeon, Attio and IMAP reads
 count as reads only from a read-only action, and a read-only action can't reply,
 send or triage through Pidgeon.
 
@@ -179,11 +179,12 @@ refuse a later callback even if an earlier read succeeded in the same query.
 Handle that refusal rather than serving an earlier value as current data.
 Member-directory reads are outside the company snapshot.
 
-Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon and Attio calls
+Queries have no `ctx.connections`. Company Postgres, PostHog, Pidgeon, Attio and IMAP calls
 belong in actions, not subscribed queries. The host enforces this kind rule, even
 if code bypasses the TypeScript context. A Pidgeon send takes the draft key the
 page made for that email, passed in the action's arguments; read
-`../patchy-pidgeon/SKILL.md`. Attio's reads are in `../patchy-attio/SKILL.md`.
+`../patchy-pidgeon/SKILL.md`. Attio's reads are in `../patchy-attio/SKILL.md`, and a
+mailbox's in `../patchy-imap/SKILL.md`.
 
 ### Atomic mutations
 
@@ -402,7 +403,7 @@ schema then tells the agent, and a call missing the field is refused before the
 handler runs.
 
 To agents, a query or read-only action is a read and anything else is a change,
-so Postgres, PostHog, Pidgeon and Attio reads count as reads only from a read-only action.
+so Postgres, PostHog, Pidgeon, Attio and IMAP reads count as reads only from a read-only action.
 Clients decide whether to ask the person before a change, and most ask every
 time. Patchy's log records each change and action as "Person via Client",
 failures included. A query that succeeds without `ctx.log` leaves no row; a
@@ -511,6 +512,35 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `imap.parser.literal` | contract | 4194304 | bytes | company | One IMAP literal in a response; past it the session is destroyed | `too_large` | No | release |
 | `imap.parser.response` | contract | 8388608 | bytes | company | One whole IMAP response, its lines and literals together; past it the session is destroyed | `too_large` | No | release |
 | `imap.snapshot.folders` | contract | 5000 | folders | company | Folders one IMAP snapshot keeps, in the order LIST names them; past it the snapshot is marked truncated | None | No | release |
+| `runtime.imap.bytes` | contract | 262144 | bytes | viewer | IMAP operation arguments: a folder, search values, a cursor or checkpoint, and up to 25 refs | `too_large` | No | release |
+| `imap.call.bytes` | contract | 33554432 | bytes | viewer | Raw bytes one IMAP read receives from the mail server across all its commands, its text fetches included; past it the session is destroyed | `too_large` | No | release |
+| `imap.calls.concurrent` | contract | 2 | calls | host | IMAP reads at once in one server process per mailbox, its normalized host and login, shared by dev and published calls and by every connection to that mailbox; an excess call waits within its deadline | `busy` | No | release |
+| `imap.server.concurrent` | contract | 8 | calls | host | IMAP reads at once in one server process per mail server, across its mailboxes; an excess call waits within its deadline | `busy` | No | release |
+| `imap.host.concurrent` | contract | 32 | calls | host | IMAP reads at once in one server process across every mail server, each within imap.call.bytes, which bounds the mail a process downloads at once; an excess call waits within its deadline | `busy` | No | release |
+| `imap.sessions.idle` | contract | 30000 | milliseconds | host | How long a logged-in IMAP session waits in a server process's pool for its next call before it logs out | None | No | release |
+| `imap.sessions.pooled` | contract | 2 | sessions | host | Idle IMAP sessions a server process keeps per connection, across its credential revisions; past it the oldest logs out | None | No | release |
+| `imap.page.messages` | contract | 100 | messages | viewer | Message summaries one scanMessages, listMessages or searchMessages page answers | None | No | release |
+| `imap.window.uids` | contract | 1024 | UIDs | viewer | The width of the first UID window an IMAP page searches; a window that comes up short doubles the next | None | No | release |
+| `imap.window.maxUids` | contract | 16384 | UIDs | viewer | The widest UID window an IMAP page searches, so no search answers more numbers than this | None | No | release |
+| `imap.scan.windows` | contract | 32 | windows | viewer | UID windows one scanMessages, listMessages or searchMessages call searches before it answers what it has, with a cursor to go on | None | No | release |
+| `imap.scan.milliseconds` | contract | 8000 | milliseconds | viewer | Time into one scanMessages, listMessages or searchMessages call after which it starts no further UID window; the first always runs | None | No | release |
+| `imap.getMessages.refs` | contract | 25 | refs | viewer | Refs one IMAP getMessages call reads | None | No | release |
+| `imap.message.text` | contract | 262144 | bytes | viewer | UTF-8 bytes of one message's cleaned text; past it the text is cut on a character and marked truncated | None | No | release |
+| `imap.message.textFetch` | contract | 1048576 | bytes | viewer | Raw bytes of one message's text parts a read fetches, shared between them; past it the text is marked truncated | None | No | release |
+| `imap.message.depth` | contract | 10 | levels | viewer | MIME nesting a message's structure may have, its root counted; deeper answers malformed | None | No | release |
+| `imap.message.parts` | contract | 500 | parts | viewer | Nodes in one message's MIME structure, containers and leaves together; more answers malformed | None | No | release |
+| `imap.summary.addresses` | contract | 100 | addresses | viewer | Addresses kept of one From, To, Cc or Reply-To list; a cut list marks the summary recipientsTruncated | None | No | release |
+| `imap.summary.addressBytes` | contract | 16384 | bytes | viewer | Encoded bytes of one From, To, Cc or Reply-To list; addresses past it are left off and the summary marked recipientsTruncated | None | No | release |
+| `imap.summary.references` | contract | 32 | message IDs | viewer | Message-IDs kept of a References header: the first, which starts the thread, and the latest | None | No | release |
+| `imap.summary.referencesBytes` | contract | 16384 | bytes | viewer | Bytes of a message's References header a summary reads | None | No | release |
+| `imap.summary.flags` | contract | 50 | flags | viewer | Flags kept of one message | None | No | release |
+| `imap.text.name` | contract | 255 | characters | viewer | One filename, content type, content ID or address's display name, as display text | None | No | release |
+| `imap.text.address` | contract | 320 | characters | viewer | One email address; a longer one is left out, never cut | None | No | release |
+| `imap.text.subject` | contract | 1000 | characters | viewer | A message's subject, as display text | None | No | release |
+| `imap.text.messageId` | contract | 255 | characters | viewer | One Message-ID with its angle brackets; a longer one is left out, never cut | None | No | release |
+| `imap.text.flag` | contract | 64 | characters | viewer | One message flag; a longer one is left out | None | No | release |
+| `imap.text.folder` | contract | 1024 | characters | viewer | One folder path in a call, a ref or a listed folder | None | No | release |
+| `imap.text.search` | contract | 256 | characters | viewer | One IMAP search value: from, to, subject or text | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |
