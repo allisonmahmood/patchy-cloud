@@ -1019,4 +1019,60 @@ it.layer(
       assert.strictEqual(ran.length, ops.length);
     }).pipe(Effect.scoped)
   );
+  it.effect("IMAP runs only in actions, read-only ones included, and caps its arguments", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      const maxBytes = yield* ContractLimits.get("runtime.imap.bytes");
+      const ran: Array<string> = [];
+      const ops = [
+        "imap.listFolders",
+        "imap.folderStatus",
+        "imap.scanMessages",
+        "imap.listMessages",
+        "imap.searchMessages",
+        "imap.getMessages"
+      ] as const;
+      const gateway = yield* CallbackGateway.make(
+        Object.fromEntries(
+          ops.map((op): [string, Runtime.JsonHandler] => [
+            op,
+            {
+              kind: "integration",
+              connectionId: () => "imap-connection",
+              run: () =>
+                Effect.sync(() => {
+                  ran.push(op);
+                  return { ok: true, messages: [] };
+                })
+            }
+          ])
+        )
+      ).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const call = (op: (typeof ops)[number]) => ({ op, args: { connection: "mail" } });
+      for (const kind of ["query", "mutation"] as const)
+        for (const op of ops) {
+          const capability = yield* Fixtures.issue(capabilities, { kind });
+          assert.include(yield* gateway.callback(capability.token, capability.attempt, call(op)), {
+            ok: false,
+            code: "access_denied"
+          });
+        }
+      assert.deepStrictEqual(ran, []);
+      // Every IMAP operation reads, so a read-only action may make each.
+      for (const op of ops) {
+        const readOnly = yield* Fixtures.issue(capabilities, { kind: "action", readOnly: true });
+        assert.isTrue((yield* gateway.callback(readOnly.token, readOnly.attempt, call(op))).ok);
+      }
+      assert.deepStrictEqual(ran, [...ops]);
+      const action = yield* Fixtures.issue(capabilities, { kind: "action" });
+      assert.include(
+        yield* gateway.callback(action.token, action.attempt, {
+          op: "imap.searchMessages",
+          args: { connection: "mail", folder: "INBOX", text: "x".repeat(maxBytes) }
+        }),
+        { ok: false, code: "too_large", limitId: "runtime.imap.bytes", value: maxBytes }
+      );
+      assert.strictEqual(ran.length, ops.length);
+    }).pipe(Effect.scoped)
+  );
 });

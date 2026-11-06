@@ -424,6 +424,27 @@ it.layer(fixture)("IMAP reads", (it) => {
     })
   );
 
+  it.effect("destroys a session a literal past the parser's bound broke", () =>
+    Effect.gen(function* () {
+      const folder = inbox(3);
+      folder.messages[0] = { ...folder.messages[0]!, text: "y".repeat(20_000) };
+      const { call, connection, logins } = yield* setup("literal", {
+        mailboxes: [folder],
+        limits: { "imap.parser.literal": 4_096 }
+      });
+      const before = logins();
+      const over = yield* Effect.flip(
+        call("getMessages", {
+          refs: [{ connection: connection.id, folder: "INBOX", uidValidity: 7, uid: 1 }]
+        })
+      );
+      assert.strictEqual(over._tag, "ImapOverflow");
+      assert.include(over, { limitId: "imap.parser.literal", code: "too_large" });
+      yield* call("folderStatus", { folder: "INBOX" });
+      assert.strictEqual(logins() - before, 2);
+    })
+  );
+
   it.effect("destroys a session whose call was interrupted mid-command", () =>
     Effect.gen(function* () {
       let release: () => void = () => {};
