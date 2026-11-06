@@ -293,8 +293,16 @@ function Dialog(props: { close: () => void }) {
 ```
 
 The open state is the parent's: the dialog opens as it mounts and closes as it unmounts,
-which returns focus to where it was. Opening and closing in a layout effect keeps focus
-returning; a passive effect's cleanup runs after the dialog has left the page.
+which returns focus to where it was while that element is still in the page; if it has gone,
+focus falls to the page's body. Opening and closing in a layout effect keeps focus returning; a
+passive effect's cleanup runs after the dialog has left the page.
+
+`showModal()` makes the patch's page inert, not Patchy's page around its frame. Tab past a modal
+dialog's last tabbable element, Shift+Tab before its first, or either in a dialog with none,
+leaves the frame for the shell's controls or the browser's. Keys then go where focus went, so
+Escape can stop reaching the dialog, which stays open. So a modal dialog in a patch keeps Tab
+and Shift+Tab among the tabbable elements it has when the key is pressed, and on the dialog
+itself while it has none.
 
 ## The shortcuts sheet
 
@@ -342,14 +350,12 @@ viewer who finds it once learns Mod+/.
   the page's `<body>`, outside the patch's root element, so restyle it with selectors that don't
   depend on where it's mounted, such as `.hotkey-sheet …`, and set `--look-*` overrides on
   `:root` or `body`.
-- A sheet of your own is a dialog: focus moves into it as it opens, Tab stays inside it, Escape
-  closes it, and focus goes back as it closes. Build it from `useHotkeyList` and `hotkeyKeys`
-  inside a `HotkeyScope`, in a `<dialog>` opened and closed as under Native `<dialog>`, which
-  does all of that except keep Tab inside. Tab past its last control, or Shift+Tab before its
-  first, leaves the patch's frame for Patchy's bar, and keys go there: in Chromium, Escape stops
-  closing the sheet. So Tab on its last control moves to its first, and Shift+Tab on its first to
-  its last. `HotkeySheet` already does all of this, and runs each command from its button or its
-  keys; build your own when its listing or look won't do.
+- A sheet of your own is a modal dialog built from `useHotkeyList` and `hotkeyKeys` inside a
+  `HotkeyScope`. Focus moves into it as it opens, Tab stays inside it as under Native
+  `<dialog>`, and Escape closes it. Closing puts focus back where it was, or, when that element
+  has gone, in the dialog it was in, or on the page. `HotkeySheet` already does all of this and
+  runs each command from its button or its keys; build your own when its listing or look won't
+  do.
 
 ## Showing hotkeys
 
