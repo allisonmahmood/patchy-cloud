@@ -1,6 +1,6 @@
 ---
 name: patchy-imap
-description: Add a company's IMAP mailbox to a patch and read its folders, messages and their text.
+description: Add a company's IMAP mailbox to a patch, read its folders, messages and their text, and save its attachments into the patch's own files.
 ---
 
 # Company mailbox over IMAP
