@@ -54,9 +54,9 @@ import * as RuntimeTest from "../src/test/runtime.js";
  * folder in and resumes after each way a run stops: a stage refused on quota, a message expunged
  * between its page and its read, an attachment past the staged-file bound and a row write that
  * fails after its file was adopted. It saves only what a person calls attachments: a named PDF
- * sent inline and a forwarded message's PDF, never the forward's own text and HTML, nor a logo
- * the HTML body embeds. The staged-file bound is lowered to 100,000 bytes, so a 150,000-byte
- * attachment stands in for one past 20 MiB.
+ * sent inline, a PDF with no name, a forwarded message's PDF and a signed message's PDF, never
+ * the forward's own text and HTML, a logo the HTML body embeds or the signature. The staged-file
+ * bound is lowered to 100,000 bytes, so a 150,000-byte attachment stands in for one past 20 MiB.
  */
 
 const mail = inject("imap");
@@ -196,8 +196,8 @@ const forward = (subject: string, day: string, pdf: Uint8Array) => ({
   ].join("\r\n")
 });
 /**
- * An HTML body showing a logo as a desktop mail client sends it, named image001.png with a Content-ID inside
- * `multipart/related`, and `pdf` attached as part 2.
+ * An HTML body showing a logo as a desktop mail client sends it, named image001.png with a
+ * Content-ID inside `multipart/related`, and `pdf` attached as part 2.
  */
 const withLogo = (subject: string, day: string, pdf: Uint8Array, logo: Uint8Array) => ({
   day,
@@ -221,6 +221,55 @@ const withLogo = (subject: string, day: string, pdf: Uint8Array, logo: Uint8Arra
     "--mixed",
     ...pdfPart(subject, pdf),
     "--mixed--",
+    ""
+  ].join("\r\n")
+});
+/**
+ * An S/MIME signed message: its text and `pdf` as part 1.2, then the detached signature as part 2,
+ * `smime.p7s` attached as mail programs send it.
+ */
+const signed = (subject: string, day: string, pdf: Uint8Array, signature: Uint8Array) => ({
+  day,
+  raw: [
+    ...headers(
+      subject,
+      'multipart/signed; protocol="application/pkcs7-signature"; micalg=sha-256; boundary="signed"'
+    ),
+    "--signed",
+    'Content-Type: multipart/mixed; boundary="content"',
+    "",
+    "--content",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    `${subject}, signed.`,
+    "--content",
+    ...pdfPart(subject, pdf),
+    "--content--",
+    "--signed",
+    'Content-Type: application/pkcs7-signature; name="smime.p7s"',
+    "Content-Transfer-Encoding: base64",
+    'Content-Disposition: attachment; filename="smime.p7s"',
+    "",
+    base64(signature),
+    "--signed--",
+    ""
+  ].join("\r\n")
+});
+/** A text body and `pdf` as part 2 with no name and no disposition, as some scanners send one. */
+const nameless = (subject: string, day: string, pdf: Uint8Array) => ({
+  day,
+  raw: [
+    ...headers(subject, 'multipart/mixed; boundary="scan"'),
+    "--scan",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Scanned document.",
+    "--scan",
+    "Content-Type: application/pdf",
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64(pdf),
+    "--scan--",
     ""
   ].join("\r\n")
 });
@@ -358,12 +407,16 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             randomBytes(6_000),
             randomBytes(7_000),
             randomBytes(8_000),
-            randomBytes(9_000)
+            randomBytes(9_000),
+            randomBytes(10_000),
+            randomBytes(11_000)
           ] as const;
           const logo = randomBytes(1_000);
+          const signature = randomBytes(1_500);
           yield* owned((owner) => owner.mailboxCreate(folder));
-          // UID 1 is before the window; 2 to 8 are in it, 6 a named PDF sent inline, 7 a forward
-          // and 8 a body with an embedded logo; 9 arrives after the first full import.
+          // UID 1 is before the window; 2 to 10 are in it, 6 a named PDF sent inline, 7 a forward,
+          // 8 a body with an embedded logo, 9 a signed message and 10 a PDF with no name; 11
+          // arrives after the first full import.
           yield* append(folder, invoice("Old", "2026-09-20", pdfs[0]));
           yield* append(folder, invoice("Small", "2026-10-02", pdfs[1]));
           yield* append(folder, invoice("Large", "2026-10-03", pdfs[2]));
@@ -372,6 +425,8 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           yield* append(folder, invoice("Inline", "2026-10-05", pdfs[5], "inline"));
           yield* append(folder, forward("Forwarded", "2026-10-05", pdfs[6]));
           yield* append(folder, withLogo("Logo", "2026-10-05", pdfs[7], logo));
+          yield* append(folder, signed("Signed", "2026-10-05", pdfs[8], signature));
+          yield* append(folder, nameless("Scan", "2026-10-05", pdfs[9]));
           const uidValidity = yield* owned(async (owner) => {
             const status = await owner.status(folder, { uidValidity: true });
             return status === false ? 0 : Number(status.uidValidity);
@@ -538,10 +593,11 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
 
           // 3. Run again: the page is read again, rows and files written over, nothing doubled.
           //    Only the attachments are kept: the forward's PDF, not its text, HTML or container,
-          //    and the logo message's PDF, not its logo.
+          //    the logo message's PDF, not its logo, the signed message's PDF, not its signature,
+          //    and the PDF with no name.
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
-            value: { imported: 6, done: true, stopped: null }
+            value: { imported: 8, done: true, stopped: null }
           });
           const attachments = yield* list("attachments");
           assert.sameMembers(
@@ -552,7 +608,9 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
               `${key(5)} 2`,
               `${key(6)} 2`,
               `${key(7)} 2.2`,
-              `${key(8)} 2`
+              `${key(8)} 2`,
+              `${key(9)} 1.2`,
+              `${key(10)} 2`
             ]
           );
           const kept = new Map(attachments.map((row) => [row["message"] as string, row]));
@@ -562,12 +620,15 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             filename: "Large.pdf"
           });
           assert.isAbove(kept.get(key(3))!["size"] as number, BOUND);
+          assert.isNull(kept.get(key(10))!["filename"]);
           for (const [uid, part, pdf] of [
             [2, "2", pdfs[1]],
             [5, "2", pdfs[4]],
             [6, "2", pdfs[5]],
             [7, "2.2", pdfs[6]],
-            [8, "2", pdfs[7]]
+            [8, "2", pdfs[7]],
+            [9, "1.2", pdfs[8]],
+            [10, "2", pdfs[9]]
           ] as const) {
             assert.deepInclude(kept.get(key(uid))!, {
               file: file(uid, part),
@@ -582,26 +643,34 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
               sha256(pdf)
             );
           }
-          assert.sameMembers(yield* stored(), [file(2), file(5), file(6), file(7, "2.2"), file(8)]);
+          assert.sameMembers(yield* stored(), [
+            file(2),
+            file(5),
+            file(6),
+            file(7, "2.2"),
+            file(8),
+            file(9, "1.2"),
+            file(10)
+          ]);
           assert.sameMembers(
             (yield* list("messages")).map((row) => row["key"]),
-            [key(2), key(3), key(5), key(6), key(7), key(8)]
+            [key(2), key(3), key(5), key(6), key(7), key(8), key(9), key(10)]
           );
           assert.lengthOf(yield* list("imports"), 1);
 
           // 4. New mail since: the next run starts from the checkpoint and imports only it.
-          yield* append(folder, invoice("Later", "2026-10-06", pdfs[8]));
+          yield* append(folder, invoice("Later", "2026-10-06", pdfs[10]));
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
             value: { imported: 1, done: true, stopped: null }
           });
           assert.strictEqual(
             sha256(
-              (yield* as(files["files.get"].run({ store: "documents", name: file(9) }))).bytes
+              (yield* as(files["files.get"].run({ store: "documents", name: file(11) }))).bytes
             ),
-            sha256(pdfs[8])
+            sha256(pdfs[10])
           );
-          assert.lengthOf(yield* list("messages"), 7);
+          assert.lengthOf(yield* list("messages"), 9);
         })
     );
   }

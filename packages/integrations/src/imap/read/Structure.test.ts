@@ -221,6 +221,52 @@ describe("which parts are attachments", () => {
     );
   });
 
+  it("counts a file with no name by its type, never a nameless text part", () => {
+    // A PDF a scanner sends with no name and no disposition, beside the body and on its own.
+    const nameless = leaf("application/pdf", { encoding: "base64", size: 4000 });
+    const structure = read(multipart("mixed", [plain, nameless]));
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, nameless])), ["2"]);
+    assert.isNull(structure.parts[1]!.filename);
+    assert.deepStrictEqual(attachments(nameless), ["1"]);
+    // Text with no name and no disposition that isn't the body is shown, not listed.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, leaf("text/calendar", { charset: "utf-8" })])),
+      []
+    );
+  });
+
+  it("never counts a signed message's signature, S/MIME or PGP, but counts what it signs", () => {
+    const smime = (type: string) =>
+      leaf(type, { encoding: "base64", disposition: "attachment", filename: "smime.p7s" });
+    assert.deepStrictEqual(
+      attachments(
+        multipart("signed", [
+          multipart("mixed", [plain, pdf]),
+          smime("application/pkcs7-signature")
+        ])
+      ),
+      ["1.2"]
+    );
+    assert.deepStrictEqual(
+      attachments(multipart("signed", [plain, smime("application/x-pkcs7-signature")])),
+      []
+    );
+    const pgp = leaf("application/pgp-signature", {
+      disposition: "attachment",
+      filename: "OpenPGP_signature.asc"
+    });
+    assert.deepStrictEqual(attachments(multipart("signed", [plain, pgp])), []);
+    assert.deepStrictEqual(
+      attachments(multipart("signed", [multipart("mixed", [plain, pdf]), pgp])),
+      ["1.2"]
+    );
+    // A forwarded message's signature follows the same rule.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, message(multipart("signed", [plain, pgp]))])),
+      []
+    );
+  });
+
   it("never counts the body: its text, its HTML twin or its ciphertext", () => {
     assert.deepStrictEqual(attachments(multipart("alternative", [plain, html])), []);
     assert.deepStrictEqual(
