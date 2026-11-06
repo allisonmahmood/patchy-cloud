@@ -717,12 +717,14 @@ function Sheet(props: {
       onCancel: props.onClose,
       // The dialog is the scrim around the card, so a click on the dialog itself is outside it.
       // A drag into or out of the card, such as one selecting a label, clicks the dialog too, so a
-      // tap closes the sheet only when its press went down and came up on the scrim.
+      // tap closes the sheet only when its press went down and came up on the scrim. Where it came
+      // up is hit-tested: a touch's release targets the element its press went down on.
       onPointerDown: (event: PointerEvent) => {
         tap.current = event.target === event.currentTarget;
       },
       onPointerUp: (event: PointerEvent) => {
-        tap.current &&= event.target === event.currentTarget;
+        tap.current &&=
+          document.elementFromPoint(event.clientX, event.clientY) === event.currentTarget;
       },
       onClick: (event: MouseEvent) => {
         if (tap.current && event.target === event.currentTarget) props.onClose();
