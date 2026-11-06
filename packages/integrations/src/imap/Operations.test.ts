@@ -583,6 +583,44 @@ it.layer(fixture)("IMAP reads", (it) => {
     })
   );
 
+  it.effect("reads 25 messages of about 1 MB each in one text fetch, within the call's bytes", () =>
+    Effect.gen(function* () {
+      const body = "Please pay this invoice within 30 days.\n".repeat(25_000).slice(0, 1_000_000);
+      const folder: ImapTest.ScriptedFolder = {
+        path: "INBOX",
+        uidValidity: 7,
+        messages: Array.from({ length: 25 }, (_, index) => ({
+          uid: index + 1,
+          day: day(index),
+          subject: `Invoice ${index + 1}`,
+          from: "billing@example.com",
+          text: body
+        }))
+      };
+      const { served, call, connection } = yield* setup("long", { mailboxes: [folder] });
+      const refs = folder.messages.map(({ uid }) => ({
+        connection: connection.id,
+        folder: "INBOX",
+        uidValidity: 7,
+        uid
+      }));
+      const read = (yield* call("getMessages", { refs })) as {
+        readonly messages: ReadonlyArray<{ readonly text?: string; readonly truncated?: boolean }>;
+      };
+      assert.lengthOf(read.messages, 25);
+      for (const message of read.messages) {
+        assert.isTrue(message.truncated);
+        assert.isAbove(Buffer.byteLength(message.text ?? ""), 200_000);
+        assert.isAtMost(Buffer.byteLength(message.text ?? ""), 256 * 1024);
+      }
+      // One FETCH asked for every body; each message came back as its own response.
+      assert.lengthOf(
+        served.lines.filter((line) => line.includes("BODY.PEEK[1]<0.")),
+        1
+      );
+    })
+  );
+
   it.effect("refuses busy with nothing sent while the mailbox's calls are full", () =>
     Effect.gen(function* () {
       const releases: Array<() => void> = [];
