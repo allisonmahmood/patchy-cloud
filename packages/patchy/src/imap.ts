@@ -89,8 +89,8 @@ export interface ImapUnread {
   readonly error: "not_found" | "malformed" | "too_large";
 }
 
-/** A calendar day, `YYYY-MM-DD`, compared with internal dates. */
-export type ImapDay = `${number}-${number}-${number}`;
+/** A calendar day, `YYYY-MM-DD`, compared with internal dates; another form fails `invalid_request`. */
+export type ImapDay = string;
 
 export interface ImapPage {
   readonly messages: readonly ImapSummary[];
