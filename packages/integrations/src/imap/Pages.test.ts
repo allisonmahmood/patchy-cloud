@@ -92,6 +92,9 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
         mailbox.reply = "OK Logged in";
         const html = yield* Effect.promise(() => tested.text());
         assert.include(html, "Paused: the mail server refused the password");
+        assert.include(html, '<span class="tag">Paused · password refused</span>');
+        const index = yield* read("/company/connections", owner.user);
+        assert.include(index.html, "Paused · password refused");
         assert.include(html, `href="${path}/rotate"`);
         assert.include(html, "Replace password…");
         const retested = yield* send(`${path}/test`, post(owner.user));

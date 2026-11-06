@@ -448,4 +448,38 @@ it.layer(layer)("connections group", (it) => {
       assert.deepInclude(current.offered ?? [], { integration: "attio", connected: true });
     })
   );
+  it.effect("lists an IMAP connection only to a caller that decodes IMAP", () =>
+    Effect.gen(function* () {
+      const tokens = yield* MachineTokens.MachineTokens;
+      const api = yield* client(
+        (yield* tokens.mint({ userId: "connections-foreign", name: "IMAP reader" })).token
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+        status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('conn_invoices', 'cmp_foreign_connections', 'imap', 'invoices', 'Invoices', 'company',
+          'connected', ${JSON.stringify({ host: "mail.example.test", port: 993, security: "tls", username: "invoices@example.test" })}::jsonb,
+          'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
+      // A CLI from before IMAP names the integrations it decodes, and IMAP isn't one.
+      const older = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon,attio" }
+      });
+      assert.notInclude(
+        older.connections.map((connection) => connection.integration),
+        "imap"
+      );
+      const current = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon,attio,imap", all: true }
+      });
+      assert.deepInclude(current.connections, {
+        id: "conn_invoices",
+        handle: "invoices",
+        integration: "imap",
+        description: "Invoices",
+        status: "connected",
+        hint: "patchy add imap/invoices"
+      });
+      assert.deepInclude(current.offered ?? [], { integration: "imap", connected: true });
+    })
+  );
 });

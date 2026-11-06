@@ -38,6 +38,9 @@ export const results = {
 
 const security = (value: Source.Display["security"]) => (value === "tls" ? "TLS" : "STARTTLS");
 
+/** The label beside a paused connection's name, on the index and its page. */
+export const tag = (connection: Connection) =>
+  connection.display.paused === undefined ? undefined : "Paused · password refused";
 export const source = (connection: Connection) =>
   `${connection.display.username} at ${connection.display.host}`;
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => [

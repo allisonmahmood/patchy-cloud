@@ -120,7 +120,11 @@ const about = (
       : connection.integration === "attio"
         ? { source: AttioPage.source(connection), facts: AttioPage.facts(connection) }
         : connection.integration === "imap"
-          ? { source: ImapPage.source(connection), facts: ImapPage.facts(connection) }
+          ? {
+              source: ImapPage.source(connection),
+              facts: ImapPage.facts(connection),
+              tag: ImapPage.tag(connection)
+            }
           : {
               source: PidgeonPage.source(connection),
               facts: PidgeonPage.facts(connection),
