@@ -1577,8 +1577,10 @@ uidNext }` from `STATUS`, after a fresh `EXAMINE` of the folder.
   checkpoint, and a later scan after it fixes a fresh bound. `since`, a day,
   becomes a lower UID bound once: `UID SEARCH RETURN (MIN) SINCE` where the
   server offers ESEARCH, otherwise the first bounded UID window upward that
-  holds a match; from there every UID is read whatever its date. Nothing since
-  the day answers an empty page that's `done`.
+  holds a match; from there every UID is read whatever its date. A walk upward
+  stops at its share of windows or time like any page, so it can answer an
+  empty page that isn't `done`, with a cursor that carries on looking; only
+  nothing since the day answers an empty page that's `done`.
 - `listMessages({ folder, cursor? })` pages newest first by UID, arrival order.
 - `searchMessages({ folder, from?, to?, subject?, text?, since?, before?,
 unseen?, cursor? })` searches the server newest first. `text` matches the
