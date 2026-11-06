@@ -257,6 +257,8 @@ export interface Served {
    * not the socket: anything else on this machine may connect to a loopback port too.
    */
   readonly dials: Array<string>;
+  /** Sessions logged in now: their login was answered OK and their socket isn't closed yet. */
+  readonly signedIn: () => number;
 }
 
 const defaults = ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE", "SPECIAL-USE"];
@@ -277,8 +279,15 @@ export const serve = (certs: Certificates, script: Script = {}) =>
         ...(!secure ? ["LOGINDISABLED"] : [])
       ].join(" ");
     const login = script.login ?? (() => "OK Logged in");
+    const signedIn = new Set<Socket>();
     const session = (socket: Socket, secure: boolean, greet: boolean) => {
       socket.on("error", () => {});
+      socket.once("close", () => signedIn.delete(socket));
+      const loggedIn = (reply: string | Promise<string>) =>
+        Promise.resolve(reply).then((text) => {
+          if (text.startsWith("OK") && !socket.destroyed) signedIn.add(socket);
+          return text;
+        });
       const say = (line: string) => socket.write(`${line}\r\n`);
       if (greet)
         say(
@@ -443,11 +452,11 @@ export const serve = (certs: Certificates, script: Script = {}) =>
               );
               return;
             case "LOGIN":
-              answer(tag, login("LOGIN"));
+              answer(tag, loggedIn(login("LOGIN")));
               break;
             case "AUTHENTICATE":
               say("+ ");
-              continuation = () => answer(tag, login("AUTHENTICATE"));
+              continuation = () => answer(tag, loggedIn(login("AUTHENTICATE")));
               break;
             case "NAMESPACE":
               say('* NAMESPACE (("" "/")) NIL NIL');
@@ -528,7 +537,8 @@ export const serve = (certs: Certificates, script: Script = {}) =>
       plain: yield* listen(plain),
       commands,
       lines,
-      dials
+      dials,
+      signedIn: () => signedIn.size
     } satisfies Served;
   });
 

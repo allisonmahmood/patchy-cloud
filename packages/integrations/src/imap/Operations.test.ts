@@ -77,7 +77,7 @@ interface Setup {
 const setup = (handle: string, options: Setup = {}) =>
   Effect.gen(function* () {
     const certs = yield* Certs;
-    const mailbox: { reply: string } = { reply: "OK Logged in" };
+    const mailbox: { reply: string | Promise<string> } = { reply: "OK Logged in" };
     const mailboxes = options.mailboxes ?? [inbox(5)];
     const served = yield* ImapTest.serve(certs, {
       capabilities: options.capabilities ?? [
@@ -147,6 +147,15 @@ const assertReadOnly = (lines: ReadonlyArray<string>) => {
     assert.notMatch(line, /BODY\[/i, line);
   }
 };
+
+/** Waits in real time until `done` holds, for at most three seconds. */
+const until = (done: () => boolean) =>
+  Effect.gen(function* () {
+    for (let tries = 0; !done(); tries++) {
+      if (tries === 150) return yield* Effect.die(new Error("Timed out waiting."));
+      yield* TestClock.withLive(Effect.sleep("20 millis"));
+    }
+  });
 
 const messages = (value: unknown) =>
   (value as { readonly messages: ReadonlyArray<{ readonly subject: string }> }).messages;
@@ -465,6 +474,72 @@ it.layer(fixture)("IMAP reads", (it) => {
       release();
       yield* call("folderStatus", { folder: "INBOX" });
       assert.strictEqual(logins() - before, 2);
+    })
+  );
+
+  it.effect("logs out a session it logged in when the call is interrupted before using it", () =>
+    Effect.gen(function* () {
+      const { served, call, mailbox, logins } = yield* setup("abandoned");
+      // Interrupted while the server holds the login: once it's answered, the session closes.
+      let answer: (reply: string) => void = () => {};
+      mailbox.reply = new Promise<string>((resolve) => {
+        answer = resolve;
+      });
+      const before = logins();
+      const logging = yield* Effect.forkChild(call("listFolders", {}));
+      yield* until(() => logins() > before);
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(logging));
+      mailbox.reply = "OK Logged in";
+      answer("OK Logged in");
+      yield* Fiber.join(interrupting);
+      yield* until(() => served.signedIn() === 0);
+      // Interrupted at the recheck after a new login, before any command: it closes too.
+      let rechecks = 0;
+      const checking = yield* Effect.forkChild(
+        call(
+          "listFolders",
+          {},
+          { recheck: Effect.suspend(() => (++rechecks === 2 ? Effect.never : Effect.void)) }
+        )
+      );
+      yield* until(() => rechecks === 2);
+      assert.strictEqual(served.signedIn(), 1);
+      yield* Fiber.interrupt(checking);
+      yield* until(() => served.signedIn() === 0);
+    })
+  );
+
+  it.effect("admits a mailbox's waiters in arrival order; an interrupted one holds nothing", () =>
+    Effect.gen(function* () {
+      let hold = true;
+      const releases: Array<() => void> = [];
+      const { served, call } = yield* setup("queued", {
+        limits: { "imap.calls.concurrent": 1 },
+        before: (line) =>
+          hold && /^\S+ UID SEARCH/.test(line)
+            ? new Promise<void>((resolve) => releases.push(resolve))
+            : undefined
+      });
+      const arrive = <A, E, R>(read: Effect.Effect<A, E, R>) =>
+        Effect.tap(Effect.forkChild(read), () => TestClock.withLive(Effect.sleep("200 millis")));
+      const first = yield* arrive(call("listMessages", { folder: "INBOX" }));
+      const gaveUp = yield* arrive(call("folderStatus", { folder: "INBOX" }));
+      const second = yield* arrive(call("listFolders", {}));
+      const third = yield* arrive(call("folderStatus", { folder: "INBOX" }));
+      yield* Fiber.interrupt(gaveUp);
+      const sent = served.lines.length;
+      hold = false;
+      for (const release of releases) release();
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      yield* Fiber.join(third);
+      const after = served.lines.slice(sent);
+      const listed = after.findIndex((line) => line.startsWith("LIST"));
+      assert.isAtLeast(listed, 0);
+      assert.isAbove(
+        after.findIndex((line) => line.startsWith("EXAMINE")),
+        listed
+      );
     })
   );
 

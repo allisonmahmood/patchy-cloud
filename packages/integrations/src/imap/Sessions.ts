@@ -2,16 +2,18 @@
  * The logged-in sessions IMAP reads borrow, and the gates in front of them. A call first waits
  * for the gates of its mailbox (normalized host and login, so duplicate connections to one mailbox
  * share it), its mail server and this process, within its deadline, and is refused `busy` with
- * nothing sent when they stay full. Then it checks its caller and connection again and loads the
- * login as it stands, takes an idle session of that exact connection and credential revision or
- * opens one, and checks the caller and connection once more once a new socket is logged in.
+ * nothing sent when they stay full. Each gate admits its waiters in arrival order. Then it checks
+ * its caller and connection again and loads the login as it stands, takes an idle session of that
+ * exact connection and credential revision or opens one, and checks the caller and connection
+ * once more once a new socket is logged in.
  *
- * A call owns its session until it settles. The session goes back to the pool only when the call
- * succeeded or failed on a command that finished; a deadline, an interruption, a parser error, a
- * byte budget passed or a broken connection destroys it instead. A session that breaks mid-call is
- * retried once on a fresh one, whose own EXAMINE checks UIDVALIDITY again; a refused login never
- * is. Idle sessions log out after `imap.sessions.idle`, and a session whose socket closed or
- * errored is never lent again.
+ * A call owns its session from the moment it's logged in or taken from the pool until the call
+ * settles, interrupted or not. The session goes back to the pool only when the call succeeded or
+ * failed on a command that finished; a deadline, an interruption, a refused recheck, a parser
+ * error, a byte budget passed or a broken connection destroys it instead. A session that breaks
+ * mid-call is retried once on a fresh one, whose own EXAMINE checks UIDVALIDITY again; a refused
+ * login never is. Idle sessions log out after `imap.sessions.idle`, and a session whose socket
+ * closed or errored is never lent again.
  */
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { ContractLimits } from "@patchy/limits";
@@ -26,7 +28,6 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import type { ImapFlow, ImapFlowError } from "imapflow";
 import * as ImapSource from "./Source.js";
 
@@ -163,13 +164,36 @@ interface Entry {
   timer: Fiber.Fiber<void> | undefined;
 }
 
-const gate = (gates: Map<string, Semaphore.Semaphore>, key: string, size: number) => {
+/**
+ * Permits for calls, handed out in arrival order: a freed permit goes straight to the call that
+ * has waited longest, so a waiter never loses a free permit to a call that just arrived.
+ */
+interface Gate {
+  free: number;
+  readonly waiting: Array<Waiter>;
+}
+/** A call waiting at a gate. Once `granted`, the permit is the call's, woken or not. */
+interface Waiter {
+  granted: boolean;
+  wake: (() => void) | undefined;
+}
+
+const gate = (gates: Map<string, Gate>, key: string, size: number) => {
   let found = gates.get(key);
   if (found === undefined) {
-    found = Semaphore.makeUnsafe(size);
+    found = { free: size, waiting: [] };
     gates.set(key, found);
   }
   return found;
+};
+
+const release = (gate: Gate) => {
+  const next = gate.waiting.shift();
+  if (next === undefined) gate.free++;
+  else {
+    next.granted = true;
+    next.wake?.();
+  }
 };
 
 export const make = Effect.gen(function* () {
@@ -184,9 +208,9 @@ export const make = Effect.gen(function* () {
     callBytes: ContractLimits.get("imap.call.bytes"),
     deadlineMs: ContractLimits.get("integration.deadline")
   });
-  const mailboxes = new Map<string, Semaphore.Semaphore>();
-  const servers = new Map<string, Semaphore.Semaphore>();
-  const everyMailbox = Semaphore.makeUnsafe(limits.perProcess);
+  const mailboxes = new Map<string, Gate>();
+  const servers = new Map<string, Gate>();
+  const everyMailbox: Gate = { free: limits.perProcess, waiting: [] };
   const idle = new Map<string, Entry[]>();
 
   /** Closes a session: logs out a clean one, destroys a broken or unfinished one at once. */
@@ -248,11 +272,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** A new logged-in session for these settings, metered for calls. */
+  /**
+   * A new logged-in session for these settings, metered for calls. Runs masked: only the login
+   * runs under `restore`, and one that doesn't finish logs out of whatever it opened.
+   */
   const open = Effect.fn("ImapSessions.open")(function* (
     key: string,
     revision: number,
-    settings: ImapSource.Settings
+    settings: ImapSource.Settings,
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
   ) {
     const scope = Scope.makeUnsafe();
     const meter: ImapSource.Meter = {
@@ -260,8 +288,7 @@ export const make = Effect.gen(function* () {
       limit: limits.callBytes,
       limitId: "imap.call.bytes"
     };
-    const client = yield* source.open(settings, meter).pipe(
-      Scope.provide(scope),
+    const client = yield* restore(source.open(settings, meter).pipe(Scope.provide(scope))).pipe(
       Effect.onError(() => Scope.close(scope, Exit.void))
     );
     const entry: Entry = {
@@ -286,23 +313,42 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Takes a permit, as Semaphore's own `withPermits` does: only the waiting may be interrupted,
-   * never the taking, so an interrupted caller never holds a permit it won't release.
+   * Runs `effect` holding a permit of `gate`, waiting for one until shortly before the deadline.
+   * Only the waiting may be interrupted, never the taking or the giving back: a waiter handed a
+   * permit just as it's interrupted passes it on, so an interrupted call never holds one.
    */
   const held =
-    (semaphore: Semaphore.Semaphore, limitId: Busy["limitId"], deadline: number) =>
+    (gate: Gate, limitId: Busy["limitId"], deadline: number) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy, R> =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          while (!(yield* semaphore.takeIfAvailable(1))) {
+          if (gate.free > 0 && gate.waiting.length === 0) gate.free--;
+          else {
             const budget = deadline - GATE_RESERVE_MS - (yield* Clock.currentTimeMillis);
             if (budget <= 0) return yield* new Busy({ limitId });
-            const freed = yield* restore(
-              semaphore.withPermits(1)(Effect.void).pipe(Effect.timeoutOption(budget))
+            const waiter: Waiter = { granted: false, wake: undefined };
+            gate.waiting.push(waiter);
+            const waited = yield* Effect.exit(
+              restore(
+                Effect.callback<void>((resume) => {
+                  if (waiter.granted) resume(Effect.void);
+                  else waiter.wake = () => resume(Effect.void);
+                }).pipe(Effect.timeoutOption(budget))
+              )
             );
-            if (Option.isNone(freed)) return yield* new Busy({ limitId });
+            if (waiter.granted) {
+              if (Exit.isFailure(waited)) {
+                release(gate);
+                return yield* Effect.failCause(waited.cause);
+              }
+            } else {
+              gate.waiting.splice(gate.waiting.indexOf(waiter), 1);
+              if (Exit.isFailure(waited)) return yield* Effect.failCause(waited.cause);
+              return yield* new Busy({ limitId });
+            }
           }
-        }).pipe(Effect.andThen(restore(effect).pipe(Effect.ensuring(semaphore.release(1)))))
+          return yield* restore(effect).pipe(Effect.ensuring(Effect.sync(() => release(gate))));
+        })
       );
 
   const lease: Sessions["Service"]["lease"] = (lease, use) => {
@@ -330,41 +376,50 @@ export const make = Effect.gen(function* () {
               yield* WideEvents.add({ connectionWaitMs: start - queued });
               const admitted = yield* lease.admit;
               const milliseconds = Math.max(1, Math.min(lease.deadline - start, limits.deadlineMs));
-              /** One try on a session: an idle one unless `fresh`, else a new one. */
+              /**
+               * One try on a session: an idle one unless `fresh`, else a new one. The try owns the
+               * session from the moment it has one, masked so no interruption falls between, and
+               * only how it exits decides whether the session goes back or is closed.
+               */
               const attempt = (fresh: boolean) =>
-                Effect.gen(function* () {
-                  const found = fresh
-                    ? Option.none<Entry>()
-                    : yield* checkout(key, admitted.credentialRevision);
-                  const entry = Option.isSome(found)
-                    ? found.value
-                    : yield* open(key, admitted.credentialRevision, admitted.settings);
-                  yield* WideEvents.enrich({
-                    imapSession: Option.isSome(found) ? "pooled" : "opened"
-                  });
-                  yield* WideEvents.add({ attempts: 1 });
-                  if (Option.isNone(found))
-                    yield* lease.opened.pipe(Effect.onError(() => close(entry, true)));
-                  entry.meter.received = 0;
-                  entry.meter.limit = limits.callBytes;
-                  entry.meter.limitId = "imap.call.bytes";
-                  delete entry.meter.overflow;
-                  return yield* use({
-                    client: entry.client,
-                    host: entry.host,
-                    meter: entry.meter
-                  }).pipe(
-                    Effect.onExit((exit) =>
-                      Effect.andThen(
-                        WideEvents.add({ responseBytes: entry.meter.received }),
-                        Exit.isSuccess(exit) ||
-                          Option.exists(Exit.findErrorOption(exit), lease.reusable)
-                          ? giveBack(entry)
-                          : close(entry, true)
+                Effect.uninterruptibleMask((restore) =>
+                  Effect.gen(function* () {
+                    const found = fresh
+                      ? Option.none<Entry>()
+                      : yield* checkout(key, admitted.credentialRevision);
+                    const entry = Option.isSome(found)
+                      ? found.value
+                      : yield* open(key, admitted.credentialRevision, admitted.settings, restore);
+                    entry.meter.received = 0;
+                    entry.meter.limit = limits.callBytes;
+                    entry.meter.limitId = "imap.call.bytes";
+                    delete entry.meter.overflow;
+                    return yield* restore(
+                      Effect.gen(function* () {
+                        yield* WideEvents.enrich({
+                          imapSession: Option.isSome(found) ? "pooled" : "opened"
+                        });
+                        yield* WideEvents.add({ attempts: 1 });
+                        if (Option.isNone(found)) yield* lease.opened;
+                        return yield* use({
+                          client: entry.client,
+                          host: entry.host,
+                          meter: entry.meter
+                        });
+                      })
+                    ).pipe(
+                      Effect.onExit((exit) =>
+                        Effect.andThen(
+                          WideEvents.add({ responseBytes: entry.meter.received }),
+                          Exit.isSuccess(exit) ||
+                            Option.exists(Exit.findErrorOption(exit), lease.reusable)
+                            ? giveBack(entry)
+                            : close(entry, true)
+                        )
                       )
-                    )
-                  );
-                });
+                    );
+                  })
+                );
               // A session that broke mid-call is tried once more on a fresh one.
               return yield* attempt(false).pipe(
                 Effect.catchIf(isSessionLost, () => attempt(true)),
