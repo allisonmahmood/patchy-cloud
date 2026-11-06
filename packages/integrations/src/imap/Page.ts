@@ -158,6 +158,7 @@ export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
   ["imap_certificate_untrusted", "host"],
   ["imap_certificate_mismatch", "host"],
   ["imap_not_imap4", "host"],
+  ["imap_preauth", "host"],
   ["imap_port_not_allowed", "port"],
   ["imap_starttls_unavailable", "port"],
   ["imap_login_disabled", "username"],

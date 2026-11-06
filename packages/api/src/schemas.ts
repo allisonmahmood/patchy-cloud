@@ -699,7 +699,12 @@ export const ConnectionSummary = Schema.Struct({
   hint: Schema.String,
   reason: Schema.optionalKey(Schema.Literal("not_connected")),
   /** A Pidgeon connection made with a test key: its mail stays in Pidgeon. Absent otherwise. */
-  test: Schema.optionalKey(Schema.Literal(true))
+  test: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * An IMAP connection whose mail server refused its password: every call fails `auth_failed`
+   * until an admin's Test or Replace password logs in. Absent otherwise.
+   */
+  paused: Schema.optionalKey(Schema.Literal(true))
 });
 
 export const Connections = Schema.Struct({
@@ -727,7 +732,11 @@ export const PostgresConnectionDetail = detail("postgres", Snapshot.fields);
 export const PostHogConnectionDetail = detail("posthog", PostHogSnapshot.fields);
 export const PidgeonConnectionDetail = detail("pidgeon", PidgeonSnapshot.fields);
 export const AttioConnectionDetail = detail("attio", AttioSnapshot.fields);
-export const ImapConnectionDetail = detail("imap", ImapSnapshot.fields);
+export const ImapConnectionDetail = Schema.Struct({
+  ...detail("imap", ImapSnapshot.fields).fields,
+  /** When its mail server refused the password; calls fail `auth_failed` until it's fixed. */
+  paused: Schema.optionalKey(Schema.Struct({ at: Schema.String }))
+});
 /** One connection and its current metadata, in its integration's shape. */
 export const ConnectionDetail = Schema.Union([
   PostgresConnectionDetail,

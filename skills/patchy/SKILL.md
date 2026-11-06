@@ -63,7 +63,7 @@ connection; with several, it lists choices from `list connections` and stops.
 
 All levels accept `--json`. Top-level success is `{ patches, connections }`
 merged from two routes; the other levels print the wire body with no `ok`
-wrapper. Branch on `declarable` and `reason`, never parse the human `hint`.
+wrapper. Branch on `declarable`, `reason` and `paused` (an IMAP connection whose password its server refused, which fails every call until an admin fixes it), never parse the human `hint`.
 Unshared tables and stores name their owner; off sources need restoration
 before use. Disconnected connections point to the admin's
 browser at `/company/connections`. Listing grants no access and reads no rows

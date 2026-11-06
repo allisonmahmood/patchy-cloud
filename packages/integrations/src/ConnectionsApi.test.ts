@@ -482,4 +482,34 @@ it.layer(layer)("connections group", (it) => {
       assert.deepInclude(current.offered ?? [], { integration: "imap", connected: true });
     })
   );
+  it.effect(
+    "says a paused IMAP connection is paused, with the way out, in its row and detail",
+    () =>
+      Effect.gen(function* () {
+        const tokens = yield* MachineTokens.MachineTokens;
+        const api = yield* client(
+          (yield* tokens.mint({ userId: "connections-foreign", name: "Paused reader" })).token
+        );
+        const sql = yield* SqlClient.SqlClient;
+        const at = "2026-11-05T09:00:00.000Z";
+        yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+        status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('conn_paused', 'cmp_foreign_connections', 'imap', 'paused', 'Paused mailbox', 'company',
+          'connected', ${JSON.stringify({ host: "mail.example.test", port: 993, security: "tls", username: "paused@example.test", logins: 1, paused: { at, reply: null, during: "call" } })}::jsonb,
+          'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
+        yield* sql`INSERT INTO connection_snapshots (company_id, connection_id, integration, revision, snapshot)
+        VALUES ('cmp_foreign_connections', 'conn_paused', 'imap', 1,
+          ${JSON.stringify({ version: 1, host: "mail.example.test", port: 993, security: "tls", username: "paused@example.test", capabilities: [], folders: [], truncated: false })}::jsonb)`;
+        const listed = yield* api.listConnections({ query: { integrations: "imap" } });
+        const row = listed.connections.find((connection) => connection.id === "conn_paused");
+        assert.deepInclude(row, { status: "connected", paused: true });
+        assert.include(row?.hint, "Paused: its mail server refused the password");
+        assert.include(row?.hint, "Test it or replace the password at /company/connections");
+        assert.notInclude(row?.hint, "patchy add");
+        const detail = yield* api.getIntegrationConnection({
+          params: { integration: "imap", handle: "paused" }
+        });
+        assert.deepInclude(detail, { integration: "imap", paused: { at } });
+      })
+  );
 });

@@ -590,7 +590,9 @@ Choose only entries marked `declarable: true` and carry the canonical patch id
 into `patchy add shared-table <patchId>/<table>` or
 `patchy add shared-store <patchId>/<store>`. Unshared entries name the owner;
 retired or deleted sources must be restored.
-Agents branch on `declarable` and `reason`, not the human `hint`.
+Agents branch on `declarable`, `reason` and a connection's `paused`, not the human `hint`.
+A paused IMAP connection's server refused its password: every call fails `auth_failed`
+until an admin's Test or Replace password, so `list connections` says so instead of an add hint.
 
 Names and canonical ids are accepted; a pasted URL resolves by its final path
 segment. Names resolve only non-deleted patches. A deleted patch needs its id

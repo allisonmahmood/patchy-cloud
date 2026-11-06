@@ -5,9 +5,11 @@ import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as AttioSource from "../attio/Source.js";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
@@ -56,9 +58,14 @@ const login = (password: string) =>
 const setup = (handle: string) =>
   Effect.gen(function* () {
     const certs = yield* Certs;
-    const mailbox = { reply: "OK Logged in" };
+    // `held`, when set, answers the next login alone, whenever it resolves.
+    const mailbox: { reply: string; held?: Promise<string> } = { reply: "OK Logged in" };
     const served = yield* ImapTest.serve(certs, {
-      login: () => mailbox.reply,
+      login: () => {
+        const held = mailbox.held;
+        mailbox.held = undefined;
+        return held ?? mailbox.reply;
+      },
       folders: [{ path: "INBOX" }, { path: "Invoices/2026" }]
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
@@ -92,7 +99,8 @@ it.layer(fixture)("IMAP connections", (it) => {
         host,
         port: 993,
         security: "tls",
-        username: "invoices@example.test"
+        username: "invoices@example.test",
+        logins: 1
       });
       const metadata = yield* store.snapshot(who.companyId, id, 1);
       if (metadata.integration !== "imap") return assert.fail("not an IMAP snapshot");
@@ -196,10 +204,42 @@ it.layer(fixture)("IMAP connections", (it) => {
     })
   );
 
+  it.effect(
+    "never pauses on a refusal that lands after a later login of the same password worked",
+    () =>
+      Effect.gen(function* () {
+        const { store, other, mailbox, logins, id } = yield* setup("invoices-stale");
+        // One admin's Test logs in, and the server sits on its answer.
+        const { promise, resolve: refuse } = Promise.withResolvers<string>();
+        mailbox.held = promise;
+        const before = logins();
+        const first = yield* store.test(as(id)).pipe(Effect.flip, Effect.forkChild);
+        while (logins() === before) yield* TestClock.withLive(Effect.sleep("5 millis"));
+        // Meanwhile another admin's Test of the same password works and is saved.
+        assert.isUndefined(imap(yield* other.test(as(id))).display.paused);
+        // Then the first one's refusal arrives: stale, so it pauses nothing.
+        refuse("NO [AUTHENTICATIONFAILED] Authentication failed.");
+        assert.instanceOf(yield* Fiber.join(first), Source.LoginRefused);
+        const after = imap(yield* store.get(who.companyId, id));
+        assert.isUndefined(after.display.paused);
+        // A call that read the connection before that Test can't pause it either; one after can.
+        const call = { companyId: who.companyId, id, reply: null } as const;
+        const revision = after.credentialRevision;
+        yield* store.pauseLogin({ ...call, credentialRevision: revision, logins: 1 });
+        assert.isUndefined(imap(yield* store.get(who.companyId, id)).display.paused);
+        yield* store.pauseLogin({
+          ...call,
+          credentialRevision: revision,
+          logins: after.display.logins ?? 0
+        });
+        assert.isDefined(imap(yield* store.get(who.companyId, id)).display.paused);
+      })
+  );
+
   it.effect("records a call's refused login once, and never over a newer password", () =>
     Effect.gen(function* () {
       const { store, id, connection } = yield* setup("invoices-call");
-      const stale = { companyId: who.companyId, id, reply: null } as const;
+      const stale = { companyId: who.companyId, id, reply: null, logins: 1 } as const;
       yield* store.pauseLogin({ ...stale, credentialRevision: connection.credentialRevision - 1 });
       assert.isUndefined(imap(yield* store.get(who.companyId, id)).display.paused);
       yield* store.pauseLogin({

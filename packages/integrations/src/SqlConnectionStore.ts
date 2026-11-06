@@ -110,16 +110,26 @@ const sameLogin = (
   next.port === current.port &&
   next.security === current.security &&
   next.username === current.username;
-/** Where an IMAP connection logs in, with no pause: what a login that worked leaves. */
-const unpaused = (login: Pick<ImapSource.Display, "host" | "port" | "security" | "username">) => ({
+/**
+ * Where an IMAP connection logs in after a login that worked, `logins` of them so far, with no
+ * pause: what each saved success leaves.
+ */
+const working = (
+  login: Pick<ImapSource.Display, "host" | "port" | "security" | "username">,
+  logins: number
+) => ({
   integration: "imap" as const,
   display: {
     host: login.host,
     port: login.port,
     security: login.security,
-    username: login.username
+    username: login.username,
+    logins
   } satisfies ImapSource.Display
 });
+/** The logins a connection has saved as working; absent is none. */
+const loginsOf = (connection: Connection) =>
+  connection.integration === "imap" ? (connection.display.logins ?? 0) : 0;
 /** Credentials for the same destination may replace each other; anything else is a retarget. */
 const sameTarget = (current: Target, next: Target) =>
   current.integration === "postgres"
@@ -180,7 +190,9 @@ const SnapshotDetail = Schema.Union([
   Schema.Struct({
     ...detailFields,
     integration: Schema.Literal("imap"),
-    snapshot: Schema.NullOr(ImapSnapshot)
+    snapshot: Schema.NullOr(ImapSnapshot),
+    // What a member is told about a pause: only when it began.
+    display: ImapSource.Display
   })
 ]);
 const Lookup = Schema.Struct({
@@ -269,7 +281,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       }),
       Result: SnapshotDetail,
       execute: ({ companyId, integration, handle }) => sql`SELECT c.integration, c.handle,
-      c.description, c.status,
+      c.description, c.status, c.display,
       c.metadata_revision AS revision, s.snapshot,
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
@@ -358,11 +370,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
-        if (row.integration === "imap")
+        if (row.integration === "imap") {
+          const { display, ...imap } = row;
           return {
-            ...row,
-            snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
+            ...imap,
+            snapshot:
+              imap.snapshot === null || stamp === null ? null : { ...imap.snapshot, ...stamp },
+            ...(display.paused === undefined ? {} : { paused: { at: display.paused.at } })
           } satisfies ConnectionDetail;
+        }
         return {
           ...row,
           snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
@@ -956,12 +972,14 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       keys.decrypt(current, current).pipe(Effect.flatMap(ImapSource.parseCredentials));
     const iso = (now: number) => DateTime.formatIso(DateTime.makeUnsafe(now));
     /**
-     * Records a refused login on the connection, so no host process logs in with it again: only
-     * while the credentials that were refused are still the connection's, and once.
+     * Records a refused login on the connection, so no host process logs in with it again: once,
+     * and only while what the attempt started under still stands. A refusal that arrives after
+     * other credentials were saved (`credentialRevision`), or after a login with these ones worked
+     * and was saved (`logins`), is stale and pauses nothing.
      */
     const imapPause = (
       input: { readonly companyId: string; readonly id: string },
-      credentialRevision: number,
+      attempt: { readonly credentialRevision: number; readonly logins: number },
       paused: ImapSource.Paused
     ) =>
       sql.withTransaction(
@@ -970,7 +988,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           if (
             Option.isNone(locked) ||
             locked.value.integration !== "imap" ||
-            locked.value.credentialRevision !== credentialRevision ||
+            locked.value.credentialRevision !== attempt.credentialRevision ||
+            loginsOf(locked.value) !== attempt.logins ||
             locked.value.display.paused !== undefined
           )
             return;
@@ -1004,12 +1023,14 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               ImapLoginRefused: (error) =>
                 Effect.gen(function* () {
                   const now = yield* Clock.currentTimeMillis;
-                  yield* imapPause(input, current.credentialRevision, {
-                    at: iso(now),
-                    reply: error.reply,
-                    during,
-                    by: input.userId
-                  });
+                  yield* imapPause(
+                    input,
+                    {
+                      credentialRevision: current.credentialRevision,
+                      logins: current.display.logins ?? 0
+                    },
+                    { at: iso(now), reply: error.reply, during, by: input.userId }
+                  );
                   return yield* error;
                 })
             })
@@ -1041,7 +1062,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             insert(
               identity,
               input,
-              unpaused(login),
+              working(login, 1),
               encrypted,
               { integration: "imap", snapshot },
               now
@@ -1061,9 +1082,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input, current);
+          const locked = yield* lock(input, current);
           yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}),
-            display = ${encodeDisplay(unpaused(current.display))}
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))}
             WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
         })
@@ -1090,8 +1111,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input, current);
-          yield* sql`UPDATE connections SET display = ${encodeDisplay(unpaused(login))},
+          const locked = yield* lock(input, current);
+          yield* sql`UPDATE connections SET display = ${encodeDisplay(working(login, loginsOf(locked) + 1))},
             credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId},
             credential_revision = credential_revision + 1,
             last_tested_at = to_timestamp(${now / 1_000})
@@ -1113,10 +1134,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input, current);
+          const locked = yield* lock(input, current);
           const revision = current.metadataRevision + 1;
           yield* writeSnapshot(input, revision, { integration: "imap", snapshot }, now);
           yield* sql`UPDATE connections SET metadata_revision = ${revision},
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))},
             last_tested_at = to_timestamp(${now / 1_000}),
             last_discovered_at = to_timestamp(${now / 1_000})
             WHERE id = ${input.id} AND company_id = ${input.companyId}`;
@@ -1134,9 +1156,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       const now = yield* Clock.currentTimeMillis;
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* lock(input, current);
+          const locked = yield* lock(input, current);
           yield* sql`UPDATE connections SET status = 'connected', credential_revision = credential_revision + 1,
-            display = ${encodeDisplay(unpaused(current.display))},
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))},
             last_tested_at = to_timestamp(${now / 1_000})
             WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           return yield* get(input.companyId, input.id);
@@ -1149,10 +1171,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         readonly companyId: string;
         readonly id: string;
         readonly credentialRevision: number;
+        readonly logins: number;
         readonly reply: ImapSource.Paused["reply"];
       }) {
         const now = yield* Clock.currentTimeMillis;
-        yield* imapPause(input, input.credentialRevision, {
+        yield* imapPause(input, input, {
           at: iso(now),
           reply: input.reply,
           during: "call"

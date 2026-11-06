@@ -77,7 +77,7 @@ const connectionLines = (result: typeof Connections.Type) => {
   const lines: string[] = [];
   for (const connection of result.connections) {
     lines.push(
-      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}`,
+      `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}${connection.test === true ? " · test, mail stays in Pidgeon" : ""}${connection.paused === true ? " · paused, its password was refused" : ""}`,
       `  ${connection.hint}`
     );
   }
@@ -107,7 +107,13 @@ const primitiveLines = (primitive: PrimitiveDetail) => [
 
 const connectionDetailLines = (connection: typeof ConnectionDetail.Type) => {
   const lines = [
-    `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`
+    `${connection.integration}/${connection.handle}  ${connection.description}  ${connection.status}`,
+    // A paused mailbox fails every call; say so before anything is declared against it.
+    ...(connection.integration === "imap" && connection.paused !== undefined
+      ? [
+          `Paused since ${connection.paused.at}: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections.`
+        ]
+      : [])
   ];
   if (connection.snapshot === null) return [...lines, "Snapshot: unavailable"];
   if (connection.integration === "pidgeon") {

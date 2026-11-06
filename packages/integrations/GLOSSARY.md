@@ -85,7 +85,7 @@ An IMAP session opened for one Test, connect, Replace password, Refresh folders 
 _Avoid_: probe, connection test
 
 **Login pause**:
-An IMAP connection whose mail server refused its login, recorded on the connection's row with when, the server's code and whose login it was, so no host process logs in with it again: calls fail `auth_failed` without contacting the server, until an admin's Test, Replace password or Reconnect logs in. Only a `NO` to `LOGIN` or `AUTHENTICATE` coded `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded pauses; a `BAD`, a throttle, another code and a network failure don't.
+An IMAP connection whose mail server refused its login, recorded on the connection's row with when, the server's code and whose login it was, so no host process logs in with it again: calls fail `auth_failed` without contacting the server, until an admin's Test, Replace password or Reconnect logs in. Only a `NO` to `LOGIN` or `AUTHENTICATE` coded `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded pauses; a `BAD`, a throttle, another code and a network failure don't, nor does a refusal that lands after a login with the same password has worked and been saved since the attempt began. `patchy list connections` marks a paused connection, with the way out.
 _Avoid_: lockout, disabled (the mail host's words for what the pause prevents), disconnect
 
 **Mail network**:

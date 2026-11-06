@@ -316,6 +316,19 @@ it.layer(certs)("IMAP source", (it) => {
       })
   );
 
+  it.effect("refuses a server that logs in without a password, on 993 and on 143", () =>
+    Effect.gen(function* () {
+      for (const over of [{}, { port: 143, security: "starttls" } as const]) {
+        const { result, served } = yield* against({ preauth: true }, over);
+        const refused = refusal(result);
+        assert.instanceOf(refused, Source.Preauthenticated, String(over.port ?? 993));
+        assert.include(refused.message, "without a password");
+        assert.strictEqual(logins(served), 0);
+        assert.notInclude(served.commands.join("\n"), "EXAMINE");
+      }
+    })
+  );
+
   it.effect("refuses a mailbox without an INBOX it can examine", () =>
     Effect.gen(function* () {
       const { result } = yield* against({ inbox: false });

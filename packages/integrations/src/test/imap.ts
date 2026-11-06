@@ -105,7 +105,9 @@ export interface Script {
   /** Whether port 143 offers STARTTLS; it's advertised only before TLS. */
   readonly starttls?: boolean;
   /** The tagged reply to LOGIN or AUTHENTICATE PLAIN, after the tag: `OK …`, `NO […] …`, `BAD …`. */
-  readonly login?: (method: "LOGIN" | "AUTHENTICATE") => string;
+  readonly login?: (method: "LOGIN" | "AUTHENTICATE") => string | Promise<string>;
+  /** Greets PREAUTH, as logged in already, instead of OK. */
+  readonly preauth?: boolean;
   /** LIST's folders, each `path` with its flags. */
   readonly folders?: ReadonlyArray<{ readonly path: string; readonly flags?: string }>;
   /** Whether EXAMINE INBOX succeeds. */
@@ -149,7 +151,13 @@ export const serve = (certs: Certificates, script: Script = {}) =>
     const session = (socket: Socket, secure: boolean, greet: boolean) => {
       socket.on("error", () => {});
       const say = (line: string) => socket.write(`${line}\r\n`);
-      if (greet) say(`* OK [CAPABILITY ${capabilities(secure)}] Scripted IMAP ready`);
+      if (greet)
+        say(
+          `* ${script.preauth === true ? "PREAUTH" : "OK"} [CAPABILITY ${capabilities(secure)}] Scripted IMAP ready`
+        );
+      // A reply may wait, as a slow server's would; the client sends nothing until it arrives.
+      const answer = (tag: string, reply: string | Promise<string>) =>
+        void Promise.resolve(reply).then((text) => say(`${tag} ${text}`));
       let buffer = "";
       let continuation: ((line: string) => void) | undefined;
       const onData = (chunk: Buffer) => {
@@ -189,11 +197,11 @@ export const serve = (certs: Certificates, script: Script = {}) =>
               );
               return;
             case "LOGIN":
-              say(`${tag} ${login("LOGIN")}`);
+              answer(tag, login("LOGIN"));
               break;
             case "AUTHENTICATE":
               say("+ ");
-              continuation = () => say(`${tag} ${login("AUTHENTICATE")}`);
+              continuation = () => answer(tag, login("AUTHENTICATE"));
               break;
             case "NAMESPACE":
               say('* NAMESPACE (("" "/")) NIL NIL');

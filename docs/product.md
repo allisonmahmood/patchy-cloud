@@ -309,7 +309,7 @@ Signed-in pages share one sidebar of places, grouped by whose thing each is: **H
 
 Patch detail returns cumulative inventory and reads across retained versions, not dependants or version history. Table detail returns column kinds, optionality, explicit defaults including `null`, ref targets, indexes with `unique`, sharing and schema revision, never rows. An unavailable company database yields `inventory: null` and text `Tables: unavailable`, not empty definitions. Shared live tables and stores carry copy-ready `patchy add shared-table <patchId>/<table>` or `patchy add shared-store <patchId>/<store>` hints. Agents branch on `declarable` and `reason`, not the human `hint`; unshared resources name the owner and off sources need restoration. Store reads and dependants use a `store` field, never a `table` field.
 
-`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
+`list connections [--all]` lists the company's connections, with offered integrations when requested. Connected entries carry an `add` hint; disconnected ones carry `reason: not_connected` and a `/company/connections` pointer; a paused IMAP connection carries `paused: true` and a hint to ask an admin to Test it or replace its password, instead of the `add` hint. `list connections <integration>/<handle>`, or a handle only one connection has, returns the current immutable snapshot with its revision and `takenAt`. A handle is unique within its integration, so `postgres/warehouse` names one connection. A null snapshot is unavailable, not an empty database. Discovery reads no source rows or credentials.
 
 Every discovery level accepts `--json`. The top level merges `{ patches, connections }` from `GET /api/patches` and `GET /api/connections`; other levels print their wire body without an `ok` wrapper. Agents filter those documents locally. Patch detail includes `descriptionUpdatedAt` for repo synchronization. The patch read query carries live dependant edges for the portal, while agent detail exposes inventory and reads.
 
@@ -1518,7 +1518,9 @@ address is private, the port isn't allowed, the TLS handshake or version fails,
 the certificate isn't from a trusted authority, the certificate doesn't name the
 host (listing the names it does carry; a host reached through a company's own
 CNAME often presents the provider's certificate), STARTTLS isn't offered on 143,
-login is disabled, the credentials are refused, or there's no INBOX.
+login is disabled, the server logs in without a password (`PREAUTH`, so the
+password typed can't be checked), the credentials are refused, or there's no
+INBOX.
 
 **The snapshot** keeps the host, port, security mode, username, the
 capabilities seen at Test, and the folders: each one's path, delimiter, the
@@ -1536,8 +1538,12 @@ the addresses Patchy connects from, and those addresses are shared. Only a real
 refusal pauses: a `NO` answering `LOGIN` or `AUTHENTICATE` coded
 `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded. A `BAD`, a
 throttle, a `NO` with `UNAVAILABLE`, `REFERRAL` or `LIMIT`, and a network failure
-don't. The connection page shows the pause, whose login it was and when, with
-Test and Replace password.
+don't. A refusal that arrives after a later login with the same password worked
+and was saved is stale and pauses nothing: each attempt carries the count of
+saved logins it started under. The connection page shows the pause, whose login
+it was and when, with Test and Replace password; `patchy list connections`
+marks it paused (`paused: true` in its JSON, and `paused.at` on the connection's
+detail) with the same way out, rather than an `add` hint.
 
 **Lifecycle.** Test logs in on a fresh session. Replace password tests the new
 one, then saves it and clears a pause, keeping the snapshot. Refresh folders

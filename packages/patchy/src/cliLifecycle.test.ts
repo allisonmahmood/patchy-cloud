@@ -1044,7 +1044,7 @@ describe("patchy list", () => {
     expect(JSON.parse(json.stdout)).toEqual(detail);
   });
 
-  it("prints an IMAP connection's mailbox, capabilities and folders", async () => {
+  it("prints an IMAP connection's pause with its way out, then its mailbox and folders", async () => {
     const detail = {
       integration: "imap",
       handle: "invoices",
@@ -1070,12 +1070,36 @@ describe("patchy list", () => {
           }
         ],
         truncated: true
-      }
+      },
+      paused: { at: "2026-11-05T09:00:00.000Z" }
+    };
+    const summary = {
+      connections: [
+        {
+          id: "conn-invoices",
+          handle: "invoices",
+          integration: "imap",
+          description: "Supplier invoices",
+          status: "connected",
+          paused: true,
+          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections."
+        }
+      ]
     };
     const instance = await stubInstance((request, respond) => {
+      if (request.url?.startsWith("/api/connections?")) return respond(200, summary);
       expect(request.url).toBe("/api/connections/imap/invoices");
       respond(200, detail);
     });
+    const listed = await runCli(["list", "connections", "--api-url", instance.url], { env });
+    expect(listed).toMatchObject({ status: 0, stderr: "" });
+    expect(listed.stdout).toBe(
+      [
+        "imap/invoices  Supplier invoices  connected · paused, its password was refused",
+        `  ${summary.connections[0]!.hint}`,
+        ""
+      ].join("\n")
+    );
     const result = await runCli(
       ["list", "connections", "imap/invoices", "--api-url", instance.url],
       { env }
@@ -1084,6 +1108,7 @@ describe("patchy list", () => {
     expect(result.stdout).toBe(
       [
         "imap/invoices  Supplier invoices  connected",
+        "Paused since 2026-11-05T09:00:00.000Z: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections.",
         "Mailbox: invoices@example.test at mail.example.test, port 143 (STARTTLS)",
         "Snapshot revision: 2",
         "Taken at: 2026-11-05T00:00:00.000Z",

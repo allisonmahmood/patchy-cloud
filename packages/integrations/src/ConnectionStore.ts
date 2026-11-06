@@ -422,14 +422,16 @@ export class ConnectionStore extends Context.Service<
     ) => Effect.Effect<number, ConnectionStorageFailed>;
     /**
      * Pauses an IMAP connection whose mail server refused its login during a patch's call, so no
-     * host process logs in again until an admin's Test or Replace password succeeds. Records
-     * nothing once the credentials it tried were replaced (`credentialRevision`), or when it's
-     * already paused.
+     * host process logs in again until an admin's Test or Replace password succeeds. The caller
+     * passes what it read before logging in: the credential revision and the connection's
+     * `display.logins`. Records nothing once other credentials were saved, once a login with
+     * these ones worked and was saved since, or when it's already paused.
      */
     readonly pauseLogin: (input: {
       readonly companyId: string;
       readonly id: string;
       readonly credentialRevision: number;
+      readonly logins: number;
       readonly reply: ImapSource.Paused["reply"];
     }) => Effect.Effect<void, ConnectionStorageFailed>;
   }

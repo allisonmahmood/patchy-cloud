@@ -82,12 +82,18 @@ export const Paused = Schema.Struct({
 });
 export type Paused = typeof Paused.Type;
 
-/** Safe to show: where the connection logs in, as who, and whether it's paused. */
+/**
+ * Safe to show: where the connection logs in, as who, and whether it's paused. `logins` counts the
+ * logins that worked and were saved, from connect, Test, Replace password, Refresh folders and
+ * Reconnect (absent is none): a login attempt carries the count it started under, and its refusal
+ * pauses the connection only if no login has worked since.
+ */
 export const Display = Schema.Struct({
   host: Host,
   port: ImapPort,
   security: ImapSecurity,
   username: Username,
+  logins: Schema.optionalKey(Schema.Int),
   paused: Schema.optionalKey(Paused)
 });
 export type Display = typeof Display.Type;
@@ -229,6 +235,20 @@ export class LoginRefused extends Schema.TaggedError<LoginRefused>()("ImapLoginR
       : `${this.host} refused this username and password. Check both, or make an app password if the host has them.`;
   }
 }
+/**
+ * The server greeted with PREAUTH: it logged Patchy in without asking for the password, so the
+ * password typed could never be checked. Nothing was sent after the greeting's own commands.
+ */
+export class Preauthenticated extends Schema.TaggedError<Preauthenticated>()(
+  "ImapPreauthenticated",
+  { host: Schema.String }
+) {
+  readonly code = "imap_preauth";
+  readonly status = 422;
+  override get message() {
+    return `${this.host} logged Patchy in without a password (PREAUTH), so the password you typed can't be checked. Patchy connects only to mail servers that ask for the mailbox's password.`;
+  }
+}
 /** A paused connection: nothing was sent to the mail server. */
 export class ConnectionPaused extends Schema.TaggedError<ConnectionPaused>()(
   "ImapConnectionPaused",
@@ -332,6 +352,7 @@ export type OpenError =
   | StartTlsUnavailable
   | NotImap4
   | LoginDisabled
+  | Preauthenticated
   | LoginRefused
   | Unavailable
   | Throttled
@@ -376,6 +397,8 @@ declare module "imapflow" {
   interface ImapFlow {
     /** ImapFlow's own login step, run once CAPABILITY and STARTTLS are done. */
     authenticate(): Promise<boolean>;
+    /** ImapFlow's handler for a PREAUTH greeting, which it takes as already logged in. */
+    initialPREAUTH(): Promise<void>;
   }
 }
 
@@ -388,8 +411,11 @@ interface Progress {
   /** What broke the handshake, and the names a trusted certificate carried instead of the host. */
   tlsError?: unknown;
   mismatch?: ReadonlyArray<string>;
-  /** CAPABILITY came back without what Patchy needs, so nothing was sent after it. */
-  refused?: "not_imap4" | "login_disabled";
+  /**
+   * CAPABILITY came back without what Patchy needs, or the server greeted PREAUTH, so no login
+   * was sent.
+   */
+  refused?: "not_imap4" | "login_disabled" | "preauth";
   /** LOGIN or AUTHENTICATE was sent, and what it failed with if it did. */
   loginStarted: boolean;
   loginError?: unknown;
@@ -417,7 +443,9 @@ const imapError = (error: unknown): ImapFlowError | undefined =>
 /**
  * ImapFlow with one step added: before LOGIN or AUTHENTICATE, the server must advertise IMAP4rev1
  * or IMAP4rev2 and take a password login at all. A server that doesn't is refused with nothing
- * sent, and any failure once the step begins is the login's, never a later command's.
+ * sent, and any failure once the step begins is the login's, never a later command's. A server
+ * that greets PREAUTH is refused too: ImapFlow would skip the login, so the password would never
+ * be checked.
  */
 class CheckedImapFlow extends ImapFlow {
   readonly #progress: Progress;
@@ -425,7 +453,13 @@ class CheckedImapFlow extends ImapFlow {
     super(options);
     this.#progress = progress;
   }
+  override async initialPREAUTH() {
+    this.#progress.refused = "preauth";
+    return super.initialPREAUTH();
+  }
   override async authenticate() {
+    if (this.#progress.refused === "preauth")
+      throw new Error("The server logged in without asking for the password.");
     const capabilities = this.capabilities;
     if (!capabilities.has("IMAP4rev1") && !capabilities.has("IMAP4rev2")) {
       this.#progress.refused = "not_imap4";
@@ -565,6 +599,7 @@ const classify = (host: string, progress: Progress, error: unknown): OpenError =
   if (progress.overflow !== undefined) return new Overflow({ host, limitId: progress.overflow });
   const bound = parserBounds[errorCode(error) ?? ""];
   if (bound !== undefined) return new Overflow({ host, limitId: bound });
+  if (progress.refused === "preauth") return new Preauthenticated({ host });
   if (progress.refused === "not_imap4") return new NotImap4({ host });
   if (progress.refused === "login_disabled") return new LoginDisabled({ host });
   if (progress.connected && !progress.secured && progress.tlsError !== undefined) {

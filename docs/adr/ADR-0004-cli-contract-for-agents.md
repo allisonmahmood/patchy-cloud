@@ -313,7 +313,9 @@ shared stores get `patchy add shared-store <patchId>/<store>` hints. Resource
 detail includes `shared`, `declarable`, `reason` and the add hint. Unshared
 resources name the owner; off sources need restoration. Connected entries get
 `patchy add <integration>/<handle>`; disconnected ones point to `/company/connections`.
-JSON agents branch on `declarable` and `reason`, never parse `hint`. Shared reads
+A paused IMAP connection, whose server refused its password, is marked `paused: true`
+(and `paused.at` on its detail) and its hint asks an admin to Test it or replace the
+password instead. JSON agents branch on `declarable`, `reason` and `paused`, never parse `hint`. Shared reads
 name their resource in `table` or `store`, never label a store as a table.
 
 ### Patch-repo commands and managed files

@@ -19,4 +19,4 @@ Connections are tier 2's. A tier 1 page reaches only its own patch, so declaring
 
 There is no fixture: mail invented for a fixture never resembles a company's.
 
-The client has no operations yet: reading folders and messages is coming. A connection an admin's Test found refusing its password is paused until they fix it, and every call fails `auth_failed` meanwhile; ask an admin to look at it at `/company/connections`.
+The client has no operations yet: reading folders and messages is coming. A connection whose mail server refused its password is paused until an admin fixes it, and every call fails `auth_failed` meanwhile. `pnpm patchy list connections` marks it `paused` with that way out: ask an admin to Test it or replace the password at `/company/connections` rather than declaring it.
