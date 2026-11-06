@@ -162,7 +162,8 @@ const common = {
   tsconfig: path.join(packageDir, "tsconfig.json"),
   conditions: ["development"],
   // Its WASM/data and worker-relative imports must remain a real package. npm packs it with Patchy.
-  external: ["@electric-sql/pglite", "@electric-sql/pglite/*", "esbuild"],
+  // PROTOTYPE (#1090): playwright-core drives `patchy dev act`; it ships as a bundled package too.
+  external: ["@electric-sql/pglite", "@electric-sql/pglite/*", "esbuild", "playwright-core"],
   // CSSTree's Node entry reads JSON at runtime; its standalone build embeds that data.
   alias: { "css-tree": path.join(packageDir, "node_modules/css-tree/dist/csstree.esm.js") }
 };

@@ -19,6 +19,7 @@ import type { CliError } from "./CliError.js";
 import { LocalError, RejectedError, UnreachableError } from "./CliError.js";
 import * as Instance from "./Instance.js";
 import * as Output from "./Output.js";
+import * as DevAct from "./devAct.js";
 import * as Preparation from "./devPreparation.js";
 import { checkRepoRelease } from "./repoBuild.js";
 import { safePath } from "./ManagedProject.js";
@@ -425,6 +426,30 @@ export const manage = Effect.fn("Dev.manage")(function* (
       );
     })
   );
+});
+
+/**
+ * PROTOTYPE (#1090): `patchy dev act`. Runs the steps on the running session's pages and prints the
+ * report; a step that fails still prints it, then exits 1 with `step_failed`, as a test runner does.
+ */
+export const act = Effect.fn("Dev.act")(function* (
+  cwd: string,
+  words: readonly string[],
+  options: DevAct.ActOptions
+) {
+  const steps = DevAct.parseSteps(words);
+  if (!Array.isArray(steps)) return yield* steps;
+  const instance = yield* Instance.Instance;
+  const { root, stateDir } = yield* directory(cwd, instance.apiUrl);
+  const record = yield* recorded(root, stateDir, instance.apiUrl);
+  if (record?.url === undefined || !(yield* healthy(record))) return yield* notRunning();
+  const report = yield* DevAct.act({ root, stateDir, record }, steps, options);
+  yield* Output.report(report, DevAct.textReport(report));
+  if (report.failed !== undefined)
+    return yield* new LocalError({
+      message: `Step ${report.failed.step} failed: ${report.failed.error} The report, with screenshots, is on stdout.`,
+      code: "step_failed"
+    });
 });
 
 /** A tool's arguments: a JSON object, from the command line or from stdin with `-`; `{}` when omitted. */

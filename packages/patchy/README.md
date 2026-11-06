@@ -893,10 +893,41 @@ page and log the error. Config and fixture changes need `dev stop` followed by `
 | `dev logs`   | Print the dev log.                                                                             | `{ ok, log, text }`                                                                                             |
 | `dev reset`  | Stop and wipe disposable local state. Published resources are unchanged; run `dev` afterwards. | `{ ok, healthy: false, reset: true }`                                                                           |
 | `dev agent`  | Call the running binding's agent tools as people's agents do; see below.                       | `open_patch`'s answer, or `{ result, version }`                                                                 |
+| `dev act`    | PROTOTYPE (#1090): run steps on the dev pages as dev people in a headless browser; see below.  | `{ ok, failed?, warnings, browser, ms, steps, people }`                                                         |
 
 `--foreground` waits and streams logs; Ctrl-C stops a session it started.
 Joining an existing session leaves it running on interruption. Under `--json`
 only the readiness document is printed; use `dev logs --json` to read logs.
+
+### `patchy dev act [<steps>...] [--size <w>x<h>] [--timeout <s>] [--install-browser]`
+
+PROTOTYPE for #1090, never merged. Opens the running session's pages in a
+headless browser as dev people, through the real shell around the patch frame,
+and runs steps in order:
+
+| step                          | does                                                                                     |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `press <keys>`                | Presses a hotkey or sequence in hotkey notation: `'G H'`, `Mod+K`, `Escape`, `?`.        |
+| `click <name>`                | Clicks what has that accessible name or visible text, in the patch, then Patchy's shell. |
+| `type <field> <text>`         | Clicks the field with that label, placeholder or name, clears it and types key by key.   |
+| `wait <text>` / `gone <text>` | Waits for text to appear or leave, up to `--timeout` seconds (5).                        |
+| `open <route>`                | Opens the patch at a route.                                                              |
+| `shot`                        | Takes a screenshot now.                                                                  |
+| `as <you\|colleague\|guest>`  | Runs the next steps on that person's page. Every person a run names opens at its start.  |
+
+Each page is ready once its frame has loaded, the tier 2 starting cover is gone
+and its calls have been quiet for 150 ms. `press` refuses while the cover is up,
+as the cover holds the keys. The report gives each step's outcome and what has
+focus, then for each person a screenshot under `.patchy/dev/<hash>/act/` (the
+newest 10 runs are kept), the console, the calls Patchy refused, the starting
+cover's time on screen and the screen as an accessibility snapshot. `--json`
+prints it as one document, with refused calls and uncaught errors in `warnings`.
+A failed step still prints the report, then exits 1 with `step_failed`.
+
+The browser is `PATCHY_BROWSER`, else the machine's Chrome, Chromium, Edge or
+Brave, else Playwright's headless Chromium if downloaded. `--install-browser`
+uses Playwright's, downloading it (about 114 MiB) once. With none, it exits 1
+with `no_browser`.
 
 ### `patchy dev agent [<tool>] [<json>|-] [--colleague]`
 

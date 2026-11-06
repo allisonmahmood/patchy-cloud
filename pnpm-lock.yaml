@@ -609,6 +609,9 @@ importers:
       '@preact/signals-core':
         specifier: 1.14.5
         version: 1.14.5
+      playwright-core:
+        specifier: 1.63.0
+        version: 1.63.0
       preact:
         specifier: 11.1.0
         version: 11.1.0

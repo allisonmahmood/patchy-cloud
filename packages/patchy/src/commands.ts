@@ -1869,6 +1869,52 @@ const devAgent = Command.make(
   )
 );
 
+// PROTOTYPE (#1090): steps on the dev page as a dev person, in a headless browser.
+const devAct = Command.make(
+  "act",
+  {
+    steps: Argument.String("steps").pipe(
+      Argument.withDescription(
+        "Steps in order: press <keys>, click <name>, type <field> <text>, wait <text>, gone <text>, open <route>, shot, as <you|colleague|guest>"
+      ),
+      Argument.variadic()
+    ),
+    size: Flag.String("size").pipe(
+      Flag.withDescription("The viewport as <width>x<height>; 390x844 for a phone"),
+      Flag.withDefault("1280x800")
+    ),
+    timeout: Flag.Int("timeout").pipe(
+      Flag.withDescription("Seconds a step waits for what it names to appear"),
+      Flag.withDefault(5)
+    ),
+    installBrowser: Flag.Boolean("install-browser").pipe(
+      Flag.withDescription(
+        "Use Playwright's headless Chromium instead of this machine's browser, downloading it (about 110 MB) once"
+      ),
+      Flag.withDefault(false)
+    )
+  },
+  (input) =>
+    runProject(
+      Effect.gen(function* () {
+        yield* Project.readRepo(yield* Cwd);
+        const [width, height] = input.size.split("x").map(Number);
+        if (!Number.isInteger(width) || !Number.isInteger(height))
+          return yield* new LocalError({ message: "--size is <width>x<height>, such as 390x844." });
+        yield* Dev.act(yield* Cwd, input.steps, {
+          width: width!,
+          height: height!,
+          timeoutMs: input.timeout * 1000,
+          installBrowser: input.installBrowser
+        });
+      })
+    )
+).pipe(
+  Command.withDescription(
+    "PROTOTYPE: open the dev page as a dev person in a headless browser, run steps and report what they'd see."
+  )
+);
+
 const dev = Command.make(
   "dev",
   {
@@ -1910,7 +1956,8 @@ const dev = Command.make(
         )
       )
     ),
-    devAgent
+    devAgent,
+    devAct
   ])
 );
 
