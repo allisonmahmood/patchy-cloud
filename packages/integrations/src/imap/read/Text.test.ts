@@ -111,6 +111,13 @@ describe("charsets", () => {
     assert.strictEqual(charsetDecode(sjis, "shift_jis", true), "こんにちは");
     const koi = Uint8Array.from([0xf0, 0xd2, 0xc9, 0xd7, 0xc5, 0xd4]);
     assert.strictEqual(charsetDecode(koi, " koi8-r ", true), "Привет");
+    // Every label WHATWG reads as windows-1252: 0x80 to 0x9F are characters, not C1 controls,
+    // except the five it leaves undefined.
+    for (const charset of ["windows-1252", "iso-8859-1", "latin1"])
+      assert.strictEqual(
+        charsetDecode(Uint8Array.from([0x93, 0x80, 0x35, 0x81, 0x94]), charset, true),
+        "\u{201C}\u{20AC}5\u{81}\u{201D}"
+      );
   });
 
   it("reads an unknown or missing charset as UTF-8, else latin1", () => {

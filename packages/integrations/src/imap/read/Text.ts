@@ -5,9 +5,12 @@
  *
  * The runtime's own `TextDecoder` reads every charset the WHATWG Encoding standard names, on Node
  * and Bun alike, which covers the charsets mail uses in practice; no charset library is needed.
+ * windows-1252, which WHATWG reads `latin1`, `iso-8859-1` and `us-ascii` as, is decoded by
+ * `decodeWindows1252` instead, because Node 22.22's decoder reads it wrong.
  */
 import { TEXT_BYTES } from "./Bounds.js";
 import { htmlToText } from "./Html.js";
+import { decodeWindows1252 } from "./Windows1252.js";
 
 /**
  * Characters that never reach a patch:
@@ -110,7 +113,7 @@ const quotedPrintable = (bytes: Uint8Array, complete: boolean): Uint8Array => {
   return Uint8Array.from(out);
 };
 
-/** WHATWG's labels for US-ASCII, which it reads as windows-1252. */
+/** US-ASCII's names. WHATWG reads three of them as windows-1252 and doesn't know the rest. */
 const ASCII = new Set([
   "us-ascii",
   "ascii",
@@ -124,40 +127,51 @@ const ASCII = new Set([
   "csascii"
 ]);
 const eightBit = (bytes: Uint8Array) => bytes.some((byte) => byte >= 0x80);
-/**
- * The decoder for the charset the part's header names, unless it can't be the truth: a label the
- * runtime doesn't know, or US-ASCII over 8-bit bytes, which ASCII can't hold.
- */
-const declaredDecoder = (charset: string | null, bytes: Uint8Array) => {
-  const label = charset?.trim().toLowerCase();
-  if (label === undefined || label === "" || (ASCII.has(label) && eightBit(bytes)))
-    return undefined;
+/** The runtime's decoder for a WHATWG label, or `undefined` for one it doesn't know. */
+const decoderFor = (label: string) => {
   try {
     return new TextDecoder(label);
   } catch {
     return undefined;
   }
 };
-const latin1 = new TextDecoder("latin1");
+/**
+ * How the charset the part's header names reads `bytes`, unless it can't be the truth: a label the
+ * runtime doesn't know, or US-ASCII over 8-bit bytes, which ASCII can't hold. Any label WHATWG
+ * reads as windows-1252 reads through `decodeWindows1252`, the same on every runtime.
+ */
+const declaredDecode = (
+  charset: string | null,
+  bytes: Uint8Array
+): ((stream: boolean) => string) | undefined => {
+  const label = charset?.trim().toLowerCase();
+  if (label === undefined || label === "" || (ASCII.has(label) && eightBit(bytes)))
+    return undefined;
+  const decoder = decoderFor(label);
+  if (decoder === undefined) return undefined;
+  return decoder.encoding === "windows-1252"
+    ? () => decodeWindows1252(bytes)
+    : (stream) => decoder.decode(bytes, { stream });
+};
 
 /**
  * Bytes as text in the charset the part's header names. With none, one the runtime doesn't know
  * such as `utf-7`, or US-ASCII over 8-bit bytes, they read as UTF-8, or as latin1 (windows-1252,
  * as WHATWG reads the label) when they aren't valid UTF-8. When `complete` is false, a character
- * the cut split is held back.
+ * the cut split is held back; windows-1252 has one byte per character, so it never splits one.
  */
 export const charsetDecode = (
   bytes: Uint8Array,
   charset: string | null,
   complete: boolean
 ): string => {
-  const declared = declaredDecoder(charset, bytes);
-  if (declared !== undefined) return declared.decode(bytes, { stream: !complete });
+  const declared = declaredDecode(charset, bytes);
+  if (declared !== undefined) return declared(!complete);
   try {
     // A fresh decoder each time: one decoding with `stream` holds a cut character for the next.
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: !complete });
   } catch {
-    return latin1.decode(bytes);
+    return decodeWindows1252(bytes);
   }
 };
 
