@@ -128,6 +128,7 @@ export class TooLarge extends Schema.TaggedError<TooLarge>()("TooLarge", {
     "runtime.posthog.bytes",
     "runtime.pidgeon.bytes",
     "runtime.attio.bytes",
+    "runtime.imap.bytes",
     "tier2.args.bytes",
     "runtime.result.bytes",
     "runtime.file.bytes",
@@ -385,6 +386,7 @@ export const config = Effect.all({
   posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
   pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
   attioBytes: ContractLimits.get("runtime.attio.bytes"),
+  imapBytes: ContractLimits.get("runtime.imap.bytes"),
   serverArgsBytes: ContractLimits.get("tier2.args.bytes"),
   fileBytes: byteLimits.fileBytes,
   mutationDeadlineMs: ContractLimits.get("runtime.mutation.deadline"),
@@ -494,6 +496,7 @@ export const make = (
       settings.posthogBytes,
       settings.pidgeonBytes,
       settings.attioBytes,
+      settings.imapBytes,
       settings.serverArgsBytes + settings.callBytes
     );
     const maxCallLimitId =
@@ -509,7 +512,9 @@ export const make = (
                 ? "runtime.posthog.bytes"
                 : maxCallBytes === settings.pidgeonBytes
                   ? "runtime.pidgeon.bytes"
-                  : "runtime.attio.bytes";
+                  : maxCallBytes === settings.attioBytes
+                    ? "runtime.attio.bytes"
+                    : "runtime.imap.bytes";
 
     const dispatch = <A>(
       input: typeof RuntimeEnvelope.Type,
@@ -665,6 +670,7 @@ export const make = (
             input.op.startsWith("posthog.") ||
             input.op.startsWith("pidgeon.") ||
             input.op.startsWith("attio.") ||
+            input.op.startsWith("imap.") ||
             input.op.startsWith("members.") ||
             (version.manifest.tier === 2 &&
               input.op !== "files.redeem" &&

@@ -130,6 +130,13 @@ describe("charsets", () => {
     assert.strictEqual(charsetDecode(bytes("é"), "iso-8859-1", true), "Ã©");
   });
 
+  it("reads US-ASCII over 8-bit bytes as if it named no charset", () => {
+    // ASCII can't hold an 8-bit byte, so the label isn't the truth: UTF-8 where it reads, else latin1.
+    assert.strictEqual(charsetDecode(bytes("naïve"), "us-ascii", true), "naïve");
+    assert.strictEqual(charsetDecode(Uint8Array.from([0x6e, 0xef]), "US-ASCII", true), "nï");
+    assert.strictEqual(charsetDecode(bytes("plain"), "us-ascii", true), "plain");
+  });
+
   it("holds back a UTF-8 character a cut split when no charset is named", () => {
     assert.strictEqual(charsetDecode(bytes("héllo").subarray(0, 2), null, false), "h");
   });

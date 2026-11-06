@@ -53,6 +53,7 @@ describe("summarize", () => {
       from: [{ name: "Billing", address: "billing@example.com" }],
       to: [{ name: null, address: "invoices@example.test" }],
       cc: [],
+      recipientsTruncated: false,
       subject: "Invoice 1182 for October",
       date: "2026-10-30T09:15:00.000Z",
       internalDate: "2026-10-30T09:16:02.000Z",
@@ -81,6 +82,7 @@ describe("summarize", () => {
         from: [],
         to: [],
         cc: [],
+        recipientsTruncated: false,
         subject: null,
         date: null,
         internalDate: null,
@@ -137,21 +139,36 @@ describe("addresses", () => {
         { address: `${"a".repeat(310)}@example.com` },
         { name: "Spaced", address: "two words@example.com" }
       ]),
-      [{ name: "Ada Lovelace", address: "ada@example.com" }]
+      { kept: [{ name: "Ada Lovelace", address: "ada@example.com" }], cut: false }
     );
   });
 
-  it("keeps at most ADDRESSES entries and ADDRESS_LIST_BYTES encoded", () => {
+  it("keeps at most ADDRESSES entries and ADDRESS_LIST_BYTES encoded, and says it cut", () => {
     const many = Array.from({ length: 500 }, (_, index) => ({ address: `p${index}@example.com` }));
-    assert.lengthOf(addresses(many), ADDRESSES);
+    const counted = addresses(many);
+    assert.lengthOf(counted.kept, ADDRESSES);
+    assert.isTrue(counted.cut);
+    assert.isFalse(addresses(many.slice(0, ADDRESSES)).cut);
     const long = Array.from({ length: 500 }, (_, index) => ({
       name: "n".repeat(255),
       address: `p${index}@example.com`
     }));
-    const kept = addresses(long);
-    assert.isBelow(kept.length, ADDRESSES);
-    assert.isAtMost(encodedBytes(kept), ADDRESS_LIST_BYTES);
-    assert.deepStrictEqual(kept[0], long[0]);
+    const sized = addresses(long);
+    assert.isBelow(sized.kept.length, ADDRESSES);
+    assert.isAtMost(encodedBytes(sized.kept), ADDRESS_LIST_BYTES);
+    assert.isTrue(sized.cut);
+    assert.deepStrictEqual(sized.kept[0], long[0]);
+  });
+
+  it("marks a summary whose From, To, Cc or Reply-To list was cut", () => {
+    const crowd = Array.from({ length: ADDRESSES + 1 }, (_, index) => ({
+      address: `p${index}@example.com`
+    }));
+    for (const field of ["from", "to", "cc", "replyTo"] as const)
+      assert.isTrue(
+        summarize({ uid: 1, envelope: { [field]: crowd } }, folder).recipientsTruncated,
+        field
+      );
   });
 });
 

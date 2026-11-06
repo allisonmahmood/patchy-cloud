@@ -6,24 +6,15 @@
  * ImapFlow: it numbers a non-multipart message's root `undefined` (IMAP's `1`), and the body of a
  * `message/rfc822` whose content isn't multipart with the wrapper's own number (IMAP's `n.1`).
  */
+import type { ImapPart } from "@patchy/api";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { MIME_DEPTH, MIME_PARTS, NAME_CHARACTERS } from "./Bounds.js";
 import { MalformedStructure } from "./Errors.js";
 import { displayText } from "./Text.js";
 
-/** One part as a patch sees it. */
-export const Part = Schema.Struct({
-  /** The IMAP section, such as `1` or `2.1`. */
-  part: Schema.String,
-  contentType: Schema.String,
-  filename: Schema.NullOr(Schema.String),
-  /** The part's size on the wire, transfer-encoded: base64 runs about a third over its bytes. */
-  encodedSize: Schema.Int,
-  disposition: Schema.NullOr(Schema.Literals(["inline", "attachment"])),
-  contentId: Schema.NullOr(Schema.String)
-});
-export type Part = typeof Part.Type;
+/** One part as a patch sees it: the wire's. */
+export type Part = ImapPart;
 
 /** One text part a message's body is read from, with what decoding it needs. */
 export interface TextPart {

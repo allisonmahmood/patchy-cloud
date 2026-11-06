@@ -110,9 +110,28 @@ const quotedPrintable = (bytes: Uint8Array, complete: boolean): Uint8Array => {
   return Uint8Array.from(out);
 };
 
-const declaredDecoder = (charset: string | null) => {
-  const label = charset?.trim();
-  if (label === undefined || label === "") return undefined;
+/** WHATWG's labels for US-ASCII, which it reads as windows-1252. */
+const ASCII = new Set([
+  "us-ascii",
+  "ascii",
+  "ansi_x3.4-1968",
+  "iso646-us",
+  "iso_646.irv:1991",
+  "iso-ir-6",
+  "us",
+  "ibm367",
+  "cp367",
+  "csascii"
+]);
+const eightBit = (bytes: Uint8Array) => bytes.some((byte) => byte >= 0x80);
+/**
+ * The decoder for the charset the part's header names, unless it can't be the truth: a label the
+ * runtime doesn't know, or US-ASCII over 8-bit bytes, which ASCII can't hold.
+ */
+const declaredDecoder = (charset: string | null, bytes: Uint8Array) => {
+  const label = charset?.trim().toLowerCase();
+  if (label === undefined || label === "" || (ASCII.has(label) && eightBit(bytes)))
+    return undefined;
   try {
     return new TextDecoder(label);
   } catch {
@@ -122,16 +141,17 @@ const declaredDecoder = (charset: string | null) => {
 const latin1 = new TextDecoder("latin1");
 
 /**
- * Bytes as text in the charset the part's header names. With none, or one the runtime doesn't
- * know such as `utf-7`, they read as UTF-8, or as latin1 (windows-1252, as WHATWG reads the label)
- * when they aren't valid UTF-8. When `complete` is false, a character the cut split is held back.
+ * Bytes as text in the charset the part's header names. With none, one the runtime doesn't know
+ * such as `utf-7`, or US-ASCII over 8-bit bytes, they read as UTF-8, or as latin1 (windows-1252,
+ * as WHATWG reads the label) when they aren't valid UTF-8. When `complete` is false, a character
+ * the cut split is held back.
  */
 export const charsetDecode = (
   bytes: Uint8Array,
   charset: string | null,
   complete: boolean
 ): string => {
-  const declared = declaredDecoder(charset);
+  const declared = declaredDecoder(charset, bytes);
   if (declared !== undefined) return declared.decode(bytes, { stream: !complete });
   try {
     // A fresh decoder each time: one decoding with `stream` holds a cut character for the next.

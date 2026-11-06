@@ -38,7 +38,13 @@ const integrations: Readonly<Record<DevRead["op"], string>> = {
   "attio.getManyRecords": "Attio",
   "attio.listEntries": "Attio",
   "attio.getEntry": "Attio",
-  "attio.listMembers": "Attio"
+  "attio.listMembers": "Attio",
+  "imap.listFolders": "IMAP",
+  "imap.folderStatus": "IMAP",
+  "imap.scanMessages": "IMAP",
+  "imap.listMessages": "IMAP",
+  "imap.searchMessages": "IMAP",
+  "imap.getMessages": "IMAP"
 };
 
 /** The instance couldn't be reached, or answered with something other than its wire. */
@@ -53,7 +59,13 @@ export class InstanceUnavailable extends Schema.TaggedError<InstanceUnavailable>
       "attio.getManyRecords",
       "attio.listEntries",
       "attio.getEntry",
-      "attio.listMembers"
+      "attio.listMembers",
+      "imap.listFolders",
+      "imap.folderStatus",
+      "imap.scanMessages",
+      "imap.listMessages",
+      "imap.searchMessages",
+      "imap.getMessages"
     ]),
     instance: Schema.String,
     cause: Schema.optionalKey(Schema.Redacted(Schema.Defect()))

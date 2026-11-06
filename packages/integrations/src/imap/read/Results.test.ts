@@ -16,6 +16,7 @@ const message = (uid: number, text = "hello"): Message => ({
   from: [],
   to: [],
   cc: [],
+  recipientsTruncated: false,
   subject: null,
   date: null,
   internalDate: null,

@@ -2,6 +2,7 @@
  * `getMessages` around its fetches: the refs checked and grouped by folder before anything goes
  * upstream, then one answer per ref in the order asked, held to the row and result bounds.
  */
+import type { ImapUnread } from "@patchy/api";
 import { Runtime } from "@patchy/runtime/core";
 import * as Result from "effect/Result";
 import { encodedBytes, GET_REFS, RESULT_BYTES, ROW_BYTES } from "./Bounds.js";
@@ -47,7 +48,7 @@ export const planGetMessages = (
 };
 
 /** A ref that didn't read as a message. */
-export type Unread = { readonly error: "not_found" | "malformed" | "too_large" };
+export type Unread = ImapUnread;
 /** What one ref answers: its message, or why there is none. */
 export type Outcome = Message | Unread;
 

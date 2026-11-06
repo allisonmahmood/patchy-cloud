@@ -4,9 +4,9 @@
  * so the most a hostile header can make of one summary still lets a full page fit the result
  * bound. ImapFlow has already decoded the envelope's encoded words; here they are cleaned as text.
  */
+import type { ImapAddress, ImapSummary } from "@patchy/api";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import {
   ADDRESS_CHARACTERS,
   ADDRESS_LIST_BYTES,
@@ -20,7 +20,7 @@ import {
   REFERENCES_HEADER_BYTES,
   SUBJECT_CHARACTERS
 } from "./Bounds.js";
-import { MessageRef } from "./Refs.js";
+import type { MessageRef } from "./Refs.js";
 import { readStructure, type Structure } from "./Structure.js";
 import { clean, displayText } from "./Text.js";
 
@@ -62,56 +62,35 @@ export interface Fetched {
 
 // ---------- the summary ----------
 
-/** One address as a patch reads it. A group's name alone, with no address, isn't one. */
-export const Address = Schema.Struct({
-  name: Schema.NullOr(Schema.String),
-  address: Schema.String
-});
-export type Address = typeof Address.Type;
-
-export const Summary = Schema.Struct({
-  ref: MessageRef,
-  from: Schema.Array(Address),
-  to: Schema.Array(Address),
-  cc: Schema.Array(Address),
-  subject: Schema.NullOr(Schema.String),
-  /** The sender's `Date` as ISO 8601, or `null` when it's missing or isn't a date. */
-  date: Schema.NullOr(Schema.String),
-  /** When the server took the message in, as ISO 8601: what `since` and `before` compare. */
-  internalDate: Schema.NullOr(Schema.String),
-  /** The whole message's size on the server, in bytes. */
-  size: Schema.Int,
-  flags: Schema.Array(Schema.String),
-  /** Threading metadata, never identity: the ref names the message. */
-  messageId: Schema.NullOr(Schema.String),
-  inReplyTo: Schema.NullOr(Schema.String),
-  references: Schema.Array(Schema.String),
-  hasAttachments: Schema.Boolean
-});
-export type Summary = typeof Summary.Type;
+export type Address = ImapAddress;
+export type Summary = ImapSummary;
 
 /** The folder a fetch read, under the UIDVALIDITY its `EXAMINE` reported. */
 export type FolderRef = Omit<MessageRef, "uid">;
 
 /**
  * An address list as a patch reads it, up to `ADDRESSES` entries and `ADDRESS_LIST_BYTES`
- * encoded. A group's name, an empty address, or one past `ADDRESS_CHARACTERS` is left out.
+ * encoded, and whether an address was left off for those bounds. A group's name, an empty address,
+ * or one past `ADDRESS_CHARACTERS` is left out without counting as cut: it was never an address
+ * the summary could carry.
  */
-export const addresses = (list: ReadonlyArray<EnvelopeAddress> | undefined): Address[] => {
+export const addresses = (
+  list: ReadonlyArray<EnvelopeAddress> | undefined
+): { readonly kept: Address[]; readonly cut: boolean } => {
   const kept: Address[] = [];
   let bytes = 2;
   for (const entry of list ?? []) {
-    if (kept.length >= ADDRESSES) break;
     const address = clean(entry.address ?? "").trim();
     if (address === "" || /\s/.test(address) || Array.from(address).length > ADDRESS_CHARACTERS)
       continue;
+    if (kept.length >= ADDRESSES) return { kept, cut: true };
     const shaped: Address = { name: displayText(entry.name, NAME_CHARACTERS), address };
     const size = encodedBytes(shaped) + 1;
-    if (bytes + size > ADDRESS_LIST_BYTES) break;
+    if (bytes + size > ADDRESS_LIST_BYTES) return { kept, cut: true };
     kept.push(shaped);
     bytes += size;
   }
-  return kept;
+  return { kept, cut: false };
 };
 
 /** `<id@host>`: printable ASCII but angle brackets, inside them. */
@@ -163,11 +142,16 @@ export const summaryOf = (
   structure: Structure | undefined
 ): Summary => {
   const envelope = fetched.envelope ?? {};
+  const from = addresses(envelope.from);
+  const to = addresses(envelope.to);
+  const cc = addresses(envelope.cc);
+  const replyTo = addresses(envelope.replyTo);
   return {
     ref: { ...folder, uid: fetched.uid },
-    from: addresses(envelope.from),
-    to: addresses(envelope.to),
-    cc: addresses(envelope.cc),
+    from: from.kept,
+    to: to.kept,
+    cc: cc.kept,
+    recipientsTruncated: from.cut || to.cut || cc.cut || replyTo.cut,
     subject: displayText(envelope.subject, SUBJECT_CHARACTERS),
     date: iso(envelope.date),
     internalDate: iso(fetched.internalDate),

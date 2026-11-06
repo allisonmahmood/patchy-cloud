@@ -36,7 +36,8 @@ const encodeAliases = Schema.encodeSync(
     Schema.Struct({
       sharedStores: Schema.Array(Schema.String),
       pidgeon: Schema.Array(Schema.String),
-      attio: Schema.Array(Schema.String)
+      attio: Schema.Array(Schema.String),
+      imap: Schema.Array(Schema.String)
     })
   )
 );

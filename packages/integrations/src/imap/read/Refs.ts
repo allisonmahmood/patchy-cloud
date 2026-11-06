@@ -1,37 +1,14 @@
 /**
- * The values IMAP reads name messages and folders by. These are local stand-ins: when the reads
- * are wired, `ConnectionId` meets the declaration's `id` from #1251 and the schemas move to the
- * wire in `packages/api`.
+ * How IMAP reads name messages and UID ranges. The ref itself is the wire's `ImapMessageRef`; its
+ * `connection` is the declaration's connection id, stable across password changes and new when
+ * a connection is deleted and recreated.
  */
+import { IMAP_MAX_UID, type ImapMessageRef } from "@patchy/api";
 import { canonicalArgs } from "@patchy/api/canonical-args";
-import * as Schema from "effect/Schema";
-import { FOLDER_CHARACTERS } from "./Bounds.js";
 
 /** IMAP's nz-number: UIDs and UIDVALIDITY are unsigned 32-bit and never 0. */
-export const MAX_UID = 4_294_967_295;
-const NzNumber = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_UID }));
-
-/** A connection's id from its declaration: stable across password changes, new on recreate. */
-export const ConnectionId = Schema.String.check(Schema.isBetweenLength(1, 128));
-/** A folder's full path, decoded from modified UTF-7, as `listFolders` answers it. */
-export const Folder = Schema.String.check(
-  Schema.isBetweenLength(1, FOLDER_CHARACTERS),
-  Schema.makeFilter((path) => !/[\0\r\n]/.test(path) || "A folder path has no NUL, CR or LF.")
-);
-export const UidValidity = NzNumber;
-export const Uid = NzNumber;
-
-/**
- * One message: its UID within the folder under one UIDVALIDITY. Message-ID is threading metadata,
- * never identity.
- */
-export const MessageRef = Schema.Struct({
-  connection: ConnectionId,
-  folder: Folder,
-  uidValidity: UidValidity,
-  uid: Uid
-});
-export type MessageRef = typeof MessageRef.Type;
+export const MAX_UID = IMAP_MAX_UID;
+export type MessageRef = ImapMessageRef;
 
 /** A ref as a map key: equal refs, equal keys. */
 export const refKey = (ref: MessageRef): string =>

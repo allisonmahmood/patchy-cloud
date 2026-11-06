@@ -15,6 +15,7 @@ import { postgresOperations } from "./postgres.js";
 import { posthogOperations } from "./posthog.js";
 import { pidgeonOperations } from "./pidgeon.js";
 import { attioOperations } from "./attio.js";
+import { imapOperations } from "./imap.js";
 import { limitRefusalFields } from "./limits.js";
 import { HandlerKind, HandlerName } from "./handlers.js";
 
@@ -27,6 +28,7 @@ export const runtimeByteLimits = {
   posthogBytes: registry["runtime.posthog.bytes"].default,
   pidgeonBytes: registry["runtime.pidgeon.bytes"].default,
   attioBytes: registry["runtime.attio.bytes"].default,
+  imapBytes: registry["runtime.imap.bytes"].default,
   serverArgsBytes: registry["tier2.args.bytes"].default,
   resultBytes: registry["runtime.result.bytes"].default,
   fileBytes: registry["runtime.file.bytes"].default
@@ -40,6 +42,7 @@ export type RuntimeBodyLimitId =
   | "runtime.posthog.bytes"
   | "runtime.pidgeon.bytes"
   | "runtime.attio.bytes"
+  | "runtime.imap.bytes"
   | "tier2.args.bytes";
 
 export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
@@ -55,9 +58,11 @@ export function runtimeBodyLimitId(op: string): RuntimeBodyLimitId {
             ? "runtime.pidgeon.bytes"
             : op.startsWith("attio.")
               ? "runtime.attio.bytes"
-              : op === "server.call"
-                ? "tier2.args.bytes"
-                : "runtime.call.bytes";
+              : op.startsWith("imap.")
+                ? "runtime.imap.bytes"
+                : op === "server.call"
+                  ? "tier2.args.bytes"
+                  : "runtime.call.bytes";
 }
 
 export function runtimeBodyLimit(
@@ -70,6 +75,7 @@ export function runtimeBodyLimit(
     readonly posthogBytes: number;
     readonly pidgeonBytes: number;
     readonly attioBytes: number;
+    readonly imapBytes: number;
     readonly serverArgsBytes: number;
   } = runtimeByteLimits
 ): number {
@@ -86,6 +92,8 @@ export function runtimeBodyLimit(
       return limits.pidgeonBytes;
     case "runtime.attio.bytes":
       return limits.attioBytes;
+    case "runtime.imap.bytes":
+      return limits.imapBytes;
     case "tier2.args.bytes":
       return limits.serverArgsBytes + limits.callBytes;
     case "runtime.call.bytes":
@@ -362,6 +370,7 @@ export const runtimeOperations = {
   ...posthogOperations,
   ...pidgeonOperations,
   ...attioOperations,
+  ...imapOperations,
   "server.call": {
     request: Schema.Struct({ op: Schema.Literal("server.call"), args: ServerCall }),
     response: Schema.suspend(() => ServerCallReply),
@@ -644,7 +653,9 @@ export const RuntimeCode = Schema.Literals([
   "limit_exceeded",
   "offset_exhausted",
   "source_rate_limited",
-  "idempotency_conflict"
+  "idempotency_conflict",
+  "auth_failed",
+  "mailbox_reset"
 ]).annotate({ identifier: "RuntimeCode" });
 export type RuntimeCode = typeof RuntimeCode.Type;
 

@@ -9,12 +9,11 @@
  */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import type { ImapCriteria } from "@patchy/api";
 import {
   CALL_SCAN_MILLIS,
   CALL_WINDOWS,
   PAGE_MESSAGES,
-  SEARCH_VALUE_CHARACTERS,
   WINDOW_MAX_UIDS,
   WINDOW_UIDS
 } from "./Bounds.js";
@@ -23,37 +22,8 @@ import { MAX_UID, sequenceSet, uidRange, type UidRange } from "./Refs.js";
 
 // ---------- arguments ----------
 
-const isCalendarDay = (day: string) => {
-  const [year, month, date] = day.split("-").map(Number) as [number, number, number];
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  return year >= 1 && days !== undefined && date >= 1 && date <= days;
-};
-/** A calendar day, `YYYY-MM-DD`, compared with messages' internal dates as IMAP does. */
-export const Day = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/),
-  Schema.makeFilter((day) => isCalendarDay(day) || "Not a calendar day.")
-);
-const SearchValue = Schema.String.check(
-  Schema.isBetweenLength(1, SEARCH_VALUE_CHARACTERS),
-  Schema.makeFilter((value) => !/[\0-\x1F\x7F]/.test(value) || "A search value has no controls.")
-);
-
-/**
- * What a search matches, ANDed. `from`, `to`, `subject` and `text` are IMAP's case-insensitive
- * substring matches; `since` is on or after a day and `before` strictly before one, by internal
- * date; `unseen` true matches unread mail and false read mail.
- */
-export const Criteria = Schema.Struct({
-  from: Schema.optionalKey(SearchValue),
-  to: Schema.optionalKey(SearchValue),
-  subject: Schema.optionalKey(SearchValue),
-  text: Schema.optionalKey(SearchValue),
-  since: Schema.optionalKey(Day),
-  before: Schema.optionalKey(Day),
-  unseen: Schema.optionalKey(Schema.Boolean)
-});
-export type Criteria = typeof Criteria.Type;
+/** What a search matches, ANDed: the wire's criteria. */
+export type Criteria = ImapCriteria;
 
 /**
  * The ImapFlow `SearchObject` for a window and criteria, with `uid` always set. Days go as

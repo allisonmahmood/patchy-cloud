@@ -11,13 +11,14 @@
  *   after it with a fresh bound. Patches keep checkpoints in their tables, so their encoding must
  *   stay readable across releases: add a version, never change version 1.
  */
+import { ImapUidValidity as UidValidity } from "@patchy/api";
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import { Cryptography } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { WINDOW_MAX_UIDS, WINDOW_UIDS } from "./Bounds.js";
 import { InvalidCheckpoint, InvalidCursor, MailboxReset } from "./Errors.js";
-import { MAX_UID, UidValidity } from "./Refs.js";
+import { MAX_UID } from "./Refs.js";
 
 export type Operation = "imap.scanMessages" | "imap.listMessages" | "imap.searchMessages";
 

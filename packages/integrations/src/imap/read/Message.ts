@@ -8,26 +8,14 @@
  *
  * `readMessage` then shapes both, or answers `malformed` when the structure can't be read.
  */
+import type { ImapMessage, ImapUnread } from "@patchy/api";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import { TEXT_FETCH_BYTES } from "./Bounds.js";
-import type { Unread } from "./Results.js";
-import { Part, readStructure, type Body } from "./Structure.js";
-import { addresses, Address, Summary, summaryOf, type Fetched, type FolderRef } from "./Summary.js";
+import { readStructure, type Body } from "./Structure.js";
+import { addresses, summaryOf, type Fetched, type FolderRef } from "./Summary.js";
 import { bodyText, type TextSource } from "./Text.js";
 
-export const Message = Schema.Struct({
-  ...Summary.fields,
-  replyTo: Schema.Array(Address),
-  /** Cleaned, lossy plain text of the body, at most 256 KiB of UTF-8. */
-  text: Schema.String,
-  /** Whether the fetch or the bound left any of the body's text out. */
-  truncated: Schema.Boolean,
-  parts: Schema.Array(Part),
-  /** How the body is encrypted, when it is: its text is then empty, never decrypted. */
-  encrypted: Schema.NullOr(Schema.Literals(["smime", "pgp"]))
-});
-export type Message = typeof Message.Type;
+export type Message = ImapMessage;
 
 /** One text part to fetch, and the bytes it may read. */
 export interface TextFetch {
@@ -73,7 +61,7 @@ export const readMessage = (
   fetched: Fetched,
   folder: FolderRef,
   answered: FetchedText
-): Message | Unread => {
+): Message | ImapUnread => {
   const read = readStructure(fetched.bodyStructure);
   if (Result.isFailure(read)) return { error: "malformed" };
   const structure = read.success;
@@ -94,7 +82,7 @@ export const readMessage = (
   const shown = bodyText(sources);
   return {
     ...summaryOf(fetched, folder, structure),
-    replyTo: addresses(fetched.envelope?.replyTo),
+    replyTo: addresses(fetched.envelope?.replyTo).kept,
     text: shown.text,
     truncated: shown.truncated || fetches.length < texts.length,
     parts: structure.parts,

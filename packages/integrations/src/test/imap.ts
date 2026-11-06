@@ -9,10 +9,14 @@ import { promisify } from "node:util";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ImapNetwork from "../imap/Network.js";
+import * as ImapSessions from "../imap/Sessions.js";
 import * as ImapSource from "../imap/Source.js";
 
-/** The IMAP source over production's network, for suites that reach no mailbox. */
-export const offline = ImapSource.layer.pipe(Layer.provide(ImapNetwork.layer));
+/** The IMAP source and its session pool over production's network, for suites that reach no mailbox. */
+export const offline = ImapSessions.layer.pipe(
+  Layer.provideMerge(ImapSource.layer),
+  Layer.provide(ImapNetwork.layer)
+);
 
 const openssl = promisify(execFile);
 
