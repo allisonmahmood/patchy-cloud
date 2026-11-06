@@ -443,7 +443,7 @@ export default createGuest({ desk: { importWindow, peek } }, [], {}, [], [], ["m
 
 it.layer(tier2, { excludeTestServices: true, timeout: 60_000 })("IMAP in a tier 2 action", (it) => {
   it.effect(
-    "an action in workerd imports a window and reads it through ctx.connections",
+    "an action in workerd scans a window and reads it through ctx.connections",
     () =>
       Effect.gen(function* () {
         const { handlers, connection } = yield* connected("importer");

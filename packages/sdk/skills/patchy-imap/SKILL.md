@@ -81,6 +81,7 @@ await ctx.files.documents.put(
 
 One action that brings a date window of a folder into tables and files, and on every later run carries on from the checkpoint of the last page it finished. Each page's rows go in before its checkpoint, so a run that stops anywhere, from a refusal, a failed write or the action's 60 seconds, loses nothing; files are named by ref and part, so a page read again writes the same rows and files rather than new ones.
 
+- A scan page holds up to 100 messages and `getMessages` takes 25, so it reads each page in batches of 25.
 - Every part marked `attachment` is imported, a forwarded message's files included, and nothing else: not an embedded logo, a signature, a bounce's or read receipt's status, nor a forward's own text.
 - A message gone between its page and `getMessages` answers `not_found`: there's nothing to keep.
 - An attachment past 20 MiB is kept by its filename and its size on the wire, without the file.
@@ -177,8 +178,10 @@ export const importFolder = action({
         ...start,
         ...(cursor === undefined ? {} : { cursor })
       });
-      const read =
-        page.messages.length === 0 ? [] : await mail.getMessages(page.messages.map((m) => m.ref));
+      // A page holds up to 100 messages, and getMessages reads at most 25 at a time.
+      const read = [];
+      for (let at = 0; at < page.messages.length; at += 25)
+        read.push(...(await mail.getMessages(page.messages.slice(at, at + 25).map((m) => m.ref))));
       for (const message of read) {
         // Gone since the page was read: deleted or moved, so nothing to keep.
         if ("error" in message) continue;

@@ -37,8 +37,10 @@ export const importFolder = action({
         ...start,
         ...(cursor === undefined ? {} : { cursor })
       });
-      const read =
-        page.messages.length === 0 ? [] : await mail.getMessages(page.messages.map((m) => m.ref));
+      // A page holds up to 100 messages, and getMessages reads at most 25 at a time.
+      const read = [];
+      for (let at = 0; at < page.messages.length; at += 25)
+        read.push(...(await mail.getMessages(page.messages.slice(at, at + 25).map((m) => m.ref))));
       for (const message of read) {
         // Gone since the page was read: deleted or moved, so nothing to keep.
         if ("error" in message) continue;

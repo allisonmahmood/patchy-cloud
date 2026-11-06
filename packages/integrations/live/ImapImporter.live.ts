@@ -55,8 +55,10 @@ import * as RuntimeTest from "../src/test/runtime.js";
  * between its page and its read, an attachment past the staged-file bound and a row write that
  * fails after its file was adopted. It saves only what a person calls attachments: a named PDF
  * sent inline, a PDF with no name, a forwarded message's PDF and a signed message's PDF, never
- * the forward's own text and HTML, a logo the HTML body embeds or the signature. The staged-file
- * bound is lowered to 100,000 bytes, so a 150,000-byte attachment stands in for one past 20 MiB.
+ * the forward's own text and HTML, a logo the HTML body embeds or the signature. A second folder
+ * of 130 messages runs past a scan page of 100 and `getMessages`' 25 refs, and resumes across
+ * pages, every message kept once. The staged-file bound is lowered to 100,000 bytes, so a
+ * 150,000-byte attachment stands in for one past 20 MiB.
  */
 
 const mail = inject("imap");
@@ -273,6 +275,11 @@ const nameless = (subject: string, day: string, pdf: Uint8Array) => ({
     ""
   ].join("\r\n")
 });
+/** A note with no attachment, received on `day` of 2026. */
+const note = (subject: string, day: string) => ({
+  day,
+  raw: [...headers(subject, "text/plain; charset=utf-8"), `${subject}.`, ""].join("\r\n")
+});
 /** One invoice with `pdf` attached, received on `day` of 2026. */
 const invoice = (
   subject: string,
@@ -394,7 +401,7 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
   "The reference importer, live",
   (it) => {
     it.effect(
-      "Dovecot: imports a date window into tables and files, and resumes after each stop",
+      "Dovecot: imports windows past a scan page into tables and files, resuming after each stop",
       () =>
         Effect.gen(function* () {
           const folder = `Importer ${run}`;
@@ -541,17 +548,38 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             invoke("importer.importFolder", { folder, since: "2026-10-01" });
           const as = <A, E>(effect: Effect.Effect<A, E, Binding.Binding>) =>
             effect.pipe(Effect.provideService(Binding.Binding, binding));
+          // Every row of `table`, page by page.
           const list = (table: string) =>
-            as(rows["tables.list"].run({ table, limit: 100 })).pipe(
-              Effect.map(
-                (page) => (page as { readonly rows: ReadonlyArray<Record<string, unknown>> }).rows
-              )
-            );
+            Effect.gen(function* () {
+              const all: Array<Record<string, unknown>> = [];
+              let cursor: string | null = null;
+              do {
+                const page = (yield* as(
+                  rows["tables.list"].run({
+                    table,
+                    limit: 100,
+                    ...(cursor === null ? {} : { cursor })
+                  })
+                )) as {
+                  readonly rows: ReadonlyArray<Record<string, unknown>>;
+                  readonly cursor: string | null;
+                };
+                all.push(...page.rows);
+                cursor = page.cursor;
+              } while (cursor !== null);
+              return all;
+            });
           const key = (uid: number) => `${folder}/${uidValidity}/${uid}`;
           const file = (uid: number, part = "2") =>
             `${encodeURIComponent(folder)}.${uidValidity}/${uid}/${part}`;
-          const stored = () =>
-            as(files["files.list"].run({ store: "documents", limit: 100 })).pipe(
+          const stored = (prefix?: string) =>
+            as(
+              files["files.list"].run({
+                store: "documents",
+                limit: 100,
+                ...(prefix === undefined ? {} : { prefix })
+              })
+            ).pipe(
               Effect.map((page) =>
                 (page as { readonly files: ReadonlyArray<{ readonly name: string }> }).files.map(
                   (each) => each.name
@@ -671,6 +699,74 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             sha256(pdfs[10])
           );
           assert.lengthOf(yield* list("messages"), 9);
+
+          // 5. A window of 130 messages in another folder, past one scan page of 100 and
+          //    getMessages' 25 refs, every tenth with a PDF. A row write on the second page fails
+          //    once: the run fails after the first page's checkpoint, and the next run reads only
+          //    the second page. Every message is kept once, with no gaps.
+          const bulk = `Bulk ${run}`;
+          const uids = Array.from({ length: 130 }, (_, index) => index + 1);
+          const bulkPdfs = new Map(
+            uids.filter((uid) => uid % 10 === 0).map((uid) => [uid, randomBytes(1_000 + uid)])
+          );
+          yield* owned(async (owner) => {
+            await owner.mailboxCreate(bulk);
+            for (const uid of uids) {
+              const day = `2026-10-${String(1 + (uid % 28)).padStart(2, "0")}`;
+              const pdf = bulkPdfs.get(uid);
+              const message =
+                pdf === undefined ? note(`Note ${uid}`, day) : invoice(`Bulk ${uid}`, day, pdf);
+              await owner.append(bulk, message.raw, [], new Date(`${day}T10:00:00Z`));
+            }
+          });
+          const bulkValidity = yield* owned(async (owner) => {
+            const status = await owner.status(bulk, { uidValidity: true });
+            return status === false ? 0 : Number(status.uidValidity);
+          });
+          const bulkKey = (uid: number) => `${bulk}/${bulkValidity}/${uid}`;
+          const bulkFile = (uid: number) => `${encodeURIComponent(bulk)}.${bulkValidity}/${uid}/2`;
+          const importBulk = () =>
+            invoke("importer.importFolder", { folder: bulk, since: "2026-10-01" });
+          const inBulk = (table: string, column: string) =>
+            Effect.map(list(table), (all) => all.filter((row) => row[column] === bulk));
+
+          failRowOf = bulkKey(110);
+          assert.propertyVal(yield* Effect.flip(importBulk()), "_tag", "CallbackRefusal");
+          // The first page's 100 and the second page's rows up to the failed one, and its
+          // checkpoint.
+          assert.lengthOf(yield* inBulk("messages", "folder"), 109);
+          assert.lengthOf(yield* inBulk("imports", "folder"), 1);
+
+          assert.deepStrictEqual(yield* importBulk(), {
+            ok: true,
+            value: { imported: 30, done: true, stopped: null }
+          });
+          const bulkMessages = yield* inBulk("messages", "folder");
+          assert.deepStrictEqual(
+            bulkMessages.map((row) => row["uid"] as number).sort((a, b) => a - b),
+            uids
+          );
+          assert.strictEqual(new Set(bulkMessages.map((row) => row["key"])).size, uids.length);
+          const bulkAttachments = (yield* list("attachments")).filter((row) =>
+            (row["message"] as string).startsWith(`${bulk}/`)
+          );
+          assert.sameMembers(
+            bulkAttachments.map((row) => `${row["message"] as string} ${row["part"] as string}`),
+            [...bulkPdfs.keys()].map((uid) => `${bulkKey(uid)} 2`)
+          );
+          for (const row of bulkAttachments) {
+            const uid = Number((row["message"] as string).split("/").at(-1));
+            assert.deepInclude(row, {
+              file: bulkFile(uid),
+              sha256: sha256(bulkPdfs.get(uid)!),
+              size: bulkPdfs.get(uid)!.byteLength
+            });
+          }
+          assert.sameMembers(
+            yield* stored(`${encodeURIComponent(bulk)}.`),
+            [...bulkPdfs.keys()].map(bulkFile)
+          );
+          assert.lengthOf(yield* inBulk("imports", "folder"), 1);
         })
     );
   }
