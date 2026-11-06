@@ -103,7 +103,13 @@ import {
   RuntimeSubscriptionRequest,
   RuntimeSubscriptionAccepted
 } from "./runtime.js";
-import { DEV_READ_PATH, DevRead } from "./devRead.js";
+import {
+  DEV_ATTACHMENT_HEADER,
+  DEV_ATTACHMENT_PATH,
+  DEV_READ_PATH,
+  DevAttachment,
+  DevRead
+} from "./devRead.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
 export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
@@ -863,6 +869,22 @@ export class DevReadsGroup extends HttpApiGroup.make("devReads", { topLevel: tru
           "`operation`, as a published patch's do. Success is `{ ok: true, value }`, the " +
           "operation's runtime result, such as `{ ok: true, rows }` for a PostHog query; " +
           "refusals are runtime failures. Responses are no-store."
+      )
+    ),
+    HttpApiEndpoint.post("devAttachment", DEV_ATTACHMENT_PATH, {
+      payload: DevAttachment,
+      success: RuntimeBytes,
+      error: [...runtimeErrors, ...protectedErrors]
+    }).annotateMerge(
+      describe(
+        "`patchy dev`'s `imap.stageAttachment`, as the bearer, under the dev read's authority, " +
+          "slots, deadline, rate limit and recent calls: the instance downloads the part as a " +
+          "published stage does and answers its bytes instead of staging them, for the dev " +
+          "daemon to stage in its own store. `args` are `{ ref, part }`. Success is the raw " +
+          `bytes, at most \`files.stage.bytes\`, with \`${DEV_ATTACHMENT_HEADER}\` carrying ` +
+          "`{ size, sha256, contentType, filename }` as base64url JSON, so the daemon refuses a " +
+          "transfer that ends short or differs. A part past the bound answers `too_large` with " +
+          "nothing sent. Recent calls record its size, never its filename. Responses are no-store."
       )
     )
   )

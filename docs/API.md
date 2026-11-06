@@ -381,6 +381,25 @@ Responses:
 - `503` [RuntimeFailure_7](#runtimefailure_7)
 - `504` [RuntimeFailure_8](#runtimefailure_8)
 
+### `POST /api/connections/dev-attachment`
+
+`patchy dev`'s `imap.stageAttachment`, as the bearer, under the dev read's authority, slots, deadline, rate limit and recent calls: the instance downloads the part as a published stage does and answers its bytes instead of staging them, for the dev daemon to stage in its own store. `args` are `{ ref, part }`. Success is the raw bytes, at most `files.stage.bytes`, with `patchy-attachment` carrying `{ size, sha256, contentType, filename }` as base64url JSON, so the daemon refuses a transfer that ends short or differs. A part past the bound answers `too_large` with nothing sent. Recent calls record its size, never its filename. Responses are no-store.
+
+Request body: [DevAttachment](#devattachment)
+
+Responses:
+
+- `200` raw bytes (`application/octet-stream`)
+- `400` [RuntimeFailure](#runtimefailure) | { ok: false, error: string }
+- `401` [RuntimeFailure_1](#runtimefailure_1) | { ok: false, error: "Missing or invalid API token." }
+- `403` [RuntimeFailure_2](#runtimefailure_2)
+- `404` [RuntimeFailure_3](#runtimefailure_3) | { ok: false, error: string }
+- `409` [RuntimeFailure_4](#runtimefailure_4)
+- `413` [RuntimeFailure_5](#runtimefailure_5)
+- `429` [RuntimeFailure_6](#runtimefailure_6) | { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
+- `503` [RuntimeFailure_7](#runtimefailure_7)
+- `504` [RuntimeFailure_8](#runtimefailure_8)
+
 ## look
 
 ### `GET /api/look`
@@ -985,6 +1004,28 @@ RuntimeSuccess | HandlerFailure
   patchyLook: { look.css: string, LOOK.md: string } | null,
   admins: { id: string, name: string }[],
   restored?: { by: { id: string, name: string }, at: string, note: string | null } | null
+}
+```
+
+### DevAttachment
+
+```
+{
+  op: "imap.stageAttachment",
+  connection: {
+    id: string,
+    handle: string,
+    revision?: integer
+  },
+  args: {
+    ref: {
+      connection: string,
+      folder: string,
+      uidValidity: integer,
+      uid: integer
+    },
+    part: string
+  }
 }
 ```
 

@@ -41,6 +41,9 @@ import * as AttioDev from "./attio/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as ImapDev from "./imap/Dev.js";
+import * as ImapSessions from "./imap/Sessions.js";
+import * as ImapSource from "./imap/Source.js";
 import * as ImapTest from "./test/imap.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
@@ -274,13 +277,21 @@ const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).p
   Layer.provide(DevReads.layer),
   Layer.provide(Authorization.layer)
 );
-/** The door on a socket over a migrated database; `log` stands in for the runtime log when given. */
+/**
+ * The door on a socket over a migrated database; `log` stands in for the runtime log when given,
+ * and `imap` for the IMAP source and pool, which reach no mailbox by default.
+ */
 const serve = (
   log: Layer.Layer<
     RuntimeLog.RuntimeLog,
     never,
     SqlClient.SqlClient | Cryptography.Cryptography
-  > = RuntimeLog.layer
+  > = RuntimeLog.layer,
+  imap: Layer.Layer<
+    ImapSessions.Sessions | ImapSource.Source,
+    never,
+    Cryptography.Cryptography
+  > = ImapTest.offline
 ) =>
   HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
@@ -291,7 +302,7 @@ const serve = (
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),
-        Layer.provideMerge(ImapTest.offline)
+        Layer.provideMerge(imap)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
@@ -499,11 +510,13 @@ const devCalls = Effect.gen(function* () {
     outcome: string;
     outcomeCode: string | null;
     rowCount: number | null;
+    bytes: number | null;
     correlationId: string;
   }>`SELECT credential_kind AS "credentialKind", machine_id AS "machineId",
       machine_name AS "machineName", user_id AS "userId", patch_id AS "patchId",
       version_id AS "versionId", op, resource, connection_id AS "connectionId", outcome,
-      outcome_code AS "outcomeCode", row_count AS "rowCount", correlation_id AS "correlationId"
+      outcome_code AS "outcomeCode", row_count AS "rowCount", bytes,
+      correlation_id AS "correlationId"
     FROM runtime_calls WHERE credential_kind = 'machine' ORDER BY at DESC, id DESC`;
 });
 
@@ -1393,3 +1406,119 @@ it.live(
     }),
   { timeout: 30_000 }
 );
+
+/** A scripted mailbox behind the door: INBOX holds one invoice whose part 2 is a PDF. */
+const mailbox = { host: "mail.example.test", filename: "INV-SENTINEL-dev.pdf" };
+const invoice = Uint8Array.from({ length: 40_000 }, (_, index) => (index * 31) % 256);
+/** The scripted server, once the suite's layer has started it. */
+let mailboxServed: ImapTest.Served | undefined;
+const scriptedImap = Layer.unwrap(
+  Effect.gen(function* () {
+    const certs = yield* ImapTest.certificates([mailbox.host]);
+    const served = yield* ImapTest.serve(certs, {
+      capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE"],
+      mailboxes: [
+        {
+          path: "INBOX",
+          uidValidity: 4,
+          messages: [
+            {
+              uid: 1,
+              day: "2026-10-02",
+              subject: "Invoice",
+              from: "billing@example.com",
+              text: "Attached.\n",
+              attachment: {
+                filename: mailbox.filename,
+                bytes: invoice.byteLength,
+                content: invoice
+              }
+            }
+          ]
+        }
+      ]
+    });
+    mailboxServed = served;
+    return ImapSessions.layer.pipe(
+      Layer.provideMerge(ImapSource.layer),
+      Layer.provide(ImapTest.network(served, certs))
+    );
+  })
+);
+
+it.layer(serve(RuntimeLog.layer, scriptedImap), {
+  excludeTestServices: true,
+  timeout: "60 seconds"
+})("IMAP attachments in patchy dev", (it) => {
+  it.effect(
+    "streams the part to the daemon, which stages it locally, and records its size alone",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const connected = yield* store.connect({
+          integration: "imap",
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          handle: "invoices",
+          description: "Supplier invoices",
+          credentials: ImapSource.credentials({
+            host: mailbox.host,
+            port: 993,
+            security: "tls",
+            username: "invoices@example.test",
+            password: "the-mailbox-password"
+          })
+        });
+        const staging = ImapTest.recordingStaging();
+        const handlers = yield* ImapDev.handlers(
+          { apiUrl: yield* origin, token: Option.some(Redacted.make(DEV_SEED.token)) },
+          staging.service
+        ).pipe(Effect.provide(FetchHttpClient.layer));
+        const answer = yield* handlers["imap.stageAttachment"]
+          .run({
+            connection: "mail",
+            ref: { connection: connected.id, folder: "INBOX", uidValidity: 4, uid: 1 },
+            part: "2"
+          })
+          .pipe(
+            Effect.provideService(
+              Binding.Binding,
+              local(
+                {
+                  mail: {
+                    kind: "imap",
+                    id: connected.id,
+                    handle: connected.handle,
+                    revision: connected.metadataRevision
+                  }
+                },
+                yield* Clock.currentTimeMillis
+              )
+            )
+          );
+        assert.deepInclude(answer as object, {
+          ok: true,
+          size: invoice.byteLength,
+          filename: mailbox.filename
+        });
+        assert.lengthOf(staging.staged, 1);
+        assert.deepStrictEqual(staging.staged[0]!.bytes, invoice);
+        // The download peeked, and nothing marked the message read.
+        for (const line of mailboxServed!.lines) assert.notMatch(line, /BODY\[|STORE|SELECT/i);
+        const [latest] = yield* devCalls;
+        assert.include(latest, {
+          op: "imap.stageAttachment",
+          connectionId: connected.id,
+          outcome: "success",
+          resource: null,
+          rowCount: null,
+          bytes: invoice.byteLength
+        });
+        // Never the filename or the Upload's token.
+        const row = JSON.stringify(latest);
+        assert.notInclude(row, "SENTINEL");
+        assert.notInclude(row, staging.staged[0]!.token);
+      }),
+    60_000
+  );
+});

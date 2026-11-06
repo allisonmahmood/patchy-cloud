@@ -1,11 +1,16 @@
 import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
-import { imapReads } from "./imap.js";
+import { imapReads, imapStageAttachment } from "./imap.js";
+import { FileContentType } from "./schemas.js";
 import { PidgeonDevRead } from "./pidgeon.js";
 import { PostHogDevQuery } from "./posthog.js";
 
 /** Where `patchy dev` sends a read, under the instance's `/api`. */
 export const DEV_READ_PATH = "/connections/dev-read";
+/** Where `patchy dev` fetches an attachment's bytes, under the instance's `/api`. */
+export const DEV_ATTACHMENT_PATH = "/connections/dev-attachment";
+/** The response header carrying a dev attachment's `DevAttachmentMeta`, as base64url JSON. */
+export const DEV_ATTACHMENT_HEADER = "patchy-attachment";
 
 /**
  * A `patchy dev` read of an integration that dev reads live (ADR-0013). The repo's manifest only
@@ -73,3 +78,23 @@ export const DevRead = Schema.Union([
   imap("getMessages")
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;
+
+/**
+ * A `patchy dev` attachment: the instance downloads the part as a published stage does and answers
+ * its bytes, at most `files.stage.bytes`, for the dev daemon to stage in its own store.
+ */
+export const DevAttachment = Schema.Struct({
+  op: Schema.Literal("imap.stageAttachment"),
+  connection: DevReadConnection,
+  args: imapStageAttachment.input
+}).annotate({ identifier: "DevAttachment" });
+export type DevAttachment = typeof DevAttachment.Type;
+
+/** What the instance says of the bytes it answers, so the daemon can tell a cut transfer. */
+export const DevAttachmentMeta = Schema.Struct({
+  size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  contentType: FileContentType,
+  filename: Schema.NullOr(Schema.String)
+});
+export type DevAttachmentMeta = typeof DevAttachmentMeta.Type;
