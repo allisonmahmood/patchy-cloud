@@ -44,7 +44,9 @@ export const importFolder = action({
         if ("error" in message) continue;
         const key = keyOf(message.ref);
         for (const part of message.parts) {
-          if (part.disposition !== "attachment" || part.contentType === "message/rfc822") continue;
+          // Every file the message carries, inline or attached, a forward's own parts too: never
+          // the body's text, nor a forwarded message's container.
+          if (part.body || part.contentType === "message/rfc822") continue;
           const file = fileOf(message.ref, part.part);
           let stored: { readonly size: number; readonly sha256: string } | null = null;
           try {

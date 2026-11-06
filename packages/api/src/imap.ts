@@ -108,7 +108,13 @@ export const ImapPart = Schema.Struct({
   /** The part's size on the wire, transfer-encoded: base64 runs about a third over its bytes. */
   encodedSize: Schema.Int,
   disposition: Schema.NullOr(Schema.Literals(["inline", "attachment"])),
-  contentId: Schema.NullOr(Schema.String)
+  contentId: Schema.NullOr(Schema.String),
+  /**
+   * Whether the part is the message's body: the text read into `text`, a rendering of it such
+   * as an HTML twin, or the part it's encrypted in. Every other part but a forwarded message's
+   * container is a file the message carries, whatever its disposition.
+   */
+  body: Schema.Boolean
 });
 export type ImapPart = typeof ImapPart.Type;
 

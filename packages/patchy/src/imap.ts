@@ -51,6 +51,12 @@ export interface ImapPart {
   readonly encodedSize: number;
   readonly disposition: "inline" | "attachment" | null;
   readonly contentId: string | null;
+  /**
+   * Whether the part is the message's body: its text, a rendering of it such as an HTML twin, or
+   * the part it's encrypted in. Every other part but a `message/rfc822` container is a file the
+   * message carries, whatever its disposition: an inline, named PDF is one.
+   */
+  readonly body: boolean;
 }
 
 export interface ImapSummary {

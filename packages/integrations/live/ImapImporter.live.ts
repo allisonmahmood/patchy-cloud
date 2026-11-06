@@ -52,7 +52,8 @@ import * as RuntimeTest from "../src/test/runtime.js";
  * The `patchy-imap` skill's reference importer, taken from the skill, as a tier 2 action in real
  * workerd over real tables and files, reading Dovecot in Docker. It brings a date window of a
  * folder in and resumes after each way a run stops: a stage refused on quota, a message expunged
- * between its page and its read, an attachment past the staged-file bound, and a row write that
+ * between its page and its read, an attachment past the staged-file bound, a named PDF sent
+ * inline, which is a file like any other, and a row write that
  * fails after its file was adopted. The staged-file bound is lowered to 100,000 bytes, so a
  * 150,000-byte attachment stands in for one past 20 MiB.
  */
@@ -131,7 +132,12 @@ const owned = <A>(use: (owner: ImapFlow) => Promise<A>) =>
     ).pipe(Effect.flatMap((owner) => Effect.promise(() => use(owner))))
   );
 /** One invoice with `pdf` attached, received on `day` of 2026. */
-const invoice = (subject: string, day: string, pdf: Uint8Array) => ({
+const invoice = (
+  subject: string,
+  day: string,
+  pdf: Uint8Array,
+  disposition: "attachment" | "inline" = "attachment"
+) => ({
   day,
   raw: [
     "From: Billing <billing@example.com>",
@@ -147,7 +153,7 @@ const invoice = (subject: string, day: string, pdf: Uint8Array) => ({
     "--importer-boundary",
     `Content-Type: application/pdf; name="${subject}.pdf"`,
     "Content-Transfer-Encoding: base64",
-    `Content-Disposition: attachment; filename="${subject}.pdf"`,
+    `Content-Disposition: ${disposition}; filename="${subject}.pdf"`,
     "",
     (
       Buffer.from(pdf)
@@ -265,15 +271,18 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             randomBytes(150_000),
             randomBytes(4_000),
             randomBytes(5_000),
-            randomBytes(6_000)
+            randomBytes(6_000),
+            randomBytes(7_000)
           ] as const;
           yield* owned((owner) => owner.mailboxCreate(folder));
-          // UID 1 is before the window; 2 to 5 are in it; 6 arrives after the first full import.
+          // UID 1 is before the window; 2 to 6 are in it, 6 a named PDF sent inline; 7 arrives
+          // after the first full import.
           yield* append(folder, invoice("Old", "2026-09-20", pdfs[0]));
           yield* append(folder, invoice("Small", "2026-10-02", pdfs[1]));
           yield* append(folder, invoice("Large", "2026-10-03", pdfs[2]));
           yield* append(folder, invoice("Expunged", "2026-10-04", pdfs[3]));
           yield* append(folder, invoice("Failed", "2026-10-05", pdfs[4]));
+          yield* append(folder, invoice("Inline", "2026-10-05", pdfs[5], "inline"));
           const uidValidity = yield* owned(async (owner) => {
             const status = await owner.status(folder, { uidValidity: true });
             return status === false ? 0 : Number(status.uidValidity);
@@ -430,12 +439,12 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           // 3. Run again: the page is read again, rows and files written over, nothing doubled.
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
-            value: { imported: 3, done: true, stopped: null }
+            value: { imported: 4, done: true, stopped: null }
           });
           const kept = new Map(
             (yield* list("attachments")).map((row) => [row["message"] as string, row])
           );
-          assert.sameMembers([...kept.keys()], [key(2), key(3), key(5)]);
+          assert.sameMembers([...kept.keys()], [key(2), key(3), key(5), key(6)]);
           assert.deepInclude(kept.get(key(3))!, {
             file: null,
             sha256: null,
@@ -444,7 +453,8 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           assert.isAbove(kept.get(key(3))!["size"] as number, BOUND);
           for (const [uid, pdf] of [
             [2, pdfs[1]],
-            [5, pdfs[4]]
+            [5, pdfs[4]],
+            [6, pdfs[5]]
           ] as const) {
             assert.deepInclude(kept.get(key(uid))!, {
               file: file(uid),
@@ -460,23 +470,23 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           }
           assert.sameMembers(
             (yield* list("messages")).map((row) => row["key"]),
-            [key(2), key(3), key(5)]
+            [key(2), key(3), key(5), key(6)]
           );
           assert.lengthOf(yield* list("imports"), 1);
 
           // 4. New mail since: the next run starts from the checkpoint and imports only it.
-          yield* append(folder, invoice("Later", "2026-10-06", pdfs[5]));
+          yield* append(folder, invoice("Later", "2026-10-06", pdfs[6]));
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
             value: { imported: 1, done: true, stopped: null }
           });
           assert.strictEqual(
             sha256(
-              (yield* as(files["files.get"].run({ store: "documents", name: file(6) }))).bytes
+              (yield* as(files["files.get"].run({ store: "documents", name: file(7) }))).bytes
             ),
-            sha256(pdfs[5])
+            sha256(pdfs[6])
           );
-          assert.lengthOf(yield* list("messages"), 4);
+          assert.lengthOf(yield* list("messages"), 5);
         })
     );
   }

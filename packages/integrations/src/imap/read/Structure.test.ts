@@ -73,7 +73,8 @@ describe("parts and their numbers", () => {
         filename: null,
         encodedSize: 100,
         disposition: null,
-        contentId: null
+        contentId: null,
+        body: true
       }
     ]);
     assert.deepStrictEqual(structure.body, {
@@ -106,8 +107,45 @@ describe("parts and their numbers", () => {
       filename: "invoice.pdf",
       encodedSize: 4000,
       disposition: "attachment",
-      contentId: null
+      contentId: null,
+      body: false
     });
+  });
+
+  it("marks the body's parts, every rendering of it included, and nothing a message carries", () => {
+    const inlinePdf = leaf("application/pdf", {
+      encoding: "base64",
+      disposition: "inline",
+      filename: "scan.pdf"
+    });
+    const named = leaf("image/png", { name: "chart.png" });
+    const notes = leaf("text/plain", { disposition: "attachment", filename: "notes.txt" });
+    const forwarded = message(multipart("mixed", [plain, pdf]), { filename: "Fwd.eml" });
+    const structure = read(
+      multipart("mixed", [
+        multipart("alternative", [plain, html]),
+        inlinePdf,
+        named,
+        notes,
+        forwarded
+      ])
+    );
+    assert.deepStrictEqual(
+      structure.parts.map((part) => `${part.part} ${part.contentType} ${part.body}`),
+      [
+        // The text, and its HTML twin: both renderings of the body.
+        "1.1 text/plain true",
+        "1.2 text/html true",
+        // Files, inline or attached, named by disposition or by name alone.
+        "2 application/pdf false",
+        "3 image/png false",
+        "4 text/plain false",
+        // A forwarded message: its container, and its own parts, are never the body.
+        "5 message/rfc822 false",
+        "5.1 text/plain false",
+        "5.2 application/pdf false"
+      ]
+    );
   });
 
   it("includes a forwarded message and its parts, numbered as IMAP sections", () => {

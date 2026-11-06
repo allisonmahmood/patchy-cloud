@@ -161,6 +161,13 @@ interface Selected {
 const none: Selected = { body: { kind: "none" }, parts: [] };
 const leaves = (node: Node): ReadonlyArray<string> =>
   node.children.length === 0 ? [node.part] : node.children.flatMap(leaves);
+/** The inline text leaves under `node`: the renderings an alternative offers of one body. */
+const renderings = (node: Node): ReadonlyArray<string> =>
+  node.children.length === 0
+    ? inlineText(node)
+      ? [node.part]
+      : []
+    : node.children.filter((child) => child.contentType !== "message/rfc822").flatMap(renderings);
 
 const select = (node: Node): Selected => {
   const type = node.contentType;
@@ -171,7 +178,11 @@ const select = (node: Node): Selected => {
       [...chosen]
         .reverse()
         .find(({ body }) => body.kind === "text" && body.texts[0]!.format === format);
-    return last("plain") ?? last("html") ?? chosen[0] ?? none;
+    const picked = last("plain") ?? last("html") ?? chosen[0] ?? none;
+    // Every rendering of the body is the body, the twins it wasn't read from too: never a file.
+    return picked.body.kind === "none"
+      ? picked
+      : { ...picked, parts: [...new Set([...picked.parts, ...renderings(node)])] };
   }
   if (type === "multipart/related") {
     const start = contentIdOf(node.parameters["start"]);
@@ -229,7 +240,8 @@ const flatten = (node: Node, into: Part[], files: { any: boolean }, body: Readon
       filename: node.filename,
       encodedSize: node.size,
       disposition: node.disposition,
-      contentId: node.contentId
+      contentId: node.contentId,
+      body: body.has(node.part)
     });
     if (!body.has(node.part) && (attached(node) || node.contentType === "message/rfc822"))
       files.any = true;
