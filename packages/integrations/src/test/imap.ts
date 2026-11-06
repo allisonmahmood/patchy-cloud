@@ -45,7 +45,7 @@ export const recordingStaging = (refuse?: () => Runtime.RuntimeError | undefined
   });
   const service = FileStaging.FileStaging.of({
     admits: () => refused,
-    stage: (bytes, contentType) =>
+    stage: (_binding, bytes, contentType) =>
       Effect.suspend(() => {
         const refusal = refuse?.();
         if (refusal !== undefined) return Effect.fail(refusal);

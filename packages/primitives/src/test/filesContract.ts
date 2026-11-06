@@ -1027,7 +1027,7 @@ const hostStagingContract = Effect.fn("test.filesContract.hostStaging")(function
   const fixture = yield* setupStaged(companyId, "filehoststage");
   const staging = yield* Files.makeStagingLocal;
   const stage = (bytes: Uint8Array, current: Binding.Binding["Service"] = fixture.binding) =>
-    staging.stage(bytes, "application/pdf").pipe(Effect.provideService(Binding.Binding, current));
+    staging.stage(current, bytes, "application/pdf");
   const bytes = new Uint8Array([37, 80, 68, 70, 0, 255]);
   const staged = yield* stage(bytes);
   assert.deepStrictEqual(
@@ -1045,8 +1045,7 @@ const hostStagingContract = Effect.fn("test.filesContract.hostStaging")(function
     "files.stage.count"
   );
   // The check before a fetch refuses as a stage would, and reserves nothing when it admits.
-  const admits = (bytes: number) =>
-    staging.admits(bytes).pipe(Effect.provideService(Binding.Binding, fixture.binding));
+  const admits = (bytes: number) => staging.admits(fixture.binding, bytes);
   assert.propertyVal(yield* admits(1).pipe(Effect.flip), "limitId", "files.stage.count");
   yield* fixture.discard(uploads.at(-1)!);
   yield* admits(1);
@@ -1079,9 +1078,7 @@ const hostStagingContract = Effect.fn("test.filesContract.hostStaging")(function
     Effect.provideService(ContractLimits.overrides, { "files.stage.bytes": 4 })
   );
   assert.propertyVal(
-    yield* bounded
-      .stage(new Uint8Array(5), "application/pdf")
-      .pipe(Effect.provideService(Binding.Binding, fixture.binding), Effect.flip),
+    yield* bounded.stage(fixture.binding, new Uint8Array(5), "application/pdf").pipe(Effect.flip),
     "limitId",
     "files.stage.bytes"
   );

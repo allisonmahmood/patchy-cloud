@@ -375,16 +375,14 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       yield* wakes.publish([`store:${binding.patchId}:${store}`]);
       return result;
     });
-  const uploadBinding = Effect.gen(function* () {
-    const binding = yield* Binding.Binding;
-    if (
-      binding.manifest.tier !== 2 ||
-      binding.identity === null ||
-      binding.identity.company.id !== binding.companyId
-    )
-      return yield* new Runtime.AccessDenied({});
-    return binding;
-  });
+  /** A call that may stage: a tier 2 version's, with a viewer of its company. */
+  const stagingCall = (binding: Binding.Binding["Service"]) =>
+    binding.manifest.tier !== 2 ||
+    binding.identity === null ||
+    binding.identity.company.id !== binding.companyId
+      ? Effect.fail(new Runtime.AccessDenied({}))
+      : Effect.succeed(binding);
+  const uploadBinding = Effect.flatMap(Binding.Binding, stagingCall);
   /**
    * Each staging quota and where a stage of `size` bytes would take it: outstanding stages and
    * bytes for this viewer and patch, and bytes for the company. Reservations count before blob
@@ -583,10 +581,11 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
    * internal entry point (`FileStaging`) both come through here.
    */
   const stageBytes = Effect.fn("Files.stageBytes")(function* (
+    call: Binding.Binding["Service"],
     bytes: Uint8Array,
     contentType: string
   ) {
-    const binding = yield* uploadBinding;
+    const binding = yield* stagingCall(call);
     if (bytes.byteLength > stageLimits.bytes)
       return yield* new Runtime.TooLarge({
         maxBytes: stageLimits.bytes,
@@ -609,12 +608,12 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     transport: "bytes-put",
     run: (input: unknown, bytes?: Uint8Array) =>
       Effect.gen(function* () {
-        yield* uploadBinding;
+        const binding = yield* uploadBinding;
         const args = yield* decodeStage(input).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
         if (bytes === undefined) return yield* new Runtime.InvalidRequest({});
-        const row = yield* stageBytes(bytes, args.contentType);
+        const row = yield* stageBytes(binding, bytes, args.contentType);
         return { token: row.token, size: row.size, contentType: row.contentType };
       })
   } satisfies Runtime.BytesPutHandler;
@@ -960,8 +959,11 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     "shared.files.list": sharedList,
     "shared.files.stat": sharedStat
   } satisfies Readonly<Record<string, Runtime.Handler>>;
-  const admits = Effect.fn("Files.admits")(function* (size: number) {
-    const binding = yield* uploadBinding;
+  const admits = Effect.fn("Files.admits")(function* (
+    call: Binding.Binding["Service"],
+    size: number
+  ) {
+    const binding = yield* stagingCall(call);
     if (size > stageLimits.bytes)
       return yield* new Runtime.TooLarge({
         maxBytes: stageLimits.bytes,
@@ -977,8 +979,8 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
   });
   const staging = FileStaging.FileStaging.of({
     admits,
-    stage: (bytes, contentType) =>
-      Effect.map(stageBytes(bytes, contentType), (row) => ({
+    stage: (binding, bytes, contentType) =>
+      Effect.map(stageBytes(binding, bytes, contentType), (row) => ({
         upload: { token: row.token, size: row.size, contentType: row.contentType },
         sha256: row.sha256
       }))

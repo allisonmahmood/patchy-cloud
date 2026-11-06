@@ -409,7 +409,9 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           // 1. The viewer's staged uploads are full: the run stops before anything is kept.
           const full = [];
           for (let index = 0; index < 16; index++)
-            full.push((yield* as(staging.stage(new Uint8Array([index]), "text/plain"))).upload);
+            full.push(
+              (yield* staging.stage(binding, new Uint8Array([index]), "text/plain")).upload
+            );
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
             value: { imported: 0, done: false, stopped: "limit_exceeded" }

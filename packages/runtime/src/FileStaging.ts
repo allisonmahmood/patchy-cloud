@@ -15,14 +15,22 @@ export class FileStaging extends Context.Service<
   FileStaging,
   {
     /**
-     * Refuses as staging `bytes` would be refused now, reserving nothing: for a caller about to
-     * fetch bytes that may not fit. A stage can still be refused if others stage meanwhile.
+     * Refuses as staging `bytes` for `binding`'s call would be refused now, reserving nothing:
+     * for a caller about to fetch bytes that may not fit. A stage can still be refused if others
+     * stage meanwhile.
      */
-    readonly admits: (bytes: number) => Effect.Effect<void, RuntimeError, Binding>;
-    /** `sha256` is the staged bytes' digest in lowercase hex. */
+    readonly admits: (
+      binding: Binding["Service"],
+      bytes: number
+    ) => Effect.Effect<void, RuntimeError>;
+    /**
+     * Stages `bytes` for `binding`'s call: its viewer, patch and loaded version. `sha256` is the
+     * staged bytes' digest in lowercase hex.
+     */
     readonly stage: (
+      binding: Binding["Service"],
       bytes: Uint8Array,
       contentType: string
-    ) => Effect.Effect<{ readonly upload: Upload; readonly sha256: string }, RuntimeError, Binding>;
+    ) => Effect.Effect<{ readonly upload: Upload; readonly sha256: string }, RuntimeError>;
   }
 >()("@patchy/runtime/FileStaging") {}

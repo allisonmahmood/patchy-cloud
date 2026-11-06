@@ -81,7 +81,7 @@ export const handlers = Effect.fn("ImapDev.handlers")(function* (
       if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "imap")
         return yield* new ConnectionNotDeclared({});
       // A full local quota refuses before the instance downloads anything for it.
-      yield* staging.admits(1);
+      yield* staging.admits(binding, 1);
       const maxBytes = yield* ContractLimits.get("files.stage.bytes");
       const { bytes, meta } = yield* DevDoor.attachment(
         instance,
@@ -95,7 +95,7 @@ export const handlers = Effect.fn("ImapDev.handlers")(function* (
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.provideService(Cryptography.Cryptography, cryptography)
       );
-      const staged = yield* staging.stage(bytes, meta.contentType);
+      const staged = yield* staging.stage(binding, bytes, meta.contentType);
       return yield* encodeStaged({
         ok: true,
         upload: staged.upload,

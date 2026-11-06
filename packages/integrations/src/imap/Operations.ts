@@ -700,13 +700,14 @@ export const stageAttachmentAt = <E>(target: Target<E>, input: StageInput) =>
   Effect.gen(function* () {
     const sessions = yield* Sessions.Sessions;
     const staging = yield* FileStaging.FileStaging;
+    const binding = yield* Binding.Binding;
     return yield* sessions.buffered(target.deadline)(
       Effect.gen(function* () {
         const found = yield* downloadAttachment(target, input);
         // The page's staging refusals as they are: the bound, a quota, the viewer. Anything else
         // is Patchy's side being unavailable.
         const staged = yield* staging
-          .stage(found.bytes, found.contentType)
+          .stage(binding, found.bytes, found.contentType)
           .pipe(
             Effect.mapError((error) =>
               isStagingRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
