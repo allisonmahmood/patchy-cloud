@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { imapReads, type ImapRead } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
 import { Runtime } from "@patchy/runtime/core";
@@ -7,6 +8,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { ImapFlow } from "imapflow";
 import { inject } from "vitest";
 import * as AttioSource from "../src/attio/Source.js";
@@ -130,6 +132,17 @@ const flags = (server: LiveServer, folder: string) =>
 const owned = <A>(server: LiveServer, use: (owner: ImapFlow) => Promise<A>) =>
   Effect.scoped(Effect.flatMap(client(server), (owner) => Effect.promise(() => use(owner))));
 
+type Outputs = { readonly [K in ImapRead]: (typeof imapReads)[K]["output"]["Type"] };
+/** Each read's answer held to its wire, as a patch receives it. */
+const outputs: { readonly [K in ImapRead]: (value: unknown) => Outputs[K] } = {
+  listFolders: Schema.decodeUnknownSync(imapReads.listFolders.output),
+  folderStatus: Schema.decodeUnknownSync(imapReads.folderStatus.output),
+  scanMessages: Schema.decodeUnknownSync(imapReads.scanMessages.output),
+  listMessages: Schema.decodeUnknownSync(imapReads.listMessages.output),
+  searchMessages: Schema.decodeUnknownSync(imapReads.searchMessages.output),
+  getMessages: Schema.decodeUnknownSync(imapReads.getMessages.output)
+};
+
 /** A connected mailbox, and a way to call each read on it as a patch's viewer would. */
 const connected = (server: LiveServer, handle: string) =>
   Effect.gen(function* () {
@@ -160,19 +173,14 @@ const connected = (server: LiveServer, handle: string) =>
         },
         name,
         input
-      ).pipe(Effect.provideService(ConnectionStore.ConnectionStore, store));
+      ).pipe(
+        Effect.map((value) => outputs[name](value)),
+        Effect.provideService(ConnectionStore.ConnectionStore, store)
+      );
     return { connection, call };
   });
 
-interface Page {
-  readonly messages: ReadonlyArray<{
-    readonly subject: string | null;
-    readonly ref: { readonly uid: number; readonly uidValidity: number };
-  }>;
-  readonly cursor: string | null;
-  readonly checkpoint?: string;
-  readonly done: boolean;
-}
+type Page = Outputs["listMessages"] & { readonly checkpoint?: string };
 const servers = [
   ["Dovecot", mail.dovecot],
   ["GreenMail", mail.greenmail]
@@ -188,24 +196,22 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
           const folder = `Reads ${run} Überweisungen`;
           yield* seed(server, folder, 120);
           const { call, connection } = yield* connected(server, `reads-${name.toLowerCase()}`);
-          const listed = (yield* call("listFolders", {})) as {
-            readonly folders: ReadonlyArray<{ readonly path: string }>;
-          };
+          const listed = yield* call("listFolders", {});
           assert.isTrue(listed.folders.some((entry) => entry.path === folder));
           assert.deepInclude(yield* call("folderStatus", { folder }), {
             messages: 120,
             unseen: 120
           });
 
-          const scanned: Page["messages"][number][] = [];
-          let page = (yield* call("scanMessages", { folder, since: "2026-10-01" })) as Page;
+          const scanned: Array<Page["messages"][number]> = [];
+          let page = yield* call("scanMessages", { folder, since: "2026-10-01" });
           scanned.push(...page.messages);
           while (page.cursor !== null) {
-            page = (yield* call("scanMessages", {
+            page = yield* call("scanMessages", {
               folder,
               since: "2026-10-01",
               cursor: page.cursor
-            })) as Page;
+            });
             scanned.push(...page.messages);
           }
           assert.deepStrictEqual(
@@ -213,18 +219,18 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
             Array.from({ length: 120 }, (_, index) => index + 1)
           );
           assert.strictEqual(scanned[6]!.subject, "Überweisung № 7");
-          const after = (yield* call("scanMessages", { folder, after: page.checkpoint! })) as Page;
+          const after = yield* call("scanMessages", { folder, after: page.checkpoint! });
           assert.deepInclude(after, { messages: [], done: true });
 
-          const newest = (yield* call("listMessages", { folder })) as Page;
+          const newest = yield* call("listMessages", { folder });
           assert.strictEqual(newest.messages[0]!.ref.uid, 120);
           assert.lengthOf(newest.messages, 100);
           // GreenMail's FROM finds no part of an address, so it's searched by subject alone.
-          const found = (yield* call("searchMessages", {
+          const found = yield* call("searchMessages", {
             folder,
             subject: "Überweisung № 11",
             ...(name === "Dovecot" ? { from: "billing2" } : {})
-          })) as Page;
+          });
           assert.includeMembers(
             found.messages.map((message) => message.ref.uid),
             [11, 110]
@@ -244,11 +250,13 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
               uid: 4_000
             }
           ];
-          const read = (yield* call("getMessages", { refs })) as {
-            readonly messages: ReadonlyArray<{ readonly text?: string; readonly error?: string }>;
-          };
+          const read = yield* call("getMessages", { refs });
           assert.lengthOf(read.messages, 25);
-          assert.strictEqual(read.messages[0]!.text, "Bitte zahlen Sie Rechnung 1.");
+          const first = read.messages[0]!;
+          assert.strictEqual(
+            "text" in first ? first.text : first.error,
+            "Bitte zahlen Sie Rechnung 1."
+          );
           assert.deepStrictEqual(read.messages[24], { error: "not_found" });
 
           // Nothing Patchy sent marked a message read.
@@ -274,7 +282,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
           const folder = `Expunge ${run}`;
           yield* seed(server, folder, 150);
           const { call } = yield* connected(server, `expunge-${name.toLowerCase()}`);
-          const first = (yield* call("scanMessages", { folder })) as Page;
+          const first = yield* call("scanMessages", { folder });
           assert.lengthOf(first.messages, 100);
           yield* owned(server, async (owner) => {
             const lock = await owner.getMailboxLock(folder);
@@ -284,7 +292,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
               lock.release();
             }
           });
-          const second = (yield* call("scanMessages", { folder, cursor: first.cursor! })) as Page;
+          const second = yield* call("scanMessages", { folder, cursor: first.cursor! });
           assert.deepStrictEqual(
             second.messages.map((message) => message.ref.uid),
             Array.from({ length: 50 }, (_, index) => index + 101).filter((uid) => uid !== 120)
@@ -309,14 +317,14 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
           });
           const { call } = yield* connected(server, `gaps-${name.toLowerCase()}`);
           const found: number[] = [];
-          let page = (yield* call("searchMessages", { folder, subject: "Early" })) as Page;
+          let page = yield* call("searchMessages", { folder, subject: "Early" });
           found.push(...page.messages.map((message) => message.ref.uid));
           while (page.cursor !== null) {
-            page = (yield* call("searchMessages", {
+            page = yield* call("searchMessages", {
               folder,
               subject: "Early",
               cursor: page.cursor
-            })) as Page;
+            });
             found.push(...page.messages.map((message) => message.ref.uid));
           }
           assert.deepStrictEqual(found, [5, 4, 3, 2, 1]);
@@ -328,7 +336,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
           const folder = `Reset ${run}`;
           yield* seed(server, folder, 3);
           const { call, connection } = yield* connected(server, `reset-${name.toLowerCase()}`);
-          const page = (yield* call("scanMessages", { folder })) as Page;
+          const page = yield* call("scanMessages", { folder });
           const ref = {
             connection: connection.id,
             folder,
@@ -339,9 +347,7 @@ it.layer(services, { timeout: "120 seconds", excludeTestServices: true })(
           // Dovecot's UIDVALIDITY counts seconds: a folder recreated in the same one could keep it.
           yield* Effect.sleep("1100 millis");
           yield* seed(server, folder, 3);
-          const status = (yield* call("folderStatus", { folder })) as {
-            readonly uidValidity: number;
-          };
+          const status = yield* call("folderStatus", { folder });
           assert.notStrictEqual(status.uidValidity, ref.uidValidity);
           for (const failed of [
             yield* Effect.flip(call("getMessages", { refs: [ref] })),
