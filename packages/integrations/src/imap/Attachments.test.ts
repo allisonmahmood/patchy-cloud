@@ -109,7 +109,7 @@ interface Setup {
   readonly capabilities?: ReadonlyArray<string>;
   readonly before?: ImapTest.Script["before"];
   readonly limits?: Partial<Record<Parameters<typeof ContractLimits.get>[0], number>>;
-  readonly refuse?: () => Runtime.RuntimeError | undefined;
+  readonly refuse?: (at: "admits" | "stage") => Runtime.RuntimeError | undefined;
 }
 /** A connected mailbox on a scripted server, and a stage on it through recording host staging. */
 const setup = (handle: string, attachment: ImapTest.ScriptedAttachment, options: Setup = {}) =>
@@ -354,25 +354,46 @@ it.layer(fixture)("IMAP attachments", (it) => {
     })
   );
 
-  it.effect("hands on staging's quota refusal, and keeps the session", () =>
+  it.effect("refuses at a full quota before it downloads: no session, no FETCH", () =>
     Effect.gen(function* () {
-      let full = true;
-      const { stage, logins } = yield* setup("quota", pdf(content), {
+      const { served, stage, staged } = yield* setup("quota-full", pdf(content), {
         refuse: () =>
-          full
-            ? new Runtime.LimitExceeded({
-                limitId: "files.stage.count",
-                value: registry["files.stage.count"].default
-              })
-            : undefined
+          new Runtime.LimitExceeded({
+            limitId: "files.stage.count",
+            value: registry["files.stage.count"].default
+          })
       });
-      const before = logins();
+      const dials = served.dials.length;
       const refused = yield* Effect.flip(stage("2"));
       assert.include(refused, { code: "limit_exceeded", limitId: "files.stage.count" });
-      full = false;
-      yield* stage("2");
-      assert.strictEqual(logins() - before, 1);
+      assert.strictEqual(served.dials.length, dials);
+      assert.notInclude(served.commands.join("\n"), "FETCH");
+      assert.lengthOf(staged, 0);
     })
+  );
+
+  it.effect(
+    "hands on a quota refusal staging finds after the download, and keeps the session",
+    () =>
+      Effect.gen(function* () {
+        let full = true;
+        const { stage, logins } = yield* setup("quota", pdf(content), {
+          // Others filled the quota while this call downloaded.
+          refuse: (at) =>
+            full && at === "stage"
+              ? new Runtime.LimitExceeded({
+                  limitId: "files.stage.count",
+                  value: registry["files.stage.count"].default
+                })
+              : undefined
+        });
+        const before = logins();
+        const refused = yield* Effect.flip(stage("2"));
+        assert.include(refused, { code: "limit_exceeded", limitId: "files.stage.count" });
+        full = false;
+        yield* stage("2");
+        assert.strictEqual(logins() - before, 1);
+      })
   );
 });
 

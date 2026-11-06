@@ -35,19 +35,22 @@ export interface Staged {
 }
 /**
  * Host staging that keeps what it staged in memory, for suites about what reaches staging. Files'
- * own contract holds the real staging's quotas, expiry and adoption; `refuse` stands in a quota.
+ * own contract holds the real staging's quotas, expiry and adoption; `refuse` stands in a quota,
+ * asked at each step: `admits` before a caller fetches bytes, `stage` once it has them.
  */
-export const recordingStaging = (refuse?: () => Runtime.RuntimeError | undefined) => {
+export const recordingStaging = (
+  refuse?: (at: "admits" | "stage") => Runtime.RuntimeError | undefined
+) => {
   const staged: Staged[] = [];
-  const refused = Effect.suspend(() => {
-    const refusal = refuse?.();
-    return refusal === undefined ? Effect.void : Effect.fail(refusal);
-  });
   const service = FileStaging.FileStaging.of({
-    admits: () => refused,
+    admits: () =>
+      Effect.suspend(() => {
+        const refusal = refuse?.("admits");
+        return refusal === undefined ? Effect.void : Effect.fail(refusal);
+      }),
     stage: (_binding, bytes, contentType) =>
       Effect.suspend(() => {
-        const refusal = refuse?.();
+        const refusal = refuse?.("stage");
         if (refusal !== undefined) return Effect.fail(refusal);
         const token = randomBytes(16).toString("hex");
         staged.push({ token, bytes, contentType });

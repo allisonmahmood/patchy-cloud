@@ -691,28 +691,30 @@ const isStagingRefusal = Schema.is(
   ])
 );
 
+// The page's staging refusals as they are: the bound, a quota, the viewer. Anything else is
+// Patchy's side being unavailable.
+const asStagingRefusal = Effect.mapError((error: Runtime.RuntimeError) =>
+  isStagingRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
+);
+
 /**
- * One part of a message staged as an Upload for the call's viewer, patch and version. The call
- * holds one of the process's attachment places from before its download until the bytes are
- * staged, so the attachments a process buffers at once stay bounded.
+ * One part of a message staged as an Upload for the call's viewer, patch and version. A call that
+ * staging would refuse now, such as one past its viewer's quota, is refused before it takes a place
+ * or downloads. The call holds one of the process's attachment places from before its download
+ * until the bytes are staged, so the attachments a process buffers at once stay bounded.
  */
 export const stageAttachmentAt = <E>(target: Target<E>, input: StageInput) =>
   Effect.gen(function* () {
     const sessions = yield* Sessions.Sessions;
     const staging = yield* FileStaging.FileStaging;
     const binding = yield* Binding.Binding;
+    yield* staging.admits(binding, 1).pipe(asStagingRefusal);
     return yield* sessions.buffered(target.deadline)(
       Effect.gen(function* () {
         const found = yield* downloadAttachment(target, input);
-        // The page's staging refusals as they are: the bound, a quota, the viewer. Anything else
-        // is Patchy's side being unavailable.
         const staged = yield* staging
           .stage(binding, found.bytes, found.contentType)
-          .pipe(
-            Effect.mapError((error) =>
-              isStagingRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
-            )
-          );
+          .pipe(asStagingRefusal);
         yield* WideEvents.add({ stagedBytes: staged.upload.size });
         return yield* encodeStaged({
           ok: true,
