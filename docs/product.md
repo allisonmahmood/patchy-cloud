@@ -1595,9 +1595,10 @@ its parts from `BODYSTRUCTURE`, `{ part, contentType, filename, encodedSize,
 disposition, contentId, attachment }` with a forwarded message's parts included,
 `attachment` marking what a person reading the mail calls one, decided in one
 place: attached by disposition, or named or of a type other than text and not a
-resource the body embeds (in `multipart/related` with a Content-ID); never the
-body, its HTML twin, the part it's encrypted in, a signed message's signature or
-a forwarded message's container, while a forward's own files count, and a PDF
+resource the body embeds (in `multipart/related` with a Content-ID) or a
+`message/*` report such as a bounce's delivery status or a read receipt's; never
+the body, its HTML twin, the part it's encrypted in, a signed message's signature
+or a forwarded message's container, while a forward's own files count, and a PDF
 with no name is one. `hasAttachments` is true exactly when some part is one. A
 message adds
 `encrypted` for an S/MIME or PGP body, which is never decrypted. A message whose

@@ -253,14 +253,17 @@ const signatures = (node: Node): ReadonlyArray<string> => {
  * them. Never one of `never`, the message's own body (its text, a rendering of it, the part it's
  * encrypted in) and its signatures, nor a forwarded message's container. Always one attached by
  * disposition. Otherwise one with a filename or of a type other than text, unless it's a resource
- * the body embeds: inside `multipart/related` with a Content-ID, such as a logo. So a nameless PDF
- * is one, and a forwarded message's own text and HTML aren't, while its files are.
+ * the body embeds (inside `multipart/related` with a Content-ID, such as a logo) or a report about
+ * mail rather than a file anyone sent: any other `message/*` part, such as a bounce's delivery
+ * status or a read receipt's. So a nameless PDF is one, and a forwarded message's own text and
+ * HTML aren't, while its files are.
  */
 const isAttachment = (node: Node, never: ReadonlySet<string>, related: boolean) =>
   !never.has(node.part) &&
   node.contentType !== "message/rfc822" &&
   (node.disposition === "attachment" ||
-    ((node.filename !== null || !node.contentType.startsWith("text/")) &&
+    (!node.contentType.startsWith("message/") &&
+      (node.filename !== null || !node.contentType.startsWith("text/")) &&
       !(related && node.contentId !== null)));
 
 /**

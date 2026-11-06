@@ -112,9 +112,10 @@ export const ImapPart = Schema.Struct({
   /**
    * Whether the part is what a person reading the mail calls an attachment: one attached by
    * disposition, or one with a filename or of a type other than text that isn't a resource the
-   * body embeds (inside `multipart/related` with a Content-ID, such as a logo). Never the
-   * message's body, a signed message's signature or a forwarded message's container; a forwarded
-   * message's own files are. `hasAttachments` is true exactly when a part is one.
+   * body embeds (inside `multipart/related` with a Content-ID, such as a logo) or a `message/*`
+   * report, such as a bounce's delivery status or a read receipt's. Never the message's body, a
+   * signed message's signature or a forwarded message's container; a forwarded message's own
+   * files are. `hasAttachments` is true exactly when a part is one.
    */
   attachment: Schema.Boolean
 });

@@ -54,8 +54,9 @@ export interface ImapPart {
   /**
    * Whether the part is what a person reading the mail calls an attachment: attached by
    * disposition, or named or of a type other than text, and not a resource the body embeds, such
-   * as a logo. A named PDF sent inline is one, and so is a PDF with no name; the body, a signed
-   * message's signature, a forwarded message's container and its own text aren't, but a forwarded
+   * as a logo, nor a `message/*` report such as a bounce's delivery status. A named PDF sent inline
+   * is one, and so is a PDF with no name; the body, a signed message's signature, a read receipt's
+   * notification, a forwarded message's container and its own text aren't, but a forwarded
    * message's files are. `hasAttachments` is true exactly when a part is one.
    */
   readonly attachment: boolean;

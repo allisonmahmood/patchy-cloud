@@ -235,6 +235,49 @@ describe("which parts are attachments", () => {
     );
   });
 
+  it("never counts a bounce's or a read receipt's status, but counts a file it returns", () => {
+    const report = (type: string, status: unknown, returned: unknown) =>
+      multipart("report", [plain, status, returned], { "report-type": type });
+    const returned = message(multipart("mixed", [plain, pdf]));
+    // A bounce: its text, the delivery status, and the returned message with its PDF.
+    assert.deepStrictEqual(
+      attachments(report("delivery-status", leaf("message/delivery-status"), returned)),
+      ["3.2"]
+    );
+    // The same with the returned message's headers alone, as an internationalized bounce sends.
+    assert.deepStrictEqual(
+      attachments(
+        report(
+          "global-delivery-status",
+          leaf("message/global-delivery-status"),
+          leaf("message/global-headers")
+        )
+      ),
+      []
+    );
+    // A read receipt: its text, the disposition notification, and the original's headers.
+    assert.deepStrictEqual(
+      attachments(
+        report(
+          "disposition-notification",
+          leaf("message/disposition-notification", { name: "MDNPart2.txt" }),
+          leaf("text/rfc822-headers")
+        )
+      ),
+      []
+    );
+    // Attached by disposition, it is one.
+    assert.deepStrictEqual(
+      attachments(
+        multipart("mixed", [
+          plain,
+          leaf("message/delivery-status", { disposition: "attachment", filename: "status.txt" })
+        ])
+      ),
+      ["2"]
+    );
+  });
+
   it("never counts a signed message's signature, S/MIME or PGP, but counts what it signs", () => {
     const smime = (type: string) =>
       leaf(type, { encoding: "base64", disposition: "attachment", filename: "smime.p7s" });
