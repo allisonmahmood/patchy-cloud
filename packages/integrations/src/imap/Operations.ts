@@ -669,7 +669,6 @@ export const downloadAttachment = <E>(target: Target<E>, input: StageInput) =>
         if (part.contentType === "message/rfc822")
           return yield* new Attachments.NotAFile({ part: input.part });
         const bytes = yield* Attachments.download(session, input.ref.uid, part.part, bounds);
-        yield* WideEvents.enrich({ stagedBytes: bytes.byteLength });
         return {
           bytes,
           // A media type a file can carry, or bytes of no stated kind.
@@ -713,6 +712,7 @@ export const stageAttachmentAt = <E>(target: Target<E>, input: StageInput) =>
               isStagingRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
             )
           );
+        yield* WideEvents.add({ stagedBytes: staged.upload.size });
         return yield* encodeStaged({
           ok: true,
           upload: staged.upload,

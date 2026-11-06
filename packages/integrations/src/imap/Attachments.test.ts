@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { assert, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -317,6 +318,39 @@ it.layer(fixture)("IMAP attachments", (it) => {
       assert.strictEqual(served.dials.length, dials);
       for (const release of releases) release();
       yield* Fiber.join(first);
+    })
+  );
+
+  it.effect("sums the request's staged bytes on its wide event; a refused stage adds none", () =>
+    Effect.gen(function* () {
+      let full = false;
+      const { stage } = yield* setup("summed", pdf(content), {
+        refuse: () =>
+          full
+            ? new Runtime.LimitExceeded({
+                limitId: "files.stage.count",
+                value: registry["files.stage.count"].default
+              })
+            : undefined
+      });
+      const recorded: WideEvents.WideEvent[] = [];
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Effect.sync(() => void recorded.push(event))
+        })
+      );
+      yield* events.withEvent(
+        { type: "request" },
+        Effect.gen(function* () {
+          yield* stage("2");
+          yield* stage("2");
+          full = true;
+          yield* Effect.flip(stage("2"));
+        })
+      );
+      yield* Effect.yieldNow;
+      assert.lengthOf(recorded, 1);
+      assert.include(JSON.stringify(recorded[0]), `"stagedBytes":${2 * content.byteLength}`);
     })
   );
 
