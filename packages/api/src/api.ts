@@ -997,8 +997,8 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "UID windows within `imap.scan.windows` and `imap.scan.milliseconds`, so a page can be empty and not `done`. " +
           "A cursor binds its call (`invalid_cursor`). `getMessages` takes 1 to `imap.getMessages.refs` refs " +
           "`{ connection, folder, uidValidity, uid }` and answers one per ref in order: a message with its text, parts and " +
-          'encryption, or `{ error: "not_found" | "malformed" | "too_large" }`, a message over `runtime.row.bytes` ' +
-          "being `too_large`; past `runtime.result.bytes` in all it refuses `too_large`. A ref, cursor or checkpoint made " +
+          'encryption, or `{ error: "not_found" | "malformed" | "too_large" }`, a message whose answer passes ' +
+          "`runtime.row.bytes` being `too_large`; past `runtime.result.bytes` in all it refuses `too_large`. A ref, cursor or checkpoint made " +
           "under another UIDVALIDITY fails `mailbox_reset` with `details.folder`; a ref of another connection " +
           "`invalid_request`; a folder that can't be opened `not_found` with `details.folder`. A login the mail server " +
           "refuses pauses the connection, and it and every later call fail `auth_failed` without contacting the server until " +

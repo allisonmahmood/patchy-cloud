@@ -1594,10 +1594,11 @@ hasAttachments }`, every field bounded, `recipientsTruncated` marking an address
 list longer than a summary keeps. A message adds `replyTo`, its text, `truncated`,
 its parts from `BODYSTRUCTURE`, `{ part, contentType, filename, encodedSize,
 disposition, contentId }` with a forwarded message's parts included, and
-`encrypted` for an S/MIME or PGP body, which is never decrypted. A message over
-1 MiB encoded answers `too_large` alone, so each fits a patch's row; a whole
-answer past 8 MiB refuses the call `too_large`, saying to ask for fewer refs, and
-drops nothing.
+`encrypted` for an S/MIME or PGP body, which is never decrypted. A message whose
+answer, its summary, text and parts, passes 1 MiB encoded answers `too_large`
+alone, so each fits a patch's row; attachments never count, since their bytes
+are never returned. A whole answer past 8 MiB refuses the call `too_large`,
+saying to ask for fewer refs, and drops nothing.
 
 **Refs.** A message is `{ connection, folder, uidValidity, uid }`, checked
 against the declaration: a ref of another connection is refused
