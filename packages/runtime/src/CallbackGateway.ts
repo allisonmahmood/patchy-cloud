@@ -96,7 +96,8 @@ const connections: Readonly<Record<string, true>> = {
   "imap.scanMessages": true,
   "imap.listMessages": true,
   "imap.searchMessages": true,
-  "imap.getMessages": true
+  "imap.getMessages": true,
+  "imap.stageAttachment": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -468,7 +469,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
                       : "source_unavailable",
               durationMs: (yield* Clock.currentTimeMillis) - now,
               rowCount:
-                reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null
+                reply?.ok && "value" in reply ? (handler.rowCount?.(reply.value) ?? null) : null,
+              bytes: reply?.ok && "value" in reply ? (handler.bytes?.(reply.value) ?? null) : null
             })
             .pipe(Effect.interruptible, Effect.forkDetach);
           // Await only the fiber handle: a stuck SQL finalizer must not extend cleanup.

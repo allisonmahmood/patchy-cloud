@@ -1,4 +1,5 @@
 import { decodeError } from "./clientError.js";
+import type { Upload } from "./config.js";
 
 /**
  * One IMAP mailbox's client, in a tier 2 action. Patchy builds every command from these
@@ -84,6 +85,20 @@ export interface ImapMessage extends ImapSummary {
   readonly encrypted: "smime" | "pgp" | null;
 }
 
+/**
+ * One part staged as an Upload, which this action adopts once with
+ * `ctx.files.<store>.put(name, upload)` within the hour. `size` is the bytes' true size and
+ * `sha256` their digest. `filename` is the sender's, display text only: name the stored file by the
+ * ref and part instead.
+ */
+export interface ImapStaged {
+  readonly upload: Upload;
+  readonly size: number;
+  readonly sha256: string;
+  readonly contentType: string;
+  readonly filename: string | null;
+}
+
 /** A ref that didn't read as a message. */
 export interface ImapUnread {
   readonly error: "not_found" | "malformed" | "too_large";
@@ -148,6 +163,13 @@ export interface ImapClient {
   ): Promise<ImapPage>;
   /** Up to 25 messages with their text and parts, one answer per ref in the order asked. */
   getMessages(refs: readonly ImapRef[]): Promise<ReadonlyArray<ImapMessage | ImapUnread>>;
+  /**
+   * One part of a message, such as `2` or `3.1` from its `parts`, staged for this action to adopt
+   * with `ctx.files.<store>.put(name, upload)`. A part past 20 MiB fails `too_large`; staging past
+   * the viewer's 16 outstanding uploads or 100 MiB fails `limit_exceeded`, so adopt each upload
+   * before staging the next ones.
+   */
+  stageAttachment(options: { readonly ref: ImapRef; readonly part: string }): Promise<ImapStaged>;
 }
 
 type Operation =
@@ -156,7 +178,8 @@ type Operation =
   | "imap.scanMessages"
   | "imap.listMessages"
   | "imap.searchMessages"
-  | "imap.getMessages";
+  | "imap.getMessages"
+  | "imap.stageAttachment";
 type Call = (op: Operation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The broker refuses an option set to undefined, so those are left out, as JSON would. */
@@ -190,6 +213,7 @@ export function createImapClient(connection: string, call: Call): ImapClient {
           "imap.getMessages",
           { refs }
         )
-      ).messages
+      ).messages,
+    stageAttachment: (options) => invoke("imap.stageAttachment", options)
   };
 }

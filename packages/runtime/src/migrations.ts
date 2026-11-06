@@ -142,5 +142,12 @@ export const migrations: Migrations = {
         THEN agent_name IS NOT NULL AND patch_id IS NOT NULL AND version_id IS NOT NULL
         ELSE agent_name IS NULL END)`,
     `ALTER TABLE runtime_invocations ADD COLUMN agent_name TEXT`
+  ),
+  // How many bytes a call moved, for one whose size says what it did, such as an IMAP
+  // attachment it staged. Null for the rest; never set while a call is pending.
+  "0035_runtime_calls_bytes": ddl(
+    `ALTER TABLE runtime_calls
+      ADD COLUMN bytes INTEGER CONSTRAINT runtime_calls_bytes_nonnegative CHECK (bytes >= 0),
+      ADD CONSTRAINT runtime_calls_bytes_settled CHECK (outcome <> 'pending' OR bytes IS NULL)`
   )
 };

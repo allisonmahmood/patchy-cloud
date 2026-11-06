@@ -15,13 +15,13 @@ const client = `// Generated from an immutable IMAP snapshot. Tier 2 handlers ty
 // a command, change the mailbox or mark mail as read.
 import { createImapClient } from "patchy/client";
 import type { BoundaryError as ClientBoundaryError, Call, Errors, ImapClient } from "patchy/client";
-export type { ImapAddress as Address, ImapCriteria as Criteria, ImapDay as Day, ImapFolder as Folder, ImapMessage as Message, ImapPage as Page, ImapPart as Part, ImapRef as Ref, ImapScanPage as ScanPage, ImapSummary as Summary, ImapUnread as Unread, ErrorCode, ErrorDetails, Errors } from "patchy/client";
+export type { ImapAddress as Address, ImapCriteria as Criteria, ImapDay as Day, ImapFolder as Folder, ImapMessage as Message, ImapPage as Page, ImapPart as Part, ImapRef as Ref, ImapScanPage as ScanPage, ImapStaged as Staged, ImapSummary as Summary, ImapUnread as Unread, ErrorCode, ErrorDetails, Errors } from "patchy/client";
 export type BoundaryError = ClientBoundaryError | Errors<"connection_not_declared">;
 // These unions describe known Patchy refusals, not checked or exhaustive TypeScript throws.
 // IMAP's own details: narrow a caught error with isPatchyError(error, code, "imap").
 export type ReadError =
   | BoundaryError
-  | Errors<"invalid_cursor" | "mailbox_reset" | "auth_failed" | "not_found" | "busy" | "source_rate_limited", \`imap.\${string}\`>;
+  | Errors<"invalid_cursor" | "mailbox_reset" | "auth_failed" | "not_found" | "busy" | "source_rate_limited" | "limit_exceeded", \`imap.\${string}\`>;
 export type Client = ImapClient;
 export function createClient(connection: string, call: Call): Client {
   return createImapClient(connection, call);
@@ -39,6 +39,7 @@ Use the declared alias: \`ctx.connections.<alias>\` in an action; the page calls
 - \`listMessages({ folder, cursor? })\`: newest first by arrival.
 - \`searchMessages({ folder, from?, to?, subject?, text?, since?, before?, unseen?, cursor? })\`: newest first, searched on the server a window at a time. A page can be empty and not \`done\`: keep following \`cursor\`.
 - \`getMessages(refs)\`: up to ${bound("imap.getMessages.refs")} refs, one answer per ref in order: a message with \`replyTo\`, \`text\` (at most ${registry["imap.message.text"].default / 1024} KiB, \`truncated\` past it), \`parts\` and \`encrypted\`, or \`{ error: "not_found" | "malformed" | "too_large" }\`.
+- \`stageAttachment({ ref, part })\`: one part from a message's \`parts\`, such as \`2\` or \`3.1\`, staged as \`{ upload, size, sha256, contentType, filename }\` for this action to adopt once with \`ctx.files.<store>.put(name, upload)\` within the hour. Name the file by the ref and part; \`filename\` is display text. A part past ${bound("files.stage.bytes")} bytes fails \`too_large\`; more than ${bound("files.stage.count")} uploads or ${bound("files.stage.viewerBytes")} bytes staged and not adopted fails \`limit_exceeded\`.
 - Pages hold at most ${bound("imap.page.messages")} summaries: \`{ ref, from, to, cc, recipientsTruncated, subject, date, internalDate, size, flags, messageId, inReplyTo, references, hasAttachments }\`.
 - A ref is \`{ connection, folder, uidValidity, uid }\`. A ref, cursor or checkpoint from before the folder's UIDVALIDITY changed fails \`mailbox_reset\`: scan the folder again from the start.
 

@@ -517,6 +517,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `imap.calls.concurrent` | contract | 2 | calls | host | IMAP reads at once in one server process per mailbox, its normalized host and login, shared by dev and published calls and by every connection to that mailbox; an excess call waits within its deadline | `busy` | No | release |
 | `imap.server.concurrent` | contract | 8 | calls | host | IMAP reads at once in one server process per mail server, across its mailboxes; an excess call waits within its deadline | `busy` | No | release |
 | `imap.host.concurrent` | contract | 32 | calls | host | IMAP reads at once in one server process across every mail server, each within imap.call.bytes, which bounds the mail a process downloads at once; an excess call waits within its deadline | `busy` | No | release |
+| `imap.attachments.concurrent` | contract | 4 | calls | host | IMAP attachments one server process downloads and stages at once, each buffered whole up to files.stage.bytes, which bounds the memory they hold; an excess call waits within its deadline | `busy` | No | release |
 | `imap.sessions.idle` | contract | 30000 | milliseconds | host | How long a logged-in IMAP session waits in a server process's pool for its next call before it logs out | None | No | release |
 | `imap.sessions.pooled` | contract | 2 | sessions | host | Idle IMAP sessions a server process keeps per connection, across its credential revisions; past it the oldest logs out | None | No | release |
 | `imap.page.messages` | contract | 100 | messages | viewer | Message summaries one scanMessages, listMessages or searchMessages page answers | None | No | release |
@@ -529,6 +530,7 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `imap.message.textFetch` | contract | 1048576 | bytes | viewer | Raw bytes of one message's text parts a read fetches, shared between them; past it the text is marked truncated | None | No | release |
 | `imap.message.depth` | contract | 10 | levels | viewer | MIME nesting a message's structure may have, its root counted; deeper answers malformed | None | No | release |
 | `imap.message.parts` | contract | 500 | parts | viewer | Nodes in one message's MIME structure, containers and leaves together; more answers malformed | None | No | release |
+| `imap.download.chunk` | contract | 1048576 | bytes | company | Bytes each FETCH of an attachment download asks for, in turn; each answer is one literal, so it stays within imap.parser.literal | None | No | release |
 | `imap.summary.addresses` | contract | 100 | addresses | viewer | Addresses kept of one From, To, Cc or Reply-To list; a cut list marks the summary recipientsTruncated | None | No | release |
 | `imap.summary.addressBytes` | contract | 16384 | bytes | viewer | Encoded bytes of one From, To, Cc or Reply-To list; addresses past it are left off and the summary marked recipientsTruncated | None | No | release |
 | `imap.summary.references` | contract | 32 | message IDs | viewer | Message-IDs kept of a References header: the first, which starts the thread, and the latest | None | No | release |

@@ -39,7 +39,8 @@ export class Busy extends Schema.TaggedError<Busy>()("ImapBusy", {
   limitId: Schema.Literals([
     "imap.calls.concurrent",
     "imap.server.concurrent",
-    "imap.host.concurrent"
+    "imap.host.concurrent",
+    "imap.attachments.concurrent"
   ])
 }) {
   readonly code = "busy" as const;
@@ -56,7 +57,9 @@ export class Busy extends Schema.TaggedError<Busy>()("ImapBusy", {
       ? `This mailbox already has ${this.value} reads running from Patchy. Try again shortly.`
       : this.limitId === "imap.server.concurrent"
         ? `This mail server already has ${this.value} reads running from Patchy. Try again shortly.`
-        : "Patchy is reading as much mail as it can right now. Try again shortly.";
+        : this.limitId === "imap.attachments.concurrent"
+          ? "Patchy is fetching as many attachments as it can right now. Try again shortly."
+          : "Patchy is reading as much mail as it can right now. Try again shortly.";
   }
 }
 
@@ -147,6 +150,14 @@ export class Sessions extends Context.Service<
       E | E2 | Busy | SessionLost | ImapSource.OpenError | ImapSource.Timeout,
       R
     >;
+    /**
+     * Runs `effect` holding one of this process's `imap.attachments.concurrent` places, waited
+     * for within `deadline` as the other gates are: what a call buffering an attachment holds
+     * from before its download until its bytes are staged or sent.
+     */
+    readonly buffered: (
+      deadline: number
+    ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy, R>;
   }
 >()("@patchy/integrations/imap/Sessions") {}
 
@@ -203,6 +214,7 @@ export const make = Effect.gen(function* () {
     perMailbox: ContractLimits.get("imap.calls.concurrent"),
     perServer: ContractLimits.get("imap.server.concurrent"),
     perProcess: ContractLimits.get("imap.host.concurrent"),
+    attachments: ContractLimits.get("imap.attachments.concurrent"),
     idleMs: ContractLimits.get("imap.sessions.idle"),
     pooled: ContractLimits.get("imap.sessions.pooled"),
     callBytes: ContractLimits.get("imap.call.bytes"),
@@ -211,6 +223,7 @@ export const make = Effect.gen(function* () {
   const mailboxes = new Map<string, Gate>();
   const servers = new Map<string, Gate>();
   const everyMailbox: Gate = { free: limits.perProcess, waiting: [] };
+  const attachments: Gate = { free: limits.attachments, waiting: [] };
   const idle = new Map<string, Entry[]>();
 
   /** Closes a session: logs out a clean one, destroys a broken or unfinished one at once. */
@@ -436,7 +449,10 @@ export const make = Effect.gen(function* () {
     });
   };
 
-  return Sessions.of({ lease });
+  const buffered: Sessions["Service"]["buffered"] = (deadline) =>
+    held(attachments, "imap.attachments.concurrent", deadline);
+
+  return Sessions.of({ lease, buffered });
 });
 
 /** Published patches, the dev door and every connection share one process's pool and gates. */

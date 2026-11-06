@@ -519,6 +519,16 @@ export const registry = {
     refusal: "busy",
     overridable: false
   },
+  "imap.attachments.concurrent": {
+    kind: "contract",
+    default: 4,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "IMAP attachments one server process downloads and stages at once, each buffered whole up to files.stage.bytes, which bounds the memory they hold; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
   "imap.sessions.idle": {
     kind: "contract",
     default: 30000,
@@ -634,6 +644,16 @@ export const registry = {
     scope: "viewer",
     measure:
       "Nodes in one message's MIME structure, containers and leaves together; more answers malformed",
+    refusal: null,
+    overridable: false
+  },
+  "imap.download.chunk": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "company",
+    measure:
+      "Bytes each FETCH of an attachment download asks for, in turn; each answer is one literal, so it stays within imap.parser.literal",
     refusal: null,
     overridable: false
   },

@@ -309,6 +309,8 @@ interface HandlerMetadata {
   readonly kind: "read" | "mutation" | "integration";
   readonly resource?: (args: unknown) => string | null;
   readonly rowCount?: (value: unknown) => number | null;
+  /** The bytes a successful call moved, for recent calls; most calls record none. */
+  readonly bytes?: (value: unknown) => number | null;
   readonly connectionId?: (args: unknown, binding: Binding.Binding["Service"]) => string | null;
   readonly sql?: (args: unknown) => string | undefined;
 }
@@ -346,6 +348,7 @@ export const handler = <
     readonly output: Output;
     readonly resource?: Handler["resource"];
     readonly rowCount?: Handler["rowCount"];
+    readonly bytes?: Handler["bytes"];
     readonly connectionId?: Handler["connectionId"];
     readonly sql?: Handler["sql"];
   },
@@ -357,6 +360,7 @@ export const handler = <
     kind: definition.kind,
     ...(definition.resource === undefined ? {} : { resource: definition.resource }),
     ...(definition.rowCount === undefined ? {} : { rowCount: definition.rowCount }),
+    ...(definition.bytes === undefined ? {} : { bytes: definition.bytes }),
     ...(definition.connectionId === undefined ? {} : { connectionId: definition.connectionId }),
     ...(definition.sql === undefined ? {} : { sql: definition.sql }),
     run: (args) =>

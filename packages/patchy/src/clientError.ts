@@ -128,21 +128,32 @@ export type AttioShapeMismatchDetails = AttioWhere & {
   readonly renamedTo?: string;
 };
 /** IMAP's refusals that carry their own details: never a subject, address or search value. */
-type ImapDetails<C extends ErrorCode> = C extends "mailbox_reset" | "not_found"
+type ImapDetails<C extends ErrorCode> = C extends "mailbox_reset"
   ? {
       /**
-       * `mailbox_reset`: the folder whose UIDVALIDITY changed, so refs, cursors and checkpoints
-       * from before name other messages now: scan it again from the start. `not_found`: the folder
-       * that can't be opened.
+       * The folder whose UIDVALIDITY changed, so refs, cursors and checkpoints from before name
+       * other messages now: scan it again from the start.
        */
       readonly folder: string;
     }
-  : C extends "source_unavailable"
+  : C extends "not_found"
     ? {
-        /** The requirement an admin's Test would name, when the mailbox stopped meeting one. */
-        readonly reason?: string;
+        /** The folder that can't be opened. */
+        readonly folder?: string;
+        /** The part a staged message doesn't have. Neither, when the message itself is gone. */
+        readonly part?: string;
       }
-    : Readonly<Record<string, unknown>>;
+    : C extends "too_large" | "invalid_request"
+      ? {
+          /** The part a stage named: past the staged-file bound, or a forwarded message. */
+          readonly part?: string;
+        }
+      : C extends "source_unavailable"
+        ? {
+            /** The requirement an admin's Test would name, when the mailbox stopped meeting one. */
+            readonly reason?: string;
+          }
+        : Readonly<Record<string, unknown>>;
 export type ShapeMismatchDetails<O extends string = string> = O extends AttioOperation
   ? AttioShapeMismatchDetails
   : O extends PostHogOperation

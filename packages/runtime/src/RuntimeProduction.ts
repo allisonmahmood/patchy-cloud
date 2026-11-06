@@ -130,7 +130,10 @@ export const make = (
                   ? failure.value.code
                   : "source_unavailable",
               durationMs: (yield* Clock.currentTimeMillis) - started,
-              rowCount: Exit.isSuccess(result) ? (operation.rowCount?.(result.value) ?? null) : null
+              rowCount: Exit.isSuccess(result)
+                ? (operation.rowCount?.(result.value) ?? null)
+                : null,
+              bytes: Exit.isSuccess(result) ? (operation.bytes?.(result.value) ?? null) : null
             })
             .pipe(
               Effect.mapError(

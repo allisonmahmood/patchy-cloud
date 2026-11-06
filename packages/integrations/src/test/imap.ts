@@ -1,16 +1,46 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a scripted IMAP server over real sockets, TLS and OpenSSL certificates.
 import { execFile } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createTcpServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer as createTlsServer, TLSSocket, type TlsOptions } from "node:tls";
 import { promisify } from "node:util";
+import { FileStaging, Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ImapNetwork from "../imap/Network.js";
 import * as ImapSessions from "../imap/Sessions.js";
 import * as ImapSource from "../imap/Source.js";
+
+/** What a test's host staging was handed: the bytes, as an action would adopt them. */
+export interface Staged {
+  readonly token: string;
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+}
+/**
+ * Host staging that keeps what it staged in memory, for suites about what reaches staging. Files'
+ * own contract holds the real staging's quotas, expiry and adoption; `refuse` stands in a quota.
+ */
+export const recordingStaging = (refuse?: () => Runtime.RuntimeError | undefined) => {
+  const staged: Staged[] = [];
+  const service = FileStaging.FileStaging.of({
+    stage: (bytes, contentType) =>
+      Effect.suspend(() => {
+        const refusal = refuse?.();
+        if (refusal !== undefined) return Effect.fail(refusal);
+        const token = randomBytes(16).toString("hex");
+        staged.push({ token, bytes, contentType });
+        return Effect.succeed({
+          upload: { token, size: bytes.byteLength, contentType },
+          sha256: createHash("sha256").update(bytes).digest("hex")
+        });
+      })
+  });
+  return { staged, service };
+};
 
 /** The IMAP source and its session pool over production's network, for suites that reach no mailbox. */
 export const offline = ImapSessions.layer.pipe(
@@ -132,6 +162,19 @@ export interface Script {
   readonly before?: (line: string) => void | "drop" | Promise<void | "drop">;
 }
 
+/**
+ * A message's attachment, part 2. With `content`, FETCH serves it: `BODY[2]` transfer-encoded as
+ * `encoding` says (base64 by default), `BINARY[2]` decoded, `BODY[2.MIME]` its headers, each
+ * partial `<start.length>` as asked. Without, BODYSTRUCTURE states `bytes` and nothing serves it.
+ */
+export interface ScriptedAttachment {
+  readonly filename: string;
+  readonly bytes: number;
+  readonly content?: Uint8Array;
+  readonly encoding?: "base64" | "quoted-printable" | "8bit";
+  readonly contentType?: string;
+}
+
 /** One message in a scripted folder: a text/plain body, and at most one attachment. */
 export interface ScriptedMessage {
   readonly uid: number;
@@ -142,7 +185,9 @@ export interface ScriptedMessage {
   readonly to?: ReadonlyArray<string>;
   readonly seen?: boolean;
   readonly text?: string;
-  readonly attachment?: { readonly filename: string; readonly bytes: number };
+  readonly attachment?: ScriptedAttachment;
+  /** A forwarded message as part 3, in BODYSTRUCTURE only: nothing serves its sections. */
+  readonly forwarded?: boolean;
   readonly references?: ReadonlyArray<string>;
 }
 export interface ScriptedFolder {
@@ -174,15 +219,63 @@ const envelope = (message: ScriptedMessage) =>
   `(${quoted(`${message.day.split("-")[2]} ${MONTHS[Number(message.day.split("-")[1]) - 1]} ${message.day.split("-")[0]} 09:00:00 +0000`)} ${quoted(message.subject)} ${address(message.from)} ${address(message.from)} ${address(message.from)} ${addresses(message.to)} NIL NIL NIL ${quoted(`<${message.uid}@scripted.test>`)})`;
 const textPart = (message: ScriptedMessage) =>
   `("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" ${Buffer.byteLength(textOf(message))} ${textOf(message).split("\n").length})`;
+/** An attachment's bytes as BODY serves them: transfer-encoded, base64 in 76-character lines. */
+const encoded = (attachment: ScriptedAttachment): Buffer => {
+  const content = Buffer.from(attachment.content ?? new Uint8Array());
+  switch (attachment.encoding ?? "base64") {
+    case "8bit":
+      return content;
+    case "quoted-printable": {
+      let out = "";
+      let line = 0;
+      for (const byte of content) {
+        const piece =
+          (byte >= 33 && byte <= 126 && byte !== 61) || byte === 32
+            ? String.fromCharCode(byte)
+            : `=${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+        if (line + piece.length > 75) {
+          out += "=\r\n";
+          line = 0;
+        }
+        out += piece;
+        line += piece.length;
+      }
+      return Buffer.from(out, "latin1");
+    }
+    case "base64":
+      return Buffer.from(
+        (content.toString("base64").match(/.{1,76}/g) ?? []).join("\r\n"),
+        "latin1"
+      );
+  }
+};
+const [mediaType, mediaSubtype] = ["APPLICATION", "PDF"];
+const attachmentPart = (attachment: ScriptedAttachment) => {
+  const [type, subtype] = attachment.contentType?.toUpperCase().split("/") ?? [
+    mediaType,
+    mediaSubtype
+  ];
+  const size = attachment.content === undefined ? attachment.bytes : encoded(attachment).length;
+  return `(${quoted(type)} ${quoted(subtype)} ("NAME" ${quoted(attachment.filename)}) NIL NIL ${quoted((attachment.encoding ?? "base64").toUpperCase())} ${size} NIL ("ATTACHMENT" ("FILENAME" ${quoted(attachment.filename)})) NIL NIL)`;
+};
+const forwardedPart = (message: ScriptedMessage) =>
+  `("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 120 ${envelope(message)} ("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 10 1) 5 NIL ("ATTACHMENT" NIL) NIL NIL)`;
 const bodyStructure = (message: ScriptedMessage) =>
-  message.attachment === undefined
+  message.attachment === undefined && message.forwarded !== true
     ? textPart(message)
-    : `(${textPart(message)}("APPLICATION" "PDF" ("NAME" ${quoted(message.attachment.filename)}) NIL NIL "BASE64" ${message.attachment.bytes} NIL ("ATTACHMENT" ("FILENAME" ${quoted(message.attachment.filename)})) NIL NIL) "MIXED")`;
+    : `(${textPart(message)}${message.attachment === undefined ? "" : attachmentPart(message.attachment)}${message.forwarded === true ? forwardedPart(message) : ""} "MIXED")`;
+const mimeHeaders = (attachment: ScriptedAttachment) =>
+  `Content-Type: ${attachment.contentType ?? "application/pdf"}; name="${attachment.filename}"\r\nContent-Transfer-Encoding: ${attachment.encoding ?? "base64"}\r\nContent-Disposition: attachment; filename="${attachment.filename}"\r\n\r\n`;
 const referencesHeader = (message: ScriptedMessage) =>
   message.references === undefined || message.references.length === 0
     ? "\r\n"
     : `References: ${message.references.join(" ")}\r\n\r\n`;
 const literal = (value: string) => `{${Buffer.byteLength(value)}}\r\n${value}`;
+/** A literal of raw bytes; `eight` makes it literal8, as BINARY answers. */
+const literalBytes = (bytes: Buffer, eight = false) => [
+  Buffer.from(`${eight ? "~" : ""}{${bytes.length}}\r\n`, "latin1"),
+  bytes
+];
 
 /** The UIDs `set` names among `uids`: `3:5,9`, `7`, never past the highest for `n:*`. */
 const inSet = (set: string, uids: ReadonlyArray<number>) => {
@@ -363,23 +456,58 @@ export const serve = (certs: Certificates, script: Script = {}) =>
               set,
               messages.map((_, index) => index + 1)
             ).map((number) => messages[number - 1]!);
-        const partials = [...line.matchAll(/BODY\.PEEK\[(\d+(?:\.\d+)*)\]<0\.(\d+)>/g)];
+        const sections = [
+          ...line.matchAll(/(BODY|BINARY)\.PEEK\[(\d+(?:\.\d+)*)(\.MIME)?\](?:<(\d+)\.(\d+)>)?/gi)
+        ];
         for (const message of chosen) {
-          const items = [`UID ${message.uid}`];
-          if (line.includes("FLAGS"))
-            items.push(`FLAGS (${message.seen === true ? "\\Seen" : ""})`);
+          // Each item is its pieces, joined by nothing; items are joined by a space.
+          const items: Buffer[][] = [];
+          const item = (...pieces: Array<string | Buffer>) =>
+            items.push(
+              pieces.map((piece) => (typeof piece === "string" ? Buffer.from(piece) : piece))
+            );
+          item(`UID ${message.uid}`);
+          if (line.includes("FLAGS")) item(`FLAGS (${message.seen === true ? "\\Seen" : ""})`);
           if (line.includes("INTERNALDATE"))
-            items.push(`INTERNALDATE "${imapDay(message.day)} 10:00:00 +0000"`);
+            item(`INTERNALDATE "${imapDay(message.day)} 10:00:00 +0000"`);
           if (line.includes("RFC822.SIZE"))
-            items.push(`RFC822.SIZE ${Buffer.byteLength(textOf(message)) + 400}`);
-          if (line.includes("ENVELOPE")) items.push(`ENVELOPE ${envelope(message)}`);
-          if (line.includes("BODYSTRUCTURE")) items.push(`BODYSTRUCTURE ${bodyStructure(message)}`);
+            item(
+              `RFC822.SIZE ${Buffer.byteLength(textOf(message)) + 400 + (message.attachment?.content === undefined ? 0 : encoded(message.attachment).length)}`
+            );
+          if (line.includes("ENVELOPE")) item(`ENVELOPE ${envelope(message)}`);
+          if (line.includes("BODYSTRUCTURE")) item(`BODYSTRUCTURE ${bodyStructure(message)}`);
           if (line.includes("HEADER.FIELDS"))
-            items.push(`BODY[HEADER.FIELDS (REFERENCES)] ${literal(referencesHeader(message))}`);
-          for (const [, part, length] of partials)
-            if (part === "1")
-              items.push(`BODY[1]<0> ${literal(textOf(message).slice(0, Number(length)))}`);
-          say(`* ${messages.indexOf(message) + 1} FETCH (${items.join(" ")})`);
+            item(`BODY[HEADER.FIELDS (REFERENCES)] ${literal(referencesHeader(message))}`);
+          const attachment =
+            message.attachment?.content === undefined ? undefined : message.attachment;
+          for (const [, kind, part, mime, start, length] of sections) {
+            const from = Number(start ?? 0);
+            const slice = (bytes: Buffer) =>
+              length === undefined ? bytes : bytes.subarray(from, from + Number(length));
+            const origin = start === undefined ? "" : `<${from}>`;
+            const binary = kind!.toUpperCase() === "BINARY";
+            if (part === "1" && mime === undefined)
+              item(`BODY[1]${origin} `, ...literalBytes(slice(Buffer.from(textOf(message)))));
+            else if (part === "2" && attachment !== undefined && mime !== undefined)
+              item("BODY[2.MIME] ", ...literalBytes(Buffer.from(mimeHeaders(attachment))));
+            else if (part === "2" && attachment !== undefined)
+              item(
+                `${binary ? "BINARY" : "BODY"}[2]${origin} `,
+                ...literalBytes(
+                  slice(binary ? Buffer.from(attachment.content!) : encoded(attachment)),
+                  binary
+                )
+              );
+          }
+          socket.write(
+            Buffer.concat([
+              Buffer.from(`* ${messages.indexOf(message) + 1} FETCH (`),
+              ...items.flatMap((pieces, index) =>
+                index === 0 ? pieces : [Buffer.from(" "), ...pieces]
+              ),
+              Buffer.from(")\r\n")
+            ])
+          );
         }
         say(`${tag} OK Fetch completed`);
         return true;

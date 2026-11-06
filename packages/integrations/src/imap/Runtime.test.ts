@@ -8,7 +8,13 @@ import { clerkEnv } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { NodeCryptography } from "@patchy/core";
 import { Limits, OperatingLimits } from "@patchy/limits";
-import { Binding, InvocationCapabilities, InvocationLog, RuntimeLog } from "@patchy/runtime";
+import {
+  Binding,
+  FileStaging,
+  InvocationCapabilities,
+  InvocationLog,
+  RuntimeLog
+} from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -92,11 +98,13 @@ const connected = (handle: string) =>
       })
     });
     const sessions = yield* Sessions.make.pipe(Effect.provide(source));
+    const staging = ImapTest.recordingStaging();
     const handlers = yield* Operations.makeHandlers.pipe(
       Effect.provideService(Sessions.Sessions, sessions),
-      Effect.provideService(ConnectionStore.ConnectionStore, store)
+      Effect.provideService(ConnectionStore.ConnectionStore, store),
+      Effect.provideService(FileStaging.FileStaging, staging.service)
     );
-    return { served, store, connection, sessions, handlers };
+    return { served, store, connection, sessions, handlers, staged: staging.staged };
   });
 
 const credentials = Layer.mergeAll(
