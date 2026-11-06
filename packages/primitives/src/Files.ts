@@ -385,6 +385,50 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
       return yield* new Runtime.AccessDenied({});
     return binding;
   });
+  /**
+   * Each staging quota and where a stage of `size` bytes would take it: outstanding stages and
+   * bytes for this viewer and patch, and bytes for the company. Reservations count before blob
+   * I/O, including writers on other replicas.
+   */
+  const stageQuota = Effect.fnUntraced(function* (
+    binding: Binding.Binding["Service"],
+    size: number,
+    companyBytes: Pick<OperatingLimits.EffectiveLimit, "value" | "configRevision">
+  ) {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const [usage] = yield* sql<{
+      count: number;
+      viewerBytes: number;
+      companyBytes: number;
+    }>`SELECT
+      count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
+      coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
+      coalesce(sum(size), 0)::double precision AS "companyBytes"
+      FROM patchy.file_uploads
+      WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
+    const contractRevision = { deploymentRevision: "contract", overrideRevision: "0" };
+    return [
+      {
+        limitId: "files.stage.count",
+        value: stageLimits.count,
+        peak: usage!.count + 1,
+        configRevision: contractRevision
+      },
+      {
+        limitId: "files.stage.viewerBytes",
+        value: stageLimits.viewerBytes,
+        peak: usage!.viewerBytes + size,
+        configRevision: contractRevision
+      },
+      {
+        limitId: "files.stage.companyBytes",
+        value: companyBytes.value,
+        peak: usage!.companyBytes + size,
+        configRevision: companyBytes.configRevision
+      }
+    ] as const;
+  });
   const reserveUpload = Effect.fn("Files.reserveUpload")(function* (
     binding: Binding.Binding["Service"],
     bytes: Uint8Array,
@@ -418,38 +462,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const now = DateTime.formatIso(yield* DateTime.now);
-          // Reservations count before blob I/O, including writers on other replicas.
-          const [usage] = yield* sql<{
-            count: number;
-            viewerBytes: number;
-            companyBytes: number;
-          }>`SELECT
-            count(*) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id})::integer AS count,
-            coalesce(sum(size) FILTER (WHERE patch_id = ${binding.patchId} AND viewer_id = ${binding.identity!.user.id}), 0)::double precision AS "viewerBytes",
-            coalesce(sum(size), 0)::double precision AS "companyBytes"
-            FROM patchy.file_uploads
-            WHERE token IS NOT NULL AND state IN ('writing', 'staged') AND expires_at > ${now}::timestamptz`;
-          const contractRevision = { deploymentRevision: "contract", overrideRevision: "0" };
-          const limits = [
-            {
-              limitId: "files.stage.count",
-              value: stageLimits.count,
-              peak: usage!.count + 1,
-              configRevision: contractRevision
-            },
-            {
-              limitId: "files.stage.viewerBytes",
-              value: stageLimits.viewerBytes,
-              peak: usage!.viewerBytes + row.size,
-              configRevision: contractRevision
-            },
-            {
-              limitId: "files.stage.companyBytes",
-              value: companyBytes.value,
-              peak: usage!.companyBytes + row.size,
-              configRevision: companyBytes.configRevision
-            }
-          ] as const;
+          const limits = yield* stageQuota(binding, row.size, companyBytes);
           yield* WideEvents.enrich({ limits });
           for (const { limitId, value, peak } of limits)
             if (peak > value) return yield* new Runtime.LimitExceeded({ limitId, value });
@@ -947,7 +960,23 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     "shared.files.list": sharedList,
     "shared.files.stat": sharedStat
   } satisfies Readonly<Record<string, Runtime.Handler>>;
+  const admits = Effect.fn("Files.admits")(function* (size: number) {
+    const binding = yield* uploadBinding;
+    if (size > stageLimits.bytes)
+      return yield* new Runtime.TooLarge({
+        maxBytes: stageLimits.bytes,
+        limitId: "files.stage.bytes"
+      });
+    const companyBytes = yield* companyQuota(binding.companyId);
+    const limits = yield* withCompany(
+      binding.companyId,
+      CompanyDatabases.withFileObjectsLock(stageQuota(binding, size, companyBytes))
+    );
+    for (const { limitId, value, peak } of limits)
+      if (peak > value) return yield* new Runtime.LimitExceeded({ limitId, value });
+  });
   const staging = FileStaging.FileStaging.of({
+    admits,
     stage: (bytes, contentType) =>
       Effect.map(stageBytes(bytes, contentType), (row) => ({
         upload: { token: row.token, size: row.size, contentType: row.contentType },

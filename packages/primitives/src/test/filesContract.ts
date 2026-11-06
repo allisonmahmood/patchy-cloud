@@ -1044,6 +1044,19 @@ const hostStagingContract = Effect.fn("test.filesContract.hostStaging")(function
     "limitId",
     "files.stage.count"
   );
+  // The check before a fetch refuses as a stage would, and reserves nothing when it admits.
+  const admits = (bytes: number) =>
+    staging.admits(bytes).pipe(Effect.provideService(Binding.Binding, fixture.binding));
+  assert.propertyVal(yield* admits(1).pipe(Effect.flip), "limitId", "files.stage.count");
+  yield* fixture.discard(uploads.at(-1)!);
+  yield* admits(1);
+  yield* admits(1);
+  uploads.splice(-1, 1, (yield* stage(new Uint8Array([14]))).upload);
+  assert.propertyVal(
+    yield* admits(21 * 1024 * 1024).pipe(Effect.flip),
+    "limitId",
+    "files.stage.bytes"
+  );
   // Adopted once, as a page's upload is, then gone.
   yield* fixture.adopt(staged.upload, "invoice.pdf");
   assert.deepStrictEqual((yield* fixture.get("invoice.pdf")).bytes, bytes);

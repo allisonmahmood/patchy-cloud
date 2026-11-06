@@ -39,7 +39,12 @@ export interface Staged {
  */
 export const recordingStaging = (refuse?: () => Runtime.RuntimeError | undefined) => {
   const staged: Staged[] = [];
+  const refused = Effect.suspend(() => {
+    const refusal = refuse?.();
+    return refusal === undefined ? Effect.void : Effect.fail(refusal);
+  });
   const service = FileStaging.FileStaging.of({
+    admits: () => refused,
     stage: (bytes, contentType) =>
       Effect.suspend(() => {
         const refusal = refuse?.();

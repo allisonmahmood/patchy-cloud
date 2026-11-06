@@ -7,7 +7,8 @@
  *
  * An attachment comes back as bytes over the door's private transport, at most
  * `files.stage.bytes`, and is staged in the local store once its size and sha256 match what the
- * instance stated: a transfer that ends short, differs or runs over stages nothing.
+ * instance stated: a transfer that ends short, differs or runs over stages nothing. A local
+ * staging quota already full refuses before the door is asked, so nothing is downloaded for it.
  */
 import {
   ImapFolderStatus,
@@ -79,6 +80,8 @@ export const handlers = Effect.fn("ImapDev.handlers")(function* (
       const declaration = binding.manifest.uses[alias];
       if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "imap")
         return yield* new ConnectionNotDeclared({});
+      // A full local quota refuses before the instance downloads anything for it.
+      yield* staging.admits(1);
       const maxBytes = yield* ContractLimits.get("files.stage.bytes");
       const { bytes, meta } = yield* DevDoor.attachment(
         instance,

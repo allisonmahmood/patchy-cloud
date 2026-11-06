@@ -5,7 +5,8 @@ import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, DEV_ATTACHMENT_HEADER, WIRE_VERSION } from "@patchy/api";
 import { NodeCryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
-import { Binding } from "@patchy/runtime/core";
+import { registry } from "@patchy/limits/registry";
+import { Binding, Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -91,9 +92,13 @@ const instance = (answer: (request: IncomingMessage, response: ServerResponse) =
   );
 
 /** A stage through the dev binding against `apiUrl`, with recording local staging. */
-const stage = (apiUrl: string, limits: Partial<Record<"files.stage.bytes", number>> = {}) =>
+const stage = (
+  apiUrl: string,
+  limits: Partial<Record<"files.stage.bytes", number>> = {},
+  refuse?: () => Runtime.RuntimeError | undefined
+) =>
   Effect.gen(function* () {
-    const staging = ImapTest.recordingStaging();
+    const staging = ImapTest.recordingStaging(refuse);
     const handlers = yield* ImapDev.handlers(
       { apiUrl, token: Option.some(Redacted.make("pat_machine_key")) },
       staging.service
@@ -211,6 +216,31 @@ it.effect("hands on the instance's refusal as it sent it", () =>
       assert.propertyVal(result.failure, "_tag", "DevDoorRefused");
       assert.propertyVal(result.failure, "code", "too_large");
     }
+    assert.lengthOf(staged, 0);
+  }).pipe(Effect.scoped)
+);
+
+it.effect("refuses at a full local quota before asking the instance, which downloads nothing", () =>
+  Effect.gen(function* () {
+    const stub = yield* instance((_, response) => {
+      response.writeHead(200, { [DEV_ATTACHMENT_HEADER]: meta(content) });
+      response.end(content);
+    });
+    const { result, staged } = yield* stage(
+      stub.apiUrl,
+      {},
+      () =>
+        new Runtime.LimitExceeded({
+          limitId: "files.stage.count",
+          value: registry["files.stage.count"].default
+        })
+    );
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.propertyVal(result.failure, "code", "limit_exceeded");
+      assert.propertyVal(result.failure, "limitId", "files.stage.count");
+    }
+    assert.lengthOf(stub.bodies, 0);
     assert.lengthOf(staged, 0);
   }).pipe(Effect.scoped)
 );

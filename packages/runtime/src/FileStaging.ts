@@ -14,6 +14,11 @@ import type { RuntimeError } from "./Runtime.js";
 export class FileStaging extends Context.Service<
   FileStaging,
   {
+    /**
+     * Refuses as staging `bytes` would be refused now, reserving nothing: for a caller about to
+     * fetch bytes that may not fit. A stage can still be refused if others stage meanwhile.
+     */
+    readonly admits: (bytes: number) => Effect.Effect<void, RuntimeError, Binding>;
     /** `sha256` is the staged bytes' digest in lowercase hex. */
     readonly stage: (
       bytes: Uint8Array,
