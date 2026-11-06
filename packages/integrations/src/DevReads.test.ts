@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A stub answers on a real socket, as a proxy would.
-import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -1520,5 +1521,133 @@ it.layer(serve(RuntimeLog.layer, scriptedImap), {
         assert.notInclude(row, staging.staged[0]!.token);
       }),
     60_000
+  );
+});
+
+/**
+ * A door whose process holds one attachment at a time, over a mailbox whose INBOX message carries
+ * an attachment of nearly 20 MiB: more than loopback sockets hold for a client that stops reading.
+ */
+const large = randomAttachment(19 * 1024 * 1024);
+function randomAttachment(size: number) {
+  const bytes = new Uint8Array(size);
+  for (let index = 0; index < size; index += 65_536)
+    bytes.set(createHash("sha256").update(String(index)).digest(), index);
+  return bytes;
+}
+/** The door's own pool, once the suite's layer has made it. */
+let doorSessions: ImapSessions.Sessions["Service"] | undefined;
+const oneAttachment = Layer.unwrap(
+  Effect.gen(function* () {
+    const certs = yield* ImapTest.certificates([mailbox.host]);
+    const served = yield* ImapTest.serve(certs, {
+      capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE"],
+      mailboxes: [
+        {
+          path: "INBOX",
+          uidValidity: 5,
+          messages: [
+            {
+              uid: 1,
+              day: "2026-10-02",
+              subject: "Archive",
+              from: "billing@example.com",
+              text: "Attached.\n",
+              attachment: { filename: "archive.bin", bytes: large.byteLength, content: large }
+            }
+          ]
+        }
+      ]
+    });
+    const source = Layer.fresh(ImapSource.layer).pipe(
+      Layer.provide(ImapTest.network(served, certs))
+    );
+    return Layer.effect(
+      ImapSessions.Sessions,
+      ImapSessions.make.pipe(
+        Effect.tap((made) => Effect.sync(() => void (doorSessions = made))),
+        Effect.provideService(ContractLimits.overrides, { "imap.attachments.concurrent": 1 })
+      )
+    ).pipe(Layer.provideMerge(source));
+  })
+);
+
+it.layer(serve(RuntimeLog.layer, oneAttachment), {
+  excludeTestServices: true,
+  timeout: "120 seconds"
+})("IMAP attachments in patchy dev, held until sent", (it) => {
+  it.effect(
+    "keeps the attachment's place while a client hasn't read its body, and gives it back once read",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const connected = yield* store.connect({
+          integration: "imap",
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          handle: "archive",
+          description: "Archive mailbox",
+          credentials: ImapSource.credentials({
+            host: mailbox.host,
+            port: 993,
+            security: "tls",
+            username: "archive@example.test",
+            password: "the-mailbox-password"
+          })
+        });
+        const url = new URL(`${yield* origin}/api/connections/dev-attachment`);
+        const body = JSON.stringify({
+          op: "imap.stageAttachment",
+          connection: { id: connected.id, handle: connected.handle },
+          args: {
+            ref: { connection: connected.id, folder: "INBOX", uidValidity: 5, uid: 1 },
+            part: "2"
+          }
+        });
+        // A client that takes the answer's headers, then stops reading its body.
+        const response = yield* Effect.promise(
+          () =>
+            new Promise<IncomingMessage>((resolve, reject) => {
+              const sent = httpRequest(
+                url,
+                {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${DEV_SEED.token}`,
+                    "content-type": "application/json"
+                  }
+                },
+                (answer) => {
+                  answer.pause();
+                  resolve(answer);
+                }
+              );
+              sent.on("error", reject);
+              sent.end(body);
+            })
+        );
+        assert.strictEqual(response.statusCode, 200);
+        const place = (deadline: number) =>
+          doorSessions!.buffered(deadline)(Effect.void).pipe(Effect.flip, Effect.option);
+        yield* Effect.sleep("500 millis");
+        // The body is still being sent: the process's one place is taken, so another waits.
+        const refused = yield* place(Date.now() + 1_500);
+        assert.isTrue(refused._tag === "Some" && refused.value._tag === "ImapBusy");
+        // Read it whole: the place comes back once the last of it is sent.
+        const bytes = yield* Effect.promise(
+          () =>
+            new Promise<Buffer>((resolve, reject) => {
+              const chunks: Buffer[] = [];
+              response.on("data", (chunk: Buffer) => chunks.push(chunk));
+              response.on("end", () => resolve(Buffer.concat(chunks)));
+              response.on("error", reject);
+              response.resume();
+            })
+        );
+        assert.strictEqual(bytes.byteLength, large.byteLength);
+        assert.isTrue(bytes.equals(Buffer.from(large)));
+        assert.strictEqual((yield* place(Date.now() + 1_500))._tag, "None");
+      }),
+    120_000
   );
 });

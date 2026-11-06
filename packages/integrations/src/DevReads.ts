@@ -32,6 +32,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -126,6 +128,8 @@ const decodeAttachment = Schema.decodeUnknownEffect(Schema.fromJsonString(DevAtt
 const encodeMeta = Schema.encodeEffect(Schema.fromJsonString(DevAttachmentMeta));
 const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
 const noStore = { "cache-control": "no-store" };
+/** How much of an attachment's body is written before waiting for the socket to drain. */
+const BODY_CHUNK = 64 * 1024;
 
 export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
   Effect.gen(function* () {
@@ -329,10 +333,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
     });
 
     /**
-     * An attachment's bytes for `patchy dev`, downloaded as a published stage downloads it, under
-     * one of the process's attachment places, and answered with what the daemon checks them by.
+     * An attachment's bytes for `patchy dev`, downloaded as a published stage downloads it and
+     * answered with what the daemon checks them by. The call holds one of the process's attachment
+     * places in the request's own scope, which closes once the body is sent or the client goes,
+     * and the body streams a chunk at a time as the socket drains, so the bytes a slow client
+     * hasn't read yet still count against the process's places.
      */
     const attachment = Effect.fn("DevReads.attachment")(function* () {
+      const request = yield* Scope.Scope;
       const imapBytes =
         sizes.get("runtime.imap.bytes") ?? (yield* ContractLimits.get("runtime.imap.bytes"));
       const { text } = yield* RuntimeApi.readText(imapBytes, "runtime.imap.bytes");
@@ -344,9 +352,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         connection: input.connection,
         resource: null,
         run: (target) =>
-          imapSessions.buffered(target.deadline)(
-            ImapOperations.downloadAttachment(target, input.args)
-          ),
+          imapSessions
+            .placeIn(target.deadline, request)
+            .pipe(Effect.andThen(ImapOperations.downloadAttachment(target, input.args))),
         rowCount: () => null,
         bytes: (found) => found.bytes.byteLength,
         respond: (found) =>
@@ -357,8 +365,13 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
               contentType: found.contentType,
               filename: found.filename
             }).pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
-            return HttpServerResponse.uint8Array(found.bytes, {
+            const chunks = Array.from(
+              { length: Math.ceil(found.bytes.byteLength / BODY_CHUNK) },
+              (_, index) => found.bytes.subarray(index * BODY_CHUNK, (index + 1) * BODY_CHUNK)
+            );
+            return HttpServerResponse.stream(Stream.fromIterable(chunks), {
               contentType: "application/octet-stream",
+              contentLength: found.bytes.byteLength,
               headers: {
                 ...noStore,
                 [DEV_ATTACHMENT_HEADER]: Buffer.from(meta).toString("base64url")

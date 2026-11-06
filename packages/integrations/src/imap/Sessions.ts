@@ -158,6 +158,12 @@ export class Sessions extends Context.Service<
     readonly buffered: (
       deadline: number
     ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | Busy, R>;
+    /**
+     * Takes one of the same places into `scope`, given back when `scope` closes: for a holder whose
+     * buffer outlives one effect, such as a response body still being sent after its handler
+     * returned. The take and the finalizer are one step, so no interruption falls between.
+     */
+    readonly placeIn: (deadline: number, scope: Scope.Scope) => Effect.Effect<void, Busy>;
   }
 >()("@patchy/integrations/imap/Sessions") {}
 
@@ -326,42 +332,53 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Runs `effect` holding a permit of `gate`, waiting for one until shortly before the deadline.
-   * Only the waiting may be interrupted, never the taking or the giving back: a waiter handed a
-   * permit just as it's interrupted passes it on, so an interrupted call never holds one.
+   * Takes a permit of `gate`, waiting for one until shortly before the deadline. Run masked: only
+   * the waiting runs under `restore`, never the taking, and a waiter handed a permit just as it's
+   * interrupted passes it on, so an interrupted call never holds one. The caller gives the permit
+   * back with `release` once it's done, however that ends.
    */
+  const take = Effect.fnUntraced(function* (
+    gate: Gate,
+    limitId: Busy["limitId"],
+    deadline: number,
+    restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  ) {
+    if (gate.free > 0 && gate.waiting.length === 0) {
+      gate.free--;
+      return;
+    }
+    const budget = deadline - GATE_RESERVE_MS - (yield* Clock.currentTimeMillis);
+    if (budget <= 0) return yield* new Busy({ limitId });
+    const waiter: Waiter = { granted: false, wake: undefined };
+    gate.waiting.push(waiter);
+    const waited = yield* Effect.exit(
+      restore(
+        Effect.callback<void>((resume) => {
+          if (waiter.granted) resume(Effect.void);
+          else waiter.wake = () => resume(Effect.void);
+        }).pipe(Effect.timeoutOption(budget))
+      )
+    );
+    if (waiter.granted) {
+      if (Exit.isFailure(waited)) {
+        release(gate);
+        return yield* Effect.failCause(waited.cause);
+      }
+      return;
+    }
+    gate.waiting.splice(gate.waiting.indexOf(waiter), 1);
+    if (Exit.isFailure(waited)) return yield* Effect.failCause(waited.cause);
+    return yield* new Busy({ limitId });
+  });
+
+  /** Runs `effect` holding a permit of `gate`, given back however `effect` ends. */
   const held =
     (gate: Gate, limitId: Busy["limitId"], deadline: number) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | Busy, R> =>
       Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          if (gate.free > 0 && gate.waiting.length === 0) gate.free--;
-          else {
-            const budget = deadline - GATE_RESERVE_MS - (yield* Clock.currentTimeMillis);
-            if (budget <= 0) return yield* new Busy({ limitId });
-            const waiter: Waiter = { granted: false, wake: undefined };
-            gate.waiting.push(waiter);
-            const waited = yield* Effect.exit(
-              restore(
-                Effect.callback<void>((resume) => {
-                  if (waiter.granted) resume(Effect.void);
-                  else waiter.wake = () => resume(Effect.void);
-                }).pipe(Effect.timeoutOption(budget))
-              )
-            );
-            if (waiter.granted) {
-              if (Exit.isFailure(waited)) {
-                release(gate);
-                return yield* Effect.failCause(waited.cause);
-              }
-            } else {
-              gate.waiting.splice(gate.waiting.indexOf(waiter), 1);
-              if (Exit.isFailure(waited)) return yield* Effect.failCause(waited.cause);
-              return yield* new Busy({ limitId });
-            }
-          }
-          return yield* restore(effect).pipe(Effect.ensuring(Effect.sync(() => release(gate))));
-        })
+        take(gate, limitId, deadline, restore).pipe(
+          Effect.andThen(restore(effect).pipe(Effect.ensuring(Effect.sync(() => release(gate)))))
+        )
       );
 
   const lease: Sessions["Service"]["lease"] = (lease, use) => {
@@ -451,8 +468,19 @@ export const make = Effect.gen(function* () {
 
   const buffered: Sessions["Service"]["buffered"] = (deadline) =>
     held(attachments, "imap.attachments.concurrent", deadline);
+  const placeIn: Sessions["Service"]["placeIn"] = (deadline, scope) =>
+    Effect.uninterruptibleMask((restore) =>
+      take(attachments, "imap.attachments.concurrent", deadline, restore).pipe(
+        Effect.andThen(
+          Scope.addFinalizer(
+            scope,
+            Effect.sync(() => release(attachments))
+          )
+        )
+      )
+    );
 
-  return Sessions.of({ lease, buffered });
+  return Sessions.of({ lease, buffered, placeIn });
 });
 
 /** Published patches, the dev door and every connection share one process's pool and gates. */
