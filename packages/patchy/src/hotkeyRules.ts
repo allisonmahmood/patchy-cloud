@@ -32,10 +32,10 @@ const reserved = (hotkey: string): boolean => {
   return found;
 };
 
-// Physical keys that type text: letters, digits, the numpad's digits and operators, punctuation and
-// Space. A hotkey names one only through a cast, as `"[KeyA]"`.
+// Physical keys that type text: letters, digits, the numpad's digits, operators and symbols,
+// punctuation and Space. A hotkey names one only through a cast, as `"[KeyA]"`.
 const typingCode =
-  /^(Key[A-Z]|Digit\d|Numpad(\d|Add|Subtract|Multiply|Divide|Decimal|Comma|Equal)|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|Intl(Backslash|Ro|Yen)|Space)$/;
+  /^(Key[A-Z]|Digit\d|Numpad(\d|Add|Subtract|Multiply|Star|Divide|Decimal|Comma|Equal|Hash|Paren(Left|Right))|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|Intl(Backslash|Ro|Yen)|Space)$/;
 
 // Whether each hotkey seen types text at every step, cached as `reserves` is.
 const typing = new Map<string, boolean>();

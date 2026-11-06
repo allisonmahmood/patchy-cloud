@@ -1441,7 +1441,7 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
 });
 
 // Page-wide character shortcuts, Mod and named keys, a key within an element, a narrower Mod+/
-// that takes the key, and the sheet.
+// that takes the key, sequences that Mod+/ and Escape would continue, and the sheet.
 const setting = `import { render, useRef } from "patchy/preact";
 import { HotkeySheet, useHotkey } from "patchy/hotkeys";
 
@@ -1462,6 +1462,8 @@ function App() {
   useHotkey("Mod+K", log("Mod+K"), { label: "Find a deal", group: "Deals" });
   useHotkey("Shift+A", log("Shift+A"));
   useHotkey("Escape", log("Escape"));
+  useHotkey("G Mod+/", log("G Mod+/"));
+  useHotkey("G Escape", log("G Escape"));
   return <main><p id="body" tabIndex={-1}>body</p><Panel /><HotkeySheet /></main>;
 }
 render(<App />, document.getElementById("app")!);
@@ -1591,6 +1593,24 @@ test("with single-key shortcuts off, character shortcuts stand down while Mod ch
     await page.keyboard.press("Control+/");
     await expect(sheet).toBeVisible();
     await firedNext(frame, []);
+  });
+
+  await test.step("Mod+/ opens it ahead of a sequence under way, which starts over", async () => {
+    await page.keyboard.press("Escape");
+    await expect(sheet).toBeHidden();
+    await view.locator("#body").focus();
+    // G starts both G Mod+/ and G Escape, which mix keys, so the setting doesn't stop them.
+    await page.keyboard.press("g");
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeHidden();
+    // G Escape started over as the sheet opened, so Escape is the page's own.
+    await page.keyboard.press("Escape");
+    await firedNext(frame, ["Escape"]);
+    await view.locator("#panel").focus();
+    await page.keyboard.press("Control+/");
+    await expect(sheet).toBeVisible();
   });
 
   await test.step("the sheet says Off at the top and keeps the stopped commands as buttons with inactive keys", async () => {

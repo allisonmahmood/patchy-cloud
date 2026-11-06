@@ -15,6 +15,7 @@ import {
   detectPlatform,
   formatForDisplay,
   getHotkeyManager,
+  matchesKeyboardEvent,
   parseHotkey,
   useDefaultHotkeysOptions,
   useHotkeyRegistrations,
@@ -213,14 +214,9 @@ type Checked = HotkeyOptions & {
    * page but keeps the place of the command it copies. Others work it out from where they listen.
    */
   readonly character?: boolean;
-  /** Listen on the window as the key goes down, ahead of every other hotkey, for the sheet's Mod+/. */
-  readonly ahead?: true;
 };
 
 type Within = NonNullable<HotkeyOptions["within"]>;
-
-// Where an `ahead` binding listens, in place of a `within`: the window.
-const windowPlace: Within = { current: null };
 
 // Our Chord type is the contract; TanStack parses the same names at runtime.
 const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> => {
@@ -313,11 +309,7 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
         : { stopPropagation: false }),
       // TanStack's own warning names options this API doesn't have; ours follows registration.
       conflictBehavior: "allow",
-      ...(binding.ahead
-        ? { target: windowPlace, capture: true }
-        : binding.within === undefined
-          ? {}
-          : { target: binding.within }),
+      ...(binding.within === undefined ? {} : { target: binding.within }),
       ...(meta === undefined ? {} : { meta })
     }
   };
@@ -327,14 +319,13 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
 // element hold, so does each registration.
 const shape = (bindings: ReadonlyArray<Checked>): string =>
   JSON.stringify(
-    bindings.map(({ hotkey, label, group, enabled, whileTyping, character, ahead }) => [
+    bindings.map(({ hotkey, label, group, enabled, whileTyping, character }) => [
       hotkey,
       label,
       group,
       enabled,
       whileTyping,
-      character,
-      ahead
+      character
     ])
   );
 
@@ -415,7 +406,7 @@ function useBindings(bindings: ReadonlyArray<Checked>, scope?: string): void {
         kept.map((binding, index) => definition(binding, () => latest.current[index]!)),
         {
           ...(placed === undefined ? {} : { defaults: { scope: placed } }),
-          resolveTarget: (within: Within) => (within === windowPlace ? window : within.current)
+          resolveTarget: (within: Within) => within.current
         }
       )
     );
@@ -1007,17 +998,34 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       setSaid((before) => before && { ...before, count: before.count + 1 });
     }, 0);
   }, [from]);
-  // In the openers' scope, which every `HotkeyScope` lets through. Mod+/ opens it from a text field,
-  // where `?` is typed, and listens ahead of the page's hotkeys, so a narrower one that takes the
-  // key can't keep the sheet shut. Pressed again while it is open, either closes it.
+  // Pressed again while it is open, either opener closes it.
+  const toggle = useRef(() => {});
+  toggle.current = () => (from === undefined ? show() : close());
+  // `?`, or the `hotkey` that replaces it, in the openers' scope, which every `HotkeyScope` lets
+  // through.
   useBindings(
-    own.map((row) => ({
-      ...row,
-      run: () => (from === undefined ? show() : close()),
-      ...(row.hotkey === "Mod+/" ? { ahead: true as const } : {})
-    })),
+    own
+      .filter((row) => row.hotkey !== "Mod+/")
+      .map((row) => ({ ...row, run: () => toggle.current() })),
     sheetOpener
   );
+  // Mod+/ opens it from a text field too, where `?` is typed, and nothing on the page can take it
+  // first: it is caught on the window as the key goes down, outside the matching that lets a
+  // narrower hotkey or a sequence under way claim a key, and goes no further. A sequence part-way
+  // through starts over. A held key's repeats are kept from the page and toggle nothing.
+  useLayoutEffect(() => {
+    const opener = parseHotkey("Mod+/");
+    const listen = (event: KeyboardEvent) => {
+      if (!matchesKeyboardEvent(event, opener) || !eligible(event, window, undefined)) return;
+      consume(event);
+      event.stopPropagation();
+      if (event.repeat) return;
+      getHotkeyManager().resetSequenceProgress();
+      toggle.current();
+    };
+    window.addEventListener("keydown", listen, true);
+    return () => window.removeEventListener("keydown", listen, true);
+  }, []);
   return createElement(
     Fragment,
     null,

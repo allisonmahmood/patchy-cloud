@@ -71,6 +71,9 @@ export interface Port {
 export class LostReply extends PatchyError<"unknown_outcome"> {}
 const lost = () => new LostReply("unknown_outcome", "The runtime reply was lost.", {});
 
+// Transports that have their port, so a call made on one goes out as it is made.
+const bound = new WeakSet<Transport>();
+
 type HandlerKinds = Readonly<Record<string, HandlerKindName>>;
 const readHandlerKinds = (value: unknown): HandlerKinds | undefined => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -292,7 +295,7 @@ export function createPortTransport(
     }
     return promise;
   };
-  return {
+  const transport: Transport = {
     ready: () => (closed ? Promise.reject(lost()) : Promise.resolve()),
     handlerKind: (name) => (closed ? undefined : handlerKinds?.[name]),
     call,
@@ -353,6 +356,8 @@ export function createPortTransport(
     },
     close
   };
+  bound.add(transport);
+  return transport;
 }
 
 /** Accept exactly the parent's port for this document's URL nonce; never rebind after navigation. */
@@ -400,6 +405,7 @@ export function createPostMessageTransport(
       });
       try {
         port.postMessage({ kind: "ready", wire: WIRE_VERSION, nonce });
+        bound.add(self);
         resolve(transport);
       } catch {
         transport.close();
@@ -423,16 +429,18 @@ export function createPostMessageTransport(
     reject(lost());
   };
   frame?.addEventListener("pagehide", close, { once: true });
-  return {
+  const self: Transport = {
     ready: async () => {
       if (closed) throw lost();
       await ready;
       if (closed) throw lost();
     },
-    call: async (op, args, bytes) => {
-      if (closed) throw lost();
-      return (await ready).call(op, args, bytes);
-    },
+    // Once bound, a call goes out as it is made, so nothing can close in between.
+    call: (op, args, bytes) =>
+      closed
+        ? Promise.reject(lost())
+        : (transport?.call(op, args, bytes) ??
+          ready.then((connected) => connected.call(op, args, bytes))),
     serverTime: () => (closed ? undefined : transport?.serverTime()),
     waitForServerTime: async () => {
       if (closed) throw lost();
@@ -467,10 +475,10 @@ export function createPostMessageTransport(
         if (closed) throw lost();
         return (await ready).route.get();
       },
-      set: async (path) => {
-        if (closed) throw lost();
-        return (await ready).route.set(path);
-      },
+      set: (path) =>
+        closed
+          ? Promise.reject(lost())
+          : (transport?.route.set(path) ?? ready.then((connected) => connected.route.set(path))),
       subscribe: (listener) => {
         let active = !closed;
         let unsubscribe: (() => void) | undefined;
@@ -488,6 +496,7 @@ export function createPostMessageTransport(
     },
     close
   };
+  return self;
 }
 
 // The document's one broker port, shared by tier 1 and tier 2 clients, handle-only hooks and
@@ -498,9 +507,10 @@ export const getDocumentTransport = (): Transport =>
 
 /**
  * One client's share of a transport. Closing it ends only what this client started: its waits for
- * the bootstrap or the server's clock and its later calls reject as lost, and its route listeners
- * and query subscriptions stop. A call already sent settles with its own outcome. The transport,
- * its port and every other consumer of it stay open.
+ * the bootstrap or the server's clock reject as lost, and so does each call still waiting for the
+ * bootstrap, which then never goes out, and each later call; its route listeners and query
+ * subscriptions stop. A call already sent settles with its own outcome. The transport, its port
+ * and every other consumer of it stay open.
  */
 export function createClientTransport(shared: Transport): Transport {
   let closed = false;
@@ -518,6 +528,10 @@ export function createClientTransport(shared: Transport): Transport {
       .finally(() => waiting.delete(reject));
     return promise;
   };
+  // A call goes out as it is made once the transport has its port. Before that it waits for the
+  // bootstrap as this client, and goes out only if the client is still open then.
+  const send = <T>(dispatch: () => Promise<T>): Promise<T> =>
+    bound.has(shared) ? open(dispatch) : wait(() => shared.ready()).then(() => open(dispatch));
   // A subscription's stop, which closing calls too; either way it runs once.
   const track = (stop: () => void): (() => void) => {
     const end = () => {
@@ -527,7 +541,7 @@ export function createClientTransport(shared: Transport): Transport {
     return end;
   };
   return {
-    call: (op, args, bytes) => open(() => shared.call(op, args, bytes)),
+    call: (op, args, bytes) => send(() => shared.call(op, args, bytes)),
     ready: () => wait(() => shared.ready()),
     serverTime: () => (closed ? undefined : shared.serverTime()),
     waitForServerTime: () => wait(() => shared.waitForServerTime()),
@@ -546,8 +560,8 @@ export function createClientTransport(shared: Transport): Transport {
       }
     },
     route: {
-      get: () => open(() => shared.route.get()),
-      set: (path) => open(() => shared.route.set(path)),
+      get: () => send(() => shared.route.get()),
+      set: (path) => send(() => shared.route.set(path)),
       subscribe: (listener) =>
         closed
           ? () => {}

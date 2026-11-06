@@ -13,7 +13,7 @@ import {
   type MutationUnknownOutcome,
   type QuerySnapshot
 } from "./client.js";
-import { defineConfig, files, table, t, type Id } from "./config.js";
+import { defineConfig, files, table, t, type Id, type Upload } from "./config.js";
 import type { Port } from "./clientTransport.js";
 import type { Handler } from "./server.js";
 
@@ -627,6 +627,87 @@ it.each(["timeout", "close"] as const)(
     client.close();
   }
 );
+
+// A frame waiting for its bootstrap, a transport shared by the clients made over it, and the
+// bootstrap that hands it `port`.
+const unbootstrapped = () => {
+  const parent = {};
+  const frame = Object.assign(new EventTarget(), {
+    parent,
+    location: { href: "https://instance/~content/p/v?n=document-one" }
+  });
+  const shared = createPostMessageTransport({ window: frame as unknown as Window });
+  const bootstrap = (port: FakePort) => {
+    const event = new Event("message");
+    Object.assign(event, {
+      source: parent,
+      data: { v: 1, kind: "bootstrap", nonce: "document-one", route: "/", handlerKinds: {} },
+      ports: [port]
+    });
+    frame.dispatchEvent(event);
+  };
+  return { shared, bootstrap };
+};
+
+it("never sends what a tier 1 client queued before the bootstrap once it has closed", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const closing = createClient<typeof config>(config, { transport: shared });
+  const staying = createClient<typeof config>(config, { transport: shared });
+  const queued = [closing.tables.notes.insert({ title: "queued" }), closing.route.set("/queued")];
+  const settled = Promise.allSettled(queued);
+  closing.close();
+  const port = new FakePort();
+  bootstrap(port);
+  await flush();
+  // Only the transport's ready went out.
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined]);
+  expect((await settled).map((result) => result.status === "rejected" && result.reason)).toEqual([
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" })
+  ]);
+  const listed = staying.tables.notes.list();
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined, "tables.list"]);
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: { rows: [], cursor: null } });
+  await expect(listed).resolves.toEqual({ rows: [], cursor: null });
+  staying.close();
+  shared.close();
+});
+
+it("never sends what a tier 2 client queued before the bootstrap once it has closed", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const closing = createServerClient({ transport: shared });
+  const staying = createServerClient({ transport: shared });
+  const upload = { token: "staged", size: 1, contentType: "text/plain" } as Upload;
+  const queued = [
+    closing.files.discard(upload),
+    closing.route.set("/queued"),
+    closing.download("notes.txt", new Uint8Array([1]))
+  ];
+  const settled = Promise.allSettled(queued);
+  closing.close();
+  const port = new FakePort();
+  bootstrap(port);
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined]);
+  expect((await settled).map((result) => result.status === "rejected" && result.reason)).toEqual([
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" }),
+    expect.objectContaining({ code: "unknown_outcome" })
+  ]);
+  const moved = staying.route.set("/stayed");
+  await flush();
+  expect(port.sent.map(({ op }) => op)).toEqual([undefined, "route.set"]);
+  port.reply({ v: 1, kind: "result", id: port.sent[1]!.id, value: null });
+  await expect(moved).resolves.toBeNull();
+  staying.close();
+  shared.close();
+});
 
 it.each([
   { source: "handler", code: "unknown_outcome" },
