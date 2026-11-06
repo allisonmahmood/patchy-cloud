@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CURRENT_RELEASE, WIRE_VERSION } from "@patchy/api";
@@ -57,6 +58,7 @@ const SENTINEL = "SENTINEL-imap-5d27";
 const PASSWORD = "the-mailbox-password-7c3e";
 class Certs extends Context.Service<Certs, ImapTest.Certificates>()("test/imap/RuntimeCerts") {}
 
+const attachmentBytes = Uint8Array.from({ length: 9_000 }, (_, index) => (index * 11) % 256);
 const mailbox = (): ImapTest.ScriptedFolder => ({
   path: "INBOX",
   uidValidity: 11,
@@ -68,7 +70,11 @@ const mailbox = (): ImapTest.ScriptedFolder => ({
       subject: `Invoice ${SENTINEL}`,
       from: `${SENTINEL.toLowerCase()}@example.com`,
       text: `Pay ${SENTINEL} by Friday.\n`,
-      attachment: { filename: "invoice.pdf", bytes: 9_000 }
+      attachment: {
+        filename: `invoice-${SENTINEL}.pdf`,
+        bytes: attachmentBytes.byteLength,
+        content: attachmentBytes
+      }
     },
     { uid: 3, day: "2026-10-04", subject: "Reminder", from: "billing@example.com", text: "Soon." }
   ]
@@ -166,6 +172,32 @@ const everything = Effect.fn("ImapJourney.everything")(function* (logs: Readonly
   return { rows: rows.length, text: [...rows.map((row) => row.row), ...logs].join("\n") };
 });
 
+/** The call host staging binds an Upload to, for stages made outside a page's call. */
+const viewer = {
+  user: { id: who.userId, name: "Dev", email: "dev@patchy.local" },
+  company: { id: who.companyId, name: "Patchy Dev", handle: "patchy-dev" },
+  admin: false
+};
+const stagingBinding = Binding.Binding.of({
+  companyId: who.companyId,
+  patchId: "imapstaging",
+  versionId: "ver_aaaaaaaaaaaaaaaaaaaaaaaa",
+  wireVersion: WIRE_VERSION,
+  scope: "company",
+  correlationId: "imap-staging",
+  principal: { userId: who.userId },
+  identity: viewer,
+  reauthorize: Effect.succeed(viewer),
+  manifest: {
+    manifestVersion: 1,
+    release: CURRENT_RELEASE,
+    tier: 2,
+    tables: {},
+    files: {},
+    uses: {}
+  }
+});
+
 const patchId = "imapcallback";
 const versionId = "ver_aaaaaaaaaaaaaaaaaaaaaaaa";
 let declared: { readonly id: string; readonly handle: string } = {
@@ -197,7 +229,8 @@ it.layer(tier1)("IMAP from a tier 2 action's callbacks", (it) => {
     () => {
       const logs: string[] = [];
       return Effect.gen(function* () {
-        const { served, connection, sessions, handlers, store } = yield* connected("journey");
+        const { served, connection, sessions, handlers, store, staged } =
+          yield* connected("journey");
         declared = { id: connection.id, handle: connection.handle };
         const call = yield* RuntimeTest.page(handlers, patchId, versionId);
         const mail = yield* generatedClient(declared, call);
@@ -230,6 +263,21 @@ it.layer(tier1)("IMAP from a tier 2 action's callbacks", (it) => {
           assert.strictEqual(message.text, `Pay ${SENTINEL} by Friday.`);
           assert.isTrue(message.hasAttachments);
         }
+        // An attachment stages through host staging: its true size and digest come back with
+        // the Upload, and the sender's filename only as display text.
+        const attachment = yield* Effect.promise(() =>
+          mail.stageAttachment({ ref: scan.messages[0]!.ref, part: "2" })
+        );
+        assert.deepInclude(attachment, {
+          size: attachmentBytes.byteLength,
+          sha256: createHash("sha256").update(attachmentBytes).digest("hex"),
+          contentType: "application/pdf",
+          filename: `invoice-${SENTINEL}.pdf`
+        });
+        assert.deepStrictEqual(
+          staged.map((each) => each.token),
+          [attachment.upload.token]
+        );
         // A reset folder fails mailbox_reset with its own details, narrowed by integration.
         const reset = yield* Effect.promise(() =>
           mail
@@ -265,13 +313,25 @@ it.layer(tier1)("IMAP from a tier 2 action's callbacks", (it) => {
         const calls = yield* log.recent({ companyId: who.companyId, connectionId: connection.id });
         assert.includeMembers(
           calls.map((recent) => recent.op),
-          ["imap.listFolders", "imap.scanMessages", "imap.searchMessages", "imap.getMessages"]
+          [
+            "imap.listFolders",
+            "imap.scanMessages",
+            "imap.searchMessages",
+            "imap.getMessages",
+            "imap.stageAttachment"
+          ]
+        );
+        // A staged attachment is recorded by its size: never its filename or its Upload.
+        assert.strictEqual(
+          calls.find((recent) => recent.op === "imap.stageAttachment")?.bytes,
+          attachmentBytes.byteLength
         );
         const seen = yield* everything(logs);
         assert.isAbove(seen.rows, 6);
         assert.notInclude(seen.text, SENTINEL);
         assert.notInclude(seen.text, SENTINEL.toLowerCase());
         assert.notInclude(seen.text, PASSWORD);
+        assert.notInclude(seen.text, attachment.upload.token);
 
         // Wide events carry the pool's values for tuning, and no mail either.
         const recorded: WideEvents.WideEvent[] = [];
@@ -304,10 +364,19 @@ it.layer(tier1)("IMAP from a tier 2 action's callbacks", (it) => {
         yield* recordedRead(
           Operations.atMailbox(target, "folderStatus", { folder: `Missing ${SENTINEL}` })
         );
+        const staging = ImapTest.recordingStaging();
+        yield* recordedRead(
+          Operations.stageAttachmentAt(target, { ref: scan.messages[0]!.ref, part: "2" }).pipe(
+            Effect.provideService(FileStaging.FileStaging, staging.service),
+            Effect.provideService(Binding.Binding, stagingBinding)
+          )
+        );
         yield* Effect.yieldNow;
         const text = JSON.stringify(recorded);
         assert.isAtLeast(recorded.length, 3);
         assert.include(text, '"imapSession":"pooled"');
+        assert.include(text, `"stagedBytes":${attachmentBytes.byteLength}`);
+        assert.notInclude(text, staging.staged[0]!.token);
         assert.notInclude(text, SENTINEL);
         assert.notInclude(text, SENTINEL.toLowerCase());
         assert.notInclude(text, PASSWORD);
