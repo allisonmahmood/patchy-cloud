@@ -1,5 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
-import { bodyText, charsetDecode, clean, transferDecode, truncate } from "./Text.js";
+import {
+  bodyText,
+  charsetDecode,
+  clean,
+  displayText,
+  transferDecode,
+  truncate,
+  type TextSource
+} from "./Text.js";
 
 const bytes = (text: string, encoding: BufferEncoding = "utf8") => Buffer.from(text, encoding);
 const latin1 = (data: Uint8Array) => Buffer.from(data).toString("latin1");
@@ -9,17 +17,33 @@ describe("clean", () => {
   it("strips tag characters, bidi controls and other invisibles", () => {
     const tagged = "Pay\u{E0049}\u{E0047}\u{E004E}\u{E004F}\u{E0052}\u{E0045} now";
     assert.strictEqual(clean(tagged), "Pay now");
-    assert.strictEqual(clean("abc‮dcba‬ ⁦x⁩ ‏y‎"), "abcdcba x y");
-    assert.strictEqual(clean("zero​width⁠﻿"), "zerowidth");
+    assert.strictEqual(
+      clean("abc\u{202E}dcba\u{202C} \u{2066}x\u{2069} \u{200F}y\u{200E}"),
+      "abcdcba x y"
+    );
+    assert.strictEqual(clean("zero\u{200B}width\u{2060}\u{FEFF}"), "zerowidth");
     assert.strictEqual(clean("bell\u0007 esc\u001B del\u007F c1\u0085"), "bell esc del c1");
   });
 
   it("keeps ZWJ, ZWNJ, tabs and line breaks, as \\n", () => {
-    const family = "👨‍👩‍👧";
-    const persian = "می‌خواهم";
+    const family = "👨\u{200D}👩\u{200D}👧";
+    const persian = "می\u{200C}خواهم";
     assert.strictEqual(clean(family), family);
     assert.strictEqual(clean(persian), persian);
     assert.strictEqual(clean("a\tb\r\nc\rd\ne"), "a\tb\nc\nd\ne");
+  });
+});
+
+describe("displayText", () => {
+  it("puts a header value on one line, cleaned and bounded, or null", () => {
+    assert.strictEqual(
+      displayText("  Re:\r\n\tquarterly\u{202E} numbers  ", 100),
+      "Re: quarterly numbers"
+    );
+    assert.strictEqual(displayText("ééé", 2), "éé");
+    assert.strictEqual(displayText("a 😀😀", 3), "a 😀");
+    assert.isNull(displayText(" \u{200B} ", 10));
+    assert.isNull(displayText(undefined, 10));
   });
 });
 
@@ -89,10 +113,25 @@ describe("charsets", () => {
     assert.strictEqual(charsetDecode(koi, " koi8-r ", true), "Привет");
   });
 
-  it("reads an unknown or missing charset as UTF-8", () => {
-    assert.strictEqual(charsetDecode(bytes("naïve"), "x-unknown", true), "naïve");
-    assert.strictEqual(charsetDecode(bytes("naïve"), null, true), "naïve");
-    assert.strictEqual(charsetDecode(bytes("naïve"), "", true), "naïve");
+  it("reads an unknown or missing charset as UTF-8, else latin1", () => {
+    for (const charset of ["x-unknown", "utf-7", null, ""]) {
+      assert.strictEqual(charsetDecode(bytes("naïve"), charset, true), "naïve");
+      assert.strictEqual(
+        charsetDecode(Uint8Array.from([0x6e, 0x61, 0xef, 0x76, 0x65]), charset, true),
+        "naïve"
+      );
+    }
+    // windows-1252, as WHATWG reads latin1: 0x93 and 0x94 are curly quotes.
+    assert.strictEqual(
+      charsetDecode(Uint8Array.from([0x93, 0x68, 0x69, 0x94]), null, true),
+      "\u{201C}hi\u{201D}"
+    );
+    // A declared charset wins, even over bytes that would read as UTF-8.
+    assert.strictEqual(charsetDecode(bytes("é"), "iso-8859-1", true), "Ã©");
+  });
+
+  it("holds back a UTF-8 character a cut split when no charset is named", () => {
+    assert.strictEqual(charsetDecode(bytes("héllo").subarray(0, 2), null, false), "h");
   });
 
   it("holds back a character a partial fetch split", () => {
@@ -103,34 +142,48 @@ describe("charsets", () => {
 });
 
 describe("bodyText", () => {
+  const source = (text: string, extra: Partial<TextSource> = {}): TextSource => ({
+    bytes: bytes(text),
+    complete: true,
+    transferEncoding: "7bit",
+    charset: "utf-8",
+    format: "plain",
+    ...extra
+  });
+
   it("decodes, cleans and converts HTML", () => {
-    const html = Buffer.from("<p>Hello‮ <b>there</b></p><script>steal()</script>").toString(
+    const html = Buffer.from("<p>Hello\u{202E} <b>there</b></p><script>steal()</script>").toString(
       "base64"
     );
     assert.deepStrictEqual(
-      bodyText({
-        bytes: bytes(html),
-        complete: true,
-        transferEncoding: "base64",
-        charset: "utf-8",
-        format: "html"
-      }),
-      { text: "Hello there", truncated: false }
+      bodyText([source(html, { transferEncoding: "base64", format: "html" })]),
+      {
+        text: "Hello there",
+        truncated: false
+      }
     );
   });
 
-  it("says truncated when the fetch was cut or the text is past the bound", () => {
-    const source = {
-      bytes: bytes("line one\r\nline two"),
-      transferEncoding: "7bit",
-      charset: "us-ascii",
-      format: "plain" as const
-    };
-    assert.deepStrictEqual(bodyText({ ...source, complete: false }), {
-      text: "line one\nline two",
+  it("joins several parts with a blank line, skipping empty ones", () => {
+    const parts = [
+      source("Here is the photo:\r\n\r\n"),
+      source("   \r\n"),
+      source("<p>And the <b>receipt</b>.</p>", { format: "html" }),
+      source("\r\n\r\n    indented sign-off\r\n")
+    ];
+    assert.deepStrictEqual(bodyText(parts), {
+      text: "Here is the photo:\n\nAnd the receipt.\n\n    indented sign-off",
+      truncated: false
+    });
+  });
+
+  it("says truncated when a fetch was cut or the text is past the bound", () => {
+    const lines = source("line one\r\nline two", { charset: "us-ascii" });
+    assert.deepStrictEqual(bodyText([lines, { ...lines, complete: false }]), {
+      text: "line one\nline two\n\nline one\nline two",
       truncated: true
     });
-    assert.deepStrictEqual(bodyText({ ...source, complete: true }, 8), {
+    assert.deepStrictEqual(bodyText([lines, source("second")], 8), {
       text: "line one",
       truncated: true
     });

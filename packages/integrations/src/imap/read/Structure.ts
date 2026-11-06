@@ -1,6 +1,6 @@
 /**
  * A message's MIME structure, from ImapFlow's parsed `BODYSTRUCTURE` (`MessageStructureObject`),
- * as the parts a patch sees and the one text part its body is read from.
+ * as the parts a patch sees and the text parts its body is read from.
  *
  * Part numbers are worked out here, as RFC 3501 §6.4.5 numbers sections, rather than taken from
  * ImapFlow: it numbers a non-multipart message's root `undefined` (IMAP's `1`), and the body of a
@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { MIME_DEPTH, MIME_PARTS, NAME_CHARACTERS } from "./Bounds.js";
 import { MalformedStructure } from "./Errors.js";
-import { clean } from "./Text.js";
+import { displayText } from "./Text.js";
 
 /** One part as a patch sees it. */
 export const Part = Schema.Struct({
@@ -25,7 +25,7 @@ export const Part = Schema.Struct({
 });
 export type Part = typeof Part.Type;
 
-/** The text part a message's body is read from, with what decoding it needs. */
+/** One text part a message's body is read from, with what decoding it needs. */
 export interface TextPart {
   readonly part: string;
   readonly format: "plain" | "html";
@@ -35,11 +35,11 @@ export interface TextPart {
 }
 
 /**
- * What a message's body is: a text part, a part encrypted with S/MIME or PGP (reported, never
- * decrypted), or nothing that reads as a body.
+ * What a message's body is: text read from one or more text parts in order, a part encrypted with
+ * S/MIME or PGP (reported, never decrypted), or nothing that reads as a body.
  */
 export type Body =
-  | { readonly kind: "text"; readonly text: TextPart }
+  | { readonly kind: "text"; readonly texts: ReadonlyArray<TextPart> }
   | { readonly kind: "encrypted"; readonly scheme: "smime" | "pgp"; readonly part: string }
   | { readonly kind: "none" };
 
@@ -47,7 +47,7 @@ export interface Structure {
   /** Every part but multipart containers, in order. A `message/rfc822` is listed with its own. */
   readonly parts: ReadonlyArray<Part>;
   readonly body: Body;
-  /** Whether any part besides the body's text is a file: attached, named, or a message. */
+  /** Whether any part besides the body's own is a file: attached, named, or a message. */
   readonly hasAttachments: boolean;
 }
 
@@ -78,15 +78,6 @@ interface Node {
   readonly contentId: string | null;
   readonly children: ReadonlyArray<Node>;
 }
-
-/** A name as display text: cleaned, on one line, bounded, or `null` when nothing is left. */
-const displayName = (value: string | undefined): string | null => {
-  if (value === undefined) return null;
-  const name = Array.from(clean(value).replace(/\s+/g, " ").trim())
-    .slice(0, NAME_CHARACTERS)
-    .join("");
-  return name.length === 0 ? null : name;
-};
 
 /** RFC 2183: an unrecognized disposition is treated as `attachment`. */
 const disposition = (value: string | undefined): Part["disposition"] => {
@@ -142,8 +133,11 @@ const walk = (
     encoding: node.encoding?.trim().toLowerCase() || "7bit",
     size: node.size ?? 0,
     disposition: disposition(node.disposition),
-    filename: displayName(node.dispositionParameters?.["filename"] ?? parameters["name"]),
-    contentId: displayName(node.id),
+    filename: displayText(
+      node.dispositionParameters?.["filename"] ?? parameters["name"],
+      NAME_CHARACTERS
+    ),
+    contentId: displayText(node.id, NAME_CHARACTERS),
     children
   });
 };
@@ -153,6 +147,16 @@ const walk = (
 const charsetOf = (node: Node) => node.parameters["charset"]?.trim().toLowerCase() || null;
 /** An attached text file is a file, never the body. */
 const attached = (node: Node) => node.disposition === "attachment" || node.filename !== null;
+/** A text part shown as text: plain or HTML, neither attached nor named. */
+const inlineText = (node: Node) =>
+  (node.contentType === "text/plain" || node.contentType === "text/html") && !attached(node);
+const textPart = (node: Node): TextPart => ({
+  part: node.part,
+  format: node.contentType === "text/plain" ? "plain" : "html",
+  transferEncoding: node.encoding,
+  charset: charsetOf(node),
+  encodedSize: node.size
+});
 const isSmime = (type: string) =>
   type === "application/pkcs7-mime" || type === "application/x-pkcs7-mime";
 const contentIdOf = (value: string | undefined | null) =>
@@ -173,7 +177,9 @@ const select = (node: Node): Selected => {
     // Parts run from plainest to richest; plain text wins, then HTML, then whatever else.
     const chosen = node.children.map(select).filter((selected) => selected.body.kind !== "none");
     const last = (format: TextPart["format"]) =>
-      [...chosen].reverse().find(({ body }) => body.kind === "text" && body.text.format === format);
+      [...chosen]
+        .reverse()
+        .find(({ body }) => body.kind === "text" && body.texts[0]!.format === format);
     return last("plain") ?? last("html") ?? chosen[0] ?? none;
   }
   if (type === "multipart/related") {
@@ -196,10 +202,16 @@ const select = (node: Node): Selected => {
   }
   if (type.startsWith("multipart/")) {
     // mixed, and any subtype Patchy doesn't know, as RFC 2046 reads them: the first part that is
-    // a body is the body.
-    for (const child of node.children) {
+    // a body, then every later inline text part, as a client shows text around inline images.
+    for (const [index, child] of node.children.entries()) {
       const selected = select(child);
-      if (selected.body.kind !== "none") return selected;
+      if (selected.body.kind === "none") continue;
+      if (selected.body.kind !== "text") return selected;
+      const later = node.children.slice(index + 1).filter(inlineText);
+      return {
+        body: { kind: "text", texts: [...selected.body.texts, ...later.map(textPart)] },
+        parts: [...selected.parts, ...later.map((leaf) => leaf.part)]
+      };
     }
     return none;
   }
@@ -209,20 +221,8 @@ const select = (node: Node): Selected => {
       ? none
       : { body: { kind: "encrypted", scheme: "smime", part: node.part }, parts: [node.part] };
   }
-  if ((type === "text/plain" || type === "text/html") && !attached(node))
-    return {
-      body: {
-        kind: "text",
-        text: {
-          part: node.part,
-          format: type === "text/plain" ? "plain" : "html",
-          transferEncoding: node.encoding,
-          charset: charsetOf(node),
-          encodedSize: node.size
-        }
-      },
-      parts: [node.part]
-    };
+  if (inlineText(node))
+    return { body: { kind: "text", texts: [textPart(node)] }, parts: [node.part] };
   // A forwarded message and every other type is never the body.
   return none;
 };

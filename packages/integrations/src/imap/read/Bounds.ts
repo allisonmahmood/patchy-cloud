@@ -4,6 +4,7 @@
  * wired, so they can be tuned from wide events. None has been measured against a real host.
  */
 import { registry } from "@patchy/limits/registry";
+import * as Schema from "effect/Schema";
 
 /** MIME nesting a message's structure may have, counting the root as depth 1. */
 export const MIME_DEPTH = 10;
@@ -22,6 +23,24 @@ export const NAME_CHARACTERS = 255;
 export const FOLDER_CHARACTERS = 1024;
 /** Characters of one search value: `from`, `to`, `subject` or `text`. */
 export const SEARCH_VALUE_CHARACTERS = 256;
+
+/** Addresses kept of one From, To, Cc or Reply-To list. */
+export const ADDRESSES = 100;
+/** Encoded bytes of one address list together; addresses past it are left off. */
+export const ADDRESS_LIST_BYTES = 16 * 1024;
+/** Characters of one address. A longer one is left out, never cut into another address. */
+export const ADDRESS_CHARACTERS = 320;
+/** Characters kept of a subject. */
+export const SUBJECT_CHARACTERS = 1000;
+/** Characters of a Message-ID with its angle brackets. A longer one is left out. */
+export const MESSAGE_ID_CHARACTERS = 255;
+/** Message-IDs kept of `References`: the first, which starts the thread, and the latest. */
+export const REFERENCES = 32;
+/** Bytes of the `References` header read. */
+export const REFERENCES_HEADER_BYTES = 16 * 1024;
+/** Flags kept of a message, and characters of each. */
+export const FLAGS = 50;
+export const FLAG_CHARACTERS = 64;
 
 /** Summaries per page of a scan, list or search. */
 export const PAGE_MESSAGES = 100;
@@ -47,3 +66,8 @@ export const CALL_SCAN_MILLIS = 8_000;
 export const RESULT_BYTES = registry["runtime.result.bytes"].default;
 /** One message, encoded, so a patch can store it as one row. */
 export const ROW_BYTES = registry["runtime.row.bytes"].default;
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+/** A value's size as the bounds measure it: its JSON encoding in UTF-8. */
+export const encodedBytes = (value: Schema.Json): number =>
+  Buffer.byteLength(encodeJson(value), "utf8");

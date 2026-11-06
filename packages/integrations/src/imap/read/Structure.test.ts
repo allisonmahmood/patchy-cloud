@@ -60,7 +60,7 @@ const numbers = (structure: Structure) =>
   structure.parts.map((part) => `${part.part} ${part.contentType}`);
 const bodyPart = (structure: Structure) =>
   structure.body.kind === "text"
-    ? `${structure.body.text.part} ${structure.body.text.format}`
+    ? structure.body.texts.map((text) => `${text.part} ${text.format}`).join(", ")
     : structure.body.kind;
 
 describe("parts and their numbers", () => {
@@ -78,13 +78,15 @@ describe("parts and their numbers", () => {
     ]);
     assert.deepStrictEqual(structure.body, {
       kind: "text",
-      text: {
-        part: "1",
-        format: "plain",
-        transferEncoding: "quoted-printable",
-        charset: "utf-8",
-        encodedSize: 100
-      }
+      texts: [
+        {
+          part: "1",
+          format: "plain",
+          transferEncoding: "quoted-printable",
+          charset: "utf-8",
+          encodedSize: 100
+        }
+      ]
     });
     assert.isFalse(structure.hasAttachments);
   });
@@ -141,7 +143,7 @@ describe("parts and their numbers", () => {
     const sneaky = read(
       leaf("application/octet-stream", {
         disposition: "attachment",
-        filename: "invoice‮fdp.exe\u{E0041}"
+        filename: "invoice\u{202E}fdp.exe\u{E0041}"
       })
     );
     assert.strictEqual(sneaky.parts[0]!.filename, "invoicefdp.exe");
@@ -200,6 +202,33 @@ describe("the body", () => {
     assert.strictEqual(bodyPart(read(multipart("mixed", [named]))), "none");
     assert.strictEqual(bodyPart(read(multipart("mixed", [message(plain)]))), "none");
     assert.strictEqual(bodyPart(read(multipart("mixed", [pdf]))), "none");
+  });
+
+  it("reads a mixed body on through every later inline text part, as a client shows it", () => {
+    const image = leaf("image/jpeg", { disposition: "inline", filename: "photo.jpg" });
+    const around = read(multipart("mixed", [plain, image, plain, image, html]));
+    assert.strictEqual(bodyPart(around), "1 plain, 3 plain, 5 html");
+    assert.isTrue(around.hasAttachments);
+    const afterAlternative = read(
+      multipart("mixed", [multipart("alternative", [plain, html]), pdf, plain])
+    );
+    assert.strictEqual(bodyPart(afterAlternative), "1.1 plain, 3 plain");
+    // An attached or named text part, a forwarded message and a nested multipart stay out.
+    const notes = leaf("text/plain", { disposition: "attachment", filename: "notes.txt" });
+    const named = leaf("text/html", { filename: "page.html" });
+    const kept = read(
+      multipart("mixed", [
+        plain,
+        notes,
+        named,
+        message(plain),
+        multipart("alternative", [plain]),
+        html
+      ])
+    );
+    assert.strictEqual(bodyPart(kept), "1 plain, 6 html");
+    // A file before the body doesn't stop the text after it.
+    assert.strictEqual(bodyPart(read(multipart("mixed", [pdf, html, plain]))), "2 html, 3 plain");
   });
 
   it("reads a signed message's content", () => {

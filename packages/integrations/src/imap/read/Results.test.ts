@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Result from "effect/Result";
 import { RESULT_BYTES, ROW_BYTES } from "./Bounds.js";
 import { refKey, type MessageRef } from "./Refs.js";
+import type { Message } from "./Message.js";
 import { answerGetMessages, planGetMessages, type Outcome } from "./Results.js";
 
 const ref = (uid: number, folder = "INBOX", uidValidity = 7): MessageRef => ({
@@ -10,8 +11,26 @@ const ref = (uid: number, folder = "INBOX", uidValidity = 7): MessageRef => ({
   uidValidity,
   uid
 });
-type Message = { readonly uid: number; readonly text: string };
-const message = (uid: number, text = "hello"): Message => ({ uid, text });
+const message = (uid: number, text = "hello"): Message => ({
+  ref: ref(uid),
+  from: [],
+  to: [],
+  cc: [],
+  subject: null,
+  date: null,
+  internalDate: null,
+  size: text.length,
+  flags: [],
+  messageId: null,
+  inReplyTo: null,
+  references: [],
+  hasAttachments: false,
+  replyTo: [],
+  text,
+  truncated: false,
+  parts: [],
+  encrypted: null
+});
 const failureTag = <A, E extends { readonly _tag: string }>(result: Result.Result<A, E>) =>
   Result.isFailure(result) ? result.failure._tag : "ok";
 
@@ -43,7 +62,7 @@ describe("planGetMessages", () => {
 describe("answerGetMessages", () => {
   it("answers each ref in the order asked, a missing one not_found", () => {
     const refs = [ref(3), ref(1), ref(2), ref(3)];
-    const found = new Map<string, Outcome<Message>>([
+    const found = new Map<string, Outcome>([
       [refKey(ref(1)), message(1)],
       [refKey(ref(3)), message(3)],
       [refKey(ref(2)), { error: "malformed" }]
@@ -61,7 +80,7 @@ describe("answerGetMessages", () => {
 
   it("answers too_large for a message past one row, keeping the rest", () => {
     const big = message(2, "x".repeat(ROW_BYTES));
-    const found = new Map([
+    const found = new Map<string, Outcome>([
       [refKey(ref(1)), message(1)],
       [refKey(ref(2)), big]
     ]);
@@ -73,9 +92,11 @@ describe("answerGetMessages", () => {
 
   it("refuses the call past the result bound, dropping nothing", () => {
     // Nine messages that each fit a row are more than the result bound together.
-    const text = "x".repeat(ROW_BYTES - 100);
+    const text = "x".repeat(ROW_BYTES - 1000);
     const refs = Array.from({ length: 9 }, (_, index) => ref(index + 1));
-    const found = new Map(refs.map((each) => [refKey(each), message(each.uid, text)]));
+    const found = new Map<string, Outcome>(
+      refs.map((each) => [refKey(each), message(each.uid, text)])
+    );
     const result = answerGetMessages(refs, found);
     assert.isTrue(Result.isFailure(result));
     if (Result.isFailure(result)) {

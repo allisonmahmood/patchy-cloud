@@ -4,9 +4,9 @@
  */
 import { Runtime } from "@patchy/runtime/core";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
-import { GET_REFS, RESULT_BYTES, ROW_BYTES } from "./Bounds.js";
+import { encodedBytes, GET_REFS, RESULT_BYTES, ROW_BYTES } from "./Bounds.js";
 import { ForeignRef, MailboxReset, ResultTooLarge } from "./Errors.js";
+import type { Message } from "./Message.js";
 import { refKey, type MessageRef } from "./Refs.js";
 
 /** One folder a call reads: the UIDVALIDITY its refs were made under and their UIDs, ascending. */
@@ -48,35 +48,28 @@ export const planGetMessages = (
 
 /** A ref that didn't read as a message. */
 export type Unread = { readonly error: "not_found" | "malformed" | "too_large" };
-export type Outcome<M> = M | Unread;
-
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
-const bytes = (value: Schema.Json) => Buffer.byteLength(encodeJson(value), "utf8");
-const isUnread = (outcome: Outcome<Schema.Json>): outcome is Unread =>
-  typeof outcome === "object" &&
-  outcome !== null &&
-  !Array.isArray(outcome) &&
-  Object.keys(outcome).length === 1 &&
-  "error" in outcome;
+/** What one ref answers: its message, or why there is none. */
+export type Outcome = Message | Unread;
 
 /**
- * One answer per ref, in `refs`' order, from what the fetches found by `refKey`. A ref found
- * nothing for is `not_found`; a message over `ROW_BYTES` encoded is `too_large`, so each one fits
- * a patch's row. Past `RESULT_BYTES` in all, the call is refused with nothing dropped.
+ * One answer per ref, in `refs`' order, from what `readMessage` made of each ref the fetches found,
+ * by `refKey`. A ref found nothing for is `not_found`; a message over `ROW_BYTES` encoded is
+ * `too_large`, so each one fits a patch's row. Past `RESULT_BYTES` in all, the call is refused with
+ * nothing dropped.
  */
-export const answerGetMessages = <M extends Schema.Json>(
+export const answerGetMessages = (
   refs: ReadonlyArray<MessageRef>,
-  found: ReadonlyMap<string, Outcome<M>>
-): Result.Result<ReadonlyArray<Outcome<M>>, ResultTooLarge> => {
-  const answers: Outcome<M>[] = [];
+  found: ReadonlyMap<string, Outcome>
+): Result.Result<ReadonlyArray<Outcome>, ResultTooLarge> => {
+  const answers: Outcome[] = [];
   // The brackets, and a comma between answers.
   let total = 2 + Math.max(0, refs.length - 1);
   for (const ref of refs) {
-    let outcome: Outcome<M> = found.get(refKey(ref)) ?? { error: "not_found" };
-    let size = bytes(outcome);
-    if (!isUnread(outcome) && size > ROW_BYTES) {
+    let outcome: Outcome = found.get(refKey(ref)) ?? { error: "not_found" };
+    let size = encodedBytes(outcome);
+    if (!("error" in outcome) && size > ROW_BYTES) {
       outcome = { error: "too_large" };
-      size = bytes(outcome);
+      size = encodedBytes(outcome);
     }
     answers.push(outcome);
     total += size;

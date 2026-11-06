@@ -278,7 +278,7 @@ class Output {
   done(): string {
     return this.parts
       .join("")
-      .replace(/ /g, " ")
+      .replace(/\u{A0}/gu, " ")
       .replace(/[ \t]+\n/g, "\n")
       .trimEnd();
   }

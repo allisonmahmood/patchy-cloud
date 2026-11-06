@@ -105,7 +105,10 @@ export interface Source<M, E, R> {
   ) => Effect.Effect<number | undefined, E, R>;
   /** `FETCH n (UID)`: the UID of the folder's `n`th message, or `undefined` when there is none. */
   readonly uidAt: (sequence: number) => Effect.Effect<number | undefined, E, R>;
-  /** `UID FETCH` of these UIDs' summaries. One expunged meanwhile is simply missing. */
+  /**
+   * `UID FETCH` of these UIDs (`uidSet`) with what a summary reads, as `Summary.Fetched`. One
+   * expunged meanwhile is simply missing. The caller shapes a page's messages with `summarize`.
+   */
   readonly fetch: (uids: ReadonlyArray<number>) => Effect.Effect<ReadonlyArray<M>, E, R>;
 }
 

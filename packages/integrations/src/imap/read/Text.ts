@@ -21,10 +21,24 @@ import { htmlToText } from "./Html.js";
  *
  * ZWJ and ZWNJ (U+200D, U+200C) stay: emoji sequences and several scripts need them.
  */
-const INVISIBLE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F؜​‎‏‪-‮⁠-⁤⁦-⁩﻿]|\uDB40[\uDC00-\uDC7F]/g;
+const INVISIBLE =
+  /[\u{0}-\u{8}\u{B}-\u{1F}\u{7F}-\u{9F}\u{61C}\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2060}-\u{2064}\u{2066}-\u{2069}\u{FEFF}\u{E0000}-\u{E007F}]/gu;
 
 /** `text` without invisible characters, with every line break as `\n`. */
 export const clean = (text: string): string => text.replace(/\r\n?/g, "\n").replace(INVISIBLE, "");
+
+/**
+ * A header value or name as display text: cleaned, on one line, cut to `maxCharacters` code
+ * points, or `null` when nothing is left.
+ */
+export const displayText = (value: string | undefined, maxCharacters: number): string | null => {
+  if (value === undefined) return null;
+  const text = Array.from(clean(value).replace(/\s+/g, " ").trim())
+    .slice(0, maxCharacters)
+    .join("")
+    .trim();
+  return text.length === 0 ? null : text;
+};
 
 const encoder = new TextEncoder();
 
@@ -96,24 +110,35 @@ const quotedPrintable = (bytes: Uint8Array, complete: boolean): Uint8Array => {
   return Uint8Array.from(out);
 };
 
+const declaredDecoder = (charset: string | null) => {
+  const label = charset?.trim();
+  if (label === undefined || label === "") return undefined;
+  try {
+    return new TextDecoder(label);
+  } catch {
+    return undefined;
+  }
+};
+const latin1 = new TextDecoder("latin1");
+
 /**
- * Bytes in `charset` as text. A label the runtime doesn't know, such as `utf-7`, reads as UTF-8
- * with replacement characters. When `complete` is false, a character the cut split is held back
- * instead of read as U+FFFD.
+ * Bytes as text in the charset the part's header names. With none, or one the runtime doesn't
+ * know such as `utf-7`, they read as UTF-8, or as latin1 (windows-1252, as WHATWG reads the label)
+ * when they aren't valid UTF-8. When `complete` is false, a character the cut split is held back.
  */
 export const charsetDecode = (
   bytes: Uint8Array,
   charset: string | null,
   complete: boolean
 ): string => {
-  const decoder = () => {
-    try {
-      return new TextDecoder(charset?.trim() || "utf-8");
-    } catch {
-      return new TextDecoder("utf-8");
-    }
-  };
-  return decoder().decode(bytes, { stream: !complete });
+  const declared = declaredDecoder(charset);
+  if (declared !== undefined) return declared.decode(bytes, { stream: !complete });
+  try {
+    // A fresh decoder each time: one decoding with `stream` holds a cut character for the next.
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: !complete });
+  } catch {
+    return latin1.decode(bytes);
+  }
 };
 
 /** The text part a message's body was selected from, as its structure describes it. */
@@ -131,18 +156,27 @@ export interface TextSource {
 }
 
 /**
- * A message's text: decoded, HTML made inert text, cleaned, and cut to `maxBytes` of UTF-8.
- * `truncated` is true when the fetch or the cut left any of the part out.
+ * A message's text from its text parts in order: each decoded, HTML made inert text and cleaned,
+ * joined by a blank line, and cut to `maxBytes` of UTF-8. `truncated` is true when a fetch or the
+ * cut left any of it out.
  */
 export const bodyText = (
-  source: TextSource,
+  sources: ReadonlyArray<TextSource>,
   maxBytes: number = TEXT_BYTES
 ): { readonly text: string; readonly truncated: boolean } => {
-  const decoded = charsetDecode(
-    transferDecode(source.bytes, source.transferEncoding, source.complete),
-    source.charset,
-    source.complete
-  );
-  const cut = truncate(clean(source.format === "html" ? htmlToText(decoded) : decoded), maxBytes);
-  return { text: cut.text, truncated: cut.truncated || !source.complete };
+  const texts = sources
+    .map((source) => {
+      const decoded = charsetDecode(
+        transferDecode(source.bytes, source.transferEncoding, source.complete),
+        source.charset,
+        source.complete
+      );
+      // Blank lines at either end would pile up between parts; indentation stays.
+      return clean(source.format === "html" ? htmlToText(decoded) : decoded)
+        .replace(/^\n+/, "")
+        .trimEnd();
+    })
+    .filter((text) => text.length > 0);
+  const cut = truncate(texts.join("\n\n"), maxBytes);
+  return { text: cut.text, truncated: cut.truncated || sources.some((source) => !source.complete) };
 };
