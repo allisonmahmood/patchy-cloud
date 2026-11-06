@@ -248,7 +248,7 @@ it.layer(fixture)("IMAP reads", (it) => {
       assert.strictEqual(logins() - before, 1);
       assert.strictEqual(
         served.lines.filter((line) => line.startsWith("EXAMINE")).length - examined,
-        2
+        3
       );
     })
   );

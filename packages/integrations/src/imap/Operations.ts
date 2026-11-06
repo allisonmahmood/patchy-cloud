@@ -298,6 +298,9 @@ const runners: {
     }),
   folderStatus: (session, _connection, input) =>
     Effect.gen(function* () {
+      // STATUS of a folder this session had open answers from that view: a folder deleted and
+      // recreated since would keep its old UIDVALIDITY. A fresh EXAMINE first makes it current.
+      yield* examine(session, input.folder);
       const status = yield* Effect.tryPromise({
         try: () =>
           session.client.status(input.folder, {
