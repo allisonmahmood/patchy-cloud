@@ -12,6 +12,7 @@ export type Operation =
   | "me"
   | "server.call"
   | "route.set"
+  | "shortcuts.setting"
   | "download"
   | "download.generated"
   | "files.download"
@@ -243,9 +244,9 @@ export function createPortTransport(
     if (closed) return Promise.reject(lost());
     const id = String(++sequence);
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    // A shell-local offer waits for the person, not a runtime reply deadline.
+    // A shell-local offer or question waits for the person, not a runtime reply deadline.
     const timer =
-      op === "download.generated"
+      op === "download.generated" || op === "shortcuts.setting"
         ? undefined
         : setTimeout(
             () => {
@@ -489,10 +490,82 @@ export function createPostMessageTransport(
   };
 }
 
-// The generated tier 2 client and handle-only hooks share the document's single broker port.
+// The document's one broker port, shared by tier 1 and tier 2 clients, handle-only hooks and
+// `patchy/hotkeys`. Whichever asks first makes it, and the bootstrap it waits for comes once.
 let documentTransport: Transport | undefined;
 export const getDocumentTransport = (): Transport =>
   (documentTransport ??= createPostMessageTransport());
+
+/**
+ * One client's share of a transport. Closing it ends only what this client started: its waits for
+ * the bootstrap or the server's clock and its later calls reject as lost, and its route listeners
+ * and query subscriptions stop. A call already sent settles with its own outcome. The transport,
+ * its port and every other consumer of it stay open.
+ */
+export function createClientTransport(shared: Transport): Transport {
+  let closed = false;
+  const active = new Set<() => void>();
+  const waiting = new Set<(error: unknown) => void>();
+  const open = <T>(start: () => Promise<T>): Promise<T> =>
+    closed ? Promise.reject(lost()) : start();
+  // A wait this client gives up on as it closes, though the transport keeps waiting.
+  const wait = <T>(start: () => Promise<T>): Promise<T> => {
+    if (closed) return Promise.reject(lost());
+    const { promise, resolve, reject } = Promise.withResolvers<T>();
+    waiting.add(reject);
+    void start()
+      .then(resolve, reject)
+      .finally(() => waiting.delete(reject));
+    return promise;
+  };
+  // A subscription's stop, which closing calls too; either way it runs once.
+  const track = (stop: () => void): (() => void) => {
+    const end = () => {
+      if (active.delete(end)) stop();
+    };
+    active.add(end);
+    return end;
+  };
+  return {
+    call: (op, args, bytes) => open(() => shared.call(op, args, bytes)),
+    ready: () => wait(() => shared.ready()),
+    serverTime: () => (closed ? undefined : shared.serverTime()),
+    waitForServerTime: () => wait(() => shared.waitForServerTime()),
+    handlerKind: (name) => (closed ? undefined : shared.handlerKind(name)),
+    queries: {
+      subscribe(request, onFrame) {
+        if (closed) {
+          onFrame({ status: "error", error: lost(), permanent: true });
+          return () => {};
+        }
+        return track(
+          shared.queries.subscribe(request, (frame) => {
+            if (!closed) onFrame(frame);
+          })
+        );
+      }
+    },
+    route: {
+      get: () => open(() => shared.route.get()),
+      set: (path) => open(() => shared.route.set(path)),
+      subscribe: (listener) =>
+        closed
+          ? () => {}
+          : track(
+              shared.route.subscribe((path) => {
+                if (!closed) listener(path);
+              })
+            )
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      for (const reject of waiting) reject(lost());
+      waiting.clear();
+      for (const end of [...active]) end();
+    }
+  };
+}
 
 export interface HttpTransportOptions {
   readonly baseUrl: string;
@@ -633,6 +706,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
         op === "shared.download" ||
         op === "files.download" ||
         op === "download.generated" ||
+        op === "shortcuts.setting" ||
         op.startsWith("subscriptions.")
       )
         throw browserOnly();

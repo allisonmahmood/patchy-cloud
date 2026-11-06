@@ -3,7 +3,7 @@
  * What `patchy/hotkeys` checks around TanStack Hotkeys at runtime, in Patchy's words. Internal:
  * `hotkeys.ts` is the public entry and applies these when its hooks register.
  */
-import { normalizeHotkey } from "@tanstack/preact-hotkeys";
+import { normalizeHotkey, parseHotkey, type HotkeyChord } from "@tanstack/preact-hotkeys";
 
 /** Patchy keeps this chord for its own shortcuts. `Hotkey` refuses it at compile time. */
 const reservedChord = "Mod+Shift+K";
@@ -31,6 +31,43 @@ const reserved = (hotkey: string): boolean => {
   }
   return found;
 };
+
+// Physical keys that type text: letters, digits, the numpad's digits and operators, punctuation and
+// Space. A hotkey names one only through a cast, as `"[KeyA]"`.
+const typingCode =
+  /^(Key[A-Z]|Digit\d|Numpad(\d|Add|Subtract|Multiply|Divide|Decimal|Comma|Equal)|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Semicolon|Quote|Comma|Period|Slash|Intl(Backslash|Ro|Yen)|Space)$/;
+
+// Whether each hotkey seen types text at every step, cached as `reserves` is.
+const typing = new Map<string, boolean>();
+const typesText = (hotkey: string): boolean => {
+  let found = typing.get(hotkey);
+  if (found === undefined) {
+    found = steps(hotkey).every((step) => {
+      const chord = parseHotkey(step as HotkeyChord);
+      if (chord.ctrl || chord.alt || chord.meta) return false;
+      return chord.code === undefined
+        ? chord.key === "Space" || [...chord.key].length === 1
+        : typingCode.test(chord.code);
+    });
+    typing.set(hotkey, found);
+  }
+  return found;
+};
+
+/**
+ * Whether a hotkey is a character shortcut, which a viewer who turns single-key shortcuts off
+ * stops. It is when every step, as TanStack parses it, is a key that types text: a letter, digit,
+ * symbol or Space, Shift or not, with no Mod, Ctrl or Alt anywhere in the hotkey. A character
+ * typed with AltGr or reached through a dead key's position counts, and so do the numpad's digits
+ * and operators. Named keys, the arrows and Home a numpad sends without NumLock among them, don't,
+ * and neither does a sequence with one. A hotkey `within` an element is exempt, as its keys work
+ * only while focus is there, unless the element is the page's body or root.
+ */
+export const characterShortcut = (hotkey: string, within: Element | undefined): boolean =>
+  typesText(hotkey) &&
+  (within === undefined ||
+    within === within.ownerDocument.body ||
+    within === within.ownerDocument.documentElement);
 
 const refused = new Set<string>();
 

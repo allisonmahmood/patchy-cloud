@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  characterShortcut,
   duplicateWarnings,
   fieldKeeps,
   permitted,
@@ -248,4 +249,98 @@ it("splits a sequence into steps and gives a lone trailing letter its capital", 
   expect(steps("g  h")).toEqual(["G", "H"]);
   expect(steps("Mod+k")).toEqual(["Mod+K"]);
   expect(steps("Alt+ArrowUp ?")).toEqual(["Alt+ArrowUp", "?"]);
+});
+
+it("calls a hotkey a character shortcut when every step types text, with no Mod, Ctrl or Alt", () => {
+  const page = (hotkey: string) => characterShortcut(hotkey, undefined);
+  const characters = [
+    // Letters, digits and symbols, Shift or not: Shift doesn't exempt a step.
+    "A",
+    "a",
+    "7",
+    "?",
+    "Shift+A",
+    "Shift+/",
+    "Shift+7",
+    // Space, and a literal plus.
+    "Space",
+    "Shift+Space",
+    "+",
+    "Shift++",
+    // What AltGr types on other layouts, such as German's @, { and \\, and a key it types a
+    // non-ASCII character with.
+    "@",
+    "{",
+    "\\",
+    "|",
+    "€",
+    // What a dead key's position falls back to.
+    "`",
+    "^",
+    "~",
+    "'",
+    // The numpad with NumLock on types its digits and operators, by key or by position.
+    "5",
+    "*",
+    "-",
+    "/",
+    ".",
+    "[Numpad5]",
+    "[NumpadAdd]",
+    "[NumpadDecimal]",
+    "[KeyA]",
+    "[Slash]",
+    // Sequences of them.
+    "G H",
+    "P 5",
+    "G Shift+H",
+    "Space +"
+  ];
+  const exempt = [
+    // A Mod, Ctrl or Alt anywhere.
+    "Mod+K",
+    "Mod+/",
+    "Mod+Shift+A",
+    "Alt+K",
+    "Alt+Shift+2",
+    "Control+A",
+    "Meta+A",
+    "Mod+[KeyA]",
+    // Keys that don't type, the numpad's without NumLock among them.
+    "Escape",
+    "Enter",
+    "Tab",
+    "Shift+Tab",
+    "Backspace",
+    "Delete",
+    "F1",
+    "ArrowUp",
+    "ArrowLeft",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Insert",
+    "Clear",
+    "[NumpadEnter]",
+    // A sequence with any step that doesn't type.
+    "G Escape",
+    "G Mod+K",
+    "Mod+K G",
+    "Tab A"
+  ];
+  expect(characters.filter((hotkey) => !page(hotkey))).toEqual([]);
+  expect(exempt.filter(page)).toEqual([]);
+});
+
+it("leaves a hotkey within an element to it, but not one within the page's body or root", () => {
+  const document = { body: {}, documentElement: {} };
+  const owned = (node: object) =>
+    Object.assign(node, { ownerDocument: document }) as unknown as Element;
+  const [list, body, root] = [owned({}), owned(document.body), owned(document.documentElement)];
+  expect(characterShortcut("A", list)).toBe(false);
+  expect(characterShortcut("G H", list)).toBe(false);
+  expect(characterShortcut("A", body)).toBe(true);
+  expect(characterShortcut("G H", root)).toBe(true);
+  expect(characterShortcut("Escape", body)).toBe(false);
 });

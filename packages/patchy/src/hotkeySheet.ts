@@ -172,6 +172,20 @@ const styles = `@layer look.patchy-hotkeys {
     display: none;
   }
 
+  /* The viewer's single-key shortcut setting, above the groups between two of the look's lines. */
+  .hotkey-setting {
+    margin: 0 0 calc(var(--look-space, 8px) * 2.5);
+    border-block: var(--hotkey-line, var(--hotkey-hairline));
+  }
+  .hotkey-setting .hotkey-row {
+    border-bottom: 0;
+  }
+  .hotkey-state {
+    flex-shrink: 0;
+    font-size: 0.94rem;
+    font-weight: 750;
+  }
+
   .hotkey-groups {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
@@ -259,9 +273,17 @@ const styles = `@layer look.patchy-hotkeys {
     font-size: 0.95rem;
     font-weight: 600;
   }
+  /* A key the viewer's setting stops: dashed, flat and muted. */
+  .hotkey-sheet-dialog kbd.hotkey-key-off {
+    border-style: dashed;
+    border-bottom-width: 1.5px;
+    background: none;
+    color: var(--look-muted, color-mix(in srgb, currentColor 55%, transparent));
+  }
 
   /* Read by screen readers, never drawn. */
-  .hotkey-announce {
+  .hotkey-announce,
+  .hotkey-hidden {
     position: absolute;
     width: 1px;
     height: 1px;

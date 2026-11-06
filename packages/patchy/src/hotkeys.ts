@@ -24,6 +24,7 @@ import {
 import { Fragment, createElement, createPortal, type ComponentChildren, type JSX } from "preact";
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  characterShortcut,
   duplicateWarnings,
   fieldKeeps,
   focusedField,
@@ -32,6 +33,12 @@ import {
   type Mounted
 } from "./hotkeyRules.js";
 import { addSheetStyles, narrowest, sections, type Placed } from "./hotkeySheet.js";
+import {
+  askShell,
+  shortcutSetting,
+  subscribeShortcutSetting,
+  type ShortcutSetting
+} from "./shortcutSetting.js";
 
 type Letter =
   | "A"
@@ -197,13 +204,23 @@ export interface HotkeyBinding<S extends string> extends HotkeyOptions {
   readonly run: (event: KeyboardEvent) => void;
 }
 
-// A binding after its hotkey passed the type check.
+// A binding after its hotkey passed the type check, with what only Patchy's own bindings set.
 type Checked = HotkeyOptions & {
   readonly hotkey: string;
   readonly run: (event: KeyboardEvent) => void;
+  /**
+   * Whether the viewer's setting stops it, for the sheet's copy of a command, which listens on the
+   * page but keeps the place of the command it copies. Others work it out from where they listen.
+   */
+  readonly character?: boolean;
+  /** Listen on the window as the key goes down, ahead of every other hotkey, for the sheet's Mod+/. */
+  readonly ahead?: true;
 };
 
 type Within = NonNullable<HotkeyOptions["within"]>;
+
+// Where an `ahead` binding listens, in place of a `within`: the window.
+const windowPlace: Within = { current: null };
 
 // Our Chord type is the contract; TanStack parses the same names at runtime.
 const toTanStack = (hotkey: string): HotkeyChord | ReadonlyArray<HotkeyChord> => {
@@ -259,6 +276,12 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
   const meta =
     binding.label === undefined ? undefined : { name: binding.label, group: binding.group };
   if (meta !== undefined) runs.set(meta, (event) => current().run(event));
+  const character =
+    binding.character ?? characterShortcut(binding.hotkey, binding.within?.current ?? undefined);
+  // While the viewer has single-key shortcuts off, a character shortcut fires nothing, takes no
+  // key and steps no sequence. It is read as each key arrives and never through `enabled`, so the
+  // hotkey stays listed.
+  const stopped = () => character && !shortcutSetting().on;
   return {
     hotkey: toTanStack(binding.hotkey),
     callback: (event) => {
@@ -266,7 +289,7 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
       // own consume would come too late to leave a key to a field. A sequence's steps are
       // consumed as TanStack takes each one, and its last stops propagation there.
       if (!sequence) {
-        if (!eligible(event, event.currentTarget, binding.whileTyping)) return;
+        if (stopped() || !eligible(event, event.currentTarget, binding.whileTyping)) return;
         consume(event);
         event.stopPropagation();
       }
@@ -284,13 +307,17 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
       ...(sequence
         ? {
             allowStep: (event: KeyboardEvent, target: EventTarget) =>
-              eligible(event, target, binding.whileTyping),
+              !stopped() && eligible(event, target, binding.whileTyping),
             onStep: consume
           }
         : { stopPropagation: false }),
       // TanStack's own warning names options this API doesn't have; ours follows registration.
       conflictBehavior: "allow",
-      ...(binding.within === undefined ? {} : { target: binding.within }),
+      ...(binding.ahead
+        ? { target: windowPlace, capture: true }
+        : binding.within === undefined
+          ? {}
+          : { target: binding.within }),
       ...(meta === undefined ? {} : { meta })
     }
   };
@@ -300,12 +327,14 @@ const definition = (binding: Checked, current: () => Checked): AdapterHotkeyDefi
 // element hold, so does each registration.
 const shape = (bindings: ReadonlyArray<Checked>): string =>
   JSON.stringify(
-    bindings.map(({ hotkey, label, group, enabled, whileTyping }) => [
+    bindings.map(({ hotkey, label, group, enabled, whileTyping, character, ahead }) => [
       hotkey,
       label,
       group,
       enabled,
-      whileTyping
+      whileTyping,
+      character,
+      ahead
     ])
   );
 
@@ -386,7 +415,7 @@ function useBindings(bindings: ReadonlyArray<Checked>, scope?: string): void {
         kept.map((binding, index) => definition(binding, () => latest.current[index]!)),
         {
           ...(placed === undefined ? {} : { defaults: { scope: placed } }),
-          resolveTarget: (within: Within) => within.current
+          resolveTarget: (within: Within) => (within === windowPlace ? window : within.current)
         }
       )
     );
@@ -494,8 +523,9 @@ export function useHotkeyList(): ReadonlyArray<ListedHotkey> {
   });
 }
 
-// Each step's keys as keycaps, with "then" between a sequence's steps.
-const keycaps = (hotkey: string) =>
+// Each step's keys as keycaps, with "then" between a sequence's steps. Keys the viewer's setting
+// stops are drawn inactive and said to be off.
+const keycaps = (hotkey: string, off = false) => [
   createElement(
     "span",
     { class: "hotkey-keys" },
@@ -505,15 +535,24 @@ const keycaps = (hotkey: string) =>
       ...keys.map((key) =>
         createElement(
           "kbd",
-          { class: /^[^ -~]$/.test(key) ? "hotkey-key hotkey-symbol" : "hotkey-key" },
+          {
+            class: `hotkey-key${/^[^ -~]$/.test(key) ? " hotkey-symbol" : ""}${off ? " hotkey-key-off" : ""}`
+          },
           key
         )
       )
     ])
-  );
+  ),
+  off && createElement("span", { class: "hotkey-hidden" }, ", key off")
+];
+
+/** A row the sheet lists, and whether the viewer's setting stops its keys where they listen. */
+interface Row extends ListedHotkey {
+  readonly character: boolean;
+}
 
 /** A command the sheet lists: a labelled hotkey that works where focus was, and its `run`. */
-interface Command extends ListedHotkey {
+interface Command extends Row {
   readonly run: (event: KeyboardEvent) => void;
 }
 
@@ -660,7 +699,13 @@ const commandsFor = (
       )
         return [];
       const group = meta?.group;
-      const placed = { hotkey, label, run, depth: element === undefined ? -1 : depth(element) };
+      const placed = {
+        hotkey,
+        label,
+        run,
+        character: characterShortcut(hotkey, element),
+        depth: element === undefined ? -1 : depth(element)
+      };
       return [group === undefined ? placed : { ...placed, group }];
     })
   );
@@ -669,6 +714,16 @@ const commandsFor = (
 // through its buttons. While it is open, such a command runs from its button alone.
 const usesSheetKeys = (hotkey: string): boolean =>
   steps(hotkey).some((step) => /(^|\+)(Escape|Tab)$/.test(step));
+
+// The viewer's setting as the sheet draws it, rendering again as it changes.
+function useShortcutSetting(): ShortcutSetting {
+  const [setting, setSetting] = useState(shortcutSetting);
+  useLayoutEffect(() => {
+    setSetting(shortcutSetting());
+    return subscribeShortcutSetting(() => setSetting(shortcutSetting()));
+  }, []);
+  return setting;
+}
 
 // A modal dialog: the page behind it is inert and Escape asks it to close. Its state is the
 // sheet's: the dialog closes as it unmounts, which returns focus to where it was. Chrome fires
@@ -679,14 +734,19 @@ const usesSheetKeys = (hotkey: string): boolean =>
 function Sheet(props: {
   readonly title: string;
   readonly from: From;
-  readonly own: ReadonlyArray<ListedHotkey>;
+  readonly own: ReadonlyArray<Row>;
+  /** Whether it opens on its setting row, as it comes back from the shell's dialog. */
+  readonly onSetting: boolean;
   readonly onClose: () => void;
   readonly onRun: (command: Command, event?: KeyboardEvent) => void;
+  readonly onAsk: () => void;
 }): JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null);
   // Whether the last press on the dialog has been on its scrim alone, for a tap outside the card.
   const tap = useRef(false);
+  const settingRow = useRef<HTMLButtonElement>(null);
   const title = useId();
+  const setting = useShortcutSetting();
   const commands = commandsFor(
     useHotkeyRegistrations(),
     props.from,
@@ -698,7 +758,8 @@ function Sheet(props: {
       .filter((command) => !usesSheetKeys(command.hotkey))
       .map((command) => ({
         hotkey: command.hotkey,
-        run: (event: KeyboardEvent) => props.onRun(command, event)
+        run: (event: KeyboardEvent) => props.onRun(command, event),
+        character: command.character
       }))
   );
   useLayoutEffect(() => {
@@ -706,6 +767,8 @@ function Sheet(props: {
     // Its reset back first in `<head>`, ahead of any stylesheet prepended since it last opened.
     addSheetStyles();
     element?.showModal();
+    // Focus on the row says its new state.
+    if (props.onSetting) settingRow.current?.focus();
     return () => element?.close();
   }, []);
   return createElement(
@@ -758,41 +821,66 @@ function Sheet(props: {
           createElement("span", { class: "hotkey-sheet-close-word" }, "Close")
         )
       ),
+      // Only the shell changes the setting, in its own dialog, so patch code can't turn it off.
+      setting.shown &&
+        createElement(
+          "div",
+          { class: "hotkey-setting" },
+          createElement(
+            "div",
+            { class: "hotkey-row" },
+            createElement(
+              "button",
+              {
+                ref: settingRow,
+                type: "button",
+                class: "hotkey-command",
+                "aria-haspopup": "dialog",
+                // Its two parts, read as one: the label, then the state.
+                "aria-label": `Single-key shortcuts: ${setting.on ? "On" : "Off"}`,
+                onClick: props.onAsk
+              },
+              createElement("span", { class: "hotkey-label" }, "Single-key shortcuts"),
+              createElement("span", { class: "hotkey-state" }, setting.on ? "On" : "Off")
+            )
+          )
+        ),
       createElement(
         "div",
         { class: "hotkey-groups" },
-        sections<ListedHotkey & { readonly run?: Command["run"] }>(commands, props.own).map(
-          ([name, rows]) =>
+        sections<Row & { readonly run?: Command["run"] }>(commands, props.own).map(([name, rows]) =>
+          createElement(
+            "section",
+            { class: "hotkey-group", key: name },
+            name !== undefined && createElement("h3", null, name),
             createElement(
-              "section",
-              { class: "hotkey-group", key: name },
-              name !== undefined && createElement("h3", null, name),
-              createElement(
-                "ul",
-                null,
-                rows.map((row) => {
-                  const label = createElement("span", { class: "hotkey-label" }, row.label);
-                  const { run } = row;
-                  return createElement(
-                    "li",
-                    { class: "hotkey-row", key: `${row.hotkey}\n${row.label}` },
-                    // The sheet's own rows are what opened it, listed so the viewer learns them.
-                    run === undefined
-                      ? [label, keycaps(row.hotkey)]
-                      : createElement(
-                          "button",
-                          {
-                            type: "button",
-                            class: "hotkey-command",
-                            onClick: () => props.onRun({ ...row, run })
-                          },
-                          label,
-                          keycaps(row.hotkey)
-                        )
-                  );
-                })
-              )
+              "ul",
+              null,
+              rows.map((row) => {
+                const label = createElement("span", { class: "hotkey-label" }, row.label);
+                // A command whose keys are off stays a button.
+                const keys = keycaps(row.hotkey, row.character && !setting.on);
+                const { run } = row;
+                return createElement(
+                  "li",
+                  { class: "hotkey-row", key: `${row.hotkey}\n${row.label}` },
+                  // The sheet's own rows are what opened it, listed so the viewer learns them.
+                  run === undefined
+                    ? [label, keys]
+                    : createElement(
+                        "button",
+                        {
+                          type: "button",
+                          class: "hotkey-command",
+                          onClick: () => props.onRun({ ...row, run })
+                        },
+                        label,
+                        keys
+                      )
+                );
+              })
             )
+          )
         )
       )
     )
@@ -803,8 +891,8 @@ export interface HotkeySheetProps<S extends string> {
   /** The sheet's heading and accessible name. Defaults to "Keyboard shortcuts". */
   readonly title?: string;
   /**
-   * The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"` and `"Mod+/"`, which
-   * opens it from a text field too.
+   * The hotkey that opens it, listed as "Show shortcuts". Defaults to `"?"`. Mod+/ opens it too,
+   * whatever this is, from a text field and ahead of every other hotkey.
    */
   readonly hotkey?: Hotkey<S>;
   /** The heading its "Show shortcuts" rows list under, after the commands either way. */
@@ -827,14 +915,17 @@ export function openHotkeySheet(): void {
 
 /**
  * A `?` button where it is mounted, and a sheet that it, `?` and Mod+/ open over the whole page,
- * dialogs included. It lists the commands for the current context: the labelled hotkeys that work
- * where focus was, under their groups. Each is a button, and its keys run it too, unless a step of
- * them is the sheet's own Escape or Tab: the sheet closes, focus and the selection go back, then
- * the command runs, and a polite live region announces its label. Other hotkeys wait while it is
- * open. Escape, its close button and a click outside close it alone. Mount one per page. It draws
- * in the company look, its button one of the look's, or in the page's font and text colour without
- * one. The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules in its
- * stylesheets, layered or not, don't reach it.
+ * dialogs included. Mod+/ always opens it, ahead of every other hotkey. It lists the commands for
+ * the current context: the labelled hotkeys that work where focus was, under their groups. Each is
+ * a button, and its keys run it too, unless a step of them is the sheet's own Escape or Tab: the
+ * sheet closes, focus and the selection go back, then the command runs, and a polite live region
+ * announces its label. Other hotkeys wait while it is open. Escape, its close button and a click
+ * outside close it alone. Where Patchy's shell says the viewer's single-key shortcut setting, a
+ * row at the top shows it and asks the shell to change it; while it is off, the keys of character
+ * shortcuts, `?` among them, show inactive and their commands stay buttons. Mount one per page. It
+ * draws in the company look, its button one of the look's, or in the page's font and text colour
+ * without one. The page's unlayered rules aimed at its `hotkey-*` classes restyle it; element rules
+ * in its stylesheets, layered or not, don't reach it.
  *
  * ```tsx
  * <HotkeySheet />
@@ -856,9 +947,13 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
   // moves there as the sheet opens, so it is in place before a command runs, and again after one
   // that moves focus to another modal context.
   const [home, setHome] = useState<Element>(() => document.body);
-  const own = (props.hotkey === undefined ? ["?", "Mod+/"] : [props.hotkey]).map((hotkey) => ({
+  // While the shell's dialog asks the viewer about the setting, the sheet steps aside; once it has
+  // answered, the sheet comes back on its row.
+  const [asking, setAsking] = useState<"asking" | "answered">();
+  const own = [...new Set([props.hotkey ?? "?", "Mod+/"])].map((hotkey) => ({
     hotkey,
     label: "Show shortcuts",
+    character: characterShortcut(hotkey, undefined),
     ...(props.group === undefined ? {} : { group: props.group })
   }));
   const close = (command?: Command, event?: KeyboardEvent) => {
@@ -869,6 +964,13 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       ...(event === undefined ? {} : { event })
     };
     setFrom(undefined);
+    setAsking(undefined);
+  };
+  const ask = () => {
+    setAsking("asking");
+    void askShell()
+      .catch(() => {})
+      .finally(() => setAsking((now) => now && "answered"));
   };
   useLayoutEffect(addSheetStyles, []);
   useLayoutEffect(() => getHotkeyManager().activateScope(sheetOpener), []);
@@ -906,11 +1008,13 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
     }, 0);
   }, [from]);
   // In the openers' scope, which every `HotkeyScope` lets through. Mod+/ opens it from a text field,
-  // where `?` is typed. Pressed again while it is open, either closes it.
+  // where `?` is typed, and listens ahead of the page's hotkeys, so a narrower one that takes the
+  // key can't keep the sheet shut. Pressed again while it is open, either closes it.
   useBindings(
     own.map((row) => ({
       ...row,
-      run: () => (from === undefined ? show() : close())
+      run: () => (from === undefined ? show() : close()),
+      ...(row.hotkey === "Mod+/" ? { ahead: true as const } : {})
     })),
     sheetOpener
   );
@@ -939,14 +1043,17 @@ export function HotkeySheet<const S extends string = "?">(props: HotkeySheetProp
       home
     ),
     from !== undefined &&
+      asking !== "asking" &&
       createPortal(
         createElement(HotkeyScope, {
           children: createElement(Sheet, {
             title,
             from,
             own,
+            onSetting: asking === "answered",
             onClose: () => close(),
-            onRun: close
+            onRun: close,
+            onAsk: ask
           })
         }),
         document.body

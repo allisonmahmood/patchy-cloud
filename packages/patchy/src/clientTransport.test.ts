@@ -33,6 +33,11 @@ class FakePort extends EventTarget implements Port {
   }
 }
 afterEach(() => vi.useRealTimers());
+// Lets every queued microtask run, so a call waiting on its client's transport is sent.
+const flush = () =>
+  vi.isFakeTimers()
+    ? vi.advanceTimersByTimeAsync(0)
+    : new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 it("refuses oversized staged Blobs before reading their bytes", async () => {
   class OversizedFile extends Blob {
@@ -141,13 +146,13 @@ it("keeps lazy handler names and business errors distinct from similarly shaped 
     details: { reason: "approval" }
   };
   const call = client.server.leads.renamed({ search: undefined, filter: { stage: undefined } });
-  await Promise.resolve();
+  await flush();
   expect(port.sent[0]!.args).toEqual({ handler: "leads.renamed", args: { filter: {} } });
   port.reply({ v: 1, id: port.sent[0]!.id, kind: "result", value: business });
   await expect(call).resolves.toEqual(business);
   const refused = client.server.leads.renamed({});
   const failure = refused.catch((error: unknown) => error);
-  await Promise.resolve();
+  await flush();
   port.reply({ v: 1, id: port.sent[1]!.id, kind: "error", error: business });
   const error = await failure;
   expect(isHandlerError(error, "access_denied")).toBe(true);
@@ -245,7 +250,7 @@ it.each([
     transport: createPortTransport(port, { handlerKinds: { "leads.find": "query" } })
   });
   const rejected = expect(client.server.leads.find({})).rejects.toMatchObject(error);
-  await Promise.resolve();
+  await flush();
   port.reply({
     v: 1,
     kind: "error",
@@ -266,6 +271,18 @@ it("keeps a server call pending through startup, the action deadline and settlem
   port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "imported" });
   await expect(result).resolves.toBe("imported");
   expect(port.sent).toHaveLength(1);
+  transport.close();
+});
+
+it("waits on the shell's shortcut setting past the reply deadline, as it waits on the person", async () => {
+  vi.useFakeTimers();
+  const port = new FakePort();
+  const transport = createPortTransport(port);
+  const setting = transport.call("shortcuts.setting", {});
+  await vi.advanceTimersByTimeAsync(40_000);
+  expect(port.sent).toEqual([{ v: 1, id: "1", op: "shortcuts.setting", args: {} }]);
+  port.reply({ v: 1, kind: "result", id: "1", value: false });
+  await expect(setting).resolves.toBe(false);
   transport.close();
 });
 
@@ -338,7 +355,7 @@ it("updates cached server callables from trusted live handler kinds without relo
     data: { type: "hello", generation: "live", serverTime: 50_000 }
   });
   const before = change({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[0]!.args).toEqual({ handler: "leads.change", args: {} });
   port.reply({ v: 1, kind: "result", id: port.sent[0]!.id, value: "old query" });
   await expect(before).resolves.toBe("old query");
@@ -351,7 +368,7 @@ it("updates cached server callables from trusted live handler kinds without relo
   });
   const changed = change({});
   const added = client.server.added.save({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[1]!.args).toMatchObject({
     handler: "leads.change",
     args: {},
@@ -375,7 +392,7 @@ it("updates cached server callables from trusted live handler kinds without relo
     data: { type: "handlers", kinds: { "leads.change": "query" } }
   });
   const reverted = change({});
-  await Promise.resolve();
+  await flush();
   expect(port.sent[3]!.args).toEqual({ handler: "leads.change", args: {} });
   port.reply({ v: 1, kind: "result", id: port.sent[3]!.id, value: "query again" });
   await expect(reverted).resolves.toBe("query again");
@@ -400,7 +417,7 @@ it("mints distinct 128-bit mutation keys from the advancing server clock, not th
   await vi.advanceTimersByTimeAsync(125);
   const first = client.server.leads.save({ name: "Ada" });
   const second = client.server.leads.save({ name: "Ada" });
-  await Promise.resolve();
+  await flush();
   const keys = port.sent.map(({ args }) => {
     if (
       args === null ||
@@ -451,7 +468,7 @@ it.each(["timeout", "broker", "runtime"] as const)(
     const args = { names: [{ name: "Ada" }], note: undefined };
     const result = client.server.leads.save(args).catch((error: unknown) => error);
     args.names[0]!.name = "Grace";
-    await Promise.resolve();
+    await flush();
     const original = structuredClone(port.sent[0]!.args);
     if (failure !== "timeout")
       port.reply({
@@ -628,7 +645,7 @@ it.each([
     data: { type: "hello", generation: "first", serverTime: 50_000 }
   });
   const result = client.server.leads.save({}).catch((error: unknown) => error);
-  await Promise.resolve();
+  await flush();
   port.reply({
     v: 1,
     kind: "error",

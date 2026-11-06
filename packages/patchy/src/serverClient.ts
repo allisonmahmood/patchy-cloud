@@ -1,9 +1,15 @@
 import { canonicalArgs } from "@patchy/api/canonical-args";
 import { PatchyError, isPatchyError } from "./clientError.js";
-import { getDocumentTransport, LostReply, type Me, type Transport } from "./clientTransport.js";
+import {
+  createClientTransport,
+  getDocumentTransport,
+  LostReply,
+  type Me,
+  type Transport
+} from "./clientTransport.js";
 import { createQueryRegistry } from "./queryRegistry.js";
 import type { ServerClient } from "./server.js";
-import { createServerFiles, getDocumentFiles, type ServerFiles } from "./serverFiles.js";
+import { createServerFiles, type ServerFiles } from "./serverFiles.js";
 import { createDownload, type Download } from "./download.js";
 
 export interface ServerOnlyClient<Modules> {
@@ -28,8 +34,8 @@ const mutationKey = (serverTime: number): string => {
 export function createServerClient<Modules>(
   options: { readonly transport?: Transport } = {}
 ): ServerOnlyClient<Modules> {
-  const transport = options.transport ?? getDocumentTransport();
-  const files = options.transport ? createServerFiles(transport) : getDocumentFiles();
+  const transport = createClientTransport(options.transport ?? getDocumentTransport());
+  const files = createServerFiles(transport);
   const registry = createQueryRegistry({
     subscribe: ({ handler, args }, onFrame) =>
       transport.queries.subscribe({ handler: "server.call", args: { handler, args } }, onFrame)
