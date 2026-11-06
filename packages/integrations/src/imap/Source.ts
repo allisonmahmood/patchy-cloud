@@ -311,7 +311,13 @@ export class Overflow extends Schema.TaggedError<Overflow>()("ImapOverflow", {
   readonly code = "too_large";
   readonly status = 413;
   override get message() {
-    return `${this.host} sent more than Patchy reads (${registry[this.limitId].measure.split(";")[0]}).`;
+    const what = {
+      "imap.session.bytes": "in one session",
+      "imap.parser.line": "in one line",
+      "imap.parser.literal": "in one literal",
+      "imap.parser.response": "in one response"
+    }[this.limitId];
+    return `${this.host} sent more than the ${registry[this.limitId].default.toLocaleString("en-US")} bytes Patchy reads ${what}, so Patchy closed the session.`;
   }
 }
 
