@@ -368,7 +368,9 @@ about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with
-`attio/crm` connected to Patchy's probe workspace on Attio; `guests` is Harbor Works
+`attio/crm` connected to Patchy's probe workspace on Attio; `imap` is Fernhill
+Supplies with `imap/invoices` connected to a dev mailbox in Docker on this machine,
+holding the scenario's supplier mail; `guests` is Harbor Works
 with a tier 1 and a tier 2 patch, both shared with Jo at a second company, Pine
 Studio, and brightline shares Kudos with Taylor at Cedar Works. `up` shares a
 patch's `guests` through the CLI as the publisher. `up` is idempotent and resumes a
@@ -852,6 +854,25 @@ can quote it.
   its own workflow, `Attio live`, on main and on this repository's pull requests
   that touch Attio, one run at a time and never cancelled; `attio-live` is
   informational and never a required check.
+  IMAP needs no account or secret: its mail servers run in Docker here. The
+  offline suites carry correctness over a scripted IMAP server on loopback
+  (`packages/integrations/src/test/imap.ts`), through the network seam
+  (`imap/Network.ts`) with a disposable CA: every refusal before login with
+  nothing sent, DNS rebinding, the certificate cases, a TLS 1.1 server, STARTTLS,
+  the exact login-pause classifier, and the pause no second process logs in past.
+  `pnpm test:imap` starts Dovecot (TLS on 993, STARTTLS on 143) and GreenMail (no
+  SPECIAL-USE, BINARY or STARTTLS) in Docker on random loopback ports, connects,
+  tests, refreshes and deletes a mailbox on each, and removes them; set
+  `PATCHY_IMAP_LIVE_PREFIX` to name the containers on a shared machine. CI runs
+  it in `IMAP live` on every pull request that touches IMAP, forks included.
+  `pnpm dev up imap` starts the environment's own Dovecot mailbox under
+  `mail.fernhill.test`, its certificate signed by a CA kept in the environment
+  folder, puts `mail.json`'s folders and messages in it over IMAP, and lists it
+  in `.local/dev/mailboxes.json`. The dev instance's server runs from
+  `scripts/dev/src/server.ts`, which reaches the listed mailboxes on loopback;
+  production's `start.ts` never includes that network. `up` skips the connection
+  when Docker isn't answering, restarts a stopped mailbox, and `down` and `reset`
+  remove it.
 - **Execution engine and fleet.** `pnpm exec vitest run packages/execution` runs
   real workerd. Fleet hosting offline is in
   [Operations](OPERATIONS.md#exercising-the-fleet-offline); local execution

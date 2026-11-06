@@ -666,7 +666,7 @@ Personal-connection credentials and the takedown of owner-only patches wait for 
 
 ### Integrations and connections
 
-Patchy ships the **integration** — today Postgres, PostHog, Pidgeon and Attio — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
+Patchy ships the **integration** — today Postgres, PostHog, Pidgeon, Attio and Email (IMAP) — as a company-scoped capability. A **connection** is the live, credentialed instance an admin connects for their company. Patches declare connections, not an integration in the abstract, and never receive their credentials. Personal connections and group grants are future extensions of this model; the implemented connect flow and its limits are spelled out under [Integrations](#integrations).
 
 **Integrations**, at `/company/connections`, is one table of the company's connections across
 integrations: each row is titled with the name agents type (`postgres/warehouse`),
@@ -1103,10 +1103,12 @@ reads are built, with generated relation clients and local fixtures. Company
 PostHog connections read one PostHog Cloud project through named HogQL queries.
 Company Pidgeon connections connect one email address with a key Patchy mints for
 it, and patches read and send from it. Company Attio connections read one CRM
-workspace through a read-only key: its records, list entries and members. Other
-integrations and personal connections remain planned.
+workspace through a read-only key: its records, list entries and members.
+Company Email (IMAP) connections log in to one mailbox with its password, read
+only; patches can't read through them yet. Other integrations and personal
+connections remain planned.
 
-An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, and Attio the fourth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
+An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth and Email (IMAP) the fifth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
 Integrations sit inside the **primitive** model. **Patch-scoped** primitives — the patch's own tables and file stores — are defined in config and provisioned with the patch. **Company-scoped** primitives — connections and the database those tables live in — are shared infrastructure, never owned by a consuming patch. A table remains patch-owned wherever it physically lives. Connections and shared tables are declared dependencies; omitting a definition does not delete its provisioned resources.
 
@@ -1117,8 +1119,8 @@ a source, and every active company member may use it through a tier 2 patch whos
 handlers declare it; a page below tier 2 reaches no connection. There is no per-patch grant. “As the viewer” means Patchy
 checks company access and records the user; the source sees the shared role from
 the connection string, the admin's PostHog key, the key Patchy minted for a
-Pidgeon address, or the admin's read-only Attio workspace key, not a separate
-identity for each person.
+Pidgeon address, the admin's read-only Attio workspace key, or a mailbox's IMAP
+login, not a separate identity for each person.
 
 A company may hold several connections of that integration, each with an
 immutable **handle** and an editable description: `postgres/warehouse`,
@@ -1456,6 +1458,99 @@ range, orderBy, limit, cursor })`, `get(id)` and `getMany(ids)`;
   together, and 8 MiB decoded. Attio's own limits fail `source_rate_limited` and
   are never retried. Refusals carry Patchy's own details, never a supplied value
   or Attio's words; recent calls name the object or list and the row count.
+
+### Connecting Email (IMAP)
+
+Email (IMAP) is read-only and company-wide: one connection is one mailbox login
+on a plain mail host, such as `imap/invoices`, with no provider-specific code.
+The host and username are fixed for a connection's life; another mailbox is
+another connection. Patches can't read through a connection yet: folders,
+messages and attachments arrive with
+[#1252](https://github.com/allisonmahmood/patchy-cloud/issues/1252) and
+[#1253](https://github.com/allisonmahmood/patchy-cloud/issues/1253), in the
+same release.
+
+**Requirements.** A mailbox works if it:
+
+- speaks IMAP4rev1 or IMAP4rev2 over TLS 1.2 or later, on port 993, or on 143
+  with STARTTLS;
+- presents a certificate from a public authority that names the host the admin
+  types;
+- takes a username and password, or an app password where the host has them;
+- is reachable from the internet, at an address that isn't private, without an
+  IP allowlist. Patchy's outbound addresses change on every deploy.
+
+Accounts that need Google or Microsoft sign-in don't meet these: Microsoft 365
+turned off password IMAP in 2022, and Gmail needs OAuth or an app password. The
+requirements stand on the connect page and in the context agents get.
+
+**Who reads it.** As with every integration, every member reads the whole
+mailbox through any patch that declares it, and so do the patch's guests unless
+an admin turns on Block guests; builder agents' live reads while building count
+too. The connect page says so, offers Block guests and suggests a shared or
+dedicated mailbox, not a person's own.
+
+**Read-only.** Patchy opens every folder with `EXAMINE` and fetches with
+`BODY.PEEK`, so reading never marks mail as read, and no code path sends
+`STORE`, `COPY`, `MOVE`, `EXPUNGE`, `APPEND` or SMTP. The password itself can
+still change the mailbox, and the connect page says so. Patchy keeps no mirror
+of the mailbox: a patch imports what it needs into its own tables and files, and
+that copy stays in the patch after a disconnect. Nothing refreshes on its own.
+
+**Connecting.** The admin types the host, the port (993 by default), the
+security mode (TLS on 993, STARTTLS on 143), the username (often the whole
+address) and the password. There's no autodiscovery and no fallback host. The
+password is sealed under the keyring together with the endpoint, and goes only
+to that host, after the network checks:
+
+- the host resolves, and every address it resolves to must be public;
+- the session connects to the address it checked, with SNI and certificate
+  verification against the typed host, over TLS 1.2 or later, with no switch to
+  skip verification; 143 must offer STARTTLS before anything else is sent;
+- `CAPABILITY` must name IMAP4rev1 or IMAP4rev2 and take a password login before
+  the password is sent; login referrals and redirects are never followed;
+- every new session resolves and checks again.
+
+Connecting is **Test** on a fresh session, never a pooled one: TLS, `CAPABILITY`,
+`LOGIN` or `AUTHENTICATE PLAIN`, `LIST`, `EXAMINE INBOX`, `LOGOUT`, within 30
+seconds. Each failure names the requirement: the name doesn't resolve, the
+address is private, the port isn't allowed, the TLS handshake or version fails,
+the certificate isn't from a trusted authority, the certificate doesn't name the
+host (listing the names it does carry; a host reached through a company's own
+CNAME often presents the provider's certificate), STARTTLS isn't offered on 143,
+login is disabled, the credentials are refused, or there's no INBOX.
+
+**The snapshot** keeps the host, port, security mode, username, the
+capabilities seen at Test, and the folders: each one's path, delimiter, the
+special-use flags the server sent and whether it's selectable, at most 5,000,
+marked `truncated` past that. It never holds mail. The folders are hints for
+generation and context, not limits on calls. The declaration is
+`{ kind: "imap", handle, id, revision }`; revisions, `stale_generated`, publish
+freshness and historical snapshots work as for every integration.
+
+**The login pause.** When the host refuses the credentials, the connection
+records it durably on its row and stops logging in: every process refuses its
+calls `auth_failed` without contacting the host, until an admin's Test, Replace
+password or Reconnect logs in again. Repeated failures make mail hosts refuse
+the addresses Patchy connects from, and those addresses are shared. Only a real
+refusal pauses: a `NO` answering `LOGIN` or `AUTHENTICATE` coded
+`AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded. A `BAD`, a
+throttle, a `NO` with `UNAVAILABLE`, `REFERRAL` or `LIMIT`, and a network failure
+don't. The connection page shows the pause, whose login it was and when, with
+Test and Replace password.
+
+**Lifecycle.** Test logs in on a fresh session. Replace password tests the new
+one, then saves it and clears a pause, keeping the snapshot. Refresh folders
+takes a new snapshot revision, and is refused while paused. Reconnect always
+logs in on a fresh session first. Disconnect and Delete when unused work as for
+every integration; there's no retarget.
+
+**Not in this integration:** sending (SMTP), changing flags, moving or deleting
+mail; background refresh, IDLE or push, and syncing flag changes or deletions;
+OAuth, so Gmail and Microsoft 365 would be integrations of their own;
+autodiscovery; private-network hosts, non-standard ports and IP allowlists;
+attachment text extraction and raw `.eml` export; personal connections; server
+SORT and THREAD; S/MIME and PGP decryption.
 
 ### Discovery and binding
 

@@ -130,6 +130,14 @@ Done when `pnpm dev status` exits 0.
   so and skips the connection; never ask for a key that can write. It only
   reads, so `down` has nothing to take down in Attio. Every run shares the
   workspace's 100 reads a second with the live tier and other environments.
+  IMAP here is a Dovecot mailbox in Docker on this machine: `pnpm dev up imap`
+  starts it under `mail.fernhill.test`, puts the scenario's supplier mail in it,
+  and connects `imap/invoices` through the connect page, with a password that's
+  only ever on loopback. Without Docker it says so and skips the connection.
+  `pnpm dev down` removes the mailbox. The instance's server reaches it on
+  loopback because the dev runner starts it from `scripts/dev/src/server.ts`;
+  a production host never can. `pnpm test:imap` is the live tier, on Dovecot
+  and GreenMail in Docker, with no secrets.
 - **Clerk sign-in, its handshake or real invitation mail.** These need
   `pnpm dev --clerk`, the person's Clerk keys and their browser; follow
   DEVELOPMENT's **Signing in with Clerk** and ask the person for each sign-in.
