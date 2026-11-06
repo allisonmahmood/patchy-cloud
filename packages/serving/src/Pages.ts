@@ -22,7 +22,14 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
+import {
+  Session,
+  TermsPrompt,
+  withCookies,
+  sessionScripts,
+  returnPath,
+  pageResponse
+} from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { Cryptography, isWelcomePage } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
@@ -231,6 +238,18 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       !(yield* grantedGuest(served.value.patch, served.value.version, admission.user.id))
     ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
+    }
+    // A patch's page is a page boundary, as a portal page is: someone who hasn't accepted the
+    // current terms, a guest included, is asked here first. Public pages and frames never ask.
+    if (kind === "address" && !isPublic) {
+      const prompt = yield* TermsPrompt.prompt(session, admission.user.id).pipe(
+        Effect.catchTags({ SqlError: Effect.die })
+      );
+      if (prompt !== null)
+        return withCookies(
+          HttpServerResponse.setHeader(prompt, "x-robots-tag", PATCH_ROBOTS_TAG),
+          cookies
+        );
     }
     if (served.value.patch.state !== "live" && !isAlias) {
       const canOpen = yield* Patches.Openability;
@@ -505,6 +524,7 @@ export const layer: Layer.Layer<
       | Patches.Patches
       | GuestGrants.GuestGrants
       | Session.Session
+      | Users.Users
       | Analytics.Analytics
       | SqlClient.SqlClient
     >

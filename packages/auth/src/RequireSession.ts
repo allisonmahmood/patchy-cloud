@@ -7,6 +7,7 @@ import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
+import * as TermsPrompt from "./TermsPrompt.js";
 import { pageResponse, RECEIPT_SHOWN, returnPath, signOutForm, withCookies } from "./page.js";
 
 export class Viewer extends Context.Service<
@@ -177,9 +178,10 @@ export const resolveViewer = Effect.gen(function* () {
   });
 });
 
-export const withViewer = <E, R>(
+const viewerPage = <E, R>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-  returnTo?: string
+  returnTo: string | undefined,
+  terms: "prompt" | "pass"
 ) =>
   withSession(
     Effect.gen(function* () {
@@ -196,6 +198,11 @@ export const withViewer = <E, R>(
       }
       yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
       const session = yield* Session.Session;
+      // A receipt waiting for this page waits on through the prompt, for the page it goes on to.
+      if (terms === "prompt") {
+        const prompt = yield* TermsPrompt.prompt(session, viewer.user.id);
+        if (prompt !== null) return prompt;
+      }
       const request = yield* HttpServerRequest.HttpServerRequest;
       const receipt = Receipt.take(request.cookies, {
         userId: viewer.user.id,
@@ -215,6 +222,21 @@ export const withViewer = <E, R>(
     }),
     returnTo
   );
+
+/**
+ * A signed-in person's page: their viewer for `app`, or the way in first. A page load in a
+ * browser by someone who hasn't accepted the current terms gets the terms prompt instead.
+ */
+export const withViewer = <E, R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  returnTo?: string
+) => viewerPage(app, returnTo, "prompt");
+
+/** `withViewer` without the terms prompt, for the prompt's own answer alone. */
+export const forTerms = <E, R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  returnTo?: string
+) => viewerPage(app, returnTo, "pass");
 
 export const forEnrollment = <E, R>(
   app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
