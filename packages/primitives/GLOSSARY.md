@@ -61,8 +61,12 @@ The host-minted token a handler returns with a file's metadata, which lets the s
 _Avoid_: file URL, signed link, file reference
 
 **Staged upload**:
-A viewer's unreferenced file, bound to the consuming patch and loaded version, which an action can adopt into an owned file store once. Its Upload carries Patchy's measured size and the claimed content type; it expires after an hour or can be discarded before adoption.
+A viewer's unreferenced file, bound to the consuming patch and loaded version, which an action can adopt into an owned file store once. Its Upload carries Patchy's measured size and the claimed content type; it expires after an hour or can be discarded before adoption. A page stages one through the shell; the host stages one itself, through **host staging**, for bytes it fetched on a call's behalf.
 _Avoid_: file handle, object id, saved file
+
+**Host staging**:
+Files' internal entry point (`FileStaging`) for bytes the host fetched during a tier 2 call, such as an IMAP attachment: a staged upload for that call's viewer, patch and loaded version, under the same reservation, quotas, expiry and single-use adoption as a page's. Only the Upload crosses into workerd.
+_Avoid_: server upload, attachment cache, direct put
 
 **The patch's filter**:
 Which files and rows a patch's server code chooses to return, distinct from Patchy's live access checks. Redemption does not rerun this filter. To cut off a previously selected file when a record becomes private, changes hands or is deleted, the patch must re-put or delete the file. Already delivered bytes cannot be recalled.

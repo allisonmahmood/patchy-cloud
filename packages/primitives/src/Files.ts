@@ -23,7 +23,7 @@ import { ContentStore } from "@patchy/content-store";
 import { Cryptography } from "@patchy/core";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
-import { Binding, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
+import { Binding, FileStaging, LoadedVersions, Runtime, Wakes } from "@patchy/runtime/core";
 import { boundedRows } from "./bounded-rows.js";
 import * as ReadSnapshot from "./ReadSnapshot.js";
 
@@ -564,33 +564,44 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     );
     if (discarded) yield* removeDiscardedObject(binding, row.objectId);
   });
+  /**
+   * Stages `bytes` for the call's viewer, patch and loaded version: reserved against the quotas
+   * before the blob is written, then marked staged. The page's staging route and the host's
+   * internal entry point (`FileStaging`) both come through here.
+   */
+  const stageBytes = Effect.fn("Files.stageBytes")(function* (
+    bytes: Uint8Array,
+    contentType: string
+  ) {
+    const binding = yield* uploadBinding;
+    if (bytes.byteLength > stageLimits.bytes)
+      return yield* new Runtime.TooLarge({
+        maxBytes: stageLimits.bytes,
+        limitId: "files.stage.bytes"
+      });
+    const row = yield* reserveUpload(binding, bytes, contentType);
+    yield* withCompany(
+      binding.companyId,
+      CompanyDatabases.withFileObjectsLock(finishStage(row.objectId))
+    ).pipe(
+      Effect.catchTags({
+        FileReservationExpired: () =>
+          reclaimLateObject(binding, row).pipe(Effect.andThen(Effect.fail(new UploadNotFound())))
+      })
+    );
+    return row;
+  });
   const stage = {
     kind: "read",
     transport: "bytes-put",
     run: (input: unknown, bytes?: Uint8Array) =>
       Effect.gen(function* () {
-        const binding = yield* uploadBinding;
+        yield* uploadBinding;
         const args = yield* decodeStage(input).pipe(
           Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
         );
         if (bytes === undefined) return yield* new Runtime.InvalidRequest({});
-        if (bytes.byteLength > stageLimits.bytes)
-          return yield* new Runtime.TooLarge({
-            maxBytes: stageLimits.bytes,
-            limitId: "files.stage.bytes"
-          });
-        const row = yield* reserveUpload(binding, bytes, args.contentType);
-        yield* withCompany(
-          binding.companyId,
-          CompanyDatabases.withFileObjectsLock(finishStage(row.objectId))
-        ).pipe(
-          Effect.catchTags({
-            FileReservationExpired: () =>
-              reclaimLateObject(binding, row).pipe(
-                Effect.andThen(Effect.fail(new UploadNotFound()))
-              )
-          })
-        );
+        const row = yield* stageBytes(bytes, args.contentType);
         return { token: row.token, size: row.size, contentType: row.contentType };
       })
   } satisfies Runtime.BytesPutHandler;
@@ -922,7 +933,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
         )
       )
   );
-  return {
+  const handlers = {
     "files.stage": stage,
     "files.discard": discard,
     "files.inspectUpload": inspectUpload,
@@ -936,9 +947,17 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     "shared.files.list": sharedList,
     "shared.files.stat": sharedStat
   } satisfies Readonly<Record<string, Runtime.Handler>>;
+  const staging = FileStaging.FileStaging.of({
+    stage: (bytes, contentType) =>
+      Effect.map(stageBytes(bytes, contentType), (row) => ({
+        upload: { token: row.token, size: row.size, contentType: row.contentType },
+        sha256: row.sha256
+      }))
+  });
+  return { handlers, staging };
 });
 
-export const make = Effect.gen(function* () {
+const production = Effect.gen(function* () {
   const operating = yield* OperatingLimits.OperatingLimits;
   return yield* makeWithCompanyQuota((companyId) =>
     operating
@@ -946,11 +965,20 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
   );
 });
-
 /** Local dev has no platform database or company operating-limit overrides. */
-export const makeLocal = makeWithCompanyQuota(() =>
+const local = makeWithCompanyQuota(() =>
   Effect.succeed({
     value: registry["files.stage.companyBytes"].default,
     configRevision: { deploymentRevision: "local", overrideRevision: "0" }
   })
 );
+
+/** The file operations a loaded version calls, by operation name. */
+export const make = Effect.map(production, (files) => files.handlers);
+export const makeLocal = Effect.map(local, (files) => files.handlers);
+/**
+ * The host's own staging, for bytes Patchy fetched on a tier 2 call's behalf: the same reserve
+ * and finish, quotas, expiry and single-use adoption as a page's staged upload.
+ */
+export const makeStaging = Effect.map(production, (files) => files.staging);
+export const makeStagingLocal = Effect.map(local, (files) => files.staging);
