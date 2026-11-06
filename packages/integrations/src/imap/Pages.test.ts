@@ -184,7 +184,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
             "<code>INBOX</code>",
             "<code>Receipts</code>",
             "And 2 more.",
-            "subjects, bodies, addresses and search values are never logged"
+            "Subjects, bodies, addresses, search values, attachment filenames and upload tokens are never logged."
           ])
             assert.include(page.html, part);
           assert.notInclude(page.html, "Query text keeps its first 8 KiB");

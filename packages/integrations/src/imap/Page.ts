@@ -35,9 +35,9 @@ export const results = {
     "Folders refreshed. Existing patches keep their pinned folders; regenerate before publishing against the new ones.",
   reconnect: "Mailbox tested and reconnected. Its snapshot revision is unchanged."
 };
-/** What recent calls keep of an IMAP call. */
+/** What recent calls keep of an IMAP call, an attachment's stage included. */
 export const logged =
-  "Each call keeps its operation, who made it, when, how long it took and how much it read; subjects, bodies, addresses and search values are never logged.";
+  "Each call keeps its operation, who made it, when, how long it took and how much it read: rows, or an attachment's size. Subjects, bodies, addresses, search values, attachment filenames and upload tokens are never logged.";
 
 /** The port choice, which decides the security too: 993 opens TLS at once, 143 starts it. */
 const ports = [
