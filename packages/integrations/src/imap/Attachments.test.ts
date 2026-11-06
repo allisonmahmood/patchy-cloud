@@ -170,43 +170,47 @@ const setup = (handle: string, attachment: ImapTest.ScriptedAttachment, options:
 const content = Uint8Array.from({ length: 10_000 }, (_, index) => (index * 7) % 256);
 
 it.layer(fixture)("IMAP attachments", (it) => {
-  it.effect("stages a part's exact bytes under each transfer encoding, with BINARY or not", () =>
-    Effect.gen(function* () {
-      for (const binary of [false, true])
-        for (const encoding of ["base64", "quoted-printable", "8bit"] as const) {
-          const { served, stage, staged } = yield* setup(
-            `stage-${encoding}-${binary}`,
-            pdf(content, encoding),
-            {
-              capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", ...(binary ? ["BINARY"] : [])],
-              limits: { "imap.download.chunk": 4_096 }
-            }
-          );
-          const answer = yield* stage("2");
-          assert.deepInclude(answer, {
-            ok: true,
-            size: content.byteLength,
-            sha256: sha256(content),
-            contentType: "application/pdf",
-            filename: "invoice.pdf"
-          });
-          assert.deepStrictEqual(
-            staged.map((each) => each.token),
-            [answer.upload.token]
-          );
-          assert.deepStrictEqual(staged[0]!.bytes, content);
-          // In chunks of `imap.download.chunk`, peeking, with BINARY only where it's offered.
-          const fetches = served.lines.filter((line) => /\[2\]</.test(line));
-          assert.isAtLeast(fetches.length, 2, encoding);
-          for (const line of fetches) {
-            assert.match(
-              line,
-              binary ? /BINARY\.PEEK\[2\]<\d+\.4096>/ : /BODY\.PEEK\[2\]<\d+\.4096>/
+  it.effect(
+    "stages a part's exact bytes under each transfer encoding, with BINARY or not",
+    () =>
+      Effect.gen(function* () {
+        for (const binary of [false, true])
+          for (const encoding of ["base64", "quoted-printable", "8bit"] as const) {
+            const { served, stage, staged } = yield* setup(
+              `stage-${encoding}-${binary}`,
+              pdf(content, encoding),
+              {
+                capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", ...(binary ? ["BINARY"] : [])],
+                limits: { "imap.download.chunk": 4_096 }
+              }
             );
-            assert.notMatch(line, binary ? /BODY\.PEEK\[2\]</ : /BINARY/);
+            const answer = yield* stage("2");
+            assert.deepInclude(answer, {
+              ok: true,
+              size: content.byteLength,
+              sha256: sha256(content),
+              contentType: "application/pdf",
+              filename: "invoice.pdf"
+            });
+            assert.deepStrictEqual(
+              staged.map((each) => each.token),
+              [answer.upload.token]
+            );
+            assert.deepStrictEqual(staged[0]!.bytes, content);
+            // In chunks of `imap.download.chunk`, peeking, with BINARY only where it's offered.
+            const fetches = served.lines.filter((line) => /\[2\]</.test(line));
+            assert.isAtLeast(fetches.length, 2, encoding);
+            for (const line of fetches) {
+              assert.match(
+                line,
+                binary ? /BINARY\.PEEK\[2\]<\d+\.4096>/ : /BODY\.PEEK\[2\]<\d+\.4096>/
+              );
+              assert.notMatch(line, binary ? /BODY\.PEEK\[2\]</ : /BINARY/);
+            }
           }
-        }
-    })
+      }),
+    // Six scripted servers and connections, one for each encoding with BINARY and without.
+    60_000
   );
 
   it.effect("stages exactly the bound, and destroys the session past it with nothing staged", () =>
