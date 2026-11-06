@@ -8,10 +8,10 @@ import * as Source from "./Source.js";
 
 /**
  * What the connections pages say about an IMAP mailbox; the layout around it is every
- * integration's. A plain form on the shared components while the connect form's and connection
- * page's own design is chosen: host, port, security, username and password, with the
- * requirements and who reads the mailbox above it. The password is typed into this page only and
- * never written back.
+ * integration's. The connect page is the shared form inside a walkthrough: what a mailbox needs,
+ * then its login (one choice for port and security, which follows the port), then using it. The
+ * password is typed into this page only and never written back. The connection page names the
+ * server and username, counts the folders, and keeps a paused connection's way out on top.
  */
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "imap" }>;
@@ -26,7 +26,7 @@ export const offer = {
 export const actions: View.Actions = { refresh: "Refresh folders", rotate: "Replace password" };
 export const results = {
   connect: "Mailbox connected and its folders listed.",
-  test: "Mailbox tested: TLS, login, its folders and INBOX all answered.",
+  test: "Mailbox tested: it logged in, listed its folders and opened INBOX.",
   rotate: (connection: ConnectionStore.Connection) =>
     connection.status === "connected"
       ? "Password replaced and tested. Patches keep reading the same mailbox."
@@ -35,18 +35,30 @@ export const results = {
     "Folders refreshed. Existing patches keep their pinned folders; regenerate before publishing against the new ones.",
   reconnect: "Mailbox tested and reconnected. Its snapshot revision is unchanged."
 };
+/** What recent calls keep of an IMAP call. */
+export const logged =
+  "Each call keeps its operation, who made it, when, how long it took and how much it read; subjects, bodies, addresses and search values are never logged.";
 
-const security = (value: Source.Display["security"]) => (value === "tls" ? "TLS" : "STARTTLS");
+/** The port choice, which decides the security too: 993 opens TLS at once, 143 starts it. */
+const ports = [
+  { port: 993, security: "tls", label: "993 (TLS)" },
+  { port: 143, security: "starttls", label: "143 (STARTTLS)" }
+] as const;
 
 /** The label beside a paused connection's name, on the index and its page. */
 export const tag = (connection: Connection) =>
-  connection.display.paused === undefined ? undefined : "Paused · password refused";
+  connection.display.paused === undefined ? undefined : "Paused";
+/** Why a connected one needs an admin anyway, as Needs attention says it after its name. */
+export const attention = (connection: Connection) =>
+  connection.display.paused === undefined
+    ? undefined
+    : "is paused because its mail server refused the password";
 export const source = (connection: Connection) =>
   `${connection.display.username} at ${connection.display.host}`;
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => [
   [
     "Server",
-    `${connection.display.host}, port ${connection.display.port} (${security(connection.display.security)})`
+    `${connection.display.host}, port ${ports.find((item) => item.port === connection.display.port)?.label ?? connection.display.port}`
   ],
   ["Username", connection.display.username]
 ];
@@ -54,7 +66,7 @@ export const facts = (connection: Connection): ReadonlyArray<readonly [string, s
 const whose = { test: "Test", refresh: "Refresh", reconnect: "Reconnect" } as const;
 /**
  * A paused connection, until a Test or Replace password logs in: whose login the server refused,
- * when, and the way out.
+ * when, and the two ways out.
  */
 export const standing = (
   connection: Connection,
@@ -65,21 +77,20 @@ export const standing = (
   if (paused === undefined) return [];
   const who =
     paused.during === "call"
-      ? "A patch's call"
-      : `${(paused.by === undefined ? undefined : people.get(paused.by)) ?? "An admin"}'s ${whose[paused.during]}`;
+      ? "a patch's call"
+      : `${(paused.by === undefined ? undefined : people.get(paused.by)) ?? "an admin"}'s ${whose[paused.during]}`;
   return [
     {
       tone: "refused",
       title: "Paused: the mail server refused the password",
-      text: `${who}, ${ago(paused.at, now)}, was refused at login${paused.reply === null ? "" : ` (${paused.reply})`}. Patchy stopped logging in, so the mail host doesn't block the addresses Patchy connects from. Patches that declare imap/${connection.handle} fail until a Test or a new password logs in.`,
+      text: `It refused ${who} ${ago(paused.at, now)}${paused.reply === null ? "" : ` (${paused.reply})`}. Patchy stopped logging in so the mail host won't block it, and calls stop until Test or Replace password succeeds.`,
       actions: [
         {
-          href: View.connectionPath(connection.id, "test"),
-          label: "Test",
-          primary: true,
-          post: true
+          href: View.connectionPath(connection.id, "rotate"),
+          label: "Replace password…",
+          primary: true
         },
-        { href: View.connectionPath(connection.id, "rotate"), label: "Replace password…" }
+        { href: View.connectionPath(connection.id, "test"), label: "Test again", post: true }
       ]
     }
   ];
@@ -87,11 +98,11 @@ export const standing = (
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
-const SHOWN = 8;
+const SHOWN = 5;
 
-/** "12 folders.", then the first folders by path. */
+/** "13 folders.", then the first folders by path. */
 export const reads = (snapshot: ImapSnapshot) => ({
-  summary: `${plural(snapshot.folders.length, "folder")}${snapshot.truncated ? ", and more the snapshot doesn't keep" : ""}. Patches read their messages and attachments, never changing them.`,
+  summary: `${plural(snapshot.folders.length, "folder")}${snapshot.truncated ? ", and more the snapshot doesn't keep" : ""}.`,
   items: snapshot.folders.slice(0, SHOWN).map((folder) => folder.path),
   more: Math.max(0, snapshot.folders.length - SHOWN)
 });
@@ -104,10 +115,32 @@ export const consequences = {
 // ---------- connecting ----------
 
 export const connectIntro =
-  "From your mail settings: the IMAP server, its port and security, the username and the password. Connecting logs in once on a fresh session to check everything before anything is saved.";
+  "Nothing is saved until Patchy has logged in to the mailbox and listed its folders.";
 
-const requirements = `<div class="note"><strong class="note-title">The mailbox must</strong><ul class="list list-compact"><li class="list-row">speak IMAP4rev1 or IMAP4rev2 over TLS 1.2 or later, on port 993, or on 143 with STARTTLS;</li><li class="list-row">present a certificate from a public authority that names the host you type;</li><li class="list-row">take a username and password, or an app password where the host has them;</li><li class="list-row">be reachable from the internet at a public address, without an IP allowlist.</li></ul><p>Accounts that need Google or Microsoft sign-in can't connect this way.</p></div>`;
-const audience = `<div class="note note-warn"><strong class="note-title">Who reads this mailbox</strong><p>Every member reads the whole mailbox through any patch that declares it, and so do the patch's guests unless you block guests on the connection's page. While someone builds a patch with it, their agent reads the real mailbox through Patchy, as them. Use a shared or dedicated mailbox, not a person's own.</p><p>Patchy only reads: it never sends, moves, deletes or marks mail as read. The password itself isn't read-only. What patches import stays in each patch after a disconnect, and nothing refreshes on its own.</p></div>`;
+const requirements = [
+  "IMAP over TLS 1.2 or later, on port 993, or 143 with STARTTLS",
+  "A certificate from a public authority naming the host you type",
+  "A username and password, or an app password",
+  "An address reachable from the internet, with no IP allowlist"
+];
+export const walkthrough: View.Walkthrough = {
+  before: [
+    {
+      title: "Get a login for the mailbox",
+      text: "Patchy works with a mailbox that has:",
+      detail: `<ul class="list list-compact">${requirements.map((item) => `<li class="list-row">${escapeHtml(item)}</li>`).join("")}</ul><p>Accounts that need Google or Microsoft sign-in can't connect this way.</p>`
+    }
+  ],
+  current: "Fill it in",
+  after: [
+    {
+      title: "Use it in a patch",
+      text: "Ask your agent to add it to a patch by its name, such as imap/invoices."
+    }
+  ]
+};
+
+const access = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member reads the whole mailbox through any patch that declares it, and so do its guests unless you block guests on the connection's page. Patchy only reads, so use a shared or dedicated mailbox, not a person's own.</p></div>`;
 
 const passwordField = (refusal: View.Notice | undefined, label = "Password") => {
   const note = View.fieldNote(
@@ -129,13 +162,7 @@ const loginFields = (submitted: Submitted, refusal: View.Notice | undefined) => 
   const port = View.fieldNote(
     "connection-port",
     "port",
-    "993 with TLS, or 143 with STARTTLS.",
-    refusal
-  );
-  const mode = View.fieldNote(
-    "connection-security",
-    "security",
-    "TLS for 993, STARTTLS for 143.",
+    "From your mail settings; the security follows the port.",
     refusal
   );
   const username = View.fieldNote(
@@ -144,10 +171,8 @@ const loginFields = (submitted: Submitted, refusal: View.Notice | undefined) => 
     "Often the whole address.",
     refusal
   );
-  const chosen = submitted.port === "143" ? "143" : "993";
-  const secured =
-    submitted.security === "starttls" ? "starttls" : chosen === "143" ? "starttls" : "tls";
-  return `<label class="field-label" for="connection-host">Server</label><input class="field" id="connection-host" name="host" value="${escapeAttribute(submitted.host ?? "")}" required maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false"${host.attributes}>${host.note}<label class="field-label" for="connection-port">Port</label><select class="field" id="connection-port" name="port"${port.attributes}>${["993", "143"].map((value) => `<option value="${value}"${chosen === value ? " selected" : ""}>${value}</option>`).join("")}</select>${port.note}<label class="field-label" for="connection-security">Security</label><select class="field" id="connection-security" name="security"${mode.attributes}>${(["tls", "starttls"] as const).map((value) => `<option value="${value}"${secured === value ? " selected" : ""}>${security(value)}</option>`).join("")}</select>${mode.note}<label class="field-label" for="connection-username">Username</label><input class="field" id="connection-username" name="username" value="${escapeAttribute(submitted.username ?? "")}" required maxlength="320" autocomplete="off" autocapitalize="none" spellcheck="false"${username.attributes}>${username.note}${passwordField(refusal)}`;
+  const chosen = submitted.port === "143" ? 143 : 993;
+  return `<label class="field-label" for="connection-host">Server</label><input class="field" id="connection-host" name="host" value="${escapeAttribute(submitted.host ?? "")}" required maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false"${host.attributes}>${host.note}<label class="field-label" for="connection-port">Port</label><select class="field" id="connection-port" name="port"${port.attributes}>${ports.map((item) => `<option value="${item.port}"${item.port === chosen ? " selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select>${port.note}<label class="field-label" for="connection-username">Username</label><input class="field" id="connection-username" name="username" value="${escapeAttribute(submitted.username ?? "")}" required maxlength="320" autocomplete="off" autocapitalize="none" spellcheck="false"${username.attributes}>${username.note}${passwordField(refusal)}`;
 };
 
 /** Refusals about the login, shown under the field they're about rather than atop the page. */
@@ -184,13 +209,13 @@ export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
     "One line on what this mailbox holds, so builders pick the right one.",
     refusal
   );
-  return `${requirements}<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">imap/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${loginFields(submitted, refusal)}${audience}`;
+  return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">imap/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${loginFields(submitted, refusal)}${access}`;
 };
 
 export const rotate = {
   title: (name: string) => `Replace the password for ${name}`,
   consequence: (connection: ConnectionStore.Connection) =>
-    `Patchy logs in with the new password on a fresh session before saving it${connection.integration === "imap" ? `, as ${connection.display.username} at ${connection.display.host}` : ""}. A paused connection is unpaused once it works.`,
+    `Patchy logs in${connection.integration === "imap" ? ` to ${connection.display.host} as ${connection.display.username}` : ""} with the new password before saving it. If it works, a paused connection resumes.`,
   fields: (_submitted: Submitted, refusal?: View.Notice) => passwordField(refusal, "New password")
 };
 
@@ -205,7 +230,8 @@ const isUsername = Schema.is(Source.Username);
 const isPassword = Schema.is(Source.Password);
 
 /**
- * The submitted login as one secret, or the refusal at the field that stops it. Replace password
+ * The submitted login as one secret, or the refusal at the field that stops it. The form's one
+ * port choice decides the security; a `security` sent beside it must agree. Replace password
  * keeps the connection's host, port, security and username, and takes only the new password.
  */
 export const credentials = (
@@ -214,18 +240,23 @@ export const credentials = (
 ): Redacted.Redacted<string> | View.Notice => {
   const kept = current?.integration === "imap" ? current.display : undefined;
   const host = kept?.host ?? (form.host ?? "").trim().toLowerCase().replace(/\.$/, "");
-  const port = kept?.port ?? Number(form.port);
-  const mode = kept?.security ?? form.security;
+  const choice = ports.find((item) => item.port === (kept?.port ?? Number(form.port)));
   const username = kept?.username ?? (form.username ?? "").trim();
   const password = form.password ?? "";
   if (!isHost(host)) return refused("host");
-  if (port !== 993 && port !== 143) return refused("port");
-  const expected = port === 993 ? "tls" : "starttls";
-  if (mode !== expected) return refused("security");
+  if (choice === undefined) return refused("port");
+  if (kept === undefined && form.security !== undefined && form.security !== choice.security)
+    return refused("security");
   if (!isUsername(username)) return refused("username");
   if (!isPassword(password)) return refused("password");
-  return Source.credentials({ host, port, security: expected, username, password });
+  return Source.credentials({
+    host,
+    port: choice.port,
+    security: choice.security,
+    username,
+    password
+  });
 };
 
-/** Layout only: none of its own yet. */
+/** Layout only: none of its own. */
 export const styles = "";

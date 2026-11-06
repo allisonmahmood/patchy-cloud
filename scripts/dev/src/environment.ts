@@ -740,8 +740,8 @@ const connectImap = Effect.fn("connectImap")(function* (
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
         await page.locator("#connection-host").fill(login.host);
+        // One choice is the port and its security: 993 (TLS).
         await page.locator("#connection-port").selectOption("993");
-        await page.locator("#connection-security").selectOption("tls");
         await page.locator("#connection-username").fill(login.username);
         await page.locator("#connection-password").fill(login.password);
         step = "testing the login and listing folders";

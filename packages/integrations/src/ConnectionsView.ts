@@ -35,7 +35,16 @@ export interface Row extends Usage {
   readonly status: "connected" | "disconnected";
   /** A label beside its name wherever it's shown, such as a test connection's. */
   readonly tag?: string;
+  /**
+   * Why a connected one needs an admin anyway, as it reads after its name, such as a paused
+   * mailbox's "is paused because its mail server refused the password". It then counts under
+   * Needs attention, as a disconnected one does.
+   */
+  readonly attention?: string;
 }
+
+/** Whether a row needs an admin: disconnected, or connected but stopped for another reason. */
+const needsAttention = (row: Row) => row.status !== "connected" || row.attention !== undefined;
 
 /** When each connection's newest call began, or "unavailable" when the call log could not be read. */
 export type LastCalls = ReadonlyMap<string, string> | "unavailable";
@@ -218,8 +227,7 @@ const matches = (row: Row, filters: Filters) =>
     name(row).toLowerCase().includes(filters.q) ||
     row.description.toLowerCase().includes(filters.q)) &&
   (filters.source === undefined || row.integration.key === filters.source) &&
-  (filters.view === "all" ||
-    (filters.view === "attention" ? row.status !== "connected" : !row.declared));
+  (filters.view === "all" || (filters.view === "attention" ? needsAttention(row) : !row.declared));
 
 const controls = (rows: ReadonlyArray<Row>, filters: Filters, admin: boolean) => {
   const sources = [
@@ -233,7 +241,7 @@ const controls = (rows: ReadonlyArray<Row>, filters: Filters, admin: boolean) =>
     .join("");
   const views: ReadonlyArray<readonly [View, string, number]> = [
     ["all", "All", rows.length],
-    ["attention", "Needs attention", rows.filter((row) => row.status !== "connected").length],
+    ["attention", "Needs attention", rows.filter(needsAttention).length],
     ...(admin ? [["unused", "Unused", rows.filter((row) => !row.declared).length] as const] : [])
   ];
   return `<form class="connections-filters" method="get" action="${indexPath}">${filters.view === "all" ? "" : hidden("view", filters.view)}<div><label class="field-label" for="connections-q">Search</label><input class="field" type="search" id="connections-q" name="q" value="${escapeAttribute(filters.q)}" placeholder="Name or description" maxlength="100"></div><div><label class="field-label" for="connections-source">Integration</label><select class="field" id="connections-source" name="source"><option value="">All integrations</option>${options}</select></div><div><button class="btn" type="submit">Filter</button></div></form><nav class="connections-views" aria-label="Show">${views
@@ -244,14 +252,14 @@ const controls = (rows: ReadonlyArray<Row>, filters: Filters, admin: boolean) =>
     .join("")}</nav>`;
 };
 
-/** Disconnected sources, each named, for the admins who can fix them. */
+/** Disconnected and otherwise stopped sources, each named, for the admins who can fix them. */
 const attention = (rows: ReadonlyArray<Row>) => {
-  const off = rows.filter((row) => row.status !== "connected");
+  const off = rows.filter(needsAttention);
   if (off.length === 0) return "";
   return `<div class="note note-warn"><strong class="note-title">${escapeHtml(off.length === 1 ? "1 connection needs attention" : `${off.length} connections need attention`)}</strong><p>${off
     .map(
       (row) =>
-        `<a href="${escapeAttribute(connectionPath(row.id))}">${escapeHtml(name(row))}</a> is disconnected; ${escapeHtml(row.usedBy.length === 0 ? "nothing uses it." : `${plural(row.usedBy.length, "patch", "patches")} can't read it.`)}`
+        `<a href="${escapeAttribute(connectionPath(row.id))}">${escapeHtml(name(row))}</a> ${escapeHtml(row.status === "connected" && row.attention !== undefined ? row.attention : "is disconnected")}; ${escapeHtml(row.usedBy.length === 0 ? "nothing uses it." : `${plural(row.usedBy.length, "patch", "patches")} can't read it.`)}`
     )
     .join(" ")}</p></div>`;
 };
@@ -508,12 +516,17 @@ const took = (call: RuntimeLog.Call) =>
     .filter((part) => part !== null)
     .join(" · ") || "—";
 
-const recentCalls = (calls: ReadonlyArray<RuntimeLog.Call> | "unavailable", names: CallNames) => {
+/** `logged` is what the integration's calls keep, and what they never do, in its own words. */
+const recentCalls = (
+  calls: ReadonlyArray<RuntimeLog.Call> | "unavailable",
+  names: CallNames,
+  logged: string
+) => {
   const latest =
     calls !== "unavailable" && calls.length >= RECENT_CALLS
       ? `The latest ${RECENT_CALLS} calls`
       : "Calls";
-  const intro = `<p class="supporting-text">${latest}, newest first. Only admins see this. Query text keeps its first 8 KiB; parameters and returned rows are never logged.</p>`;
+  const intro = `<p class="supporting-text">${escapeHtml(`${latest}, newest first. Only admins see this. ${logged}`)}</p>`;
   const body =
     calls === "unavailable"
       ? '<div class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</div>'
@@ -558,7 +571,10 @@ const tag = (value: string | undefined) =>
 const standing = (item: Standing, admin: boolean) =>
   `<div class="note note-${item.tone}" role="${item.tone === "ok" ? "status" : "alert"}"><strong class="note-title">${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p>${!admin || item.actions === undefined || item.actions.length === 0 ? "" : `<div class="actions">${item.actions.map((action) => (action.post === true ? postButton : linkButton)(action.href, action.label, action.primary === true ? " btn-primary" : "")).join("")}</div>`}</div>`;
 
-/** `/company/connections/:id`: the same layout for every integration. */
+/**
+ * `/company/connections/:id`: the same layout for every integration. Recent calls span the page
+ * under what patches read and the facts, so their six columns fit beside nothing.
+ */
 export const renderConnection = (input: {
   readonly connection: Connection;
   readonly reads: Reads | null;
@@ -567,6 +583,8 @@ export const renderConnection = (input: {
   readonly calls?: {
     readonly list: ReadonlyArray<RuntimeLog.Call> | "unavailable";
     readonly names: CallNames;
+    /** What the integration's calls keep and never keep, in its own words. */
+    readonly logged: string;
   };
   readonly admin: boolean;
   readonly now: number;
@@ -586,7 +604,7 @@ export const renderConnection = (input: {
       : `<p>${escapeHtml(`${reads.summary} Found ${reads.foundAt === null ? "at an unknown time" : ago(reads.foundAt, now)} (revision ${reads.revision}).`)}</p>${reads.detail ?? (reads.items.length === 0 ? "" : `<ul class="list list-compact">${reads.items.map((item) => `<li class="list-row"><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`)}<p class="supporting-text">${escapeHtml(`${reads.more > 0 ? `And ${reads.more} more. ` : ""}Agents get the full discovered metadata when they add the connection.`)}</p>`
   }</section>`;
   const facts = `<dl class="facts">${connection.facts.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}<dt>Added by</dt><dd>${escapeHtml(connection.addedBy)}</dd><dt>Used by</dt><dd>${usedByFact(connection)}</dd><dt>Guests</dt><dd>${connection.blockGuests ? "Blocked" : "Allowed"}</dd></dl>`;
-  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map((item) => standing(item, input.admin)).join("")}${add}<div class="connection-split"><div>${readsSection}${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names)}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>`;
+  return `<p><a href="${indexPath}">Integrations</a> / ${escapeHtml(connection.integration.label)}</p><h1 class="page-heading">${escapeHtml(name(connection))}${tag(connection.tag)}</h1>${status}<p>${escapeHtml(connection.description || "No description.")}</p>${notice(input.notice)}${(connection.standing ?? []).map((item) => standing(item, input.admin)).join("")}${add}<div class="connection-split"><div>${readsSection}</div><aside class="connection-aside" aria-label="About this connection">${facts}${input.admin ? adminActions(connection, input.actions) : '<p class="supporting-text">Only admins can change this connection.</p>'}</aside></div>${input.calls === undefined ? "" : recentCalls(input.calls.list, input.calls.names, input.calls.logged)}`;
 };
 
 // ---------- confirmations ----------

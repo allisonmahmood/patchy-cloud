@@ -684,8 +684,11 @@ already has. With nothing connected, admins get the catalogue inline and members
 are told which admins can connect a source.
 
 Each connection's page has one layout for every integration: the `patchy add`
-line, what patches can read and recent calls on the left; its facts, who added it,
-Used by and the actions on the right. Replacing credentials, pointing elsewhere,
+line and what patches can read on the left; its facts, who added it, Used by and
+the actions on the right; recent calls across the page below, introduced in the
+integration's own words for what a call keeps and never keeps. A connected
+connection an admin still has to fix, such as a paused mailbox, counts under
+Needs attention as a disconnected one does. Replacing credentials, pointing elsewhere,
 editing the description, disconnecting and deleting each open their own page, as
 the portal confirms retire and delete. Members see the index without Last call,
 the attention notice or Unused, and connection pages without recent calls or
@@ -1482,24 +1485,27 @@ same release.
 
 Accounts that need Google or Microsoft sign-in don't meet these: Microsoft 365
 turned off password IMAP in 2022, and Gmail needs OAuth or an app password. The
-requirements stand on the connect page and in the context agents get.
+requirements are the connect page's first step, and in the context agents get.
 
 **Who reads it.** As with every integration, every member reads the whole
 mailbox through any patch that declares it, and so do the patch's guests unless
 an admin turns on Block guests; builder agents' live reads while building count
-too. The connect page says so, offers Block guests and suggests a shared or
-dedicated mailbox, not a person's own.
+too. The connect page's access note says so, points to Block guests on the
+connection's page, as for every integration, and suggests a shared or dedicated
+mailbox, not a person's own.
 
 **Read-only.** Patchy opens every folder with `EXAMINE` and fetches with
 `BODY.PEEK`, so reading never marks mail as read, and no code path sends
 `STORE`, `COPY`, `MOVE`, `EXPUNGE`, `APPEND` or SMTP. The password itself can
-still change the mailbox, and the connect page says so. Patchy keeps no mirror
-of the mailbox: a patch imports what it needs into its own tables and files, and
-that copy stays in the patch after a disconnect. Nothing refreshes on its own.
+still change the mailbox. Patchy keeps no mirror of the mailbox: a patch imports
+what it needs into its own tables and files, and that copy stays in the patch
+after a disconnect, as the Disconnect confirmation says. Nothing refreshes on
+its own.
 
-**Connecting.** The admin types the host, the port (993 by default), the
-security mode (TLS on 993, STARTTLS on 143), the username (often the whole
-address) and the password. There's no autodiscovery and no fallback host. The
+**Connecting.** The connect page is the shared walkthrough: what a mailbox
+needs, then the login, then using it in a patch. The admin types the host,
+chooses the port and its security as one choice, 993 (TLS) by default or 143
+(STARTTLS), and types the username (often the whole address) and the password. There's no autodiscovery and no fallback host. The
 password is sealed under the keyring together with the endpoint, and goes only
 to that host, after the network checks:
 

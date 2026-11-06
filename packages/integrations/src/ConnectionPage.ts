@@ -86,6 +86,8 @@ interface IntegrationPage {
     form: Submitted,
     current?: ConnectionStore.Connection
   ) => Redacted.Redacted<string> | View.Notice;
+  /** What recent calls keep of its calls, and what they never keep, in its own words. */
+  readonly logged: string;
   /** The integration's own words for a completed action, where they differ. */
   readonly results?: Partial<
     Record<Result, string | ((connection: ConnectionStore.Connection) => string)>
@@ -112,6 +114,7 @@ const about = (
   readonly facts: ReadonlyArray<readonly [string, string]>;
   readonly standing?: ReadonlyArray<View.Standing>;
   readonly tag?: string | undefined;
+  readonly attention?: string | undefined;
 } =>
   connection.integration === "postgres"
     ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
@@ -123,7 +126,8 @@ const about = (
           ? {
               source: ImapPage.source(connection),
               facts: ImapPage.facts(connection),
-              tag: ImapPage.tag(connection)
+              tag: ImapPage.tag(connection),
+              attention: ImapPage.attention(connection)
             }
           : {
               source: PidgeonPage.source(connection),
@@ -232,6 +236,7 @@ const row = (
     source: known.source,
     status: connection.status,
     ...(known.tag === undefined ? {} : { tag: known.tag }),
+    ...(known.attention === undefined ? {} : { attention: known.attention }),
     ...(usage.get(connection.id) ?? ConnectionStore.unused)
   };
 };
@@ -448,12 +453,17 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
               : [call.effectivePrincipal]
           )
         );
-        return { list, names: { people: new Map([...people, ...guests]), versions } };
+        return {
+          list,
+          names: { people: new Map([...people, ...guests]), versions },
+          logged: page.logged
+        };
       }).pipe(
         Effect.catch(() =>
           Effect.succeed({
             list: "unavailable" as const,
-            names: { people, versions: new Map() }
+            names: { people, versions: new Map() },
+            logged: page.logged
           })
         )
       )

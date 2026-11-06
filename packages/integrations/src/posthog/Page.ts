@@ -15,6 +15,9 @@ export const offer = {
   reads: "SQL over a PostHog Cloud project's events and people.",
   mode: "Company-wide · read-only"
 };
+/** What recent calls keep of a PostHog call. */
+export const logged =
+  "Each query keeps its name and the first 8 KiB of its HogQL; values and returned rows are never logged.";
 export const actions = {
   refresh: "Refresh events",
   rotate: "Replace key",
