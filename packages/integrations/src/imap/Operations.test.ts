@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
@@ -72,6 +73,7 @@ interface Setup {
   readonly mailboxes?: ReadonlyArray<ImapTest.ScriptedFolder>;
   readonly before?: ImapTest.Script["before"];
   readonly limits?: Partial<Record<Parameters<typeof ContractLimits.get>[0], number>>;
+  readonly pauseLogin?: ConnectionStore.ConnectionStore["Service"]["pauseLogin"];
 }
 /** A connected mailbox on a scripted server, and a way to call each read on it. */
 const setup = (handle: string, options: Setup = {}) =>
@@ -93,7 +95,9 @@ const setup = (handle: string, options: Setup = {}) =>
       ...(options.before === undefined ? {} : { before: options.before })
     });
     const source = Source.layer.pipe(Layer.provide(ImapTest.network(served, certs)));
-    const store = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const stored = yield* SqlConnectionStore.make.pipe(Effect.provide(source));
+    const store =
+      options.pauseLogin === undefined ? stored : { ...stored, pauseLogin: options.pauseLogin };
     const connection = yield* store.connect({
       integration: "imap",
       ...who,
@@ -399,6 +403,42 @@ it.layer(fixture)("IMAP reads", (it) => {
       assert.strictEqual(again.code, "auth_failed");
       assert.strictEqual(served.dials.length, dials);
       assert.strictEqual(logins(), attempts);
+    })
+  );
+
+  it.effect("still fails auth_failed when the pause can't be saved, and says so on the event", () =>
+    Effect.gen(function* () {
+      let pauses = 0;
+      const { store, call, connection, mailbox } = yield* setup("unpaused", {
+        pauseLogin: () =>
+          Effect.suspend(() => {
+            pauses++;
+            return Effect.fail(
+              new ConnectionStore.ConnectionStorageFailed({
+                operation: "pauseLogin",
+                cause: Redacted.make(new Error("The store is down."))
+              })
+            );
+          })
+      });
+      mailbox.reply = "NO [AUTHENTICATIONFAILED] Authentication failed.";
+      const recorded: WideEvents.WideEvent[] = [];
+      const events = yield* WideEvents.make.pipe(
+        Effect.provideService(WideEvents.Sink, {
+          write: (event) => Effect.sync(() => void recorded.push(event))
+        })
+      );
+      const refused = yield* events.withEvent(
+        { type: "request" },
+        Effect.flip(call("listFolders", {}))
+      );
+      yield* Effect.yieldNow;
+      assert.strictEqual(refused._tag, "ImapLoginRefused");
+      assert.strictEqual(refused.code, "auth_failed");
+      assert.strictEqual(pauses, 2);
+      assert.include(JSON.stringify(recorded), '"imapPauseFailed":true');
+      const unpaused = yield* store.get(who.companyId, connection.id);
+      assert.isTrue(unpaused.integration === "imap" && unpaused.display.paused === undefined);
     })
   );
 

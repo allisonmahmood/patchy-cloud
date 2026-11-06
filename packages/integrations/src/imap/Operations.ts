@@ -7,6 +7,7 @@
  * from an earlier UIDVALIDITY fails `mailbox_reset`. Results leave the host through their wire
  * schema only.
  */
+import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   ImapFolderStatus,
   ImapGetMessages,
@@ -557,6 +558,8 @@ export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
       .lease(lease, (session) => runners[name](session, first.id, input))
       .pipe(
         Effect.catchTags({
+          // A pause that can't be saved is tried once more, then logged: the caller still
+          // hears `auth_failed`, and the next call may log in once more and pause it then.
           ImapLoginRefused: (refused) =>
             Effect.andThen(
               admitted === undefined
@@ -569,7 +572,18 @@ export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
                       logins: admitted.logins,
                       reply: refused.reply
                     })
-                    .pipe(Effect.ignore),
+                    .pipe(
+                      Effect.retry({ times: 1 }),
+                      Effect.catch((error) =>
+                        Effect.andThen(
+                          Effect.logError(
+                            "The mail server refused the login, and pausing the connection failed.",
+                            error
+                          ).pipe(Effect.annotateLogs({ connectionId: first.id })),
+                          WideEvents.enrich({ imapPauseFailed: true })
+                        )
+                      )
+                    ),
               Effect.fail(refused)
             ),
           ImapHostNotFound: (error) => Effect.fail(unreachable(error)),
