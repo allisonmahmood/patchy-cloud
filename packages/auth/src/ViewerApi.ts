@@ -1,0 +1,100 @@
+/**
+ * The viewer group: what a signed-in person's browser changes about their own use of Patchy,
+ * admitted by their session and the same-origin check, as Patchy's own forms are.
+ */
+import * as ByteSize from "effect/ByteSize";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import {
+  BadRequest,
+  PatchyApi,
+  PayloadTooLarge,
+  refuse,
+  ShortcutsRequest,
+  ShortcutsSetting
+} from "@patchy/api";
+import { Users } from "@patchy/companies";
+import * as Receipt from "./Receipt.js";
+import * as RequireSession from "./RequireSession.js";
+import * as Session from "./Session.js";
+import { pageResponse, returnPath } from "./page.js";
+
+/** The value and a page path to land back on. */
+const MAX_FORM_BYTES = 4_096;
+const readForm = HttpServerRequest.schemaBodyUrlParams(ShortcutsRequest).pipe(
+  Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(MAX_FORM_BYTES))
+);
+const encodeSetting = Schema.encodeSync(ShortcutsSetting);
+const noStore = { "cache-control": "private, no-store" };
+
+/**
+ * Stores the explicit value, then answers `{ value }` to a request asking for JSON, such as the
+ * shell's, or sends a form post back where it came from with a receipt.
+ */
+const setShortcuts = Effect.gen(function* () {
+  const viewer = yield* RequireSession.Viewer;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  // A declared overflow is answered; one that streams past the bound loses its connection.
+  if (Number(request.headers["content-length"]) > MAX_FORM_BYTES)
+    return refuse(PayloadTooLarge, { ok: false, error: "Request body is too large." }, noStore);
+  const form = yield* readForm;
+  yield* (yield* Users.Users).setSingleKeyShortcuts({
+    userId: viewer.user.id,
+    on: form.value === "on"
+  });
+  if (request.headers.accept?.includes("application/json") === true)
+    return HttpServerResponse.jsonUnsafe(
+      encodeSetting(new ShortcutsSetting({ value: form.value })),
+      { headers: noStore }
+    );
+  const session = yield* Session.Session;
+  return Receipt.set(
+    HttpServerResponse.redirect(returnPath(form.return ?? null, session.publicBaseUrl) ?? "/", {
+      status: 303,
+      headers: noStore
+    }),
+    {
+      userId: viewer.user.id,
+      text: `Turned ${form.value} single-key shortcuts`,
+      publicBaseUrl: session.publicBaseUrl
+    }
+  );
+}).pipe(
+  Effect.catchTags({
+    SchemaError: () =>
+      Effect.succeed(
+        refuse(BadRequest, { ok: false, error: "Send value=on or value=off." }, noStore)
+      ),
+    HttpServerError: () =>
+      Effect.succeed(refuse(BadRequest, { ok: false, error: "Malformed request body." }, noStore))
+  })
+);
+
+/** A sign-in or database failure is a retryable page; nothing claims the change was made. */
+const route = RequireSession.sameOrigin(RequireSession.withViewer(setShortcuts)).pipe(
+  Effect.catchTags({
+    SessionError: () =>
+      Effect.succeed(
+        pageResponse({
+          title: "Sign-in service unavailable",
+          body: "<p>Please try again.</p>",
+          status: 502
+        })
+      ),
+    SqlError: () =>
+      Effect.succeed(
+        pageResponse({
+          title: "Settings unavailable",
+          body: "<p>Please try again. Nothing was changed.</p>",
+          status: 503
+        })
+      )
+  })
+);
+
+export const layer = HttpApiBuilder.group(PatchyApi, "viewer", (handlers) =>
+  Effect.succeed(handlers.handleRaw("setShortcuts", () => route))
+);

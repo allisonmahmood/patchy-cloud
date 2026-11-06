@@ -40,7 +40,8 @@ import {
   OAuthEndpoints,
   OAuthMetadata,
   RequireSession,
-  Session
+  Session,
+  ViewerApi
 } from "@patchy/auth";
 import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
 import {
@@ -359,6 +360,7 @@ export const sweeper = Layer.effectDiscard(
 const api = Layer.mergeAll(HttpApiBuilder.layer(PatchyApi), ApiGuard.notFound).pipe(
   Layer.provide([
     AuthApi.layer,
+    ViewerApi.layer,
     PatchesApi.layer,
     ConnectionsApi.layer,
     DevReads.layer,

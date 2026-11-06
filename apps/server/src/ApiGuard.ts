@@ -5,7 +5,8 @@
  * router matches, before a body is read. Release discovery and the two POST
  * device-login routes are anonymous. Publish has its own limits after its
  * authenticated replay lookup; the guard must not throttle a recovery attempt.
- * Runtime has its own browser admission and per-viewer/patch limit.
+ * Runtime has its own browser admission and per-viewer/patch limit, and the
+ * viewer group admits by browser session as Patchy's pages do.
  * Other `/api/*` requests spend the per-address protected-API limit, then need
  * a token. Malformed targets and missing routes disclose their shape only
  * after authentication.
@@ -61,6 +62,13 @@ const apiPatchRoutes: ReadonlyArray<{ method: string; suffix: readonly string[] 
     suffix: endpoint.path.split("/").slice(4)
   }));
 
+/** The viewer group's routes, as `<method> <path>`: a browser session admits them, not a token. */
+const sessionRoutes = new Set(
+  Object.values(PatchyApi.groups.viewer.endpoints).map(
+    (endpoint) => `${endpoint.method} ${endpoint.path}`
+  )
+);
+
 /**
  * What the guard makes of a request target: not the API's business at all,
  * the API's to route, or a shape the router never sees, answered after the
@@ -71,6 +79,7 @@ export type Target =
   | { readonly kind: "route" }
   | { readonly kind: "publish" }
   | { readonly kind: "runtime" }
+  | { readonly kind: "session" }
   | { readonly kind: "device-login"; readonly action: "start" | "poll" }
   | { readonly kind: "refused"; readonly status: 400 | 404 | 414 };
 
@@ -93,6 +102,7 @@ export function classify(method: string, requestTarget: string): Target {
     (method === "GET" && /^\/api\/runtime\/shared-files\/[^/]+\/[^/]+\/[^/]+\/.+$/.test(pathname))
   )
     return { kind: "runtime" };
+  if (sessionRoutes.has(`${method} ${pathname}`)) return { kind: "session" };
   if (method === "POST") {
     if (pathname === "/api/login/device") return { kind: "device-login", action: "start" };
     if (pathname === "/api/login/device/token") return { kind: "device-login", action: "poll" };
@@ -151,7 +161,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const target = classify(request.method, request.url);
-      if (target.kind === "public" || target.kind === "publish" || target.kind === "runtime")
+      if (
+        target.kind === "public" ||
+        target.kind === "publish" ||
+        target.kind === "runtime" ||
+        target.kind === "session"
+      )
         return yield* app;
       if (target.kind === "device-login" && target.action === "poll") return yield* app;
 

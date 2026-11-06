@@ -21,7 +21,9 @@ export class User extends Schema.Class<User>("User")({
   createdAt: Schema.Date,
   deactivatedAt: Schema.NullOr(Schema.Date),
   /** The newest What's new release this person has seen. */
-  whatsNewSeen: Schema.Int
+  whatsNewSeen: Schema.Int,
+  /** Whether patches' single-key shortcuts fire for this person; on until they turn it off. */
+  singleKeyShortcuts: Schema.Boolean
 }) {}
 
 export class AlreadyInCompany extends Schema.TaggedError<AlreadyInCompany>()("AlreadyInCompany", {
@@ -128,6 +130,11 @@ export class Users extends Context.Service<
       readonly userId: string;
       readonly through: number;
     }) => Effect.Effect<void, SqlError>;
+    /** Stores the person's own single-key shortcut setting, `on` or not; never a flip. */
+    readonly setSingleKeyShortcuts: (input: {
+      readonly userId: string;
+      readonly on: boolean;
+    }) => Effect.Effect<void, SqlError>;
   }
 >()("@patchy/companies/Users") {}
 
@@ -135,7 +142,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
     email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
-    whats_new_seen AS "whatsNewSeen"`;
+    whats_new_seen AS "whatsNewSeen", single_key_shortcuts AS "singleKeyShortcuts"`;
   const ref = Schema.Struct({ companyId: Schema.String, userId: Schema.String });
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
 
@@ -342,6 +349,13 @@ export const make = Effect.gen(function* () {
       WHERE id = ${input.userId} AND whats_new_seen < ${input.through}`;
   });
 
+  const setSingleKeyShortcuts = Effect.fn("Users.setSingleKeyShortcuts")(function* (input: {
+    readonly userId: string;
+    readonly on: boolean;
+  }) {
+    yield* sql`UPDATE users SET single_key_shortcuts = ${input.on} WHERE id = ${input.userId}`;
+  });
+
   return Users.of({
     findByClerkId,
     findByEmail,
@@ -352,7 +366,8 @@ export const make = Effect.gen(function* () {
     checkDeactivation,
     deactivate,
     reactivate,
-    markWhatsNewSeen
+    markWhatsNewSeen,
+    setSingleKeyShortcuts
   });
 });
 

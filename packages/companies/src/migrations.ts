@@ -3,8 +3,8 @@
  * (`packages/sql/GLOSSARY.md`): companies, users, invites and the member
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
- * names the people stored without one, id 16 records the look's latest restore and id 20
- * adds the agent access switch.
+ * names the people stored without one, id 16 records the look's latest restore, id 20
+ * adds the agent access switch and id 35 each person's single-key shortcut setting.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -137,5 +137,10 @@ export const migrations: Migrations = {
       ADD CONSTRAINT companies_agent_access_change_check CHECK (
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
+  ),
+  // Whether patches' single-key shortcuts fire for this person. Everyone already here and every
+  // new user starts on; only the person's own choice turns it off, and the same route turns it on.
+  "0035_single_key_shortcuts": ddl(
+    `ALTER TABLE users ADD COLUMN single_key_shortcuts BOOLEAN NOT NULL DEFAULT true`
   )
 };
