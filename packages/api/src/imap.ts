@@ -110,11 +110,13 @@ export const ImapPart = Schema.Struct({
   disposition: Schema.NullOr(Schema.Literals(["inline", "attachment"])),
   contentId: Schema.NullOr(Schema.String),
   /**
-   * Whether the part is the message's body: the text read into `text`, a rendering of it such
-   * as an HTML twin, or the part it's encrypted in. Every other part but a forwarded message's
-   * container is a file the message carries, whatever its disposition.
+   * Whether the part is what a person reading the mail calls an attachment: one attached by
+   * disposition, or one with a filename that isn't a resource the body embeds (inside
+   * `multipart/related` with a Content-ID, such as a logo). Never the message's body or a
+   * forwarded message's container; a forwarded message's own files are. `hasAttachments` is true
+   * exactly when a part is one.
    */
-  body: Schema.Boolean
+  attachment: Schema.Boolean
 });
 export type ImapPart = typeof ImapPart.Type;
 

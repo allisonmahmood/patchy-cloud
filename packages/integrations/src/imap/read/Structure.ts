@@ -38,7 +38,7 @@ export interface Structure {
   /** Every part but multipart containers, in order. A `message/rfc822` is listed with its own. */
   readonly parts: ReadonlyArray<Part>;
   readonly body: Body;
-  /** Whether any part besides the body's own is a file: attached, named, or a message. */
+  /** Whether any part is an attachment, so the summary and the parts never disagree. */
   readonly hasAttachments: boolean;
 }
 
@@ -231,9 +231,25 @@ const select = (node: Node): Selected => {
 
 // ---------- the whole ----------
 
-/** Lists `node`'s parts into `into`, noting in `files` any file that isn't part of the body. */
-const flatten = (node: Node, into: Part[], files: { any: boolean }, body: ReadonlySet<string>) => {
-  if (!node.contentType.startsWith("multipart/")) {
+/**
+ * Whether a part is what a person reading the mail calls an attachment: never the message's own
+ * body (its text, a rendering of it, the part it's encrypted in) or a forwarded message's
+ * container; always one attached by disposition; otherwise one with a filename, unless it's a
+ * resource the body embeds, inside `multipart/related` with a Content-ID, such as a logo. A
+ * forwarded message's parts follow the same rule, so its PDF is one and its own text isn't.
+ */
+const isAttachment = (node: Node, body: ReadonlySet<string>, related: boolean) =>
+  !body.has(node.part) &&
+  node.contentType !== "message/rfc822" &&
+  (node.disposition === "attachment" ||
+    (node.filename !== null && !(related && node.contentId !== null)));
+
+/**
+ * Lists `node`'s parts into `into`. `related` is whether `node` is inside a `multipart/related`
+ * of the same message: a forwarded message's content starts afresh.
+ */
+const flatten = (node: Node, into: Part[], body: ReadonlySet<string>, related: boolean) => {
+  if (!node.contentType.startsWith("multipart/"))
     into.push({
       part: node.part,
       contentType: node.contentType,
@@ -241,12 +257,13 @@ const flatten = (node: Node, into: Part[], files: { any: boolean }, body: Readon
       encodedSize: node.size,
       disposition: node.disposition,
       contentId: node.contentId,
-      body: body.has(node.part)
+      attachment: isAttachment(node, body, related)
     });
-    if (!body.has(node.part) && (attached(node) || node.contentType === "message/rfc822"))
-      files.any = true;
-  }
-  for (const child of node.children) flatten(child, into, files, body);
+  const within =
+    node.contentType === "message/rfc822"
+      ? false
+      : related || node.contentType === "multipart/related";
+  for (const child of node.children) flatten(child, into, body, within);
 };
 
 /**
@@ -257,7 +274,10 @@ export const readStructure = (raw: unknown): Result.Result<Structure, MalformedS
   Result.map(walk(raw, [], true, 1, { nodes: 0 }), (root) => {
     const selected = select(root);
     const parts: Part[] = [];
-    const files = { any: false };
-    flatten(root, parts, files, new Set(selected.parts));
-    return { parts, body: selected.body, hasAttachments: files.any };
+    flatten(root, parts, new Set(selected.parts), false);
+    return {
+      parts,
+      body: selected.body,
+      hasAttachments: parts.some((part) => part.attachment)
+    };
   });

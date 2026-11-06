@@ -74,7 +74,7 @@ describe("parts and their numbers", () => {
         encodedSize: 100,
         disposition: null,
         contentId: null,
-        body: true
+        attachment: false
       }
     ]);
     assert.deepStrictEqual(structure.body, {
@@ -108,46 +108,9 @@ describe("parts and their numbers", () => {
       encodedSize: 4000,
       disposition: "attachment",
       contentId: null,
-      body: false
+      attachment: true
     });
   });
-
-  it("marks the body's parts, every rendering of it included, and nothing a message carries", () => {
-    const inlinePdf = leaf("application/pdf", {
-      encoding: "base64",
-      disposition: "inline",
-      filename: "scan.pdf"
-    });
-    const named = leaf("image/png", { name: "chart.png" });
-    const notes = leaf("text/plain", { disposition: "attachment", filename: "notes.txt" });
-    const forwarded = message(multipart("mixed", [plain, pdf]), { filename: "Fwd.eml" });
-    const structure = read(
-      multipart("mixed", [
-        multipart("alternative", [plain, html]),
-        inlinePdf,
-        named,
-        notes,
-        forwarded
-      ])
-    );
-    assert.deepStrictEqual(
-      structure.parts.map((part) => `${part.part} ${part.contentType} ${part.body}`),
-      [
-        // The text, and its HTML twin: both renderings of the body.
-        "1.1 text/plain true",
-        "1.2 text/html true",
-        // Files, inline or attached, named by disposition or by name alone.
-        "2 application/pdf false",
-        "3 image/png false",
-        "4 text/plain false",
-        // A forwarded message: its container, and its own parts, are never the body.
-        "5 message/rfc822 false",
-        "5.1 text/plain false",
-        "5.2 application/pdf false"
-      ]
-    );
-  });
-
   it("includes a forwarded message and its parts, numbered as IMAP sections", () => {
     const forwarded = message(
       multipart("mixed", [plain, leaf("image/png", { filename: "a.png" })]),
@@ -201,6 +164,73 @@ describe("parts and their numbers", () => {
     assert.strictEqual(
       read(leaf("image/png", { disposition: "INLINE" })).parts[0]!.disposition,
       "inline"
+    );
+  });
+});
+
+describe("which parts are attachments", () => {
+  /** Each part that's an attachment, and `hasAttachments` agreeing with them. */
+  const attachments = (raw: unknown) => {
+    const structure = read(raw);
+    const found = structure.parts.filter((part) => part.attachment).map((part) => part.part);
+    assert.strictEqual(structure.hasAttachments, found.length > 0);
+    return found;
+  };
+  const logo = (extra: Parameters<typeof leaf>[1] = {}) =>
+    leaf("image/png", { id: "<logo@example.test>", encoding: "base64", ...extra });
+
+  it("counts a forwarded message's files, never its container or its own text", () => {
+    const forwarded = message(multipart("mixed", [multipart("alternative", [plain, html]), pdf]), {
+      filename: "Fwd.eml"
+    });
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, forwarded])), ["2.2"]);
+    // A forward of text alone carries no attachment.
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, message(plain)])), []);
+  });
+
+  it("leaves out a resource the body embeds, and counts a named file sent inline", () => {
+    // An HTML body's logo, by Content-ID inside multipart/related.
+    assert.deepStrictEqual(attachments(multipart("related", [html, logo()])), []);
+    assert.deepStrictEqual(
+      attachments(
+        multipart("related", [html, logo({ disposition: "inline", filename: "logo.png" })])
+      ),
+      []
+    );
+    // A desktop client's named image001.png with a Content-ID, beside the text and HTML it
+    // illustrates.
+    const signature = logo({ name: "image001.png", id: "<image001.png@01DB2C.7E5F>" });
+    assert.deepStrictEqual(
+      attachments(multipart("related", [multipart("alternative", [plain, html]), signature])),
+      []
+    );
+    // The same image attached by disposition is one.
+    const attached = logo({ disposition: "attachment", filename: "image001.png" });
+    assert.deepStrictEqual(
+      attachments(multipart("related", [multipart("alternative", [plain, html]), attached])),
+      ["2"]
+    );
+    // A named PDF sent inline, outside multipart/related, is one; so is an attached text file.
+    const inlinePdf = leaf("application/pdf", { disposition: "inline", filename: "scan.pdf" });
+    const notes = leaf("text/plain", { disposition: "attachment", filename: "notes.txt" });
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, inlinePdf, notes])), ["2", "3"]);
+    // A file named in its Content-Type alone counts as one with a filename.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, leaf("image/png", { name: "chart.png" })])),
+      ["2"]
+    );
+  });
+
+  it("never counts the body: its text, its HTML twin or its ciphertext", () => {
+    assert.deepStrictEqual(attachments(multipart("alternative", [plain, html])), []);
+    assert.deepStrictEqual(
+      attachments(
+        multipart("encrypted", [
+          leaf("application/pgp-encrypted"),
+          leaf("application/octet-stream", { filename: "encrypted.asc", disposition: "inline" })
+        ])
+      ),
+      []
     );
   });
 });

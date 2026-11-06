@@ -36,7 +36,7 @@ const [message] = await mail.getMessages([page.messages[0]!.ref]);
 - `searchMessages({ folder, from?, to?, subject?, text?, since?, before?, unseen?, cursor? })` gives the folder's matches newest first. Criteria are ANDed. `from`, `to` and `subject` match part of that header and `text` part of the headers and the body together, case-insensitively, as the mail server matches them. `since` is on or after a day and `before` strictly before one, `YYYY-MM-DD`, by the date the server took the message in. `unseen: true` matches unread mail and `false` read mail.
 - `getMessages(refs)` takes up to 25 refs and answers in the order asked, one answer per ref: a message, or `{ error: "not_found" | "malformed" | "too_large" }`.
 - A page holds at most 100 summaries: `{ ref, from, to, cc, recipientsTruncated, subject, date, internalDate, size, flags, messageId, inReplyTo, references, hasAttachments }`. Addresses are `{ name, address }`. `recipientsTruncated` is true when From, To, Cc or Reply-To had more addresses than a summary keeps, so someone missing from them may still be on the message. `date` is the sender's `Date` and `internalDate` when the server took the message in, both ISO 8601 or `null`.
-- A message is its summary plus `replyTo`, `text`, `truncated`, `parts` and `encrypted`. `text` is at most 256 KiB, with `truncated` when the bound or the fetch left any out. `parts` lists every part, `{ part, contentType, filename, encodedSize, disposition, contentId, body }`, a forwarded message's own parts included; `encodedSize` is the size on the wire, about a third over the bytes for base64. `body` is true for the message's body: its text, a rendering of it such as an HTML twin, or the part it's encrypted in. `encrypted` is `"smime"` or `"pgp"` for an encrypted body, whose text is then empty: Patchy never decrypts.
+- A message is its summary plus `replyTo`, `text`, `truncated`, `parts` and `encrypted`. `text` is at most 256 KiB, with `truncated` when the bound or the fetch left any out. `parts` lists every part, `{ part, contentType, filename, encodedSize, disposition, contentId, attachment }`, a forwarded message's own parts included; `encodedSize` is the size on the wire, about a third over the bytes for base64. `attachment` is true for what a person reading the mail calls an attachment, and `hasAttachments` exactly when a part is one. `encrypted` is `"smime"` or `"pgp"` for an encrypted body, whose text is then empty: Patchy never decrypts.
 - `text` is the body made plain and cleaned, lossily: plain text where the message has it, else its HTML as text, links kept as `text (url)`; script, style and hidden content dropped on a best-effort basis; Unicode tag characters and bidi overrides removed. No raw source, raw headers or HTML leave Patchy.
 
 ## Saving attachments
@@ -52,7 +52,7 @@ await ctx.files.documents.put(
 );
 ```
 
-- Every part that isn't `body` and isn't a `message/rfc822` container is a file the message carries, whether its disposition is `attachment`, `inline` or none: some mail clients send a named PDF inline.
+- `attachment` says which parts to save: one attached by disposition, or a named one that isn't a resource the body embeds, such as a logo inside `multipart/related` with a Content-ID. A named PDF sent inline is one. The body, its HTML twin and a forwarded message's container never are; a forwarded message's own text isn't, but its files are.
 - `stageAttachment({ ref, part })` takes a part from the message's `parts`, such as `2`, or `3.1` inside a forwarded message, and answers `{ upload, size, sha256, contentType, filename }`. Patchy downloads the part, decoded from its transfer encoding, and stages it for this viewer and this version; the action gets only the Upload, which `ctx.files.<store>.put(name, upload)` adopts once without copying the bytes. `size` is the file's true size and `sha256` its digest, not the part's `encodedSize`.
 - A forwarded message's own part, `message/rfc822`, is a container: it fails `invalid_request` with `details.part`; stage its parts. A part the message doesn't have fails `not_found` with `details.part`, and a message gone from its folder `not_found` alone.
 - A part past 20 MiB fails `too_large`, nothing staged: keep its `filename` and `encodedSize` from `parts` instead.
@@ -81,7 +81,7 @@ await ctx.files.documents.put(
 
 One action that brings a date window of a folder into tables and files, and on every later run carries on from the checkpoint of the last page it finished. Each page's rows go in before its checkpoint, so a run that stops anywhere, from a refusal, a failed write or the action's 60 seconds, loses nothing; files are named by ref and part, so a page read again writes the same rows and files rather than new ones.
 
-- Every file a message carries is imported, inline or attached, a forwarded message's own parts included.
+- Every part marked `attachment` is imported, a forwarded message's files included, and nothing else: not an embedded logo, nor a forward's own text.
 - A message gone between its page and `getMessages` answers `not_found`: there's nothing to keep.
 - An attachment past 20 MiB is kept by its filename and its size on the wire, without the file.
 - A stage refused `limit_exceeded` ends the run before the page's checkpoint: the next run reads the page again.
@@ -184,9 +184,8 @@ export const importFolder = action({
         if ("error" in message) continue;
         const key = keyOf(message.ref);
         for (const part of message.parts) {
-          // Every file the message carries, inline or attached, a forward's own parts too: never
-          // the body's text, nor a forwarded message's container.
-          if (part.body || part.contentType === "message/rfc822") continue;
+          // What a person reading the mail calls an attachment, a forwarded message's included.
+          if (!part.attachment) continue;
           const file = fileOf(message.ref, part.part);
           let stored: { readonly size: number; readonly sha256: string } | null = null;
           try {

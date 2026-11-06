@@ -52,10 +52,11 @@ import * as RuntimeTest from "../src/test/runtime.js";
  * The `patchy-imap` skill's reference importer, taken from the skill, as a tier 2 action in real
  * workerd over real tables and files, reading Dovecot in Docker. It brings a date window of a
  * folder in and resumes after each way a run stops: a stage refused on quota, a message expunged
- * between its page and its read, an attachment past the staged-file bound, a named PDF sent
- * inline, which is a file like any other, and a row write that
- * fails after its file was adopted. The staged-file bound is lowered to 100,000 bytes, so a
- * 150,000-byte attachment stands in for one past 20 MiB.
+ * between its page and its read, an attachment past the staged-file bound and a row write that
+ * fails after its file was adopted. It saves only what a person calls attachments: a named PDF
+ * sent inline and a forwarded message's PDF, never the forward's own text and HTML, nor a logo
+ * the HTML body embeds. The staged-file bound is lowered to 100,000 bytes, so a 150,000-byte
+ * attachment stands in for one past 20 MiB.
  */
 
 const mail = inject("imap");
@@ -131,6 +132,98 @@ const owned = <A>(use: (owner: ImapFlow) => Promise<A>) =>
       (opened) => Effect.promise(() => opened.logout().catch(() => undefined))
     ).pipe(Effect.flatMap((owner) => Effect.promise(() => use(owner))))
   );
+const base64 = (bytes: Uint8Array) =>
+  (
+    Buffer.from(bytes)
+      .toString("base64")
+      .match(/.{1,76}/g) ?? []
+  ).join("\r\n");
+const headers = (subject: string, type: string) => [
+  "From: Billing <billing@example.com>",
+  "To: invoices@imap-live.test",
+  `Subject: ${subject}`,
+  "MIME-Version: 1.0",
+  `Content-Type: ${type}`,
+  ""
+];
+/** A PDF part named for `subject`, attached. */
+const pdfPart = (subject: string, pdf: Uint8Array) => [
+  `Content-Type: application/pdf; name="${subject}.pdf"`,
+  "Content-Transfer-Encoding: base64",
+  `Content-Disposition: attachment; filename="${subject}.pdf"`,
+  "",
+  base64(pdf)
+];
+/**
+ * A note forwarding a supplier's mail as a message of its own, `message/rfc822`, named as a mail
+ * client names it: the forward has its own text and HTML, and `pdf` attached as its part 2.2.
+ */
+const forward = (subject: string, day: string, pdf: Uint8Array) => ({
+  day,
+  raw: [
+    ...headers(`Fwd: ${subject}`, 'multipart/mixed; boundary="outer"'),
+    "--outer",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Forwarding this one.",
+    "--outer",
+    "Content-Type: message/rfc822",
+    'Content-Disposition: attachment; filename="Original message.eml"',
+    "",
+    "From: Accounts <accounts@supplier.example.com>",
+    "To: billing@example.com",
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    'Content-Type: multipart/mixed; boundary="inner"',
+    "",
+    "--inner",
+    'Content-Type: multipart/alternative; boundary="alternative"',
+    "",
+    "--alternative",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "The invoice is attached.",
+    "--alternative",
+    "Content-Type: text/html; charset=utf-8",
+    "",
+    "<p>The invoice is attached.</p>",
+    "--alternative--",
+    "--inner",
+    ...pdfPart(subject, pdf),
+    "--inner--",
+    "--outer--",
+    ""
+  ].join("\r\n")
+});
+/**
+ * An HTML body showing a logo as a desktop mail client sends it, named image001.png with a Content-ID inside
+ * `multipart/related`, and `pdf` attached as part 2.
+ */
+const withLogo = (subject: string, day: string, pdf: Uint8Array, logo: Uint8Array) => ({
+  day,
+  raw: [
+    ...headers(subject, 'multipart/mixed; boundary="mixed"'),
+    "--mixed",
+    'Content-Type: multipart/related; boundary="related"',
+    "",
+    "--related",
+    "Content-Type: text/html; charset=utf-8",
+    "",
+    '<p>Invoice attached.</p><img src="cid:image001.png@example.com">',
+    "--related",
+    'Content-Type: image/png; name="image001.png"',
+    "Content-Transfer-Encoding: base64",
+    "Content-ID: <image001.png@example.com>",
+    'Content-Disposition: inline; filename="image001.png"',
+    "",
+    base64(logo),
+    "--related--",
+    "--mixed",
+    ...pdfPart(subject, pdf),
+    "--mixed--",
+    ""
+  ].join("\r\n")
+});
 /** One invoice with `pdf` attached, received on `day` of 2026. */
 const invoice = (
   subject: string,
@@ -140,12 +233,7 @@ const invoice = (
 ) => ({
   day,
   raw: [
-    "From: Billing <billing@example.com>",
-    "To: invoices@imap-live.test",
-    `Subject: ${subject}`,
-    "MIME-Version: 1.0",
-    'Content-Type: multipart/mixed; boundary="importer-boundary"',
-    "",
+    ...headers(subject, 'multipart/mixed; boundary="importer-boundary"'),
     "--importer-boundary",
     "Content-Type: text/plain; charset=utf-8",
     "",
@@ -155,16 +243,12 @@ const invoice = (
     "Content-Transfer-Encoding: base64",
     `Content-Disposition: ${disposition}; filename="${subject}.pdf"`,
     "",
-    (
-      Buffer.from(pdf)
-        .toString("base64")
-        .match(/.{1,76}/g) ?? []
-    ).join("\r\n"),
+    base64(pdf),
     "--importer-boundary--",
     ""
   ].join("\r\n")
 });
-const append = (folder: string, message: ReturnType<typeof invoice>) =>
+const append = (folder: string, message: { readonly day: string; readonly raw: string }) =>
   owned((owner) => owner.append(folder, message.raw, [], new Date(`${message.day}T10:00:00Z`)));
 const expunge = (folder: string, uid: number) =>
   owned(async (owner) => {
@@ -272,17 +356,22 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             randomBytes(4_000),
             randomBytes(5_000),
             randomBytes(6_000),
-            randomBytes(7_000)
+            randomBytes(7_000),
+            randomBytes(8_000),
+            randomBytes(9_000)
           ] as const;
+          const logo = randomBytes(1_000);
           yield* owned((owner) => owner.mailboxCreate(folder));
-          // UID 1 is before the window; 2 to 6 are in it, 6 a named PDF sent inline; 7 arrives
-          // after the first full import.
+          // UID 1 is before the window; 2 to 8 are in it, 6 a named PDF sent inline, 7 a forward
+          // and 8 a body with an embedded logo; 9 arrives after the first full import.
           yield* append(folder, invoice("Old", "2026-09-20", pdfs[0]));
           yield* append(folder, invoice("Small", "2026-10-02", pdfs[1]));
           yield* append(folder, invoice("Large", "2026-10-03", pdfs[2]));
           yield* append(folder, invoice("Expunged", "2026-10-04", pdfs[3]));
           yield* append(folder, invoice("Failed", "2026-10-05", pdfs[4]));
           yield* append(folder, invoice("Inline", "2026-10-05", pdfs[5], "inline"));
+          yield* append(folder, forward("Forwarded", "2026-10-05", pdfs[6]));
+          yield* append(folder, withLogo("Logo", "2026-10-05", pdfs[7], logo));
           const uidValidity = yield* owned(async (owner) => {
             const status = await owner.status(folder, { uidValidity: true });
             return status === false ? 0 : Number(status.uidValidity);
@@ -404,7 +493,16 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
               )
             );
           const key = (uid: number) => `${folder}/${uidValidity}/${uid}`;
-          const file = (uid: number) => `${encodeURIComponent(folder)}.${uidValidity}/${uid}/2`;
+          const file = (uid: number, part = "2") =>
+            `${encodeURIComponent(folder)}.${uidValidity}/${uid}/${part}`;
+          const stored = () =>
+            as(files["files.list"].run({ store: "documents", limit: 100 })).pipe(
+              Effect.map((page) =>
+                (page as { readonly files: ReadonlyArray<{ readonly name: string }> }).files.map(
+                  (each) => each.name
+                )
+              )
+            );
 
           // 1. The viewer's staged uploads are full: the run stops before anything is kept.
           const full = [];
@@ -439,56 +537,71 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           );
 
           // 3. Run again: the page is read again, rows and files written over, nothing doubled.
+          //    Only the attachments are kept: the forward's PDF, not its text, HTML or container,
+          //    and the logo message's PDF, not its logo.
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
-            value: { imported: 4, done: true, stopped: null }
+            value: { imported: 6, done: true, stopped: null }
           });
-          const kept = new Map(
-            (yield* list("attachments")).map((row) => [row["message"] as string, row])
+          const attachments = yield* list("attachments");
+          assert.sameMembers(
+            attachments.map((row) => `${row["message"] as string} ${row["part"] as string}`),
+            [
+              `${key(2)} 2`,
+              `${key(3)} 2`,
+              `${key(5)} 2`,
+              `${key(6)} 2`,
+              `${key(7)} 2.2`,
+              `${key(8)} 2`
+            ]
           );
-          assert.sameMembers([...kept.keys()], [key(2), key(3), key(5), key(6)]);
+          const kept = new Map(attachments.map((row) => [row["message"] as string, row]));
           assert.deepInclude(kept.get(key(3))!, {
             file: null,
             sha256: null,
             filename: "Large.pdf"
           });
           assert.isAbove(kept.get(key(3))!["size"] as number, BOUND);
-          for (const [uid, pdf] of [
-            [2, pdfs[1]],
-            [5, pdfs[4]],
-            [6, pdfs[5]]
+          for (const [uid, part, pdf] of [
+            [2, "2", pdfs[1]],
+            [5, "2", pdfs[4]],
+            [6, "2", pdfs[5]],
+            [7, "2.2", pdfs[6]],
+            [8, "2", pdfs[7]]
           ] as const) {
             assert.deepInclude(kept.get(key(uid))!, {
-              file: file(uid),
+              file: file(uid, part),
               sha256: sha256(pdf),
               size: pdf.byteLength
             });
             assert.strictEqual(
               sha256(
-                (yield* as(files["files.get"].run({ store: "documents", name: file(uid) }))).bytes
+                (yield* as(files["files.get"].run({ store: "documents", name: file(uid, part) })))
+                  .bytes
               ),
               sha256(pdf)
             );
           }
+          assert.sameMembers(yield* stored(), [file(2), file(5), file(6), file(7, "2.2"), file(8)]);
           assert.sameMembers(
             (yield* list("messages")).map((row) => row["key"]),
-            [key(2), key(3), key(5), key(6)]
+            [key(2), key(3), key(5), key(6), key(7), key(8)]
           );
           assert.lengthOf(yield* list("imports"), 1);
 
           // 4. New mail since: the next run starts from the checkpoint and imports only it.
-          yield* append(folder, invoice("Later", "2026-10-06", pdfs[6]));
+          yield* append(folder, invoice("Later", "2026-10-06", pdfs[8]));
           assert.deepStrictEqual(yield* importWindow(), {
             ok: true,
             value: { imported: 1, done: true, stopped: null }
           });
           assert.strictEqual(
             sha256(
-              (yield* as(files["files.get"].run({ store: "documents", name: file(7) }))).bytes
+              (yield* as(files["files.get"].run({ store: "documents", name: file(9) }))).bytes
             ),
-            sha256(pdfs[6])
+            sha256(pdfs[8])
           );
-          assert.lengthOf(yield* list("messages"), 5);
+          assert.lengthOf(yield* list("messages"), 7);
         })
     );
   }
