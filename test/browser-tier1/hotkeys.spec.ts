@@ -1251,14 +1251,29 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     const scrim = (await sheet.boundingBox())!;
     const card = { x: label.x + 2, y: label.y + label.height / 2 };
     const corner = { x: scrim.x + 4, y: scrim.y + 4 };
+    // Each drag must click the dialog, as a scrim tap does, or the check proves nothing. A
+    // selection left by the first drag stops Chromium clicking on the second, so clear it.
+    await frame.evaluate(() => {
+      const clicks: string[] = [];
+      document.addEventListener("click", (event) =>
+        clicks.push((event.target as Element).localName)
+      );
+      Object.assign(window, { dragClicks: clicks });
+    });
     for (const [start, end] of [
       [card, corner],
       [corner, card]
     ] as const) {
+      await frame.evaluate(() => document.getSelection()?.removeAllRanges());
       await page.mouse.move(start.x, start.y);
       await page.mouse.down();
       await page.mouse.move(end.x, end.y, { steps: 4 });
       await page.mouse.up();
+      await expect
+        .poll(() =>
+          frame.evaluate(() => (window as unknown as { dragClicks: string[] }).dragClicks.splice(0))
+        )
+        .toEqual(["dialog"]);
       await expect(sheet).toBeVisible();
     }
     await page.keyboard.press("Escape");
