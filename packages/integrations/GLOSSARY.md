@@ -141,7 +141,7 @@ One of the reads Patchy writes for an Attio workspace, each its own runtime oper
 _Avoid_: CRM API, Attio query (Attio's own word for one request)
 
 **IMAP operation**:
-One of the reads Patchy writes for an IMAP mailbox, each its own runtime operation: `imap.listFolders`, `imap.folderStatus`, `imap.scanMessages`, `imap.listMessages`, `imap.searchMessages` and `imap.getMessages`. Patchy builds every command from typed arguments, opens folders with `EXAMINE` and fetches with `BODY.PEEK`, so none changes the mailbox or marks mail as read.
+One of the operations Patchy writes for an IMAP mailbox, each its own runtime operation: the reads `imap.listFolders`, `imap.folderStatus`, `imap.scanMessages`, `imap.listMessages`, `imap.searchMessages` and `imap.getMessages`, and `imap.stageAttachment`, which downloads one part of a message and stages it through [host staging](../primitives/GLOSSARY.md) for the action to adopt into its own file store. Patchy builds every command from typed arguments, opens folders with `EXAMINE` and fetches with `BODY.PEEK`, so none changes the mailbox or marks mail as read.
 _Avoid_: IMAP command (the protocol's own word for what Patchy sends)
 
 **Message ref**:

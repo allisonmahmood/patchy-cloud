@@ -73,7 +73,8 @@ await ctx.files.documents.put(
 - A scan page costs a few round trips to the mail server, and `getMessages` a few more for 25 messages' text. Against a server 100 ms away, one action reads on the order of a few hundred messages, fewer when they're long.
 - A mailbox holding years of mail can't be imported in one sitting. Import a window, `since` a recent day, and resume from the stored checkpoint each time someone opens the patch or asks their agent. Older mail is reached live with `searchMessages` and `getMessages`. A full backfill without a viewer waits for tier 3.
 - A `getMessages` answer past 8 MiB fails `too_large`: ask for fewer refs. One message answers `{ error: "too_large" }` in its place only when what Patchy returns for it, its summary, text and parts list, passes 1 MiB encoded, so each answer fits a row of the patch's own tables. Its size on the mail server doesn't count: attachments' bytes are never returned, so mail with a large attachment reads normally.
-- `busy` means Patchy's calls to the mailbox, its server or this host stayed full and nothing was sent: two reads run at once per mailbox. Try again shortly.
+- `busy` means Patchy's calls to the mailbox, its server or this host stayed full and nothing was sent: two reads run at once per mailbox, and a host fetches four attachments at once. Try again shortly.
+- An attachment downloads in 1 MiB chunks: 20 MiB from a server 100 ms away takes about four seconds of the action's time.
 
 ## A reference importer
 
@@ -260,9 +261,10 @@ Queries and mutations can't use connections, and IMAP reads are not live-query d
 - `auth_failed`: the mail server refused the password, so Patchy paused the connection and logs in no more until an admin's Test or Replace password succeeds at `/company/connections`. `pnpm patchy list connections` marks it `paused`. Every call fails `auth_failed` meanwhile without reaching the server.
 - `not_found` with `details.folder`: the folder can't be opened, because it's gone or holds only other folders.
 - `source_unavailable`: the server couldn't be reached or closed the session, or answered a command with a refusal. `details.reason`, when present, names a requirement the mailbox stopped meeting, such as its certificate; an admin's Test names it fully. `source_rate_limited` is the server limiting Patchy's logins.
-- `too_large` is a bound passed: the whole answer (ask for fewer refs), one message's answer in `getMessages` (in its place), or the mail server sending more than a call reads.
+- `too_large` is a bound passed: the whole answer (ask for fewer refs), one message's answer in `getMessages` (in its place), an attachment past 20 MiB, or the mail server sending more than a call reads.
+- `limit_exceeded` from `stageAttachment` is the viewer's staged uploads full: adopt or discard staged ones first.
 - `invalid_request` is arguments outside the wire, or a ref of another connection. `invalid_cursor` is a cursor or checkpoint of another call or folder.
-- Narrow a caught error with `isPatchyError(error, code, "imap")`, imported from the relative generated `client.js`, to type IMAP's `details`.
+- In an action, a caught refusal's `code` says which, as the importer reads it. On the page, narrow a refusal an action relayed with `isPatchyError(error, code, "imap")`, imported from the relative generated `client.js`, to type IMAP's `details`: server code can't import the client.
 - Company admins see every call in the connection's recent calls: the operation, its outcome and how many folders or messages it answered. Subjects, bodies, addresses, search values and the password are never kept.
 
 `connection_not_connected` needs the admin's connection page. `pnpm patchy remove mail` drops the declaration and its generated surface.

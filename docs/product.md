@@ -1467,11 +1467,8 @@ range, orderBy, limit, cursor })`, `get(id)` and `getMany(ids)`;
 Email (IMAP) is read-only and company-wide: one connection is one mailbox login
 on a plain mail host, such as `imap/invoices`, with no provider-specific code.
 The host and username are fixed for a connection's life; another mailbox is
-another connection. Patches read its folders and messages, as
-[Reading Email (IMAP)](#reading-email-imap) says; saving attachments into a
-patch's files arrives with
-[#1253](https://github.com/allisonmahmood/patchy-cloud/issues/1253), in the
-same release.
+another connection. Patches read its folders and messages and save attachments
+into their own files, as [Reading Email (IMAP)](#reading-email-imap) says.
 
 **Requirements.** A mailbox works if it:
 
@@ -1560,7 +1557,7 @@ every integration; there's no retarget.
 ### Reading Email (IMAP)
 
 A tier 2 action reads a declared mailbox through `ctx.connections.<alias>`, with
-six operations, flat on the wire as `imap.<operation>`. Patchy builds every
+six reads and a stage, flat on the wire as `imap.<operation>`. Patchy builds every
 command from typed arguments; patch code never sends an IMAP command, a search
 string or a section name.
 
@@ -1587,6 +1584,8 @@ unseen?, cursor? })` searches the server newest first. `text` matches the
   headers and the body together.
 - `getMessages({ refs })` takes up to 25 refs and answers in their order, one
   answer each: a message, or `{ error: "not_found" | "malformed" | "too_large" }`.
+- `stageAttachment({ ref, part })` stages one part of a message for the action to
+  adopt into its own file store, as **Attachments** below says.
 
 Pages hold at most 100 summaries: `{ ref, from, to, cc, recipientsTruncated,
 subject, date, internalDate, size, flags, messageId, inReplyTo, references,
@@ -1644,6 +1643,28 @@ deploys briefly run 4 host tasks, each with its own address. All of these are
 starting values in the limits registry, tuned from wide events, which carry the
 gate wait, attempts, bytes and whether a session was pooled or opened.
 
+**Attachments.** `stageAttachment` answers `{ upload, size, sha256,
+contentType, filename }`. The part is checked against the message's current
+`BODYSTRUCTURE`: the wire takes numbered sections only, never `HEADER`, `TEXT`
+or `.MIME`; a forwarded message's `message/rfc822` is a container and refused
+`invalid_request`, its own parts stageable. The host downloads the part through
+the call's session, under its gates, recheck and destroy rules: decoded from its
+transfer encoding by `BINARY` where the server offers it and by the host
+otherwise, text left as its bytes, in sequential partial fetches of
+`imap.download.chunk` (1 MiB, held within `imap.parser.literal`), with
+ImapFlow's byte bound one past `files.stage.bytes`, so a part past 20 MiB is
+refused `too_large`, never staged cut. It buffers at most that and stages
+through Files' host staging (`FileStaging`): the same reservation, per-viewer
+quotas (16 uploads and 100 MiB a patch, `limit_exceeded`), one-hour expiry and
+single-use adoption as a page's staged upload. Only the Upload crosses into
+workerd; the action adopts it with `ctx.files.<store>.put(name, upload)`.
+`size` is the true size, not `encodedSize` or the message's. A process buffers
+at most `imap.attachments.concurrent` (4) attachments at once, from download to
+staging, else `busy`. A part past the bound, or a download abandoned midway,
+destroys the session. Stored files are named by the ref and part; the filename
+is display text, bounded and cleaned. 20 MiB from a server 100 ms away stages in
+about 4 seconds.
+
 **Importing a mailbox.** A tier 2 action runs for at most 60 seconds, each read
 for 15. Against a host about 100 ms away that is on the order of a few hundred
 messages an action, fewer when they're long, so a mailbox holding years of mail
@@ -1654,10 +1675,15 @@ Backfilling the whole history waits for tier 3.
 
 **In `patchy dev`** every read is in the integration's `live` list and runs on
 the real connection through the instance's dev door (ADR-0013), sharing the
-mailbox's pool and gates. **Recent calls** and wide events record the connection,
-the viewer or agent, the patch and version, the operation, its duration, outcome
-and a count of folders or messages, never a subject, a body, an address, a search
-value or the password.
+mailbox's pool and gates. An attachment comes over the door's private byte
+transport: the instance downloads it as a published stage does and answers its
+bytes, at most `files.stage.bytes`, with their size and sha256, and the dev
+daemon stages them in its local store once they match, so a transfer that ends
+short, differs or runs over stages nothing; JSON results keep their 8 MiB bound.
+**Recent calls** and wide events record the connection, the viewer or agent, the
+patch and version, the operation, its duration, outcome and a count of folders or
+messages, or a staged attachment's size, never a subject, a body, an address, a
+search value, a filename, an Upload or the password.
 
 **Not in this integration:** sending (SMTP), changing flags, moving or deleting
 mail; background refresh, IDLE or push, and syncing flag changes or deletions;
