@@ -245,8 +245,13 @@ export const credentials = (
   const password = form.password ?? "";
   if (!isHost(host)) return refused("host");
   if (choice === undefined) return refused("port");
+  // The form has no security control: the port choice carries it, so a refusal sits there.
   if (kept === undefined && form.security !== undefined && form.security !== choice.security)
-    return refused("security");
+    return {
+      ...refused("security"),
+      message: "The security follows the port: 993 opens TLS, and 143 starts it with STARTTLS.",
+      field: "port"
+    };
   if (!isUsername(username)) return refused("username");
   if (!isPassword(password)) return refused("password");
   return Source.credentials({

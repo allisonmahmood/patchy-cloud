@@ -636,7 +636,6 @@ const credentialFields: ReadonlyArray<View.Field> = [
   "access",
   "host",
   "port",
-  "security",
   "username",
   "password"
 ];

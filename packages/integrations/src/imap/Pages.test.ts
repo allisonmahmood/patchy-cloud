@@ -130,6 +130,22 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
         })
     );
 
+    it.effect("shows a security that disagrees with the port under Port, where the choice is", () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("imap-security");
+        const response = yield* send(
+          connectPath,
+          post(owner.user, fields("invoices", { port: "993", security: "starttls" }))
+        );
+        assert.strictEqual(response.status, 422);
+        const html = yield* Effect.promise(() => response.text());
+        assert.include(html, 'id="connection-port-error" role="alert"');
+        assert.include(html, "The security follows the port: 993 opens TLS");
+        assert.include(html, `value="${host}"`);
+        assert.notInclude(html, "the-right-password");
+      })
+    );
+
     it.effect("refuses a login the server refused under the password, keeping all but it", () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("imap-refused");
