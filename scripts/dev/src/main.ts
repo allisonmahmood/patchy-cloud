@@ -72,6 +72,7 @@ import { checkFfmpeg, filmMarkdown, filmSide, loadFlow, sideBySide, Take } from 
 import { type Environment, Plan, PlanJson, computePlan, findWorktree, signInOf } from "./plan.js";
 import { isPortFree } from "./ports.js";
 import { takeDownRecorded } from "./pidgeon.js";
+import { takeDownMailbox } from "./mailbox.js";
 import { alive, signal } from "./process.js";
 import { bun, realNode } from "./runtimes.js";
 import { loadScenario, Person } from "./scenario.js";
@@ -512,6 +513,7 @@ const reset = Command.make(
     // What the environment made in Pidgeon goes first, whatever plan.json says, while the record
     // of it is still there.
     yield* takeDownPidgeon(root);
+    yield* takeDownMailbox(root);
     yield* buildBroker(root);
     const stateDir = yield* stateDirOf(root);
     // Reset is the recovery path, so an unreadable plan.json is wiped, not fatal.
@@ -1667,6 +1669,7 @@ const down = Command.make(
     );
     // What the environment made in Pidgeon goes before the folder that records it.
     yield* takeDownPidgeon(root);
+    yield* takeDownMailbox(root);
     const evidenceRemoved = yield* removeEvidence(root);
     const environmentRemoved = yield* tearDown(root);
     if (Option.isSome(recorded)) yield* stopInstance(recorded.value);

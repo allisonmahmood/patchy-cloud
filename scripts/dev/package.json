@@ -22,7 +22,8 @@
     "@patchy/sql": "workspace:*",
     "@playwright/test": "^1.63.0",
     "effect": "catalog:",
-    "embedded-postgres": "18.4.0-beta.17"
+    "embedded-postgres": "18.4.0-beta.17",
+    "imapflow": "2.10.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

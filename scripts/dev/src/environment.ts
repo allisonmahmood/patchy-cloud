@@ -34,6 +34,8 @@ import {
   recordAddress
 } from "./pidgeon.js";
 import { hostLabel, type Plan, worktreeHash } from "./plan.js";
+import { startMailbox, type Login } from "./mailbox.js";
+import { layout as instanceLayout } from "./state.js";
 import { realNode } from "./runtimes.js";
 import { Person, publisherToken, type Scenario, type ScenarioConnection } from "./scenario.js";
 
@@ -710,6 +712,53 @@ const connectAttio = Effect.fn("connectAttio")(function* (
 });
 
 /**
+ * Connects a scenario's IMAP connection as `email` through its connect page, as an admin would:
+ * the name, the description and the dev mailbox's login, in one submit. One already connected
+ * under its name is left be; answers whether it connected one.
+ */
+const connectImap = Effect.fn("connectImap")(function* (
+  apiUrl: string,
+  email: string,
+  connection: Extract<ScenarioConnection, { readonly integration: "imap" }>,
+  login: Login
+) {
+  const name = `${connection.integration}/${connection.handle}`;
+  let step = "starting the browser";
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const { chromium } = await import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        step = "signing in";
+        await page.goto(
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+        );
+        if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
+        step = "filling in the connect form";
+        await page.goto(`${apiUrl}/company/connections/connect/imap`);
+        await page.locator("#connection-handle").fill(connection.handle);
+        await page.locator("#connection-description").fill(connection.description);
+        await page.locator("#connection-host").fill(login.host);
+        await page.locator("#connection-port").selectOption("993");
+        await page.locator("#connection-security").selectOption("tls");
+        await page.locator("#connection-username").fill(login.username);
+        await page.locator("#connection-password").fill(login.password);
+        step = "testing the login and listing folders";
+        await Promise.all([
+          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 60_000 }),
+          page.getByRole("button", { name: "Test and connect", exact: true }).click()
+        ]);
+        return true;
+      } finally {
+        await browser.close();
+      }
+    },
+    catch: (cause) => connectFailed(name, step, cause)
+  });
+});
+
+/**
  * A scenario connection an earlier start already made, by the environment's CLI: none when the
  * instance has none by that name, else its address's local part, none inside when it can't be read.
  */
@@ -830,6 +879,25 @@ export const overlay = (
     }
   });
 
+/** The scenario's dev mailbox for `connection`, started or restarted; none without Docker. */
+const mailboxFor = Effect.fn("mailboxFor")(function* (
+  layout: Layout,
+  plan: Plan,
+  scenarioDir: string,
+  scenario: Scenario,
+  connection: Extract<ScenarioConnection, { readonly integration: "imap" }>
+) {
+  const path = yield* Path.Path;
+  return yield* startMailbox({
+    worktree: plan.worktree,
+    dir: layout.dir,
+    mailboxes: instanceLayout(plan, path).mailboxes,
+    company: scenario.company.handle,
+    username: connection.username,
+    mail: Option.map(Option.fromNullishOr(connection.mail), (file) => path.join(scenarioDir, file))
+  });
+});
+
 /**
  * Publishes each scenario patch as the publisher, then loads its sample data and shares it with
  * its guests, recording each step in the manifest. Steps already recorded are skipped, except
@@ -838,6 +906,7 @@ export const overlay = (
  */
 const materialize = Effect.fn("materialize")(function* (
   layout: Layout,
+  plan: Plan,
   scenarioDir: string,
   scenario: Scenario,
   manifest: Manifest
@@ -870,6 +939,21 @@ const materialize = Effect.fn("materialize")(function* (
   const skipped = new Set<string>();
   for (const connection of connections) {
     const name = `${connection.integration}/${connection.handle}`;
+    // IMAP's mailbox is this machine's own, in Docker; `down` removes it.
+    if (connection.integration === "imap") {
+      const login = yield* mailboxFor(layout, plan, scenarioDir, scenario, connection);
+      if (Option.isNone(login)) {
+        skipped.add(name);
+        yield* Console.error(
+          `  ${name}: skipped. Its dev mailbox runs in Docker, which isn't answering here.`
+        );
+        continue;
+      }
+      yield* Console.error(`  ${name}: connecting as ${publisher.name}`);
+      const made = yield* connectImap(manifest.apiUrl, publisher.email, connection, login.value);
+      if (!made) yield* Console.error(`  ${name}: already connected`);
+      continue;
+    }
     // Attio's is read-only: nothing is made in Attio, so `down` has nothing to take down there.
     if (connection.integration === "attio") {
       if (Option.isNone(attioKey)) {
@@ -1051,6 +1135,10 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
   if (Option.isSome(existing) && existing.value.complete) {
     yield* writeAgent(layout, plan.apiUrl);
     yield* writeWorkers(layout, plan);
+    // A dev mailbox a restart stopped starts again; its connection is already made.
+    for (const connection of loaded.scenario.connections ?? [])
+      if (connection.integration === "imap")
+        yield* mailboxFor(layout, plan, loaded.dir, loaded.scenario, connection);
     if (existing.value.release === release) return existing.value;
     yield* Console.error("The instance's release changed; updating the CLI and workspace repos.");
     yield* installCli(layout, release);
@@ -1095,7 +1183,10 @@ export const setUp = Effect.fn("Environment.setUp")(function* (
       if (yield* fs.exists(path.join(repo, "patchy.json")))
         yield* run(`Refreshing ${done.key}`, "patchy", ["refresh", "--json"], { cwd: repo, env });
     }
-  const published = yield* materialize(layout, loaded.dir, scenario, { ...started, release });
+  const published = yield* materialize(layout, plan, loaded.dir, scenario, {
+    ...started,
+    release
+  });
   const manifest: Manifest = { ...published, release, complete: true };
   yield* fs.writeFileString(layout.manifest, encodeManifest(manifest));
   return manifest;

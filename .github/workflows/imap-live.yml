@@ -1,0 +1,56 @@
+name: IMAP live
+
+# Patchy's IMAP connections against real mail servers: Dovecot over TLS on 993 and STARTTLS on
+# 143, and GreenMail, a baseline server without SPECIAL-USE or BINARY. The harness starts both in
+# Docker, with a certificate a disposable CA signs for each run, which is why they're containers
+# the job starts rather than `services:` that start before the certificate exists. It needs no
+# secrets, so it runs on every pull request touching what it exercises, forks included.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  imap-changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] || git diff --name-only "$BASE" HEAD |
+            grep -qE '^(packages/integrations/(src/imap/|src/test/imap\.ts$|src/(Sql)?ConnectionStore\.ts$|live/(Imap|imap))|packages/api/src/imap|vitest\.imap-live\.config\.ts$|pnpm-lock\.yaml$|\.github/workflows/imap-live\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing IMAP's live tier exercises changed, so it doesn't run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  imap-live:
+    needs: imap-changes
+    if: needs.imap-changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Connect, test, refresh and delete mailboxes on Dovecot and GreenMail
+        run: pnpm test:imap
