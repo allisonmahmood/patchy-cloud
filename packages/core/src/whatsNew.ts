@@ -60,6 +60,38 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 39,
+    date: "2026-11-07",
+    through: "17b1ad85f33fc61509342500b24ee9dd97dc650b",
+    changes: [
+      {
+        kind: "New",
+        title: "Patches can read a company mailbox",
+        detail:
+          "If your company's mail is on an ordinary email host, an admin can connect a mailbox from Integrations with its server, username and password. Patchy checks it before saving and says what's missing if it can't connect. Patches can then list its folders, bring in mail from a date and carry on where they left off, search it, and read messages as text. Patchy only reads: it never sends, moves or deletes mail, or marks it as read.",
+        prs: [1266, 1262]
+      },
+      {
+        kind: "New",
+        title: "Patches can keep email attachments",
+        detail:
+          "A patch can save the files attached to a message into its own files, exactly as they were sent, up to 20 MB each. Bigger attachments are listed by name and size instead.",
+        prs: [1264]
+      },
+      {
+        kind: "Improved",
+        title: "Recent calls fit a connection's page",
+        detail:
+          "On a connection's page in Integrations, recent calls now span the page so every column shows, and each kind of connection says in its own words what its calls record.",
+        prs: [1266]
+      }
+    ],
+    behindTheScenes: [
+      "When a mail server turns down a mailbox's password, Patchy pauses that connection after one try and stops logging in until an admin fixes it, so a wrong password can't get Patchy blocked by the mail host."
+    ],
+    patchChanges: []
+  },
+  {
     id: 38,
     date: "2026-11-05",
     through: "1d59c40877c532357904972954c18a35f05d762a",

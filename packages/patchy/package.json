@@ -1,6 +1,6 @@
 {
   "name": "patchy",
-  "version": "0.38.0",
+  "version": "0.39.0",
   "description": "The Patchy CLI, typed config, browser client and local dev runtime.",
   "type": "module",
   "private": true,
