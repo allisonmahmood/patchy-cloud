@@ -671,7 +671,10 @@ pnpm patchy dev --json
 user, `colleagueUrl` as a fixed non-admin colleague on a second origin, and
 `guestUrl` as the patch's guest from another company on a third: in the patch's
 company, never its admin, starting only `guest: true` handlers on tier 2, with no
-agent door. Writes and subscriptions are shared between them. Config and fixture edits need
+agent door. Writes and subscriptions are shared between them. Each keeps their own
+single-key shortcut setting in `shortcuts.json` beside the daemon's record, so a restart keeps
+it: their frame is named with it as a hosted shell names it, and the sheet's row changes it
+through Patchy's dialog and `POST /api/me/shortcuts` on that origin. Config and fixture edits need
 `pnpm patchy dev stop` and a start; `src/` edits rebuild and reload the shell,
 and `server/` and `agent/` edits rebind without a reload. A tier 2 repo's agent
 tools answer `pnpm patchy dev agent`, which prints what `open_patch` would, and

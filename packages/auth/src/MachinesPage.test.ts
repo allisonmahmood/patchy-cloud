@@ -195,7 +195,11 @@ it.layer(services)("Your agents", (it) => {
       assert.include(another, "such as Cursor and Gemini CLI, can’t connect yet");
       const unknown = yield* page("/machines?agent=%3Cscript%3E", member.cookie);
       assert.include(unknown, 'agent=claude#connect-an-agent" aria-current="page"');
-      assert.notInclude(unknown, "%3Cscript");
+      // Only the account menu's switch keeps the address, escaped, to come back to it.
+      assert.notInclude(
+        unknown.replace(/<input type="hidden" name="return" value="[^"]*">/, ""),
+        "%3Cscript"
+      );
     })
   );
 

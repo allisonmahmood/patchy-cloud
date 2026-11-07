@@ -118,6 +118,38 @@ it.live(
       assert.include(initial.headers["content-security-policy"]!, "connect-src 'none'");
       assert.include(yield* initial.text, "First local build");
 
+      // Each mount's person keeps their own single-key shortcut setting, which names its frame,
+      // and the shell's dialog saves it through the route Patchy serves.
+      const named = Effect.fn(function* (target: string) {
+        const html = yield* (yield* client.get(`${target}${base}`)).text;
+        return html.match(/ name="(patchy:shortcuts=(?:on|off))"/)?.[1];
+      });
+      const setShortcuts = (value: string, from = origin, target = origin) =>
+        client.execute(
+          HttpClientRequest.post(`${target}/api/me/shortcuts`).pipe(
+            HttpClientRequest.setHeaders({ origin: from, accept: "application/json" }),
+            HttpClientRequest.bodyUrlParams({ value })
+          )
+        );
+      assert.strictEqual(yield* named(origin), "patchy:shortcuts=on");
+      assert.strictEqual((yield* setShortcuts("off", "https://foreign.example.test")).status, 403);
+      assert.strictEqual((yield* setShortcuts("sideways")).status, 400);
+      const off = yield* setShortcuts("off");
+      assert.strictEqual(off.status, 200);
+      assert.deepStrictEqual(yield* off.json, { value: "off" });
+      assert.strictEqual(yield* named(origin), "patchy:shortcuts=off");
+      assert.strictEqual(yield* named(colleagueOrigin), "patchy:shortcuts=on");
+      const stored = path.join(stateDir, "shortcuts.json");
+      assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(stored)), {
+        [identity.user.id]: false
+      });
+      // A save whose write fails is refused and changes nothing a shell shows.
+      yield* fs.remove(stored);
+      yield* fs.makeDirectory(stored);
+      assert.strictEqual((yield* setShortcuts("on")).status, 503);
+      assert.strictEqual(yield* named(origin), "patchy:shortcuts=off");
+      yield* fs.remove(stored, { recursive: true });
+
       const call = (
         op: string,
         args: unknown,

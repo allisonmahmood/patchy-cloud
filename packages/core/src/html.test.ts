@@ -6,7 +6,8 @@ describe("htmlPage app body", () => {
   const viewer = {
     user: { name: "Sam", email: "sam@northwind.example" },
     company: { name: "Northwind" },
-    whatsNewSeen: latestRelease
+    whatsNewSeen: latestRelease,
+    singleKeyShortcuts: true
   };
   const places = (html: string) =>
     [...html.matchAll(/<a class="app-place" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map(
@@ -41,6 +42,25 @@ describe("htmlPage app body", () => {
       '<form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button>'
     );
     expect(body.slice(body.indexOf("<main"))).not.toContain("/logout");
+  });
+
+  it("switches single-key shortcuts from the account menu without script, back to the page", () => {
+    const menu = (shell: Partial<typeof viewer> & { page?: string }) => {
+      const html = htmlPage({
+        title: "Home",
+        app: { viewer: { ...viewer, ...shell }, section: "home" },
+        body: ""
+      });
+      return html.slice(html.indexOf('id="account-menu"'), html.indexOf("/logout"));
+    };
+    // It posts the value it switches to, never a flip, with the page to come back to.
+    expect(menu({ page: '/patches?q="a"&tab=tools' })).toContain(
+      '<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="off"><input type="hidden" name="return" value="/patches?q=&quot;a&quot;&amp;tab=tools"><button class="menu-item" type="submit" role="switch" aria-checked="true">Single-key shortcuts <span class="pill pill-done" aria-hidden="true">On</span></button></form>'
+    );
+    // A page that can't be opened again, such as a form's answer, lands the switch on Home.
+    expect(menu({ singleKeyShortcuts: false })).toContain(
+      '<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="on"><button class="menu-item" type="submit" role="switch" aria-checked="false">Single-key shortcuts <span class="pill" aria-hidden="true">Off</span></button></form>'
+    );
   });
 
   it("searches patches from the sidebar and lights Home on Home", () => {
@@ -79,7 +99,8 @@ describe("htmlPage app body", () => {
         viewer: {
           user: { name: '<img src=x onerror="alert(1)">', email: "<b>x</b>@example.com" },
           company: { name: "R&D <script>alert(2)</script>" },
-          whatsNewSeen: latestRelease
+          whatsNewSeen: latestRelease,
+          singleKeyShortcuts: true
         },
         section: "people"
       },

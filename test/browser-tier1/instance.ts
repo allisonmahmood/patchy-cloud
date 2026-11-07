@@ -73,7 +73,10 @@ export interface Instance {
     html?: string,
     patchId?: string,
     declarations?: Partial<
-      Pick<typeof Manifest.Type, "tier" | "tables" | "files" | "uses" | "handlers">
+      Pick<
+        typeof Manifest.Type,
+        "tier" | "tables" | "files" | "uses" | "handlers" | "sdkImports" | "shortcutSetting"
+      >
     >,
     options?: { readonly server?: string; readonly force?: boolean }
   ): Promise<Published>;
@@ -84,6 +87,8 @@ export interface Instance {
     force?: boolean
   ): Promise<void>;
   share(patchId: string, scope: "company" | "public"): Promise<void>;
+  /** Shares a patch with someone at another company, as its owner's Share… does. */
+  addGuest(patchId: string, email: string): Promise<void>;
   restart(environment?: Readonly<Record<string, string>>): Promise<void>;
   /** A second real host sharing this instance's databases, storage and session verifier. */
   startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
@@ -757,6 +762,14 @@ export async function startInstance(options: {
           body: JSON.stringify({ scope })
         });
         if (!response.ok) throw new Error(`share: ${response.status} ${await response.text()}`);
+      },
+      async addGuest(patchId, email) {
+        const response = await fetch(`${backendOrigin()}/api/patches/${patchId}/guests`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+        if (!response.ok) throw new Error(`guest: ${response.status} ${await response.text()}`);
       },
       async session(context, user = "owner", expiresInSeconds = 3600) {
         await context.clearCookies();

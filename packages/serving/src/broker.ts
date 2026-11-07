@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
 import { createDownloads } from "./downloads.js";
+import { createShortcutSetting, decodeShortcutsQuestion, showShortcutsNote } from "./shortcuts.js";
 
 const MAX_HELD = registry["frame.heldBytes"].default;
 const MAX_FILE = runtimeByteLimits.fileBytes;
@@ -246,9 +247,12 @@ function mount(frame: HTMLIFrameElement): void {
     held -= size;
   };
   const handleDownloads = createDownloads(frame, reserve, release);
+  // Tier 2's starting cover is up, or about to be, until its tools are ready.
+  const shortcuts = createShortcutSetting(frame, () => execution !== "ready");
   const stop = () => {
     if (closed) return;
     closed = true;
+    shortcuts?.close();
     stream?.close();
     port?.close();
     port = undefined;
@@ -339,6 +343,8 @@ function mount(frame: HTMLIFrameElement): void {
   };
   if (!patchId || !versionId || !nonce || !base || !contentSrc) return notice("bootstrap_failed");
   if (wire !== WIRE_VERSION) return stale();
+  if (shortcuts?.on === false && frame.dataset.shortcutsNote !== undefined)
+    showShortcutsNote(frame, patchId);
 
   /** Stream into a bounded buffer; reservations include both chunks and the final contiguous copy. */
   const readBody = async (
@@ -595,6 +601,7 @@ function mount(frame: HTMLIFrameElement): void {
         op !== "shared.download" &&
         op !== "files.download" &&
         op !== "download.generated" &&
+        op !== "shortcuts.setting" &&
         !subscriptionOperation &&
         !Object.hasOwn(runtimeOperations, op)
       )
@@ -672,6 +679,20 @@ function mount(frame: HTMLIFrameElement): void {
             reason: "download_discarded"
           });
         send({ v: wire, id, kind: "result", value: null });
+        return;
+      }
+      if (op === "shortcuts.setting") {
+        try {
+          decodeShortcutsQuestion(message.args);
+        } catch {
+          throw invalid();
+        }
+        // A public or older shell names no frame, so there is no setting here to change.
+        if (shortcuts === undefined) throw invalid();
+        // Shell-local, like a generated download: it waits on the person, never on Runtime.
+        const value = await shortcuts.ask();
+        if (closed) return;
+        send({ v: wire, id, kind: "result", value });
         return;
       }
       let request: RuntimeRequest | undefined;

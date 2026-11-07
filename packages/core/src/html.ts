@@ -116,6 +116,34 @@ export const shellStyles = `
       font-family: var(--font-mono);
       font-size: .9em;
     }
+    /* pill: a state or kind in a word, on its own paper: progress blue, done green, failed amber. */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 3px 11px;
+      border: 2px solid var(--ink);
+      border-radius: var(--radius-pill);
+      color: var(--ink);
+      font-size: .76rem;
+      font-weight: 850;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+    .pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+    .pill-progress { background: var(--paper-blue); color: var(--blue-dark); }
+    .pill-done { background: var(--paper-green); color: var(--green-ink); }
+    /* pill-failed: failed and refused outcomes, danger ink on amber like btn-danger. */
+    .pill-failed { background: var(--paper-amber); color: var(--danger); }
     /* glyph-sm: the Patchy glyph at a floating element's title size, so the viewer knows Patchy is speaking. Use with glyph. */
     .glyph-sm { width: 18px; height: 18px; border-radius: 5px; box-shadow: 2px 2px 0 var(--ink); }
     .glyph-sm::after { top: 3px; right: 3px; width: 5px; height: 5px; }
@@ -133,6 +161,8 @@ export const shellStyles = `
       overflow-wrap: anywhere;
     }
     .note-float .note-title { display: flex; align-items: center; gap: 8px; }
+    /* A pill in a floating note's title, such as a setting's On or Off, sits at its end. */
+    .note-float .note-title > .pill { margin-left: auto; }
     .note-float p { margin: 0; }
     .note-float p + p { margin-top: 6px; }
     /* note-info: Patchy offers something, such as a new version. */
@@ -311,8 +341,12 @@ export interface AppShell {
     readonly company: { readonly name: string };
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
+    /** Whether patches' single-key shortcuts fire for them; the account menu switches it. */
+    readonly singleKeyShortcuts: boolean;
     /** One line naming what their last form did, shown once at the top of the page. */
     readonly receipt?: string | undefined;
+    /** This page's local path, when opening it again shows it: the account menu's forms come back here. */
+    readonly page?: string | undefined;
   };
   /** The place the page belongs to; `whats-new` is reached from its own button, so no place is lit there. */
   readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new";
@@ -360,9 +394,19 @@ const chevron =
 const menuIcon =
   '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>';
 
-/** The signed-in person: their name opens a menu with who they are and Sign out. */
-function account(user: AppShell["viewer"]["user"]): string {
-  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${chevron}</button><div class="menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong><br>${escapeHtml(user.email)}</p><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button></form></div>`;
+/**
+ * The signed-in person: their name opens a menu with who they are, the single-key shortcut switch
+ * and Sign out. The switch is a form, so it needs no script. It posts the value it switches to,
+ * never a flip, to `POST /api/me/shortcuts`, which brings the person back here with a receipt.
+ */
+function account(viewer: AppShell["viewer"]): string {
+  const { user, singleKeyShortcuts: on } = viewer;
+  const back =
+    viewer.page === undefined
+      ? ""
+      : `<input type="hidden" name="return" value="${escapeAttribute(viewer.page)}">`;
+  const shortcuts = `<form method="post" action="/api/me/shortcuts"><input type="hidden" name="value" value="${on ? "off" : "on"}">${back}<button class="menu-item" type="submit" role="switch" aria-checked="${on}">Single-key shortcuts <span class="pill${on ? " pill-done" : ""}" aria-hidden="true">${on ? "On" : "Off"}</span></button></form>`;
+  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${chevron}</button><div class="menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong><br>${escapeHtml(user.email)}</p><hr class="menu-rule">${shortcuts}<hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button></form></div>`;
 }
 
 /**
@@ -388,7 +432,7 @@ function appBody(app: AppShell, body: string): string {
     label: "Search patches",
     className: "app-search"
   });
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -480,49 +524,6 @@ export function htmlPage(options: {
     }
 
 
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      border: 2px solid var(--ink);
-      border-radius: var(--radius-pill);
-      color: var(--ink);
-      font-weight: 850;
-      line-height: 1;
-      text-transform: uppercase;
-      letter-spacing: 0;
-      white-space: nowrap;
-    }
-
-    .pill {
-      gap: 6px;
-      min-height: 28px;
-      padding: 3px 11px;
-      font-size: .76rem;
-    }
-
-    .pill::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .pill-progress {
-      background: var(--paper-blue);
-      color: var(--blue-dark);
-    }
-
-    .pill-done {
-      background: var(--paper-green);
-      color: var(--green-ink);
-    }
-
-    /* pill-failed: failed and refused outcomes, danger ink on amber like btn-danger. */
-    .pill-failed {
-      background: var(--paper-amber);
-      color: var(--danger);
-    }
 
     h1,
     h2,
@@ -887,8 +888,10 @@ export function htmlPage(options: {
     }
     .menu form { margin: 0; }
     .menu-head { max-width: none; margin: 0; padding: 6px 12px 4px; color: var(--muted); font-size: .8rem; font-weight: 750; overflow-wrap: anywhere; }
-    .menu-item { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.3; text-align: left; text-decoration: none; cursor: pointer; }
+    .menu-item { display: flex; align-items: center; gap: 18px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--field-radius); background: transparent; color: var(--ink); font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.3; text-align: left; text-decoration: none; cursor: pointer; }
     .menu-item:hover { background: var(--paper-blue); }
+    /* A switch's state, such as On or Off, at the end of its item. */
+    .menu-item > .pill { margin-left: auto; }
     .menu-item-danger { color: var(--danger); }
     /* A Copy item waits hidden for the page's copy script, so a menu without script offers only what works. */
     .menu-item[hidden] { display: none; }

@@ -35,6 +35,7 @@ import { renderAddressNotice } from "./address-notice.js";
 import { compress, negotiate, type Precompressed } from "./compression.js";
 import {
   renderPatchWrapper,
+  ignoresShortcutSetting,
   renderShellNotice,
   isShellNotice,
   brokerScript,
@@ -250,7 +251,13 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           {
             title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
             body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
-            app: { viewer: admission, section: "patches" }
+            app: {
+              viewer: {
+                ...admission,
+                page: returnPath(request.url, session.publicBaseUrl) ?? undefined
+              },
+              section: "patches"
+            }
           },
           session
         ).pipe(HttpServerResponse.setHeader("x-robots-tag", PATCH_ROBOTS_TAG)),
@@ -372,6 +379,15 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
           viewerId,
+          // A guest's setting is their own, as their account is.
+          ...(viewerId === undefined || HttpServerResponse.isHttpServerResponse(admission)
+            ? {}
+            : {
+                shortcuts: {
+                  on: admission.singleKeyShortcuts,
+                  note: !admission.singleKeyShortcuts && ignoresShortcutSetting(version)
+                }
+              }),
           head: isPublic ? undefined : sessionScripts(session),
           // Only an address renders a shell, so its route selection is always there.
           nonce: yield* cryptography.internalId("boot"),
