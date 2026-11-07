@@ -1314,7 +1314,7 @@ it.layer(layer)("SDK company generation", (it) => {
         assert.deepStrictEqual(yield* response.json, {
           ok: false,
           code: "not_shared",
-          error: `sdk-unshared-source's \`${resource}\` isn't shared with other patches. Ask ${owner.user.name}, its owner, or an admin to share it.`
+          error: `\`${resource}\` in sdk-unshared-source isn't shared with other patches. Ask ${owner.user.name}, the patch's owner, or an admin to share it.`
         });
       }
     })

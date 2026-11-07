@@ -2541,7 +2541,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         assert.deepStrictEqual(yield* refused.json, {
           ok: false,
           code: "not_shared",
-          error: `shared-contacts's \`contacts\` isn't shared with other patches. Ask ${uploader.user.name}, its owner, or an admin to share it.`
+          error: `\`contacts\` in shared-contacts isn't shared with other patches. Ask ${uploader.user.name}, the patch's owner, or an admin to share it.`
         });
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
       })

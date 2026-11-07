@@ -1050,7 +1050,7 @@ export const add = Effect.fn("Project.add")(function* (
               refusal: {
                 ok: false,
                 code: "not_shared",
-                error: `${source.name}'s \`${shared.name}\` isn't shared with other patches. Ask ${source.owner.name}, its owner, or an admin to share it.`
+                error: `\`${shared.name}\` in ${source.name} isn't shared with other patches. Ask ${source.owner.name}, the patch's owner, or an admin to share it.`
               }
             }
           : shared.reason === "source_off"

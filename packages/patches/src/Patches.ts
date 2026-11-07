@@ -486,7 +486,7 @@ export class NotShared extends Schema.TaggedError<NotShared>()("NotShared", {
 }) {
   readonly code = "not_shared" as const;
   override get message() {
-    return `${this.name}'s \`${this.store ?? this.table}\` isn't shared with other patches. Ask ${this.owner}, its owner, or an admin to share it.`;
+    return `\`${this.store ?? this.table}\` in ${this.name} isn't shared with other patches. Ask ${this.owner}, the patch's owner, or an admin to share it.`;
   }
 }
 

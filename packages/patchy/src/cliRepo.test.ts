@@ -141,7 +141,7 @@ describe("patch-repo commands", () => {
         }
       },
       code: "not_shared",
-      error: `directory's \`people\` isn't shared with other patches. Ask ${projectSource.owner.name}, its owner, or an admin to share it.`
+      error: `\`people\` in directory isn't shared with other patches. Ask ${projectSource.owner.name}, the patch's owner, or an admin to share it.`
     },
     {
       availability: "retired",
