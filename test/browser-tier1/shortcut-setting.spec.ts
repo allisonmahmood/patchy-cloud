@@ -305,6 +305,30 @@ test("a dialog dismissed mid-save needs a fresh press, even once its save has st
   await expect(dialog).toBeVisible();
 });
 
+test("a confirmed dialog needs a fresh press too, so a patch can't ask again on the press that answered it", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch);
+  const dialog = shellDialog(page);
+  await frame.locator("h1").click();
+  await ask(frame, instance.wire, "first");
+  await dialog.getByRole("button", { name: "Turn off" }).click();
+  await expect.poll(() => answer(frame, "first")).toMatchObject({ value: false });
+  await expect(dialog).toHaveCount(0);
+  // Asked again at once, on the press that confirmed: the value, and no dialog to flip it back.
+  await ask(frame, instance.wire, "again");
+  await expect.poll(() => answer(frame, "again")).toMatchObject({ value: false });
+  await expect(dialog).toHaveCount(0);
+  expect(await stored(instance)).toBe(false);
+  // Once that press has lapsed, a fresh one opens it.
+  await sleep(6_500);
+  await frame.locator("h1").click();
+  await ask(frame, instance.wire, "fresh");
+  await expect(dialog).toBeVisible();
+});
+
 test("a dialog needs a press: none, one already open, or the press a Cancel answered shows nothing, and a later press does", async ({
   page,
   instance

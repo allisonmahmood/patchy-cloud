@@ -8,8 +8,8 @@
  * confirms in its own dialog over the frame, so patch code can't change the setting without the
  * person:
  * - one dialog at a time, and only while the person has just pressed or clicked something;
- * - after a Cancel or Escape, the next dialog needs a fresh press: the one that asked has to lapse
- *   first, a few seconds in practice;
+ * - once a dialog closes, confirmed or dismissed, the next one needs a fresh press: the one that
+ *   answered it has to lapse first, a few seconds in practice;
  * - only a real press in the dialog saves, through the same route as the account menu's switch;
  * - Cancel and Escape close the dialog at once, even mid-save. A save under way keeps the one slot
  *   until it answers, and the answer is what it stored, or the setting as it was if it failed.
@@ -52,8 +52,8 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
   let on = named[1] === "on";
   // The open dialog, and how to end it at once when the document stops.
   let open: { readonly abandon: () => void } | undefined;
-  // Set by a Cancel or an Escape. The press that opened that dialog may still count as one, so it
-  // clears only once activation has read as lapsed.
+  // Set whenever a dialog closes, confirmed or dismissed. The press that answered it may still
+  // count as one, so it clears only once activation has read as lapsed.
   let dismissed = false;
   let lapse: number | undefined;
   const watchLapse = () => {
@@ -98,9 +98,11 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       let shown = true;
       // The question is answered; until then it holds the one slot, so no other dialog opens.
       let settled = false;
+      // However it closes, the next dialog needs a fresh press, so a patch can't ask again on this one.
       const hide = () => {
         if (!shown) return;
         shown = false;
+        watchLapse();
         dialog.close();
         dialog.remove();
         frame.focus();
@@ -113,11 +115,10 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
         resolve(on);
       };
       // Cancel, Escape, or the browser closing it, as a second Escape with no press between can:
-      // the dialog goes at once and the next one needs a fresh press. A save under way still
-      // answers, with what it stored or, failing, the setting as it was.
+      // the dialog goes at once. A save under way still answers, with what it stored or, failing,
+      // the setting as it was.
       const dismiss = () => {
         if (!shown) return;
-        watchLapse();
         if (saving) hide();
         else settle();
       };
@@ -182,7 +183,8 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
     /**
      * The person's answer once they choose, or the setting as it is, with no dialog, while an
      * earlier question is unanswered (its dialog up, or its save under way after a dismissal),
-     * the cover is up, nothing was just pressed, or the last dismissal's press hasn't lapsed.
+     * the cover is up, nothing was just pressed, or the press that closed the last dialog hasn't
+     * lapsed.
      */
     ask(): Promise<boolean> {
       if (open !== undefined || dismissed || starting() || !navigator.userActivation.isActive)
