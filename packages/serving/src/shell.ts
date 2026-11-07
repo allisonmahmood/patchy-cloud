@@ -173,15 +173,34 @@ export function isShellNotice(code: string): code is ShellNotice {
   return Object.hasOwn(notices, code);
 }
 
-/** First-party notices never render uploaded markup or a patch-controlled error message. */
-export function renderShellNotice(code: ShellNotice, returnTo: string): string {
+/**
+ * The active signed-in viewer a top-level notice is rendered for: it loads their switcher, then
+ * `session`, the session's scripts, as trusted host markup. Anyone else's notice has neither.
+ */
+export interface NoticeViewer {
+  readonly userId: string;
+  /** Their own company, a guest's included, which keys the switcher's list. */
+  readonly companyId: string;
+  readonly session: string;
+}
+
+/**
+ * First-party notices never render uploaded markup or a patch-controlled error message. Only a
+ * top-level notice has a `viewer`; a framed one keeps the relay alone, never a nested menu.
+ */
+export function renderShellNotice(
+  code: ShellNotice,
+  returnTo: string,
+  viewer?: NoticeViewer
+): string {
   const { signIn, ...copy } = notices[code];
   return renderNoticePage({
     ...copy,
     code,
     action: signIn
       ? { label: "Sign in", href: `/login?return=${encodeURIComponent(returnTo)}` }
-      : undefined
+      : undefined,
+    head: viewer && `${switcherTag(viewer)}${viewer.session}`
   });
 }
 
@@ -196,9 +215,12 @@ export function renderNoticePage(notice: {
   /** Marks a stopping notice, which the browser tests look for; the 404 has none. */
   readonly code?: ShellNotice;
   readonly action?: { readonly label: string; readonly href: string } | undefined;
+  /** Trusted host markup: a signed-in viewer's switcher and session scripts. */
+  readonly head?: string | undefined;
 }): string {
   return htmlPage({
     title: notice.title,
+    head: notice.head,
     styles: ".auth-card p:last-child { margin-bottom: 0; }",
     body: `<main class="auth-card"${notice.code === undefined ? "" : ` data-notice="${notice.code}"`}><div class="brand"><span class="glyph" aria-hidden="true"></span>Patchy</div><p class="auth-kicker">${escapeHtml(notice.kicker)}</p><h1 class="page-heading">${escapeHtml(notice.title)}</h1><p>${escapeHtml(notice.message)}</p>${notice.action === undefined ? "" : `<div class="actions"><a class="btn btn-primary" href="${escapeAttribute(notice.action.href)}">${escapeHtml(notice.action.label)}</a></div>`}</main>`
   });

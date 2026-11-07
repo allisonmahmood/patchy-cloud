@@ -64,6 +64,45 @@ const admission = Effect.gen(function* () {
   })
 );
 
+/** Who a top-level notice is for: an active signed-in viewer, or no one. */
+interface NoticeAdmission {
+  readonly viewer: RequireSession.Viewer["Service"] | undefined;
+  readonly cookies: ReadonlyArray<string>;
+}
+const nobody: NoticeAdmission = { viewer: undefined, cookies: [] };
+
+/**
+ * Who a top-level notice at `/~shell/notice/:code` is for, if anyone, and the cookies Clerk set
+ * reading the session, so a session it refreshed on the way stays refreshed. Unlike `Admission`
+ * it never answers for the page: Clerk wanting a handshake, a failed sign-in, no membership and a
+ * deactivated account are all no one, and a handshake's cookies, which belong to its redirect,
+ * are dropped. A person stopped on a notice always sees the notice.
+ */
+export const noticeViewer = Effect.gen(function* () {
+  const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const result = yield* session.authenticate(
+    new Request(new URL(request.url, session.publicBaseUrl), {
+      method: request.method,
+      headers: request.headers
+    })
+  );
+  if (result.status === "handshake") return nobody;
+  if (result.status === "signed-out") return { viewer: undefined, cookies: result.cookies };
+  const viewer = yield* RequireSession.resolveViewer.pipe(
+    Effect.provideService(RequireSession.SignedIn, result.claims)
+  );
+  if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
+    return { viewer: undefined, cookies: result.cookies };
+  yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
+  return { viewer, cookies: result.cookies };
+}).pipe(
+  Effect.catchTags({
+    SessionError: () => Effect.succeed(nobody),
+    SqlError: () => Effect.succeed(nobody)
+  })
+);
+
 /** Installed only on patch addresses and content URLs; handlers own scope and cookies. */
 export const layer = HttpRouter.middleware<{ provides: Admission }>()(
   Effect.gen(function* () {
