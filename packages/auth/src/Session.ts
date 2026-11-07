@@ -57,6 +57,11 @@ export type SessionResult =
       readonly response: Response;
       /** A verified return must set its cookies even when the destination is public. */
       readonly completed: boolean;
+      /**
+       * A verified return's session, which its response's cookies set: a page that never
+       * redirects, such as a notice, admits it without Clerk's cleanup hop.
+       */
+      readonly claims?: typeof SessionClaims.Type;
     };
 
 /**
@@ -73,6 +78,15 @@ export const refreshable = (result: SessionResult, now: number) =>
       result.reason?.startsWith("session-token-expired-refresh-") === true);
 
 const decodeClaims = Schema.decodeUnknownOption(SessionClaims);
+/** A verified signed-in state's session, when it names a user and session and has our claims. */
+const claimsOf = (auth: {
+  readonly userId: string | null;
+  readonly sessionId: string | null;
+  readonly sessionClaims: unknown;
+}) =>
+  auth.userId === null || auth.sessionId === null
+    ? Option.none()
+    : decodeClaims(auth.sessionClaims);
 const FrontendHost = Schema.String.check(
   Schema.isPattern(
     /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
@@ -354,18 +368,19 @@ export const make = Effect.gen(function* () {
       }
       const responseHeaders = new Headers({ location });
       for (const cookie of cookies) responseHeaders.append("set-cookie", cookie);
+      const verified = state.status === "signed-in" ? claimsOf(state.toAuth()) : Option.none();
       return {
         status: "handshake",
         response: new Response(null, { status: 307, headers: responseHeaders }),
-        completed: state.status === "signed-in"
+        completed: state.status === "signed-in",
+        ...(Option.isSome(verified) ? { claims: verified.value } : {})
       };
     }
     if (state.status === "signed-out") {
       return { status: "signed-out", reason, handshakeFailed: false, cookies };
     }
-    const auth = state.toAuth();
-    const claims = decodeClaims(auth.sessionClaims);
-    if (auth.userId === null || auth.sessionId === null || Option.isNone(claims)) {
+    const claims = claimsOf(state.toAuth());
+    if (Option.isNone(claims)) {
       return {
         status: "signed-out",
         reason: "session-claims-invalid",

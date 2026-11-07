@@ -19,16 +19,25 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION, type Manifest } from "@patchy/api";
-import { AgentConnections, AuthPages, DeviceLogins, MachineTokens, Session } from "@patchy/auth";
+import {
+  AgentConnections,
+  AuthPages,
+  DeviceLogins,
+  MachineTokens,
+  Session,
+  sessionScripts
+} from "@patchy/auth";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Limits } from "@patchy/limits";
 import {
   clerkEnv,
+  publishableKey,
   signedInCookies,
   signSession,
   signHandshake,
@@ -48,13 +57,21 @@ import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import {
   CONTENT_SECURITY_POLICY,
+  PATCH_CONTENT_SECURITY_POLICY,
   SHELL_SECURITY_POLICY,
+  noticeContentSecurityPolicy,
   servingHeaders,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
 import { switcherRelay, switcherTag } from "@patchy/core/html";
 import { switcherDigest, switcherScript } from "@patchy/core/switcher-script";
-import { brokerScript, brokerSrc, withSwitcherRelay } from "./shell.js";
+import {
+  brokerScript,
+  brokerSrc,
+  renderShellNotice,
+  type ShellNotice,
+  withSwitcherRelay
+} from "./shell.js";
 import { compress } from "./compression.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -114,12 +131,40 @@ const routes = Layer.mergeAll(
   HttpRouter.add("*", "/*", Pages.notFound),
   HttpRouter.middleware(servingHeaders, { global: true })
 );
+/** The cookies Clerk's backend answers a session refresh with, which a case sets. */
+const clerk = { refreshed: [] as Array<string> };
+/** Sessions as production reads them, over a stub of Clerk's backend that answers a refresh. */
+const session = Layer.unwrap(
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") return yield* Effect.die("Expected TCP");
+    return Session.layer.pipe(
+      Layer.provide(Layer.succeed(Session.backendApiUrl)(`http://127.0.0.1:${server.address.port}`))
+    );
+  })
+).pipe(
+  Layer.provide(
+    HttpRouter.serve(
+      HttpRouter.add(
+        "POST",
+        "/v1/sessions/:sid/refresh",
+        Effect.sync(() =>
+          HttpServerResponse.jsonUnsafe({ object: "cookies", cookies: clerk.refreshed })
+        )
+      ),
+      { disableLogger: true, disableListenLog: true }
+    ).pipe(
+      // A server of its own: layers memoize by reference, and the pages' tests use this one.
+      Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest))
+    )
+  )
+);
 const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
       memoryStore,
-      Session.layer,
+      session,
       Companies.layer,
       MachineTokens.layer,
       AgentConnections.layer,
@@ -1189,6 +1234,252 @@ it.layer(services)("pages in memory", (it) => {
           }
         }
       })
+  );
+
+  /** A notice as anyone sees it: the page with no viewer, under the relay-only policy. */
+  const forAnyone = Effect.fn(function* (
+    response: Response,
+    code: ShellNotice,
+    { returnTo = "/", status = 200 }: { readonly returnTo?: string; readonly status?: number } = {}
+  ) {
+    assert.strictEqual(response.status, status);
+    assert.strictEqual(
+      response.headers.get("content-security-policy"),
+      PATCH_CONTENT_SECURITY_POLICY
+    );
+    assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+    assert.strictEqual(
+      yield* Effect.promise(() => response.text()),
+      renderShellNotice(code, returnTo)
+    );
+  });
+  /** A top-level notice for one viewer: their switcher, then the session's scripts. */
+  const forViewer = Effect.fn(function* (
+    response: Response,
+    code: ShellNotice,
+    viewer: { readonly userId: string; readonly companyId: string; readonly patchId?: string },
+    { returnTo = "/", status = 200 }: { readonly returnTo?: string; readonly status?: number } = {}
+  ) {
+    assert.strictEqual(response.status, status);
+    assert.strictEqual(
+      response.headers.get("content-security-policy"),
+      noticeContentSecurityPolicy(FRONTEND_API_HOST)
+    );
+    assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+    const html = yield* Effect.promise(() => response.text());
+    assert.strictEqual(
+      html,
+      renderShellNotice(code, returnTo, {
+        ...viewer,
+        session: sessionScripts({
+          clerk: { frontendApiHost: FRONTEND_API_HOST, publishableKey: publishableKey() }
+        })
+      })
+    );
+    // Ahead of Clerk, so the menu never waits on it.
+    assert.isBelow(html.indexOf(switcherTag(viewer)), html.indexOf(FRONTEND_API_HOST));
+  });
+  /** A second member of the dev company, deactivated once `deactivate` runs. */
+  const colleague = Effect.fn(function* (handle: string) {
+    const companies = yield* Companies.Companies;
+    const invitation = yield* companies.createInvite({
+      companyId: DEV_SEED.companyId,
+      invitedBy: DEV_SEED.userId,
+      email: `${handle}@example.com`
+    });
+    const user = yield* companies.consumeInvite({
+      inviteId: invitation.id,
+      clerkUserId: `user_${handle}`,
+      email: `${handle}@example.com`,
+      name: handle
+    });
+    const cookie = (claims: Parameters<typeof signSession>[0] = {}) =>
+      signedInCookies(
+        signSession({
+          sub: `user_${handle}`,
+          email: `${handle}@example.com`,
+          sid: `sess_${handle}`,
+          ...claims
+        })
+      );
+    return {
+      ids: { userId: user.id, companyId: DEV_SEED.companyId },
+      cookie,
+      deactivate: (yield* Users.Users).deactivate({
+        companyId: DEV_SEED.companyId,
+        userId: user.id
+      })
+    };
+  });
+  /** Cookies a browser holds after its session token expired, with Clerk's refresh cookie or not. */
+  const expired = (refresh: boolean) => {
+    const now = Math.floor(Date.now() / 1_000);
+    const cookies = signedInCookies(signSession({ iat: now - 120, nbf: now - 120, exp: now - 60 }));
+    return refresh ? `${cookies}; ${refreshCookie}=refresh-old` : cookies;
+  };
+  // Clerk refreshes an expired session itself when the browser holds its refresh cookie, whose
+  // name carries the instance's suffix.
+  const refreshCookie = `__refresh_${createHash("sha1").update(publishableKey()).digest("base64url").slice(0, 8)}`;
+  /** Clerk's backend answers the next refresh with these cookies, which the page must carry. */
+  const refreshes = () => {
+    const token = signSession();
+    clerk.refreshed = [
+      `__session=${token}; Path=/; SameSite=Lax`,
+      `${refreshCookie}=refresh-new; Path=/; HttpOnly; SameSite=Lax`
+    ];
+    return (response: Response) =>
+      assert.includeMembers(
+        response.headers.getSetCookie().map((cookie) => cookie.split(";")[0]),
+        [`__session=${token}`, `${refreshCookie}=refresh-new`]
+      );
+  };
+  /** A development handshake's verified return, carrying a fresh session for the dev user. */
+  const handshakeReturn = () => {
+    const directives = [
+      `__session=${signSession()}; Path=/; SameSite=Lax`,
+      `__client_uat=${Math.floor(Date.now() / 1_000)}; Path=/; SameSite=Lax`,
+      "__clerk_db_jwt=offline-browser; Path=/; SameSite=Lax"
+    ];
+    return { directives, handshake: signHandshake(directives) };
+  };
+  const navigation = { "sec-fetch-dest": "document", accept: "text/html" };
+  const dev = { userId: DEV_SEED.userId, companyId: DEV_SEED.companyId };
+
+  it.effect("carries the switcher on a stopping notice for an active viewer, and no one else", () =>
+    Effect.gen(function* () {
+      const path = `/~shell/notice/stream_replaced?return=${encodeURIComponent("/patchy-dev/board")}`;
+      const notice = (cookie: string) =>
+        send(path, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
+      yield* forViewer(yield* notice(signedInCookies()), "stream_replaced", dev);
+
+      // A session Clerk refreshed on the way: the notice keeps the cookies it set.
+      const refreshed = refreshes();
+      const renewed = yield* notice(expired(true));
+      refreshed(renewed);
+      yield* forViewer(renewed, "stream_replaced", dev);
+
+      // Back from a handshake Clerk verified: the notice admits it at once, with the cookies
+      // that complete it, rather than through Clerk's cleanup hop.
+      const returned = handshakeReturn();
+      const completed = yield* send(
+        `${path}&__clerk_handshake=${encodeURIComponent(returned.handshake)}`,
+        { headers: navigation }
+      );
+      assert.isNull(completed.headers.get("location"));
+      assert.deepStrictEqual(completed.headers.getSetCookie(), returned.directives);
+      yield* forViewer(completed, "stream_replaced", dev);
+
+      // Stale with nothing to refresh it, Clerk wants a handshake. The notice never redirects
+      // for one, and sets none of its cookies.
+      const stale = yield* notice(expired(false));
+      assert.isNull(stale.headers.get("location"));
+      assert.deepStrictEqual(stale.headers.getSetCookie(), []);
+      yield* forAnyone(stale, "stream_replaced");
+
+      yield* forAnyone(yield* notice(""), "stream_replaced");
+      // Signed in to Clerk, but no one's member.
+      yield* forAnyone(
+        yield* notice(
+          signedInCookies(signSession({ sub: "user_nobody", email: "no@example.com" }))
+        ),
+        "stream_replaced"
+      );
+
+      // The account changed in this browser: the notice names only the one signed in now.
+      const other = yield* colleague("notice-switch");
+      yield* forViewer(yield* notice(other.cookie()), "stream_replaced", other.ids);
+      yield* other.deactivate;
+      yield* forAnyone(yield* notice(other.cookie()), "stream_replaced");
+
+      // A notice that signs in again keeps its link, for a viewer too.
+      const signIn = `/~shell/notice/principal_changed?return=${encodeURIComponent("/patchy-dev/board")}`;
+      yield* forViewer(
+        yield* send(signIn, { headers: { cookie: signedInCookies() } }),
+        "principal_changed",
+        dev,
+        { returnTo: "/patchy-dev/board" }
+      );
+    })
+  );
+
+  it.effect("carries the switcher on a needs-rebuild address for its admitted viewer only", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const patches = yield* Patches.Patches;
+      const { patchId, versionId, path } = yield* publish(
+        "Retired wire",
+        undefined,
+        null,
+        "old-wire"
+      );
+      yield* sql`UPDATE patch_versions SET wire_version = 999 WHERE id = ${versionId}`;
+      const open = (cookie: string, at = path) =>
+        send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
+      const rebuild = { status: 409 };
+      // The switcher treats the patch that can't open as the one on screen.
+      const about = { ...dev, patchId };
+      yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", about, rebuild);
+      const refreshed = refreshes();
+      const renewed = yield* open(expired(true));
+      refreshed(renewed);
+      yield* forViewer(renewed, "needs_rebuild", about, rebuild);
+
+      // A guest's switcher keys their own company's list.
+      const companies = yield* Companies.Companies;
+      const guestCompany = yield* companies.create({
+        name: "Guest Company",
+        handle: "guest-notice",
+        clerkUserId: "user_guest_notice",
+        email: "guest@example.com",
+        userName: "Guest"
+      });
+      const guest = signedInCookies(
+        signSession({ sub: "user_guest_notice", email: "guest@example.com", sid: "sess_guest" })
+      );
+      assert.strictEqual((yield* open(guest)).status, 404);
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId,
+        userId: guestCompany.user.id,
+        grantedBy: DEV_SEED.userId
+      });
+      yield* forViewer(
+        yield* open(guest),
+        "needs_rebuild",
+        { userId: guestCompany.user.id, companyId: guestCompany.company.id, patchId },
+        rebuild
+      );
+
+      // The frame's notice keeps the relay alone, under the content policy.
+      const framed = yield* open(signedInCookies(), `/~content/${patchId}/${versionId}?n=boot_x`);
+      assert.strictEqual(framed.status, 409);
+      assert.strictEqual(framed.headers.get("content-security-policy"), CONTENT_SECURITY_POLICY);
+      assert.strictEqual(
+        yield* Effect.promise(() => framed.text()),
+        renderShellNotice("needs_rebuild", "")
+      );
+
+      // Anyone else meets the address's door as before: sign in, the deactivated page.
+      assert.strictEqual((yield* send(path)).status, 401);
+      const other = yield* colleague("rebuild-switch");
+      yield* forViewer(
+        yield* open(other.cookie()),
+        "needs_rebuild",
+        { ...other.ids, patchId },
+        rebuild
+      );
+      yield* other.deactivate;
+      const deactivated = yield* open(other.cookie());
+      assert.strictEqual(deactivated.status, 403);
+      assert.notInclude(yield* Effect.promise(() => deactivated.text()), "switcher.js");
+
+      // A public page carries no viewer data, nor any cookie, even for a signed-in member.
+      yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+      for (const cookie of [signedInCookies(), expired(false), ""]) {
+        const response = yield* open(cookie);
+        assert.deepStrictEqual(response.headers.getSetCookie(), []);
+        yield* forAnyone(response, "needs_rebuild", rebuild);
+      }
+    })
   );
 
   /** A published tier 1 version's content URL, with its stored document. */
