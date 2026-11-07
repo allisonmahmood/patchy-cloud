@@ -17,6 +17,10 @@ import { developerEnvFile, readDeveloperEnv } from "../../scripts/dev/src/develo
 import { startCluster, type Published } from "../browser-tier1/instance.js";
 import { startProxy, listen, closeServer } from "./proxy.js";
 import { checkBrowsers } from "./check.js";
+import { publishSpend } from "./spend.js";
+import { checkWorkflow } from "./workflow.js";
+
+const workflow = process.argv.includes("--workflow");
 
 const keys = await Effect.runPromise(
   Effect.gen(function* () {
@@ -39,7 +43,7 @@ const cleanup: (() => Promise<unknown>)[] = [() => rm(directory, { recursive: tr
 process.stdout.write("Preparing isolated Clerk people and local server\n");
 try {
   // Only these exact run-scoped test users are ever created/deleted. No invitations or mail.
-  for (const kind of ["member", "guest", "outsider"]) {
+  for (const kind of workflow ? ["member", "requester"] : ["member", "guest", "outsider"]) {
     const email = `${run}-${kind}+clerk_test@example.com`;
     const user = await clerk.users.createUser({
       emailAddress: [email],
@@ -58,13 +62,22 @@ try {
   await sql.connect();
   cleanup.push(() => sql.end());
   for (const user of users) {
-    const id = { member: "usr_dev", guest: "usr_guest", outsider: "usr_colleague" }[user.kind]!;
+    const id = {
+      member: "usr_dev",
+      guest: "usr_guest",
+      outsider: "usr_colleague",
+      requester: "usr_colleague"
+    }[user.kind]!;
     await sql.query("UPDATE users SET clerk_user_id=$1, email=$2, company_id=$3 WHERE id=$4", [
       user.id,
       user.email,
-      user.kind === "member" ? "cmp_dev" : "cmp_pine",
+      user.kind === "member" || user.kind === "requester" ? "cmp_dev" : "cmp_pine",
       id
     ]);
+  }
+  if (workflow) {
+    await sql.query("UPDATE users SET name='Review manager' WHERE id='usr_dev'");
+    await sql.query("UPDATE users SET name='Project teammate' WHERE id='usr_colleague'");
   }
   const proxy = await startProxy();
   cleanup.push(() => proxy.close());
@@ -155,6 +168,8 @@ try {
       headers: { authorization: "Bearer patchy-dev-token", "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
+  // CLI init downloads this local server's release through its advertised proxy address.
+  proxy.configure({ upstream, auth, clerk, patches: [] });
   const publish = async (scope: "company" | "public") => {
     const response = await api("publish", "POST", {
       publishKey: crypto.randomUUID(),
@@ -176,7 +191,8 @@ try {
       throw new Error(`Fixture publish failed (${response.status}): ${await response.text()}`);
     return (await response.json()) as Published;
   };
-  const privatePatch = await publish("company");
+  const spend = workflow ? await publishSpend(directory, upstream) : undefined;
+  const privatePatch = spend?.patch ?? (await publish("company"));
   const publicPatch = await publish("public");
   const grant = async (remove = false) => {
     const email = users.find((user) => user.kind === "guest")!.email;
@@ -187,7 +203,7 @@ try {
     );
     if (!response.ok) throw new Error(`Fixture guest grant failed (${response.status}).`);
   };
-  await grant();
+  if (!workflow) await grant();
   proxy.configure({ upstream, auth, clerk, patches: [privatePatch, publicPatch] });
   const hosts = [];
   for (let index = 0; index < 2; index++) {
@@ -202,8 +218,9 @@ try {
     cleanup.push(() => closeServer(host));
   }
   proxy.approved.add(hosts[0]!);
-  await mkdir(".local/embed-prototype", { recursive: true });
-  const report = await checkBrowsers({
+  const output = workflow ? ".local/embed-workflow" : ".local/embed-prototype";
+  await mkdir(output, { recursive: true });
+  const input = {
     proxy,
     hosts,
     users,
@@ -213,8 +230,11 @@ try {
     publicPatch,
     grant,
     api
-  });
-  await writeFile(".local/embed-prototype/results.json", JSON.stringify(report, null, 2));
+  };
+  const report = spend
+    ? await checkWorkflow({ ...input, republish: spend.republish })
+    : await checkBrowsers(input);
+  await writeFile(`${output}/results.json`, JSON.stringify(report, null, 2));
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (report.browsers.some((browser) => browser.blocker)) process.exitCode = 1;
 } finally {
