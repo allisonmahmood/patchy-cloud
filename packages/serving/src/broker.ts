@@ -16,7 +16,7 @@ import {
 } from "@patchy/api";
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import { serverReplyTimeoutMs } from "@patchy/api/query-config";
-import { openSwitcher, switcherMessageKind } from "@patchy/core/switcher";
+import { openSwitcher, switcherMessage, switcherMessageKind } from "@patchy/core/switcher";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
@@ -807,7 +807,13 @@ function mount(frame: HTMLIFrameElement): void {
   window.addEventListener("message", (event) => {
     if (event.source !== frame.contentWindow || event.origin !== "null") return;
     const kind = switcherMessageKind(event.data, ["hello", "open"]);
-    if (kind === "hello") return handOffKeys();
+    if (kind === "hello") {
+      // A switcher already here will take the keyboard when it opens; one that loads later says
+      // so itself.
+      if (frame.dataset.scope === "company" && typeof window.patchySwitcher === "object")
+        frame.contentWindow?.postMessage(switcherMessage("available"), "*");
+      return handOffKeys();
+    }
     if (kind !== "open") return;
     // Only ever opens: a patch can post this itself, and must not close the menu under the person.
     if (frame.dataset.scope === "company") return openSwitcher(window);

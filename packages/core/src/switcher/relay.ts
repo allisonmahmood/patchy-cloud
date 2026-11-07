@@ -7,7 +7,8 @@
  * Its one capture listener on `window` is the first any script registers, so it hears every key
  * before page code can: it claims Mod+Shift+K and on an activating press asks for the switcher.
  * In a frame, that is an `open` message to the shell, which also learns the relay is running from
- * its `hello`; at the top it toggles this page's own switcher, and lets a shell's waiting frame
+ * its `hello`. A shell with a switcher says so (`available`); there, every key that follows the
+ * press is the switcher's until it takes the keyboard, so the page never hears one; at the top it toggles this page's own switcher, and lets a shell's waiting frame
  * take clicks and focus once that frame's document can claim the key. When the shell says the
  * switcher closed, the relay puts focus and the selection back where the press found them.
  */
@@ -15,9 +16,28 @@ import { activates, claims, platformOf } from "./key.js";
 import { switcherMessage, switcherMessageKind, toggleSwitcher } from "./messages.js";
 
 const platform = platformOf(navigator);
-// Read once, before page code runs, which could shadow it.
+// Read once, before page code runs, which could shadow them.
 const shell = parent;
 const framed = shell !== window;
+const now = performance.now.bind(performance);
+
+/** The shell said it has a switcher that takes the keyboard when it opens. */
+let menu = false;
+/**
+ * Until when every key this frame hears belongs to the switcher just asked for: from an
+ * activating press, where a switcher will take the keyboard, until it has (this window blurs), it
+ * closed, or a second passes. A key pressed in that moment is dropped, never the page's.
+ */
+let holdUntil = 0;
+const hold = (event: Event) => {
+  if (!event.isTrusted || now() >= holdUntil) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+};
+/** `closed` came while the frame didn't have focus yet: restore once it does. */
+let restoreOnFocus = false;
+/** A focus or blur of this frame as a whole, not of an element in it; Firefox aims some at the document. */
+const whole = (event: Event) => event.target === window || event.target === document;
 
 /** Where the press found focus, and the selection there, for `closed` to restore. */
 let saved:
@@ -73,7 +93,10 @@ const restore = () => {
 addEventListener(
   "keydown",
   (event) => {
-    if (!claims(event, platform)) return;
+    if (!claims(event, platform)) {
+      if (framed) hold(event);
+      return;
+    }
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!activates(event, platform)) return;
@@ -81,19 +104,48 @@ addEventListener(
     if (!framed) return toggleSwitcher(window);
     remember();
     shell.postMessage(switcherMessage("open"), "*");
+    if (menu) holdUntil = now() + 1_000;
   },
   true
 );
 
 if (framed) {
+  addEventListener("keypress", hold, true);
+  addEventListener("keyup", hold, true);
+  addEventListener(
+    "blur",
+    (event) => {
+      // The switcher took the keyboard; keys that come back here are the page's.
+      if (whole(event)) holdUntil = 0;
+    },
+    true
+  );
+  addEventListener(
+    "focus",
+    (event) => {
+      if (!whole(event) || !restoreOnFocus) return;
+      restoreOnFocus = false;
+      restore();
+    },
+    true
+  );
   addEventListener(
     "message",
     (event) => {
-      if (event.source !== shell || switcherMessageKind(event.data, ["closed"]) === undefined)
-        return;
+      // Only the shell's own message: a page can dispatch one claiming any source, untrusted.
+      if (!event.isTrusted || event.source !== shell) return;
+      const kind = switcherMessageKind(event.data, ["available", "closed"]);
+      if (kind === undefined) return;
       // Patchy's own message; page code never sees it.
       event.stopImmediatePropagation();
-      restore();
+      if (kind === "available") {
+        menu = true;
+        return;
+      }
+      holdUntil = 0;
+      // Focus returns with the message, but a browser can settle it later: then restore on arrival.
+      if (document.hasFocus()) restore();
+      else restoreOnFocus = true;
     },
     true
   );
