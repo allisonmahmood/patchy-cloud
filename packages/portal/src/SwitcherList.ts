@@ -23,36 +23,11 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { RequireSession, Session, withCookies } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
 import { WhatsNew } from "@patchy/core";
+import type { SwitcherList } from "@patchy/core/switcher";
 import { GuestGrants, Patches } from "@patchy/patches";
 
-/** What `/switcher.json` answers a signed-in person. Titles are as published, possibly blank. */
-export interface SwitcherList {
-  readonly viewer: { readonly id: string; readonly companyId: string; readonly role: Users.Role };
-  readonly company: { readonly handle: string; readonly name: string };
-  /** How many What's new changes shipped since the viewer last looked. */
-  readonly whatsNewUnseen: number;
-  /** The company's live patches the viewer can open, its public ones included. */
-  readonly patches: ReadonlyArray<{
-    readonly id: string;
-    readonly name: string;
-    readonly title: string;
-    readonly tier: number;
-    /** The viewer owns it. */
-    readonly mine: boolean;
-    /** When the viewer last opened it; absent until they do. */
-    readonly openedAt?: string;
-    /** The viewer's halving open score, as Home's Your usual ranks by; absent with `openedAt`. */
-    readonly score?: number;
-  }>;
-  /** Other companies' patches shared with the viewer that they can open now and aren't public. */
-  readonly shared: ReadonlyArray<{
-    readonly id: string;
-    readonly company: { readonly handle: string; readonly name: string };
-    readonly name: string;
-    readonly title: string;
-    readonly tier: number;
-  }>;
-}
+/** What `/switcher.json` answers, which the switcher's script in core reads. */
+export type { SwitcherList };
 
 const noStore = { "cache-control": "private, no-store" };
 

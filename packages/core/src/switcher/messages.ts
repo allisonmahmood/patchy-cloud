@@ -9,8 +9,11 @@
 
 /** From a frame to its shell: `hello` once its relay runs, `open` on an activating press. */
 export type FrameMessage = "hello" | "open";
-/** From a shell to its frame: the switcher closed, so the relay puts focus back. */
-export type ShellMessage = "closed";
+/**
+ * From a shell to its frame: `available` once the shell has a switcher that will take the
+ * keyboard, and `closed` when the switcher closed, so the relay puts focus back.
+ */
+export type ShellMessage = "available" | "closed";
 
 export const switcherMessage = <Kind extends FrameMessage | ShellMessage>(kind: Kind) =>
   ({ patchy: "switcher", v: 1, kind }) as const;

@@ -4,8 +4,8 @@ import { pageResponse } from "./page.js";
 
 const app = {
   viewer: {
-    user: { name: "Sam", email: "sam@northwind.example" },
-    company: { name: "Northwind" },
+    user: { id: "usr_sam", name: "Sam", email: "sam@northwind.example" },
+    company: { id: "cmp_northwind", name: "Northwind" },
     whatsNewSeen: 0
   },
   section: "people"

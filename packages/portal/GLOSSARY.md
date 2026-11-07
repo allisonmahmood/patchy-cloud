@@ -24,6 +24,10 @@ _Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
 Home's shelf of other companies' patches shared with the viewer as their [guest](../companies/GLOSSARY.md): each opens the patch, or, while its guests can't open it, says why, and its menu holds **Remove…**, which asks on a confirmation page and then ends the viewer's own grant. It sits after Home's own shelves, or after its empty state, and a search leaves it out.
 _Avoid_: shared patches, guest patches, inbox
 
+**Switcher**:
+Patchy's own **Go to…** menu on Mod+Shift+K, over any company patch the person can open, a guest's view of a shared patch included, and every signed-in portal page; never on a public patch's page or in `patchy dev`, which only claim the key. Nothing typed, it lists the patch they were last in first and lit, so the key then Enter flips back, the next five they opened last, **This patch** (the card's Overview and Versions, with Log and Settings for its owner and admins, never for a guest) and **Patchy**, the places with What's new. Typing filters it all by word starts, initials, and from three letters inside a word. It opens at once from the tab's copy of the [switcher list](#switcher-list), which each page load and an open after a minute refresh and signing out forgets; Escape or the key again closes it and puts the cursor back. There is no button for it.
+_Avoid_: command palette (it runs no commands), launcher, quick open, spotlight
+
 **Switcher list**:
 What `/switcher.json` answers a signed-in person's browser, for the switcher's menu: their company's live patches they can open, public ones included, each saying whether it is theirs and when they last opened it, and the patches shared with them that they can open now and that aren't public. A grant outlives its patch going public and back, so a shared patch drops out while it is public, and another company's public patch never appears. Only a script on a Patchy page gets it, by the browser's session; another site, a machine token, or someone signed out or deactivated gets a JSON refusal. It is not part of the agents' API.
 _Avoid_: patch index, directory, menu API

@@ -25,7 +25,8 @@ import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
-import { Cryptography, isWelcomePage, switcherRelay } from "@patchy/core";
+import { Cryptography, isWelcomePage, SWITCHER_PATH, switcherRelay } from "@patchy/core";
+import { switcherDigest, switcherScript } from "@patchy/core/switcher-script";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
 import { Content, GuestGrants, Patches, PatchesConfig } from "@patchy/patches";
@@ -310,10 +311,9 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // An admitted member opening the current version's address, not an older version or the
   // frame's content request, is an open for their own Home: it is what clears "new to you".
   // Public pages are served without a session, so they record none.
-  const viewerId =
-    !isPublic && !HttpServerResponse.isHttpServerResponse(admission)
-      ? admission.user.id
-      : undefined;
+  const viewer =
+    !isPublic && !HttpServerResponse.isHttpServerResponse(admission) ? admission : undefined;
+  const viewerId = viewer?.user.id;
   // A guest has no Home in the patch's company to record an open for.
   const member =
     !HttpServerResponse.isHttpServerResponse(admission) &&
@@ -377,6 +377,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           handlerKinds: handlerKinds(served.value.version.manifest.handlers),
           scope: isPublic ? "public" : "company",
           viewerId,
+          // The viewer's own company, a guest's too, keys the switcher's list.
+          companyId: viewer?.company.id,
           head: isPublic ? undefined : sessionScripts(session),
           // Only an address renders a shell, so its route selection is always there.
           nonce: yield* cryptography.internalId("boot"),
@@ -424,26 +426,32 @@ const patches = HttpRouter.use((router) =>
 const otherPages = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const publicBaseUrl = yield* PatchesConfig.publicBaseUrl;
-    const broker = yield* compress(encoder.encode(brokerScript));
-    yield* router.add(
-      "GET",
-      "/~shell/broker.js",
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const coding = negotiate(request.headers["accept-encoding"]);
-        // Mixed releases share this path during a rolling deploy. Only bytes whose digest is `v`
-        // are kept for good; a shell from another release, or none, revalidates every load.
-        const current = new URL(request.url, publicBaseUrl).searchParams.get("v") === brokerDigest;
-        return HttpServerResponse.uint8Array(broker[coding], {
-          contentType: "text/javascript",
-          headers: {
-            "cache-control": current ? "public, max-age=31536000, immutable" : "no-cache",
-            vary: "Accept-Encoding",
-            ...(coding === "identity" ? {} : { "content-encoding": coding })
-          }
-        });
-      })
-    );
+    // Shell scripts by URL. Mixed releases share each path during a rolling deploy: only bytes
+    // whose digest is `v` are kept for good, and a page from another release, or none,
+    // revalidates every load.
+    for (const [path, text, digest] of [
+      ["/~shell/broker.js", brokerScript, brokerDigest],
+      [SWITCHER_PATH, switcherScript, switcherDigest]
+    ] as const) {
+      const bytes = yield* compress(encoder.encode(text));
+      yield* router.add(
+        "GET",
+        path,
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const coding = negotiate(request.headers["accept-encoding"]);
+          const current = new URL(request.url, publicBaseUrl).searchParams.get("v") === digest;
+          return HttpServerResponse.uint8Array(bytes[coding], {
+            contentType: "text/javascript",
+            headers: {
+              "cache-control": current ? "public, max-age=31536000, immutable" : "no-cache",
+              vary: "Accept-Encoding",
+              ...(coding === "identity" ? {} : { "content-encoding": coding })
+            }
+          });
+        })
+      );
+    }
     yield* router.add(
       "GET",
       "/~shell/notice/:code",
