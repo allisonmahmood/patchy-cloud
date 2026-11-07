@@ -576,7 +576,9 @@ it as "<key>'s email". The suite: `cheers` (one shared count),
 (agent tools on `brightline`'s Kudos) and `war-room`, the reference for the
 hardest builds: a live incident room on `brightline` where only the commander
 or an admin resolves, Taylor at Cedar Works works incidents as a guest, and
-agents never resolve a SEV1.
+agents never resolve a SEV1. Held-out tasks run only when `--tasks` names
+them, to confirm that an edit generalises, never to choose one: `standup`
+(tier 2: a written standup where only an entry's author can change it).
 
 Flags: `--base <ref>` or `--only-head`, `--tasks` (comma-separated ids; every
 task that isn't held out by default), `--builders` (`sonnet,terra`),
