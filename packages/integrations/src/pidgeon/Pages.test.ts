@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { switcherRelay } from "@patchy/core";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -57,7 +58,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           html.match(/<fieldset class="form-step" id="[^"]+" disabled data-pidgeon-step>/g)?.length,
           3
         );
-        assert.notMatch(html, /<script(?![^>]*\bsrc=)/);
+        assert.notMatch(html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
         assert.include(page.response.headers.get("content-security-policy")!, "script-src 'self'");
         const script = yield* send(Page.connectScriptPath, {
           headers: { cookie: cookie(owner.user) }

@@ -25,6 +25,11 @@
       "types": "./dist/look.d.ts",
       "import": "./dist/look.js"
     },
+    "./switcher": {
+      "development": "./src/switcher/index.ts",
+      "types": "./dist/switcher/index.d.ts",
+      "import": "./dist/switcher/index.js"
+    },
     "./whatsNew": {
       "development": "./src/whatsNew.ts",
       "types": "./dist/whatsNew.d.ts",
@@ -35,8 +40,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "effect-tsgo tsc -p tsconfig.json",
-    "test": "vitest run"
+    "build": "node ../../scripts/build-core-scripts.mjs && effect-tsgo tsc -p tsconfig.json",
+    "test": "node ../../scripts/build-core-scripts.mjs && vitest run"
   },
   "dependencies": {
     "@patchy/limits": "workspace:*",
@@ -46,6 +51,7 @@
     "saxes": "^6.0.0"
   },
   "devDependencies": {
+    "@tanstack/hotkeys": "0.19.0",
     "@types/css-tree": "^3.2.0"
   }
 }

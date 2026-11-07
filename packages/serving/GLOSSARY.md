@@ -28,6 +28,10 @@ _Avoid_: patch (the untrusted content it contains), viewer (the person opening i
 The shell's gate between one patch document and Patchy. It binds requests to the loaded version and the initiating viewer, never gives patch code a credential, and never lends a replacement document the old document's authority.
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
 
+**Switcher relay**:
+The one script Patchy puts ahead of a patch's own code, first in the `<head>` of every document it serves, and at the top of its own pages, shells and notices. It claims Mod+Shift+K before any page listener or the browser can have it, and tells the shell when it starts and when the key asks for the switcher, in messages that carry no authority.
+_Avoid_: injection (Patchy adds nothing else to a patch's bytes), hotkey (a patch's own, through `patchy/hotkeys`)
+
 **Envelope**:
 One correlated request or reply between a patch document and its broker, carrying the bundle's wire version and operation data. It is a message contract, not permission to choose a patch, version or initiating viewer.
 _Avoid_: transport version (there is only the runtime wire), binding (the host's trusted context)

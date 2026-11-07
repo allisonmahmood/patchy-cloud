@@ -23,6 +23,7 @@ import {
   signHandshake,
   signSession
 } from "@patchy/auth/testing";
+import { withSwitcherRelay } from "@patchy/serving/shell";
 import { answer, html, send, server, publish, publishBody } from "./test/server.js";
 
 const publicBaseUrl = "https://patchy.example";
@@ -124,7 +125,10 @@ it.layer(
         assert.isDefined(frame, "the restored patch opens its document");
         const src = attributes(frame!)["data-content-src"];
         assert.isString(src);
-        assert.strictEqual(yield* (yield* send(signedRequest(src!, cookie))).text, document);
+        assert.strictEqual(
+          yield* (yield* send(signedRequest(src!, cookie))).text,
+          withSwitcherRelay(document)
+        );
       }
     })
   );

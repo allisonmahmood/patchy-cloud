@@ -1,5 +1,15 @@
 import { avatar, searchField } from "./components.js";
 import { changesSince, type ChangeKind, latestRelease, tally } from "./whatsNew.js";
+import { relayScript, relayScriptHash } from "./generated/relay-script.js";
+
+/**
+ * The switcher relay as a document carries it: the inline script that claims Mod+Shift+K before
+ * any other script can hear it (`switcher/relay.ts`). Every first-party page and patch shell has
+ * it at the top of its `<head>`, and Serving inserts it ahead of a patch's own code.
+ */
+export const switcherRelay = `<script>${relayScript}</script>`;
+/** The CSP source that admits the relay, and only it, wherever a page's policy allows no inline script. */
+export const SWITCHER_RELAY_SOURCE = relayScriptHash;
 
 /** Shared component subset for first-party pages and the served document's state notices. */
 export const shellStyles = `
@@ -419,7 +429,10 @@ export const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:ima
 export const framedDocument = (html: string): string =>
   `<base href="about:srcdoc">${html.replace(/^\uFEFF/, "")}`;
 
-/** First-party HTML shell. Served patch documents remain separate in Serving. */
+/**
+ * First-party HTML shell. Served patch documents remain separate in Serving. Every one carries the
+ * switcher relay, so its response's CSP admits `SWITCHER_RELAY_SOURCE`.
+ */
 export function htmlPage(options: {
   title: string;
   body: string;
@@ -431,6 +444,7 @@ export function htmlPage(options: {
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  ${switcherRelay}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(options.title)}</title>
   ${faviconLink}

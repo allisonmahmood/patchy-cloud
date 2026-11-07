@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-// @effect-diagnostics globalTimers:off globalFetch:off
+// @effect-diagnostics globalTimers:off globalFetch:off globalConsole:off
 // This browser entry owns platform I/O; it never creates an Effect runtime.
 import {
   RuntimeRequest,
@@ -16,6 +16,7 @@ import {
 } from "@patchy/api";
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import { serverReplyTimeoutMs } from "@patchy/api/query-config";
+import { openSwitcher, switcherMessageKind } from "@patchy/core/switcher";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
@@ -792,12 +793,29 @@ function mount(frame: HTMLIFrameElement): void {
       release(reserved);
     }
   };
-  // Keys go to the focused document. The frame takes focus as its patch starts loading, so the
-  // patch hears a key once it is on screen, before its load event. Shell UI that holds focus,
-  // such as the starting cover, keeps it.
+  // Keys go to the focused document. The frame waits, unclickable and out of Tab order, until its
+  // document's relay says hello; the shell's own relay, whose listeners run first, then shows it,
+  // and it takes focus here, so the patch hears a key once it is on screen, before its load event.
+  // Until then the shell's relay claims Mod+Shift+K. Shell UI that holds focus, such as the
+  // starting cover, keeps it.
   const handOffKeys = () => {
     if (document.activeElement === null || document.activeElement === document.body) frame.focus();
   };
+  // The relay's window messages, apart from the port. They carry no authority: a document that
+  // fakes one only takes focus it could take by being clicked, or asks for Patchy's own switcher.
+  let explained = false;
+  window.addEventListener("message", (event) => {
+    if (event.source !== frame.contentWindow || event.origin !== "null") return;
+    const kind = switcherMessageKind(event.data, ["hello", "open"]);
+    if (kind === "hello") return handOffKeys();
+    if (kind !== "open" || frame.dataset.scope === "public") return;
+    // Only ever opens: a patch can post this itself, and must not close the menu under the person.
+    if (frame.dataset.scope === "company") openSwitcher(window);
+    if (explained) return;
+    explained = true;
+    // oxlint-disable-next-line no-console -- for the builder or person who wonders where the key went.
+    console.info("Mod+Shift+K is Patchy's switcher key; it never reaches the patch's own code.");
+  });
   frame.addEventListener("load", () => {
     if (closed) return;
     if (issued) return stop();
@@ -824,7 +842,8 @@ function mount(frame: HTMLIFrameElement): void {
     } catch {
       notice("bootstrap_failed");
     }
-    // Again on load, in case focus fell back to the shell's body while the frame loaded.
+    // On load too, for a document without the relay, or in case focus fell back to the shell's
+    // body while the frame loaded.
     handOffKeys();
   });
   window.addEventListener("popstate", announceRoute);
@@ -857,7 +876,6 @@ function mount(frame: HTMLIFrameElement): void {
     // Tier 2's stream carries the cold start, so it binds the company while the frame loads.
     if (tier === 2) startStream();
   }
-  handOffKeys();
   // Install the one-shot load handoff before permitting the initial document to load.
   frame.src = contentSrc;
 }

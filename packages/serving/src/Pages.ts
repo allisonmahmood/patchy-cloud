@@ -4,9 +4,10 @@
  * The server owns the root and catch-all together. Pages read through
  * `patches`; metadata, visits and opens go through `Patches`, a colleague's
  * first open is reported as `patch.first_opened`, and `Content` reads the
- * HTML only after admission. A content URL's document comes from the
- * host's memory once read, compressed by `Accept-Encoding`. The serving
- * guarantees these routes answer under are `serving-headers.ts`.
+ * HTML only after admission. A content URL's document, its stored bytes with
+ * the switcher relay inserted, comes from the host's memory once read,
+ * compressed by `Accept-Encoding`. The serving guarantees these routes answer
+ * under are `serving-headers.ts`.
  */
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -24,7 +25,7 @@ import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
-import { Cryptography, isWelcomePage } from "@patchy/core";
+import { Cryptography, isWelcomePage, switcherRelay } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import { DeploymentConfig } from "@patchy/limits";
 import { Content, GuestGrants, Patches, PatchesConfig } from "@patchy/patches";
@@ -38,7 +39,8 @@ import {
   renderShellNotice,
   isShellNotice,
   brokerScript,
-  brokerDigest
+  brokerDigest,
+  withSwitcherRelay
 } from "./shell.js";
 import {
   NO_REFERRER_POLICY,
@@ -88,6 +90,8 @@ type StoredDocument = Pick<Patches.PatchVersion, "objectKey" | "contentHash" | "
 type Document = Precompressed | Pick<Precompressed, "identity">;
 
 const encoder = new TextEncoder();
+/** What the relay adds to every document, whatever its stored size. */
+const relayBytes = encoder.encode(switcherRelay).byteLength;
 
 /** How a kept document is compressed: `compress`, which tests replace to watch it run. */
 export const DocumentCompression = Context.Reference<
@@ -96,9 +100,10 @@ export const DocumentCompression = Context.Reference<
 
 /**
  * Content URL documents in memory, within the `serving.contentCache.*` bounds. The body is the
- * stored bytes verbatim, the same for every viewer who passes the door, so a kept or compressed
- * body suits them all: the nonce stays in the URL and every header is computed per request. A
- * miss checks the bytes against the version's recorded digest before anyone receives them.
+ * stored bytes with the switcher relay first in their head, the same for every viewer who passes
+ * the door, so a kept or compressed body suits them all: the nonce stays in the URL and every
+ * header is computed per request. A miss checks the stored bytes against the version's recorded
+ * digest before the relay goes in and anyone receives them.
  *
  * A host reads and prepares at most four documents at a time, from the read through keeping
  * them, so documents waiting their turn hold no bytes; their wait counts against the job's
@@ -116,8 +121,8 @@ const makeDocuments = Effect.gen(function* () {
     const html = yield* content.read(stored);
     if ((yield* cryptography.contentHash(html)) !== stored.contentHash)
       return yield* new StoredDocumentMismatch({ objectKey: stored.objectKey });
-    const identity = encoder.encode(html);
-    // One that won't be kept goes out as stored, rather than compressed on every load. The
+    const identity = encoder.encode(withSwitcherRelay(html));
+    // One that won't be kept goes out uncompressed, rather than compressed on every load. The
     // permit is held until zlib finishes, so the bound counts native work, not waiting fibers.
     const document: Document = keep
       ? yield* compressing.withPermits(1)(Effect.uninterruptible(compressDocument(identity)))
@@ -130,7 +135,7 @@ const makeDocuments = Effect.gen(function* () {
     maxBytes: deployment.get("serving.contentCache.bytes"),
     maxEntries: deployment.get("serving.contentCache.entries"),
     identity: (stored: StoredDocument) => `${stored.objectKey}#${stored.contentHash}`,
-    size: (stored) => stored.fileSize,
+    size: (stored) => stored.fileSize + relayBytes,
     read: (stored, keep) => preparing.withPermits(1)(prepare(stored, keep)),
     loaded: (contentLoad) => WideEvents.enrich({ contentLoad })
   });
