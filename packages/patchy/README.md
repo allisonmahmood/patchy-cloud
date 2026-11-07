@@ -386,7 +386,7 @@ export default defineConfig({
         created: t.timestamp().default("now"),
         parent: t.ref("notes").optional()
       },
-      { indexes: { byDone: ["done"] }, shared: true }
+      { indexes: { byDone: ["done"] } }
     )
   },
   files: { attachments: files("Note attachments keyed by note id and filename.") },
@@ -408,6 +408,14 @@ table and a file store. CLI commands report these failures as `invalid_manifest`
 Descriptions are config-owned metadata: publishing a definition replaces its
 description, omission keeps it, and rollback leaves it unchanged. A
 description-only publish does not advance the schema revision.
+
+Every table and file store is shared unless its options say `shared: false`. The
+company's other tier 2 patches can declare a shared one and read it from their
+handlers, read-only; an unshared one is reached only through its own patch, which
+anyone who can open that patch still does. A publish that defines `shared: false`
+unshares it, and refuses with `has_dependants` while live consumers read it unless
+`--force` is passed. Defining it again without `shared: false` shares it; omission
+and rollback never change sharing.
 
 `Row<typeof config, "notes">`, `Insert<typeof config, "notes">` and
 `Update<typeof config, "notes">` infer the owned table contract. Rows include
@@ -479,8 +487,8 @@ that the user saved the file. File operations on public patches reject with
 `not_available_on_public`, which application code can catch without ending the
 shell session.
 
-Share a whole store with `files("Source documents", { shared: true })`. Sharing
-publishes read access to every file in that store. Add it with
+A store is shared whole unless `files("Source documents", { shared: false })`
+opts it out. Sharing publishes read access to every file in that store. Add it with
 `patchy add shared-store <patchId>/<store> --as assets` on a tier 2 repo. Its
 queries use `ctx.shared.assets.list/stat`; actions also use `get` for bytes. A
 store on any tier can be shared out.

@@ -372,7 +372,9 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
       const unshared = yield* databases.withPatchLock(patchId)(
         tables.provision(patchId, {
           ...definition,
-          files: { attachments: { description: definition.files.attachments.description } }
+          files: {
+            attachments: { description: definition.files.attachments.description, shared: false }
+          }
         })
       );
       assert.strictEqual(unshared.schemaRevision, 3);
@@ -394,6 +396,64 @@ export const stores = Effect.fn("ProvisioningContract.stores")(function* (compan
         (yield* inventory.read(patchId))!.stores.find((store) => store.name === "attachments")!
           .shared
       );
+    })
+  );
+});
+
+/** An omitted flag shares a table or store; only `shared: false` keeps or makes it unshared. */
+export const sharingDefault = Effect.fn("ProvisioningContract.sharingDefault")(function* (
+  companyId: string
+) {
+  const databases = yield* CompanyDatabases.CompanyDatabases;
+  const tables = yield* Tables.Tables;
+  const inventory = yield* Inventory.Inventory;
+  const patchId = "sharing-default";
+  const table = { description: "Notes identified by their row id.", columns: {}, indexes: {} };
+  const store = { description: "Attachments identified by file name." };
+  const defined = (shared?: boolean): typeof Manifest.Type => {
+    const flag = shared === undefined ? {} : { shared };
+    return {
+      ...manifest({ omitted: table, private: { ...table, ...flag } }),
+      files: { omittedFiles: store, privateFiles: { ...store, ...flag } }
+    };
+  };
+  const flags = Effect.map(inventory.read(patchId), (snapshot) =>
+    Object.fromEntries(
+      [...snapshot!.tables, ...snapshot!.stores].map((resource) => [resource.name, resource.shared])
+    )
+  );
+  yield* databases.ensureReady(companyId);
+  yield* databases.withCompany(companyId)(
+    Effect.gen(function* () {
+      const created = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, defined(false))
+      );
+      assert.deepStrictEqual(created.sharing, []);
+      assert.deepStrictEqual(yield* flags, {
+        omitted: true,
+        private: false,
+        omittedFiles: true,
+        privateFiles: false
+      });
+      const kept = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, defined(false))
+      );
+      assert.deepStrictEqual(kept.sharing, []);
+      assert.strictEqual(kept.schemaRevision, created.schemaRevision);
+      // Dropping `shared: false` shares, as `shared: true` would.
+      const shared = yield* databases.withPatchLock(patchId)(tables.provision(patchId, defined()));
+      assert.sameMembers([...shared.sharing], ["private", "privateFiles"]);
+      assert.strictEqual(shared.schemaRevision, created.schemaRevision + 1);
+      assert.deepStrictEqual(yield* flags, {
+        omitted: true,
+        private: true,
+        omittedFiles: true,
+        privateFiles: true
+      });
+      const explicit = yield* databases.withPatchLock(patchId)(
+        tables.provision(patchId, defined(true))
+      );
+      assert.deepStrictEqual(explicit.sharing, []);
     })
   );
 });

@@ -1129,6 +1129,57 @@ keep the new slot.
 6. Remove the old slot's value from the secret. No release reads it any more, and
    the next rotation writes a new one there.
 
+### Sharing existing tables
+
+Tables and file stores are shared by default
+([#1259](https://github.com/allisonmahmood/patchy-cloud/issues/1259)): a publish
+shares every one it defines unless its definition says `shared: false`. Those
+provisioned before that release keep the flag their last publish wrote, which was
+unshared unless the config said `shared: true`, so a one-time flip shares them. It
+runs only with Allison's go, after that release's deploy run has succeeded and
+`/healthz/deep` names it, never as part of the Deploy workflow.
+
+`bun dist/fleet.js share-by-default` walks every ready company database. For each
+patch with inventory, it skips one whose platform row is gone, leaving it to the
+reclamation sweep. Otherwise it locks the platform row, reads the patch's newest
+version, takes the company patch lock and shares each table and store that is
+unshared unless that version defines it with `shared: false`; a table or store the
+version doesn't define at all, such as one a failed publish left, is shared too. It
+only ever turns sharing on. A flag already on whose newest version says
+`shared: false`, left by a publish whose company provisioning committed but whose
+platform commit failed, stays on, since consumers may already read it, and is
+listed. Each change advances the resource's revision and the patch's schema
+revision and wakes its live queries on every host. Each patch commits on its own.
+It then checks every patch again and exits nonzero if anything meant to be shared
+is still unshared. It prints, per company, how many patches it checked, how many
+tables and stores it shared and how many patches it skipped, and each resource it
+left shared.
+
+Run it as a one-off task from the live host task definition, as the deploy runs
+promote, so the database settings never leave the task definition:
+
+```sh
+out() { aws cloudformation describe-stacks --stack-name patchy-production-app \
+  --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+task=$(aws ecs run-task --cluster patchy-production --task-definition "$(out HostTaskDefinitionArn)" \
+  --launch-type FARGATE --count 1 --started-by share-by-default \
+  --overrides '{"containerOverrides":[{"name":"host","command":["bun","dist/fleet.js","share-by-default"]}]}' \
+  --network-configuration "awsvpcConfiguration={subnets=[$(out HostSubnetIds)],securityGroups=[$(out HostSecurityGroupId)],assignPublicIp=ENABLED}" \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --cluster patchy-production --tasks "$task"
+aws ecs describe-tasks --cluster patchy-production --tasks "$task" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+```
+
+Its output is in `/patchy/production/host`, stream `host/host/<task id>`. A run that
+fails partway has shared the patches before the failure; run it again. A rerun
+writes nothing, keeps every revision and wakes nothing, while config is sharing's
+only writer. The patch settings' sharing switch
+([#1261](https://github.com/allisonmahmood/patchy-cloud/issues/1261)) deletes the
+command before settings can opt anything out. On a local instance, run it from
+the checkout with the instance's env loaded:
+`(set -a; . .local/dev/env; set +a; pnpm exec bun --conditions=development apps/server/src/fleet.ts share-by-default)`.
+
 ## Deploying only the tier 2 spike
 
 The ECS provider, reproducible host/exec image and guarded spike deploy script

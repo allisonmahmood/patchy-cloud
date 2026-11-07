@@ -934,7 +934,7 @@ it.layer(
       const before = yield* stored(source.patchId);
       const unshared = {
         ...manifest,
-        files: { photos: { description: manifest.files.photos.description } }
+        files: { photos: { description: manifest.files.photos.description, shared: false } }
       };
       const attempt = input({ intent: "update", patchId: source.patchId, manifest: unshared });
       for (const operation of [

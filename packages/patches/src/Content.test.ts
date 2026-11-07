@@ -111,7 +111,7 @@ it.layer(
       );
       assert.deepStrictEqual(
         (yield* (yield* patches).inventory(created.patchId, uploader.user.id)).files,
-        { attachments: { description: "Attachments keyed by file name.", shared: false } }
+        { attachments: { description: "Attachments keyed by file name.", shared: true } }
       );
     })
   );
@@ -159,8 +159,8 @@ it.layer(
       const cumulative = yield* (yield* patches).inventory(created.patchId, uploader.user.id);
       assert.strictEqual(cumulative.schemaRevision, 2);
       assert.deepStrictEqual(cumulative.files, {
-        attachments: { description: "Attachments keyed by file name.", shared: false },
-        images: { description: "Images keyed by file name.", shared: false }
+        attachments: { description: "Attachments keyed by file name.", shared: true },
+        images: { description: "Images keyed by file name.", shared: true }
       });
     })
   );
@@ -213,8 +213,8 @@ it.layer(
         const cumulative = yield* service.inventory(created.patchId, uploader.user.id);
         assert.strictEqual(cumulative.schemaRevision, 2);
         assert.deepStrictEqual(cumulative.files, {
-          attachments: { description: "Attachments keyed by file name.", shared: false },
-          images: { description: "Images keyed by file name.", shared: false }
+          attachments: { description: "Attachments keyed by file name.", shared: true },
+          images: { description: "Images keyed by file name.", shared: true }
         });
         yield* TestClock.adjust(Patches.PENDING_OBJECT_LEASE);
         yield* sweep;

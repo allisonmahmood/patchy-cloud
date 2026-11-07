@@ -6,6 +6,7 @@ import {
   Manifest,
   ProvisioningReport,
   TableDefinition,
+  isShared,
   sharedTableId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
@@ -330,7 +331,7 @@ const diff = Effect.fn("Tables.diff")(function* (
   for (const [store, definition] of Object.entries(manifest.files)) {
     const oldStore = oldStores.get(store);
     if (oldStore !== undefined) {
-      if (oldStore.shared !== (definition.shared === true)) {
+      if (oldStore.shared !== isShared(definition)) {
         sharing.push(store);
         provisioned.stores.push(store);
       }
@@ -356,7 +357,7 @@ const diff = Effect.fn("Tables.diff")(function* (
         });
       newTables.push(table);
       provisioned.tables.push(table);
-    } else if (oldTable.shared !== (definition.shared === true)) {
+    } else if (oldTable.shared !== isShared(definition)) {
       sharing.push(table);
       provisioned.tables.push(table);
     }
@@ -579,7 +580,7 @@ export const make = Effect.gen(function* () {
           patchId,
           name: table,
           description: definition.description,
-          shared: definition.shared === true
+          shared: isShared(definition)
         });
       }
       const createdTables = new Set(plan.newTables);
@@ -620,15 +621,12 @@ export const make = Effect.gen(function* () {
     for (const table of snapshot?.tables ?? []) {
       if (!Object.hasOwn(manifest.tables, table.name)) continue;
       const definition = manifest.tables[table.name]!;
-      if (
-        table.description !== definition.description ||
-        table.shared !== (definition.shared === true)
-      )
+      if (table.description !== definition.description || table.shared !== isShared(definition))
         yield* inventory.putTable({
           patchId,
           name: table.name,
           description: definition.description,
-          shared: definition.shared === true
+          shared: isShared(definition)
         });
     }
     for (const name of plan.newStores)
@@ -636,20 +634,17 @@ export const make = Effect.gen(function* () {
         patchId,
         name,
         description: manifest.files[name]!.description,
-        shared: manifest.files[name]!.shared === true
+        shared: isShared(manifest.files[name]!)
       });
     for (const store of snapshot?.stores ?? []) {
       if (!Object.hasOwn(manifest.files, store.name)) continue;
       const definition = manifest.files[store.name]!;
-      if (
-        store.description !== definition.description ||
-        store.shared !== (definition.shared === true)
-      )
+      if (store.description !== definition.description || store.shared !== isShared(definition))
         yield* inventory.putStore({
           patchId,
           name: store.name,
           description: definition.description,
-          shared: definition.shared === true
+          shared: isShared(definition)
         });
     }
     const schemaRevision = schemaChanged

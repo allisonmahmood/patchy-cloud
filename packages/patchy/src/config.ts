@@ -215,6 +215,7 @@ export interface TableDefinition<C extends Columns = Columns, I extends Indexes 
   readonly description: string;
   readonly columns: C;
   readonly indexes: I;
+  /** Readable by the company's other tier 2 patches unless `false`. */
   readonly shared?: boolean;
 }
 type SystemColumn = "id" | "createdAt" | "updatedAt";
@@ -232,6 +233,7 @@ type NormalizeIndexes<I> = {
 export type NonEmptyString<S extends string> = S extends "" ? never : S;
 export interface FileStoreDefinition {
   readonly description: string;
+  /** Readable by the company's other tier 2 patches unless `false`. */
   readonly shared?: boolean;
 }
 

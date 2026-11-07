@@ -150,8 +150,28 @@ Add new tables, stores, optional/defaulted columns or non-unique indexes. Existi
 
 Retyping, changing optionality or defaults, adding a required column or uniqueness to an existing table, changing an existing index, and omitting a required column are `not_additive`. Follow the refusal's object, change and fix: keep the old column and add a compatible new one.
 
-Omitting a table, store, optional/defaulted column or index keeps its data and reports it unused; it does not delete it. A rename adds a new empty table beside the kept old one. The kept name stays taken: a new store cannot reuse an omitted table's name, nor a new table an omitted store's. Omitted defaults and unique indexes continue to apply. A compatible redefinition can expose the kept table again. `shared: true` lets other patches declare read-only access; see `../patchy-shared-tables/SKILL.md` when available. Omission does not unshare a table, and changing a version pointer does not change live sharing.
+Omitting a table, store, optional/defaulted column or index keeps its data and reports it unused; it does not delete it. A rename adds a new empty table beside the kept old one. The kept name stays taken: a new store cannot reuse an omitted table's name, nor a new table an omitted store's. Omitted defaults and unique indexes continue to apply. A compatible redefinition can expose the kept table again.
 
 Publishing a table definition replaces its description. Omitting the table
 preserves its description, and rollback leaves it unchanged. Description-only
 changes do not advance the schema revision.
+
+## Sharing
+
+Tables never leave your company. A shared table can be read by your company's
+other patches; an unshared table is reached only through its own patch. Every
+table is shared unless its definition says `shared: false`:
+`table("…", { … }, { shared: false })`. Other patches read a shared table from
+tier 2 handlers, read-only and straight from the table, with none of this
+patch's handlers in between, so they cannot change its rows or its shape; see
+`../patchy-shared-tables/SKILL.md` for the reader's side.
+
+Leave tables shared unless their rows must not reach other patches, such as
+per-person notes that this patch's handlers filter by viewer. Do not opt out out
+of caution. Unsharing is not privacy from colleagues: anyone who can open the
+patch still reaches its rows through it.
+
+Publishing a table with `shared: false` unshares it, and refuses with
+`has_dependants` while other live patches read it, unless published with
+`--force`. Defining it again without `shared: false` shares it. Omitting the
+table and rolling back leave its sharing as it is.

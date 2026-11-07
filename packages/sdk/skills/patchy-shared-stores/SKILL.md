@@ -7,7 +7,7 @@ description: Declare another patch's shared file store, read its files from tier
 
 Read `../patchy-loop/SKILL.md` first. A shared store publishes read access to every file, not selected names. A declaration grants no authority: each read requires a viewer who can still open the source and a store that is still shared. Shared stores are read-only.
 
-Reading another patch's store is tier 2's: queries and actions read it through `ctx.shared`, and the page calls those handlers. A tier 1 page reaches only its own patch, so declaring a shared store on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says. Any tier can share its own stores out.
+Reading another patch's store is tier 2's: queries and actions read it through `ctx.shared`, and the page calls those handlers. A tier 1 page reaches only its own patch, so declaring a shared store on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says. Every patch's stores, on any tier, are shared unless their definition says `shared: false`.
 
 ## Declare, seed locally, read
 
@@ -36,7 +36,7 @@ The source's tier does not restrict consumption: a tier 2 consumer can read a st
 
 ## Sharing and recovery
 
-A source publishes sharing with `files(description, { shared: true })`. Omitting the store and rolling back either source or consumer preserve sharing. Publishing the store with `shared: false` or without `shared` unshares it. Unshare, retire and delete refuse while live consumers depend on the store unless forced; the refusal names those consumers.
+A source's store is shared unless its definition says `files(description, { shared: false })`; publishing that unshares it, and defining it again without `shared: false` shares it. Omitting the store and rolling back either source or consumer preserve sharing. Unshare, retire and delete refuse while live consumers depend on the store unless forced; the refusal names those consumers.
 
 After forced unshare or loss of source access, the next read returns `access_denied`, including bytes and downloads. Do not turn that refusal into an empty successful listing. Resharing or restoring the same source lets consumers recover unchanged. A new patch under its old name never replaces the canonical source id. Public patches cannot use shared stores.
 

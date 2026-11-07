@@ -18,6 +18,7 @@ import {
   omissions,
   refusals,
   rowExpansionLimit,
+  sharingDefault,
   stores
 } from "./test/provisioningContract.js";
 import { NodeCryptography } from "@patchy/core";
@@ -63,6 +64,11 @@ const backends = (it: Provisioning) => {
   it.effect(
     "leaves empty patches without inventory and rolls DDL back with inventory",
     () => emptyAndRollback("cmp_dev"),
+    30_000
+  );
+  it.effect(
+    "shares tables and stores that omit the flag and keeps explicit opt-outs unshared",
+    () => sharingDefault("cmp_dev"),
     30_000
   );
 };

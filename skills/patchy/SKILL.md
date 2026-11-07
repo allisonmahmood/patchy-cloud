@@ -99,7 +99,9 @@ as a total that several people change at once), anything outside the patch
 (company connections, other patches' shared data, the member directory), or
 when people's agents should use it: agents reach only a tier 2 agent area. Tier 1 rules are advisory because a viewer can make the same writes
 from devtools. Live sync and sequential steps work on tier 1 and do not require
-tier 2.
+tier 2. To depend on another patch, use tier 2: every table and file store can
+be read by the company's other tier 2 patches unless its patch opted it out with
+`shared: false`.
 
 Use the instance-installed CLI described under Publishing, settle the instance
 and identity, and complete the login handoff below if needed. Then run:

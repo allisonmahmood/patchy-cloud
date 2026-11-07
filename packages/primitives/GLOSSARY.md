@@ -45,15 +45,15 @@ A table column holding a user id, checked against the candidates on insertion or
 _Avoid_: user ref, owner field
 
 **Shared table**:
-A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
-_Avoid_: public table, copied table
+A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the source remains openable and the table shared. Every table is shared unless its definition says `shared: false`; an unshared table is reached only through its own patch, which is not privacy from anyone who can open that patch. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
+_Avoid_: public table, copied table, private table
 
 **File store**:
 A named, patch-owned collection of files available through the operations its loaded version admits. Its files persist independently of published versions; omitting the store leaves them intact and older versions that define it retain access.
 _Avoid_: bucket, content store (the infrastructure holding bytes)
 
 **Shared file store**:
-A source patch's file store, on any tier, published as read-only access to every file for tier 2 consumers' handlers, with the viewer's source access and the store's sharing rechecked on every read. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/GLOSSARY.md), independent of published versions, omissions and rollbacks.
+A source patch's file store, on any tier, published as read-only access to every file for tier 2 consumers' handlers, with the viewer's source access and the store's sharing rechecked on every read. Every store is shared unless its definition says `shared: false`. Its immutable identity is the source patch and store; its sharing authority belongs to [Company database's Inventory](../company-database/GLOSSARY.md), independent of published versions, omissions and rollbacks.
 _Avoid_: public files, copied store, shared folder
 
 **Authorised file handle**:

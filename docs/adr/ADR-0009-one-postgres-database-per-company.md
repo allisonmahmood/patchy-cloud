@@ -89,6 +89,8 @@ or sharing authority.
 
 The company database's `patchy` schema holds the cumulative provisioning authority: patches and their schema revisions, tables, columns, indexes, stores, and the file index. Tables and stores have required descriptions. Publishing a definition replaces its description; omission preserves it. Physical namespaces are `p_<patchId>`; table and column identifiers are quoted as written. Inventory commits with DDL and is never rolled back merely because the active patch version is rolled back. Table-schema and sharing changes and new stores advance the revision; description changes, a new patch version or a file-content mutation alone do not.
 
+Each table and store carries a sharing flag. A publish that defines the resource sets it, shared unless the definition says `shared: false`; omission and rollback keep it. Resources provisioned while sharing was opt-in are shared by the one-time `fleet.js share-by-default` flip, which skips any whose patch's newest version says `shared: false`. It takes the platform patch row, then the company patch lock, per patch, and only ever turns sharing on, so it takes no dependency lock: unsharing is what dependants need guarding from.
+
 Inventory reads acquire the same patch lock as provisioning, so their revision
 and component queries cannot straddle a writer's commit. These metadata reads
 may wait for provisioning; they do not return a partly old, partly new inventory.
