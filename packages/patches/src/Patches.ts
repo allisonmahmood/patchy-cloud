@@ -59,6 +59,8 @@ const decodeResponseBodies = Schema.decodeUnknownEffect(
 export const RECOVERY_WINDOW = Duration.days(30);
 /** How long an open takes to count half as much toward a member's usual patches. */
 export const OPEN_HALF_LIFE = Duration.days(7);
+/** An open this close to the member's last open of the patch adds nothing to its score. */
+export const REOPEN_WINDOW = Duration.minutes(10);
 
 /** Allows the bounded put and 60-second record transaction to finish before reclamation. */
 export const PENDING_OBJECT_LEASE = Duration.minutes(5);
@@ -346,7 +348,10 @@ export type ListedPatch = Omit<ReadPatch, "reads" | "dependants">;
 export interface Open {
   readonly patchId: string;
   readonly lastOpenedAt: string;
-  /** Every open counts 1, halving each `OPEN_HALF_LIFE` since, as of the read. */
+  /**
+   * Each open counts 1, halving each `OPEN_HALF_LIFE` since, as of the read; one within
+   * `REOPEN_WINDOW` of the last adds nothing, so reopening every few minutes counts once.
+   */
   readonly score: number;
 }
 
@@ -935,7 +940,8 @@ export class Patches extends Context.Service<
     /** Counts a visit to a serving patch without changing its lifecycle. */
     readonly recordVisit: (patchId: string) => Effect.Effect<void, SqlError>;
     /**
-     * Records that a member opened `versionId` at a serving patch's address, while it is current.
+     * Records that a member opened `versionId` at a serving patch's address, while it is current;
+     * one within `REOPEN_WINDOW` of their last open of it adds nothing to its score.
      * True only for the call that made the member's first record of the patch, which concurrent
      * opens never share; a stale version or an off patch records nothing and answers false.
      */
@@ -2627,6 +2633,7 @@ export const make = Effect.gen(function* () {
   });
 
   const halfLifeSeconds = Duration.toSeconds(OPEN_HALF_LIFE);
+  const reopenSeconds = Duration.toSeconds(REOPEN_WINDOW);
   // 2^(−age / half-life) as float8. The age is clamped to [0, 1000 half-lives], so a decade-old
   // row reads as nearly nothing instead of underflowing, and a clock that stepped back adds nothing.
   const halving = (age: Statement.Fragment) =>
@@ -2645,6 +2652,11 @@ export const make = Effect.gen(function* () {
       // published must not mark v2 seen. Both opens decay to the later of the two instants, so a
       // late-arriving earlier open never moves the last open back.
       const latest = sql`GREATEST(patch_opens.last_opened_at, EXCLUDED.last_opened_at)`;
+      // The new open adds its point only when it is `REOPEN_WINDOW` or more from the last one,
+      // on either side, so flipping between two patches counts each about once; one inside the
+      // window still moves the last open. The rule goes by arrival: opens at minutes 0, 18 and 9,
+      // arriving in that order, count twice, since the row keeps only the last open.
+      const apart = sql`abs(extract(epoch FROM EXCLUDED.last_opened_at - patch_opens.last_opened_at))`;
       // `xmax = 0` only on a row this statement inserted: the conflict path locks the existing
       // row before updating it, which stamps the new row's xmax. Concurrent inserts of one key
       // wait on the primary key, so exactly one of them inserts.
@@ -2653,7 +2665,8 @@ export const make = Effect.gen(function* () {
         WHERE patches.id = ${patchId} AND patches.current_version_id = ${versionId} AND ${serving}
         ON CONFLICT (user_id, patch_id) DO UPDATE SET
           score = patch_opens.score * ${halving(sql`${latest} - patch_opens.last_opened_at`)}
-            + ${halving(sql`${latest} - EXCLUDED.last_opened_at`)},
+            + CASE WHEN ${apart} >= ${reopenSeconds}
+              THEN ${halving(sql`${latest} - EXCLUDED.last_opened_at`)} ELSE 0 END,
           last_opened_at = ${latest}
         RETURNING xmax = 0 AS inserted`;
     }

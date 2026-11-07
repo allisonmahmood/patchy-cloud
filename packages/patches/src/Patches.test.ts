@@ -17,7 +17,8 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
 
-const DAY = 24 * 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const DAY = 24 * 60 * MINUTE;
 const { admin, quota, sibling, uploader, reader } = Fixtures.identities;
 const owner = { userId: uploader.user.id, admin: false };
 const administrator = { userId: admin.user.id, admin: true };
@@ -618,16 +619,16 @@ it.layer(
         Effect.map(service.opens(userId), (opens) =>
           opens.find((entry) => entry.patchId === patch.patchId)
         );
-      // Only the member's first open of the patch says so.
+      // Only the member's first open of the patch says so; reopening it at once adds nothing.
       assert.isTrue(yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId));
       assert.isFalse(yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId));
-      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+      assert.closeTo((yield* open(reader.user.id))!.score, 1, 1e-9);
       assert.isUndefined(yield* open(quota.user.id));
 
       yield* TestClock.adjust(7 * DAY);
-      assert.closeTo((yield* open(reader.user.id))!.score, 1, 1e-9);
+      assert.closeTo((yield* open(reader.user.id))!.score, 0.5, 1e-9);
       yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
-      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+      assert.closeTo((yield* open(reader.user.id))!.score, 1.5, 1e-9);
 
       // An open stamped earlier than the last one, from a clock behind or a slow request,
       // counts at its age and never moves the last open back.
@@ -635,7 +636,7 @@ it.layer(
       yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
       yield* TestClock.setTime(Date.UTC(2026, 9, 8));
       const late = (yield* open(reader.user.id))!;
-      assert.closeTo(late.score, 2.5, 1e-9);
+      assert.closeTo(late.score, 2, 1e-9);
       assert.strictEqual(late.lastOpenedAt, new Date(Date.UTC(2026, 9, 8)).toISOString());
 
       // Reading v1 while v2 is current records nothing, so it isn't a first open either.
@@ -649,7 +650,49 @@ it.layer(
       assert.isFalse(yield* service.recordOpen(admin.user.id, patch.patchId, next.versionId));
       assert.isUndefined(yield* open(admin.user.id));
       yield* service.recordOpen(reader.user.id, patch.patchId, next.versionId);
-      assert.closeTo((yield* open(reader.user.id))!.score, 2.5, 1e-9);
+      assert.closeTo((yield* open(reader.user.id))!.score, 2, 1e-9);
+    })
+  );
+
+  it.effect("counts reopens within 10 minutes of the last open once", () =>
+    Effect.gen(function* () {
+      const start = Date.UTC(2026, 9, 1);
+      yield* TestClock.setTime(start);
+      const service = yield* Patches.Patches;
+      const patch = yield* create();
+      const recorded = Effect.map(service.opens(reader.user.id), (opens) =>
+        opens.find((entry) => entry.patchId === patch.patchId)!
+      );
+      const reopen = (after: number) =>
+        Effect.andThen(
+          TestClock.adjust(after),
+          service.recordOpen(reader.user.id, patch.patchId, patch.versionId)
+        );
+      const halved = (millis: number) => 0.5 ** (millis / (7 * DAY));
+      const almost = 10 * MINUTE - 1_000;
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+
+      // 9:59 after the last open adds nothing but still moves it, so the next is measured from
+      // there: a patch reopened every few minutes counts once.
+      yield* reopen(almost);
+      const suppressed = yield* recorded;
+      assert.closeTo(suppressed.score, halved(almost), 1e-9);
+      assert.strictEqual(suppressed.lastOpenedAt, new Date(start + almost).toISOString());
+      yield* reopen(almost);
+      assert.closeTo((yield* recorded).score, halved(2 * almost), 1e-9);
+
+      // Exactly 10:00 after the last counts.
+      yield* reopen(10 * MINUTE);
+      const last = start + 2 * almost + 10 * MINUTE;
+      assert.closeTo((yield* recorded).score, 1 + halved(last - start), 1e-9);
+
+      // An earlier open arriving late inside the window adds nothing and leaves the last open.
+      yield* TestClock.setTime(last - 5 * MINUTE);
+      yield* service.recordOpen(reader.user.id, patch.patchId, patch.versionId);
+      yield* TestClock.setTime(last);
+      const late = yield* recorded;
+      assert.closeTo(late.score, 1 + halved(last - start), 1e-9);
+      assert.strictEqual(late.lastOpenedAt, new Date(last).toISOString());
     })
   );
 
@@ -704,10 +747,11 @@ it.layer(
       yield* Deferred.succeed(rollBack, undefined);
       yield* Fiber.join(holder);
       assert.deepStrictEqual((yield* Fiber.join(opens)).filter(Boolean).length, 1);
+      // They share one instant, so the two that follow the first add nothing.
       const recorded = (yield* service.opens(reader.user.id)).find(
         (entry) => entry.patchId === patch.patchId
       );
-      assert.closeTo(recorded!.score, 3, 1e-9);
+      assert.closeTo(recorded!.score, 1, 1e-9);
     })
   );
 
