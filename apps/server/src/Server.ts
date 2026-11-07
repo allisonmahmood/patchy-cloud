@@ -103,6 +103,7 @@ import * as MemberDirectory from "./MemberDirectory.js";
 import { migrations } from "./migrations.js";
 import * as RequestEvents from "./RequestEvents.js";
 import * as SetupPickup from "./SetupPickup.js";
+import * as TeamsPrototype from "./TeamsPrototype.js";
 
 /** Where client documents come from, which the launcher brings: the pinned network, or fixtures. */
 export type DocumentNetwork = ClientDocumentNetwork.ClientDocumentNetwork;
@@ -407,7 +408,9 @@ const app = Layer.mergeAll(
     OAuthEndpoints.layer,
     Door.layer,
     Layer.unwrap(
-      Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+      Effect.map(DevPersonas.enabled, (personas) =>
+        personas ? Layer.merge(DevPersonas.routes, TeamsPrototype.layer) : Layer.empty
+      )
     ),
     ConnectionPages.layer
   ).pipe(Layer.provide(RequestEvents.layer)),
