@@ -4,10 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { expect } from "vitest";
 import * as Companies from "@patchy/companies/Companies";
 import { Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
+import * as Mailbox from "./mailbox.js";
 import { decodeMail } from "./pidgeon.js";
 import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
 import { NodeCryptography } from "@patchy/core";
@@ -20,7 +22,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon", "attio", "guests", "kit-room"]) {
+      for (const name of ["team", "brightline", "pidgeon", "attio", "imap", "guests", "kit-room"]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
@@ -39,7 +41,10 @@ it.layer(Platform)("scenarios", (it) => {
               expect(thread.messages[0].from).not.toBe("me");
               for (const label of thread.labels ?? []) expect(labels.has(label), label).toBe(true);
             }
-          }
+          } else if (connection.integration === "imap" && connection.mail !== undefined)
+            yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Mailbox.Mail))(
+              yield* fs.readFileString(path.join(dir, connection.mail))
+            );
       }
       const { scenario } = yield* loadScenario(repo, "brightline");
       expect(publisherToken(scenario)).toBe("patchy-env-brightline-allison");
@@ -50,7 +55,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
-      expect(error.message).toContain("brightline, guests, kit-room, pidgeon, team");
+      expect(error.message).toContain("brightline, guests, imap, kit-room, pidgeon, team");
     })
   );
 

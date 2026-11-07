@@ -41,6 +41,7 @@ import * as AttioDev from "./attio/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as ImapTest from "./test/imap.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
@@ -289,7 +290,8 @@ const serve = (
         Layer.provide(PostgresSource.layer),
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
-        Layer.provideMerge(workspace.layer)
+        Layer.provideMerge(workspace.layer),
+        Layer.provideMerge(ImapTest.offline)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),

@@ -20,6 +20,8 @@ import type * as PidgeonSource from "../pidgeon/Source.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
+import type * as ImapSource from "../imap/Source.js";
+import * as ImapTest from "./imap.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import { NodeCryptography } from "@patchy/core";
 
@@ -37,7 +39,8 @@ export const events: Analytics.AnalyticsEvent[] = [];
 
 export const services = (
   pidgeon: Layer.Layer<PidgeonSource.Source>,
-  attio: Layer.Layer<AttioSource.Source> = AttioSource.layer
+  attio: Layer.Layer<AttioSource.Source> = AttioSource.layer,
+  imap: Layer.Layer<ImapSource.Source> = ImapTest.offline
 ) =>
   Layer.mergeAll(
     Session.layer,
@@ -62,6 +65,7 @@ export const services = (
     ),
     Layer.provideMerge(PostHogSource.layer),
     Layer.provideMerge(attio),
+    Layer.provideMerge(imap),
     Layer.provideMerge(pidgeon),
     Layer.provideMerge(
       CredentialKeys.layerFromKeys(

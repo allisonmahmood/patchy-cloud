@@ -68,22 +68,31 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           );
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
-              connections: rows.map((row) => ({
-                id: row.id,
-                handle: row.handle,
-                integration: row.integration,
-                description: row.description,
-                status: row.status,
-                ...(row.integration === "pidgeon" && row.display.test
-                  ? { test: true as const }
-                  : {}),
-                ...(row.status === "connected"
-                  ? { hint: `patchy add ${row.integration}/${row.handle}` }
-                  : {
-                      reason: "not_connected" as const,
-                      hint: "Ask an administrator to reconnect it at /company/connections."
-                    })
-              })),
+              connections: rows.map((row) => {
+                // A paused IMAP login fails every call until an admin fixes it, so it says so.
+                const paused = row.integration === "imap" && row.display.paused !== undefined;
+                return {
+                  id: row.id,
+                  handle: row.handle,
+                  integration: row.integration,
+                  description: row.description,
+                  status: row.status,
+                  ...(row.integration === "pidgeon" && row.display.test
+                    ? { test: true as const }
+                    : {}),
+                  ...(paused ? { paused: true as const } : {}),
+                  ...(row.status !== "connected"
+                    ? {
+                        reason: "not_connected" as const,
+                        hint: "Ask an administrator to reconnect it at /company/connections."
+                      }
+                    : paused
+                      ? {
+                          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections."
+                        }
+                      : { hint: `patchy add ${row.integration}/${row.handle}` })
+                };
+              }),
               ...(query.all
                 ? {
                     offered: shown.map((integration) => ({

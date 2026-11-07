@@ -696,7 +696,7 @@ describe("patchy list", () => {
       }
       // Connections are never filtered by the patch flags; the list names every integration
       // this release decodes.
-      expect(url.searchParams.get("integrations")).toBe("postgres,posthog,pidgeon,attio");
+      expect(url.searchParams.get("integrations")).toBe("postgres,posthog,pidgeon,attio,imap");
       respond(200, projectConnections);
     });
     const result = await runCli(
@@ -921,7 +921,9 @@ describe("patchy list", () => {
     };
     const instance = await stubInstance((request, respond) => {
       // A bare handle only one connection has finds its integration first.
-      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
+      if (
+        request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap"
+      )
         return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/posthog/product");
       respond(200, detail);
@@ -1008,7 +1010,9 @@ describe("patchy list", () => {
       }
     };
     const instance = await stubInstance((request, respond) => {
-      if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
+      if (
+        request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap"
+      )
         return respond(200, projectConnections);
       expect(request.url).toBe("/api/connections/pidgeon/support");
       respond(200, detail);
@@ -1035,6 +1039,90 @@ describe("patchy list", () => {
     }
     const json = await runCli(
       ["list", "connections", "pidgeon/support", "--json", "--api-url", instance.url],
+      { env }
+    );
+    expect(JSON.parse(json.stdout)).toEqual(detail);
+  });
+
+  it("prints an IMAP connection's pause with its way out, then its mailbox and folders", async () => {
+    const detail = {
+      integration: "imap",
+      handle: "invoices",
+      description: "Supplier invoices",
+      status: "connected",
+      snapshot: {
+        version: 1,
+        revision: 2,
+        takenAt: "2026-11-05T00:00:00.000Z",
+        host: "mail.example.test",
+        port: 143,
+        security: "starttls",
+        username: "invoices@example.test",
+        capabilities: ["IMAP4rev1", "SPECIAL-USE"],
+        folders: [
+          { path: "INBOX", delimiter: "/", specialUse: [], selectable: true },
+          { path: "Archive", delimiter: "/", specialUse: [], selectable: false },
+          {
+            path: "Archive/Überweisungen",
+            delimiter: "/",
+            specialUse: ["\\Archive"],
+            selectable: true
+          }
+        ],
+        truncated: true
+      },
+      paused: { at: "2026-11-05T09:00:00.000Z" }
+    };
+    const summary = {
+      connections: [
+        {
+          id: "conn-invoices",
+          handle: "invoices",
+          integration: "imap",
+          description: "Supplier invoices",
+          status: "connected",
+          paused: true,
+          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections."
+        }
+      ]
+    };
+    const instance = await stubInstance((request, respond) => {
+      if (request.url?.startsWith("/api/connections?")) return respond(200, summary);
+      expect(request.url).toBe("/api/connections/imap/invoices");
+      respond(200, detail);
+    });
+    const listed = await runCli(["list", "connections", "--api-url", instance.url], { env });
+    expect(listed).toMatchObject({ status: 0, stderr: "" });
+    expect(listed.stdout).toBe(
+      [
+        "imap/invoices  Supplier invoices  connected · paused, its password was refused",
+        `  ${summary.connections[0]!.hint}`,
+        ""
+      ].join("\n")
+    );
+    const result = await runCli(
+      ["list", "connections", "imap/invoices", "--api-url", instance.url],
+      { env }
+    );
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(result.stdout).toBe(
+      [
+        "imap/invoices  Supplier invoices  connected",
+        "Paused since 2026-11-05T09:00:00.000Z: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /company/connections.",
+        "Mailbox: invoices@example.test at mail.example.test, port 143 (STARTTLS)",
+        "Snapshot revision: 2",
+        "Taken at: 2026-11-05T00:00:00.000Z",
+        "Capabilities: IMAP4rev1 SPECIAL-USE",
+        "Folders:",
+        '  "INBOX"',
+        '  "Archive" holds folders only',
+        '  "Archive/Überweisungen" \\Archive',
+        "  …and more the snapshot doesn't keep",
+        ""
+      ].join("\n")
+    );
+    const json = await runCli(
+      ["list", "connections", "imap/invoices", "--json", "--api-url", instance.url],
       { env }
     );
     expect(JSON.parse(json.stdout)).toEqual(detail);
@@ -1084,7 +1172,10 @@ describe("patchy list", () => {
       };
       const instance = await stubInstance((request, respond) => {
         // A bare handle is looked up among every integration's connections first.
-        if (request.url === "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio")
+        if (
+          request.url ===
+          "/api/connections?integrations=postgres%2Cposthog%2Cpidgeon%2Cattio%2Cimap"
+        )
           return respond(200, projectConnections);
         expect(request.url).toBe("/api/connections/postgres/sales-db");
         respond(200, detail);

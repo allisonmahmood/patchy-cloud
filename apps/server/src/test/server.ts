@@ -18,6 +18,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { CURRENT_RELEASE, MANIFEST_VERSION } from "@patchy/api";
 import { ClientDocumentNetwork } from "@patchy/auth";
+import { ImapNetwork } from "@patchy/integrations";
 import { clerkEnv } from "@patchy/auth/testing";
 import * as Testing from "@patchy/sql/testing";
 import * as Server from "../Server.js";
@@ -25,18 +26,20 @@ import { NodeCryptography } from "@patchy/core";
 
 /**
  * `network` is where client documents come from: the real, pinned network unless a test
- * that connects agents serves fixtures (`layerClientDocumentNetwork`).
+ * that connects agents serves fixtures (`layerClientDocumentNetwork`). `mail` is where
+ * mailboxes are reached: production's network unless a test serves loopback ones.
  */
 export const server = (
   env: Record<string, string | undefined> = {},
-  network: Layer.Layer<Server.DocumentNetwork> = ClientDocumentNetwork.layer
+  network: Layer.Layer<Server.DocumentNetwork> = ClientDocumentNetwork.layer,
+  mail: Layer.Layer<Server.MailNetwork> = ImapNetwork.layer
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const storageDir = yield* fs.makeTempDirectoryScoped({ prefix: "patchy-server-" });
       return Server.layer.pipe(
-        Layer.provide(network),
+        Layer.provide([network, mail]),
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provideMerge(Testing.layer()),
         Layer.provide(

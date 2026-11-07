@@ -123,6 +123,15 @@ An Attio connection keeps the workspace's read-only key, encrypted under this
 keyring. The server calls only `https://api.attio.com`, never following a
 redirect, and needs no Attio configuration of its own.
 
+### Email (IMAP)
+
+An IMAP connection keeps the mailbox's password, encrypted under this keyring
+together with the host, port, security and username it may be sent to. The
+server connects out to each mailbox's host on port 993 or 143, from the host
+tasks' own public addresses, which change on every deploy, and needs no IMAP
+configuration of its own. `start.ts` reaches public addresses only; the
+loopback mailboxes of the dev runner's entrypoint are never part of a host.
+
 ### Initial credentials
 
 Startup migrates but creates no credential. For normal use, sign in at `/join`,

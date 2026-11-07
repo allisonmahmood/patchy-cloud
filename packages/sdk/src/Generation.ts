@@ -18,7 +18,7 @@ import {
   usesRefusal
 } from "@patchy/api";
 import { Looks } from "@patchy/companies";
-import { Attio, ConnectionStore, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
+import { Attio, ConnectionStore, Imap, Pidgeon, Postgres, PostHog } from "@patchy/integrations";
 import type { CompanyDatabases } from "@patchy/company-database";
 import { Patches } from "@patchy/patches";
 import { sdkCapabilities, sdkCapabilitiesMarkdown } from "./sdkCapabilities.js";
@@ -55,12 +55,13 @@ const labels = {
   postgres: "Postgres",
   posthog: "PostHog",
   pidgeon: "Pidgeon",
-  attio: "Attio"
+  attio: "Attio",
+  imap: "Email (IMAP)"
 } as const;
 export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConnected>()(
   "SdkConnectionNotConnected",
   {
-    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio"]),
+    integration: Schema.Literals(["postgres", "posthog", "pidgeon", "attio", "imap"]),
     handle: Schema.String
   }
 ) {
@@ -125,7 +126,7 @@ export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavaila
 const sharedSourceErrors = (
   declaration: Exclude<
     (typeof GenerateRequest.Type)["manifest"]["uses"][string],
-    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "members" }
+    { kind: "postgres" | "posthog" | "pidgeon" | "attio" | "imap" | "members" }
   >
 ) => {
   const source =
@@ -160,6 +161,7 @@ const knownSkills = [
   "patchy-posthog",
   "patchy-pidgeon",
   "patchy-attio",
+  "patchy-imap",
   "patchy-shared-tables",
   "patchy-shared-stores",
   "patchy-members"
@@ -291,12 +293,14 @@ export const generate = Effect.fn("Generation.generate")(function* (
     posthog: Record<string, (typeof DeclarationMetadata.Type)["posthog"][string]>;
     pidgeon: Record<string, (typeof DeclarationMetadata.Type)["pidgeon"][string]>;
     attio: Record<string, (typeof DeclarationMetadata.Type)["attio"][string]>;
+    imap: Record<string, (typeof DeclarationMetadata.Type)["imap"][string]>;
     shared: Record<string, (typeof DeclarationMetadata.Type)["shared"][string]>;
   } = {
     postgres: Object.create(null),
     posthog: Object.create(null),
     pidgeon: Object.create(null),
     attio: Object.create(null),
+    imap: Object.create(null),
     shared: Object.create(null)
   };
   const factories: Record<string, string> = Object.create(null);
@@ -305,7 +309,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "postgres" ||
       entry.kind === "posthog" ||
       entry.kind === "pidgeon" ||
-      entry.kind === "attio"
+      entry.kind === "attio" ||
+      entry.kind === "imap"
   )
     ? yield* connections.list(companyId).pipe(
         Effect.mapError(
@@ -326,7 +331,8 @@ export const generate = Effect.fn("Generation.generate")(function* (
       declaration.kind === "postgres" ||
       declaration.kind === "posthog" ||
       declaration.kind === "pidgeon" ||
-      declaration.kind === "attio"
+      declaration.kind === "attio" ||
+      declaration.kind === "imap"
     ) {
       const connection = available.find(
         (entry) =>
@@ -414,6 +420,24 @@ export const generate = Effect.fn("Generation.generate")(function* (
           client
         });
         skills.add("patchy-attio");
+      } else if (stored.integration === "imap") {
+        // IMAP has no fixture: mail a builder's agent invents never resembles a company's, so dev
+        // reads the real mailbox.
+        const declared = { kind: "imap" as const, ...resolved };
+        metadata.imap[alias] = { declaration: declared, snapshot: stored.snapshot };
+        const output = Imap.imap.generate({ ...described, kind: "imap" }, stored.snapshot);
+        files.set(client, output.client);
+        files.set(context, output.context);
+        uses.push({
+          alias,
+          id: resolved.id,
+          revision: resolved.revision,
+          declaration: declared,
+          skill: ".agents/skills/patchy-imap/SKILL.md",
+          context,
+          client
+        });
+        skills.add("patchy-imap");
       } else {
         // PostHog has no fixture: dev reads the real connection.
         const declared = { kind: "posthog" as const, ...resolved };

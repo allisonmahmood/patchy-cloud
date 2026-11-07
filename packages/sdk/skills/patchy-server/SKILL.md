@@ -504,6 +504,13 @@ PGlite dev has one connection. It does not reproduce production connection conte
 | `attio.discovery.options` | contract | 2000 | options | company | Active options one Attio select or status keeps in a snapshot | `too_large` | No | release |
 | `attio.discovery.optionRequests` | contract | 2000 | requests | company | Requests an Attio discovery may have sent and still read options; past it, the rest are skipped and marked | None | No | release |
 | `attio.discovery.optionDeadline` | contract | 45000 | milliseconds | company | Time into an Attio discovery after which it reads no more options; the rest are skipped and marked | None | No | release |
+| `imap.test.deadline` | contract | 30000 | milliseconds | company | Connecting, testing, reconnecting, replacing the password of or refreshing an IMAP mailbox: one fresh session's TLS, CAPABILITY, login, LIST and EXAMINE INBOX | `timeout` | No | release |
+| `imap.session.connect` | contract | 10000 | milliseconds | company | Opening one IMAP session: the TCP connection and TLS handshake, then separately the server's greeting | `timeout` | No | release |
+| `imap.session.bytes` | contract | 16777216 | bytes | company | Bytes one IMAP Test session receives from the mail server, from the greeting to LOGOUT; past it the session is destroyed | `too_large` | No | release |
+| `imap.parser.line` | contract | 1048576 | bytes | company | One IMAP response line without a literal; past it the session is destroyed | `too_large` | No | release |
+| `imap.parser.literal` | contract | 4194304 | bytes | company | One IMAP literal in a response; past it the session is destroyed | `too_large` | No | release |
+| `imap.parser.response` | contract | 8388608 | bytes | company | One whole IMAP response, its lines and literals together; past it the session is destroyed | `too_large` | No | release |
+| `imap.snapshot.folders` | contract | 5000 | folders | company | Folders one IMAP snapshot keeps, in the order LIST names them; past it the snapshot is marked truncated | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |

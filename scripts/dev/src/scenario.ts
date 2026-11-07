@@ -42,6 +42,7 @@ export const RepoPatch = Schema.Struct({
  * any patch publishes. Pidgeon's pastes the developer's test admin key and creates a new test
  * address on pidgeon.email, which Pidgeon deletes a day later. Attio's pastes the developer's
  * read-only key to Patchy's probe workspace; it only reads, so there's nothing to take down.
+ * IMAP's starts a dev mailbox in Docker on this machine and types its login; `down` removes it.
  */
 export const PidgeonScenarioConnection = Schema.Struct({
   integration: Schema.Literal("pidgeon"),
@@ -59,9 +60,19 @@ export const AttioScenarioConnection = Schema.Struct({
   handle: Slug,
   description: Schema.NonEmptyString
 });
+export const ImapScenarioConnection = Schema.Struct({
+  integration: Schema.Literal("imap"),
+  handle: Slug,
+  description: Schema.NonEmptyString,
+  /** The mailbox's login, at `mail.<company handle>.test`. */
+  username: Schema.NonEmptyString,
+  /** A file beside `scenario.json` holding the folders and messages `up` puts in the mailbox. */
+  mail: Schema.optionalKey(Schema.NonEmptyString)
+});
 export const ScenarioConnection = Schema.Union([
   PidgeonScenarioConnection,
-  AttioScenarioConnection
+  AttioScenarioConnection,
+  ImapScenarioConnection
 ]);
 export type ScenarioConnection = typeof ScenarioConnection.Type;
 

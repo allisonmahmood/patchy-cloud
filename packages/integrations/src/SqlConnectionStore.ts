@@ -2,6 +2,7 @@ import {
   AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
+  ImapSnapshot,
   integrations,
   type Integration,
   PidgeonSnapshot,
@@ -39,6 +40,7 @@ import {
   ConnectionRetargetUnavailable,
   ConnectionStorageFailed,
   Description,
+  ImapConnection,
   InvalidConnectionDescription,
   InvalidConnectionHandle,
   Metadata,
@@ -57,6 +59,7 @@ import * as PostHogSource from "./posthog/Source.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as ImapSource from "./imap/Source.js";
 
 const isDescription = Schema.is(Description);
 const decodeMetadata = Schema.decodeUnknownEffect(Metadata);
@@ -64,10 +67,12 @@ const encodePostgresSnapshot = Schema.encodeSync(Schema.fromJsonString(Snapshot)
 const encodePostHogSnapshot = Schema.encodeSync(Schema.fromJsonString(PostHogSnapshot));
 const encodePidgeonSnapshot = Schema.encodeSync(Schema.fromJsonString(PidgeonSnapshot));
 const encodeAttioSnapshot = Schema.encodeSync(Schema.fromJsonString(AttioSnapshot));
+const encodeImapSnapshot = Schema.encodeSync(Schema.fromJsonString(ImapSnapshot));
 const encodePostgresDisplay = Schema.encodeSync(Schema.fromJsonString(PostgresSource.Display));
 const encodePostHogDisplay = Schema.encodeSync(Schema.fromJsonString(PostHogSource.Display));
 const encodePidgeonDisplay = Schema.encodeSync(Schema.fromJsonString(PidgeonSource.Display));
 const encodeAttioDisplay = Schema.encodeSync(Schema.fromJsonString(AttioSource.Display));
+const encodeImapDisplay = Schema.encodeSync(Schema.fromJsonString(ImapSource.Display));
 const encodeSnapshot = (metadata: Metadata) => {
   switch (metadata.integration) {
     case "postgres":
@@ -78,6 +83,8 @@ const encodeSnapshot = (metadata: Metadata) => {
       return encodePidgeonSnapshot(metadata.snapshot);
     case "attio":
       return encodeAttioSnapshot(metadata.snapshot);
+    case "imap":
+      return encodeImapSnapshot(metadata.snapshot);
   }
 };
 const encodeDisplay = (target: Target) => {
@@ -90,8 +97,39 @@ const encodeDisplay = (target: Target) => {
       return encodePidgeonDisplay(target.display);
     case "attio":
       return encodeAttioDisplay(target.display);
+    case "imap":
+      return encodeImapDisplay(target.display);
   }
 };
+/** One mailbox login: the same host, port, security and username. */
+const sameLogin = (
+  current: Pick<ImapSource.Display, "host" | "port" | "security" | "username">,
+  next: Pick<ImapSource.Display, "host" | "port" | "security" | "username">
+) =>
+  next.host === current.host &&
+  next.port === current.port &&
+  next.security === current.security &&
+  next.username === current.username;
+/**
+ * Where an IMAP connection logs in after a login that worked, `logins` of them so far, with no
+ * pause: what each saved success leaves.
+ */
+const working = (
+  login: Pick<ImapSource.Display, "host" | "port" | "security" | "username">,
+  logins: number
+) => ({
+  integration: "imap" as const,
+  display: {
+    host: login.host,
+    port: login.port,
+    security: login.security,
+    username: login.username,
+    logins
+  } satisfies ImapSource.Display
+});
+/** The logins a connection has saved as working; absent is none. */
+const loginsOf = (connection: Connection) =>
+  connection.integration === "imap" ? (connection.display.logins ?? 0) : 0;
 /** Credentials for the same destination may replace each other; anything else is a retarget. */
 const sameTarget = (current: Target, next: Target) =>
   current.integration === "postgres"
@@ -105,18 +143,22 @@ const sameTarget = (current: Target, next: Target) =>
         next.display.projectId === current.display.projectId
       : current.integration === "pidgeon"
         ? next.integration === "pidgeon" && next.display.identityId === current.display.identityId
-        : next.integration === "attio" &&
-          next.display.workspace.id === current.display.workspace.id;
+        : current.integration === "imap"
+          ? next.integration === "imap" && sameLogin(current.display, next.display)
+          : next.integration === "attio" &&
+            next.display.workspace.id === current.display.workspace.id;
 const secret = { credentials: Schema.String, keyId: Schema.String };
 const StoredConnection = Schema.Union([
   Schema.Struct({ ...PostgresConnection.fields, ...secret }),
   Schema.Struct({ ...PostHogConnection.fields, ...secret }),
   Schema.Struct({ ...PidgeonConnection.fields, ...secret }),
-  Schema.Struct({ ...AttioConnection.fields, ...secret })
+  Schema.Struct({ ...AttioConnection.fields, ...secret }),
+  Schema.Struct({ ...ImapConnection.fields, ...secret })
 ]);
 type StoredConnection = typeof StoredConnection.Type;
 type StoredPidgeon = Extract<StoredConnection, { readonly integration: "pidgeon" }>;
 type StoredAttio = Extract<StoredConnection, { readonly integration: "attio" }>;
+type StoredImap = Extract<StoredConnection, { readonly integration: "imap" }>;
 const detailFields = {
   handle: Schema.String,
   description: Schema.String,
@@ -144,6 +186,13 @@ const SnapshotDetail = Schema.Union([
     ...detailFields,
     integration: Schema.Literal("attio"),
     snapshot: Schema.NullOr(AttioSnapshot)
+  }),
+  Schema.Struct({
+    ...detailFields,
+    integration: Schema.Literal("imap"),
+    snapshot: Schema.NullOr(ImapSnapshot),
+    // What a member is told about a pause: only when it began.
+    display: ImapSource.Display
   })
 ]);
 const Lookup = Schema.Struct({
@@ -175,6 +224,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const posthog = yield* PostHogSource.Source;
     const pidgeonSource = yield* PidgeonSource.Source;
     const attio = yield* AttioSource.Source;
+    const imap = yield* ImapSource.Source;
     const audit = yield* RuntimeLog.RuntimeLog;
     const columns = sql`id, company_id AS "companyId", integration, handle, description, mode, status,
     block_guests AS "blockGuests", display, credential_revision AS "credentialRevision", metadata_revision AS "metadataRevision",
@@ -231,7 +281,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       }),
       Result: SnapshotDetail,
       execute: ({ companyId, integration, handle }) => sql`SELECT c.integration, c.handle,
-      c.description, c.status,
+      c.description, c.status, c.display,
       c.metadata_revision AS revision, s.snapshot,
       to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "takenAt"
       FROM connections c LEFT JOIN connection_snapshots s
@@ -320,6 +370,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             ...row,
             snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
           } satisfies ConnectionDetail;
+        if (row.integration === "imap") {
+          const { display, ...imap } = row;
+          return {
+            ...imap,
+            snapshot:
+              imap.snapshot === null || stamp === null ? null : { ...imap.snapshot, ...stamp },
+            ...(display.paused === undefined ? {} : { paused: { at: display.paused.at } })
+          } satisfies ConnectionDetail;
+        }
         return {
           ...row,
           snapshot: row.snapshot === null || stamp === null ? null : { ...row.snapshot, ...stamp }
@@ -416,7 +475,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               ? registry["pidgeon.connect.deadline"].default
               : input.integration === "attio"
                 ? registry["attio.discovery.deadline"].default
-                : registry["integration.deadline"].default
+                : input.integration === "imap"
+                  ? registry["imap.test.deadline"].default
+                  : registry["integration.deadline"].default
         });
         return yield* effect.pipe(
           Effect.onExit((exit) =>
@@ -724,62 +785,69 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       });
 
     /**
-     * Connects in progress in this process, by company and handle, and when each started: a second
-     * submit while discovery runs is refused rather than run beside it.
+     * Connects in progress in this process, by integration, company and handle, and when each
+     * started: a second submit while the first still talks to the source is refused rather than
+     * run beside it.
      */
     const connecting = new Map<string, number>();
-    const attioConnect = Effect.fn("ConnectionStore.attioConnect")(function* (
-      input: ConnectInput,
-      report?: (connection: Connection) => Effect.Effect<void>
-    ) {
-      const slot = `${input.companyId}\n${input.handle}`;
-      // The name is claimed and released as one bracket, so an interrupted connect never keeps it.
-      return yield* Effect.acquireUseRelease(
+    /** Runs `effect` holding the connect's name; it's claimed and released as one bracket. */
+    const claimed = <A, E, R>(input: ConnectInput, effect: Effect.Effect<A, E, R>) => {
+      const slot = `${input.integration}\n${input.companyId}\n${input.handle}`;
+      return Effect.acquireUseRelease(
         Effect.gen(function* () {
           const running = connecting.get(slot);
           if (running !== undefined)
             return yield* new ConnectInProgress({
-              name: `attio/${input.handle}`,
+              name: `${input.integration}/${input.handle}`,
               startedAt: DateTime.formatIso(DateTime.makeUnsafe(running))
             });
           connecting.set(slot, yield* Clock.currentTimeMillis);
         }),
-        () =>
-          Effect.gen(function* () {
-            const identity = {
-              ...input,
-              integration: "attio" as const,
-              id: yield* cryptography.internalId("conn")
-            };
-            const { self, snapshot } = yield* audited(
-              identity,
-              "attio.discover",
-              attio.inspect(input.credentials)
-            );
-            const encrypted = yield* keys.encrypt(
-              identity,
-              AttioSource.credentials({
-                key: Redacted.value(input.credentials),
-                workspaceId: self.workspace.id
-              })
-            );
-            const now = yield* Clock.currentTimeMillis;
-            return yield* reportedTransaction(
-              insert(
-                identity,
-                input,
-                {
-                  integration: "attio",
-                  display: attioDisplay(self, AttioSource.keyHint(input.credentials))
-                },
-                encrypted,
-                { integration: "attio", snapshot },
-                now
-              ),
-              report
-            );
-          }),
+        () => effect,
         () => Effect.sync(() => connecting.delete(slot))
+      );
+    };
+    const attioConnect = Effect.fn("ConnectionStore.attioConnect")(function* (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) {
+      // An interrupted connect never keeps the name.
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "attio" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const { self, snapshot } = yield* audited(
+            identity,
+            "attio.discover",
+            attio.inspect(input.credentials)
+          );
+          const encrypted = yield* keys.encrypt(
+            identity,
+            AttioSource.credentials({
+              key: Redacted.value(input.credentials),
+              workspaceId: self.workspace.id
+            })
+          );
+          const now = yield* Clock.currentTimeMillis;
+          return yield* reportedTransaction(
+            insert(
+              identity,
+              input,
+              {
+                integration: "attio",
+                display: attioDisplay(self, AttioSource.keyHint(input.credentials))
+              },
+              encrypted,
+              { integration: "attio", snapshot },
+              now
+            ),
+            report
+          );
+        })
       );
     });
 
@@ -898,12 +966,231 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       );
     });
 
+    // ---------- IMAP: a mailbox login, paused when its server refuses it ----------
+
+    const imapSecret = (current: StoredImap) =>
+      keys.decrypt(current, current).pipe(Effect.flatMap(ImapSource.parseCredentials));
+    const iso = (now: number) => DateTime.formatIso(DateTime.makeUnsafe(now));
+    /**
+     * Records a refused login on the connection, so no host process logs in with it again: once,
+     * and only while what the attempt started under still stands. A refusal that arrives after
+     * other credentials were saved (`credentialRevision`), or after a login with these ones worked
+     * and was saved (`logins`), is stale and pauses nothing.
+     */
+    const imapPause = (
+      input: { readonly companyId: string; readonly id: string },
+      attempt: { readonly credentialRevision: number; readonly logins: number },
+      paused: ImapSource.Paused
+    ) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* connectionRow({ ...input, locked: true });
+          if (
+            Option.isNone(locked) ||
+            locked.value.integration !== "imap" ||
+            locked.value.credentialRevision !== attempt.credentialRevision ||
+            loginsOf(locked.value) !== attempt.logins ||
+            locked.value.display.paused !== undefined
+          )
+            return;
+          yield* sql`UPDATE connections SET display = ${encodeDisplay({
+            integration: "imap",
+            display: { ...locked.value.display, paused }
+          })} WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+        })
+      );
+    /**
+     * The stored login's Test on a fresh session, recorded in recent calls as the admin's. A login
+     * the server refuses pauses the connection, and once the refusal is known the pause is saved
+     * even if the request that asked goes away.
+     */
+    const imapCheck = (
+      input: Identity,
+      current: StoredImap,
+      during: "test" | "refresh" | "reconnect"
+    ) =>
+      Effect.gen(function* () {
+        const login = yield* imapSecret(current);
+        return yield* Effect.uninterruptibleMask((restore) =>
+          restore(
+            audited(
+              { ...input, integration: "imap" },
+              `imap.${during}`,
+              imap.inspect(ImapSource.settings(login))
+            )
+          ).pipe(
+            Effect.catchTags({
+              ImapLoginRefused: (error) =>
+                Effect.gen(function* () {
+                  const now = yield* Clock.currentTimeMillis;
+                  yield* imapPause(
+                    input,
+                    {
+                      credentialRevision: current.credentialRevision,
+                      logins: current.display.logins ?? 0
+                    },
+                    { at: iso(now), reply: error.reply, during, by: input.userId }
+                  );
+                  return yield* error;
+                })
+            })
+          )
+        );
+      });
+
+    const imapConnect = Effect.fn("ConnectionStore.imapConnect")(function* (
+      input: ConnectInput,
+      report?: (connection: Connection) => Effect.Effect<void>
+    ) {
+      const login = yield* ImapSource.parseCredentials(input.credentials);
+      return yield* claimed(
+        input,
+        Effect.gen(function* () {
+          const identity = {
+            ...input,
+            integration: "imap" as const,
+            id: yield* cryptography.internalId("conn")
+          };
+          const snapshot = yield* audited(
+            identity,
+            "imap.connect",
+            imap.inspect(ImapSource.settings(login))
+          );
+          const encrypted = yield* keys.encrypt(identity, ImapSource.credentials(login));
+          const now = yield* Clock.currentTimeMillis;
+          return yield* reportedTransaction(
+            insert(
+              identity,
+              input,
+              working(login, 1),
+              encrypted,
+              { integration: "imap", snapshot },
+              now
+            ),
+            report
+          );
+        })
+      );
+    });
+
+    /** Test: the stored login on a fresh session. Logging in is the way out of a pause. */
+    const imapTest = Effect.fn("ConnectionStore.imapTest")(function* (
+      input: Identity,
+      current: StoredImap
+    ) {
+      yield* imapCheck(input, current, "test");
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* lock(input, current);
+          yield* sql`UPDATE connections SET last_tested_at = to_timestamp(${now / 1_000}),
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))}
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /**
+     * Replace password: the new password's Test, then saved in place of the old with the pause
+     * cleared. The login stays where it was, and so does the snapshot: a new password changes
+     * nothing patches read. A disconnected connection stays disconnected.
+     */
+    const imapReplace = Effect.fn("ConnectionStore.imapReplace")(function* (
+      input: CredentialsInput,
+      current: StoredImap
+    ) {
+      const login = yield* ImapSource.parseCredentials(input.credentials);
+      if (!sameLogin(current.display, login)) return yield* new ConnectionRetargetUnavailable({});
+      yield* audited(
+        { ...input, integration: "imap" },
+        "imap.replace",
+        imap.inspect(ImapSource.settings(login))
+      );
+      const encrypted = yield* keys.encrypt(current, ImapSource.credentials(login));
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* lock(input, current);
+          yield* sql`UPDATE connections SET display = ${encodeDisplay(working(login, loginsOf(locked) + 1))},
+            credentials = ${encrypted.credentials}, key_id = ${encrypted.keyId},
+            credential_revision = credential_revision + 1,
+            last_tested_at = to_timestamp(${now / 1_000})
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /** Refresh folders: a fresh session's folders as a new snapshot revision. Never while paused. */
+    const imapRefresh = Effect.fn("ConnectionStore.imapRefresh")(function* (
+      input: Identity,
+      current: StoredImap
+    ) {
+      if (current.status !== "connected") return yield* new ConnectionNotConnected({});
+      if (current.display.paused !== undefined)
+        return yield* new ImapSource.ConnectionPaused({ at: current.display.paused.at });
+      const snapshot = yield* imapCheck(input, current, "refresh");
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* lock(input, current);
+          const revision = current.metadataRevision + 1;
+          yield* writeSnapshot(input, revision, { integration: "imap", snapshot }, now);
+          yield* sql`UPDATE connections SET metadata_revision = ${revision},
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))},
+            last_tested_at = to_timestamp(${now / 1_000}),
+            last_discovered_at = to_timestamp(${now / 1_000})
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    /** Reconnect always logs in on a fresh session; one that works clears a pause too. */
+    const imapReconnect = Effect.fn("ConnectionStore.imapReconnect")(function* (
+      input: Identity,
+      current: StoredImap
+    ) {
+      yield* imapCheck(input, current, "reconnect");
+      const now = yield* Clock.currentTimeMillis;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const locked = yield* lock(input, current);
+          yield* sql`UPDATE connections SET status = 'connected', credential_revision = credential_revision + 1,
+            display = ${encodeDisplay(working(current.display, loginsOf(locked) + 1))},
+            last_tested_at = to_timestamp(${now / 1_000})
+            WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          return yield* get(input.companyId, input.id);
+        })
+      );
+    });
+
+    const pauseLogin = Effect.fn("ConnectionStore.pauseLogin")(
+      function* (input: {
+        readonly companyId: string;
+        readonly id: string;
+        readonly credentialRevision: number;
+        readonly logins: number;
+        readonly reply: ImapSource.Paused["reply"];
+      }) {
+        const now = yield* Clock.currentTimeMillis;
+        yield* imapPause(input, input, {
+          at: iso(now),
+          reply: input.reply,
+          during: "call"
+        });
+      },
+      Effect.catchTags(safe("pauseLogin"))
+    );
+
     const connect = Effect.fn("ConnectionStore.connect")(
       function* (input: ConnectInput, report?: (connection: Connection) => Effect.Effect<void>) {
         if (!Companies.isHandle(input.handle)) return yield* new InvalidConnectionHandle({});
         if (!isDescription(input.description)) return yield* new InvalidConnectionDescription({});
         if (input.integration === "pidgeon") return yield* pidgeonConnect(input, report);
         if (input.integration === "attio") return yield* attioConnect(input, report);
+        if (input.integration === "imap") return yield* imapConnect(input, report);
         const identity = {
           ...input,
           integration: input.integration,
@@ -1068,6 +1355,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonReplace(input);
         if (current.integration === "attio") return yield* attioReplace(input, current);
+        if (current.integration === "imap") return yield* imapReplace(input, current);
         const target = yield* testTarget(current.integration, input.credentials);
         if (!sameTarget(current, target)) return yield* new ConnectionRetargetRequired({});
         const encrypted = yield* keys.encrypt(current, input.credentials);
@@ -1109,6 +1397,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         const current = yield* stored(input);
         if (current.integration === "pidgeon") return yield* pidgeonTest(input, current);
         if (current.integration === "attio") return yield* attioTest(input, current);
+        if (current.integration === "imap") return yield* imapTest(input, current);
         yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -1171,6 +1460,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
         return yield* attioRefresh(input, current);
       }
+      // Another mailbox is another connection.
+      if (current.integration === "imap") {
+        if (credentials !== undefined) return yield* new ConnectionRetargetUnavailable({});
+        return yield* imapRefresh(input, current);
+      }
       if (credentials === undefined && current.status !== "connected")
         return yield* new ConnectionNotConnected({});
       const secret = credentials ?? (yield* keys.decrypt(current, current));
@@ -1224,6 +1518,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             Effect.provideService(Cryptography.Cryptography, cryptography)
           );
         else if (current.integration === "attio") return yield* attioReconnect(input, current);
+        else if (current.integration === "imap") return yield* imapReconnect(input, current);
         else yield* testTarget(current.integration, yield* keys.decrypt(current, current));
         const now = yield* Clock.currentTimeMillis;
         return yield* sql.withTransaction(
@@ -1372,6 +1667,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
           return yield* new ConnectionNotConnected({});
         if (found.value.credentialRevision !== credentialRevision)
           return yield* new ConnectionChanged({});
+        // A refused login paused it: nothing logs in until an admin's Test or Replace password.
+        if (found.value.integration === "imap" && found.value.display.paused !== undefined)
+          return yield* new ImapSource.ConnectionPaused({ at: found.value.display.paused.at });
         return yield* keys.decrypt(found.value, found.value);
       },
       Effect.catchTags(safe("poolCredentials"))
@@ -1434,7 +1732,8 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       resolve,
       poolCredentials,
       countSend,
-      sends
+      sends,
+      pauseLogin
     });
   });
 

@@ -1,0 +1,70 @@
+{
+  "folders": ["Invoices/2026", "Statements", "Projekte/Überweisungen"],
+  "messages": [
+    {
+      "folder": "INBOX",
+      "from": "Ana Pérez <billing@olivetree-paper.example>",
+      "subject": "Factura nº 2026-0412 — papel reciclado",
+      "date": "2026-10-28T09:14:00Z",
+      "text": "Hola,\n\nAdjunto la factura 2026-0412 por 1.240,00 EUR, a pagar en 30 días.\n\nGracias,\nAna\n",
+      "attachment": {
+        "filename": "factura-2026-0412.pdf",
+        "contentType": "application/pdf",
+        "text": "%PDF-1.4\n% Invented invoice 2026-0412 for 1,240.00 EUR\n%%EOF\n"
+      }
+    },
+    {
+      "folder": "INBOX",
+      "from": "Accounts <accounts@northline-freight.example>",
+      "subject": "Invoice INV-88213: October freight",
+      "date": "2026-11-02T15:40:00Z",
+      "text": "Please find attached invoice INV-88213 for October's three pallet deliveries. Total 3,412.50 GBP, due 30 November.\n",
+      "attachment": {
+        "filename": "INV-88213.pdf",
+        "contentType": "application/pdf",
+        "text": "%PDF-1.4\n% Invented invoice INV-88213 for 3,412.50 GBP\n%%EOF\n"
+      }
+    },
+    {
+      "folder": "INBOX",
+      "from": "Accounts <accounts@northline-freight.example>",
+      "subject": "Reminder: INV-87760 is overdue",
+      "date": "2026-11-04T08:05:00Z",
+      "text": "This is a reminder that INV-87760 (1,980.00 GBP) was due on 31 October. Please ignore it if you've already paid.\n"
+    },
+    {
+      "folder": "INBOX",
+      "from": "Kai Becker <kai@becker-tools.example>",
+      "subject": "Rechnung 7731 für Werkzeuge",
+      "date": "2026-11-05T11:22:00Z",
+      "text": "Guten Tag,\n\nanbei unsere Rechnung 7731 über 615,00 EUR.\n\nViele Grüße\nKai Becker\n",
+      "seen": true,
+      "attachment": {
+        "filename": "Rechnung-7731.pdf",
+        "contentType": "application/pdf",
+        "text": "%PDF-1.4\n% Invented invoice 7731 for 615.00 EUR\n%%EOF\n"
+      }
+    },
+    {
+      "folder": "Invoices/2026",
+      "from": "Billing <billing@harbourlight-energy.example>",
+      "subject": "Your September electricity invoice",
+      "date": "2026-10-03T07:00:00Z",
+      "text": "Your September invoice is 842.17 GBP and will be collected by direct debit on 17 October.\n",
+      "seen": true,
+      "attachment": {
+        "filename": "harbourlight-2026-09.pdf",
+        "contentType": "application/pdf",
+        "text": "%PDF-1.4\n% Invented electricity invoice for 842.17 GBP\n%%EOF\n"
+      }
+    },
+    {
+      "folder": "Statements",
+      "from": "Statements <statements@olivetree-paper.example>",
+      "subject": "Statement of account, October 2026",
+      "date": "2026-11-01T06:30:00Z",
+      "text": "Opening balance 0.00 EUR. Invoiced 1,240.00 EUR. Paid 0.00 EUR. Closing balance 1,240.00 EUR.\n",
+      "seen": true
+    }
+  ]
+}

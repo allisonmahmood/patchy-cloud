@@ -17,6 +17,7 @@ import * as PostHogPage from "./posthog/Page.js";
 import * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonPage from "./pidgeon/Page.js";
 import * as AttioPage from "./attio/Page.js";
+import * as ImapPage from "./imap/Page.js";
 
 /** A page to read. */
 export type Target =
@@ -85,6 +86,8 @@ interface IntegrationPage {
     form: Submitted,
     current?: ConnectionStore.Connection
   ) => Redacted.Redacted<string> | View.Notice;
+  /** What recent calls keep of its calls, and what they never keep, in its own words. */
+  readonly logged: string;
   /** The integration's own words for a completed action, where they differ. */
   readonly results?: Partial<
     Record<Result, string | ((connection: ConnectionStore.Connection) => string)>
@@ -94,7 +97,8 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   postgres: PostgresPage,
   posthog: PostHogPage,
   pidgeon: PidgeonPage,
-  attio: AttioPage
+  attio: AttioPage,
+  imap: ImapPage
 };
 const offers = integrations.map((integration) => pages[integration].offer);
 const isIntegration = Schema.is(Integration);
@@ -110,6 +114,7 @@ const about = (
   readonly facts: ReadonlyArray<readonly [string, string]>;
   readonly standing?: ReadonlyArray<View.Standing>;
   readonly tag?: string | undefined;
+  readonly attention?: string | undefined;
 } =>
   connection.integration === "postgres"
     ? { source: PostgresPage.source(connection), facts: PostgresPage.facts(connection) }
@@ -117,12 +122,19 @@ const about = (
       ? { source: PostHogPage.source(connection), facts: PostHogPage.facts(connection) }
       : connection.integration === "attio"
         ? { source: AttioPage.source(connection), facts: AttioPage.facts(connection) }
-        : {
-            source: PidgeonPage.source(connection),
-            facts: PidgeonPage.facts(connection),
-            standing: PidgeonPage.standing(connection),
-            tag: PidgeonPage.tag(connection)
-          };
+        : connection.integration === "imap"
+          ? {
+              source: ImapPage.source(connection),
+              facts: ImapPage.facts(connection),
+              tag: ImapPage.tag(connection),
+              attention: ImapPage.attention(connection)
+            }
+          : {
+              source: PidgeonPage.source(connection),
+              facts: PidgeonPage.facts(connection),
+              standing: PidgeonPage.standing(connection),
+              tag: PidgeonPage.tag(connection)
+            };
 /** What a snapshot lets patches read, in its integration's words. */
 const readsOf = (metadata: ConnectionStore.Metadata) =>
   metadata.integration === "postgres"
@@ -131,7 +143,9 @@ const readsOf = (metadata: ConnectionStore.Metadata) =>
       ? PostHogPage.reads(metadata.snapshot)
       : metadata.integration === "attio"
         ? AttioPage.reads(metadata.snapshot)
-        : PidgeonPage.reads(metadata.snapshot);
+        : metadata.integration === "imap"
+          ? ImapPage.reads(metadata.snapshot)
+          : PidgeonPage.reads(metadata.snapshot);
 
 /** The field each refusal is about, when it is about one. */
 const refusedField = (page: IntegrationPage, code: string | undefined): View.Field | undefined =>
@@ -222,6 +236,7 @@ const row = (
     source: known.source,
     status: connection.status,
     ...(known.tag === undefined ? {} : { tag: known.tag }),
+    ...(known.attention === undefined ? {} : { attention: known.attention }),
     ...(usage.get(connection.id) ?? ConnectionStore.unused)
   };
 };
@@ -348,11 +363,13 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
     Effect.catchTags({ SqlError: () => Effect.succeed(null) })
   );
   const known = about(connection);
-  // An Attio key a check found writable names whose check it was.
+  // An Attio key a check found writable, and an IMAP login a server refused, name whose it was.
   const standing =
     connection.integration === "attio"
       ? AttioPage.standing(connection, people ?? new Map(), yield* Clock.currentTimeMillis)
-      : known.standing;
+      : connection.integration === "imap"
+        ? ImapPage.standing(connection, people ?? new Map(), yield* Clock.currentTimeMillis)
+        : known.standing;
   // A Pidgeon connection's sends today, against its budget; a count that can't be read says so.
   const sends =
     connection.integration === "pidgeon"
@@ -436,12 +453,17 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
               : [call.effectivePrincipal]
           )
         );
-        return { list, names: { people: new Map([...people, ...guests]), versions } };
+        return {
+          list,
+          names: { people: new Map([...people, ...guests]), versions },
+          logged: page.logged
+        };
       }).pipe(
         Effect.catch(() =>
           Effect.succeed({
             list: "unavailable" as const,
-            names: { people, versions: new Map() }
+            names: { people, versions: new Map() },
+            logged: page.logged
           })
         )
       )
@@ -611,7 +633,11 @@ const credentialFields: ReadonlyArray<View.Field> = [
   "project",
   "key",
   "address",
-  "access"
+  "access",
+  "host",
+  "port",
+  "username",
+  "password"
 ];
 
 const connect = Effect.fn("ConnectionPage.connect")(function* (
@@ -690,13 +716,16 @@ const act = Effect.fn("ConnectionPage.act")(function* (
           );
         default: {
           const { page } = yield* connectionView(viewer, id);
-          // A key that stopped working, or an Attio key that can write, is fixed by replacing it.
+          // A key that stopped working, an Attio key that can write, or a password a mail server
+          // refused, is fixed by replacing it.
           const replace =
             notice.code === "pidgeon_key_stopped" ||
             notice.code === "attio_key_unknown" ||
             notice.code === "attio_write_scopes"
               ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace key…" } }
-              : {};
+              : notice.code === "auth_failed"
+                ? { next: { href: View.connectionPath(id, "rotate"), label: "Replace password…" } }
+                : {};
           return yield* connectionPage(viewer, id, { ...atField(page, notice, []), ...replace });
         }
       }

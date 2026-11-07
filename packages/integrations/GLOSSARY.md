@@ -1,11 +1,11 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon and Attio connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
 
 ## Language
 
 **Integration**:
-A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon and Attio are built; OAuth integrations such as Salesforce and Gmail remain future work.
+A capability Patchy ships for reaching an outside system, the same capability for every company. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) are built; OAuth integrations such as Salesforce and Gmail remain future work.
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
@@ -45,7 +45,7 @@ An admin's setting on one connection that keeps a patch's [guests](../companies/
 _Avoid_: guest access, allow list, sensitive flag
 
 **Metadata**:
-The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
+The source's shape as discovered for one connection, never its business rows. Postgres metadata is a schema snapshot; PostHog metadata is an events snapshot; Pidgeon metadata is an address snapshot; Attio metadata is a workspace snapshot; IMAP metadata is a mailbox snapshot. A stored snapshot names its own integration, so it reads correctly after its connection is deleted.
 _Avoid_: instance, fixture
 
 **Schema snapshot**:
@@ -72,6 +72,26 @@ _Avoid_: key test, token validation
 The calls and discoveries one server process lets run at once against one Attio workspace, shared by every connection to it and by `patchy dev` and published patches, inside one gate for all of Attio. One that can't get a slot before its deadline is refused busy, having sent nothing.
 _Avoid_: pool, rate limit (Attio's own)
 
+**Mailbox snapshot**:
+An immutable description of one IMAP mailbox login: its host, port, security mode and username, the capabilities its server advertised once logged in, and its folders by path with their delimiter, the special-use flags the server sent and whether each is selectable, at most 5,000 and marked truncated past that. Never mail. The folders are hints for generation and context, not limits on calls. Refresh folders takes a new one.
+_Avoid_: inbox snapshot, mail index
+
+**Mailbox login**:
+What one IMAP connection is: a host, port, security mode, username and password an admin typed, fixed for the connection's life except the password. The password is sealed together with where it may go, and goes only there: to an address the host resolved to and Patchy checked public, over TLS 1.2 or later verified against the typed host, never to a fallback or a referral.
+_Avoid_: email account, inbox
+
+**Fresh session**:
+An IMAP session opened for one Test, connect, Replace password, Refresh folders or Reconnect alone, and logged out after it: it resolves and checks the host again, and is never taken from or returned to a pool. Test runs TLS, `CAPABILITY`, the login, `LIST` and `EXAMINE INBOX` on one, naming the requirement a mailbox missed.
+_Avoid_: probe, connection test
+
+**Login pause**:
+An IMAP connection whose mail server refused its login, recorded on the connection's row with when, the server's code and whose login it was, so no host process logs in with it again: calls fail `auth_failed` without contacting the server, until an admin's Test, Replace password or Reconnect logs in. Only a `NO` to `LOGIN` or `AUTHENTICATE` coded `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded pauses; a `BAD`, a throttle, another code and a network failure don't, nor does a refusal that lands after a login with the same password has worked and been saved since the attempt began. `patchy list connections` marks a paused connection, with the way out.
+_Avoid_: lockout, disabled (the mail host's words for what the pause prevents), disconnect
+
+**Mail network**:
+Where IMAP sessions resolve hosts, which addresses they may dial, where a checked address is dialled and which certificate authorities are trusted. The launcher provides it: production's admits public addresses and the system's authorities only; the loopback one, which only the dev runner and tests provide, adds named mail servers on this machine with their own CA. No setting turns loopback on.
+_Avoid_: proxy, egress
+
 **Admin key**:
 The Pidgeon key over the whole account an admin pastes to connect, change access or replace a key, live or test. It travels only in the bodies of that admin's own requests and is never stored, logged or shown; Patchy uses it to find or create the address and mint an address key, both in its mode. Revoking it revokes every key minted from it.
 _Avoid_: master key, account key, root key
@@ -97,7 +117,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection. Nor an IMAP one: another mailbox is another connection.
 _Avoid_: rename, new connection
 
 **Credential revision**:

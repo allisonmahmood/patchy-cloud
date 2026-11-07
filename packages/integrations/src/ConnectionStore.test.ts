@@ -18,6 +18,7 @@ import * as SourceClient from "./postgres/SourceClient.js";
 import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as ImapTest from "./test/imap.js";
 import { NodeCryptography } from "@patchy/core";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
@@ -84,7 +85,8 @@ const fixture = SqlConnectionStore.layer.pipe(
       Layer.succeed(Source.Source, source),
       posthog.layer,
       PidgeonSource.layer,
-      AttioSource.layer
+      AttioSource.layer,
+      ImapTest.offline
     )
   ),
   Layer.provideMerge(Testing.layer()),

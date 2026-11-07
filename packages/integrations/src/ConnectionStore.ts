@@ -2,6 +2,7 @@ import {
   AttioSnapshot,
   type ConnectionDeclaration,
   type ConnectionDetail,
+  ImapSnapshot,
   type Integration,
   PidgeonSnapshot,
   PostHogSnapshot
@@ -18,6 +19,7 @@ import * as PostHogSource from "./posthog/Source.js";
 import type * as PidgeonKeys from "./pidgeon/Keys.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as ImapSource from "./imap/Source.js";
 
 export const Description = Schema.String.check(
   Schema.isMaxLength(500),
@@ -58,12 +60,18 @@ export const AttioConnection = Schema.Struct({
   integration: Schema.Literal("attio"),
   display: AttioSource.Display
 });
+export const ImapConnection = Schema.Struct({
+  ...fields,
+  integration: Schema.Literal("imap"),
+  display: ImapSource.Display
+});
 /** A company connection; its integration decides what its display says. */
 export const Connection = Schema.Union([
   PostgresConnection,
   PostHogConnection,
   PidgeonConnection,
-  AttioConnection
+  AttioConnection,
+  ImapConnection
 ]);
 export type Connection = typeof Connection.Type;
 /** Where a connection reads, in its integration's terms; credentials of one target share it. */
@@ -76,7 +84,8 @@ export const Metadata = Schema.Union([
   Schema.Struct({ integration: Schema.Literal("postgres"), snapshot: Snapshot }),
   Schema.Struct({ integration: Schema.Literal("posthog"), snapshot: PostHogSnapshot }),
   Schema.Struct({ integration: Schema.Literal("pidgeon"), snapshot: PidgeonSnapshot }),
-  Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot })
+  Schema.Struct({ integration: Schema.Literal("attio"), snapshot: AttioSnapshot }),
+  Schema.Struct({ integration: Schema.Literal("imap"), snapshot: ImapSnapshot })
 ]);
 export type Metadata = typeof Metadata.Type;
 
@@ -230,7 +239,8 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "resolve",
       "poolCredentials",
       "countSend",
-      "sends"
+      "sends",
+      "pauseLogin"
     ]),
     cause: Schema.Redacted(Schema.Defect())
   }
@@ -261,7 +271,9 @@ export type ConnectionError =
   | PidgeonSource.CallError
   | PidgeonKeys.KeysError
   | AttioSource.InspectError
-  | AttioSource.OtherWorkspace;
+  | AttioSource.OtherWorkspace
+  | ImapSource.InspectError
+  | ImapSource.ConnectionPaused;
 
 /** Who declares a connection, by the rule that decides whether it may be deleted. */
 export interface Usage {
@@ -382,7 +394,10 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       declaration: ConnectionDeclaration
     ) => Effect.Effect<ConnectionDeclaration, ResolveError>;
-    /** Live identity and credential revision, never the published metadata stamp. Decrypt only to create a pool. */
+    /**
+     * Live identity and credential revision, never the published metadata stamp. Decrypt only to
+     * create a pool. A paused IMAP connection refuses `auth_failed`, so nothing logs in with it.
+     */
     readonly poolCredentials: (
       companyId: string,
       declaration: ConnectionDeclaration,
@@ -405,5 +420,19 @@ export class ConnectionStore extends Context.Service<
       id: string,
       day: string
     ) => Effect.Effect<number, ConnectionStorageFailed>;
+    /**
+     * Pauses an IMAP connection whose mail server refused its login during a patch's call, so no
+     * host process logs in again until an admin's Test or Replace password succeeds. The caller
+     * passes what it read before logging in: the credential revision and the connection's
+     * `display.logins`. Records nothing once other credentials were saved, once a login with
+     * these ones worked and was saved since, or when it's already paused.
+     */
+    readonly pauseLogin: (input: {
+      readonly companyId: string;
+      readonly id: string;
+      readonly credentialRevision: number;
+      readonly logins: number;
+      readonly reply: ImapSource.Paused["reply"];
+    }) => Effect.Effect<void, ConnectionStorageFailed>;
   }
 >()("@patchy/integrations/ConnectionStore") {}

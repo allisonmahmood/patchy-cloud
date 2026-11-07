@@ -32,6 +32,7 @@ import * as Operations from "../src/pidgeon/Operations.js";
 import * as PostgresSource from "../src/postgres/Source.js";
 import * as PostHogSource from "../src/posthog/Source.js";
 import * as AttioSource from "../src/attio/Source.js";
+import * as ImapTest from "../src/test/imap.js";
 import * as SqlConnectionStore from "../src/SqlConnectionStore.js";
 import { services as pageServices } from "../src/test/pages.js";
 import * as PidgeonTest from "../src/test/pidgeon.js";
@@ -797,6 +798,7 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon operations, live in test 
     ),
     PostHogSource.layer,
     AttioSource.layer,
+    ImapTest.offline,
     Live.layer,
     swept
   ).pipe(

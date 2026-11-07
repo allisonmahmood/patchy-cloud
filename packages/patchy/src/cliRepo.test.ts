@@ -542,6 +542,44 @@ describe("patch-repo commands", () => {
     expect(existsSync(path.join(dir, ".agents/skills/patchy-attio"))).toBe(false);
   });
 
+  it("adds an IMAP declaration with its context and skill, and removes them again", async () => {
+    const instance = await stubInstance(projectHandler);
+    const dir = tier2ProjectTree(instance.url);
+    const result = await runCli(["add", "imap/invoices", "--as", "mail", "--json"], {
+      cwd: dir,
+      env
+    });
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      alias: "mail",
+      declaration: { kind: "imap", handle: "invoices" },
+      generated: expect.arrayContaining([
+        "patchy/_generated/uses/mail.ts",
+        "patchy/_generated/context/mail.md"
+      ]),
+      skills: [...coreProjectSkills, "patchy-imap", "patchy-server"].sort()
+    });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toContain(
+      '"mail": { kind: "imap", handle: "invoices" }'
+    );
+    expect(readJson(path.join(dir, "patchy/_generated/manifest.json"))).toMatchObject({
+      uses: { mail: { kind: "imap", handle: "invoices", id: "conn-invoices", revision: 1 } }
+    });
+    const context = readFileSync(path.join(dir, "patchy/_generated/context/mail.md"), "utf8");
+    expect(context).toContain(
+      "Mailbox: <code>invoices@acme.example</code> at <code>imap.example.com</code>, port 993 (TLS)"
+    );
+    expect(context).toContain("- <code>Sent</code> (\\Sent)");
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-imap/SKILL.md"))).toBe(true);
+    expect(existsSync(path.join(dir, "fixtures"))).toBe(false);
+    const removed = await runCli(["remove", "mail", "--json"], { cwd: dir, env });
+    expect(removed).toMatchObject({ status: 0, stderr: "" });
+    expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).not.toContain("imap");
+    expect(existsSync(path.join(dir, "patchy/_generated/context/mail.md"))).toBe(false);
+    expect(existsSync(path.join(dir, ".agents/skills/patchy-imap"))).toBe(false);
+  });
+
   it("adds the unstamped member directory and refuses removal until member columns are gone", async () => {
     const instance = await stubInstance(projectHandler);
     const dir = tier2ProjectTree(instance.url);

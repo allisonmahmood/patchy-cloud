@@ -1,0 +1,31 @@
+{
+  "company": {
+    "name": "Fernhill Supplies",
+    "handle": "fernhill"
+  },
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@fernhill.example",
+      "role": "admin"
+    },
+    {
+      "key": "priya",
+      "name": "Priya Raman",
+      "email": "priya@fernhill.example",
+      "role": "member"
+    }
+  ],
+  "publisher": "allison",
+  "connections": [
+    {
+      "integration": "imap",
+      "handle": "invoices",
+      "description": "Fernhill's supplier invoices mailbox: invoices, statements and payment reminders.",
+      "username": "invoices@fernhill.test",
+      "mail": "mail.json"
+    }
+  ],
+  "patches": []
+}

@@ -14,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ConnectionStore from "../ConnectionStore.js";
 import * as CredentialKeys from "../CredentialKeys.js";
 import * as PidgeonSource from "../pidgeon/Source.js";
+import * as ImapTest from "../test/imap.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
@@ -40,7 +41,8 @@ const fixture = Layer.mergeAll(
     })
   ),
   PostHogSource.layer,
-  PidgeonSource.layer
+  PidgeonSource.layer,
+  ImapTest.offline
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;

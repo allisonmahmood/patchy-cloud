@@ -14,6 +14,9 @@ export const offer = {
   reads: "Queries against your own database, through a role you supply.",
   mode: "Company-wide · read-only"
 };
+/** What recent calls keep of a Postgres call. */
+export const logged =
+  "Query text keeps its first 8 KiB; parameters and returned rows are never logged.";
 export const actions = {
   refresh: "Refresh schema",
   rotate: "Replace credentials",

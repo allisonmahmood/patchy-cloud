@@ -20,6 +20,7 @@ import * as CredentialKeys from "../CredentialKeys.js";
 import * as PostgresSource from "../postgres/Source.js";
 import * as PostHogSource from "../posthog/Source.js";
 import * as AttioSource from "../attio/Source.js";
+import * as ImapTest from "../test/imap.js";
 import * as SqlConnectionStore from "../SqlConnectionStore.js";
 import * as PidgeonTest from "../test/pidgeon.js";
 import * as Operations from "./Operations.js";
@@ -44,7 +45,8 @@ const fixture = Layer.mergeAll(
     })
   ),
   PostHogSource.layer,
-  AttioSource.layer
+  AttioSource.layer,
+  ImapTest.offline
 ).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
 
 type Viewer = NonNullable<Binding.Binding["Service"]["identity"]>;

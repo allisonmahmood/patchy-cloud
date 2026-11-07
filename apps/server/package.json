@@ -12,6 +12,11 @@
       "development": "./src/migrations.ts",
       "types": "./dist/migrations.d.ts",
       "import": "./dist/migrations.js"
+    },
+    "./launch": {
+      "development": "./src/launch.ts",
+      "types": "./dist/launch.d.ts",
+      "import": "./dist/launch.js"
     }
   },
   "scripts": {

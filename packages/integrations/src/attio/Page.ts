@@ -20,6 +20,9 @@ export const offer = {
   reads: "A workspace's objects, lists and members, read-only.",
   mode: "Company-wide · read-only"
 };
+/** What recent calls keep of an Attio call. */
+export const logged =
+  "Each call keeps the object or list it read and how many rows came back; filters, ids, values and records are never logged.";
 export const actions: View.Actions = { refresh: "Refresh workspace", rotate: "Replace key" };
 export const results = {
   connect: "Attio connected and its workspace discovered.",

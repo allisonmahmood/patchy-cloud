@@ -27,6 +27,9 @@ export const offer = {
   reads: "An email address on Pidgeon: patches read its mail and, if you allow it, send from it.",
   mode: "Company-wide · one address"
 };
+/** What recent calls keep of a Pidgeon call. */
+export const logged =
+  "Each call keeps its operation and the ids it named, and a send its subject and recipients; message bodies and search text are never logged.";
 export const actions: View.Actions = {
   refresh: "Refresh labels",
   access: "Change access",

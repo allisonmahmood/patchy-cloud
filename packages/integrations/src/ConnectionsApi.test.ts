@@ -20,6 +20,7 @@ import * as CredentialKeys from "./CredentialKeys.js";
 import * as Source from "./postgres/Source.js";
 import * as PostHogSource from "./posthog/Source.js";
 import * as AttioSource from "./attio/Source.js";
+import * as ImapTest from "./test/imap.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as PidgeonTest from "./test/pidgeon.js";
 import { NodeCryptography } from "@patchy/core";
@@ -93,6 +94,7 @@ const layer = Layer.mergeAll(ConnectionsApi.layer, HttpServer.layerServices).pip
         Source.layer,
         PostHogSource.layer,
         AttioSource.layer,
+        ImapTest.offline,
         PidgeonSource.layer,
         CredentialKeys.layerFromKeys(
           Redacted.make(`test:${Buffer.alloc(32, 1).toString("base64")}`)
@@ -445,5 +447,69 @@ it.layer(layer)("connections group", (it) => {
       });
       assert.deepInclude(current.offered ?? [], { integration: "attio", connected: true });
     })
+  );
+  it.effect("lists an IMAP connection only to a caller that decodes IMAP", () =>
+    Effect.gen(function* () {
+      const tokens = yield* MachineTokens.MachineTokens;
+      const api = yield* client(
+        (yield* tokens.mint({ userId: "connections-foreign", name: "IMAP reader" })).token
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+        status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('conn_invoices', 'cmp_foreign_connections', 'imap', 'invoices', 'Invoices', 'company',
+          'connected', ${JSON.stringify({ host: "mail.example.test", port: 993, security: "tls", username: "invoices@example.test" })}::jsonb,
+          'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
+      // A CLI from before IMAP names the integrations it decodes, and IMAP isn't one.
+      const older = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon,attio" }
+      });
+      assert.notInclude(
+        older.connections.map((connection) => connection.integration),
+        "imap"
+      );
+      const current = yield* api.listConnections({
+        query: { integrations: "postgres,posthog,pidgeon,attio,imap", all: true }
+      });
+      assert.deepInclude(current.connections, {
+        id: "conn_invoices",
+        handle: "invoices",
+        integration: "imap",
+        description: "Invoices",
+        status: "connected",
+        hint: "patchy add imap/invoices"
+      });
+      assert.deepInclude(current.offered ?? [], { integration: "imap", connected: true });
+    })
+  );
+  it.effect(
+    "says a paused IMAP connection is paused, with the way out, in its row and detail",
+    () =>
+      Effect.gen(function* () {
+        const tokens = yield* MachineTokens.MachineTokens;
+        const api = yield* client(
+          (yield* tokens.mint({ userId: "connections-foreign", name: "Paused reader" })).token
+        );
+        const sql = yield* SqlClient.SqlClient;
+        const at = "2026-11-05T09:00:00.000Z";
+        yield* sql`INSERT INTO connections (id, company_id, integration, handle, description, mode,
+        status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+        VALUES ('conn_paused', 'cmp_foreign_connections', 'imap', 'paused', 'Paused mailbox', 'company',
+          'connected', ${JSON.stringify({ host: "mail.example.test", port: 993, security: "tls", username: "paused@example.test", logins: 1, paused: { at, reply: null, during: "call" } })}::jsonb,
+          'not-a-valid-ciphertext', 'missing-key', 1, 1, 'connections-foreign')`;
+        yield* sql`INSERT INTO connection_snapshots (company_id, connection_id, integration, revision, snapshot)
+        VALUES ('cmp_foreign_connections', 'conn_paused', 'imap', 1,
+          ${JSON.stringify({ version: 1, host: "mail.example.test", port: 993, security: "tls", username: "paused@example.test", capabilities: [], folders: [], truncated: false })}::jsonb)`;
+        const listed = yield* api.listConnections({ query: { integrations: "imap" } });
+        const row = listed.connections.find((connection) => connection.id === "conn_paused");
+        assert.deepInclude(row, { status: "connected", paused: true });
+        assert.include(row?.hint, "Paused: its mail server refused the password");
+        assert.include(row?.hint, "Test it or replace the password at /company/connections");
+        assert.notInclude(row?.hint, "patchy add");
+        const detail = yield* api.getIntegrationConnection({
+          params: { integration: "imap", handle: "paused" }
+        });
+        assert.deepInclude(detail, { integration: "imap", paused: { at } });
+      })
   );
 });

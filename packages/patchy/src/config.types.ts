@@ -8,6 +8,7 @@ import {
   pidgeon,
   posthog,
   attio,
+  imap,
   sharedStore,
   sharedTable,
   t,
@@ -68,6 +69,7 @@ const config = defineConfig({
     product: posthog("warehouse"),
     support: pidgeon("support"),
     crm: attio("crm"),
+    invoices: imap("invoices"),
     customers: sharedTable("abcdefghijkl", "customers"),
     logos: sharedStore("abcdefghijkl", "logos")
   }
@@ -108,6 +110,8 @@ export type ConfigAssertions = [
   Assert<Equal<typeof config.uses.support.kind, "pidgeon">>,
   Assert<Equal<typeof config.uses.support.handle, "support">>,
   Assert<Equal<typeof config.uses.crm.kind, "attio">>,
+  Assert<Equal<typeof config.uses.invoices.kind, "imap">>,
+  Assert<Equal<typeof config.uses.invoices.handle, "invoices">>,
   Assert<Equal<typeof config.uses.crm.handle, "crm">>,
   Assert<Equal<typeof config.uses.logos.store, "logos">>,
   Assert<Equal<typeof config.uses.logos.kind, "sharedStore">>,

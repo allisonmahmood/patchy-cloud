@@ -72,6 +72,7 @@ const changeSchema = Schema.Union([
       Schema.Struct({ kind: Schema.Literal("posthog"), handle: Schema.String }),
       Schema.Struct({ kind: Schema.Literal("pidgeon"), handle: Schema.String }),
       Schema.Struct({ kind: Schema.Literal("attio"), handle: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("imap"), handle: Schema.String }),
       Schema.Struct({
         kind: Schema.Literal("sharedTable"),
         patchId: Schema.String,
@@ -140,12 +141,13 @@ export const manifestFile = (manifest: typeof Manifest.Type) => json(encodeManif
 type Change = typeof changeSchema.Type;
 
 /** The integrations `patchy add <integration>/<handle>` declares, as their pages name them. */
-const connectionKinds = ["postgres", "posthog", "pidgeon", "attio"] as const;
+const connectionKinds = ["postgres", "posthog", "pidgeon", "attio", "imap"] as const;
 const connectionLabels: { readonly [K in (typeof connectionKinds)[number]]: string } = {
   postgres: "Postgres",
   posthog: "PostHog",
   pidgeon: "Pidgeon",
-  attio: "Attio"
+  attio: "Attio",
+  imap: "Email (IMAP)"
 };
 
 const connectionAlias = (handle: string): string => {
@@ -666,11 +668,13 @@ export const generate = Effect.fn("Project.generate")(function* (
             ? "patchy-pidgeon"
             : removedKind === "attio"
               ? "patchy-attio"
-              : removedKind === "members"
-                ? "patchy-members"
-                : removedKind === "sharedStore"
-                  ? "patchy-shared-stores"
-                  : "patchy-shared-tables";
+              : removedKind === "imap"
+                ? "patchy-imap"
+                : removedKind === "members"
+                  ? "patchy-members"
+                  : removedKind === "sharedStore"
+                    ? "patchy-shared-stores"
+                    : "patchy-shared-tables";
     if (skills.includes(skill)) removedSkills.push(skill);
     skills = skills.filter((name) => name !== skill);
   }
@@ -1050,7 +1054,7 @@ export const add = Effect.fn("Project.add")(function* (
   } else
     return yield* new LocalError({
       message:
-        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add pidgeon/<handle>, patchy add attio/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
+        "Use patchy add members, patchy add postgres/<handle>, patchy add posthog/<handle>, patchy add pidgeon/<handle>, patchy add attio/<handle>, patchy add imap/<handle>, patchy add shared-table <patchId>/<table>, or patchy add shared-store <patchId>/<store>."
     });
   const alias = Option.getOrElse(as, () => defaultAlias);
   yield* refresh(cwd, token, { kind: "add", alias, declaration });
