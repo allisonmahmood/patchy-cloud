@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { escapeHtml, htmlPage, SWITCHER_RELAY_SOURCE, switcherRelay } from "./html.js";
+import { escapeHtml, htmlPage, SWITCHER_RELAY_SOURCE, switcherRelay, switcherTag } from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
 
 describe("htmlPage app body", () => {
@@ -147,6 +147,10 @@ describe("htmlPage app body", () => {
     );
     expect(tag?.[2]).toBe(' data-viewer="usr_sam" data-company="cmp_northwind"');
     expect(app.indexOf(tag![0])).toBeLessThan(app.indexOf(session));
+    // A notice about one patch names it too, escaped like the viewer.
+    expect(
+      switcherTag({ userId: "usr_sam", companyId: "cmp_northwind", patchId: 'pat_"<b>' })
+    ).toMatch(/ data-company="cmp_northwind" data-patch="pat_&quot;&lt;b&gt;"><\/script>$/);
     expect(htmlPage({ title: "Sign in", head: session, body: "<main></main>" })).not.toContain(
       "/~shell/switcher.js"
     );

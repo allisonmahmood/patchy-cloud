@@ -37,9 +37,10 @@ locally against Clerk's public key, using the handshake for a browser that
 returns cold. `CLERK_JWT_KEY` supplies that public key without a JWKS fetch;
 without it, the SDK retrieves Clerk's signing keys. A failed returning handshake
 shows a sign-in failure rather than starting a loop. A top-level notice reads the
-session but never starts a handshake: a person stopped on one always sees it, and
-it loads the pair and their switcher only when the session verifies as an active
-member's.
+session but never redirects: it never starts a handshake, and it takes a verified
+return as it is, setting its cookies without the cleanup hop. A person stopped on
+one always sees it, and it loads the pair and their switcher only when the session
+verifies as an active member's.
 
 ## Consequences
 

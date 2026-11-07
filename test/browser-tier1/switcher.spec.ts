@@ -564,6 +564,32 @@ test("a signed-in person opens the switcher on a notice and leaves; signed out, 
   expect(requested).not.toContain("/switcher.json");
 });
 
+test("on a patch's needs-rebuild notice, the menu treats that patch as the one on screen", async ({
+  page,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  const sales = await publish(instance, "Sales HQ");
+  await visit(page, crew);
+  await visit(page, sales);
+  await instance.platform.query("UPDATE patch_versions SET wire_version=999 WHERE id=$1", [
+    sales.versionId
+  ]);
+  const blocked: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("Content Security Policy")) blocked.push(message.text());
+  });
+  expect((await page.goto(sales.address))?.status()).toBe(409);
+  await expect(page.locator('[data-notice="needs_rebuild"]')).toBeVisible();
+  // Never a row, never the flip: Enter goes back to the patch before it, not to this notice.
+  await openAt(page, "Crew rota");
+  await expect(titles(page)).not.toContainText(["Sales HQ"]);
+  await expect(group(page, "This patch")).toHaveText(["Overview", "Versions", "Log", "Settings"]);
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(crew.address);
+  expect(blocked).toEqual([]);
+});
+
 test("a public patch's shell claims the key and loads no switcher", async ({ page, instance }) => {
   const open = await publish(instance, "Timetable", "public");
   const requested: string[] = [];

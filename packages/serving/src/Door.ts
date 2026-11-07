@@ -74,9 +74,15 @@ const nobody: NoticeAdmission = { viewer: undefined, cookies: [] };
 /**
  * Who a top-level notice at `/~shell/notice/:code` is for, if anyone, and the cookies Clerk set
  * reading the session, so a session it refreshed on the way stays refreshed. Unlike `Admission`
- * it never answers for the page: Clerk wanting a handshake, a failed sign-in, no membership and a
- * deactivated account are all no one, and a handshake's cookies, which belong to its redirect,
- * are dropped. A person stopped on a notice always sees the notice.
+ * it never answers for the page, and never redirects:
+ *
+ * - A verified handshake return is admitted at once, with the cookies that complete it, rather
+ *   than through Clerk's cleanup hop.
+ * - A handshake Clerk wants to start is no one, and its cookies, which belong to the redirect,
+ *   are dropped.
+ * - So are a failed sign-in, no membership and a deactivated account.
+ *
+ * A person stopped on a notice always sees the notice.
  */
 export const noticeViewer = Effect.gen(function* () {
   const session = yield* Session.Session;
@@ -87,15 +93,22 @@ export const noticeViewer = Effect.gen(function* () {
       headers: request.headers
     })
   );
-  if (result.status === "handshake") return nobody;
-  if (result.status === "signed-out") return { viewer: undefined, cookies: result.cookies };
+  const { claims, cookies } =
+    result.status === "signed-in"
+      ? result
+      : result.status === "signed-out"
+        ? { claims: undefined, cookies: result.cookies }
+        : result.completed
+          ? { claims: result.claims, cookies: result.response.headers.getSetCookie() }
+          : { claims: undefined, cookies: [] };
+  if (claims === undefined) return { viewer: undefined, cookies };
   const viewer = yield* RequireSession.resolveViewer.pipe(
-    Effect.provideService(RequireSession.SignedIn, result.claims)
+    Effect.provideService(RequireSession.SignedIn, claims)
   );
   if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
-    return { viewer: undefined, cookies: result.cookies };
+    return { viewer: undefined, cookies };
   yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
-  return { viewer, cookies: result.cookies };
+  return { viewer, cookies };
 }).pipe(
   Effect.catchTags({
     SessionError: () => Effect.succeed(nobody),

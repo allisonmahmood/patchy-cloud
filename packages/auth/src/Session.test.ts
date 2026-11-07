@@ -146,8 +146,14 @@ it.layer(configured())("Session", (it) => {
       ];
       const returning = new URL(upstream.searchParams.get("redirect_url")!);
       returning.searchParams.set(constants.QueryParameters.Handshake, signHandshake(directives));
-      const second = handshake(
-        yield* session.authenticate(request(undefined, returning.href, { accept: "text/html" }))
+      const back = yield* session.authenticate(
+        request(undefined, returning.href, { accept: "text/html" })
+      );
+      const second = handshake(back);
+      // Verified already, so a page that never redirects can admit it without the cleanup hop.
+      assert.strictEqual(
+        back.status === "handshake" ? back.claims?.sid : undefined,
+        "sess_offline"
       );
       assert.strictEqual(
         second.headers.get("location"),
