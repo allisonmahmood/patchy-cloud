@@ -58,8 +58,9 @@ export const commandGroup = (input: {
   `<div class="command-group" role="group" aria-labelledby="${escapeAttribute(input.id)}"><p class="shelf-label command-head${input.patchy ? " command-head-patchy" : ""}" id="${escapeAttribute(input.id)}" role="presentation">${input.patchy ? '<span class="glyph glyph-sm" aria-hidden="true"></span>' : ""}${escapeHtml(input.label)}</p>${input.rows}</div>`;
 
 /**
- * The whole list: the field, the line that says nothing matched, empty until something doesn't,
- * and the listbox holding `rows`. `id` seeds the listbox's and the status line's ids.
+ * The whole list: the field, a label so a click anywhere on it, glyph included, lands in its
+ * input, the line that says nothing matched, empty until something doesn't, and the listbox
+ * holding `rows`. `id` seeds the listbox's and the status line's ids.
  */
 export const commandList = (input: {
   readonly id: string;
@@ -68,4 +69,4 @@ export const commandList = (input: {
   readonly placeholder: string;
   readonly rows: string;
 }) =>
-  `<div class="command"><div class="field field-group command-field"><span class="glyph glyph-sm" aria-hidden="true"></span><input type="text" role="combobox" aria-label="${escapeAttribute(input.label)}" aria-expanded="true" aria-controls="${escapeAttribute(input.id)}" aria-autocomplete="list" placeholder="${escapeAttribute(input.placeholder)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div><p class="command-empty" id="${escapeAttribute(`${input.id}-empty`)}" role="status"></p><div class="command-list" id="${escapeAttribute(input.id)}" role="listbox" aria-label="${escapeAttribute(input.label)}">${input.rows}</div></div>`;
+  `<div class="command"><label class="field field-group command-field"><span class="glyph glyph-sm" aria-hidden="true"></span><input type="text" role="combobox" aria-label="${escapeAttribute(input.label)}" aria-expanded="true" aria-controls="${escapeAttribute(input.id)}" aria-autocomplete="list" placeholder="${escapeAttribute(input.placeholder)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></label><p class="command-empty" id="${escapeAttribute(`${input.id}-empty`)}" role="status"></p><div class="command-list" id="${escapeAttribute(input.id)}" role="listbox" aria-label="${escapeAttribute(input.label)}">${input.rows}</div></div>`;

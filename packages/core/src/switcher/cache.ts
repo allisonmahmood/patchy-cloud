@@ -3,8 +3,9 @@
  * adopted for one viewer at one company, and the patch the tab showed last and the one before,
  * for the flip back. It holds only row metadata, never tokens, people, what was typed or URLs.
  *
- * An entry for anyone else, an older version, or one that doesn't read back counts as none, and
- * so does storage the browser denies or has no room in: the switcher then works from memory.
+ * An entry for anyone else, an older version, or one that doesn't read back counts as none and is
+ * removed, and storage the browser denies or has no room in holds nothing: the switcher then works
+ * from memory.
  */
 import { type SwitcherList, switcherList } from "./list.js";
 
@@ -35,32 +36,52 @@ export const tabStorage = (): Storage | undefined => {
   }
 };
 
-/** What the tab keeps for `who`; with nothing usable stored, just `who`. */
+/**
+ * What the tab keeps for `who`; with nothing usable stored, just `who`. An entry that is someone
+ * else's, an older version's, or doesn't read back whole is removed, pointers and all, so a later
+ * list never picks them up. An entry with pointers and no list yet, as before a first list lands,
+ * is whole.
+ */
 export const readKept = (storage: Storage | undefined, who: Who): Kept => {
+  let raw: string | null | undefined;
   try {
-    const raw = storage?.getItem(key);
-    if (raw === null || raw === undefined) return who;
-    const stored: unknown = JSON.parse(raw);
-    if (typeof stored !== "object" || stored === null) return who;
-    const entry = stored as Readonly<Record<string, unknown>>;
-    if (entry.v !== version || entry.viewer !== who.viewer || entry.company !== who.company)
-      return who;
-    const list = switcherList(entry.list);
-    const adopted =
-      list !== undefined &&
-      list.viewer.id === who.viewer &&
-      list.viewer.companyId === who.company &&
-      typeof entry.savedAt === "number";
-    const id = (value: unknown) => (typeof value === "string" ? value : undefined);
-    return {
-      ...who,
-      ...(adopted ? { list, savedAt: entry.savedAt as number } : {}),
-      current: id(entry.current),
-      previous: id(entry.previous)
-    };
+    raw = storage?.getItem(key);
   } catch {
     return who;
   }
+  if (raw === null || raw === undefined) return who;
+  const kept = entry(raw, who);
+  if (kept === undefined) forgetKept(storage);
+  return kept ?? who;
+};
+
+/** The stored text as `who`'s whole entry, or undefined. */
+const entry = (raw: string, who: Who): Kept | undefined => {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof stored !== "object" || stored === null) return undefined;
+  const { v, viewer, company, list, savedAt, current, previous } = stored as Readonly<
+    Record<string, unknown>
+  >;
+  if (v !== version || viewer !== who.viewer || company !== who.company) return undefined;
+  const id = (value: unknown): value is string | undefined =>
+    value === undefined || typeof value === "string";
+  if (!id(current) || !id(previous)) return undefined;
+  const pointers = { current, previous };
+  if (list === undefined && savedAt === undefined) return { ...who, ...pointers };
+  const adopted = switcherList(list);
+  if (
+    adopted === undefined ||
+    adopted.viewer.id !== who.viewer ||
+    adopted.viewer.companyId !== who.company ||
+    typeof savedAt !== "number"
+  )
+    return undefined;
+  return { ...who, list: adopted, savedAt, ...pointers };
 };
 
 /** Keeps `kept` for the tab, replacing anyone else's entry; a refusal keeps nothing. */

@@ -152,6 +152,32 @@ describe("the switcher's client", () => {
     expect(client.kept().list).toEqual(list());
   });
 
+  it("forgets for good on sign-out, even with an answer still on its way", async () => {
+    const storage = tab();
+    writeKept(storage, { ...who, list: list(), savedAt: 1_000, current: "p1", previous: "p0" });
+    const answer = Promise.withResolvers<Response>();
+    const fetch = vi.fn(() => answer.promise);
+    const client = switcherClient({
+      who,
+      storage,
+      fetch,
+      now: () => 1_000,
+      session: () => Promise.resolve(undefined)
+    });
+    const changes = vi.fn();
+    client.onChange(changes);
+    client.forget();
+    expect(client.kept()).toEqual(who);
+    expect(storage.getItem("patchy.switcher")).toBeNull();
+    expect(changes).toHaveBeenCalledTimes(1);
+    answer.resolve(json(200, list("Back from the dead")));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(client.kept()).toEqual(who);
+    expect(storage.getItem("patchy.switcher")).toBeNull();
+    client.freshen();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("moves the tab's pointers when a company shell for another patch starts", async () => {
     const storage = tab();
     writeKept(storage, { ...who, current: "p0" });

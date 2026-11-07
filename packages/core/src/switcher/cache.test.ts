@@ -71,33 +71,55 @@ describe("the switcher's entry", () => {
     expect(JSON.stringify(stored)).not.toMatch(/https?:|token|@/);
   });
 
-  it("ignores another viewer's or another company's entry, and replaces it on write", () => {
+  it("removes another viewer's or another company's entry, pointers and all", () => {
     const tab = storage();
-    writeKept(tab, { ...who, list, savedAt: 5, current: "p1" });
-    expect(readKept(tab, { ...who, viewer: "usr_ben" })).toEqual({ ...who, viewer: "usr_ben" });
-    expect(readKept(tab, { ...who, company: "cmp_pine" })).toEqual({ ...who, company: "cmp_pine" });
-    writeKept(tab, { ...who, viewer: "usr_ben" });
-    expect(readKept(tab, who)).toEqual(who);
+    for (const other of [
+      { ...who, viewer: "usr_ben" },
+      { ...who, company: "cmp_pine" }
+    ]) {
+      writeKept(tab, { ...who, list, savedAt: 5, current: "p1", previous: "p0" });
+      expect(readKept(tab, other)).toEqual(other);
+      expect(tab.items.size).toBe(0);
+    }
   });
 
-  it("drops a list that isn't one or isn't the viewer's, keeping the pointers", () => {
+  it("removes an entry whose list or pointers don't read back, rather than keep its pointers", () => {
     const tab = storage();
     const write = (entry: object) =>
-      tab.items.set("patchy.switcher", JSON.stringify({ v: 1, ...who, current: "p1", ...entry }));
-    write({ list: { ...list, patches: [{ id: 3 }] }, savedAt: 5 });
-    expect(readKept(tab, who)).toEqual({ ...who, current: "p1", previous: undefined });
-    write({ list: { ...list, viewer: { ...list.viewer, id: "usr_ben" } }, savedAt: 5 });
-    expect(readKept(tab, who).list).toBeUndefined();
-    write({ list, savedAt: "yesterday" });
-    expect(readKept(tab, who).list).toBeUndefined();
+      tab.items.set(
+        "patchy.switcher",
+        JSON.stringify({ v: 1, ...who, current: "p1", previous: "p0", ...entry })
+      );
+    for (const broken of [
+      { list: { ...list, patches: [{ id: 3 }] }, savedAt: 5 },
+      { list: { ...list, viewer: { ...list.viewer, id: "usr_ben" } }, savedAt: 5 },
+      { list: { ...list, viewer: { ...list.viewer, companyId: "cmp_pine" } }, savedAt: 5 },
+      { list, savedAt: "yesterday" },
+      { list },
+      { savedAt: 5 },
+      { current: 7 }
+    ]) {
+      write(broken);
+      expect(readKept(tab, who), JSON.stringify(broken)).toEqual(who);
+      expect(tab.items.size, JSON.stringify(broken)).toBe(0);
+    }
   });
 
-  it("counts an older version, unreadable JSON or refusing storage as nothing kept", () => {
+  it("keeps pointers on their own, as before a first list lands", () => {
+    const tab = storage();
+    writeKept(tab, { ...who, current: "p1", previous: "p0" });
+    expect(readKept(tab, who)).toEqual({ ...who, current: "p1", previous: "p0" });
+    expect(tab.items.size).toBe(1);
+  });
+
+  it("removes an older version or unreadable JSON, and keeps nothing in refusing storage", () => {
     const tab = storage();
     tab.items.set("patchy.switcher", JSON.stringify({ v: 0, ...who, current: "p1" }));
     expect(readKept(tab, who)).toEqual(who);
+    expect(tab.items.size).toBe(0);
     tab.items.set("patchy.switcher", "{");
     expect(readKept(tab, who)).toEqual(who);
+    expect(tab.items.size).toBe(0);
     const full = storage(true);
     expect(() => writeKept(full, { ...who, list, savedAt: 5 })).not.toThrow();
     expect(readKept(full, who)).toEqual(who);

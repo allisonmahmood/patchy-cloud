@@ -12,7 +12,8 @@
  *
  * Closing puts focus back where it opened from. Over a patch that is the frame, whose relay then
  * restores the exact field and selection; else the shell control that held focus, or the
- * starting cover while it is still up. On an app page, the element that held focus.
+ * starting cover while it is still up. On an app page, the element that held focus. Focus leaving
+ * the page while it is open closes it the same way, so it never shows while typing goes elsewhere.
  */
 import { commandGroup, commandIcon, commandList, commandRow, enterKey } from "../command-list.js";
 import { patchMark } from "../patch-marks.js";
@@ -40,6 +41,7 @@ export const switcherMenu = (
   /** The company shell's frame and the patch it shows; neither on an app page. */
   here: { readonly frame?: HTMLIFrameElement | undefined; readonly patch?: string | undefined }
 ): SwitcherMenu => {
+  const { frame } = here;
   const listId = `${SWITCHER_ID}-list`;
   const dialog = document.createElement("dialog");
   dialog.id = SWITCHER_ID;
@@ -59,6 +61,11 @@ export const switcherMenu = (
   let rows: Row[] = [];
   let selected = 0;
   let opener: Element | null = null;
+  // Whether the rows on show came from a list, and whether the person has typed, moved the
+  // selection or pointed since the menu opened. Until both, a list that lands is drawn as if it
+  // had been there at open: the patch to flip back to first and lit.
+  let filled = false;
+  let touched = false;
 
   const options = () => [...listbox.querySelectorAll<HTMLElement>('[role="option"]')];
 
@@ -112,6 +119,7 @@ export const switcherMenu = (
       })
       .join("");
     const previous = selected;
+    filled = client.kept().list !== undefined;
     rows = next.flatMap((section) => section.rows);
     const still = refresh ? rows.findIndex((row) => row.key === lit) : 0;
     select(still >= 0 ? still : previous);
@@ -127,13 +135,38 @@ export const switcherMenu = (
       back !== document.body &&
       back.isConnected &&
       back.closest("dialog:not([open])") === null;
-    const { frame } = here;
     if (frame !== undefined && (!usable || back === frame)) {
-      frame.focus();
-      frame.contentWindow?.focus();
-      // The relay puts the cursor back in the field the key found it in.
+      const toFrame = () => {
+        frame.focus();
+        frame.contentWindow?.focus();
+      };
+      toFrame();
+      // The relay puts the cursor back in the field the key found it in, once the frame has focus.
       frame.contentWindow?.postMessage(switcherMessage("closed"), "*");
+      // Firefox won't hand a frame focus during the key event that closed the menu, such as its
+      // Escape: the frame takes it once that is over, unless the person has put focus somewhere
+      // of their own meanwhile.
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (showing || active === frame) return;
+        if (active === null || active === document.body || dialog.contains(active)) toFrame();
+      });
     } else if (usable) back.focus({ preventScroll: true });
+  };
+
+  /** A key the menu acts on in its field; false for any other. */
+  const act = (key: string, mod: boolean): boolean => {
+    const last = rows.length - 1;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(key)) touched = true;
+    if (key === "ArrowDown") select(selected === last ? 0 : selected + 1);
+    else if (key === "ArrowUp") select(selected === 0 ? last : selected - 1);
+    else if (key === "Home") select(0);
+    else if (key === "End") select(last);
+    else if (key === "Enter") go(rows[selected], mod);
+    else if (key === "Escape") close();
+    // The field is the dialog's one stop.
+    else return key === "Tab";
+    return true;
   };
 
   const open = () => {
@@ -144,9 +177,11 @@ export const switcherMenu = (
     query = "";
     input.value = "";
     rows = [];
-    render(false);
+    touched = false;
+    // Focus first, so a key pressed while the rows draw lands in the field.
     dialog.showModal();
     input.focus();
+    render(false);
     client.freshen();
   };
 
@@ -171,27 +206,21 @@ export const switcherMenu = (
   };
 
   input.addEventListener("input", () => {
+    touched = true;
     query = input.value;
     render(false);
   });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing || event.keyCode === 229) return;
-    const last = rows.length - 1;
-    if (event.key === "ArrowDown") select(selected === last ? 0 : selected + 1);
-    else if (event.key === "ArrowUp") select(selected === 0 ? last : selected - 1);
-    else if (event.key === "Home") select(0);
-    else if (event.key === "End") select(last);
-    else if (event.key === "Enter") go(rows[selected], event.metaKey || event.ctrlKey);
-    else if (event.key === "Escape") close();
-    // The field is the dialog's one stop.
-    else if (event.key !== "Tab") return;
-    event.preventDefault();
+    if (act(event.key, event.metaKey || event.ctrlKey)) event.preventDefault();
   });
-  // Rows never take focus from the field; hovering lights one, as the arrows do.
-  listbox.addEventListener("mousedown", (event) => event.preventDefault());
+  // Hovering lights a row, as the arrows do.
   listbox.addEventListener("pointermove", (event) => {
     const index = optionAt(event.target);
-    if (index >= 0 && index !== selected) select(index);
+    if (index < 0) return;
+    // Pointing at a row, the lit one included, is choosing it: a list that lands won't move it.
+    touched = true;
+    if (index !== selected) select(index);
   });
   // A row is a link, so a click follows it. A modified click opens a new tab, which the menu
   // steps aside for once the browser has taken it.
@@ -199,10 +228,14 @@ export const switcherMenu = (
     if (optionAt(event.target) >= 0 && (event.metaKey || event.ctrlKey || event.shiftKey))
       setTimeout(close);
   });
-  // The scrim is the dialog itself, around the list.
+  // A press anywhere but the field's own text, rows, glyph, panel and scrim alike, leaves focus in
+  // the field, so the keys keep working; a click on a row still follows it.
   dialog.addEventListener("mousedown", (event) => {
-    if (event.target === dialog) event.preventDefault();
+    if (event.target === input) return;
+    event.preventDefault();
+    input.focus();
   });
+  // The scrim is the dialog itself, around the list.
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) close();
   });
@@ -218,8 +251,19 @@ export const switcherMenu = (
   });
   // Leaving with it open, back-forward cache included, finds the page as it was.
   addEventListener("pagehide", close);
+  // Focus leaving the dialog while it is open, to the patch, another window or the browser's own
+  // UI, closes it, so Go to never shows while typing goes elsewhere. Firefox doesn't blur the
+  // window when its frame takes focus, so the field losing it counts too; a move within the
+  // dialog doesn't.
+  const leftIt = () => {
+    if (showing && (!document.hasFocus() || !dialog.contains(document.activeElement))) close();
+  };
+  addEventListener("blur", (event) => {
+    if (event.target === window) leftIt();
+  });
+  input.addEventListener("blur", () => setTimeout(leftIt));
   client.onChange(() => {
-    if (showing) render(true);
+    if (showing) render(filled || touched);
   });
 
   return { open, close, toggle: () => (showing ? close() : open()) };
