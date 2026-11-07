@@ -7,8 +7,9 @@
  * Its one capture listener on `window` is the first any script registers, so it hears every key
  * before page code can: it claims Mod+Shift+K and on an activating press asks for the switcher.
  * In a frame, that is an `open` message to the shell, which also learns the relay is running from
- * its `hello`; at the top it toggles this page's own switcher. When the shell says the switcher
- * closed, the relay puts focus and the selection back where the press found them.
+ * its `hello`; at the top it toggles this page's own switcher, and lets a shell's waiting frame
+ * take clicks and focus once that frame's document can claim the key. When the shell says the
+ * switcher closed, the relay puts focus and the selection back where the press found them.
  */
 import { activates, claims, platformOf } from "./key.js";
 import { switcherMessage, switcherMessageKind, toggleSwitcher } from "./messages.js";
@@ -97,6 +98,29 @@ if (framed) {
     true
   );
   shell.postMessage(switcherMessage("hello"), "*");
+} else {
+  // A shell's frame waits hidden (`data-waiting`), out of reach of a click or Tab, until its
+  // document can claim the key: its relay says hello, or a document without one loads. This
+  // script ships inside the same response as that markup, so a broker from another release can
+  // never strand it. The load of the frame's first, empty document comes before it has a `src`.
+  const release = (frame: EventTarget | MessageEventSource | null) => {
+    for (const waiting of document.querySelectorAll<HTMLIFrameElement>("iframe[data-waiting]"))
+      if (waiting === frame || waiting.contentWindow === frame)
+        waiting.removeAttribute("data-waiting");
+  };
+  // A frame's load never reaches the window, only the document.
+  document.addEventListener(
+    "load",
+    (event) => {
+      if (event.target instanceof HTMLIFrameElement && event.target.hasAttribute("src"))
+        release(event.target);
+    },
+    true
+  );
+  addEventListener("message", (event) => {
+    if (event.origin === "null" && switcherMessageKind(event.data, ["hello"]))
+      release(event.source);
+  });
 }
 
 // The document keeps the listeners, not the tag.

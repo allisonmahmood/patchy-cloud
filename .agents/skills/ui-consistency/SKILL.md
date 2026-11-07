@@ -77,7 +77,7 @@ Three page kinds:
 
 ## Scroll and frames
 
-- Until its document's relay says hello, or its load for a document without one, the frame waits `visibility: hidden` with `data-waiting`, so neither a click nor Tab can focus its empty first document; one non-repeating animation in the shell's style shows it after 10 s whatever arrives. Keep that deadline in markup and style, not the broker, so a shell framing a broker from another release is never locked.
+- Until its document's relay says hello, or a document without one loads, the frame waits `visibility: hidden` with `data-waiting`, so neither a click nor Tab can focus its empty first document, however long that takes. The relay at the top of the shell releases it, not the broker, so the release always ships with the markup and a broker from another release can't strand the frame. No deadline: a frame that never loads has nothing to reach.
 - The served-patch frame owns its scrolling: `html, body { height: 100% }`, `body { overflow: hidden }`, and the iframe fills the viewport. A change that scrolls the document instead of the frame changes reader behavior and is a finding.
 - Verify actual scroll behavior when changing overflow ownership or frame sizing. Comparing classes in source is not enough.
 

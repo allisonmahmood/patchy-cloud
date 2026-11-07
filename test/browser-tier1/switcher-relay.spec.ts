@@ -45,6 +45,18 @@ const settled = async (page: Page) => {
   await expect.poll(() => page.evaluate(() => (window as Listening).settled)).toBe(true);
 };
 
+/** Presses the chord after `move`, and says whether the shell kept focus and claimed it. */
+const claimedAfter = async (page: Page, move: () => Promise<void>) => {
+  await move();
+  await page.keyboard.press(chord);
+  return page.evaluate(() => {
+    const shell = window as Listening;
+    const claimed = [document.activeElement === document.body, shell.patchySwitcher];
+    delete shell.patchySwitcher;
+    return claimed;
+  });
+};
+
 /** Console lines, CSP refusals and uncaught errors, from the shell and its frame alike. */
 const watch = (page: Page) => {
   const lines: string[] = [];
@@ -149,7 +161,7 @@ test("the frame takes no click or Tab until the patch's relay says hello, and th
     await content.promise;
     await route.continue();
   });
-  // The frame's load event never reaches the shell, so only hello can hand the patch focus.
+  // The frame's load event never reaches the shell's relay or broker, so only hello can show it.
   await page.addInitScript(() => {
     document.addEventListener(
       "load",
@@ -162,21 +174,11 @@ test("the frame takes no click or Tab until the patch's relay says hello, and th
   await page.goto(patch.address, { waitUntil: "domcontentloaded" });
   // The frame is still empty: a click on it or Tab toward it leaves focus with the shell, whose
   // own relay claims the key.
-  const claimedAfter = async (move: () => Promise<void>) => {
-    await move();
-    await page.keyboard.press(chord);
-    return page.evaluate(() => {
-      const shell = window as Listening;
-      const claimed = [document.activeElement === document.body, shell.patchySwitcher];
-      delete shell.patchySwitcher;
-      return claimed;
-    });
-  };
   const viewport = page.viewportSize()!;
   expect(
-    await claimedAfter(() => page.mouse.click(viewport.width / 2, viewport.height / 2))
+    await claimedAfter(page, () => page.mouse.click(viewport.width / 2, viewport.height / 2))
   ).toEqual([true, true]);
-  expect(await claimedAfter(() => page.keyboard.press("Tab"))).toEqual([true, true]);
+  expect(await claimedAfter(page, () => page.keyboard.press("Tab"))).toEqual([true, true]);
   await expect(page.locator("#patch")).toBeHidden();
   content.resolve();
   await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("patch");
@@ -184,7 +186,7 @@ test("the frame takes no click or Tab until the patch's relay says hello, and th
   await expect.poll(() => heard(page)).toContain("window a");
 });
 
-test("a frame whose document never arrives takes clicks again after its deadline", async ({
+test("a frame whose document is slow stays out of reach for as long as it takes", async ({
   page,
   instance
 }) => {
@@ -195,12 +197,41 @@ test("a frame whose document never arrives takes clicks again after its deadline
     await route.continue().catch(() => {});
   });
   await page.goto(patch.address, { waitUntil: "domcontentloaded" });
+  // Well past any deadline: a tier 1 page has no starting cover over its frame.
+  await page.waitForTimeout(11_000);
   const frame = page.locator("#patch");
   await expect(frame).toBeHidden();
-  // Neither hello nor load: the shell's own style lets the frame go after 10 s, whatever broker
-  // the page loaded.
-  await expect(frame).toBeVisible({ timeout: 15_000 });
+  const viewport = page.viewportSize()!;
+  expect(
+    await claimedAfter(page, () => page.mouse.click(viewport.width / 2, viewport.height / 2))
+  ).toEqual([true, true]);
+  expect(await claimedAfter(page, () => page.keyboard.press("Tab"))).toEqual([true, true]);
   content.resolve();
+  await expect(frame).toBeVisible();
+});
+
+test("the shell's own relay shows the frame even when its broker never would", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", listening, undefined, tier1);
+  // A broker from a release before the waiting frame, and content from a host before the relay:
+  // the frame only loads.
+  await page.route("**/~shell/broker.js*", (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: 'const frame = document.getElementById("patch"); frame.src = frame.dataset.contentSrc;'
+    })
+  );
+  await page.route("**/~content/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<!doctype html><title>Older</title><input aria-label="Older field">'
+    })
+  );
+  await page.goto(patch.address);
+  await expect(page.locator("#patch")).toBeVisible();
+  await page.frameLocator("#patch").getByRole("textbox", { name: "Older field" }).fill("typed");
 });
 
 test("a frame's open only ever opens the switcher; only the shell's own press toggles it", async ({
