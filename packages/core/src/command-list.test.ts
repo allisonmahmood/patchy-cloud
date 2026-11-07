@@ -7,7 +7,7 @@ describe("the command list", () => {
   it("is a combobox field over a listbox, with a live line for no matches", () => {
     const html = commandList({ id: "go-list", label: "Go to", placeholder: "Go to…", rows: "" });
     expect(html).toBe(
-      '<div class="command"><div class="field field-group command-field"><span class="glyph glyph-sm" aria-hidden="true"></span><input type="text" role="combobox" aria-label="Go to" aria-expanded="true" aria-controls="go-list" aria-autocomplete="list" placeholder="Go to…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></div><p class="command-empty" id="go-list-empty" role="status"></p><div class="command-list" id="go-list" role="listbox" aria-label="Go to"></div></div>'
+      '<div class="command"><label class="field field-group command-field"><span class="glyph glyph-sm" aria-hidden="true"></span><input type="text" role="combobox" aria-label="Go to" aria-expanded="true" aria-controls="go-list" aria-autocomplete="list" placeholder="Go to…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go"></label><p class="command-empty" id="go-list-empty" role="status"></p><div class="command-list" id="go-list" role="listbox" aria-label="Go to"></div></div>'
     );
   });
 

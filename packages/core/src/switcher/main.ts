@@ -12,9 +12,9 @@
  * installs as `window.patchySwitcher`.
  */
 import { tabStorage } from "./cache.js";
-import { pageSession, switcherClient } from "./client.js";
+import { forgetOnSignOut, pageSession, switcherClient } from "./client.js";
 import { switcherMenu } from "./menu.js";
-import type { Switcher } from "./messages.js";
+import { type Switcher, switcherMessage, switcherMessageKind } from "./messages.js";
 
 const tag = document.currentScript;
 const viewer = tag?.dataset.viewer;
@@ -34,8 +34,18 @@ if (viewer !== undefined && company !== undefined) {
     now: () => Date.now(),
     session: pageSession
   });
+  forgetOnSignOut(client, document);
   const { open, toggle } = switcherMenu(client, { frame, patch });
   const asked = window.patchySwitcher === true;
   window.patchySwitcher = { open, toggle } satisfies Switcher;
+  // The patch's relay holds its keys after the chord only where a switcher will take them, so the
+  // switcher answers each of its frame's documents' hello, whatever the broker's release. It runs
+  // before the broker gives the frame its address, so it hears every one.
+  if (frame !== undefined)
+    addEventListener("message", (event) => {
+      if (event.source !== frame.contentWindow || event.origin !== "null") return;
+      if (switcherMessageKind(event.data, ["hello"]) === undefined) return;
+      frame.contentWindow?.postMessage(switcherMessage("available"), "*");
+    });
   if (asked) open();
 }

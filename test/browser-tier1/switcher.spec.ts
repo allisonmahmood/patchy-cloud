@@ -8,8 +8,11 @@ import type { Instance } from "./instance.js";
 // Playwright's key presses are trusted, as a person's are; on Linux, where these run, Mod is Ctrl.
 const chord = "ControlOrMeta+Shift+K";
 const tier1 = { tier: 1, tables: {}, files: {} } as const;
+// Each patch says in the console every key its own listeners hear, and when its form submits.
 const patchHtml = (title: string) =>
-  `<!doctype html><html lang="en"><head><title>${title}</title></head><body><h1>${title}</h1><input id="field" aria-label="Field"></body></html>`;
+  `<!doctype html><html lang="en"><head><title>${title}</title><script>
+for (const type of ["keydown", "keyup"]) addEventListener(type, (event) => console.log("patch heard " + type + " " + event.key), true);
+</script></head><body><h1>${title}</h1><form onsubmit="console.log('patch submitted'); return false"><input id="field" aria-label="Field"></form></body></html>`;
 const publish = (instance: Instance, title: string, scope: "company" | "public" = "company") =>
   instance.publish(scope, patchHtml(title), undefined, tier1);
 
@@ -24,24 +27,25 @@ const places = ["Home", "All patches", "Your agents", "People", "Integrations", 
 const patchFrame = (page: Page): Frame =>
   page.frames().find((frame) => frame.url().includes("/~content/"))!;
 const field = (page: Page) => page.frameLocator("#patch").getByRole("textbox", { name: "Field" });
-/** The patch's field: whether it has focus, and its selection. */
+/** The patch's field: whether it has the keyboard, and its selection. */
 const cursor = (page: Page) =>
   patchFrame(page).evaluate(() => {
     const input = window.document.getElementById("field") as HTMLInputElement;
-    return [window.document.activeElement === input, input.selectionStart, input.selectionEnd];
+    const focused = window.document.hasFocus() && window.document.activeElement === input;
+    return [focused, input.selectionStart, input.selectionEnd];
   });
-/**
- * Opens the menu with `title` lit. Right after a page loads, its list may still be on the way, and
- * a menu open when it lands keeps its selection, so this closes and opens again until it shows.
- */
+/** The patch's console lines: the keys its own listeners heard, and its form's submits. */
+const patchLines = (page: Page) => {
+  const lines: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().startsWith("patch ")) lines.push(message.text());
+  });
+  return lines;
+};
+/** Opens the menu with `title` lit, the list having filled it. */
 const openAt = async (page: Page, title: string) => {
-  await expect(async () => {
-    if (!(await menu(page).isVisible())) await page.keyboard.press(chord);
-    const shown = await lit(page).textContent({ timeout: 1_000 });
-    if (shown === title) return;
-    await page.keyboard.press("Escape");
-    throw new Error(`${shown} is lit, not ${title}`);
-  }).toPass({ timeout: 15_000 });
+  await page.keyboard.press(chord);
+  await expect(lit(page)).toHaveText(title);
 };
 /** When the tab's copy of the list was last saved, in the page's clock. */
 const savedAt = (page: Page) =>
@@ -102,6 +106,7 @@ test("over a patch, ⌘⇧K ↵ flips back, typing filters, and Escape puts the 
 
   // ⌘⇧K ↵ flips back, and from there to the patch it left.
   await page.keyboard.press(chord);
+  await expect(search(page)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(crew.address);
   await expect(field(page)).toBeVisible();
@@ -126,6 +131,175 @@ test("over a patch, ⌘⇧K ↵ flips back, typing filters, and Escape puts the 
   await page.keyboard.press(chord);
   await menu(page).getByRole("option", { name: "Versions" }).click();
   await expect(page).toHaveURL(new RegExp(`/patches/${crew.name}/versions$`));
+});
+
+test("⌘⇧K ↵ flips back three times running, and an ↵ before the menu has the keyboard never reaches the patch", async ({
+  page,
+  instance
+}) => {
+  const lines = patchLines(page);
+  const crew = await publish(instance, "Crew rota");
+  const sales = await publish(instance, "Sales HQ");
+  await visit(page, crew);
+  await visit(page, sales);
+  for (const [from, to] of [
+    [sales, crew],
+    [crew, sales],
+    [sales, crew]
+  ] as const) {
+    await expect(page).toHaveURL(from.address);
+    await field(page).click();
+    await page.keyboard.press(chord);
+    await expect(search(page)).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(to.address);
+    await expect(field(page)).toBeVisible();
+  }
+  // The two presses back to back, as fast as the browser takes them: an Enter that comes before
+  // the menu has the keyboard is dropped, never the patch's, and one that comes after flips.
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => page.url() === sales.address || (await search(page).isVisible()))
+    .toBe(true);
+  // Let anything the patch heard reach the console.
+  await page.waitForTimeout(200);
+  expect(lines.filter((line) => /Enter|submitted/.test(line))).toEqual([]);
+});
+
+test("the switcher itself tells the patch it is there, so keys around a slow open stay the menu's", async ({
+  page,
+  instance
+}) => {
+  const lines = patchLines(page);
+  const crew = await publish(instance, "Crew rota");
+  // A patch that keeps telling itself it lost focus, to release keys meant for the menu.
+  const blurry = await instance.publish(
+    "company",
+    `<!doctype html><title>Blurry</title><script>
+addEventListener("keydown", (event) => console.log("patch heard keydown " + event.key), true);
+setInterval(() => { dispatchEvent(new Event("blur")); document.dispatchEvent(new Event("blur")); }, 20);
+</script><form onsubmit="console.log('patch submitted'); return false"><input id="field" aria-label="Field"></form>`,
+    undefined,
+    tier1
+  );
+  await visit(page, crew);
+  await visit(page, blurry);
+  // Readiness comes from the switcher alone: the broker, of this release or #1298's, never answers
+  // hello. The menu is slow to open, 600 ms after the relay asks, while the patch still has focus.
+  await page.evaluate(() => {
+    const shell = window as Window & { patchySwitcher?: { open(): void; toggle(): void } };
+    const switcher = shell.patchySwitcher!;
+    shell.patchySwitcher = { open: () => setTimeout(switcher.open, 600), toggle: switcher.toggle };
+  });
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await page.keyboard.press("Enter");
+  await expect(search(page)).toBeFocused();
+  // Let anything the patch heard reach the console.
+  await page.waitForTimeout(200);
+  // The Enter came before the menu had the keyboard: dropped, never the patch's, and no flip.
+  expect(lines.filter((line) => /Enter|submitted/.test(line))).toEqual([]);
+  await expect(page).toHaveURL(blurry.address);
+});
+
+test("a patch that grabs focus back never leaves the menu up while typing goes to the patch", async ({
+  page,
+  instance
+}) => {
+  const lines = patchLines(page);
+  const crew = await publish(instance, "Crew rota");
+  // Whenever it loses focus, it tries to take it back a moment later.
+  const grabby = await instance.publish(
+    "company",
+    `<!doctype html><title>Grabby</title><input id="field" aria-label="Field"><script>
+addEventListener("blur", () => setTimeout(() => { window.focus(); document.getElementById("field").focus(); console.log("patch grabbed"); }, 400));
+</script>`,
+    undefined,
+    tier1
+  );
+  await visit(page, crew);
+  await visit(page, grabby);
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await expect(menu(page)).toBeVisible();
+  await expect.poll(() => lines).toContain("patch grabbed");
+  await page.keyboard.type("private");
+  // Chromium lets the patch take focus, and the menu closes; Firefox keeps an inert frame from
+  // taking it, and the keys stay in the menu. Never the menu up with the keys in the patch.
+  if (await menu(page).isVisible()) {
+    await expect(search(page)).toHaveValue("private");
+    await expect(field(page)).toHaveValue("");
+  } else await expect(field(page)).toHaveValue("private");
+});
+
+test("a list that lands once the menu is open lights the flip, unless the person moved first", async ({
+  page,
+  context,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  const sales = await publish(instance, "Sales HQ");
+  await visit(page, crew);
+  for (const moved of ["nothing", "the arrows", "the pointer"] as const) {
+    // A fresh tab keeps nothing yet, so the menu opens on Patchy's places alone.
+    const fresh = await context.newPage();
+    const answer = Promise.withResolvers<void>();
+    await fresh.route("**/switcher.json", async (route) => {
+      await answer.promise;
+      await route.continue();
+    });
+    await visit(fresh, sales);
+    await fresh.keyboard.press(chord);
+    await expect(lit(fresh)).toHaveText("Home");
+    if (moved === "the arrows") await fresh.keyboard.press("ArrowDown");
+    // Pointing at the row already lit chooses it too.
+    if (moved === "the pointer") await lit(fresh).hover();
+    answer.resolve();
+    await expect(titles(fresh).first()).toHaveText("Crew rota");
+    await expect(lit(fresh)).toHaveText(
+      { nothing: "Crew rota", "the arrows": "All patches", "the pointer": "Home" }[moved]
+    );
+    await fresh.close();
+  }
+});
+
+test("a click on the field's glyph or the panel leaves the keys working", async ({
+  page,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  const sales = await publish(instance, "Sales HQ");
+  await visit(page, crew);
+  await visit(page, sales);
+  await openAt(page, "Crew rota");
+  await menu(page).getByText("This patch", { exact: true }).click();
+  await expect(search(page)).toBeFocused();
+  await menu(page).locator(".command-field .glyph").click();
+  await expect(search(page)).toBeFocused();
+  await page.keyboard.type("cre");
+  await expect(titles(page)).toHaveText(["Crew rota"]);
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(crew.address);
+});
+
+test("signing out forgets the tab's list before the browser leaves", async ({
+  page,
+  context,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  await visit(page, crew);
+  await listedAt(page, `${instance.origin}/patches`);
+  // Stand in for Clerk's sign-out past the form, as tier1.spec does; the page is left either way.
+  await context.route("**/logout", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Signed out</title>" })
+  );
+  await page.locator(".app-account").click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page).toHaveTitle("Signed out");
+  expect(await page.evaluate(() => sessionStorage.getItem("patchy.switcher"))).toBeNull();
 });
 
 test("opens on Home, flips to the patch the tab left, and puts focus back where it was", async ({
@@ -326,6 +500,7 @@ test("a public patch's shell claims the key and loads no switcher", async ({ pag
   page.on("request", (request) => requested.push(new URL(request.url()).pathname));
   await visit(page, open);
   await field(page).click();
+  // No switcher here, so the patch keeps every key after the chord.
   await page.keyboard.press(chord);
   await page.keyboard.press("a");
   await expect(field(page)).toHaveValue("a");
