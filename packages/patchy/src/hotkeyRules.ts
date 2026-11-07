@@ -5,7 +5,11 @@
  */
 import { normalizeHotkey } from "@tanstack/preact-hotkeys";
 
-/** Patchy keeps this chord for its own shortcuts. `Hotkey` refuses it at compile time. */
+/**
+ * Patchy keeps this chord for its switcher. The relay Patchy puts ahead of every patch's code
+ * claims it, so a registration for it could never fire: `Hotkey` refuses it at compile time and
+ * `permitted` leaves it out. Nothing here forwards it; the relay alone tells the shell.
+ */
 const reservedChord = "Mod+Shift+K";
 
 /** A hotkey's steps, split on spaces. A lone trailing lowercase letter is the same key as its capital. */

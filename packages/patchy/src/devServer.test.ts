@@ -3,7 +3,13 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Identity, RuntimeStreamFrame } from "@patchy/api";
-import { brokerScript, brokerSrc, SHELL_SECURITY_POLICY } from "@patchy/serving/shell";
+import { switcherRelay } from "@patchy/core";
+import {
+  brokerScript,
+  brokerSrc,
+  SHELL_SECURITY_POLICY,
+  withSwitcherRelay
+} from "@patchy/serving/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
@@ -116,7 +122,11 @@ it.live(
       assert.strictEqual(yield* broker.text, brokerScript);
       const initial = yield* http.get(content);
       assert.include(initial.headers["content-security-policy"]!, "connect-src 'none'");
-      assert.include(yield* initial.text, "First local build");
+      const initialHtml = yield* initial.text;
+      assert.include(initialHtml, "First local build");
+      // As the cloud serves it: the relay that claims Patchy's switcher key leads its head.
+      assert.include(shellHtml, switcherRelay);
+      assert.strictEqual(withSwitcherRelay(initialHtml.replace(switcherRelay, "")), initialHtml);
 
       const call = (
         op: string,

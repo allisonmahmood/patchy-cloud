@@ -15,7 +15,7 @@ The content response's CSP is `sandbox allow-scripts allow-modals; default-src '
 
 `/~content` responses allow only same-origin ancestors so the shell can frame them. Shells and first-party pages use `frame-ancestors 'none'`: they cannot themselves be embedded, even by a same-origin page.
 
-The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. Bootstrap has no deadline: a document that never sends `ready` is a page without the SDK, so it renders with no notice and its broker serves nothing. The broker never replays a lost operation. The tier 2 client retries a lost query reply once and offers explicit same-key `retry()` on a mutation's `unknown_outcome`; it never replays actions or tier 1 writes.
+The shell installs its load handler before navigating the frame. It transfers one MessageChannel to that document, with the URL nonce echoed in `ready { wire, nonce }`. A second load closes the port. Replies use the port, never the frame's WindowProxy, so a replacement document inherits neither pending replies nor authority. The one exception is the switcher relay's, below, and it carries no authority. Bootstrap has no deadline: a document that never sends `ready` is a page without the SDK, so it renders with no notice and its broker serves nothing. The broker never replays a lost operation. The tier 2 client retries a lost query reply once and offers explicit same-key `retry()` on a mutation's `unknown_outcome`; it never replays actions or tier 1 writes.
 
 The envelope is `{ v, id, op, args, bytes? }`; replies are `{ v, id, kind: "result" | "error", value | error, bytes? }`. The bundle declares the wire, not a separate transport version. Own-property dispatch and the API operation schemas validate requests before forwarding; the server independently admits them. The broker binds ids and principal, sends the two `X-Patchy-*` headers and same-origin credentials, and carries files over bytes routes with ArrayBuffer transfers. Per-operation limits, 32 outstanding requests and 64 MiB held bytes bound a frame's work.
 Owned upload buffers transfer through the shipped `patchy/client` transport and
@@ -27,6 +27,12 @@ Cacheable public HTML never contains a viewer identity, and a public shell carri
 `access_denied`, `session_expired`, `principal_changed` and `revoked` stop the
 document. `not_available_on_public` remains a patch-visible refusal, and public
 patches retain their browser-owned route bridge.
+
+## The switcher relay
+
+Patchy inserts one script ahead of patch code. Serving puts the switcher relay first in the `<head>` of every document it serves at a content URL, after the digest check, so every version ever published carries it, single-file pages included; the stored bytes and their digest are unchanged, and `patchy dev` serves the same. It is one capture listener on `window`, registered before any of the patch's, which claims Mod+Shift+K: the patch's own listeners and the browser never get it. The content policy's `'unsafe-inline'` already runs it there. Patchy's own pages, shells and notices carry the same script at the top of their `<head>`, admitted by its `'sha256-…'` source in each of their policies, so they claim the key from their first byte. Deliberate sabotage, such as `document.open()`, can still remove it; that is not hardened against, and frames a patch makes itself are out of reach.
+
+The shell accepts exactly one window message besides the port's bootstrap, and it carries no authority: `{ patchy: "switcher", v: 1, kind }`, only from `frame.contentWindow` with origin `"null"`. `hello`, posted as the relay starts, hands the frame keyboard focus at every scope, as `load` does for a document without it; until then the shell keeps focus, so its own relay holds the key while the frame is still empty. `open`, posted on a press, records a request for Patchy's switcher at company scope, as a press on Patchy's own page does, and is ignored on a public shell. A patch that posts either itself gains nothing it couldn't take by being clicked, or opens Patchy's own menu, which it can't read or drive. When the switcher closes, the shell posts `closed` to the frame's WindowProxy, and the relay puts focus and the selection back where the press found them. Every side ignores a version or kind it doesn't know and waits for no reply, so any mix of releases degrades to the key doing nothing.
 
 ## Browser-owned behavior and compatibility
 
@@ -40,7 +46,7 @@ by copying and pasting the actual text, not just observing a resolved promise.
 
 An old shell with a supported bundle gets one cache-bypassing refresh. A repeated mismatch stops visibly rather than looping. A stored version whose wire has retired gets the first-party needs-rebuild door; a tooling release change alone never retires a deployed bundle.
 
-`@patchy/serving/shell` exports rendering, the prebuilt broker script and CSP constants without Auth or platform infrastructure, so the local runtime can serve the same boundary. Session markup is injected by the host. The broker is bundled from the shared API schemas at build time, not compiled per request.
+`@patchy/serving/shell` exports rendering, the prebuilt broker script, the relay's insertion and CSP constants without Auth or platform infrastructure, so the local runtime can serve the same boundary. Session markup is injected by the host. The broker is bundled from the shared API schemas at build time, not compiled per request.
 
 ## Company document streams
 

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { escapeHtml, htmlPage } from "./html.js";
+import { escapeHtml, htmlPage, SWITCHER_RELAY_SOURCE, switcherRelay } from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
 
 describe("htmlPage app body", () => {
@@ -88,7 +89,7 @@ describe("htmlPage app body", () => {
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(html).toContain("R&amp;D &lt;script&gt;alert(2)&lt;/script&gt;");
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;@example.com");
-    expect(html).not.toMatch(/<(img|script|b)\b/);
+    expect(html.replace(switcherRelay, "")).not.toMatch(/<(img|script|b)\b/);
     expect(html).toContain('<a class="app-place" href="/company" aria-current="page">');
   });
 
@@ -116,7 +117,27 @@ describe("htmlPage app body", () => {
     expect(caughtUp).not.toContain('class="whats-new-dot"');
     expect(caughtUp).toContain("You’re all caught up.");
     expect(caughtUp).toContain('href="/whats-new">See all changes</a>');
-    expect(caughtUp).not.toMatch(/<script\b/);
+    expect(caughtUp.replace(switcherRelay, "")).not.toMatch(/<script\b/);
+  });
+
+  it("admits exactly the relay's text by its hash", () => {
+    const text = switcherRelay.slice("<script>".length, -"</script>".length);
+    expect(`<script>${text}</script>`).toBe(switcherRelay);
+    expect(SWITCHER_RELAY_SOURCE).toBe(
+      `'sha256-${createHash("sha256").update(text, "utf8").digest("base64")}'`
+    );
+  });
+
+  it("puts the switcher relay first in every page's head, doors included", () => {
+    for (const html of [
+      htmlPage({ title: "Home", app: { viewer, section: "home" }, body: "" }),
+      htmlPage({ title: "Sign in", body: "<main></main>" })
+    ]) {
+      expect(html.split(switcherRelay)).toHaveLength(2);
+      expect(html).toMatch(
+        /^<!doctype html>\s*<html lang="en">\s*<head>\s*<meta charset="utf-8">\s*<script>/
+      );
+    }
   });
 
   it("lights What's new, not a place, on the What's new page", () => {

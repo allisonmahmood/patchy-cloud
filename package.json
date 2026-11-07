@@ -32,9 +32,9 @@
     "test:packed-tier2-e2e": "node scripts/packed-cli-e2e.mjs --tier2",
     "test:postgres-concurrency": "vitest run --config vitest.postgres.config.ts",
     "test:rollback-rehearsal": "node --import tsx --conditions=development scripts/rollback-rehearsal.ts",
-    "prepare": "node scripts/build-serving-broker.mjs && simple-git-hooks",
+    "prepare": "node scripts/build-core-scripts.mjs && node scripts/build-serving-broker.mjs && simple-git-hooks",
     "lint": "oxlint",
-    "typecheck": "node scripts/build-serving-broker.mjs && turbo run typecheck typecheck:tests",
+    "typecheck": "node scripts/build-core-scripts.mjs && node scripts/build-serving-broker.mjs && turbo run typecheck typecheck:tests",
     "typecheck:tests": "effect-tsgo tsc -p tsconfig.test.json",
     "format": "bun fmt",
     "format:check": "bun fmt --check"

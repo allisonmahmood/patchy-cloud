@@ -17,6 +17,7 @@ import { Limits } from "@patchy/limits";
 import {
   brokerScript,
   renderPatchWrapper,
+  withSwitcherRelay,
   CONTENT_SECURITY_POLICY,
   SHELL_SECURITY_POLICY,
   PATCH_PERMISSIONS_POLICY,
@@ -229,7 +230,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
           "GET",
           content,
           Effect.sync(() =>
-            HttpServerResponse.text(html, {
+            // As the cloud serves it, with the relay that claims Patchy's switcher key first.
+            HttpServerResponse.text(withSwitcherRelay(html), {
               contentType: "text/html; charset=utf-8",
               headers: {
                 ...headers,

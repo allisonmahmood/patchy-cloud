@@ -31,11 +31,12 @@ declare module "vitest" {
 
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
   // Every server and CLI test sees the same real release, built before workers start.
-  execFileSync(
-    process.execPath,
-    [fileURLToPath(new URL("../scripts/build-serving-broker.mjs", import.meta.url))],
-    { stdio: "pipe" }
-  );
+  for (const script of ["build-core-scripts.mjs", "build-serving-broker.mjs"])
+    execFileSync(
+      process.execPath,
+      [fileURLToPath(new URL(`../scripts/${script}`, import.meta.url))],
+      { stdio: "pipe" }
+    );
   execFileSync(
     process.execPath,
     [

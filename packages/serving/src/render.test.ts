@@ -3,9 +3,37 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
-import { renderPatchWrapper, renderShellNotice } from "./shell.js";
+import { switcherRelay } from "@patchy/core/html";
+import { renderPatchWrapper, renderShellNotice, withSwitcherRelay } from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
 import { renderNotFound } from "./render.js";
+
+/** A page's inline scripts, which its CSP admits by hash: the relay alone. */
+const inlineScripts = (html: string) => html.match(/<script>[\s\S]*?<\/script>/g) ?? [];
+/** The page as it would be without the relay that leads its head. */
+const withoutRelay = (html: string) => {
+  expect(inlineScripts(html)).toEqual([switcherRelay]);
+  return html.replace(switcherRelay, "");
+};
+
+describe("withSwitcherRelay", () => {
+  it.each([
+    [
+      "after an explicit head, keeping its attributes",
+      '<!doctype html><html lang="en"><head data-theme="dark">',
+      "<title>Report</title></head><body></body></html>"
+    ],
+    [
+      "past a byte order mark, comments and the doctype, where the head is implied",
+      "\u{FEFF}<!-- Built by Acme -->\n<!doctype html>\n",
+      "<title>Report</title><script>start()</script>"
+    ],
+    ["where the body implies the head", "<!doctype html>", "<p>No head at all</p>"],
+    ["at the start, when there is no doctype to keep", "", "<p>Quirks</p>"]
+  ])("inserts the relay first in the head, %s", (_, before, after) => {
+    expect(withSwitcherRelay(before + after)).toBe(before + switcherRelay + after);
+  });
+});
 
 describe("renderNotFound", () => {
   it("is the shared notice card with one link home and nothing that needs a form or script", () => {
@@ -15,7 +43,7 @@ describe("renderNotFound", () => {
     expect(html.match(/<a\b[^>]*>[^<]*<\/a>/g)).toEqual([
       '<a class="btn btn-primary" href="/">Go to Patchy</a>'
     ]);
-    expect(html).not.toMatch(/<(form|script|iframe)\b|data-notice/);
+    expect(withoutRelay(html)).not.toMatch(/<(form|script|iframe)\b|data-notice/);
   });
 });
 
@@ -30,7 +58,7 @@ describe("renderShellNotice", () => {
 
   it("cannot turn access revocation into a reload or patch-controlled continuation", () => {
     const html = renderShellNotice("access_denied", "/acme/tool?reload=1");
-    expect(html).not.toMatch(/<(a|form|iframe|script)\b/);
+    expect(withoutRelay(html)).not.toMatch(/<(a|form|iframe|script)\b/);
     expect(html).not.toContain("/acme/tool");
   });
 });
@@ -167,7 +195,7 @@ describe("patch pages", () => {
     expect(ended).toContain('href="/patches/render-fixture"');
   });
 
-  it("frames a public page's content URL, with no chrome and no script but the broker", () => {
+  it("frames a public page's content URL, with no chrome and no script but the relay and broker", () => {
     const html = renderPatchWrapper({
       patch,
       version,
@@ -190,12 +218,13 @@ describe("patch pages", () => {
     expect(
       [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
     ).toEqual([expect.stringMatching(/^\/~shell\/broker\.js\?v=/)]);
-    expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+    expect(withoutRelay(html)).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+    expect(html).toMatch(/<head>\s*<meta charset="utf-8">\s*<script>/);
 
     expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
   });
 
-  it("adds only session scripts and the broker outside a company patch's frame", () => {
+  it("adds only the relay, session scripts and the broker outside a company patch's frame", () => {
     const html = renderPatchWrapper({
       patch: { ...patch, title: "<b>Company</b>" },
       version,
@@ -214,7 +243,7 @@ describe("patch pages", () => {
       "/auth/session.js",
       expect.stringMatching(/^\/~shell\/broker\.js\?v=/)
     ]);
-    expect(html).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
+    expect(withoutRelay(html)).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
     expect(html).toContain('title="&lt;b&gt;Company&lt;/b&gt;"');
   });
 

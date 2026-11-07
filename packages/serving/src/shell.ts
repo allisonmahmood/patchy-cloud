@@ -1,9 +1,28 @@
-import { escapeAttribute, escapeHtml, faviconLink, htmlPage, shellStyles } from "@patchy/core/html";
+import {
+  escapeAttribute,
+  escapeHtml,
+  faviconLink,
+  htmlPage,
+  shellStyles,
+  switcherRelay
+} from "@patchy/core/html";
+import { headStart } from "@patchy/core";
 import type { HandlerKind } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
 export { brokerScript, brokerDigest } from "./generated/broker-script.js";
 export * from "./shell-headers.js";
+
+/**
+ * A patch's document as Patchy serves it: its own bytes with the switcher relay first in its
+ * `<head>`, ahead of any script of its own, so no listener of the patch's hears Mod+Shift+K. The
+ * relay is the same in every document and carries no viewer data, so one body still serves every
+ * viewer; the stored artifact and its digest are untouched.
+ */
+export function withSwitcherRelay(html: string): string {
+  const at = headStart(html);
+  return `${html.slice(0, at)}${switcherRelay}${html.slice(at)}`;
+}
 
 /**
  * The broker as a scripted shell loads it. `v` names its bytes, so a host serving those bytes
@@ -30,7 +49,10 @@ interface PatchPage {
   readonly base: string;
 }
 
-/** One renderer: the shell frames the loaded version's content URL, whatever the patch serves now. */
+/**
+ * One renderer: the shell frames the loaded version's content URL, whatever the patch serves now.
+ * Its one inline script is the switcher relay, which its CSP admits by hash.
+ */
 export function renderPatchWrapper(options: PatchPage): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
   if (options.scope !== "public" && !options.viewerId)
@@ -40,6 +62,7 @@ export function renderPatchWrapper(options: PatchPage): string {
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  ${switcherRelay}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
   ${faviconLink}

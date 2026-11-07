@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -52,7 +52,8 @@ import {
   servingHeaders,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
-import { brokerScript, brokerSrc } from "./shell.js";
+import { switcherRelay } from "@patchy/core/html";
+import { brokerScript, brokerSrc, withSwitcherRelay } from "./shell.js";
 import { compress } from "./compression.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -399,22 +400,24 @@ it.layer(layer)("pages", (it) => {
           assert.include(body, "Serving Guarantees");
           if (content) {
             assert.strictEqual(response.headers["content-type"], "text/html; charset=utf-8");
+            // The stored page, with only the relay added.
             assert.strictEqual(
               body,
-              "<!doctype html><html><head><title>Serving Guarantees</title></head><body><h1>Serving Guarantees</h1></body></html>"
+              withSwitcherRelay(
+                "<!doctype html><html><head><title>Serving Guarantees</title></head><body><h1>Serving Guarantees</h1></body></html>"
+              )
             );
             assert.strictEqual(
               response.headers["permissions-policy"],
               "camera=(), microphone=(), geolocation=()"
             );
-            assert.notInclude(body, "<script");
           } else {
             assert.include(body, 'class="patch-frame"');
             assert.include(body, `data-version-id="${current.versionId}"`);
-            // The broker is the public shell's only script.
+            // The relay and the broker are the public shell's only scripts.
             assert.deepStrictEqual(
               [...body.matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag),
-              [`<script defer src="${brokerSrc}">`]
+              ["<script>", `<script defer src="${brokerSrc}">`]
             );
           }
           assert.notInclude(body, "<form");
@@ -439,7 +442,9 @@ it.layer(layer)("pages", (it) => {
             );
             assert.strictEqual(
               history,
-              "<!doctype html><html><head><title>Company-only history</title></head><body><h1>Company-only history</h1></body></html>"
+              withSwitcherRelay(
+                "<!doctype html><html><head><title>Company-only history</title></head><body><h1>Company-only history</h1></body></html>"
+              )
             );
           } else assert.include(history, `data-version-id="${olderVersionId}"`);
         }
@@ -752,7 +757,10 @@ it.layer(layer)("pages", (it) => {
       const stored = yield* (yield* ContentStore.ContentStore).get(
         Content.objectKey(patchId, versionId)
       );
-      assert.isBelow(Number(head.headers["content-length"]), Buffer.byteLength(stored));
+      assert.isBelow(
+        Number(head.headers["content-length"]),
+        Buffer.byteLength(withSwitcherRelay(stored))
+      );
       assert.strictEqual((yield* head.arrayBuffer).byteLength, 0);
     })
   );
@@ -892,7 +900,7 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
-  it.effect("serves UTF-8 content without requiring a meta tag or changing its BOM", () =>
+  it.effect("serves UTF-8 content without requiring a meta tag, keeping its BOM first", () =>
     Effect.gen(function* () {
       const { patchId, versionId } = yield* publish("Unicode content", "public");
       const store = yield* ContentStore.ContentStore;
@@ -907,9 +915,12 @@ it.layer(services)("pages in memory", (it) => {
         const response = yield* send(`/~content/${patchId}/${versionId}`);
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers.get("content-type"), "text/html; charset=utf-8");
+        const served = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()));
+        assert.deepStrictEqual(served, new TextEncoder().encode(withSwitcherRelay(html)));
+        // The mark goes ahead of the relay, where a browser's decoder reads it.
         assert.deepStrictEqual(
-          new Uint8Array(yield* Effect.promise(() => response.arrayBuffer())),
-          new TextEncoder().encode(html)
+          [...served.slice(0, 3)],
+          bom ? [0xef, 0xbb, 0xbf] : [0x3c, 0x21, 0x64]
         );
       }
     })
@@ -1132,7 +1143,7 @@ it.layer(services)("pages in memory", (it) => {
                 response.headers.get("content-security-policy"),
                 SHELL_SECURITY_POLICY
               );
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 1);
+              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 2);
               assert.deepStrictEqual(response.headers.getSetCookie(), []);
             } else {
               assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
@@ -1145,8 +1156,10 @@ it.layer(services)("pages in memory", (it) => {
                 `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
               );
               assert.include(body, 'src="/auth/session.js"');
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 3);
-              assert.notMatch(body, /<script\b[^>]*>[^<]+<\/script>/);
+              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 4);
+              // The relay is the one inline script, admitted by its hash.
+              assert.include(body, switcherRelay);
+              assert.notMatch(body.replace(switcherRelay, ""), /<script\b[^>]*>[^<]+<\/script>/);
               assert.strictEqual((yield* send(path)).status, 401);
             }
           }
@@ -1155,14 +1168,23 @@ it.layer(services)("pages in memory", (it) => {
   );
 
   /** A published tier 1 version's content URL, with its stored document. */
+  /** A tier 1 patch: its `stored` document, and its `html` as a reader receives it, with the relay. */
   const scripted = Effect.fn(function* (title: string) {
     const { patchId, versionId, path } = yield* publish(title);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
-    const html = yield* (yield* ContentStore.ContentStore).get(
+    const stored = yield* (yield* ContentStore.ContentStore).get(
       Content.objectKey(patchId, versionId)
     );
-    return { patchId, versionId, path, html, url: `/~content/${patchId}/${versionId}?n=boot_x` };
+    const html = withSwitcherRelay(stored);
+    return {
+      patchId,
+      versionId,
+      path,
+      stored,
+      html,
+      url: `/~content/${patchId}/${versionId}?n=boot_x`
+    };
   });
 
   /**
@@ -1317,7 +1339,7 @@ it.layer(services)("pages in memory", (it) => {
       const key = Content.objectKey(missing.patchId, missing.versionId);
       yield* store.delete(key);
       yield* fault(request(missing.url));
-      yield* store.put(key, missing.html);
+      yield* store.put(key, missing.stored);
       const recovered = yield* request(missing.url);
       assert.strictEqual(recovered.status, 200);
       assert.strictEqual(yield* Effect.promise(() => recovered.text()), missing.html);
@@ -1389,7 +1411,7 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
-  it.effect("compresses content by Accept-Encoding with the stored bytes underneath", () =>
+  it.effect("compresses content by Accept-Encoding with the served bytes underneath", () =>
     Effect.gen(function* () {
       const { url, html } = yield* scripted("Compressed content");
       const { request } = yield* host();
@@ -1578,6 +1600,15 @@ it.layer(services)("pages in memory", (it) => {
   it.effect("charges a kept document's raw, brotli and gzip bytes against the bound", () =>
     Effect.gen(function* () {
       const documents = [yield* scripted("Budget one"), yield* scripted("Budget two")];
+      // Random text barely compresses, so what each document holds outweighs its raw bytes.
+      const store = yield* ContentStore.ContentStore;
+      const sql = yield* SqlClient.SqlClient;
+      for (const { patchId, versionId } of documents) {
+        const html = `<!doctype html><p>${randomBytes(4096).toString("base64")}</p>`;
+        yield* store.put(Content.objectKey(patchId, versionId), html);
+        yield* sql`UPDATE patch_versions SET content_hash = ${contentHash(html)},
+          file_size = ${Buffer.byteLength(html)} WHERE id = ${versionId}`;
+      }
       // Each document's body in every coding, measured on a host of its own.
       const probe = yield* host();
       const held: Array<number> = [];

@@ -7,6 +7,8 @@
  *
  * Every shell loads Patchy's broker, and company shells also maintain the
  * session. None runs analytics. Content URLs carry the frame's sandbox policy.
+ * Every document, the patch's own included, starts with the switcher relay, so
+ * Mod+Shift+K reaches neither page code nor the browser.
  *
  * Only a public patch's current version is public, at its latest and version
  * URLs; older versions stay behind the company door. Public pages cache for at

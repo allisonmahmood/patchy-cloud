@@ -102,8 +102,9 @@ For a focused loop:
 - `pnpm exec playwright test -c playwright.tier1.config.ts --project=chromium <spec>`
   runs one browser spec.
 
-Every vitest run builds the shell broker and stages the packed CLI release once
-before its workers start. The release build reuses its last output when nothing
+Every vitest run builds core's browser scripts and the shell broker and stages
+the packed CLI release once before its workers start; `pnpm dev` builds the same
+scripts before it starts the server. The release build reuses its last output when nothing
 it reads changed (`PATCHY_PACKAGE_REBUILD=1` forces it), so a single test file
 takes seconds.
 
