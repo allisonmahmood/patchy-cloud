@@ -177,6 +177,9 @@ header that is not exactly three fields records none. A request without the
 header, from a browser or an older CLI, records none of the three. A request to
 Patchy MCP's door adds the fields [Patchy MCP › Bounds](./product.md#bounds)
 lists under Events.
+A request that sends, links, unlinks or withdraws a request or feedback adds its
+`submissionId`, never its text; a send past `feedback.sends.perMinute` adds the
+limit's `limitId`.
 
 No key is needed for stdout. `pnpm dev` captures these lines with the other
 server output; `pnpm dev logs` displays them.
@@ -392,6 +395,11 @@ The events, by area:
   the revision that is already current reports nothing.
 - Agent access: `agent_access.changed`, with `on`, after the change commits. Asking for the
   state it already has reports nothing.
+- Requests and feedback: `request.sent` with `matches`, `request.linked` with
+  `targetId` and `target` (`request` or `general`), and `feedback.sent`, each after
+  its change commits, whichever surface sent it. Each carries `submissionId`,
+  `surface` and `agent`, null from the dashboard; never the text, a why or a link's
+  why.
 - Opens: `patch.first_opened`, the one event serving reports, when a member's first
   recorded open of a colleague's patch has committed. Its distinct id is the member
   who opened it; it adds `tier` and `welcomePage`. The owner's own opens, an older
@@ -515,6 +523,92 @@ embedded Postgres of its own under its temp root. Object bytes use the separate
 content store below.
 
 Do not commit real database URLs or generated tokens.
+
+### The feedback read role
+
+Requests and feedback land in the platform database's `feedback` schema
+(`packages/feedback`). Patchy's team reads them through Patchy itself: Patchy AI
+connects the schema through the Postgres integration with a role that reads that
+schema's rows and nothing else. The integration runs whatever read-only SQL a
+patch sends (`packages/integrations/src/postgres/Operations.ts`), so the role's
+privileges are the boundary, not the connection's discovery snapshot.
+
+The role's SQL lives in one place, `packages/feedback/read-role.sql`, which
+`packages/feedback`'s tests run against a migrated database. Make the role with
+it, as the migration owner, from a checkout of the release that is live. On Neon,
+make it this way rather than in the console: a role made in Neon's console joins
+`neon_superuser`.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v password="$FEEDBACK_READER_PASSWORD" -v owner="$MIGRATION_OWNER" \
+  -f packages/feedback/read-role.sql
+```
+
+It makes a login role with no superuser, `CREATEDB`, `CREATEROLE`, replication
+or row-security bypass, inheriting from nothing, and grants it `USAGE` on the
+schema, `SELECT` on its tables, and `SELECT` on tables the migration owner adds
+to the schema later. `$MIGRATION_OWNER` is the role the server migrates as, which
+owns the schema. Keep the password out of output, chat and git.
+
+Then audit it with `packages/feedback/read-role-audit.sql`, as the migration owner.
+The test that makes the role runs this file too, and shows that it catches a
+column granted to PUBLIC.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -f packages/feedback/read-role-audit.sql
+```
+
+Each numbered query says what it should answer. Anything else is a hole to close
+before the connection uses the role:
+
+1. The role's attributes: it can log in and nothing else.
+2. Roles it belongs to: none.
+3. Every relation it can read, whole or a single column, through its own grants
+   or PUBLIC's: the `feedback` schema's tables only.
+4. Table grants to PUBLIC: none.
+5. Column grants to PUBLIC: none.
+6. Schema grants: PUBLIC holds `USAGE` on `public` at most, and the role `USAGE`
+   on `feedback`.
+7. Functions it can execute, `SECURITY DEFINER` first. Such a function runs as
+   its owner, so each one listed needs a reason, or `REVOKE EXECUTE ... FROM PUBLIC`.
+
+Run the audit again after a release adds a schema, a function, an extension or a
+grant.
+
+To rotate the password, `ALTER ROLE feedback_reader PASSWORD '<new>'` and update
+the connection's credentials on Patchy AI's Connections page. To undo the role,
+disconnect it on that page first, then run its undo as the migration owner: it
+stops the role signing in, ends its sessions, revokes its grants and drops it.
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v role=feedback_reader \
+  -v owner="$MIGRATION_OWNER" -f packages/feedback/read-role-drop.sql
+```
+
+### General requests
+
+General requests have no API: Patchy's team writes them with an operator
+credential. A new one takes a generated `gen_…` id; a public `note`, such as how
+to use what shipped, is shown to every company whose request matches it. Set
+`updated_at` with every change.
+
+```sql
+INSERT INTO feedback.general_requests (title, status, note)
+VALUES ('Postgres encryption options', 'open', NULL)
+RETURNING id;
+
+UPDATE feedback.general_requests
+SET status = 'shipped',
+  note = 'Every Postgres connection is encrypted with TLS. Ask for anything more here.',
+  updated_at = now()
+WHERE id = 'gen_...';
+```
+
+`status` is `open`, `planned`, `shipped` or `declined`. A company's request linked
+straight to a general request shows its status in matches and in the person's
+list.
 
 ## Neon Object Storage
 

@@ -1899,6 +1899,18 @@ Passed in production on 30 Oct 2026; [#861's record](https://github.com/allisonm
 
 A per-patch admin control over agent access, beyond the switch and the owner's choice to add an agent area, waits until an admin needs one. Limits are tuned from launch data. Replaying a finished action that writes waits until agents need it. A local MCP endpoint on the dev daemon waits until someone wants their own client on unpublished agent tools. Pushing changes to agents and unattended agent work are tier 3's; uploads and file handles across MCP may come later as their own effort. Tier 1 patches are never reached by agents, Patchy is not an MCP client of other servers, and billing for agent use is future work. Disconnect everything ends credentials, not browser sessions ([#821](https://github.com/allisonmahmood/patchy-cloud/issues/821)).
 
+## Requests and feedback
+
+**The store is built**; the doors to it follow. [#1210](https://github.com/allisonmahmood/patchy-cloud/issues/1210) records the decisions. The API the CLI calls exists ([API](./API.md#feedback)); `patchy request` and `patchy feedback` ([#1212](https://github.com/allisonmahmood/patchy-cloud/issues/1212)), the dashboard's page at `/feedback` ([#1215](https://github.com/allisonmahmood/patchy-cloud/issues/1215)) and Patchy MCP's `tell_patchy` ([#1214](https://github.com/allisonmahmood/patchy-cloud/issues/1214)) don't yet.
+
+A **request** is something Patchy can't do yet; **feedback** is something it did wrong, strangely or made hard. Agents send both through the CLI and Patchy MCP, and people through the dashboard. Every submission is stored as sent, near-duplicates included: how often something is asked, and by whom, is the signal. Each records the person, the company, the surface and the agent, which is the CLI's detected coding agent (`unknown` when it found none) or the MCP connection's client; dashboard submissions carry none.
+
+Filing a request returns its id and up to three similar requests with their status, found by shared words: the company's own requests and **general requests**, which Patchy's team writes, with a public note such as how to use what shipped. A company sees its own requests' titles and the general requests, never another company's text; nobody outside Patchy's team sees a why or a feedback note. A requester links its request to a match that is the same need and says why; leaving it unlinked means a different need. A person sees, links and withdraws what they and their agents sent; withdrawing deletes it.
+
+Credentials are refused, not redacted: a field holding one of a short list of credential shapes refuses the submission, naming the field and kind, and the sender sends again without it. Each person sends ten a minute across surfaces. Events carry ids, never text.
+
+The store is a `feedback` schema in the platform database. Patchy AI reads it as a company on Patchy, through the Postgres integration and a role that reads only that schema ([operations](./OPERATIONS.md#the-feedback-read-role)); connecting it is [#1216](https://github.com/allisonmahmood/patchy-cloud/issues/1216). Until connections write, Patchy's team writes general requests with an operator credential. Feedback meant for a patch's owner, telling requesters when their request ships, triage and clustering are not in this build.
+
 ## Analytics
 
 Patchy reports its business moments, such as a publish, a join or a share, to its own PostHog by ids and states, never names, email addresses, URLs or page content. The catalogue in `packages/analytics/src/Analytics.ts` says when each fires and what it carries; [operations](./OPERATIONS.md#business-events) lists them. Serving a page is not a business moment, with one exception.
