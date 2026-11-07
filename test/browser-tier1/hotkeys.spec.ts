@@ -708,7 +708,9 @@ test("the sheet opens by ? or its button, lists by group with its own rows last,
   await test.step("while it is open unlisted hotkeys wait, and Tab goes round its buttons, past a command that starts with Tab", async () => {
     await page.keyboard.press("j");
     const commands = dialog.locator(".hotkey-command");
+    // The shell names a company patch's frame, so the setting's row leads.
     await expect(commands).toHaveText([
+      "Single-key shortcutsOn",
       "Go homeGthenH",
       "Go to timelineGthenT",
       "Create taskCthenT",
@@ -1344,7 +1346,8 @@ test("local hotkeys: the narrowest place wins, fields keep their keys, handled k
     await page.keyboard.press("Control+/");
     await expect(sheet.getByRole("button", { name: "Close", exact: true })).toBeFocused();
     const commands = sheet.locator(".hotkey-command");
-    for (const index of [0, 1]) {
+    // The setting's row, then the dialog's Close, then Priority 5.
+    for (const index of [0, 1, 2]) {
       await page.keyboard.press("Tab");
       await expect(commands.nth(index)).toBeFocused();
     }
