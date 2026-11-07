@@ -23,7 +23,14 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Session, withCookies, sessionScripts, returnPath, pageResponse } from "@patchy/auth";
+import {
+  type RequireSession,
+  Session,
+  withCookies,
+  sessionScripts,
+  returnPath,
+  pageResponse
+} from "@patchy/auth";
 import { WIRE_VERSION, handlerKinds } from "@patchy/api";
 import { Cryptography, isWelcomePage, SWITCHER_PATH, switcherRelay } from "@patchy/core";
 import { switcherDigest, switcherScript } from "@patchy/core/switcher-script";
@@ -39,6 +46,7 @@ import {
   renderPatchWrapper,
   renderShellNotice,
   isShellNotice,
+  type ShellNotice,
   brokerScript,
   brokerDigest,
   withSwitcherRelay
@@ -51,6 +59,7 @@ import {
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
   PATCH_PERMISSIONS_POLICY,
+  noticeContentSecurityPolicy,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
 
@@ -79,9 +88,45 @@ const patchUrlHeaders = {
   "referrer-policy": NO_REFERRER_POLICY,
   "cache-control": PRIVATE_PATCH_CACHE_CONTROL
 };
-const noticeHeaders = {
-  ...patchUrlHeaders,
-  "content-security-policy": PATCH_CONTENT_SECURITY_POLICY
+
+/**
+ * A stopping or needs-rebuild notice. A top-level one for an active signed-in viewer loads their
+ * switcher and the session's scripts under the policy that admits them; anyone else's, a public
+ * page's and a framed one carry the relay alone. Each is private and never stored, so one viewer's
+ * notice can't reach anyone else.
+ */
+const shellNotice = (
+  code: ShellNotice,
+  returnTo: string,
+  options: {
+    readonly status?: number;
+    readonly viewer?: RequireSession.Viewer["Service"] | undefined;
+    readonly session: Session.Session["Service"];
+  }
+) => {
+  const { viewer, session } = options;
+  return HttpServerResponse.text(
+    renderShellNotice(
+      code,
+      returnTo,
+      viewer && {
+        userId: viewer.user.id,
+        companyId: viewer.company.id,
+        session: sessionScripts(session)
+      }
+    ),
+    {
+      contentType: "text/html",
+      status: options.status ?? 200,
+      headers: {
+        ...patchUrlHeaders,
+        "content-security-policy":
+          viewer === undefined
+            ? PATCH_CONTENT_SECURITY_POLICY
+            : noticeContentSecurityPolicy(session.clerk?.frontendApiHost)
+      }
+    }
+  );
 };
 
 /** What names a version's stored document: its object key and recorded digest, and its size. */
@@ -271,12 +316,16 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     );
     return isPublic ? response : withCookies(response, cookies);
   }
+  // Whom a company page was admitted for, a guest included. Public pages are served without one.
+  const viewer =
+    !isPublic && !HttpServerResponse.isHttpServerResponse(admission) ? admission : undefined;
   if (served.value.version.wireVersion !== WIRE_VERSION) {
     return withCookies(
-      HttpServerResponse.text(renderShellNotice("needs_rebuild", request.url), {
-        contentType: "text/html",
+      shellNotice("needs_rebuild", request.url, {
         status: 409,
-        headers: noticeHeaders
+        // A frame's notice keeps the relay alone.
+        viewer: kind === "address" ? viewer : undefined,
+        session
       }),
       isPublic ? [] : cookies
     );
@@ -311,8 +360,6 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   // An admitted member opening the current version's address, not an older version or the
   // frame's content request, is an open for their own Home: it is what clears "new to you".
   // Public pages are served without a session, so they record none.
-  const viewer =
-    !isPublic && !HttpServerResponse.isHttpServerResponse(admission) ? admission : undefined;
   const viewerId = viewer?.user.id;
   // A guest has no Home in the patch's company to record an open for.
   const member =
@@ -461,10 +508,11 @@ const otherPages = HttpRouter.use((router) =>
         const request = yield* HttpServerRequest.HttpServerRequest;
         const url = new URL(request.url, publicBaseUrl);
         const returnTo = returnPath(url.searchParams.get("return"), publicBaseUrl) ?? "/";
-        return HttpServerResponse.text(renderShellNotice(code, returnTo), {
-          contentType: "text/html",
-          headers: noticeHeaders
-        });
+        const { viewer, cookies } = yield* Door.noticeViewer;
+        return withCookies(
+          shellNotice(code, returnTo, { viewer, session: yield* Session.Session }),
+          cookies
+        );
       })
     );
     yield* router.add("*", "/~content/*", notFound);
@@ -518,6 +566,7 @@ export const layer: Layer.Layer<
       | Patches.Patches
       | GuestGrants.GuestGrants
       | Session.Session
+      | Users.Users
       | Analytics.Analytics
       | SqlClient.SqlClient
     >

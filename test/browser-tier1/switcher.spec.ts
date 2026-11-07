@@ -457,6 +457,42 @@ test("on a host without the switcher the key is claimed and nothing opens; witho
   await expect(titles(page)).toHaveText(places.filter((place) => place !== "All patches"));
 });
 
+test("a signed-in person opens the switcher on a notice and leaves; signed out, it only claims the key", async ({
+  page,
+  context,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  await visit(page, crew);
+  const blocked: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("Content Security Policy")) blocked.push(message.text());
+  });
+  const notice = `${instance.origin}/~shell/notice/stream_replaced?return=${encodeURIComponent(new URL(crew.address).pathname)}`;
+  await listedAt(page, notice);
+  await expect(page.locator('[data-notice="stream_replaced"]')).toBeVisible();
+  await openAt(page, "Crew rota");
+  // A notice is none of Patchy's places, and no patch is on screen.
+  await expect(group(page, "Patchy")).toHaveText(places);
+  await expect(menu(page).getByRole("group", { name: "This patch" })).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(crew.address);
+  expect(blocked).toEqual([]);
+
+  await instance.session(context, "none");
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(new URL(request.url()).pathname));
+  await page.goto(notice);
+  await expect(page.locator('[data-notice="stream_replaced"]')).toBeVisible();
+  await page.keyboard.press(chord);
+  expect(
+    await page.evaluate(() => (window as Window & { patchySwitcher?: unknown }).patchySwitcher)
+  ).toBe(true);
+  await expect(page.locator("#patchy-switcher")).toHaveCount(0);
+  expect(requested).not.toContain("/~shell/switcher.js");
+  expect(requested).not.toContain("/switcher.json");
+});
+
 test("a public patch's shell claims the key and loads no switcher", async ({ page, instance }) => {
   const open = await publish(instance, "Timetable", "public");
   const requested: string[] = [];

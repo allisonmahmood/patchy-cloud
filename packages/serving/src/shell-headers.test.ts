@@ -3,6 +3,7 @@ import { SWITCHER_RELAY_SOURCE } from "@patchy/core/html";
 import {
   CONTENT_SECURITY_POLICY,
   PATCH_CONTENT_SECURITY_POLICY,
+  noticeContentSecurityPolicy,
   shellContentSecurityPolicy
 } from "./shell-headers.js";
 
@@ -22,6 +23,22 @@ describe("the switcher relay's hash", () => {
       SWITCHER_RELAY_SOURCE
     ]);
     expect(scriptSources(PATCH_CONTENT_SECURITY_POLICY)).toEqual([SWITCHER_RELAY_SOURCE]);
+  });
+
+  it("admits a signed-in viewer's notice scripts from Patchy and Clerk, and nothing else new", () => {
+    expect(scriptSources(noticeContentSecurityPolicy())).toEqual(["'self'", SWITCHER_RELAY_SOURCE]);
+    const clerk = noticeContentSecurityPolicy("clerk.example.test").split("; ");
+    expect(scriptSources(clerk.join("; "))).toEqual([
+      "'self'",
+      "https://clerk.example.test",
+      SWITCHER_RELAY_SOURCE
+    ]);
+    expect(clerk).toContain("connect-src 'self' https://clerk.example.test");
+    expect(clerk).toContain("worker-src blob:");
+    // Otherwise it is the notice's own policy: no frames, no forms, no other origin.
+    const rest = (policy: ReadonlyArray<string>) =>
+      policy.filter((directive) => !/^(script|connect|worker)-src /.test(directive));
+    expect(rest(clerk)).toEqual(rest(PATCH_CONTENT_SECURITY_POLICY.split("; ")));
   });
 
   it("stays out of a patch's own document, whose inline script a hash would switch off", () => {

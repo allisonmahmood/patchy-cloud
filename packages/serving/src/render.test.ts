@@ -3,7 +3,7 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
-import { switcherRelay } from "@patchy/core/html";
+import { switcherRelay, switcherTag } from "@patchy/core/html";
 import { renderPatchWrapper, renderShellNotice, withSwitcherRelay } from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
 import { renderNotFound } from "./render.js";
@@ -60,6 +60,20 @@ describe("renderShellNotice", () => {
     const html = renderShellNotice("access_denied", "/acme/tool?reload=1");
     expect(withoutRelay(html)).not.toMatch(/<(a|form|iframe|script)\b/);
     expect(html).not.toContain("/acme/tool");
+  });
+
+  it("loads a signed-in viewer's switcher, then the session's scripts, and adds no inline script", () => {
+    const viewer = {
+      userId: "usr_notice",
+      companyId: "cmp_notice",
+      session: sessionScripts({
+        clerk: { frontendApiHost: "clerk.example.test", publishableKey: "pk_test_example" }
+      })
+    };
+    const html = renderShellNotice("revoked", "/", viewer);
+    expect(withoutRelay(html)).toContain(`${switcherTag(viewer)}${viewer.session}`);
+    expect(html.indexOf(switcherRelay)).toBeLessThan(html.indexOf(switcherTag(viewer)));
+    expect(renderShellNotice("revoked", "/")).not.toContain("<script defer");
   });
 });
 
