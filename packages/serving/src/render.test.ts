@@ -323,7 +323,7 @@ describe("patch pages", () => {
     expect(renderPatchWrapper({ ...options, scope: "public" })).not.toContain("patchy:shortcuts");
   });
 
-  it("says a version ignores the shortcut setting only when it has patchy/hotkeys from before the setting", () => {
+  it("says a version may ignore the shortcut setting from 0.33.0 on, unless its build says it obeys or has no patchy/hotkeys", () => {
     const ignores = (
       release: string,
       manifest: Parameters<typeof ignoresShortcutSetting>[0]["manifest"]
@@ -337,9 +337,11 @@ describe("patch pages", () => {
     // patchy/hotkeys first shipped in 0.33.0, so nothing older has its shortcuts.
     expect(ignores("0.32.0", hotkeys)).toBe(false);
     expect(ignores("0.0.0", hotkeys)).toBe(false);
-    // No patchy/hotkeys, or a single file, which has no SDK: nothing to stand down.
+    // A repo build that recorded its imports without patchy/hotkeys has nothing to stand down.
     expect(ignores("0.38.0", { sdkImports: ["patchy/preact"] })).toBe(false);
-    expect(ignores("0.38.0", {})).toBe(false);
+    // A single file records no imports and may carry an older SDK inline, so its release decides.
+    expect(ignores("0.38.0", {})).toBe(true);
+    expect(ignores("0.32.0", {})).toBe(false);
   });
 
   it("keeps a scripted public shell anonymous even when the host knows the viewer", () => {

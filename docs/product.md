@@ -67,9 +67,11 @@ only of typed characters, such as `A`, `G H` and the sheet's `?`, while chords,
 named keys and keys within a focused part keep working and `Mod+/` always opens
 the sheet. The tab where it changes takes the new value at once; others read it
 the next time they open a patch. A public patch's shell has no viewer, so its
-shortcuts stay on. A version published before the setting can't obey it, so
-Patchy tells a viewer who turned them off, once per patch on that device, until
-it is published again.
+shortcuts stay on. A repo build records that its page obeys; a version from
+0.33.0 on that doesn't, a repo build from before the setting with
+`patchy/hotkeys` or any single HTML file, which may carry an older SDK inline,
+may keep its shortcuts. Patchy tells a viewer who turned them off, once per
+patch on that device.
 
 The generated client's `download(name, data)` accepts a Blob or bytes on
 tier 1 and 2 pages, including public tier 1 patches. The shell enforces

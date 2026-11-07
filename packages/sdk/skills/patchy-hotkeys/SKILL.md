@@ -327,8 +327,8 @@ or from the account menu on Patchy's pages. Patch code can't change it. `patchy/
 - Patchy passes the setting into the page in `window.name`, which is Patchy's: patch code
   doesn't set or read it.
 - A public patch's shortcuts stay on, and its sheet has no row.
-- A version published before the setting keeps its shortcuts until it is published again with
-  the current release.
+- A version published before the setting keeps its shortcuts until it is built and published
+  again with the current release.
 
 ## The shortcuts sheet
 

@@ -81,9 +81,11 @@ export function renderPatchWrapper(options: PatchPage): string {
 }
 
 /**
- * Whether a version's single-key shortcuts ignore the viewer's setting: it imports
- * `patchy/hotkeys`, first released in 0.33.0, and was built before the CLI recorded that the SDK
- * obeys the setting. Its shell tells a viewer who turned them off, until they dismiss it.
+ * Whether a version's single-key shortcuts may ignore the viewer's setting, as D1 decided: it is
+ * from 0.33.0 on, when `patchy/hotkeys` first shipped, and its manifest doesn't record that the
+ * CLI built it with an SDK that obeys. Recorded imports without `patchy/hotkeys` clear it. A single
+ * HTML file records none, and may carry an older SDK bundled inline, so only its release counts.
+ * Its shell tells a viewer who turned them off, until they dismiss it.
  */
 export function ignoresShortcutSetting(version: {
   readonly release: string;
@@ -92,7 +94,7 @@ export function ignoresShortcutSetting(version: {
   const [major = 0, minor = 0] = version.release.split(".").map(Number);
   return (
     version.manifest.shortcutSetting === undefined &&
-    (version.manifest.sdkImports?.includes("patchy/hotkeys") ?? false) &&
+    (version.manifest.sdkImports?.includes("patchy/hotkeys") ?? true) &&
     (major > 0 || minor >= 33)
   );
 }

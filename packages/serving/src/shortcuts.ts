@@ -10,14 +10,15 @@
  * - one dialog at a time, and only while the person has just pressed or clicked something;
  * - after a Cancel or Escape, the next dialog needs a fresh press: the one that asked has to lapse
  *   first, a few seconds in practice;
- * - only a real press in the dialog saves, through the same route as the account menu's switch.
+ * - only a real press in the dialog saves, through the same route as the account menu's switch;
+ * - once a save is under way, Cancel and Escape wait for it, so the answer is what was stored.
  * The answer is the setting from then on in this tab; other tabs read it when they next open.
  */
 import { ShortcutsValue } from "@patchy/api";
 import * as Schema from "effect/Schema";
 import { shellBottom } from "./stream-status.js";
 
-/** The route's JSON answer. A 200 without it, as a body cut off at the size limit is, saved nothing. */
+/** The route's JSON answer, the value it stored. */
 const isSaved = Schema.is(Schema.Struct({ value: ShortcutsValue }));
 /** `shortcuts.setting` asks with no arguments. */
 export const decodeShortcutsQuestion = Schema.decodeUnknownSync(Schema.Struct({}), {
@@ -48,7 +49,8 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
   const named = /^patchy:shortcuts=(on|off)$/.exec(frame.getAttribute("name") ?? "");
   if (named === null) return undefined;
   let on = named[1] === "on";
-  let open: { readonly dialog: HTMLDialogElement; settle(): void } | undefined;
+  // The open dialog, and how to end it at once when the document stops.
+  let open: { readonly abandon: () => void } | undefined;
   // Set by a Cancel or an Escape. The press that opened that dialog may still count as one, so it
   // clears only once activation has read as lapsed.
   let dismissed = false;
@@ -66,9 +68,11 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
 
   const ask = () =>
     new Promise<boolean>((resolve) => {
+      // What the switch covers. A public patch's shell carries no setting, so it keeps them.
+      const question = `Turn ${on ? "off" : "on"} single-key shortcuts in every patch except public ones?`;
       const dialog = document.createElement("dialog");
       dialog.className = "shell-scrim";
-      dialog.setAttribute("aria-label", "Single-key shortcuts");
+      dialog.setAttribute("aria-label", question);
       const panel = document.createElement("section");
       panel.className = "note note-float note-info";
       const title = document.createElement("p");
@@ -77,7 +81,7 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       pill.className = on ? "pill pill-done" : "pill";
       pill.setAttribute("aria-hidden", "true");
       pill.textContent = on ? "On" : "Off";
-      title.append(glyph(), "Single-key shortcuts", pill);
+      title.append(glyph(), question, pill);
       const error = document.createElement("p");
       error.setAttribute("role", "alert");
       error.hidden = true;
@@ -90,6 +94,9 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       dialog.append(panel);
       let saving = false;
       let settled = false;
+      // The browser closed the dialog during a save, as a second Escape with no press between
+      // can make it; the save's answer settles it then.
+      let closedWhileSaving = false;
       const settle = () => {
         if (settled) return;
         settled = true;
@@ -100,13 +107,15 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
         resolve(on);
       };
       const dismiss = () => {
-        if (settled) return;
+        // A save under way decides the answer; ending now would lose what it stores.
+        if (settled || saving) return;
         watchLapse();
         settle();
       };
       const save = async () => {
         saving = true;
         const value = on ? "off" : "on";
+        let saved = false;
         try {
           const response = await fetch("/api/me/shortcuts", {
             method: "POST",
@@ -120,19 +129,23 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
             signal: AbortSignal.timeout(35_000)
           });
           const answer: unknown = response.ok ? await response.json() : undefined;
-          if (!isSaved(answer)) throw new Error("The setting was not saved.");
-          if (settled) return;
-          on = answer.value === "on";
-          settle();
+          // A 200 without the value, as a body cut off at the route's size limit is, saved nothing.
+          if (isSaved(answer)) {
+            // What is stored is the answer, whatever happened to the dialog meanwhile.
+            on = answer.value === "on";
+            saved = true;
+          }
         } catch {
-          if (settled) return;
-          panel.className = "note note-float note-warn";
-          error.textContent = "Couldn't save. Nothing changed.";
-          error.hidden = false;
-          confirm.textContent = "Try again";
-        } finally {
-          saving = false;
+          // Refused, cut off or timed out: nothing was saved.
         }
+        saving = false;
+        if (saved) return settle();
+        if (closedWhileSaving) return dismiss();
+        if (settled) return;
+        panel.className = "note note-float note-warn";
+        error.textContent = "Couldn't save. Nothing changed.";
+        error.hidden = false;
+        confirm.textContent = "Try again";
       };
       // Patch code can't reach this document, but only a person's own press saves.
       confirm.addEventListener("click", (event) => {
@@ -143,14 +156,18 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
         event.preventDefault();
         dismiss();
       });
-      // A browser that closes it anyway, as on a second Escape without a press between, cancelled.
-      dialog.addEventListener("close", dismiss);
+      // A browser that closes it anyway, as on a second Escape without a press between, cancelled,
+      // unless a save is under way.
+      dialog.addEventListener("close", () => {
+        if (saving) closedWhileSaving = true;
+        else dismiss();
+      });
       dialog.addEventListener("keydown", (event) => {
         if (event.key !== "Tab") return;
         event.preventDefault();
         (document.activeElement === confirm ? cancel : confirm).focus();
       });
-      open = { dialog, settle: dismiss };
+      open = { abandon: settle };
       document.body.append(dialog);
       dialog.showModal();
       confirm.focus();
@@ -169,8 +186,9 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
         return Promise.resolve(on);
       return ask();
     },
+    /** Ends an open dialog with the setting as it is: the document is stopping. */
     close() {
-      open?.settle();
+      open?.abandon();
       clearInterval(lapse);
     }
   };

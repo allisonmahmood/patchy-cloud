@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Frame, Page } from "@playwright/test";
@@ -8,7 +9,8 @@ import type { Instance } from "./instance.js";
 
 // The viewer's single-key shortcut setting through Patchy's real shell and broker: the shell names
 // a viewer's frame with it, patchy/hotkeys obeys that name, and the shell confirms a change in its
-// own dialog. Each engine sets a frame's name for itself, so these also run in Firefox and WebKit.
+// own dialog. Each engine sets a frame's name for itself, so these also pass in Firefox and in
+// desktop Chromium, which runs a sandboxed frame in its own process.
 //
 // Playwright's own calls into a page count as a press there for about five seconds, and in the
 // shell above it only while the two share a process, as in Chromium's headless shell. Desktop
@@ -32,6 +34,9 @@ function App() {
 }
 render(<App />, document.getElementById("app")!);
 `;
+
+/** What a repo build of this release records: the page imports patchy/hotkeys, which obeys. */
+const built = { sdkImports: ["patchy/preact", "patchy/hotkeys"], shortcutSetting: 1 } as const;
 
 /** The hotkeys page, bundled against the built patchy package as a single-file page. */
 const hotkeysHtml = async () => {
@@ -81,7 +86,14 @@ const pressAll = async (page: Page, frame: Frame) => {
   await frame.locator("#body").focus();
   for (const key of ["a", "g", "h", "Control+k"]) await page.keyboard.press(key);
 };
-const shellDialog = (page: Page) => page.getByRole("dialog", { name: "Single-key shortcuts" });
+const shellDialog = (page: Page) =>
+  page.getByRole("dialog", {
+    name: /^Turn o(n|ff) single-key shortcuts in every patch except public ones\?$/
+  });
+const note = (page: Page) =>
+  page.getByRole("status").filter({
+    hasText: "This patch's single-key shortcuts still work until it's updated."
+  });
 
 /**
  * Asks the shell with the fixture page's raw port, as a patch of any SDK could, now or after
@@ -114,13 +126,13 @@ test("Off reaches the patch, so its single-key shortcuts stop while the rest fir
 }) => {
   await store(instance, false);
   const html = await hotkeysHtml();
-  const patch = await instance.publish("company", html);
+  const patch = await instance.publish("company", html, undefined, built);
   const { frame } = await openDeals(page, patch.address);
   expect(await frame.evaluate(() => window.name)).toBe("patchy:shortcuts=off");
   await pressAll(page, frame);
   await firedNext(frame, ["Mod+K"]);
 
-  const next = await instance.publish("company", html, patch.patchId);
+  const next = await instance.publish("company", html, patch.patchId, built);
   await expect(page.getByText(/^A new version of .+ is available\.$/)).toBeVisible();
   await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(page.locator("#patch")).toHaveAttribute("data-version-id", next.versionId);
@@ -135,7 +147,7 @@ test("the sheet's row opens Patchy's dialog, which changes the setting live; a f
   instance
 }) => {
   await store(instance, false);
-  const patch = await instance.publish("company", await hotkeysHtml());
+  const patch = await instance.publish("company", await hotkeysHtml(), undefined, built);
   const { frame, sheet } = await openDeals(page, patch.address);
   const dialog = shellDialog(page);
   await frame.locator("#body").focus();
@@ -204,6 +216,53 @@ test("the sheet's row opens Patchy's dialog, which changes the setting live; a f
   });
 });
 
+test("Cancel and Escape wait for a save under way, so the sheet ends on what was stored", async ({
+  page,
+  instance
+}) => {
+  await store(instance, false);
+  const patch = await instance.publish("company", await hotkeysHtml(), undefined, built);
+  const { frame, sheet } = await openDeals(page, patch.address);
+  const dialog = shellDialog(page);
+  // The route holds each save until the step lets it go on to the server.
+  let held: (() => void) | undefined;
+  await page.route("**/api/me/shortcuts", async (route) => {
+    await new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    await route.continue();
+  });
+  await frame.locator("#body").focus();
+  await page.keyboard.press("Control+/");
+  for (const [from, to, way] of [
+    ["Off", "On", "Cancel"],
+    ["On", "Off", "Escape"]
+  ] as const) {
+    await test.step(`${way} while it saves ${to}`, async () => {
+      await sheet.getByRole("button", { name: `Single-key shortcuts: ${from}` }).click();
+      await dialog.getByRole("button", { name: `Turn ${to.toLowerCase()}` }).click();
+      await expect.poll(() => held !== undefined).toBe(true);
+      if (way === "Cancel") {
+        await dialog.getByRole("button", { name: "Cancel" }).click();
+        await expect(dialog).toBeVisible();
+      } else {
+        // A second Escape with no press between lets Chromium close the dialog regardless.
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Escape");
+      }
+      // The question waits for the save, so the sheet stays away.
+      await expect(sheet).toBeHidden();
+      held!();
+      held = undefined;
+      await expect(
+        sheet.getByRole("button", { name: `Single-key shortcuts: ${to}` })
+      ).toBeFocused();
+      await expect(dialog).toHaveCount(0);
+      expect(await stored(instance)).toBe(to === "On");
+    });
+  }
+});
+
 test("a dialog needs a press: none, one already open, or the press a Cancel answered shows nothing, and a later press does", async ({
   page,
   instance
@@ -264,7 +323,7 @@ test("the account menu's switch turns them off and on, back on the same page", a
   page,
   instance
 }) => {
-  const patch = await instance.publish("company", await hotkeysHtml());
+  const patch = await instance.publish("company", await hotkeysHtml(), undefined, built);
   const row = page.locator("#account-menu").getByRole("switch", { name: "Single-key shortcuts" });
   await page.goto(`${instance.origin}/patches?tab=pages`);
   for (const [checked, receipt, on] of [
@@ -286,7 +345,7 @@ test("the account menu's switch turns them off and on, back on the same page", a
 });
 
 test("a guest's setting is their own", async ({ page, context, instance }) => {
-  const patch = await instance.publish("company", await hotkeysHtml());
+  const patch = await instance.publish("company", await hotkeysHtml(), undefined, built);
   await instance.addGuest(patch.patchId, "guest@pine.example");
   await instance.session(context, "guest");
   const { frame, sheet } = await openDeals(page, patch.address);
@@ -378,12 +437,26 @@ export default createGuest({ rows: { ping } });`,
 });
 
 test.describe("an older version's note", () => {
-  const note = (page: Page) =>
-    page.getByRole("status").filter({
-      hasText: "This patch's single-key shortcuts still work until it's updated."
-    });
   // Built with patchy/hotkeys by a CLI from before the setting: it recorded no shortcutSetting.
   const older = { sdkImports: ["patchy/preact", "patchy/hotkeys"] };
+
+  test("a page built before the setting, published as one file, keeps working and its shortcuts, and says so", async ({
+    page,
+    instance
+  }) => {
+    await store(instance, false);
+    // As a single file is published: no imports recorded and no capability claimed.
+    const html = await readFile(new URL("./hotkeys-0.38.html", import.meta.url), "utf8");
+    const patch = await instance.publish("company", html);
+    const { frame, sheet } = await openDeals(page, patch.address);
+    expect(await frame.evaluate(() => window.name)).toBe("patchy:shortcuts=off");
+    await pressAll(page, frame);
+    await firedNext(frame, ["A", "G H", "Mod+K"]);
+    await page.keyboard.press("?");
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole("button", { name: /^Single-key shortcuts/ })).toHaveCount(0);
+    await expect(note(page)).toBeVisible();
+  });
 
   test("shows to a viewer with them off, until they dismiss it for that patch", async ({
     page,
@@ -419,7 +492,7 @@ test.describe("an older version's note", () => {
     const patch = await instance.publish("company", html, undefined, older);
     await openDeals(page, patch.address);
     await expect(note(page)).toBeVisible();
-    await instance.publish("company", html, patch.patchId, { ...older, shortcutSetting: 1 });
+    await instance.publish("company", html, patch.patchId, built);
     await openDeals(page, patch.address);
     await expect(note(page)).toHaveCount(0);
 

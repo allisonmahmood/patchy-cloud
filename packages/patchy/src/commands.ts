@@ -22,7 +22,6 @@ import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Prompt from "effect/cli/Prompt";
 import {
-  MANIFEST_CAPABILITIES,
   type CliCommand,
   PatchName,
   Identity,
@@ -809,7 +808,6 @@ const publish = Command.make(
           warnings,
           request: new PublishRequest({
             manifest: {
-              ...MANIFEST_CAPABILITIES,
               manifestVersion: MANIFEST_VERSION,
               release: RELEASE,
               ...(name === undefined ? {} : { name }),

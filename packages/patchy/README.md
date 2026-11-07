@@ -228,10 +228,13 @@ keeps each stopped command as a button with its keys drawn off, and its row asks
 Patchy, which confirms the change in its own dialog; patch code can't change it.
 Patchy names the patch's frame with the setting before the page starts, so the
 page reads it in `window.name`, which patch code leaves alone. A public patch's
-shell has no viewer, so its shortcuts stay on. The CLI records
-`shortcutSetting: 1` in every manifest it writes; a version that imports
-`patchy/hotkeys` without it was built before the setting, keeps its shortcuts,
-and Patchy tells a viewer who turned them off, until they dismiss it.
+shell has no viewer, so its shortcuts stay on. A repo build records
+`shortcutSetting: 1` in its manifest, since the CLI built its page with this
+release's SDK. A version from 0.33.0 on without it may carry an older
+`patchy/hotkeys` and keep its shortcuts: a repo build from before the setting
+that imports it, or a single HTML file, which records no imports and is
+published as it is. Patchy tells a viewer who turned them off, until they
+dismiss it for that patch.
 
 ### Generated downloads and printing
 

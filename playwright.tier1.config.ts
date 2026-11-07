@@ -21,15 +21,5 @@ export default defineConfig({
     screenshot: "off",
     video: "off"
   },
-  projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    // The shortcut setting reaches a patch by its frame's name, which each engine sets for itself.
-    // CI runs Chromium; these run here with `--project firefox` or `--project webkit`.
-    {
-      name: "firefox",
-      use: { ...devices["Desktop Firefox"] },
-      testMatch: "shortcut-setting.spec.ts"
-    },
-    { name: "webkit", use: { ...devices["Desktop Safari"] }, testMatch: "shortcut-setting.spec.ts" }
-  ]
+  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
 });

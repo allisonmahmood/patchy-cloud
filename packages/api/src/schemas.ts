@@ -655,14 +655,17 @@ export const Manifest = Schema.Struct({
   handlers: Schema.optionalKey(HandlerDescriptors),
   sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText)),
   /**
-   * The CLI that built this version has `patchy/hotkeys` obey the viewer's single-key shortcut
-   * setting. A version without it whose `sdkImports` include `patchy/hotkeys` can't, and its
-   * shell says so to a viewer who turned them off.
+   * The CLI built this version's page with a `patchy/hotkeys` that obeys the viewer's single-key
+   * shortcut setting. A version from 0.33.0 on without it may not, unless its `sdkImports` leave
+   * out `patchy/hotkeys`, and its shell says so to a viewer who turned them off.
    */
   shortcutSetting: Schema.optionalKey(Schema.Literal(1))
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
 
-/** What the CLI adds to every manifest it writes, for the server to know the page obeys. */
+/**
+ * What the CLI records in the manifest of a page it built itself, a repo build's, whose SDK is
+ * this release's. A single HTML file is published as it is, so it claims none.
+ */
 export const MANIFEST_CAPABILITIES = { shortcutSetting: 1 } as const;
 
 /**

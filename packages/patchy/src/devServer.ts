@@ -136,14 +136,14 @@ export const serve = Effect.fn("Dev.serve")(function* (
     )
   );
   const saving = yield* Semaphore.make(1);
+  // The file first: shells read the map, so a write that fails changes nothing they show.
   const saveShortcuts = (userId: string, on: boolean) =>
     saving.withPermits(1)(
-      Effect.suspend(() => {
-        shortcuts.set(userId, on);
-        return io("Could not save the dev person's shortcut setting.", () =>
-          atomicJson(stateDir, "shortcuts.json", Object.fromEntries(shortcuts))
-        );
-      })
+      Effect.suspend(() =>
+        io("Could not save the dev person's shortcut setting.", () =>
+          atomicJson(stateDir, "shortcuts.json", { ...Object.fromEntries(shortcuts), [userId]: on })
+        )
+      ).pipe(Effect.tap(() => Effect.sync(() => shortcuts.set(userId, on))))
     );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
   let html = yield* nextBuild(prepared.manifest);

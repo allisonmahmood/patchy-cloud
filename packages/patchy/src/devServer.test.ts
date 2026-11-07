@@ -139,10 +139,16 @@ it.live(
       assert.deepStrictEqual(yield* off.json, { value: "off" });
       assert.strictEqual(yield* named(origin), "patchy:shortcuts=off");
       assert.strictEqual(yield* named(colleagueOrigin), "patchy:shortcuts=on");
-      assert.deepStrictEqual(
-        JSON.parse(yield* fs.readFileString(path.join(stateDir, "shortcuts.json"))),
-        { [identity.user.id]: false }
-      );
+      const stored = path.join(stateDir, "shortcuts.json");
+      assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(stored)), {
+        [identity.user.id]: false
+      });
+      // A save whose write fails is refused and changes nothing a shell shows.
+      yield* fs.remove(stored);
+      yield* fs.makeDirectory(stored);
+      assert.strictEqual((yield* setShortcuts("on")).status, 503);
+      assert.strictEqual(yield* named(origin), "patchy:shortcuts=off");
+      yield* fs.remove(stored, { recursive: true });
 
       const call = (
         op: string,
