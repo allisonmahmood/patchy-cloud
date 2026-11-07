@@ -216,7 +216,26 @@ test("the sheet's row opens Patchy's dialog, which changes the setting live; a f
   });
 });
 
-test("Cancel and Escape wait for a save under way, so the sheet ends on what was stored", async ({
+/** Holds each save at the route until the test lets it reach the server, or refuses it. */
+const holdSaves = async (page: Page) => {
+  const held: { release?: (outcome: "save" | "refuse") => void } = {};
+  await page.route("**/api/me/shortcuts", async (route) => {
+    const outcome = await new Promise<"save" | "refuse">((resolve) => {
+      held.release = resolve;
+    });
+    if (outcome === "save") await route.continue();
+    else await route.fulfill({ status: 503, contentType: "text/html", body: "" });
+  });
+  return {
+    held: () => held.release !== undefined,
+    release(outcome: "save" | "refuse") {
+      held.release!(outcome);
+      held.release = undefined;
+    }
+  };
+};
+
+test("Cancel or Escape mid-save closes the dialog at once, and the answer is what the save stored", async ({
   page,
   instance
 }) => {
@@ -224,43 +243,66 @@ test("Cancel and Escape wait for a save under way, so the sheet ends on what was
   const patch = await instance.publish("company", await hotkeysHtml(), undefined, built);
   const { frame, sheet } = await openDeals(page, patch.address);
   const dialog = shellDialog(page);
-  // The route holds each save until the step lets it go on to the server.
-  let held: (() => void) | undefined;
-  await page.route("**/api/me/shortcuts", async (route) => {
-    await new Promise<void>((resolve) => {
-      held = resolve;
-    });
-    await route.continue();
-  });
+  const saves = await holdSaves(page);
   await frame.locator("#body").focus();
   await page.keyboard.press("Control+/");
-  for (const [from, to, way] of [
-    ["Off", "On", "Cancel"],
-    ["On", "Off", "Escape"]
+  for (const [from, to, way, outcome, ends] of [
+    ["Off", "on", "Cancel", "save", "On"],
+    ["On", "off", "Escape", "refuse", "On"]
   ] as const) {
-    await test.step(`${way} while it saves ${to}`, async () => {
+    await test.step(`${way} while it saves ${to}, which the route ${outcome === "save" ? "stores" : "refuses"}`, async () => {
       await sheet.getByRole("button", { name: `Single-key shortcuts: ${from}` }).click();
-      await dialog.getByRole("button", { name: `Turn ${to.toLowerCase()}` }).click();
-      await expect.poll(() => held !== undefined).toBe(true);
-      if (way === "Cancel") {
-        await dialog.getByRole("button", { name: "Cancel" }).click();
-        await expect(dialog).toBeVisible();
-      } else {
-        // A second Escape with no press between lets Chromium close the dialog regardless.
-        await page.keyboard.press("Escape");
-        await page.keyboard.press("Escape");
-      }
-      // The question waits for the save, so the sheet stays away.
-      await expect(sheet).toBeHidden();
-      held!();
-      held = undefined;
-      await expect(
-        sheet.getByRole("button", { name: `Single-key shortcuts: ${to}` })
-      ).toBeFocused();
+      await dialog.getByRole("button", { name: `Turn ${to}` }).click();
+      await expect.poll(saves.held).toBe(true);
+      if (way === "Cancel") await dialog.getByRole("button", { name: "Cancel" }).click();
+      else await page.keyboard.press("Escape");
+      // The dialog goes now, with focus back on the frame; the question waits for the save.
       await expect(dialog).toHaveCount(0);
-      expect(await stored(instance)).toBe(to === "On");
+      await expect(page.locator("#patch")).toBeFocused();
+      await expect(sheet).toBeHidden();
+      saves.release(outcome);
+      await expect(
+        sheet.getByRole("button", { name: `Single-key shortcuts: ${ends}` })
+      ).toBeFocused();
+      expect(await stored(instance)).toBe(ends === "On");
+      // A dismissal needs a fresh press before the next dialog: let this one lapse untouched.
+      await sleep(6_500);
     });
   }
+});
+
+test("a dialog dismissed mid-save needs a fresh press, even once its save has stored the change", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish();
+  const frame = await open(page, patch);
+  const dialog = shellDialog(page);
+  const saves = await holdSaves(page);
+  await frame.locator("h1").click();
+  await ask(frame, instance.wire, "first");
+  await dialog.getByRole("button", { name: "Turn off" }).click();
+  await expect.poll(saves.held).toBe(true);
+  // A second Escape with no press between lets Chromium close a dialog that ignores the first.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  // Its save still holds the one slot: a question meanwhile gets the setting as it is.
+  await ask(frame, instance.wire, "meanwhile");
+  await expect.poll(() => answer(frame, "meanwhile")).toMatchObject({ value: true });
+  saves.release("save");
+  await expect.poll(() => answer(frame, "first")).toMatchObject({ value: false });
+  expect(await stored(instance)).toBe(false);
+  // The press that saved is still active, but its dialog was dismissed: a scripted retry on it
+  // gets the value and no dialog.
+  await ask(frame, instance.wire, "retry");
+  await expect.poll(() => answer(frame, "retry")).toMatchObject({ value: false });
+  await expect(dialog).toHaveCount(0);
+  // Once that press has lapsed, a fresh one opens it.
+  await sleep(6_500);
+  await frame.locator("h1").click();
+  await ask(frame, instance.wire, "fresh");
+  await expect(dialog).toBeVisible();
 });
 
 test("a dialog needs a press: none, one already open, or the press a Cancel answered shows nothing, and a later press does", async ({

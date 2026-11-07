@@ -11,7 +11,8 @@
  * - after a Cancel or Escape, the next dialog needs a fresh press: the one that asked has to lapse
  *   first, a few seconds in practice;
  * - only a real press in the dialog saves, through the same route as the account menu's switch;
- * - once a save is under way, Cancel and Escape wait for it, so the answer is what was stored.
+ * - Cancel and Escape close the dialog at once, even mid-save. A save under way keeps the one slot
+ *   until it answers, and the answer is what it stored, or the setting as it was if it failed.
  * The answer is the setting from then on in this tab; other tabs read it when they next open.
  */
 import { ShortcutsValue } from "@patchy/api";
@@ -93,24 +94,32 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       panel.append(title, error, actions);
       dialog.append(panel);
       let saving = false;
+      // The dialog is up; it goes as soon as the person dismisses it, even mid-save.
+      let shown = true;
+      // The question is answered; until then it holds the one slot, so no other dialog opens.
       let settled = false;
-      // The browser closed the dialog during a save, as a second Escape with no press between
-      // can make it; the save's answer settles it then.
-      let closedWhileSaving = false;
+      const hide = () => {
+        if (!shown) return;
+        shown = false;
+        dialog.close();
+        dialog.remove();
+        frame.focus();
+      };
       const settle = () => {
         if (settled) return;
         settled = true;
         open = undefined;
-        dialog.close();
-        dialog.remove();
-        frame.focus();
+        hide();
         resolve(on);
       };
+      // Cancel, Escape, or the browser closing it, as a second Escape with no press between can:
+      // the dialog goes at once and the next one needs a fresh press. A save under way still
+      // answers, with what it stored or, failing, the setting as it was.
       const dismiss = () => {
-        // A save under way decides the answer; ending now would lose what it stores.
-        if (settled || saving) return;
+        if (!shown) return;
         watchLapse();
-        settle();
+        if (saving) hide();
+        else settle();
       };
       const save = async () => {
         saving = true;
@@ -139,9 +148,7 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
           // Refused, cut off or timed out: nothing was saved.
         }
         saving = false;
-        if (saved) return settle();
-        if (closedWhileSaving) return dismiss();
-        if (settled) return;
+        if (saved || !shown) return settle();
         panel.className = "note note-float note-warn";
         error.textContent = "Couldn't save. Nothing changed.";
         error.hidden = false;
@@ -149,19 +156,14 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       };
       // Patch code can't reach this document, but only a person's own press saves.
       confirm.addEventListener("click", (event) => {
-        if (event.isTrusted && !saving) void save();
+        if (event.isTrusted && shown && !saving) void save();
       });
       cancel.addEventListener("click", dismiss);
       dialog.addEventListener("cancel", (event) => {
         event.preventDefault();
         dismiss();
       });
-      // A browser that closes it anyway, as on a second Escape without a press between, cancelled,
-      // unless a save is under way.
-      dialog.addEventListener("close", () => {
-        if (saving) closedWhileSaving = true;
-        else dismiss();
-      });
+      dialog.addEventListener("close", dismiss);
       dialog.addEventListener("keydown", (event) => {
         if (event.key !== "Tab") return;
         event.preventDefault();
@@ -178,8 +180,9 @@ export function createShortcutSetting(frame: HTMLIFrameElement, starting: () => 
       return on;
     },
     /**
-     * The person's answer once they choose, or the setting as it is, with no dialog, when one is
-     * open, the cover is up, nothing was just pressed, or the last dialog's press hasn't lapsed.
+     * The person's answer once they choose, or the setting as it is, with no dialog, while an
+     * earlier question is unanswered (its dialog up, or its save under way after a dismissal),
+     * the cover is up, nothing was just pressed, or the last dismissal's press hasn't lapsed.
      */
     ask(): Promise<boolean> {
       if (open !== undefined || dismissed || starting() || !navigator.userActivation.isActive)
