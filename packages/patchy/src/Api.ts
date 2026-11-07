@@ -154,6 +154,7 @@ export const isDefinitivePublishRefusal = (error: ClientFailure, update: boolean
         error.code === "tier2_not_public" ||
         error.code === "has_primitives" ||
         error.code === "patch_not_openable" ||
+        error.code === "not_shared" ||
         error.code === "connection_not_connected" ||
         error.code === "stale_generated" ||
         error.code === "not_additive" ||

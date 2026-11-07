@@ -1284,6 +1284,42 @@ it.layer(layer)("SDK company generation", (it) => {
     })
   );
 
+  it.effect("names the owner of an unshared table or store on a source the caller can open", () =>
+    Effect.gen(function* () {
+      const owner = Fixtures.identities.reader;
+      const patchId = "sdkunshared1";
+      yield* Fixtures.record(
+        Fixtures.recordInput(owner, {
+          patchId,
+          manifest: {
+            ...Fixtures.manifest,
+            name: "sdk-unshared-source",
+            tables: {
+              notes: { description: "Notes kept here.", columns: {}, indexes: {}, shared: false }
+            },
+            files: { scans: { description: "Scans kept here.", shared: false } }
+          }
+        })
+      );
+      const api = yield* sdkOver(Layer.empty);
+      for (const [resource, uses] of [
+        ["notes", { notes: { kind: "sharedTable", patchId, table: "notes" } }],
+        ["scans", { scans: { kind: "sharedStore", patchId, store: "scans" } }]
+      ] as const) {
+        const response = yield* api.generate({
+          payload: generateRequest({ ...Fixtures.manifest, tier: 2, uses }),
+          responseMode: "response-only"
+        });
+        assert.strictEqual(response.status, 422);
+        assert.deepStrictEqual(yield* response.json, {
+          ok: false,
+          code: "not_shared",
+          error: `sdk-unshared-source's \`${resource}\` isn't shared with other patches. Ask ${owner.user.name}, its owner, or an admin to share it.`
+        });
+      }
+    })
+  );
+
   it.effect("answers each unavailable generation source with a bounded 503 that names it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

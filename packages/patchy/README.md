@@ -620,6 +620,11 @@ connection; with several it lists copy-ready choices from `list connections` and
 With none, it names `/company/connections`.
 The default connection alias camel-cases the handle's hyphens; a shared table or
 store alias defaults to its resource name. `--as` overrides the default.
+`patchy add shared-table` and `shared-store` refuse, exit 2 and `rejected`, as
+discovery reads the resource: `not_shared` names the source patch, the resource
+and its owner to ask; `source_off` names the retired or deleted source to restore;
+`patch_not_openable` says no more about a source you can't open or a resource it
+doesn't have.
 
 Initialization and pull require an empty or new target directory and an existing parent.
 Without `--purpose`, it asks only at an interactive human terminal; agent, JSON
@@ -1377,9 +1382,13 @@ The executing CLI must match the instance release exactly. A local mismatch exit
 File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo, now supported by this CLI.
-For `patch_not_openable`, correct the shared-table declaration or restore source
-access. For `connection_not_connected`, an admin reconnects at
-`/company/connections`; `stale_generated` requires `pnpm patchy refresh`.
+For `patch_not_openable`, the declared source isn't one you can open, or lacks
+that table or store: correct the declaration or restore source access. For
+`not_shared`, the source has the table or store but doesn't share it: ask the
+owner the message names, or an admin, to share it. Both clear the attempt, so
+the next publish after a fix sends a fresh one. For `connection_not_connected`,
+an admin reconnects at `/company/connections`; `stale_generated` requires
+`pnpm patchy refresh`.
 Connection secrets belong only in the admin's browser connect/rotate form,
 never CLI arguments or an agent transcript.
 

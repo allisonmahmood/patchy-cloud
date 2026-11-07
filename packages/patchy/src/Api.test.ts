@@ -26,6 +26,7 @@ describe("isDefinitivePublishRefusal", () => {
         "tier_mismatch",
         "has_primitives",
         "patch_not_openable",
+        "not_shared",
         "connection_not_connected",
         "stale_generated",
         "not_additive",

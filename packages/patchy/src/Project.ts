@@ -1041,7 +1041,28 @@ export const add = Effect.fn("Project.add")(function* (
     const shared = (
       integration === "shared-store" ? source.inventory.stores : source.inventory.tables
     ).find((entry) => entry.name === parts[1]);
-    if (!shared?.declarable) return yield* new RejectedError(notOpenable);
+    if (shared === undefined) return yield* new RejectedError(notOpenable);
+    // The detail answered, so the person can open this source: say what discovery says.
+    if (!shared.declarable)
+      return yield* new RejectedError(
+        shared.reason === "not_shared"
+          ? {
+              refusal: {
+                ok: false,
+                code: "not_shared",
+                error: `${source.name}'s \`${shared.name}\` isn't shared with other patches. Ask ${source.owner.name}, its owner, or an admin to share it.`
+              }
+            }
+          : shared.reason === "source_off"
+            ? {
+                refusal: {
+                  ok: false,
+                  code: "source_off",
+                  error: `${source.name} is ${source.state}. Ask ${source.owner.name}, its owner, or an admin to restore it.`
+                }
+              }
+            : notOpenable
+      );
     declaration =
       integration === "shared-store"
         ? { kind: "sharedStore", patchId: source.id, store: shared.name }

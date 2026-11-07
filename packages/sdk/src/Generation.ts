@@ -95,13 +95,15 @@ export class TierMismatch extends Schema.TaggedError<TierMismatch>()("SdkTierMis
     return usesRefusal(this.tier, this.aliases)!;
   }
 }
+/** An unshared resource on a source the caller can open keeps Patches' own refusal and words. */
 export type GenerationRefused =
   | ReleaseMismatch
   | TierMismatch
   | UnsupportedManifestVersion
   | UnsafeGeneratedPath
   | ConnectionNotConnected
-  | PatchNotOpenable;
+  | PatchNotOpenable
+  | Patches.NotShared;
 export class GenerationUnavailable extends Schema.TaggedError<GenerationUnavailable>()(
   "GenerationUnavailable",
   {

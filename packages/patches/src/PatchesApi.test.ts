@@ -2522,7 +2522,7 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           yield* patches
             .sharedTable(source.patchId, "contacts", reader.company.id)
             .pipe(Effect.flip),
-          Patches.PatchNotOpenable
+          Patches.NotShared
         );
         const replay = yield* consumer.publish({ payload, responseMode: "response-only" });
         assert.strictEqual(yield* replay.text, yield* response.text);
@@ -2537,7 +2537,12 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           responseMode: "response-only"
         });
         assert.strictEqual(refused.status, 422);
-        assert.include(yield* refused.json, { code: "patch_not_openable" });
+        // The reader can open the source, so the refusal says what discovery's hint already does.
+        assert.deepStrictEqual(yield* refused.json, {
+          ok: false,
+          code: "not_shared",
+          error: `shared-contacts's \`contacts\` isn't shared with other patches. Ask ${uploader.user.name}, its owner, or an admin to share it.`
+        });
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
       })
   );
@@ -2552,7 +2557,8 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
           ...Fixtures.manifest,
           name: "stable-source-name",
           tables: {
-            contacts: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true }
+            contacts: { description: "Notes keyed by id.", columns: {}, indexes: {}, shared: true },
+            private: { description: "Notes kept here.", columns: {}, indexes: {}, shared: false }
           }
         };
         const source = yield* owner.publish({
@@ -2587,14 +2593,26 @@ it.layer(Layer.fresh(publishLayer))("shared table publishing", (it) => {
         yield* sql`INSERT INTO companies (id, handle, name)
         VALUES ('cmp_shared_foreign', 'shared-foreign', 'Foreign company')`;
         yield* sql`UPDATE patches SET company_id = 'cmp_shared_foreign' WHERE id = ${source.patchId}`;
-        const foreign = yield* consumer.publish({
-          payload: yield* consumingRequest({
-            html: html("Foreign consumer"),
-            manifest: { ...Fixtures.manifest, uses: { contacts: declaration } }
-          }),
-          responseMode: "response-only"
-        });
-        assert.include(yield* foreign.json, { code: "patch_not_openable" });
+        // A source the reader can't open answers in the same words, shared or not, naming no one.
+        for (const table of ["contacts", "private"]) {
+          const foreign = yield* consumer.publish({
+            payload: yield* consumingRequest({
+              html: html("Foreign consumer"),
+              manifest: {
+                ...Fixtures.manifest,
+                uses: {
+                  contacts: { ...declaration, table, id: sharedTableId(source.patchId, table) }
+                }
+              }
+            }),
+            responseMode: "response-only"
+          });
+          assert.deepStrictEqual(yield* foreign.json, {
+            ok: false,
+            code: "patch_not_openable",
+            error: `Shared table ${source.patchId}/${table} is not openable.`
+          });
+        }
         assert.deepStrictEqual(yield* Stream.runCollect(store.list("patches/")), before);
         yield* sql`UPDATE patches SET company_id = ${uploader.company.id} WHERE id = ${source.patchId}`;
         yield* owner.retire({ params: { patchId: source.patchId }, payload: new ForceRequest({}) });

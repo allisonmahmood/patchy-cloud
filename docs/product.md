@@ -965,9 +965,13 @@ patch in the same company and read from its handlers. `uses` is keyed by local a
 the shared table must also be declared. Refs do not grant access or enforce a
 foreign key.
 
-Publishing resolves the source's inventory, not its active manifest. A missing,
-unopenable or unshared source is `patch_not_openable`; an older revision stamp
-warns rather than refuses. Patch discovery, client generation and local fixtures consume
+Publishing resolves the source's inventory, not its active manifest. A source
+the publisher can't open, a missing one, or a resource the source doesn't have is
+`patch_not_openable`, which says nothing more about it. Past that gate, a table
+or store the source has but doesn't share is `not_shared`, naming the source, the
+resource and its owner to ask; discovery already shows them all three. Generation
+and `patchy add` refuse the same way. An older revision stamp warns rather than
+refuses. Patch discovery, client generation and local fixtures consume
 that inventory's tables, columns and indexes, never the source's active manifest
 or its company rows.
 

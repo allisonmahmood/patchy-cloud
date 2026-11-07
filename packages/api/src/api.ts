@@ -272,8 +272,10 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "The resolved id is `<patchId>/<table>` or `<patchId>/<store>`, never a patch name; " +
           "revision stamps the source inventory. `files(description, { shared: true })` publishes " +
           "read access to every file in the store. Publish requires a live same-company source " +
-          "the publisher can open and an inventory resource marked shared, otherwise " +
-          "`patch_not_openable`. A stamp behind the source revision warns, not refuses. " +
+          "the publisher can open, otherwise `patch_not_openable`, which says nothing more about the source; " +
+          "a resource the source lacks is `patch_not_openable` too. A resource it has but doesn't share is " +
+          "`not_shared`, naming the source patch, the resource and its owner, as discovery's hint does. " +
+          "A stamp behind the source revision warns, not refuses. " +
           "Unsharing a defined table or store refuses with `has_dependants` and the distinct live declaring " +
           "patches, including declarations in retained versions, unless `force` is true. Ask the person you " +
           "are working for before forcing. Omission and rollback never change sharing. " +
@@ -749,7 +751,8 @@ export class SdkGroup extends HttpApiGroup.make("sdk", { topLevel: true })
       .annotateMerge(
         describe(
           "Resolve declarations against current company metadata and return finished managed files, uses stamps and typed declaration metadata. " +
-            "Requires the exact current release. Refuses connection_not_connected, patch_not_openable and release_mismatch, and `uses` below tier 2 with tier_mismatch. " +
+            "Requires the exact current release. Refuses connection_not_connected, patch_not_openable, not_shared and release_mismatch, and `uses` below tier 2 with tier_mismatch. " +
+            "Shared declarations refuse as publish does: a source the caller can't open, or a resource it lacks, is patch_not_openable; an unshared resource on one they can is not_shared, naming its owner. " +
             "Present skills are sticky except patchy-server below tier 2, patchy-members without uses.members and any skill this release does not ship; generation leaves those out, and the CLI removes their folders. Includes core and implied skills, " +
             "typed clients, contexts and fixture stubs. Every generation includes the company's current look: `patchy/_generated/look.css`, `patchy/_generated/logo.svg` when the revision has one, and the patchy-look skill holding its brief; with no company look, the Patchy look without a logo. index.json's `look` records the revision, or null for the Patchy look, and its `lookRestore` the company's latest restore as the look read's `restored` carries it, null after a publish. The metadata response field contains Postgres snapshots, shared-table definitions with recursive source ref targets and their shared declarations, and shared-store definitions. Store fixtures use `fixtures/shared-<alias>/README.md`; existing fixture directories are never overwritten. Metadata is never written to a generated file. Never returns manifest.json, credentials or business rows or bytes. " +
             "serverModules lists one-level server/*.ts filename stems discovered locally for tier 2, independent of manifest.handlers; tier 1 sends an empty list. Generation uses them only for type-only imports and never loads handler code. " +

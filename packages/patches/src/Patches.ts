@@ -458,7 +458,10 @@ export class HasPrimitives extends Schema.TaggedError<HasPrimitives>()("HasPrimi
   }
 }
 
-/** A declaration never reveals whether its source is missing, private or unshared. */
+/**
+ * A declared source the publisher can't open, or a resource it doesn't have. It never says
+ * which, nor anything else about the source.
+ */
 export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()("PatchNotOpenable", {
   patchId: Schema.String,
   table: Schema.optionalKey(Schema.String),
@@ -467,6 +470,23 @@ export class PatchNotOpenable extends Schema.TaggedError<PatchNotOpenable>()("Pa
   readonly code = "patch_not_openable" as const;
   override get message() {
     return `Shared ${this.store === undefined ? "table" : "store"} ${this.patchId}/${this.store ?? this.table} is not openable.`;
+  }
+}
+
+/**
+ * A declared table or store, on a source the publisher can open, that isn't shared. It says
+ * only what discovery already shows them: the source, the resource and its owner.
+ */
+export class NotShared extends Schema.TaggedError<NotShared>()("NotShared", {
+  patchId: Schema.String,
+  name: Schema.String,
+  owner: Schema.String,
+  table: Schema.optionalKey(Schema.String),
+  store: Schema.optionalKey(Schema.String)
+}) {
+  readonly code = "not_shared" as const;
+  override get message() {
+    return `${this.name}'s \`${this.store ?? this.table}\` isn't shared with other patches. Ask ${this.owner}, its owner, or an admin to share it.`;
   }
 }
 
@@ -497,6 +517,7 @@ export type DatabaseError =
 export type ResourceError =
   | HasPrimitives
   | PatchNotOpenable
+  | NotShared
   | Tables.NotAdditive
   | DatabaseError
   | ConnectionStore.ResolveError;
@@ -835,17 +856,21 @@ export class Patches extends Context.Service<
       patchId: string,
       access: ReadAccess
     ) => Effect.Effect<PatchInventory | null, PatchUnavailable | SqlError>;
-    /** Cumulative metadata from live same-company shared inventory. */
+    /**
+     * Cumulative metadata from live same-company shared inventory. A source that isn't live in
+     * the company, or lacks the resource, is `PatchNotOpenable`; one that has it unshared is
+     * `NotShared`.
+     */
     readonly sharedTable: (
       patchId: string,
       table: string,
       companyId: string
-    ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
+    ) => Effect.Effect<SharedTable, PatchNotOpenable | NotShared | DatabaseError | SqlError>;
     readonly sharedStore: (
       patchId: string,
       store: string,
       companyId: string
-    ) => Effect.Effect<SharedStore, PatchNotOpenable | DatabaseError | SqlError>;
+    ) => Effect.Effect<SharedStore, PatchNotOpenable | NotShared | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
     /**
@@ -1735,18 +1760,54 @@ export const make = Effect.gen(function* () {
     }));
   }, Effect.catchTags(dieOnSchemaError));
 
-  const sharedTable = Effect.fn("Patches.sharedTable")(function* (
+  const ownerNameRow = SqlSchema.findOne({
+    Request: Schema.String,
+    Result: Schema.Struct({ name: Schema.String }),
+    execute: (userId) => sql`SELECT name FROM users WHERE id = ${userId}`
+  });
+
+  /**
+   * A declaration's source and its inventory, once the source is live and enabled in the company.
+   * That gate runs first: past it, the publisher can open the source, so a refusal may say more.
+   */
+  const declaredSource = Effect.fn("Patches.declaredSource")(function* (
     patchId: string,
-    table: string,
+    resource: SharedResource,
     companyId: string
   ) {
     // Never nest platform patch locks: source liveness is read before the company inventory lock.
     const source = yield* find(patchId);
     if (Option.isNone(source) || source.value.patch.companyId !== companyId)
+      return yield* new PatchNotOpenable({ patchId, ...resource });
+    return { patch: source.value.patch, snapshot: yield* readInventory(companyId, patchId) };
+  });
+
+  /** Names the owner of a source the publisher can open, as discovery's `not_shared` hint does. */
+  const notShared = Effect.fn("Patches.notShared")(function* (
+    patch: Patch,
+    resource: SharedResource
+  ) {
+    const owner = yield* ownerNameRow(patch.ownerUserId).pipe(
+      Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
+    );
+    return yield* new NotShared({
+      patchId: patch.id,
+      name: patch.name,
+      owner: owner.name,
+      ...resource
+    });
+  });
+
+  const sharedTable = Effect.fn("Patches.sharedTable")(function* (
+    patchId: string,
+    table: string,
+    companyId: string
+  ) {
+    const { patch, snapshot } = yield* declaredSource(patchId, { table }, companyId);
+    const entry = snapshot?.tables.find((entry) => entry.name === table);
+    if (snapshot === null || entry === undefined)
       return yield* new PatchNotOpenable({ patchId, table });
-    const snapshot = yield* readInventory(companyId, patchId);
-    if (snapshot === null || !snapshot.tables.some((entry) => entry.name === table && entry.shared))
-      return yield* new PatchNotOpenable({ patchId, table });
+    if (!entry.shared) return yield* notShared(patch, { table });
     const definitions = Tables.inventoryManifest(snapshot).tables;
     const tables: Record<string, typeof TableDefinition.Type> = Object.create(null);
     const pending = [table];
@@ -1781,13 +1842,11 @@ export const make = Effect.gen(function* () {
     store: string,
     companyId: string
   ) {
-    const source = yield* find(patchId);
-    if (Option.isNone(source) || source.value.patch.companyId !== companyId)
-      return yield* new PatchNotOpenable({ patchId, store });
-    const snapshot = yield* readInventory(companyId, patchId);
-    const definition = snapshot?.stores.find((entry) => entry.name === store && entry.shared);
+    const { patch, snapshot } = yield* declaredSource(patchId, { store }, companyId);
+    const definition = snapshot?.stores.find((entry) => entry.name === store);
     if (snapshot === null || definition === undefined)
       return yield* new PatchNotOpenable({ patchId, store });
+    if (!definition.shared) return yield* notShared(patch, { store });
     return {
       id: sharedStoreId(patchId, store),
       patchId,

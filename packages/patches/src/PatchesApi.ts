@@ -821,6 +821,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
                 PatchNotOpenable: (error) =>
                   replayOrRespond(rejected("patch_not_openable", error.message)),
+                NotShared: (error) => replayOrRespond(rejected("not_shared", error.message)),
                 ConnectionNotConnected: (error) =>
                   replayOrRespond(rejected("connection_not_connected", error.message)),
                 StaleGenerated: (error) =>

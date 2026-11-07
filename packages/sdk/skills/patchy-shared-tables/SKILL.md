@@ -56,7 +56,7 @@ authority still stops the page.
 
 ## Access and revisions
 
-A declaration grants no authority. Each call requires an admitted viewer who can still open the source and a table that is still shared. Public patches have no data access even for signed-in members. `patch_not_openable` during generation means the source is unavailable: restore access with the source owner or correct the declaration; company administration is at `/company`. Runtime access loss is `access_denied`; preserve the shell's notice rather than rendering an empty successful table.
+A declaration grants no authority. Each call requires an admitted viewer who can still open the source and a table that is still shared. Public patches have no data access even for signed-in members. Generation, `add` and publish refuse a table its source doesn't share with `not_shared` (exit 2), whose message names the owner to ask, or an admin. `patch_not_openable` means a source you can't open or a table it doesn't have, and says nothing more: correct the declaration, or restore access with an admin at `/company`. Runtime access loss is `access_denied`; preserve the shell's notice rather than rendering an empty successful table.
 
 Generation and fixtures use the source's cumulative inventory, not its active version's manifest. A source table omitted from a newer config still exists and remains shared until its owner explicitly changes sharing. Unsharing takes effect live; rollback does not restore sharing. A consumer's revision records the definition it generated against; the server validates source availability at publish and warns about an older shared-table stamp. Refresh to update client and context, never change stamps yourself.
 

@@ -480,8 +480,9 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   [definitive publish refusals](https://github.com/allisonmahmood/patchy-cloud/blob/main/docs/adr/ADR-0004-cli-contract-for-agents.md#definitive-publish-refusals):
   decoded 413s, selected 422s or 422s carrying `errors`, selected 409s and the
   matching unavailable-update 404. A decoded 413 needs a smaller fresh payload.
-  `patch_not_openable` is definitive (exit 2): correct the shared-table/store declaration
-  or restore source access before publishing a fresh attempt.
+  `patch_not_openable` and `not_shared` are definitive (exit 2). For `patch_not_openable`,
+  correct the shared-table/store declaration or restore source access; for `not_shared`,
+  ask the owner the message names, or an admin, to share it. Then publish a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
   An admin reconnects at `/company/connections`; a stale declaration needs a
   regenerated snapshot stamp. Connection strings belong only in the person's
