@@ -34,7 +34,7 @@ end to end, and the packed Preact runtime), `install` (the installer and CLI on
 this machine: each platform's install line, a Node switch, an earlier install
 moving, setup's links, a saved key and a file publish against a stub, and the
 old-Node refusal), `tier2-smoke` (the packed tier 2 journey) and `browser` (tier 1
-and 2 pages in Chromium). CI runs `install` on Linux, macOS and Windows against
+and 2 pages in desktop Chromium). CI runs `install` on Linux, macOS and Windows against
 one release packed on Linux, switching between Node 22.22.0 and 26.11.1. Locally
 it needs only Node and the release `pnpm --filter patchy build` packs, and it
 uses this Node for both sides, so its switch changes only the npm prefix; pass
@@ -122,6 +122,11 @@ takes seconds.
   migrated and seeded once. Teardown drops that database and every company database
   it placed. If a database, role, role setting or connection outlives its test, the
   next test fails, so a spec closes any client it opens itself.
+- The tier 1 browser suite runs desktop Chromium in new headless mode
+  (`channel: "chromium"`). Playwright's default headless build, `chrome-headless-shell`,
+  keeps a patch's sandboxed frame in the shell's process, so focus and keyboard checks
+  can pass there and fail in Chrome. A script that launches its own browser for such a
+  check passes the same channel.
 - `tsconfig.test.json` keeps Effect's correctness rules and turns off the style
   rules that steer production code toward Effect services.
 - A test that fails with no code cause is flaky. CI does not retry, and a test

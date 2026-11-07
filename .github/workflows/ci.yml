@@ -300,7 +300,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: pnpm test:rollback-rehearsal
 
-  # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
+  # Tier 1 and 2 pages in desktop Chromium against an isolated server; `pnpm test:browser`.
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -316,7 +316,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Chromium
         uses: ./.github/actions/playwright
-      - name: Exercise tier 1 and 2 pages in Chromium
+      - name: Exercise tier 1 and 2 pages in desktop Chromium
         run: pnpm test:browser
 
   dependency-review:

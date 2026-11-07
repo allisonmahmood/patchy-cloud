@@ -23,7 +23,7 @@
     "test:pidgeon:sweep": "bun --conditions=development packages/integrations/live/sweep.ts",
     "test:attio": "vitest run --config vitest.attio-live.config.ts",
     "test:imap": "vitest run --config vitest.imap-live.config.ts",
-    "test:browser": "playwright test -c playwright.tier1.config.ts --project=chromium",
+    "test:browser": "playwright test -c playwright.tier1.config.ts --project=chromium --project=chromium-headless-shell",
     "check": "bun scripts/verify.ts check",
     "verify": "bun scripts/verify.ts verify",
     "test:packed-cli-e2e": "node scripts/packed-cli-e2e.mjs",
