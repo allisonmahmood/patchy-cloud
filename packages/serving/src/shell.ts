@@ -1,5 +1,5 @@
 import { escapeAttribute, escapeHtml, faviconLink, htmlPage, shellStyles } from "@patchy/core/html";
-import type { HandlerKind } from "@patchy/api";
+import type { HandlerKind, Manifest } from "@patchy/api";
 import { brokerDigest } from "./generated/broker-script.js";
 
 export { brokerScript, brokerDigest } from "./generated/broker-script.js";
@@ -21,6 +21,13 @@ interface PatchPage {
   };
   readonly scope: "company" | "public" | "local";
   readonly viewerId?: string;
+  /**
+   * The viewer's single-key shortcut setting, which names the frame `patchy:shortcuts=on` or
+   * `=off` for `patchy/hotkeys` to read as its document starts, and whether to tell them this
+   * version's shortcuts ignore it. Only a shell rendered for its viewer, and never cached for
+   * another, carries it; a public shell has no viewer, so its shortcuts stay on.
+   */
+  readonly shortcuts?: { readonly on: boolean; readonly note: boolean };
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
@@ -35,6 +42,16 @@ export function renderPatchWrapper(options: PatchPage): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
   if (options.scope !== "public" && !options.viewerId)
     throw new Error("A company or local shell needs its admitted viewer.");
+  if (options.scope === "public" && options.shortcuts)
+    throw new Error(
+      "A public shell is cached for every reader, so it carries no viewer's setting."
+    );
+  // The name is an attribute the parser sets as it creates the frame, before the frame's browsing
+  // context exists, so it reaches the sandboxed document; one set after insertion doesn't.
+  const shortcuts =
+    options.shortcuts === undefined
+      ? ""
+      : ` name="patchy:shortcuts=${options.shortcuts.on ? "on" : "off"}"${options.shortcuts.note ? " data-shortcuts-note" : ""}`;
   const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce)}`;
   return `<!doctype html>
 <html lang="en">
@@ -53,7 +70,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   </style>
 </head>
 <body>
-  <iframe id="patch" class="patch-frame" title="${title}"
+  <iframe id="patch" class="patch-frame" title="${title}"${shortcuts}
     sandbox="allow-scripts allow-modals" referrerpolicy="no-referrer"
     allow="clipboard-write *"
     data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"
@@ -61,6 +78,23 @@ export function renderPatchWrapper(options: PatchPage): string {
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>
 </html>`;
+}
+
+/**
+ * Whether a version's single-key shortcuts ignore the viewer's setting: it imports
+ * `patchy/hotkeys`, first released in 0.33.0, and was built before the CLI recorded that the SDK
+ * obeys the setting. Its shell tells a viewer who turned them off, until they dismiss it.
+ */
+export function ignoresShortcutSetting(version: {
+  readonly release: string;
+  readonly manifest: Pick<typeof Manifest.Type, "sdkImports" | "shortcutSetting">;
+}): boolean {
+  const [major = 0, minor = 0] = version.release.split(".").map(Number);
+  return (
+    version.manifest.shortcutSetting === undefined &&
+    (version.manifest.sdkImports?.includes("patchy/hotkeys") ?? false) &&
+    (major > 0 || minor >= 33)
+  );
 }
 
 /** Reader-facing copy: what Patchy did, why, and what to do next, in the reader's words. */

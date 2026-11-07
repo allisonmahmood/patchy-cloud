@@ -653,8 +653,17 @@ export const Manifest = Schema.Struct({
     ])
   ),
   handlers: Schema.optionalKey(HandlerDescriptors),
-  sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText))
+  sdkImports: Schema.optionalKey(Schema.Array(NonEmptyText)),
+  /**
+   * The CLI that built this version has `patchy/hotkeys` obey the viewer's single-key shortcut
+   * setting. A version without it whose `sdkImports` include `patchy/hotkeys` can't, and its
+   * shell says so to a viewer who turned them off.
+   */
+  shortcutSetting: Schema.optionalKey(Schema.Literal(1))
 }).check(distinctPrimitiveNames, memberColumnsValid, Schema.makeFilter(handlerTablesValid));
+
+/** What the CLI adds to every manifest it writes, for the server to know the page obeys. */
+export const MANIFEST_CAPABILITIES = { shortcutSetting: 1 } as const;
 
 /**
  * Below tier 2 a patch reaches only its own tables and files, so it declares no `uses`:

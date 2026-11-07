@@ -106,6 +106,8 @@ describe("executeConfig", () => {
     expect(manifest).toEqual({
       manifestVersion: MANIFEST_VERSION,
       release: RELEASE,
+      // What every manifest this CLI writes records: its patchy/hotkeys obeys the setting.
+      shortcutSetting: 1,
       name: "config-test",
       tier: 2,
       tables: {
@@ -365,7 +367,8 @@ describe("executeConfig", () => {
       files: {},
       uses: { sales: { kind: "postgres", handle: "warehouse" } },
       release: RELEASE,
-      manifestVersion: MANIFEST_VERSION
+      manifestVersion: MANIFEST_VERSION,
+      shortcutSetting: 1
     });
   });
 

@@ -155,7 +155,8 @@ A keyboard shortcut a page registers through `patchy/hotkeys`: one chord such as
 the hotkeys inside it fire. One `within` an element fires only while focus is inside it,
 and the narrowest place wins: element, then dialog, then page. A text field keeps the
 keys that type or edit text, whatever a hotkey asks. Patchy keeps `Mod+Shift+K` for its own
-shortcuts.
+shortcuts. A page-wide hotkey whose every step types a character is a single-key shortcut,
+which stops for a viewer who turned [single-key shortcuts](../companies/GLOSSARY.md) off.
 _Avoid_: keybinding, shortcut key, accelerator
 
 **Shortcuts sheet**:

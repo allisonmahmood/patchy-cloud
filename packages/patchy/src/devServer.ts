@@ -1,7 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This CLI-owned local server owns its Node socket and process identity.
 import { createServer } from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { RuntimeGroup, RuntimeStreamGroup, handlerKinds } from "@patchy/api";
+import {
+  RuntimeGroup,
+  RuntimeStreamGroup,
+  ShortcutsRequest,
+  ViewerGroup,
+  handlerKinds
+} from "@patchy/api";
 import type { ReleaseToolchain } from "@patchy/api";
 import {
   Binding,
@@ -30,6 +36,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Redacted from "effect/Redacted";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -43,12 +50,20 @@ import * as DevResources from "./devResources.js";
 import * as DevLog from "./devLog.js";
 import { colleague, guest } from "./devMembers.js";
 import type { Prepared } from "./devPreparation.js";
-import { AgentRequest, atomicJson, birth, io, readRecord, type Daemon } from "./devState.js";
+import {
+  AgentRequest,
+  atomicJson,
+  birth,
+  io,
+  readRecord,
+  readShortcuts,
+  type Daemon
+} from "./devState.js";
 import { watch } from "./devWatch.js";
 import * as DevServerWatch from "./devServerWatch.js";
 import { guestAliases } from "./serverBuild.js";
 
-const api = HttpApi.make("patchy").add(RuntimeGroup, RuntimeStreamGroup);
+const api = HttpApi.make("patchy").add(RuntimeGroup, RuntimeStreamGroup, ViewerGroup);
 const headers = {
   "cache-control": "private, no-store",
   "x-content-type-options": "nosniff",
@@ -114,6 +129,22 @@ export const serve = Effect.fn("Dev.serve")(function* (
     Effect.provideService(ConfigProvider.ConfigProvider, executionConfig),
     Effect.provide(FetchHttpClient.layer)
   );
+  // Each mount's person keeps their own single-key shortcut setting, as each account does.
+  const shortcuts = new Map(
+    Object.entries(
+      yield* io("Could not read the dev people's shortcut settings.", () => readShortcuts(stateDir))
+    )
+  );
+  const saving = yield* Semaphore.make(1);
+  const saveShortcuts = (userId: string, on: boolean) =>
+    saving.withPermits(1)(
+      Effect.suspend(() => {
+        shortcuts.set(userId, on);
+        return io("Could not save the dev person's shortcut setting.", () =>
+          atomicJson(stateDir, "shortcuts.json", Object.fromEntries(shortcuts))
+        );
+      })
+    );
   const nextBuild = yield* watch(record.root, stateDir, toolchain);
   let html = yield* nextBuild(prepared.manifest);
   // As publish reads it: only from the page's start.
@@ -247,6 +278,8 @@ export const serve = Effect.fn("Dev.serve")(function* (
             renderPatchWrapper({
               scope: "local",
               viewerId: identity.user.id,
+              // Every local build is this release's, which obeys the setting.
+              shortcuts: { on: shortcuts.get(identity.user.id) ?? true, note: false },
               handlerKinds: handlerKinds(resources.version.manifest.handlers),
               patch: {
                 id: version.patchId,
@@ -271,6 +304,42 @@ export const serve = Effect.fn("Dev.serve")(function* (
         });
         yield* router.add("GET", `${base}/*`, shell);
       })
+    );
+    // `POST /api/me/shortcuts` as Patchy serves it, for this mount's person: the shell's dialog
+    // saves through it. Only this origin's pages may change it.
+    const viewer = HttpApiBuilder.group(api, "viewer", (handlers) =>
+      Effect.succeed(
+        handlers.handleRaw("setShortcuts", () =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.headers.origin !== origin)
+              return HttpServerResponse.text("Request refused", { status: 403, headers });
+            const form = yield* HttpServerRequest.schemaBodyUrlParams(ShortcutsRequest).pipe(
+              Effect.option
+            );
+            if (Option.isNone(form))
+              return HttpServerResponse.text("Send value=on or value=off.", {
+                status: 400,
+                headers
+              });
+            const { value, return: back } = form.value;
+            yield* saveShortcuts(identity.user.id, value === "on");
+            if (request.headers.accept?.includes("application/json") === true)
+              return HttpServerResponse.jsonUnsafe({ value }, { headers });
+            return HttpServerResponse.redirect(
+              back?.startsWith(`${base}/`) === true ? back : `${base}/`,
+              { status: 303, headers }
+            );
+          }).pipe(
+            Effect.catchTags({
+              LocalError: (error) =>
+                Console.error(error.message).pipe(
+                  Effect.as(HttpServerResponse.text("Not saved", { status: 503, headers }))
+                )
+            })
+          )
+        )
+      )
     );
     const guard = HttpRouter.middleware(
       (requestEffect) =>
@@ -307,7 +376,9 @@ export const serve = Effect.fn("Dev.serve")(function* (
     yield* Layer.build(
       HttpRouter.serve(
         Layer.mergeAll(
-          HttpApiBuilder.layer(api).pipe(Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layer])),
+          HttpApiBuilder.layer(api).pipe(
+            Layer.provide([RuntimeApi.layer, RuntimeStreamApi.layer, viewer])
+          ),
           pages,
           guard
         ),
