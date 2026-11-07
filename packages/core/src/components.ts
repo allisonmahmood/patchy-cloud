@@ -24,12 +24,19 @@ export const agentIcon =
 /** An agent's mark beside its name, as `avatar` is a person's. */
 export const agentMark = `<span class="agent-mark" aria-hidden="true">${agentIcon}</span>`;
 
+/**
+ * The tint class a patch's monogram wears, picked from its name; `""` is the plain one. Anything
+ * that draws a patch's mark in the browser uses this, so it matches the pages Patchy renders.
+ */
+export const monogramTint = (name: string) =>
+  pick(name, ["", "mono-blue", "mono-green", "mono-amber", "mono-pink"] as const);
+
 /** Two letters from `name` on a tint picked from it. `large` is the size beside a page heading. */
 export const monogram = (name: string, large = false) => {
   const words = name.split("-").filter((word) => word !== "");
   const letters = words.length > 1 ? `${words[0]![0]}${words[1]![0]}` : name.slice(0, 2);
-  const tint = pick(name, ["", " mono-blue", " mono-green", " mono-amber", " mono-pink"]);
-  return `<span class="mono${tint}${large ? " mono-lg" : ""}" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
+  const tint = monogramTint(name);
+  return `<span class="mono${tint === "" ? "" : ` ${tint}`}${large ? " mono-lg" : ""}" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
 };
 
 /** A patch's mark: a ruled sheet for a page, else its monogram. */

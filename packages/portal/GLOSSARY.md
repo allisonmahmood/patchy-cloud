@@ -24,6 +24,10 @@ _Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
 Home's shelf of other companies' patches shared with the viewer as their [guest](../companies/GLOSSARY.md): each opens the patch, or, while its guests can't open it, says why, and its menu holds **Remove…**, which asks on a confirmation page and then ends the viewer's own grant. It sits after Home's own shelves, or after its empty state, and a search leaves it out.
 _Avoid_: shared patches, guest patches, inbox
 
+**Switcher list**:
+What `/switcher.json` answers a signed-in person's browser, for the switcher's menu: their company's live patches they can open, public ones included, each saying whether it is theirs and when they last opened it, and the patches shared with them that they can open now and that aren't public. A grant outlives its patch going public and back, so a shared patch drops out while it is public, and another company's public patch never appears. Only a script on a Patchy page gets it, by the browser's session; another site, a machine token, or someone signed out or deactivated gets a JSON refusal. It is not part of the agents' API.
+_Avoid_: patch index, directory, menu API
+
 **Share dialog**:
 The modal panel over Home, All patches or a card where the owner or an admin shares a live patch, opened by **Share…** in its menu or `?share=<name>`: an email field first, suggesting people the company has shared with before; the patch's guests with Remove; who can open it, People at the company or Anyone on the internet, where going public is confirmed in place and a tier 2 patch can't; then Copy link and Done. Each form posts and comes back to the same page with the dialog open and its receipt inside, the Log tab's to Overview; a refusal shows under the field. It is the one place who can open a patch changes in the portal.
 _Avoid_: share page, sharing settings, invite

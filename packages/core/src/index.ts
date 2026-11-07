@@ -28,6 +28,7 @@ export {
   menuLink,
   menuPost,
   monogram,
+  monogramTint,
   patchMark,
   rowMenu,
   searchField,
