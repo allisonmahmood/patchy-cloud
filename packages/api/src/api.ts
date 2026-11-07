@@ -1,6 +1,6 @@
 /**
- * The `/api/*` contract: auth, patches, connections, the company look, browser runtime and
- * public release discovery.
+ * The `/api/*` contract: auth, the viewer's own settings, patches, connections, the company
+ * look, browser runtime and public release discovery.
  * Request, success and error shapes come from the API's schema modules. The server
  * implements it and the CLI's client is derived from it; neither side
  * re-types a wire shape by hand. The route descriptions here are the text of
@@ -59,6 +59,9 @@ import {
   PatchQuotaExceeded,
   PayloadTooLarge,
   PollDeviceLoginRequest,
+  HtmlPage,
+  ShortcutsRequest,
+  ShortcutsSetting,
   RateLimited,
   RequestTargetTooLong,
   Shared,
@@ -201,6 +204,35 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
           "answers 410 `unknown`. Plaintext tokens are never stored. The JSON body is limited " +
           "to 4096 bytes: a declared overflow answers 413; overflow while streaming aborts " +
           "the connection before parsing."
+      )
+    )
+  )
+  .prefix("/api") {}
+
+/**
+ * What a signed-in person's browser changes about their own use of Patchy. Their session is the
+ * only credential, as on Patchy's pages; a machine token doesn't reach these routes.
+ */
+export class ViewerGroup extends HttpApiGroup.make("viewer", { topLevel: true })
+  .add(
+    HttpApiEndpoint.post("setShortcuts", "/me/shortcuts", {
+      payload: ShortcutsRequest.pipe(HttpApiSchema.asFormUrlEncoded()),
+      success: [ShortcutsSetting, HttpApiSchema.Empty(303)],
+      error: [BadRequest, HtmlPage(401), HtmlPage(403), PayloadTooLarge]
+    }).annotateMerge(
+      describe(
+        "Store the signed-in person's choice whether patches' single-key shortcuts fire for " +
+          "them: `value=on` or `value=off`, form-encoded, never a flip. A guest's choice is their " +
+          "own, as their account is. The browser session is the only credential. A POST from " +
+          "another origin, or one with neither `Origin` nor `Sec-Fetch-Site: same-origin`, is " +
+          "refused 403 before the session is read. Signed out, the answer is the sign-in door " +
+          "(401) or Clerk's redirect to refresh the session; someone without a company is sent " +
+          "to `/join`, and a deactivated account is refused 403. A request whose `Accept` names " +
+          "`application/json` gets the stored `{ value }`. Any other, such as a form post, is " +
+          "sent with a receipt to `return`, a path on this instance, or else to `/`. A missing " +
+          "or unknown value is 400 and changes nothing. The form is limited to 4096 bytes: a " +
+          "declared overflow answers 413; overflow while streaming aborts the connection. " +
+          "Responses are `private, no-store`, and the route spends no per-address API limit."
       )
     )
   )
@@ -1282,6 +1314,7 @@ export class RuntimeStreamGroup extends HttpApiGroup.make("runtimeStream", { top
 export class PatchyApi extends HttpApi.make("patchy")
   .add(
     AuthGroup,
+    ViewerGroup,
     PatchesGroup,
     ConnectionsGroup,
     DevReadsGroup,
@@ -1298,6 +1331,7 @@ export class PatchyApi extends HttpApi.make("patchy")
         "`GET /api/release`, `POST /api/login/device` and `POST /api/login/device/token` are " +
         "unauthenticated. `/api/runtime/*` admits only the shell's browser requests with the " +
         "runtime headers and loaded-version admission described below; machine tokens are refused. " +
+        "`/api/me/shortcuts` takes a browser session and answers a form post as Patchy's pages do. " +
         "Other routes need `Authorization: Bearer <token>`; a missing or invalid token is a " +
         "401 with `{ ok: false, error }`. Refusals add `code` and operation-specific fields when " +
         "clients branch on them. A 429 carries `Retry-After` seconds; bearer API rate-limit " +
