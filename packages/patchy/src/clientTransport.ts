@@ -85,7 +85,12 @@ const lost = () => new LostReply("unknown_outcome", "The runtime reply was lost.
  * port arrives it drains in order, and while it drains anything new, re-entrant calls made by a
  * getter during serialization or by a callback during the drain included, joins behind the entries
  * still queued. Only while the FIFO is empty does a call go straight to the port, so calls reach the
- * shell in the order they were made, across the bootstrap and across clients.
+ * shell in the order they entered the FIFO, across the bootstrap and across clients.
+ *
+ * A call enters the FIFO when its preparation is done, not when its method is invoked. Work a
+ * method does first, such as canonicalizing a tier 2 handler's arguments (whose getters may make
+ * calls of their own) or reading a `Blob` for `files.put`, can let a call made after it enter
+ * first.
  *
  * A tier 2 handler call takes its place when it is made and is prepared as its turn comes, from the
  * handler descriptors the bootstrap brings before the drain. One exception to call order: a
