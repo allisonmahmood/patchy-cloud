@@ -7,6 +7,7 @@ import { DEV_SEED } from "@patchy/auth/seed";
 import * as CompanyDatabases from "../../company-database/src/CompanyDatabases.js";
 import { NodeCryptography } from "@patchy/core";
 import { ContractLimits, OperatingLimits } from "@patchy/limits";
+import { registry } from "@patchy/limits/registry";
 import {
   Binding,
   FileStaging,
@@ -57,8 +58,9 @@ import * as RuntimeTest from "../src/test/runtime.js";
  * sent inline, a PDF with no name, a forwarded message's PDF and a signed message's PDF, never
  * the forward's own text and HTML, a logo the HTML body embeds or the signature. A second folder
  * of 130 messages runs past a scan page of 100 and `getMessages`' 25 refs, and resumes across
- * pages, every message kept once. The staged-file bound is lowered to 100,000 bytes, so a
- * 150,000-byte attachment stands in for one past 20 MiB.
+ * pages, every message kept once. A third holds long plain-text exports, 25 of which answer past
+ * the 8 MiB result bound, so the importer reads that batch again in halves. The staged-file bound
+ * is lowered to 100,000 bytes, so a 150,000-byte attachment stands in for one past 20 MiB.
  */
 
 const mail = inject("imap");
@@ -280,6 +282,18 @@ const note = (subject: string, day: string) => ({
   day,
   raw: [...headers(subject, "text/plain; charset=utf-8"), `${subject}.`, ""].join("\r\n")
 });
+/**
+ * A CSV export of about `bytes` bytes mailed as plain text, as a nightly report sends one, every
+ * field quoted and empty: each quote answers as two bytes once escaped.
+ */
+const csvExport = (subject: string, day: string, bytes: number) => {
+  const row = Array.from({ length: 20 }, () => '""').join(",");
+  const rows = Array.from({ length: Math.ceil(bytes / (row.length + 2)) }, () => row);
+  return {
+    day,
+    raw: [...headers(subject, "text/plain; charset=utf-8"), ...rows, ""].join("\r\n")
+  };
+};
 /** One invoice with `pdf` attached, received on `day` of 2026. */
 const invoice = (
   subject: string,
@@ -395,6 +409,23 @@ const before = (
     ? { ...handler, run: (args) => Effect.andThen(first(args), handler.run(args)) }
     : handler;
 
+/** `handler`, noting in `into` how many refs each call it refuses as too large asked for. */
+const noteTooLarge = (handler: Runtime.Handler, into: number[]): Runtime.Handler =>
+  handler.transport === undefined
+    ? {
+        ...handler,
+        run: (args) =>
+          handler.run(args).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                if ("code" in error && error.code === "too_large")
+                  into.push((args as { readonly refs: ReadonlyArray<unknown> }).refs.length);
+              })
+            )
+          )
+      }
+    : handler;
+
 const run = `${process.pid}`;
 
 it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
@@ -495,16 +526,21 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           // attachment row write that fails once, after its file was adopted.
           let expungeOnRead: number | undefined;
           let failRowOf: string | undefined;
+          // The ref counts of the getMessages calls refused as too large.
+          const tooLarge: number[] = [];
           const handlers = {
             ...rows,
             ...files,
             ...imap,
-            "imap.getMessages": before(imap["imap.getMessages"], () =>
-              Effect.suspend(() => {
-                const uid = expungeOnRead;
-                expungeOnRead = undefined;
-                return uid === undefined ? Effect.void : expunge(folder, uid);
-              })
+            "imap.getMessages": noteTooLarge(
+              before(imap["imap.getMessages"], () =>
+                Effect.suspend(() => {
+                  const uid = expungeOnRead;
+                  expungeOnRead = undefined;
+                  return uid === undefined ? Effect.void : expunge(folder, uid);
+                })
+              ),
+              tooLarge
             ),
             "tables.insert": before(rows["tables.insert"], (args) =>
               Effect.suspend(() => {
@@ -727,21 +763,22 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
           const bulkFile = (uid: number) => `${encodeURIComponent(bulk)}.${bulkValidity}/${uid}/2`;
           const importBulk = () =>
             invoke("importer.importFolder", { folder: bulk, since: "2026-10-01" });
-          const inBulk = (table: string, column: string) =>
-            Effect.map(list(table), (all) => all.filter((row) => row[column] === bulk));
+          // The rows of `table` that belong to folder `name`.
+          const inFolder = (name: string, table: string) =>
+            Effect.map(list(table), (all) => all.filter((row) => row["folder"] === name));
 
           failRowOf = bulkKey(110);
           assert.propertyVal(yield* Effect.flip(importBulk()), "_tag", "CallbackRefusal");
           // The first page's 100 and the second page's rows up to the failed one, and its
           // checkpoint.
-          assert.lengthOf(yield* inBulk("messages", "folder"), 109);
-          assert.lengthOf(yield* inBulk("imports", "folder"), 1);
+          assert.lengthOf(yield* inFolder(bulk, "messages"), 109);
+          assert.lengthOf(yield* inFolder(bulk, "imports"), 1);
 
           assert.deepStrictEqual(yield* importBulk(), {
             ok: true,
             value: { imported: 30, done: true, stopped: null }
           });
-          const bulkMessages = yield* inBulk("messages", "folder");
+          const bulkMessages = yield* inFolder(bulk, "messages");
           assert.deepStrictEqual(
             bulkMessages.map((row) => row["uid"] as number).sort((a, b) => a - b),
             uids
@@ -766,7 +803,39 @@ it.layer(services, { timeout: "300 seconds", excludeTestServices: true })(
             yield* stored(`${encodeURIComponent(bulk)}.`),
             [...bulkPdfs.keys()].map(bulkFile)
           );
-          assert.lengthOf(yield* inBulk("imports", "folder"), 1);
+          assert.lengthOf(yield* inFolder(bulk, "imports"), 1);
+
+          // 6. Long plain-text exports, sized from the result bound so 25 of them answer past it
+          //    once their quotes are escaped, then a few notes. The first batch is refused as a
+          //    whole and read again in halves, and every message is kept once.
+          const resultBound = registry["runtime.result.bytes"].default;
+          // A quoted empty field is 3 bytes of text and 5 escaped, so 25 exports answer a tenth
+          // past the bound; each stays within the text bound, so none is cut.
+          const exportBytes = Math.ceil((resultBound * 1.1) / 25 / (5 / 3));
+          assert.isBelow(exportBytes, registry["imap.message.text"].default);
+          const long = `Long ${run}`;
+          const longUids = Array.from({ length: 30 }, (_, index) => index + 1);
+          yield* owned(async (owner) => {
+            await owner.mailboxCreate(long);
+            for (const uid of longUids) {
+              const message =
+                uid <= 25
+                  ? csvExport(`Export ${uid}`, "2026-10-02", exportBytes)
+                  : note(`Note ${uid}`, "2026-10-03");
+              await owner.append(long, message.raw, [], new Date(`${message.day}T10:00:00Z`));
+            }
+          });
+          assert.deepStrictEqual(
+            yield* invoke("importer.importFolder", { folder: long, since: "2026-10-01" }),
+            { ok: true, value: { imported: 30, done: true, stopped: null } }
+          );
+          assert.deepStrictEqual(tooLarge, [25]);
+          const longMessages = yield* inFolder(long, "messages");
+          assert.deepStrictEqual(
+            longMessages.map((row) => row["uid"] as number).sort((a, b) => a - b),
+            longUids
+          );
+          assert.strictEqual(new Set(longMessages.map((row) => row["key"])).size, longUids.length);
         })
     );
   }

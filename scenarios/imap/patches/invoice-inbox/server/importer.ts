@@ -14,6 +14,25 @@ type Ref = {
 const codeOf = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 const keyOf = (ref: Ref) => `${ref.folder}/${ref.uidValidity}/${ref.uid}`;
+/**
+ * `read(refs)`, read again in halves when the whole answer passes 8 MiB and is refused `too_large`.
+ * One ref always fits: a message's answer is at most 1 MiB.
+ */
+const inHalves = async <R, A>(
+  refs: readonly R[],
+  read: (refs: readonly R[]) => Promise<readonly A[]>
+): Promise<A[]> => {
+  try {
+    return [...(await read(refs))];
+  } catch (error) {
+    if (refs.length === 1 || codeOf(error) !== "too_large") throw error;
+    const half = Math.ceil(refs.length / 2);
+    return [
+      ...(await inHalves(refs.slice(0, half), read)),
+      ...(await inHalves(refs.slice(half), read))
+    ];
+  }
+};
 /** A store name from the ref and part alone: the sender's filename is display text. */
 const fileOf = (ref: Ref, part: string) =>
   `${encodeURIComponent(ref.folder)}.${ref.uidValidity}/${ref.uid}/${part}`;
@@ -39,8 +58,10 @@ export const importFolder = action({
       });
       // A page holds up to 100 messages, and getMessages reads at most 25 at a time.
       const read = [];
-      for (let at = 0; at < page.messages.length; at += 25)
-        read.push(...(await mail.getMessages(page.messages.slice(at, at + 25).map((m) => m.ref))));
+      for (let at = 0; at < page.messages.length; at += 25) {
+        const refs = page.messages.slice(at, at + 25).map((m) => m.ref);
+        read.push(...(await inHalves(refs, (batch) => mail.getMessages(batch))));
+      }
       for (const message of read) {
         // Gone since the page was read: deleted or moved, so nothing to keep.
         if ("error" in message) continue;
