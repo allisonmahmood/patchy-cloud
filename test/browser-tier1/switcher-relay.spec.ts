@@ -6,7 +6,14 @@ import { test, expect } from "./fixtures.js";
 // from their first byte. Playwright's key presses are trusted, as a person's are; on Linux, where
 // these run, Mod is Ctrl.
 const chord = "ControlOrMeta+Shift+K";
+// Only `patchy dev`, which has no switcher, says where the key went.
 const explained = "Mod+Shift+K is Patchy's switcher key; it never reaches the patch's own code.";
+
+// The relay on its own, as on a host that serves no switcher: what it asks for stays pending.
+// `switcher.spec.ts` covers the menu that answers it.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/~shell/switcher.js*", (route) => route.fulfill({ status: 404 }));
+});
 
 // A patch listening everywhere a key can be heard, its own capture listener first in its head.
 const listening = `<!doctype html><html lang="en"><head data-theme="patch"><script>
@@ -105,7 +112,7 @@ test("the shell takes the relay's open at company scope and ignores it on a publ
   await page.keyboard.press(chord);
   await settled(page);
   expect(await requested(page)).toBe(true);
-  await expect.poll(() => log.lines.filter((line) => line === explained)).toHaveLength(1);
+  expect(log.lines).not.toContain(explained);
 
   log.lines.length = 0;
   const open = await instance.publish("public", listening, undefined, tier1);

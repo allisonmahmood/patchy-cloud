@@ -2,6 +2,7 @@
 // @effect-diagnostics globalTimers:off globalDate:off
 // The served shell owns browser timers, the starting cover's elapsed clock and DOM elements, without an Effect runtime.
 import { registry } from "@patchy/limits/registry";
+import { SWITCHER_CLOSED, switcherOpen } from "@patchy/core/switcher";
 
 export function createStreamStatus(
   frame: HTMLIFrameElement,
@@ -132,8 +133,13 @@ export function createStreamStatus(
     tick();
     elapsedTimer = window.setInterval(tick, 1_000);
   };
+  // The switcher can open over the cover, so a person can leave a patch that is starting. A
+  // cover due while it is open waits for it to close.
+  let afterSwitcher = false;
   const showStarting = () => {
     if (hidden || cover.open) return;
+    afterSwitcher = switcherOpen(document);
+    if (afterSwitcher) return;
     cover.showModal();
     renderStarting();
     cover.focus();
@@ -153,9 +159,16 @@ export function createStreamStatus(
     stopTicking();
     if (cover.open) {
       cover.close();
-      if (!hidden) frame.focus();
+      // Focus stays in an open switcher, which returns it to the frame when it closes.
+      if (!hidden && !switcherOpen(document)) frame.focus();
     }
   };
+  const switcherClosed = () => {
+    if (!afterSwitcher) return;
+    afterSwitcher = false;
+    if (starting) showStarting();
+  };
+  window.addEventListener(SWITCHER_CLOSED, switcherClosed);
 
   let reconnectTimer: number | undefined;
   let served: { readonly versionId: string; readonly tier: number } | undefined;
@@ -285,6 +298,7 @@ export function createStreamStatus(
       renderVersion();
     },
     close() {
+      window.removeEventListener(SWITCHER_CLOSED, switcherClosed);
       resize.disconnect();
       document.documentElement.style.removeProperty("--patchy-status-offset");
       clearTimeout(reconnectTimer);

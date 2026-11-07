@@ -29,7 +29,7 @@ The shell's gate between one patch document and Patchy. It binds requests to the
 _Avoid_: proxy URL (patches request operations, not arbitrary destinations), SDK (the client speaks to the broker)
 
 **Switcher relay**:
-The one script Patchy puts ahead of a patch's own code, first in the `<head>` of every document it serves, and at the top of its own pages, shells and notices. It claims Mod+Shift+K before any page listener or the browser can have it, and tells the shell when it starts and when the key asks for the switcher, in messages that carry no authority.
+The one script Patchy puts ahead of a patch's own code, first in the `<head>` of every document it serves, and at the top of its own pages, shells and notices. It claims Mod+Shift+K before any page listener or the browser can have it, and tells the shell when it starts and when the key asks for the [switcher](../portal/GLOSSARY.md), in messages that carry no authority: a frame's ask only ever opens it, and once it closes the relay puts the cursor back where the key found it.
 _Avoid_: injection (Patchy adds nothing else to a patch's bytes), hotkey (a patch's own, through `patchy/hotkeys`)
 
 **Envelope**:

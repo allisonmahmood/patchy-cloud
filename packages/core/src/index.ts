@@ -5,8 +5,10 @@ export {
   framedDocument,
   htmlPage,
   sentenceList,
+  SWITCHER_PATH,
   SWITCHER_RELAY_SOURCE,
   switcherRelay,
+  switcherTag,
   whatsNewKind
 } from "./html.js";
 export type { AppShell } from "./html.js";
