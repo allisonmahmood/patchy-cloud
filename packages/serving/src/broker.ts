@@ -264,6 +264,7 @@ function mount(frame: HTMLIFrameElement): void {
     downloads.clear();
     handleDownloads.close();
     window.removeEventListener("popstate", announceRoute);
+    window.removeEventListener("focus", refocusPatch);
     window.removeEventListener("pagehide", stop);
   };
   const notice = (code: string) => {
@@ -792,11 +793,24 @@ function mount(frame: HTMLIFrameElement): void {
       release(reserved);
     }
   };
+  // Focusing the iframe doesn't always reach its document. Desktop Chromium runs the sandboxed
+  // frame in its own process and drops focus given before the patch's document commits there:
+  // the shell's window takes focus back with the iframe still its active element, where focusing
+  // the iframe again does nothing. Focusing the frame's window moves focus into the document.
+  const focusPatch = () => {
+    if (document.activeElement === frame) frame.contentWindow?.focus();
+  };
+  // The commit finishes after the window's focus event, so the handoff waits a task. The event
+  // also fires when the viewer comes back to the tab with the shell's focus on the iframe.
+  const refocusPatch = () => {
+    window.setTimeout(focusPatch);
+  };
   // Keys go to the focused document. The frame takes focus as its patch starts loading, so the
   // patch hears a key once it is on screen, before its load event. Shell UI that holds focus,
   // such as the starting cover, keeps it.
   const handOffKeys = () => {
     if (document.activeElement === null || document.activeElement === document.body) frame.focus();
+    focusPatch();
   };
   frame.addEventListener("load", () => {
     if (closed) return;
@@ -824,10 +838,12 @@ function mount(frame: HTMLIFrameElement): void {
     } catch {
       notice("bootstrap_failed");
     }
-    // Again on load, in case focus fell back to the shell's body while the frame loaded.
+    // Again on load, in case focus fell back to the shell's body, or never reached the document,
+    // while the frame loaded.
     handOffKeys();
   });
   window.addEventListener("popstate", announceRoute);
+  window.addEventListener("focus", refocusPatch);
   window.addEventListener("pagehide", stop, { once: true });
   const startStream = () => {
     if (stream || closed) return;
