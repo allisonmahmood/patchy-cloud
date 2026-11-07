@@ -7,7 +7,9 @@
  *
  * Only a script on a Patchy page asks for it, with the browser's session; it is not part of the
  * agents' API. Anything else, a machine token included, is refused before authentication, and
- * every refusal is JSON the script can act on, never a page or a redirect.
+ * every refusal is JSON the script can act on, never a page or a redirect. Once Clerk has read
+ * the session, every answer carries the cookies it set, as a page's does, so a session it
+ * refreshed on the way stays refreshed.
  */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -18,7 +20,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { RequireSession, Session } from "@patchy/auth";
+import { RequireSession, Session, withCookies } from "@patchy/auth";
 import type { Companies, Users } from "@patchy/companies";
 import { WhatsNew } from "@patchy/core";
 import { GuestGrants, Patches } from "@patchy/patches";
@@ -71,6 +73,68 @@ const refuse = (code: keyof typeof refusals) => {
   return HttpServerResponse.jsonUnsafe({ ok: false, code, error }, { status, headers: noStore });
 };
 
+/** The answer to a request Clerk has read: the list, or why not. */
+const answer = Effect.fn("SwitcherList.answer")(
+  function* (result: Exclude<Session.SessionResult, { readonly status: "handshake" }>) {
+    if (Session.refreshable(result, yield* Clock.currentTimeMillis))
+      return refuse("session_refresh_required");
+    if (result.status === "signed-out") return refuse("session_expired");
+    const viewer = yield* RequireSession.resolveViewer.pipe(
+      Effect.provideService(RequireSession.SignedIn, result.claims)
+    );
+    // No membership yet, or deactivated.
+    if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
+      return refuse("access_denied");
+    yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
+
+    const patches = yield* Patches.Patches;
+    const canOpen = yield* Patches.Openability;
+    const rows = yield* patches
+      .list({
+        companyId: viewer.company.id,
+        userId: viewer.user.id,
+        canOpen: (patch) => canOpen(patch, viewer.user.id),
+        state: "live"
+      })
+      // Only a `patchRef` read can fail these.
+      .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
+    const opens = new Map(
+      (yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open])
+    );
+    const shared = yield* (yield* GuestGrants.GuestGrants).sharedWith(viewer.user.id);
+    const body: SwitcherList = {
+      viewer: { id: viewer.user.id, companyId: viewer.company.id, role: viewer.role },
+      company: { handle: viewer.company.handle, name: viewer.company.name },
+      whatsNewUnseen: WhatsNew.changesSince(viewer.whatsNewSeen).length,
+      patches: rows.map(({ patch, tier }) => {
+        const open = opens.get(patch.id);
+        return {
+          id: patch.id,
+          name: patch.name,
+          title: patch.title,
+          tier,
+          mine: patch.ownerUserId === viewer.user.id,
+          ...(open === undefined ? {} : { openedAt: open.lastOpenedAt, score: open.score })
+        };
+      }),
+      shared: shared
+        .filter((entry) => Option.isNone(entry.unavailable) && entry.scope !== "public")
+        .map(({ patchId, company, name, title, tier }) => ({
+          id: patchId,
+          company,
+          name,
+          title,
+          tier
+        }))
+    };
+    return HttpServerResponse.jsonUnsafe(body, { headers: noStore });
+  },
+  Effect.catchTags({
+    SqlError: () => Effect.succeed(refuse("unavailable")),
+    ConnectionStorageFailed: () => Effect.succeed(refuse("unavailable"))
+  })
+);
+
 const list = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   // Before authentication, which could start a handshake: only this origin's scripts ask.
@@ -80,69 +144,16 @@ const list = Effect.gen(function* () {
   )
     return refuse("access_denied");
   const session = yield* Session.Session;
-  const signedIn = yield* session.authenticate(
+  const result = yield* session.authenticate(
     new Request(new URL(request.url, session.publicBaseUrl), {
       method: request.method,
       headers: request.headers
     })
   );
-  if (Session.refreshable(signedIn, yield* Clock.currentTimeMillis))
-    return refuse("session_refresh_required");
-  if (signedIn.status !== "signed-in") return refuse("session_expired");
-  const viewer = yield* RequireSession.resolveViewer.pipe(
-    Effect.provideService(RequireSession.SignedIn, signedIn.claims)
-  );
-  // No membership yet, or deactivated.
-  if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
-    return refuse("access_denied");
-  yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
-
-  const patches = yield* Patches.Patches;
-  const canOpen = yield* Patches.Openability;
-  const rows = yield* patches
-    .list({
-      companyId: viewer.company.id,
-      userId: viewer.user.id,
-      canOpen: (patch) => canOpen(patch, viewer.user.id),
-      state: "live"
-    })
-    // Only a `patchRef` read can fail these.
-    .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, WrongState: Effect.die }));
-  const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
-  const shared = yield* (yield* GuestGrants.GuestGrants).sharedWith(viewer.user.id);
-  const body: SwitcherList = {
-    viewer: { id: viewer.user.id, companyId: viewer.company.id, role: viewer.role },
-    company: { handle: viewer.company.handle, name: viewer.company.name },
-    whatsNewUnseen: WhatsNew.changesSince(viewer.whatsNewSeen).length,
-    patches: rows.map(({ patch, tier }) => {
-      const open = opens.get(patch.id);
-      return {
-        id: patch.id,
-        name: patch.name,
-        title: patch.title,
-        tier,
-        mine: patch.ownerUserId === viewer.user.id,
-        ...(open === undefined ? {} : { openedAt: open.lastOpenedAt, score: open.score })
-      };
-    }),
-    shared: shared
-      .filter((entry) => Option.isNone(entry.unavailable) && entry.scope !== "public")
-      .map(({ patchId, company, name, title, tier }) => ({
-        id: patchId,
-        company,
-        name,
-        title,
-        tier
-      }))
-  };
-  return HttpServerResponse.jsonUnsafe(body, { headers: noStore });
-}).pipe(
-  Effect.catchTags({
-    SessionError: () => Effect.succeed(refuse("unavailable")),
-    SqlError: () => Effect.succeed(refuse("unavailable")),
-    ConnectionStorageFailed: () => Effect.succeed(refuse("unavailable"))
-  })
-);
+  // A script can't follow Clerk's handshake: it refreshes the session and asks again.
+  if (result.status === "handshake") return refuse("session_refresh_required");
+  return withCookies(yield* answer(result), result.cookies);
+}).pipe(Effect.catchTags({ SessionError: () => Effect.succeed(refuse("unavailable")) }));
 
 export const layer: Layer.Layer<
   never,

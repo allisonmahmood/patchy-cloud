@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { TestClock } from "effect/testing";
 import * as Cookies from "effect/http/Cookies";
@@ -14,6 +15,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import {
@@ -27,7 +30,13 @@ import {
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import { DeviceLogins, MachineTokens, RequireSession, Session, SetupLinks } from "@patchy/auth";
-import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
+import {
+  clerkEnv,
+  PUBLIC_BASE_URL,
+  publishableKey,
+  signedInCookies,
+  signSession
+} from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
@@ -38,7 +47,7 @@ import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import * as SwitcherList from "./SwitcherList.js";
 import { InvocationLog, Prewarm, RuntimeLog, Wakes } from "@patchy/runtime";
-import { NodeCryptography, WhatsNew } from "@patchy/core";
+import { Cryptography, NodeCryptography, WhatsNew } from "@patchy/core";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const events: Analytics.AnalyticsEvent[] = [];
@@ -68,9 +77,36 @@ const lifecycleEvents = (companyId: string) =>
       ? [[event.name, event.principalId, event.properties.userId]]
       : []
   );
+/** The cookies Clerk's backend answers a session refresh with, which a case sets. */
+const clerk = { refreshed: [] as Array<string> };
+const clerkBackend = HttpRouter.serve(
+  HttpRouter.use((router) =>
+    router.add(
+      "POST",
+      "/v1/sessions/:sid/refresh",
+      Effect.sync(() =>
+        HttpServerResponse.jsonUnsafe({ object: "cookies", cookies: clerk.refreshed })
+      )
+    )
+  ),
+  { disableLogger: true, disableListenLog: true }
+).pipe(
+  // A server of its own: layers memoize by reference, and the portal's routes use this one.
+  Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest))
+);
+/** Sessions as production reads them, with that stub as Clerk's backend. */
+const session = Layer.unwrap(
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") return yield* Effect.die("Expected TCP");
+    return Session.layer.pipe(
+      Layer.provide(Layer.succeed(Session.backendApiUrl)(`http://127.0.0.1:${server.address.port}`))
+    );
+  })
+).pipe(Layer.provide(clerkBackend));
 const services = Layer.mergeAll(
   GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
-  Session.layer,
+  session,
   Companies.layer,
   InvocationLog.layer,
   MachineTokens.layer,
@@ -4692,6 +4728,43 @@ it.layer(layer)("the switcher's list", (it) => {
       yield* refused(yield* sameOrigin(stranger), 403, "access_denied");
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${member.id}`;
       yield* refused(yield* switcher(member), 403, "access_denied");
+    })
+  );
+
+  it.effect("keeps the session Clerk refreshed on the way", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const { member } = workspace;
+      const now = Math.floor(Date.now() / 1_000);
+      const claims = { sub: member.clerkUserId, email: member.email, name: member.name };
+      // Clerk refreshes an expired session itself when the browser also holds its refresh
+      // cookie, whose name carries the instance's suffix.
+      const digest = yield* (yield* Cryptography.Cryptography).digest("SHA-1", publishableKey());
+      const refresh = `__refresh_${Buffer.from(digest).toString("base64url").slice(0, 8)}`;
+      const token = signSession(claims);
+      clerk.refreshed = [
+        `__session=${token}; Path=/; SameSite=Lax`,
+        `${refresh}=refresh-new; Path=/; HttpOnly; SameSite=Lax`
+      ];
+      const expired = signedInCookies(
+        signSession({ ...claims, iat: now - 120, nbf: now - 120, exp: now - 60 })
+      );
+
+      const response = yield* switcher(null, {
+        cookie: `${expired}; ${refresh}=refresh-old`,
+        "sec-fetch-site": "same-origin"
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepInclude(yield* response.json, {
+        viewer: listFor(member, workspace.handle).viewer
+      });
+      assert.deepStrictEqual(
+        [
+          Cookies.getValue(response.cookies, "__session"),
+          Cookies.getValue(response.cookies, refresh)
+        ],
+        [Option.some(token), Option.some("refresh-new")]
+      );
     })
   );
 });
