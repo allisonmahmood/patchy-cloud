@@ -84,6 +84,8 @@ export interface Instance {
     force?: boolean
   ): Promise<void>;
   share(patchId: string, scope: "company" | "public"): Promise<void>;
+  /** Shares a patch with the guest at Pine Studio, or stops sharing it with them. */
+  guest(patchId: string, shared: boolean): Promise<void>;
   restart(environment?: Readonly<Record<string, string>>): Promise<void>;
   /** A second real host sharing this instance's databases, storage and session verifier. */
   startReplica(): Promise<{ origin: string; stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void> }>;
@@ -757,6 +759,18 @@ export async function startInstance(options: {
           body: JSON.stringify({ scope })
         });
         if (!response.ok) throw new Error(`share: ${response.status} ${await response.text()}`);
+      },
+      async guest(patchId, shared) {
+        const guests = `${backendOrigin()}/api/patches/${patchId}/guests`;
+        const response = await fetch(
+          shared ? guests : `${guests}/${encodeURIComponent("guest@pine.example")}`,
+          {
+            method: shared ? "POST" : "DELETE",
+            headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
+            ...(shared ? { body: JSON.stringify({ email: "guest@pine.example" }) } : {})
+          }
+        );
+        if (!response.ok) throw new Error(`guest: ${response.status} ${await response.text()}`);
       },
       async session(context, user = "owner", expiresInSeconds = 3600) {
         await context.clearCookies();

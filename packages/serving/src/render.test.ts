@@ -227,12 +227,13 @@ describe("patch pages", () => {
     expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
   });
 
-  it("adds only the relay, session scripts and the broker outside a company patch's frame", () => {
+  it("adds only the relay, the switcher, session scripts and the broker outside a company patch's frame", () => {
     const html = renderPatchWrapper({
       patch: { ...patch, title: "<b>Company</b>" },
       version,
       scope: "company",
       viewerId: "viewer-1",
+      companyId: "company-1",
       nonce: "document-nonce",
       base: "/acme/render-fixture",
       head: sessionScripts({
@@ -242,10 +243,21 @@ describe("patch pages", () => {
     expect(
       [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)].map((match) => match[1])
     ).toEqual([
+      // Ahead of Clerk, so the menu never waits on it.
+      expect.stringMatching(/^\/~shell\/switcher\.js\?v=[0-9a-f]{64}$/),
       "https://clerk.example.test/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js",
       "/auth/session.js",
       expect.stringMatching(/^\/~shell\/broker\.js\?v=/)
     ]);
+    expect(html).toContain('data-viewer="viewer-1" data-company="company-1"></script>');
+    // The menu draws with the shell's own components: the command list, keycap and marks.
+    for (const rule of [
+      '.command-row[aria-selected="true"] {',
+      ".switcher[open] {",
+      ".kbd {",
+      ".mono {"
+    ])
+      expect(html).toContain(rule);
     expect(withoutRelay(html)).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
     expect(html).toContain('title="&lt;b&gt;Company&lt;/b&gt;"');
   });
@@ -270,6 +282,7 @@ describe("patch pages", () => {
       version: { ...version, tier: 1 },
       scope: "company",
       viewerId: "viewer-1",
+      companyId: "company-1",
       nonce: "document-nonce",
       base: "/acme/report/~v/2",
       route: "/items/first"
@@ -291,6 +304,7 @@ describe("patch pages", () => {
       version: { ...version, tier: 2 },
       scope: "company" as const,
       viewerId: "viewer-1",
+      companyId: "company-1",
       nonce: "document-nonce",
       base: "/acme/report",
       handlerKinds: { ['demo."><img src=x onerror=alert(1)>']: "query" as const }
@@ -316,9 +330,13 @@ describe("patch pages", () => {
         base: "/acme/report"
       };
       expect(() => renderPatchWrapper(options)).toThrow();
-      const html = renderPatchWrapper({ ...options, viewerId: 'viewer"><img src=x>' });
+      const viewer = { ...options, viewerId: 'viewer"><img src=x>' };
+      // A company shell's switcher needs the viewer's company too; a local one has none.
+      if (scope === "company") expect(() => renderPatchWrapper(viewer)).toThrow();
+      const html = renderPatchWrapper({ ...viewer, companyId: 'company"><img src=x>' });
       expect(html).toContain('data-viewer-id="viewer&quot;&gt;&lt;img src=x&gt;"');
       expect(html).not.toContain("<img");
+      expect(html.includes("/~shell/switcher.js")).toBe(scope === "company");
     }
   );
 
@@ -333,5 +351,6 @@ describe("patch pages", () => {
     });
     expect(html).not.toContain("data-viewer-id");
     expect(html).not.toContain("private-viewer");
+    expect(html).not.toContain("/~shell/switcher.js");
   });
 });

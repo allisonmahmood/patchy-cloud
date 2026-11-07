@@ -5,8 +5,8 @@ import { changesSince, latestRelease } from "./whatsNew.js";
 
 describe("htmlPage app body", () => {
   const viewer = {
-    user: { name: "Sam", email: "sam@northwind.example" },
-    company: { name: "Northwind" },
+    user: { id: "usr_sam", name: "Sam", email: "sam@northwind.example" },
+    company: { id: "cmp_northwind", name: "Northwind" },
     whatsNewSeen: latestRelease
   };
   const places = (html: string) =>
@@ -78,8 +78,12 @@ describe("htmlPage app body", () => {
       title: "People",
       app: {
         viewer: {
-          user: { name: '<img src=x onerror="alert(1)">', email: "<b>x</b>@example.com" },
-          company: { name: "R&D <script>alert(2)</script>" },
+          user: {
+            id: 'usr_"><b>',
+            name: '<img src=x onerror="alert(1)">',
+            email: "<b>x</b>@example.com"
+          },
+          company: { id: "cmp_'<b>", name: "R&D <script>alert(2)</script>" },
           whatsNewSeen: latestRelease
         },
         section: "people"
@@ -89,7 +93,15 @@ describe("htmlPage app body", () => {
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(html).toContain("R&amp;D &lt;script&gt;alert(2)&lt;/script&gt;");
     expect(html).toContain("&lt;b&gt;x&lt;/b&gt;@example.com");
-    expect(html.replace(switcherRelay, "")).not.toMatch(/<(img|script|b)\b/);
+    // The switcher's tag names the viewer in attributes, escaped too.
+    expect(html).toContain(
+      'data-viewer="usr_&quot;&gt;&lt;b&gt;" data-company="cmp_&#39;&lt;b&gt;"'
+    );
+    expect(
+      html
+        .replace(switcherRelay, "")
+        .replace(/<script defer src="\/~shell\/switcher\.js[^>]*><\/script>/, "")
+    ).not.toMatch(/<(img|script|b)\b/);
     expect(html).toContain('<a class="app-place" href="/company" aria-current="page">');
   });
 
@@ -117,7 +129,27 @@ describe("htmlPage app body", () => {
     expect(caughtUp).not.toContain('class="whats-new-dot"');
     expect(caughtUp).toContain("You’re all caught up.");
     expect(caughtUp).toContain('href="/whats-new">See all changes</a>');
-    expect(caughtUp.replace(switcherRelay, "")).not.toMatch(/<script\b/);
+    expect(
+      [...caughtUp.replace(switcherRelay, "").matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag)
+    ).toEqual([expect.stringMatching(/^<script defer src="\/~shell\/switcher\.js\?v=/)]);
+  });
+
+  it("loads the switcher on app pages, ahead of the session's scripts, and never on doors", () => {
+    const session = '<script defer src="/auth/session.js"></script>';
+    const app = htmlPage({
+      title: "Home",
+      app: { viewer, section: "home" },
+      head: session,
+      body: ""
+    });
+    const tag = app.match(
+      /<script defer src="\/~shell\/switcher\.js\?v=([0-9a-f]{64})"([^>]*)><\/script>/
+    );
+    expect(tag?.[2]).toBe(' data-viewer="usr_sam" data-company="cmp_northwind"');
+    expect(app.indexOf(tag![0])).toBeLessThan(app.indexOf(session));
+    expect(htmlPage({ title: "Sign in", head: session, body: "<main></main>" })).not.toContain(
+      "/~shell/switcher.js"
+    );
   });
 
   it("admits exactly the relay's text by its hash", () => {

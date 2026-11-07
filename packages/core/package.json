@@ -30,6 +30,11 @@
       "types": "./dist/switcher/index.d.ts",
       "import": "./dist/switcher/index.js"
     },
+    "./switcher-script": {
+      "development": "./src/generated/switcher-script.ts",
+      "types": "./dist/generated/switcher-script.d.ts",
+      "import": "./dist/generated/switcher-script.js"
+    },
     "./whatsNew": {
       "development": "./src/whatsNew.ts",
       "types": "./dist/whatsNew.d.ts",

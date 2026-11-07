@@ -1,4 +1,4 @@
-import { escapeAttribute, escapeHtml } from "./html.js";
+import { escapeAttribute, escapeHtml } from "./escape.js";
 
 /** Where the portal serves `copyScript`; "assets" is a reserved company handle. */
 export const copyScriptPath = "/assets/copy.js";
