@@ -212,11 +212,7 @@ describe("repo description sync and change notices", () => {
     });
     const dir = publishTree(instance.url);
     const config = path.join(dir, "patchy.config.ts");
-    const privateConfig = readFileSync(config, "utf8");
-    writeFileSync(
-      config,
-      privateConfig.replace("{ title: t.text() })", "{ title: t.text() }, { shared: true })")
-    );
+    const sharedConfig = readFileSync(config, "utf8");
     writeFileSync(
       path.join(dir, "patchy.json"),
       JSON.stringify({
@@ -228,7 +224,10 @@ describe("repo description sync and change notices", () => {
     );
     const options = { cwd: dir, env: { PATCHY_API_TOKEN: "pp_owner" } };
     expect((await runCli(["refresh", "--json"], options)).status).toBe(0);
-    writeFileSync(config, privateConfig);
+    writeFileSync(
+      config,
+      sharedConfig.replace("{ title: t.text() })", "{ title: t.text() }, { shared: false })")
+    );
     const refused = await runCli(["publish", "--json"], options);
     expect(refused).toMatchObject({ status: 2, stdout: "" });
     expect(JSON.parse(refused.stderr)).toMatchObject({

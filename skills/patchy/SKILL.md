@@ -107,20 +107,22 @@ A repo's **tier** is where its code runs, set by `tier` in `patchy.config.ts`:
   instead of its tables. Handlers enforce rules. A mutation reads and writes
   the patch's tables in one transaction, as a write across tables, or a value
   such as a total that several people change at once, needs. Handlers also
-  reach outside the patch: other patches' shared tables and stores and the
-  member directory, all read-only, and company connections (Postgres, PostHog,
-  Attio, an IMAP mailbox and GitHub repositories' CI runs, job logs and pull
-  requests, each read-only, and Pidgeon, which reads one inbox's email and,
-  when its connection allows, sends it). Tools in `agent/` are what people's own
-  agents call, as them, through Patchy MCP; tier 1 has no agent tools. It
-  cannot be shared public.
+  reach outside the patch: other patches' tables and stores (every table and
+  file store can be read by the company's other tier 2 patches unless its patch
+  opted it out with `shared: false`) and the member directory, all read-only,
+  and company connections (Postgres, PostHog, Attio, an IMAP mailbox and GitHub
+  repositories' CI runs, job logs and pull requests, each read-only, and
+  Pidgeon, which reads one inbox's email and, when its connection allows, sends
+  it). Tools in `agent/` are what people's own agents call, as them, through
+  Patchy MCP; tier 1 has no agent tools. It cannot be shared public.
 
 Neither tier starts work with nobody there: schedules, webhooks and inbound
 routes are not built, and handlers reach outside systems only through company
 connections. A tool that needs more is a [request](#requests-and-feedback).
 
 Tier 1 is the smaller thing to build. Start at tier 2 when the tool needs
-anything only tier 2 has; a repo moves between tiers later, as below.
+anything only tier 2 has — including depending on another patch; a repo moves
+between tiers later, as below.
 
 Use the instance-installed CLI described under Publishing, settle the instance
 and identity, and complete the login handoff below if needed. Then run:
