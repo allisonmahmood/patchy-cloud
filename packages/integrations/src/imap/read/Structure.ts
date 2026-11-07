@@ -38,7 +38,7 @@ export interface Structure {
   /** Every part but multipart containers, in order. A `message/rfc822` is listed with its own. */
   readonly parts: ReadonlyArray<Part>;
   readonly body: Body;
-  /** Whether any part besides the body's own is a file: attached, named, or a message. */
+  /** Whether any part is an attachment, so the summary and the parts never disagree. */
   readonly hasAttachments: boolean;
 }
 
@@ -161,6 +161,13 @@ interface Selected {
 const none: Selected = { body: { kind: "none" }, parts: [] };
 const leaves = (node: Node): ReadonlyArray<string> =>
   node.children.length === 0 ? [node.part] : node.children.flatMap(leaves);
+/** The inline text leaves under `node`: the renderings an alternative offers of one body. */
+const renderings = (node: Node): ReadonlyArray<string> =>
+  node.children.length === 0
+    ? inlineText(node)
+      ? [node.part]
+      : []
+    : node.children.filter((child) => child.contentType !== "message/rfc822").flatMap(renderings);
 
 const select = (node: Node): Selected => {
   const type = node.contentType;
@@ -171,7 +178,11 @@ const select = (node: Node): Selected => {
       [...chosen]
         .reverse()
         .find(({ body }) => body.kind === "text" && body.texts[0]!.format === format);
-    return last("plain") ?? last("html") ?? chosen[0] ?? none;
+    const picked = last("plain") ?? last("html") ?? chosen[0] ?? none;
+    // Every rendering of the body is the body, the twins it wasn't read from too: never a file.
+    return picked.body.kind === "none"
+      ? picked
+      : { ...picked, parts: [...new Set([...picked.parts, ...renderings(node)])] };
   }
   if (type === "multipart/related") {
     const start = contentIdOf(node.parameters["start"]);
@@ -220,21 +231,61 @@ const select = (node: Node): Selected => {
 
 // ---------- the whole ----------
 
-/** Lists `node`'s parts into `into`, noting in `files` any file that isn't part of the body. */
-const flatten = (node: Node, into: Part[], files: { any: boolean }, body: ReadonlySet<string>) => {
-  if (!node.contentType.startsWith("multipart/")) {
+const SIGNATURES = new Set([
+  "application/pkcs7-signature",
+  "application/x-pkcs7-signature",
+  "application/pgp-signature"
+]);
+/**
+ * The signature part of every `multipart/signed` under `node`, a forwarded message's too: RFC 1847
+ * puts the content first and its signature second. A mail program shows it as a badge, not a file.
+ */
+const signatures = (node: Node): ReadonlyArray<string> => {
+  const signature = node.contentType === "multipart/signed" ? node.children[1] : undefined;
+  return [
+    ...(signature !== undefined && SIGNATURES.has(signature.contentType) ? [signature.part] : []),
+    ...node.children.flatMap(signatures)
+  ];
+};
+
+/**
+ * Whether a part is what a person reading the mail calls an attachment, as mail programs list
+ * them. Never one of `never`, the message's own body (its text, a rendering of it, the part it's
+ * encrypted in) and its signatures, nor a forwarded message's container. Always one attached by
+ * disposition. Otherwise one with a filename or of a type other than text, unless it's a resource
+ * the body embeds (inside `multipart/related` with a Content-ID, such as a logo) or a report about
+ * mail rather than a file anyone sent: any other `message/*` part, such as a bounce's delivery
+ * status or a read receipt's. So a nameless PDF is one, and a forwarded message's own text and
+ * HTML aren't, while its files are.
+ */
+const isAttachment = (node: Node, never: ReadonlySet<string>, related: boolean) =>
+  !never.has(node.part) &&
+  node.contentType !== "message/rfc822" &&
+  (node.disposition === "attachment" ||
+    (!node.contentType.startsWith("message/") &&
+      (node.filename !== null || !node.contentType.startsWith("text/")) &&
+      !(related && node.contentId !== null)));
+
+/**
+ * Lists `node`'s parts into `into`. `related` is whether `node` is inside a `multipart/related`
+ * of the same message: a forwarded message's content starts afresh.
+ */
+const flatten = (node: Node, into: Part[], never: ReadonlySet<string>, related: boolean) => {
+  if (!node.contentType.startsWith("multipart/"))
     into.push({
       part: node.part,
       contentType: node.contentType,
       filename: node.filename,
       encodedSize: node.size,
       disposition: node.disposition,
-      contentId: node.contentId
+      contentId: node.contentId,
+      attachment: isAttachment(node, never, related)
     });
-    if (!body.has(node.part) && (attached(node) || node.contentType === "message/rfc822"))
-      files.any = true;
-  }
-  for (const child of node.children) flatten(child, into, files, body);
+  const within =
+    node.contentType === "message/rfc822"
+      ? false
+      : related || node.contentType === "multipart/related";
+  for (const child of node.children) flatten(child, into, never, within);
 };
 
 /**
@@ -245,7 +296,10 @@ export const readStructure = (raw: unknown): Result.Result<Structure, MalformedS
   Result.map(walk(raw, [], true, 1, { nodes: 0 }), (root) => {
     const selected = select(root);
     const parts: Part[] = [];
-    const files = { any: false };
-    flatten(root, parts, files, new Set(selected.parts));
-    return { parts, body: selected.body, hasAttachments: files.any };
+    flatten(root, parts, new Set([...selected.parts, ...signatures(root)]), false);
+    return {
+      parts,
+      body: selected.body,
+      hasAttachments: parts.some((part) => part.attachment)
+    };
   });

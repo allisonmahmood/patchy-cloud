@@ -9,26 +9,31 @@
  */
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
+  FileContentType,
   ImapFolderStatus,
   ImapGetMessages,
   ImapListFolders,
   ImapListMessages,
   ImapScanMessages,
   ImapSearchMessages,
+  ImapStageAttachment,
   imapReads,
+  imapStageAttachment,
   imapSpecialUses,
   type ImapFolderEntry,
   type ImapRead
 } from "@patchy/api";
 import { Cryptography } from "@patchy/core";
+import { ContractLimits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
-import { Binding, Runtime } from "@patchy/runtime/core";
+import { Binding, FileStaging, Runtime } from "@patchy/runtime/core";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { FetchQueryObject, ImapFlow, ImapFlowError, ListResponse } from "imapflow";
 import * as ConnectionStore from "../ConnectionStore.js";
@@ -44,7 +49,9 @@ import * as Message from "./read/Message.js";
 import * as Plan from "./read/Plan.js";
 import { refKey, uidSet } from "./read/Refs.js";
 import * as Results from "./read/Results.js";
+import { readStructure } from "./read/Structure.js";
 import * as Summary from "./read/Summary.js";
+import * as Attachments from "./Attachments.js";
 import * as Sessions from "./Sessions.js";
 import * as ImapSource from "./Source.js";
 
@@ -100,6 +107,10 @@ export const Errors = Schema.Union([
   MailboxReset,
   ForeignRef,
   ResultTooLarge,
+  Attachments.MessageNotFound,
+  Attachments.PartNotFound,
+  Attachments.NotAFile,
+  Attachments.AttachmentTooLarge,
   Sessions.Busy,
   Sessions.SessionLost,
   Sessions.CommandRefused,
@@ -111,7 +122,8 @@ export const Errors = Schema.Union([
   ImapSource.Overflow,
   Runtime.InvalidRequest,
   ...ViewerRefusal.members,
-  Runtime.TooLarge
+  Runtime.TooLarge,
+  Runtime.LimitExceeded
 ]);
 const isError = Schema.is(Errors);
 /** The connection is gone or disconnected: each door says which, its own way. */
@@ -129,7 +141,10 @@ const isReusable = Schema.is(
     InvalidCheckpoint,
     MailboxReset,
     ResultTooLarge,
-    Runtime.TooLarge
+    Runtime.TooLarge,
+    Attachments.MessageNotFound,
+    Attachments.PartNotFound,
+    Attachments.NotAFile
   ])
 );
 
@@ -486,10 +501,12 @@ const unreachable = (error: ImapSource.OpenError) =>
  * the wire says them, and the door's refusal of its caller and the connection's absence as they
  * are, for the door to say. Anything else is Patchy's side being unavailable.
  */
-export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
+const onMailbox = Effect.fnUntraced(function* <A, E>(
   target: Target<E>,
-  name: K,
-  input: Inputs[K]
+  use: (
+    session: Sessions.Session,
+    connection: string
+  ) => Effect.Effect<A, typeof Errors.Type, Cryptography.Cryptography>
 ) {
   const caller = yield* Ref.make(Option.none<E>());
   const connections = yield* ConnectionStore.ConnectionStore;
@@ -499,11 +516,6 @@ export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
     Effect.mapError(() => new CallerRefused({}))
   );
   return yield* Effect.gen(function* () {
-    // Refused before any session: refs to another connection, or one folder under two values.
-    if (name === "getMessages")
-      yield* Effect.fromResult(
-        Results.planGetMessages((input as Inputs["getMessages"]).refs, target.connection.id)
-      );
     const first = yield* current(target.companyId, target.connection);
     let admitted: { readonly credentialRevision: number; readonly logins: number } | undefined;
     const lease: Sessions.Lease<
@@ -555,7 +567,7 @@ export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
       reusable: isReusable
     };
     return yield* sessions
-      .lease(lease, (session) => runners[name](session, first.id, input))
+      .lease(lease, (session) => use(session, first.id))
       .pipe(
         Effect.catchTags({
           // A pause that can't be saved is tried once more, then logged: the caller still
@@ -613,33 +625,142 @@ export const atMailbox = Effect.fnUntraced(function* <K extends ImapRead, E>(
   );
 });
 
+/** One read on the mailbox its door admitted, through a session from the pool. */
+export const atMailbox = <K extends ImapRead, E>(target: Target<E>, name: K, input: Inputs[K]) =>
+  Effect.gen(function* () {
+    // Refused before any session: refs to another connection, or one folder under two values.
+    if (name === "getMessages")
+      yield* Effect.fromResult(
+        Results.planGetMessages((input as Inputs["getMessages"]).refs, target.connection.id)
+      );
+    return yield* onMailbox(target, (session, connection) =>
+      runners[name](session, connection, input)
+    );
+  });
+
+type StageInput = typeof imapStageAttachment.input.Type;
+const isContentType = Schema.is(FileContentType);
+
 /**
- * One operation as a loaded version's door admitted it: the declared connection and its viewer.
- * A viewer who may no longer call it, or a connection that stopped working, while the call waited
- * sends nothing.
+ * The part a stage names, found in the message's structure as it is now, and its bytes. A ref to
+ * another connection is refused before any session; a forwarded message's container isn't a file.
  */
-const perform = Effect.fn("ImapOperations.perform")(function* <K extends ImapRead>(
+export const downloadAttachment = <E>(target: Target<E>, input: StageInput) =>
+  Effect.gen(function* () {
+    if (input.ref.connection !== target.connection.id) return yield* new ForeignRef({});
+    const bounds = yield* Effect.all({
+      maxBytes: ContractLimits.get("files.stage.bytes"),
+      chunkSize: ContractLimits.get("imap.download.chunk")
+    });
+    return yield* onMailbox(target, (session) =>
+      Effect.gen(function* () {
+        const mailbox = yield* examine(session, input.ref.folder);
+        if (mailbox.uidValidity !== input.ref.uidValidity)
+          return yield* new MailboxReset({ folder: input.ref.folder });
+        const fetched = yield* command(session, (client) =>
+          client.fetchOne(String(input.ref.uid), { uid: true, bodyStructure: true }, { uid: true })
+        );
+        if (fetched === false) return yield* new Attachments.MessageNotFound({});
+        const structure = readStructure(fetched.bodyStructure);
+        const part = Result.isSuccess(structure)
+          ? structure.success.parts.find((each) => each.part === input.part)
+          : undefined;
+        if (part === undefined) return yield* new Attachments.PartNotFound({ part: input.part });
+        if (part.contentType === "message/rfc822")
+          return yield* new Attachments.NotAFile({ part: input.part });
+        const bytes = yield* Attachments.download(session, input.ref.uid, part.part, bounds);
+        return {
+          bytes,
+          // A media type a file can carry, or bytes of no stated kind.
+          contentType: isContentType(part.contentType)
+            ? part.contentType
+            : "application/octet-stream",
+          filename: part.filename
+        };
+      })
+    );
+  });
+
+const encodeStaged = Schema.encodeEffect(imapStageAttachment.output);
+const isStagingRefusal = Schema.is(
+  Schema.Union([
+    Runtime.TooLarge,
+    Runtime.LimitExceeded,
+    Runtime.AccessDenied,
+    Runtime.SourceUnavailable
+  ])
+);
+
+// The page's staging refusals as they are: the bound, a quota, the viewer. Anything else is
+// Patchy's side being unavailable.
+const asStagingRefusal = Effect.mapError((error: Runtime.RuntimeError) =>
+  isStagingRefusal(error) ? error : new Runtime.SourceUnavailable({ cause: error })
+);
+
+/**
+ * One part of a message staged as an Upload for the call's viewer, patch and version. A call that
+ * staging would refuse now, such as one past its viewer's quota, is refused before it takes a place
+ * or downloads. The call holds one of the process's attachment places from before its download
+ * until the bytes are staged, so the attachments a process buffers at once stay bounded.
+ */
+export const stageAttachmentAt = <E>(target: Target<E>, input: StageInput) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions.Sessions;
+    const staging = yield* FileStaging.FileStaging;
+    const binding = yield* Binding.Binding;
+    yield* staging.admits(binding, 1).pipe(asStagingRefusal);
+    return yield* sessions.buffered(target.deadline)(
+      Effect.gen(function* () {
+        const found = yield* downloadAttachment(target, input);
+        const staged = yield* staging
+          .stage(binding, found.bytes, found.contentType)
+          .pipe(asStagingRefusal);
+        yield* WideEvents.add({ stagedBytes: staged.upload.size });
+        return yield* encodeStaged({
+          ok: true,
+          upload: staged.upload,
+          size: staged.upload.size,
+          sha256: staged.sha256,
+          contentType: staged.upload.contentType,
+          filename: found.filename
+        }).pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+      })
+    );
+  });
+
+/**
+ * The call a loaded version's door admitted, on its declared connection as its viewer. A viewer who
+ * may no longer call it, or a connection that stopped working, while the call waited sends nothing.
+ */
+const admitted = <A, R>(
   connection: string,
-  name: K,
-  input: Inputs[K]
-) {
-  const binding = yield* Binding.Binding;
-  const declaration = binding.manifest.uses[connection];
-  if (!Object.hasOwn(binding.manifest.uses, connection) || declaration?.kind !== "imap")
-    return yield* new ConnectionNotDeclared({});
-  const { identity, principal, companyId } = binding;
-  if (
-    binding.scope !== "company" ||
-    identity === null ||
-    principal === null ||
-    identity.company.id !== companyId ||
-    identity.user.id !== principal.userId
-  )
-    return yield* new Runtime.AccessDenied({});
-  // The caller's own deadline bounds the wait for a gate, so a refused wait is never a timeout.
-  const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-  return yield* atMailbox(
-    {
+  run: (
+    target: Target<typeof ViewerRefusal.Type>
+  ) => Effect.Effect<
+    A,
+    | typeof Errors.Type
+    | ConnectionStore.ConnectionNotFound
+    | ConnectionStore.ConnectionNotConnected,
+    R
+  >
+) =>
+  Effect.gen(function* () {
+    const binding = yield* Binding.Binding;
+    const declaration = binding.manifest.uses[connection];
+    if (!Object.hasOwn(binding.manifest.uses, connection) || declaration?.kind !== "imap")
+      return yield* new ConnectionNotDeclared({});
+    const { identity, principal, companyId } = binding;
+    if (
+      binding.scope !== "company" ||
+      identity === null ||
+      principal === null ||
+      identity.company.id !== companyId ||
+      identity.user.id !== principal.userId
+    )
+      return yield* new Runtime.AccessDenied({});
+    // The caller's own deadline bounds the wait for a gate, so a refused wait is never a timeout.
+    const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
+    return yield* run({
       companyId,
       connection: {
         id: declaration.id,
@@ -648,16 +769,15 @@ const perform = Effect.fn("ImapOperations.perform")(function* <K extends ImapRea
       },
       deadline,
       recheck: viewerRecheck(binding)
-    },
-    name,
-    input
-  ).pipe(
+    });
+  }).pipe(
     Effect.catchTags({
       ConnectionNotFound: (cause) => Effect.fail(new Runtime.AccessDenied({ cause })),
       ConnectionNotConnected: (cause) => Effect.fail(new Runtime.AccessDenied({ cause }))
     })
   );
-});
+const perform = <K extends ImapRead>(connection: string, name: K, input: Inputs[K]) =>
+  admitted(connection, (target) => atMailbox(target, name, input));
 
 const listFolders = operation({
   input: ImapListFolders,
@@ -700,6 +820,13 @@ const getMessages = operation({
   run: ({ connection, ...input }: typeof ImapGetMessages.Type) =>
     perform(connection, "getMessages", input)
 });
+const stageAttachment = operation({
+  input: ImapStageAttachment,
+  output: Schema.Json,
+  errors: Errors,
+  run: ({ connection, ...input }: typeof ImapStageAttachment.Type) =>
+    admitted(connection, (target) => stageAttachmentAt(target, input))
+});
 
 export const operations = {
   listFolders,
@@ -707,7 +834,8 @@ export const operations = {
   scanMessages,
   listMessages,
   searchMessages,
-  getMessages
+  getMessages,
+  stageAttachment
 };
 
 const connectionId = (args: unknown, binding: Binding.Binding["Service"]): string | null => {
@@ -736,8 +864,15 @@ export const recorded = {
   scanMessages: counted("messages"),
   listMessages: counted("messages"),
   searchMessages: counted("messages"),
-  getMessages: counted("messages")
-} satisfies { readonly [K in ImapRead]: unknown };
+  getMessages: counted("messages"),
+  // Its size and outcome: never the filename or the Upload's token.
+  stageAttachment: {
+    resource: (): string | null => null,
+    rowCount: (): number | null => null,
+    bytes: (value: unknown): number | null =>
+      Predicate.isObject(value) && typeof value.size === "number" ? value.size : null
+  }
+} satisfies { readonly [K in ImapRead | "stageAttachment"]: unknown };
 
 /**
  * One read the definition's `live` names, for `patchy dev` through the instance's dev door
@@ -771,11 +906,13 @@ export const makeHandlers = Effect.gen(function* () {
   const sessions = yield* Sessions.Sessions;
   const connections = yield* ConnectionStore.ConnectionStore;
   const cryptography = yield* Cryptography.Cryptography;
+  const staging = yield* FileStaging.FileStaging;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(Sessions.Sessions, sessions),
       Effect.provideService(ConnectionStore.ConnectionStore, connections),
-      Effect.provideService(Cryptography.Cryptography, cryptography)
+      Effect.provideService(Cryptography.Cryptography, cryptography),
+      Effect.provideService(FileStaging.FileStaging, staging)
     );
   const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(
     definition: {
@@ -790,9 +927,10 @@ export const makeHandlers = Effect.gen(function* () {
         | Sessions.Sessions
         | ConnectionStore.ConnectionStore
         | Cryptography.Cryptography
+        | FileStaging.FileStaging
       >;
     },
-    record: (typeof recorded)[ImapRead]
+    record: (typeof recorded)[ImapRead | "stageAttachment"]
   ) =>
     Runtime.handler({ kind: "integration", ...definition, ...record, connectionId }, (args) =>
       provide(definition.run(args))
@@ -803,6 +941,7 @@ export const makeHandlers = Effect.gen(function* () {
     "imap.scanMessages": handler(scanMessages, recorded.scanMessages),
     "imap.listMessages": handler(listMessages, recorded.listMessages),
     "imap.searchMessages": handler(searchMessages, recorded.searchMessages),
-    "imap.getMessages": handler(getMessages, recorded.getMessages)
+    "imap.getMessages": handler(getMessages, recorded.getMessages),
+    "imap.stageAttachment": handler(stageAttachment, recorded.stageAttachment)
   };
 });

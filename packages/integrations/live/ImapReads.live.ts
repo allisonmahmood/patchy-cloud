@@ -160,7 +160,7 @@ const connected = (server: LiveServer, handle: string) =>
         password: server.password
       })
     });
-    const call = <K extends keyof typeof Operations.operations>(
+    const call = <K extends ImapRead>(
       name: K,
       input: Parameters<typeof Operations.atMailbox<K, Runtime.AccessDenied>>[2]
     ) =>

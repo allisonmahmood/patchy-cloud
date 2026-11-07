@@ -11,7 +11,7 @@
 import { registry } from "@patchy/limits/registry";
 import * as Schema from "effect/Schema";
 import { ImapFolder } from "./imapSnapshot.js";
-import { DefinitionName } from "./schemas.js";
+import { DefinitionName, FileContentType, Upload } from "./schemas.js";
 
 const bound = (id: keyof typeof registry) => registry[id].default;
 
@@ -74,6 +74,15 @@ export const ImapCriteria = Schema.Struct({
 });
 export type ImapCriteria = typeof ImapCriteria.Type;
 
+/**
+ * One part of a message by its IMAP section, such as `2` or `3.1`, as `getMessages` lists it:
+ * numbers joined by dots, so never a raw section such as `HEADER`, `TEXT` or `2.MIME`.
+ */
+export const ImapSection = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[1-9][0-9]*(?:\.[1-9][0-9]*)*$/)
+);
+
 /** Patchy's cursor for the next page, or a scan's checkpoint, passed back as it came. */
 const Cursor = Schema.String.check(Schema.isBetweenLength(1, 1024));
 
@@ -99,7 +108,16 @@ export const ImapPart = Schema.Struct({
   /** The part's size on the wire, transfer-encoded: base64 runs about a third over its bytes. */
   encodedSize: Schema.Int,
   disposition: Schema.NullOr(Schema.Literals(["inline", "attachment"])),
-  contentId: Schema.NullOr(Schema.String)
+  contentId: Schema.NullOr(Schema.String),
+  /**
+   * Whether the part is what a person reading the mail calls an attachment: one attached by
+   * disposition, or one with a filename or of a type other than text that isn't a resource the
+   * body embeds (inside `multipart/related` with a Content-ID, such as a logo) or a `message/*`
+   * report, such as a bounce's delivery status or a read receipt's. Never the message's body, a
+   * signed message's signature or a forwarded message's container; a forwarded message's own
+   * files are. `hasAttachments` is true exactly when a part is one.
+   */
+  attachment: Schema.Boolean
 });
 export type ImapPart = typeof ImapPart.Type;
 
@@ -221,6 +239,24 @@ export const imapReads = {
   }
 } as const;
 export type ImapRead = keyof typeof imapReads;
+
+/**
+ * Stages one part of a message, decoded from its transfer encoding, as an Upload bound to the
+ * caller, which the action adopts once with `ctx.files.<store>.put(name, upload)`. `size` is the
+ * staged bytes' true size and `sha256` their digest; `filename` is display text, never a name to
+ * store under. A message/rfc822 part is a container: its own parts are what stage.
+ */
+export const imapStageAttachment = {
+  input: Schema.Struct({ ref: ImapMessageRef, part: ImapSection }),
+  output: Schema.Struct({
+    ok: Schema.Literal(true),
+    upload: Upload,
+    size: Count,
+    sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+    contentType: FileContentType,
+    filename: Schema.NullOr(Schema.String)
+  })
+} as const;
 export const imapOperationNames = [
   "listFolders",
   "folderStatus",
@@ -239,6 +275,7 @@ export const ImapScanMessages = withAlias(imapReads.scanMessages.input);
 export const ImapListMessages = withAlias(imapReads.listMessages.input);
 export const ImapSearchMessages = withAlias(imapReads.searchMessages.input);
 export const ImapGetMessages = withAlias(imapReads.getMessages.input);
+export const ImapStageAttachment = withAlias(imapStageAttachment.input);
 
 const operation = <const Op extends string, Args extends Schema.Top, Output extends Schema.Top>(
   op: Op,
@@ -277,6 +314,11 @@ export const imapOperations = {
     ImapSearchMessages,
     imapReads.searchMessages.output
   ),
-  "imap.getMessages": operation("imap.getMessages", ImapGetMessages, imapReads.getMessages.output)
+  "imap.getMessages": operation("imap.getMessages", ImapGetMessages, imapReads.getMessages.output),
+  "imap.stageAttachment": operation(
+    "imap.stageAttachment",
+    ImapStageAttachment,
+    imapStageAttachment.output
+  )
 } as const;
 export type ImapOperation = keyof typeof imapOperations;

@@ -14,6 +14,9 @@
  */
 import {
   CurrentIdentity,
+  DEV_ATTACHMENT_HEADER,
+  DevAttachment,
+  DevAttachmentMeta,
   DevReadEnvelope,
   PatchyApi,
   RuntimeSuccess,
@@ -29,6 +32,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -39,7 +44,7 @@ import * as AttioSource from "./attio/Source.js";
 import { imap } from "./imap/index.js";
 import * as ImapOperations from "./imap/Operations.js";
 import * as ImapSessions from "./imap/Sessions.js";
-import type { DevRead } from "./definition.js";
+import type { DevRead, Target } from "./definition.js";
 import { pidgeon } from "./pidgeon/index.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
@@ -117,8 +122,14 @@ const bounds = [...new Set([...live].map(runtimeBodyLimitId))];
 const decodeEnvelope = Schema.decodeUnknownEffect(Schema.fromJsonString(DevReadEnvelope), {
   onExcessProperty: "error"
 });
+const decodeAttachment = Schema.decodeUnknownEffect(Schema.fromJsonString(DevAttachment), {
+  onExcessProperty: "error"
+});
+const encodeMeta = Schema.encodeEffect(Schema.fromJsonString(DevAttachmentMeta));
 const encodeSuccess = Schema.encodeUnknownEffect(RuntimeSuccess);
 const noStore = { "cache-control": "no-store" };
+/** How much of an attachment's body is written before waiting for the socket to drain. */
+const BODY_CHUNK = 64 * 1024;
 
 export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
   Effect.gen(function* () {
@@ -146,21 +157,45 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       next[1] > largest[1] ? next : largest
     );
 
-    const read = Effect.fn("DevReads.read")(function* () {
+    /**
+     * One dev call as the token's person, logged before anything is checked and finished with
+     * its outcome: rate limited per person, refused while draining, rechecked once a slot is held,
+     * bounded by the integration deadline. `run` is undefined for an operation dev doesn't read.
+     */
+    const devCall = Effect.fnUntraced(function* <A>(call: {
+      readonly op: string;
+      readonly connection: { readonly id: string; readonly handle: string };
+      readonly resource: string | null;
+      readonly sql?: string | undefined;
+      readonly run:
+        | ((
+            target: Target<KeyRefused>
+          ) => Effect.Effect<
+            A,
+            | Runtime.RuntimeError
+            | KeyRefused
+            | ConnectionStore.ConnectionNotFound
+            | ConnectionStore.ConnectionNotConnected,
+            | PostHogSource.Source
+            | PidgeonSource.Source
+            | AttioSource.Source
+            | ImapSessions.Sessions
+            | Cryptography.Cryptography
+            | ConnectionStore.ConnectionStore
+          >)
+        | undefined;
+      readonly rowCount: (value: A) => number | null;
+      readonly bytes?: (value: A) => number | null;
+      readonly respond: (
+        value: A
+      ) => Effect.Effect<HttpServerResponse.HttpServerResponse, Runtime.RuntimeError>;
+    }) {
       const identity = yield* CurrentIdentity;
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const { text, byteLength } = yield* RuntimeApi.readText(widestBytes, widest);
-      const input = yield* decodeEnvelope(text).pipe(
-        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
-      );
-      const limitId = runtimeBodyLimitId(input.op);
-      const maxBytes = sizes.get(limitId) ?? (yield* ContractLimits.get(limitId));
-      if (byteLength > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
-      const operation = isLive(input.op) ? runners[input.op] : undefined;
-      const named = `${input.op.slice(0, input.op.indexOf("."))}/${input.connection.handle}`;
+      const named = `${call.op.slice(0, call.op.indexOf("."))}/${call.connection.handle}`;
       // Attribute the call only to a connection of the token's company: another company's id is
       // neither recorded nor confirmed. A lookup that failed refuses the call once it is logged.
-      const lookup = yield* connections.get(identity.company.id, input.connection.id).pipe(
+      const lookup = yield* connections.get(identity.company.id, call.connection.id).pipe(
         Effect.map((found): string | null => found.id),
         Effect.catchTags({ ConnectionNotFound: () => Effect.succeed(null) }),
         Effect.result
@@ -168,7 +203,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const connectionId = lookup._tag === "Success" ? lookup.success : null;
       const correlationId = yield* cryptography.internalId("call");
       const startedAt = yield* Clock.currentTimeMillis;
-      const sql = operation?.sql?.(input.args);
       yield* log
         .begin({
           companyId: identity.company.id,
@@ -177,10 +211,10 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           machine: identity.machine,
           patchId: null,
           versionId: null,
-          op: input.op,
-          resource: operation?.resource(input.args) ?? null,
+          op: call.op,
+          resource: call.resource,
           connectionId,
-          ...(sql === undefined ? {} : { sql }),
+          ...(call.sql === undefined ? {} : { sql: call.sql }),
           correlationId,
           deadlineMs: settings.deadlineMs
         })
@@ -213,17 +247,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             limitId: attempt.reason === "capacity" ? "rate.trackedKeys" : "runtime.calls.perMinute",
             value: attempt.reason === "capacity" ? Limits.MAX_TRACKED_KEYS : settings.callsPerMinute
           });
-        if (operation === undefined) return yield* new Runtime.InvalidRequest({});
-        return yield* operation
-          .run(
-            {
-              companyId: identity.company.id,
-              connection: input.connection,
-              deadline: startedAt + settings.deadlineMs,
-              recheck
-            },
-            input.args
-          )
+        if (call.run === undefined) return yield* new Runtime.InvalidRequest({});
+        return yield* call
+          .run({
+            companyId: identity.company.id,
+            connection: call.connection,
+            deadline: startedAt + settings.deadlineMs,
+            recheck
+          })
           .pipe(
             Effect.provideService(PostHogSource.Source, posthogSource),
             Effect.provideService(PidgeonSource.Source, pidgeonSource),
@@ -263,10 +294,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
           outcome: Exit.isSuccess(result) ? "success" : "failure",
           outcomeCode: Exit.isSuccess(result) ? null : (failure?.code ?? "source_unavailable"),
           durationMs: (yield* Clock.currentTimeMillis) - startedAt,
-          rowCount:
-            Exit.isSuccess(result) && operation !== undefined
-              ? operation.rowCount(result.value)
-              : null
+          rowCount: Exit.isSuccess(result) ? call.rowCount(result.value) : null,
+          bytes: Exit.isSuccess(result) ? (call.bytes?.(result.value) ?? null) : null
         })
         .pipe(Effect.mapError((cause) => new Runtime.UnknownOutcome({ cause, correlationId })));
       if (Exit.isFailure(result))
@@ -274,16 +303,90 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
         // caller, so the patch reads that integration's details in dev too.
         return yield* RuntimeApi.recordFailure(
           failure ?? new Runtime.SourceUnavailable({ cause: result.cause }),
-          { correlationId, ...(operation === undefined ? {} : { operation: input.op }) }
+          { correlationId, ...(call.run === undefined ? {} : { operation: call.op }) }
         );
-      const body = yield* encodeSuccess({ ok: true, value: result.value }).pipe(
-        Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-      );
-      return HttpServerResponse.jsonUnsafe(body, { headers: noStore });
+      return yield* call.respond(result.value);
     });
 
-    return handlers.handleRaw("devRead", () =>
-      read().pipe(Effect.catch((error) => RuntimeApi.recordFailure(error)))
-    );
+    const read = Effect.fn("DevReads.read")(function* () {
+      const { text, byteLength } = yield* RuntimeApi.readText(widestBytes, widest);
+      const input = yield* decodeEnvelope(text).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      const limitId = runtimeBodyLimitId(input.op);
+      const maxBytes = sizes.get(limitId) ?? (yield* ContractLimits.get(limitId));
+      if (byteLength > maxBytes) return yield* new Runtime.TooLarge({ maxBytes, limitId });
+      const operation = isLive(input.op) ? runners[input.op] : undefined;
+      return yield* devCall({
+        op: input.op,
+        connection: input.connection,
+        resource: operation?.resource(input.args) ?? null,
+        sql: operation?.sql?.(input.args),
+        run: operation === undefined ? undefined : (target) => operation.run(target, input.args),
+        rowCount: (value) => operation?.rowCount(value) ?? null,
+        respond: (value) =>
+          encodeSuccess({ ok: true, value }).pipe(
+            Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+            Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: noStore }))
+          )
+      });
+    });
+
+    /**
+     * An attachment's bytes for `patchy dev`, downloaded as a published stage downloads it and
+     * answered with what the daemon checks them by. The call holds one of the process's attachment
+     * places in the request's own scope, which closes once the body is sent or the client goes,
+     * and the body streams a chunk at a time as the socket drains, so the bytes a slow client
+     * hasn't read yet still count against the process's places.
+     */
+    const attachment = Effect.fn("DevReads.attachment")(function* () {
+      const request = yield* Scope.Scope;
+      const imapBytes =
+        sizes.get("runtime.imap.bytes") ?? (yield* ContractLimits.get("runtime.imap.bytes"));
+      const { text } = yield* RuntimeApi.readText(imapBytes, "runtime.imap.bytes");
+      const input = yield* decodeAttachment(text).pipe(
+        Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
+      );
+      return yield* devCall({
+        op: input.op,
+        connection: input.connection,
+        resource: null,
+        run: (target) =>
+          imapSessions
+            .placeIn(target.deadline, request)
+            .pipe(Effect.andThen(ImapOperations.downloadAttachment(target, input.args))),
+        rowCount: () => null,
+        bytes: (found) => found.bytes.byteLength,
+        respond: (found) =>
+          Effect.gen(function* () {
+            const meta = yield* encodeMeta({
+              size: found.bytes.byteLength,
+              sha256: yield* cryptography.sha256(found.bytes),
+              contentType: found.contentType,
+              filename: found.filename
+            }).pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+            const chunks = Array.from(
+              { length: Math.ceil(found.bytes.byteLength / BODY_CHUNK) },
+              (_, index) => found.bytes.subarray(index * BODY_CHUNK, (index + 1) * BODY_CHUNK)
+            );
+            return HttpServerResponse.stream(Stream.fromIterable(chunks), {
+              contentType: "application/octet-stream",
+              contentLength: found.bytes.byteLength,
+              headers: {
+                ...noStore,
+                [DEV_ATTACHMENT_HEADER]: Buffer.from(meta).toString("base64url")
+              }
+            });
+          })
+      });
+    });
+
+    return handlers
+      .handleRaw("devRead", () =>
+        read().pipe(Effect.catch((error) => RuntimeApi.recordFailure(error)))
+      )
+      .handleRaw("devAttachment", () =>
+        attachment().pipe(Effect.catch((error) => RuntimeApi.recordFailure(error)))
+      );
   })
 );

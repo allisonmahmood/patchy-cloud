@@ -1021,8 +1021,73 @@ const stagedExpiryContract = Effect.fn("test.filesContract.stagedExpiry")(functi
   yield* fixture.discard(fresh);
 });
 
+const hostStagingContract = Effect.fn("test.filesContract.hostStaging")(function* (
+  companyId: string
+) {
+  const fixture = yield* setupStaged(companyId, "filehoststage");
+  const staging = yield* Files.makeStagingLocal;
+  const stage = (bytes: Uint8Array, current: Binding.Binding["Service"] = fixture.binding) =>
+    staging.stage(current, bytes, "application/pdf");
+  const bytes = new Uint8Array([37, 80, 68, 70, 0, 255]);
+  const staged = yield* stage(bytes);
+  assert.deepStrictEqual(
+    { size: staged.upload.size, contentType: staged.upload.contentType, sha256: staged.sha256 },
+    { size: bytes.byteLength, contentType: "application/pdf", sha256: digest(bytes) }
+  );
+  // The page's staging and the host's share one quota: 15 more fill it, whichever stages them.
+  const uploads = [staged.upload];
+  for (let index = 0; index < 14; index++)
+    uploads.push(yield* fixture.stage(new Uint8Array([index])));
+  uploads.push((yield* stage(new Uint8Array([14]))).upload);
+  assert.propertyVal(
+    yield* stage(new Uint8Array([15])).pipe(Effect.flip),
+    "limitId",
+    "files.stage.count"
+  );
+  // The check before a fetch refuses as a stage would, and reserves nothing when it admits.
+  const admits = (bytes: number) => staging.admits(fixture.binding, bytes);
+  assert.propertyVal(yield* admits(1).pipe(Effect.flip), "limitId", "files.stage.count");
+  yield* fixture.discard(uploads.at(-1)!);
+  yield* admits(1);
+  yield* admits(1);
+  uploads.splice(-1, 1, (yield* stage(new Uint8Array([14]))).upload);
+  assert.propertyVal(
+    yield* admits(21 * 1024 * 1024).pipe(Effect.flip),
+    "limitId",
+    "files.stage.bytes"
+  );
+  // Adopted once, as a page's upload is, then gone.
+  yield* fixture.adopt(staged.upload, "invoice.pdf");
+  assert.deepStrictEqual((yield* fixture.get("invoice.pdf")).bytes, bytes);
+  assert.propertyVal(yield* fixture.adopt(staged.upload).pipe(Effect.flip), "code", "not_found");
+  for (const upload of uploads.slice(1, -1)) yield* fixture.discard(upload);
+  // Unadopted past its hour, it can't be adopted.
+  yield* TestClock.adjust("3600000 millis");
+  assert.propertyVal(
+    yield* fixture.adopt(uploads.at(-1)!, "late.pdf").pipe(Effect.flip),
+    "code",
+    "not_found"
+  );
+  // A tier 1 version or a call without a viewer has no staging.
+  for (const current of [
+    { ...fixture.binding, manifest: { ...fixture.binding.manifest, tier: 1 as const } },
+    { ...fixture.binding, identity: null }
+  ])
+    assert.propertyVal(yield* stage(bytes, current).pipe(Effect.flip), "code", "access_denied");
+  const bounded = yield* Files.makeStagingLocal.pipe(
+    Effect.provideService(ContractLimits.overrides, { "files.stage.bytes": 4 })
+  );
+  assert.propertyVal(
+    yield* bounded.stage(fixture.binding, new Uint8Array(5), "application/pdf").pipe(Effect.flip),
+    "limitId",
+    "files.stage.bytes"
+  );
+});
+
 export const contracts = {
   "stages bytes without a declared store or patch namespace": stageOnlyContract,
+  "stages host-fetched bytes under the page's quotas, expiry and single-use adoption":
+    hostStagingContract,
   "adopts staged bytes without copying, restores authoritative metadata and rejects forged bindings":
     stagedLifecycleContract,
   "bounds stages atomically across replicas and frees consumed quota": stagedBoundsContract,

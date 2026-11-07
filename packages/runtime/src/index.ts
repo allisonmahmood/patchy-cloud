@@ -1,4 +1,5 @@
 export * as Binding from "./Binding.js";
+export * as FileStaging from "./FileStaging.js";
 export * as LoadedVersions from "./LoadedVersions.js";
 export * as GrantedGuests from "./GrantedGuests.js";
 export * as Executor from "./Executor.js";

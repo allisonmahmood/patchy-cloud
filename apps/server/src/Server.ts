@@ -84,6 +84,7 @@ import { PortalPages, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
+  FileStaging,
   GrantedGuests,
   InvocationLog,
   Runtime,
@@ -238,7 +239,10 @@ const services = Layer.mergeAll(
       const posthog = yield* PostHogOperations.makeHandlers;
       const pidgeon = yield* PidgeonOperations.makeHandlers;
       const attio = yield* AttioOperations.makeHandlers;
-      const imap = yield* ImapOperations.makeHandlers;
+      const staging = yield* Files.makeStaging;
+      const imap = yield* ImapOperations.makeHandlers.pipe(
+        Effect.provideService(FileStaging.FileStaging, staging)
+      );
       const handlers = {
         me,
         ...tables,

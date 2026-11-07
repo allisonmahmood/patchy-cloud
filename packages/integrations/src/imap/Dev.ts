@@ -4,6 +4,11 @@
  * token's person, whichever local viewer asked; the instance borrows a session from the same pool
  * and gates published patches use. Nothing can change the mailbox through Patchy, so every
  * operation reads live.
+ *
+ * An attachment comes back as bytes over the door's private transport, at most
+ * `files.stage.bytes`, and is staged in the local store once its size and sha256 match what the
+ * instance stated: a transfer that ends short, differs or runs over stages nothing. A local
+ * staging quota already full refuses before the door is asked, so nothing is downloaded for it.
  */
 import {
   ImapFolderStatus,
@@ -12,10 +17,14 @@ import {
   ImapListMessages,
   ImapScanMessages,
   ImapSearchMessages,
+  ImapStageAttachment,
   imapReads,
+  imapStageAttachment,
   type ImapRead
 } from "@patchy/api";
-import { Binding, Runtime } from "@patchy/runtime/core";
+import { Cryptography } from "@patchy/core";
+import { ContractLimits } from "@patchy/limits";
+import { Binding, FileStaging, Runtime } from "@patchy/runtime/core";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -35,9 +44,18 @@ const answers: {
   getMessages: Schema.decodeUnknownOption(imapReads.getMessages.output)
 };
 
-/** The six reads for `patchy dev`: the local manifest routes, the instance reads. */
-export const handlers = Effect.fn("ImapDev.handlers")(function* (instance: DevDoor.Instance) {
+const encodeStaged = Schema.encodeEffect(imapStageAttachment.output);
+
+/**
+ * The reads and the stage for `patchy dev`: the local manifest routes, the instance reads, and an
+ * attachment stages in `staging`, the dev daemon's own store.
+ */
+export const handlers = Effect.fn("ImapDev.handlers")(function* (
+  instance: DevDoor.Instance,
+  staging: FileStaging.FileStaging["Service"]
+) {
   const http = yield* HttpClient.HttpClient;
+  const cryptography = yield* Cryptography.Cryptography;
   const read =
     <K extends ImapRead>(name: K) =>
     ({ connection: alias, ...args }: { readonly connection: string }) =>
@@ -56,6 +74,37 @@ export const handlers = Effect.fn("ImapDev.handlers")(function* (instance: DevDo
           answers[name]
         ).pipe(Effect.provideService(HttpClient.HttpClient, http));
       });
+  const stage = ({ connection: alias, ...args }: typeof ImapStageAttachment.Type) =>
+    Effect.gen(function* () {
+      const binding = yield* Binding.Binding;
+      const declaration = binding.manifest.uses[alias];
+      if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "imap")
+        return yield* new ConnectionNotDeclared({});
+      // A full local quota refuses before the instance downloads anything for it.
+      yield* staging.admits(binding, 1);
+      const maxBytes = yield* ContractLimits.get("files.stage.bytes");
+      const { bytes, meta } = yield* DevDoor.attachment(
+        instance,
+        {
+          op: "imap.stageAttachment",
+          connection: { id: declaration.id, handle: declaration.handle },
+          args
+        },
+        maxBytes
+      ).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(Cryptography.Cryptography, cryptography)
+      );
+      const staged = yield* staging.stage(binding, bytes, meta.contentType);
+      return yield* encodeStaged({
+        ok: true,
+        upload: staged.upload,
+        size: staged.upload.size,
+        sha256: staged.sha256,
+        contentType: staged.upload.contentType,
+        filename: meta.filename
+      }).pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
+    });
   const handler = <I extends Schema.Top & Schema.Codec<unknown, unknown>>(
     input: I,
     run: (
@@ -68,6 +117,7 @@ export const handlers = Effect.fn("ImapDev.handlers")(function* (instance: DevDo
     "imap.scanMessages": handler(ImapScanMessages, read("scanMessages")),
     "imap.listMessages": handler(ImapListMessages, read("listMessages")),
     "imap.searchMessages": handler(ImapSearchMessages, read("searchMessages")),
-    "imap.getMessages": handler(ImapGetMessages, read("getMessages"))
+    "imap.getMessages": handler(ImapGetMessages, read("getMessages")),
+    "imap.stageAttachment": handler(ImapStageAttachment, stage)
   };
 });

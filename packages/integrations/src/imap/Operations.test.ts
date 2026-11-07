@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import type { ImapRead } from "@patchy/api";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { NodeCryptography } from "@patchy/core";
@@ -115,7 +116,7 @@ const setup = (handle: string, options: Setup = {}) =>
       Effect.provide(source),
       Effect.provideService(ContractLimits.overrides, options.limits ?? {})
     );
-    const call = <K extends keyof typeof Operations.operations>(
+    const call = <K extends ImapRead>(
       name: K,
       input: Parameters<typeof Operations.atMailbox<K, Runtime.AccessDenied>>[2],
       over: Partial<Operations.Target<Runtime.AccessDenied>> = {}

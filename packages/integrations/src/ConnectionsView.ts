@@ -110,6 +110,13 @@ const name = (connection: { readonly integration: Integration; readonly handle: 
   `${connection.integration.key}/${connection.handle}`;
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
+/** "512 B", "48 KB", "2.4 MB": a call's bytes at a glance, in powers of 1,024. */
+const size = (bytes: number) =>
+  bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 ** 2
+      ? `${Math.round(bytes / 1024)} KB`
+      : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 /** "Ada", "Ada and Ben", "Ada, Ben and Cleo". */
 const listed = (items: ReadonlyArray<string>) =>
   items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
@@ -511,7 +518,8 @@ const took = (call: RuntimeLog.Call) =>
       : call.durationMs < 1_000
         ? `${call.durationMs} ms`
         : `${(call.durationMs / 1_000).toFixed(1)} s`,
-    call.rowCount === null ? null : plural(call.rowCount, "row")
+    call.rowCount === null ? null : plural(call.rowCount, "row"),
+    call.bytes === undefined || call.bytes === null ? null : size(call.bytes)
   ]
     .filter((part) => part !== null)
     .join(" · ") || "—";

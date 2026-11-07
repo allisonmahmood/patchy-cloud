@@ -1,4 +1,5 @@
 import { decodeError } from "./clientError.js";
+import type { Upload } from "./config.js";
 
 /**
  * One IMAP mailbox's client, in a tier 2 action. Patchy builds every command from these
@@ -50,6 +51,15 @@ export interface ImapPart {
   readonly encodedSize: number;
   readonly disposition: "inline" | "attachment" | null;
   readonly contentId: string | null;
+  /**
+   * Whether the part is what a person reading the mail calls an attachment: attached by
+   * disposition, or named or of a type other than text, and not a resource the body embeds, such
+   * as a logo, nor a `message/*` report such as a bounce's delivery status. A named PDF sent inline
+   * is one, and so is a PDF with no name; the body, a signed message's signature, a read receipt's
+   * notification, a forwarded message's container and its own text aren't, but a forwarded
+   * message's files are. `hasAttachments` is true exactly when a part is one.
+   */
+  readonly attachment: boolean;
 }
 
 export interface ImapSummary {
@@ -82,6 +92,20 @@ export interface ImapMessage extends ImapSummary {
   readonly parts: readonly ImapPart[];
   /** How the body is encrypted, when it is: its text is then empty, never decrypted. */
   readonly encrypted: "smime" | "pgp" | null;
+}
+
+/**
+ * One part staged as an Upload, which this action adopts once with
+ * `ctx.files.<store>.put(name, upload)` within the hour. `size` is the bytes' true size and
+ * `sha256` their digest. `filename` is the sender's, display text only: name the stored file by the
+ * ref and part instead.
+ */
+export interface ImapStaged {
+  readonly upload: Upload;
+  readonly size: number;
+  readonly sha256: string;
+  readonly contentType: string;
+  readonly filename: string | null;
 }
 
 /** A ref that didn't read as a message. */
@@ -148,6 +172,13 @@ export interface ImapClient {
   ): Promise<ImapPage>;
   /** Up to 25 messages with their text and parts, one answer per ref in the order asked. */
   getMessages(refs: readonly ImapRef[]): Promise<ReadonlyArray<ImapMessage | ImapUnread>>;
+  /**
+   * One part of a message, such as `2` or `3.1` from its `parts`, staged for this action to adopt
+   * with `ctx.files.<store>.put(name, upload)`. A part past 20 MiB fails `too_large`; staging past
+   * the viewer's 16 outstanding uploads or 100 MiB fails `limit_exceeded`, so adopt each upload
+   * before staging the next ones.
+   */
+  stageAttachment(options: { readonly ref: ImapRef; readonly part: string }): Promise<ImapStaged>;
 }
 
 type Operation =
@@ -156,7 +187,8 @@ type Operation =
   | "imap.scanMessages"
   | "imap.listMessages"
   | "imap.searchMessages"
-  | "imap.getMessages";
+  | "imap.getMessages"
+  | "imap.stageAttachment";
 type Call = (op: Operation, args: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 /** The broker refuses an option set to undefined, so those are left out, as JSON would. */
@@ -190,6 +222,7 @@ export function createImapClient(connection: string, call: Call): ImapClient {
           "imap.getMessages",
           { refs }
         )
-      ).messages
+      ).messages,
+    stageAttachment: (options) => invoke("imap.stageAttachment", options)
   };
 }

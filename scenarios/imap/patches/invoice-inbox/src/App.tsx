@@ -3,6 +3,7 @@ import { patchy } from "../patchy/_generated/client.js";
 
 type Overview = Awaited<ReturnType<typeof patchy.server.desk.overview>>;
 type Search = Awaited<ReturnType<typeof patchy.server.desk.search>>;
+type Saved = Awaited<ReturnType<typeof patchy.server.saved.savedFiles>>;
 
 const day = (iso: string | null) => (iso === null ? "—" : iso.slice(0, 10));
 
@@ -11,6 +12,7 @@ export function App() {
   const [text, setText] = useState("");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [found, setFound] = useState<Search | null>(null);
+  const [saved, setSaved] = useState<Saved | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -39,6 +41,17 @@ export function App() {
         >
           {busy ? "Reading…" : "Read INBOX"}
         </button>
+        <button
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await patchy.server.importer.importFolder({ folder: "INBOX", since });
+              setSaved(await patchy.server.saved.savedFiles({}));
+            })
+          }
+        >
+          Save attachments
+        </button>
       </header>
       {error !== null && <p class="error">{error}</p>}
       {overview !== null && (
@@ -52,6 +65,28 @@ export function App() {
                   <td>{message.from ?? "—"}</td>
                   <td>{message.subject ?? "(no subject)"}</td>
                   <td class="muted">{message.attachments ? "attachment" : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+      {saved !== null && (
+        <section>
+          <p class="muted">{saved.length} attachments saved</p>
+          <table>
+            <tbody>
+              {saved.map((file) => (
+                <tr key={file.file ?? file.filename ?? ""}>
+                  <td>{file.filename ?? "(unnamed)"}</td>
+                  <td>{file.size} bytes</td>
+                  <td class="muted">
+                    {file.stored === null
+                      ? "kept by name and size"
+                      : file.stored === file.staged
+                        ? `sha256 ${file.stored.slice(0, 12)}…`
+                        : "stored bytes differ"}
+                  </td>
                 </tr>
               ))}
             </tbody>

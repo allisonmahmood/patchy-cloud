@@ -73,7 +73,8 @@ describe("parts and their numbers", () => {
         filename: null,
         encodedSize: 100,
         disposition: null,
-        contentId: null
+        contentId: null,
+        attachment: false
       }
     ]);
     assert.deepStrictEqual(structure.body, {
@@ -106,10 +107,10 @@ describe("parts and their numbers", () => {
       filename: "invoice.pdf",
       encodedSize: 4000,
       disposition: "attachment",
-      contentId: null
+      contentId: null,
+      attachment: true
     });
   });
-
   it("includes a forwarded message and its parts, numbered as IMAP sections", () => {
     const forwarded = message(
       multipart("mixed", [plain, leaf("image/png", { filename: "a.png" })]),
@@ -163,6 +164,162 @@ describe("parts and their numbers", () => {
     assert.strictEqual(
       read(leaf("image/png", { disposition: "INLINE" })).parts[0]!.disposition,
       "inline"
+    );
+  });
+});
+
+describe("which parts are attachments", () => {
+  /** Each part that's an attachment, and `hasAttachments` agreeing with them. */
+  const attachments = (raw: unknown) => {
+    const structure = read(raw);
+    const found = structure.parts.filter((part) => part.attachment).map((part) => part.part);
+    assert.strictEqual(structure.hasAttachments, found.length > 0);
+    return found;
+  };
+  const logo = (extra: Parameters<typeof leaf>[1] = {}) =>
+    leaf("image/png", { id: "<logo@example.test>", encoding: "base64", ...extra });
+
+  it("counts a forwarded message's files, never its container or its own text", () => {
+    const forwarded = message(multipart("mixed", [multipart("alternative", [plain, html]), pdf]), {
+      filename: "Fwd.eml"
+    });
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, forwarded])), ["2.2"]);
+    // A forward of text alone carries no attachment.
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, message(plain)])), []);
+  });
+
+  it("leaves out a resource the body embeds, and counts a named file sent inline", () => {
+    // An HTML body's logo, by Content-ID inside multipart/related.
+    assert.deepStrictEqual(attachments(multipart("related", [html, logo()])), []);
+    assert.deepStrictEqual(
+      attachments(
+        multipart("related", [html, logo({ disposition: "inline", filename: "logo.png" })])
+      ),
+      []
+    );
+    // A desktop client's named image001.png with a Content-ID, beside the text and HTML it
+    // illustrates.
+    const signature = logo({ name: "image001.png", id: "<image001.png@01DB2C.7E5F>" });
+    assert.deepStrictEqual(
+      attachments(multipart("related", [multipart("alternative", [plain, html]), signature])),
+      []
+    );
+    // The same image attached by disposition is one.
+    const attached = logo({ disposition: "attachment", filename: "image001.png" });
+    assert.deepStrictEqual(
+      attachments(multipart("related", [multipart("alternative", [plain, html]), attached])),
+      ["2"]
+    );
+    // A named PDF sent inline, outside multipart/related, is one; so is an attached text file.
+    const inlinePdf = leaf("application/pdf", { disposition: "inline", filename: "scan.pdf" });
+    const notes = leaf("text/plain", { disposition: "attachment", filename: "notes.txt" });
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, inlinePdf, notes])), ["2", "3"]);
+    // A file named in its Content-Type alone counts as one with a filename.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, leaf("image/png", { name: "chart.png" })])),
+      ["2"]
+    );
+  });
+
+  it("counts a file with no name by its type, never a nameless text part", () => {
+    // A PDF a scanner sends with no name and no disposition, beside the body and on its own.
+    const nameless = leaf("application/pdf", { encoding: "base64", size: 4000 });
+    const structure = read(multipart("mixed", [plain, nameless]));
+    assert.deepStrictEqual(attachments(multipart("mixed", [plain, nameless])), ["2"]);
+    assert.isNull(structure.parts[1]!.filename);
+    assert.deepStrictEqual(attachments(nameless), ["1"]);
+    // Text with no name and no disposition that isn't the body is shown, not listed.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, leaf("text/calendar", { charset: "utf-8" })])),
+      []
+    );
+  });
+
+  it("never counts a bounce's or a read receipt's status, but counts a file it returns", () => {
+    const report = (type: string, status: unknown, returned: unknown) =>
+      multipart("report", [plain, status, returned], { "report-type": type });
+    const returned = message(multipart("mixed", [plain, pdf]));
+    // A bounce: its text, the delivery status, and the returned message with its PDF.
+    assert.deepStrictEqual(
+      attachments(report("delivery-status", leaf("message/delivery-status"), returned)),
+      ["3.2"]
+    );
+    // The same with the returned message's headers alone, as an internationalized bounce sends.
+    assert.deepStrictEqual(
+      attachments(
+        report(
+          "global-delivery-status",
+          leaf("message/global-delivery-status"),
+          leaf("message/global-headers")
+        )
+      ),
+      []
+    );
+    // A read receipt: its text, the disposition notification, and the original's headers.
+    assert.deepStrictEqual(
+      attachments(
+        report(
+          "disposition-notification",
+          leaf("message/disposition-notification", { name: "MDNPart2.txt" }),
+          leaf("text/rfc822-headers")
+        )
+      ),
+      []
+    );
+    // Attached by disposition, it is one.
+    assert.deepStrictEqual(
+      attachments(
+        multipart("mixed", [
+          plain,
+          leaf("message/delivery-status", { disposition: "attachment", filename: "status.txt" })
+        ])
+      ),
+      ["2"]
+    );
+  });
+
+  it("never counts a signed message's signature, S/MIME or PGP, but counts what it signs", () => {
+    const smime = (type: string) =>
+      leaf(type, { encoding: "base64", disposition: "attachment", filename: "smime.p7s" });
+    assert.deepStrictEqual(
+      attachments(
+        multipart("signed", [
+          multipart("mixed", [plain, pdf]),
+          smime("application/pkcs7-signature")
+        ])
+      ),
+      ["1.2"]
+    );
+    assert.deepStrictEqual(
+      attachments(multipart("signed", [plain, smime("application/x-pkcs7-signature")])),
+      []
+    );
+    const pgp = leaf("application/pgp-signature", {
+      disposition: "attachment",
+      filename: "OpenPGP_signature.asc"
+    });
+    assert.deepStrictEqual(attachments(multipart("signed", [plain, pgp])), []);
+    assert.deepStrictEqual(
+      attachments(multipart("signed", [multipart("mixed", [plain, pdf]), pgp])),
+      ["1.2"]
+    );
+    // A forwarded message's signature follows the same rule.
+    assert.deepStrictEqual(
+      attachments(multipart("mixed", [plain, message(multipart("signed", [plain, pgp]))])),
+      []
+    );
+  });
+
+  it("never counts the body: its text, its HTML twin or its ciphertext", () => {
+    assert.deepStrictEqual(attachments(multipart("alternative", [plain, html])), []);
+    assert.deepStrictEqual(
+      attachments(
+        multipart("encrypted", [
+          leaf("application/pgp-encrypted"),
+          leaf("application/octet-stream", { filename: "encrypted.asc", disposition: "inline" })
+        ])
+      ),
+      []
     );
   });
 });

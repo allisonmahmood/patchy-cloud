@@ -1,6 +1,6 @@
 # Purpose
 
-Fernhill's supplier invoices: the INBOX since a day and a search across it, read on the server from the invoices mailbox, which nothing here changes.
+Fernhill's supplier invoices: the INBOX since a day and a search across it, read on the server from the invoices mailbox, which nothing here changes, and their attachments saved into the patch's own files.
 
 The purpose above is independent of the published description in `patchy.json`.
 

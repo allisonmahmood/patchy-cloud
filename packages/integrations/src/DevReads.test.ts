@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A stub answers on a real socket, as a proxy would.
-import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -41,6 +42,9 @@ import * as AttioDev from "./attio/Dev.js";
 import * as PidgeonDev from "./pidgeon/Dev.js";
 import * as PidgeonOperations from "./pidgeon/Operations.js";
 import * as PostgresSource from "./postgres/Source.js";
+import * as ImapDev from "./imap/Dev.js";
+import * as ImapSessions from "./imap/Sessions.js";
+import * as ImapSource from "./imap/Source.js";
 import * as ImapTest from "./test/imap.js";
 import * as PostHogDev from "./posthog/Dev.js";
 import * as PostHogOperations from "./posthog/Operations.js";
@@ -274,13 +278,21 @@ const routes = HttpApiBuilder.layer(HttpApi.make("patchy").add(DevReadsGroup)).p
   Layer.provide(DevReads.layer),
   Layer.provide(Authorization.layer)
 );
-/** The door on a socket over a migrated database; `log` stands in for the runtime log when given. */
+/**
+ * The door on a socket over a migrated database; `log` stands in for the runtime log when given,
+ * and `imap` for the IMAP source and pool, which reach no mailbox by default.
+ */
 const serve = (
   log: Layer.Layer<
     RuntimeLog.RuntimeLog,
     never,
     SqlClient.SqlClient | Cryptography.Cryptography
-  > = RuntimeLog.layer
+  > = RuntimeLog.layer,
+  imap: Layer.Layer<
+    ImapSessions.Sessions | ImapSource.Source,
+    never,
+    Cryptography.Cryptography
+  > = ImapTest.offline
 ) =>
   HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
     Layer.provideMerge(NodeHttpServer.layerTest),
@@ -291,7 +303,7 @@ const serve = (
         Layer.provideMerge(double.layer),
         Layer.provideMerge(mail.layer),
         Layer.provideMerge(workspace.layer),
-        Layer.provideMerge(ImapTest.offline)
+        Layer.provideMerge(imap)
       )
     ),
     Layer.provideMerge(Layer.mergeAll(MachineTokens.layer, log, Limits.layer)),
@@ -499,11 +511,13 @@ const devCalls = Effect.gen(function* () {
     outcome: string;
     outcomeCode: string | null;
     rowCount: number | null;
+    bytes: number | null;
     correlationId: string;
   }>`SELECT credential_kind AS "credentialKind", machine_id AS "machineId",
       machine_name AS "machineName", user_id AS "userId", patch_id AS "patchId",
       version_id AS "versionId", op, resource, connection_id AS "connectionId", outcome,
-      outcome_code AS "outcomeCode", row_count AS "rowCount", correlation_id AS "correlationId"
+      outcome_code AS "outcomeCode", row_count AS "rowCount", bytes,
+      correlation_id AS "correlationId"
     FROM runtime_calls WHERE credential_kind = 'machine' ORDER BY at DESC, id DESC`;
 });
 
@@ -1393,3 +1407,247 @@ it.live(
     }),
   { timeout: 30_000 }
 );
+
+/** A scripted mailbox behind the door: INBOX holds one invoice whose part 2 is a PDF. */
+const mailbox = { host: "mail.example.test", filename: "INV-SENTINEL-dev.pdf" };
+const invoice = Uint8Array.from({ length: 40_000 }, (_, index) => (index * 31) % 256);
+/** The scripted server, once the suite's layer has started it. */
+let mailboxServed: ImapTest.Served | undefined;
+const scriptedImap = Layer.unwrap(
+  Effect.gen(function* () {
+    const certs = yield* ImapTest.certificates([mailbox.host]);
+    const served = yield* ImapTest.serve(certs, {
+      capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE"],
+      mailboxes: [
+        {
+          path: "INBOX",
+          uidValidity: 4,
+          messages: [
+            {
+              uid: 1,
+              day: "2026-10-02",
+              subject: "Invoice",
+              from: "billing@example.com",
+              text: "Attached.\n",
+              attachment: {
+                filename: mailbox.filename,
+                bytes: invoice.byteLength,
+                content: invoice
+              }
+            }
+          ]
+        }
+      ]
+    });
+    mailboxServed = served;
+    return ImapSessions.layer.pipe(
+      Layer.provideMerge(ImapSource.layer),
+      Layer.provide(ImapTest.network(served, certs))
+    );
+  })
+);
+
+it.layer(serve(RuntimeLog.layer, scriptedImap), {
+  excludeTestServices: true,
+  timeout: "60 seconds"
+})("IMAP attachments in patchy dev", (it) => {
+  it.effect(
+    "streams the part to the daemon, which stages it locally, and records its size alone",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const connected = yield* store.connect({
+          integration: "imap",
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          handle: "invoices",
+          description: "Supplier invoices",
+          credentials: ImapSource.credentials({
+            host: mailbox.host,
+            port: 993,
+            security: "tls",
+            username: "invoices@example.test",
+            password: "the-mailbox-password"
+          })
+        });
+        const staging = ImapTest.recordingStaging();
+        const handlers = yield* ImapDev.handlers(
+          { apiUrl: yield* origin, token: Option.some(Redacted.make(DEV_SEED.token)) },
+          staging.service
+        ).pipe(Effect.provide(FetchHttpClient.layer));
+        const answer = yield* handlers["imap.stageAttachment"]
+          .run({
+            connection: "mail",
+            ref: { connection: connected.id, folder: "INBOX", uidValidity: 4, uid: 1 },
+            part: "2"
+          })
+          .pipe(
+            Effect.provideService(
+              Binding.Binding,
+              local(
+                {
+                  mail: {
+                    kind: "imap",
+                    id: connected.id,
+                    handle: connected.handle,
+                    revision: connected.metadataRevision
+                  }
+                },
+                yield* Clock.currentTimeMillis
+              )
+            )
+          );
+        assert.deepInclude(answer as object, {
+          ok: true,
+          size: invoice.byteLength,
+          filename: mailbox.filename
+        });
+        assert.lengthOf(staging.staged, 1);
+        assert.deepStrictEqual(staging.staged[0]!.bytes, invoice);
+        // The download peeked, and nothing marked the message read.
+        for (const line of mailboxServed!.lines) assert.notMatch(line, /BODY\[|STORE|SELECT/i);
+        const [latest] = yield* devCalls;
+        assert.include(latest, {
+          op: "imap.stageAttachment",
+          connectionId: connected.id,
+          outcome: "success",
+          resource: null,
+          rowCount: null,
+          bytes: invoice.byteLength
+        });
+        // Never the filename or the Upload's token.
+        const row = JSON.stringify(latest);
+        assert.notInclude(row, "SENTINEL");
+        assert.notInclude(row, staging.staged[0]!.token);
+      }),
+    60_000
+  );
+});
+
+/**
+ * A door whose process holds one attachment at a time, over a mailbox whose INBOX message carries
+ * an attachment of nearly 20 MiB: more than loopback sockets hold for a client that stops reading.
+ */
+const large = randomAttachment(19 * 1024 * 1024);
+function randomAttachment(size: number) {
+  const bytes = new Uint8Array(size);
+  for (let index = 0; index < size; index += 65_536)
+    bytes.set(createHash("sha256").update(String(index)).digest(), index);
+  return bytes;
+}
+/** The door's own pool, once the suite's layer has made it. */
+let doorSessions: ImapSessions.Sessions["Service"] | undefined;
+const oneAttachment = Layer.unwrap(
+  Effect.gen(function* () {
+    const certs = yield* ImapTest.certificates([mailbox.host]);
+    const served = yield* ImapTest.serve(certs, {
+      capabilities: ["IMAP4rev1", "AUTH=PLAIN", "ID", "NAMESPACE"],
+      mailboxes: [
+        {
+          path: "INBOX",
+          uidValidity: 5,
+          messages: [
+            {
+              uid: 1,
+              day: "2026-10-02",
+              subject: "Archive",
+              from: "billing@example.com",
+              text: "Attached.\n",
+              attachment: { filename: "archive.bin", bytes: large.byteLength, content: large }
+            }
+          ]
+        }
+      ]
+    });
+    const source = Layer.fresh(ImapSource.layer).pipe(
+      Layer.provide(ImapTest.network(served, certs))
+    );
+    return Layer.effect(
+      ImapSessions.Sessions,
+      ImapSessions.make.pipe(
+        Effect.tap((made) => Effect.sync(() => void (doorSessions = made))),
+        Effect.provideService(ContractLimits.overrides, { "imap.attachments.concurrent": 1 })
+      )
+    ).pipe(Layer.provideMerge(source));
+  })
+);
+
+it.layer(serve(RuntimeLog.layer, oneAttachment), {
+  excludeTestServices: true,
+  timeout: "120 seconds"
+})("IMAP attachments in patchy dev, held until sent", (it) => {
+  it.effect(
+    "keeps the attachment's place while a client hasn't read its body, and gives it back once read",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const connected = yield* store.connect({
+          integration: "imap",
+          companyId: DEV_SEED.companyId,
+          userId: DEV_SEED.userId,
+          handle: "archive",
+          description: "Archive mailbox",
+          credentials: ImapSource.credentials({
+            host: mailbox.host,
+            port: 993,
+            security: "tls",
+            username: "archive@example.test",
+            password: "the-mailbox-password"
+          })
+        });
+        const url = new URL(`${yield* origin}/api/connections/dev-attachment`);
+        const body = JSON.stringify({
+          op: "imap.stageAttachment",
+          connection: { id: connected.id, handle: connected.handle },
+          args: {
+            ref: { connection: connected.id, folder: "INBOX", uidValidity: 5, uid: 1 },
+            part: "2"
+          }
+        });
+        // A client that takes the answer's headers, then stops reading its body.
+        const response = yield* Effect.promise(
+          () =>
+            new Promise<IncomingMessage>((resolve, reject) => {
+              const sent = httpRequest(
+                url,
+                {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${DEV_SEED.token}`,
+                    "content-type": "application/json"
+                  }
+                },
+                (answer) => {
+                  answer.pause();
+                  resolve(answer);
+                }
+              );
+              sent.on("error", reject);
+              sent.end(body);
+            })
+        );
+        assert.strictEqual(response.statusCode, 200);
+        const place = (deadline: number) =>
+          doorSessions!.buffered(deadline)(Effect.void).pipe(Effect.flip, Effect.option);
+        yield* Effect.sleep("500 millis");
+        // The body is still being sent: the process's one place is taken, so another waits.
+        const refused = yield* place(Date.now() + 1_500);
+        assert.isTrue(refused._tag === "Some" && refused.value._tag === "ImapBusy");
+        // Read it whole: the place comes back once the last of it is sent.
+        const bytes = yield* Effect.promise(
+          () =>
+            new Promise<Buffer>((resolve, reject) => {
+              const chunks: Buffer[] = [];
+              response.on("data", (chunk: Buffer) => chunks.push(chunk));
+              response.on("end", () => resolve(Buffer.concat(chunks)));
+              response.on("error", reject);
+              response.resume();
+            })
+        );
+        assert.strictEqual(bytes.byteLength, large.byteLength);
+        assert.isTrue(bytes.equals(Buffer.from(large)));
+        assert.strictEqual((yield* place(Date.now() + 1_500))._tag, "None");
+      }),
+    120_000
+  );
+});

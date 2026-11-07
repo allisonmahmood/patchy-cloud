@@ -77,6 +77,8 @@ const invocationMetrics = {
   imapSession: Schema.optionalKey(Schema.Literals(["pooled", "opened"])),
   /** The mail server refused an IMAP login, and saving the connection's pause failed twice. */
   imapPauseFailed: Schema.optionalKey(Schema.Boolean),
+  /** The bytes of every IMAP attachment the request staged, summed; a refused stage adds none. */
+  stagedBytes: Schema.optionalKey(Schema.Number),
   /**
    * The tier 2 call or re-run went back to bind once more after its invoke was refused before
    * dispatch, its process reaped or replaced since bind. Set whatever came of that.
@@ -509,7 +511,8 @@ export const add = (
       | "argsBytes"
       | "resultBytes"
       | "requestBytes"
-      | "responseBytes",
+      | "responseBytes"
+      | "stagedBytes",
       number
     >
   >

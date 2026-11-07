@@ -32,7 +32,7 @@
       "repo": "invoice-inbox",
       "tier": 2,
       "connections": ["imap/invoices"],
-      "description": "Fernhill's supplier invoices since a day, and a search across the inbox, read from the invoices mailbox without changing it."
+      "description": "Fernhill's supplier invoices since a day, a search across the inbox, and their attachments saved into the patch's files, read from the invoices mailbox without changing it."
     }
   ]
 }

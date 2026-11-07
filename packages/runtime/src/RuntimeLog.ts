@@ -89,6 +89,8 @@ export class Call extends Schema.Class<Call>("RuntimeLog.Call")({
   outcomeCode: Schema.NullOr(Schema.String),
   durationMs: Schema.NullOr(Schema.Int),
   rowCount: Schema.NullOr(Schema.Int),
+  /** The bytes a call moved, for one whose size says what it did; null for the rest. */
+  bytes: Schema.optionalKey(Schema.NullOr(Schema.Int)),
   sql: Schema.NullOr(Schema.String),
   correlationId: Schema.String,
   deadlineMs: Schema.Int
@@ -108,6 +110,7 @@ export class RuntimeLog extends Context.Service<
       readonly outcomeCode?: string | null;
       readonly durationMs: number;
       readonly rowCount: number | null;
+      readonly bytes?: number | null;
     }) => Effect.Effect<void, SqlError>;
     readonly find: (input: {
       readonly companyId: string;
@@ -141,7 +144,7 @@ export const make = Effect.gen(function* () {
     CASE WHEN outcome = 'pending'
       AND at + deadline_ms * interval '1 millisecond' < to_timestamp(${now / 1_000})
       THEN 'unknown' ELSE outcome END AS outcome,
-    outcome_code AS "outcomeCode", duration_ms AS "durationMs", row_count AS "rowCount", sql,
+    outcome_code AS "outcomeCode", duration_ms AS "durationMs", row_count AS "rowCount", bytes, sql,
     correlation_id AS "correlationId", deadline_ms AS "deadlineMs"`;
   const known = sql`credential_kind IN ${sql.in(credentialKinds)}`;
   const findCall = SqlSchema.findOneOption({
@@ -225,7 +228,8 @@ export const make = Effect.gen(function* () {
   ) {
     yield* sql`
       UPDATE runtime_calls SET outcome = ${input.outcome}, duration_ms = ${input.durationMs},
-        row_count = ${input.rowCount}, outcome_code = ${input.outcomeCode ?? null}
+        row_count = ${input.rowCount}, bytes = ${input.bytes ?? null},
+        outcome_code = ${input.outcomeCode ?? null}
       WHERE correlation_id = ${input.correlationId} AND outcome = 'pending'`;
   });
 
