@@ -10,6 +10,7 @@ import {
   PatchyError,
   isHandlerError,
   isPatchyError,
+  type Client,
   type MutationUnknownOutcome,
   type QuerySnapshot
 } from "./client.js";
@@ -637,16 +638,53 @@ const unbootstrapped = () => {
     location: { href: "https://instance/~content/p/v?n=document-one" }
   });
   const shared = createPostMessageTransport({ window: frame as unknown as Window });
-  const bootstrap = (port: Port) => {
+  const bootstrap = (port: Port, handlerKinds: Readonly<Record<string, string>> = {}) => {
     const event = new Event("message");
     Object.assign(event, {
       source: parent,
-      data: { v: 1, kind: "bootstrap", nonce: "document-one", route: "/", handlerKinds: {} },
+      data: { v: 1, kind: "bootstrap", nonce: "document-one", route: "/", handlerKinds },
       ports: [port]
     });
     frame.dispatchEvent(event);
   };
   return { shared, bootstrap };
+};
+
+type Arrived = { readonly id: string; readonly op: string; readonly args: Record<string, unknown> };
+
+/**
+ * The shell's end of a real channel. It records each call as it arrives and answers it with what
+ * `reply` returns, or leaves it unanswered when that is `undefined`.
+ */
+const shellEnd = (reply: (call: Arrived) => unknown = () => null) => {
+  const channel = new MessageChannel();
+  const arrived: Arrived[] = [];
+  const answer = (id: string, value: unknown) =>
+    channel.port2.postMessage({ v: 1, id, kind: "result", value });
+  channel.port2.onmessage = ({ data }: MessageEvent<Arrived & { readonly kind?: string }>) => {
+    if (data.kind === "ready") return;
+    arrived.push(data);
+    const value = reply(data);
+    if (value !== undefined) answer(data.id, value);
+  };
+  return {
+    port: channel.port1,
+    arrived,
+    answer,
+    /** Each call as it arrived: its op, and a route's path or a handler's name. */
+    labels: () =>
+      arrived.map(({ op, args }) =>
+        op === "route.set"
+          ? `route.set ${String(args.path)}`
+          : op === "server.call"
+            ? `server.call ${String(args.handler)}`
+            : op
+      ),
+    /** A stream event from the server, such as its hello with the clock. */
+    stream: (data: unknown) =>
+      channel.port2.postMessage({ v: 1, kind: "event", event: "stream", data }),
+    close: () => channel.port2.close()
+  };
 };
 
 it("never sends what a tier 1 client queued before the bootstrap once it has closed", async () => {
@@ -769,6 +807,118 @@ it("sends every client's calls in call order across the bootstrap, none overtake
     server.close();
     shared.close();
     channel.port2.close();
+  }
+});
+
+it("settles a queued call with its reply once it has gone out, though its client then closes", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const server = createServerClient<{
+    notes: { count: Handler<"query", Record<string, never>, number> };
+  }>({ transport: shared });
+  const shell = shellEnd(() => undefined);
+  try {
+    const inserted = page.tables.notes.insert({ title: "kept" });
+    const counted = server.server.notes.count({});
+    bootstrap(shell.port, { "notes.count": "query" });
+    await vi.waitFor(() =>
+      expect(shell.labels()).toEqual(["tables.insert", "server.call notes.count"])
+    );
+    page.close();
+    server.close();
+    shell.answer(shell.arrived[0]!.id, { id: "note", title: "kept" });
+    shell.answer(shell.arrived[1]!.id, 3);
+    await expect(inserted).resolves.toEqual({ id: "note", title: "kept" });
+    await expect(counted).resolves.toBe(3);
+  } finally {
+    shared.close();
+    shell.close();
+  }
+});
+
+it("sends a call made while another is going out behind every call still queued", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const shell = shellEnd(({ op }) =>
+    op === "tables.insert" ? { id: "note", title: "read" } : null
+  );
+  let nested: Client<typeof config> | undefined;
+  let second: Promise<null> | undefined;
+  // Read as the insert is serialized for the port, while the queue drains.
+  const row = {
+    get title() {
+      if (nested === undefined) {
+        nested = createClient<typeof config>(config, { transport: shared });
+        second = nested.route.set("/second");
+      }
+      return "read";
+    }
+  };
+  try {
+    const inserted = page.tables.notes.insert(row);
+    const first = page.route.set("/first");
+    bootstrap(shell.port);
+    await Promise.all([inserted, first, vi.waitFor(() => expect(second).toBeDefined())]);
+    await second;
+    expect(shell.labels()).toEqual(["tables.insert", "route.set /first", "route.set /second"]);
+    await expect(page.route.get()).resolves.toBe("/second");
+  } finally {
+    page.close();
+    nested?.close();
+    shared.close();
+    shell.close();
+  }
+});
+
+it("sends tier 2 handler calls queued before the bootstrap in turn, and a mutation once the server's clock is known", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const server = createServerClient<{
+    notes: {
+      count: Handler<"query", Record<string, never>, string>;
+      save: Handler<"mutation", Record<string, never>, string>;
+    };
+  }>({ transport: shared });
+  const shell = shellEnd(({ op, args }) => (op === "server.call" ? args.handler : null));
+  try {
+    const saved = server.server.notes.save({});
+    const counted = server.server.notes.count({});
+    // The route's first callback comes as the bootstrap lands, and sets a path.
+    const later = new Promise<unknown>((resolve) => {
+      let first = true;
+      server.route.subscribe(() => {
+        if (first) resolve(server.route.set("/second"));
+        first = false;
+      });
+    });
+    bootstrap(shell.port, { "notes.count": "query", "notes.save": "mutation" });
+    await expect(Promise.all([counted, later])).resolves.toEqual(["notes.count", null]);
+    expect(shell.labels()).toEqual(["server.call notes.count", "route.set /second"]);
+    // The mutation's key needs the server's clock, which the stream's hello brings; it waited for
+    // that without holding back the calls behind it.
+    shell.stream({ type: "hello", generation: "first", serverTime: 50_000 });
+    await expect(saved).resolves.toBe("notes.save");
+    expect(shell.labels()).toEqual([
+      "server.call notes.count",
+      "route.set /second",
+      "server.call notes.save"
+    ]);
+    expect(shell.arrived[2]!.args).toMatchObject({
+      mutationKey: expect.stringMatching(/^50000-[A-Za-z0-9_-]{22}$/)
+    });
+  } finally {
+    server.close();
+    shared.close();
+    shell.close();
   }
 });
 

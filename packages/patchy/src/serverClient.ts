@@ -8,7 +8,7 @@ import {
   type Transport
 } from "./clientTransport.js";
 import { createQueryRegistry } from "./queryRegistry.js";
-import type { ServerClient } from "./server.js";
+import type { HandlerKindName, ServerClient } from "./server.js";
 import { createServerFiles, type ServerFiles } from "./serverFiles.js";
 import { createDownload, type Download } from "./download.js";
 
@@ -20,6 +20,9 @@ export interface ServerOnlyClient<Modules> {
   me(): Promise<Me>;
   close(): void;
 }
+
+// What a handler call sends.
+type Request = { readonly handler: string; readonly args: unknown; readonly mutationKey?: string };
 
 const mutationKey = (serverTime: number): string => {
   const random = crypto.getRandomValues(new Uint8Array(16));
@@ -51,34 +54,55 @@ export function createServerClient<Modules>(
           const name = `${module}.${exported}`;
           const call = async (args: Readonly<Record<string, unknown>>) => {
             const snapshot: unknown = JSON.parse(canonicalArgs(args));
-            await transport.ready();
-            const kind = transport.handlerKind(name);
-            const request = {
-              handler: name,
-              args: snapshot,
-              ...(kind === "mutation"
-                ? {
-                    mutationKey: mutationKey(
-                      transport.serverTime() ?? (await transport.waitForServerTime())
-                    )
-                  }
-                : {})
+            let kind: HandlerKindName | undefined;
+            let request: Request | undefined;
+            // Sends `prepared` on `target` in its turn, kept for a retry.
+            const post = (target: Transport, prepared: Request) => {
+              request = prepared;
+              return target.call("server.call", prepared);
             };
             let queryRetried = false;
-            const send = async (): Promise<unknown> => {
+            // A lost query reply is asked again once, and an uncertain mutation offers its same
+            // request again. A call that never went out has nothing to retry.
+            const settle = async (reply: Promise<unknown>): Promise<unknown> => {
               try {
-                return await transport.call("server.call", request);
+                return await reply;
               } catch (error) {
+                const sent = request;
+                if (sent === undefined) throw error;
+                const again = () => settle(transport.turn((target) => post(target, sent)));
                 if (kind === "mutation" && isPatchyError(error, "unknown_outcome"))
-                  throw Object.assign(error, { retry: send });
+                  throw Object.assign(error, { retry: again });
                 if (kind === "query" && error instanceof LostReply && !queryRetried) {
                   queryRetried = true;
-                  return send();
+                  return again();
                 }
                 throw error;
               }
             };
-            return send();
+            // It takes its turn now, and is prepared when the turn comes, from the descriptors
+            // the bootstrap brought. A mutation's key needs the server's clock: without it yet,
+            // the mutation steps out of line and takes a new turn once the clock is known.
+            return settle(
+              transport.turn((target) => {
+                kind = target.handlerKind(name);
+                if (kind !== "mutation") return post(target, { handler: name, args: snapshot });
+                const time = target.serverTime();
+                if (time !== undefined)
+                  return post(target, {
+                    handler: name,
+                    args: snapshot,
+                    mutationKey: mutationKey(time)
+                  });
+                return transport
+                  .waitForServerTime()
+                  .then((clock) =>
+                    transport.turn((next) =>
+                      post(next, { handler: name, args: snapshot, mutationKey: mutationKey(clock) })
+                    )
+                  );
+              })
+            );
           };
           // Types expose subscriptions only for queries. The host validates the loaded kind.
           return (handlers[exported] = Object.assign(call, {

@@ -72,12 +72,41 @@ export class LostReply extends PatchyError<"unknown_outcome"> {}
 const lost = () => new LostReply("unknown_outcome", "The runtime reply was lost.", {});
 
 /**
- * How a transport still waiting for its port holds a call: in one queue for every client on it,
- * sent in call order the moment the port arrives, before anything made after can go out. A
- * client's `wanted` is read then, so a call from a client that has closed since never goes out.
+ * How the document's calls reach the shell. Every call a client, a hook or `patchy/hotkeys` makes
+ * goes through one FIFO per document, the queue of the transport that waits for the shell's port,
+ * and has two phases:
+ *
+ * - Queued: in the FIFO, not yet handed to the port. Its client's `close()` cancels it: it rejects
+ *   with `unknown_outcome` and is never sent.
+ * - Dispatched: from the moment the transport starts sending it, serialization included. Closing
+ *   its client no longer touches it, and it settles with the shell's response.
+ *
+ * The FIFO holds every client's queued calls, query subscriptions included, in call order. When the
+ * port arrives it drains in order, and while it drains anything new, re-entrant calls made by a
+ * getter during serialization or by a callback during the drain included, joins behind the entries
+ * still queued. Only while the FIFO is empty does a call go straight to the port, so calls reach the
+ * shell in the order they were made, across the bootstrap and across clients.
+ *
+ * A tier 2 handler call takes its place when it is made and is prepared as its turn comes, from the
+ * handler descriptors the bootstrap brings before the drain. One exception to call order: a
+ * mutation's key needs the server's clock, which the document stream brings after the bootstrap.
+ * A mutation whose turn comes before the clock steps out of line without holding back the calls
+ * behind it, and joins the back of the FIFO once the clock is known, still queued until then.
  */
-type Hold = <T>(dispatch: () => Promise<T>, wanted?: () => boolean) => Promise<T>;
-const holds = new WeakMap<Transport, Hold>();
+interface Gate {
+  /** Queues `dispatch`, which runs on the port as its turn comes, and a way to cancel it until then. */
+  send<T>(dispatch: (port: Transport) => Promise<T>): {
+    readonly promise: Promise<T>;
+    readonly cancel: () => void;
+  };
+}
+// A call in the FIFO, and the phase it is in.
+type Entry = {
+  state: "queued" | "dispatched" | "cancelled";
+  readonly start: (port: Transport) => void;
+  readonly fail: (error: unknown) => void;
+};
+const gates = new WeakMap<Transport, Gate>();
 
 type HandlerKinds = Readonly<Record<string, HandlerKindName>>;
 const readHandlerKinds = (value: unknown): HandlerKinds | undefined => {
@@ -370,31 +399,69 @@ export function createPostMessageTransport(
   const frame = options.window ?? globalThis.window;
   let transport: Transport | undefined;
   let closed = false;
+  // Why nothing more can be sent: the bootstrap failed, or the transport closed.
+  let failure: { readonly error: unknown } | undefined;
   const { promise: ready, resolve, reject } = Promise.withResolvers<Transport>();
   let removeBootstrap = () => {};
-  // Calls made before the port arrives, from every client, in the order they were made.
-  const held: Array<{ readonly send: () => void; readonly fail: (error: unknown) => void }> = [];
-  const hold: Hold = <T>(dispatch: () => Promise<T>, wanted = () => true) => {
-    const { promise, resolve: settle, reject: refuse } = Promise.withResolvers<T>();
-    held.push({
-      send: () => {
-        if (wanted()) void dispatch().then(settle, refuse);
-        else refuse(lost());
-      },
-      fail: refuse
-    });
-    return promise;
+  // The document's FIFO, as the model above `Gate` describes.
+  const queue: Entry[] = [];
+  let draining = false;
+  const drain = () => {
+    const port = transport;
+    if (draining || port === undefined) return;
+    draining = true;
+    try {
+      for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
+        if (entry.state !== "queued") continue;
+        entry.state = "dispatched";
+        entry.start(port);
+      }
+    } finally {
+      draining = false;
+    }
   };
-  let bootstrapping = false;
+  const gate: Gate = {
+    send<T>(dispatch: (port: Transport) => Promise<T>) {
+      const { promise, resolve: settle, reject: refuse } = Promise.withResolvers<T>();
+      if (failure !== undefined) {
+        refuse(failure.error);
+        return { promise, cancel: () => {} };
+      }
+      const entry: Entry = {
+        state: "queued",
+        start: (port) => {
+          try {
+            void dispatch(port).then(settle, refuse);
+          } catch (error) {
+            refuse(error);
+          }
+        },
+        fail: refuse
+      };
+      queue.push(entry);
+      drain();
+      return {
+        promise,
+        cancel: () => {
+          if (entry.state !== "queued") return;
+          entry.state = "cancelled";
+          refuse(lost());
+        }
+      };
+    }
+  };
   const fail = (error: unknown) => {
-    holds.delete(self);
-    for (const call of held.splice(0)) call.fail(error);
+    failure ??= { error };
+    for (const entry of queue.splice(0)) {
+      if (entry.state !== "queued") continue;
+      entry.state = "cancelled";
+      entry.fail(error);
+    }
     reject(error);
   };
   if (!frame || frame.parent === frame) {
-    reject(new PatchyError("shell_outdated", "This client must run inside the Patchy shell.", {}));
+    fail(new PatchyError("shell_outdated", "This client must run inside the Patchy shell.", {}));
   } else {
-    bootstrapping = true;
     const nonce = new URL(frame.location.href).searchParams.get("n");
     const timer = setTimeout(() => {
       removeBootstrap();
@@ -433,9 +500,7 @@ export function createPostMessageTransport(
         fail(lost());
         return;
       }
-      // Everything called before the port goes out now, in order, before anything called after.
-      holds.delete(self);
-      for (const call of held.splice(0)) call.send();
+      drain();
       resolve(transport);
     };
     removeBootstrap = () => {
@@ -455,22 +520,13 @@ export function createPostMessageTransport(
     fail(lost());
   };
   frame?.addEventListener("pagehide", close, { once: true });
-  // A call goes out as it is made once the port is here; before that it waits in `held`.
-  const send = <T>(dispatch: (connected: Transport) => Promise<T>): Promise<T> =>
-    closed
-      ? Promise.reject(lost())
-      : transport !== undefined
-        ? dispatch(transport)
-        : holds.has(self)
-          ? hold(() => send(dispatch))
-          : ready.then(dispatch);
   const self: Transport = {
     ready: async () => {
       if (closed) throw lost();
       await ready;
       if (closed) throw lost();
     },
-    call: (op, args, bytes) => send((connected) => connected.call(op, args, bytes)),
+    call: (op, args, bytes) => gate.send((port) => port.call(op, args, bytes)).promise,
     serverTime: () => (closed ? undefined : transport?.serverTime()),
     waitForServerTime: async () => {
       if (closed) throw lost();
@@ -481,29 +537,29 @@ export function createPostMessageTransport(
       subscribe(request, onFrame) {
         let active = !closed;
         let unsubscribe: (() => void) | undefined;
-        // In turn with the calls, so one made before the port goes out in its place.
-        void send(async (connected) => {
-          if (active && !closed) unsubscribe = connected.queries.subscribe(request, onFrame);
-        }).catch((error: unknown) => {
-          if (active)
-            onFrame({
-              status: "error",
-              error: error instanceof Error ? error : lost(),
-              permanent: true
-            });
-        });
+        void gate
+          .send(async (port) => {
+            if (active) unsubscribe = port.queries.subscribe(request, onFrame);
+          })
+          .promise.catch((error: unknown) => {
+            if (active)
+              onFrame({
+                status: "error",
+                error: error instanceof Error ? error : lost(),
+                permanent: true
+              });
+          });
         return () => {
           active = false;
-          unsubscribe?.();
+          const stop = unsubscribe;
+          unsubscribe = undefined;
+          if (stop) void gate.send(async () => stop()).promise.catch(() => {});
         };
       }
     },
     route: {
-      get: async () => {
-        if (closed) throw lost();
-        return (await ready).route.get();
-      },
-      set: (path) => send((connected) => connected.route.set(path)),
+      get: () => gate.send((port) => port.route.get()).promise,
+      set: (path) => gate.send((port) => port.route.set(path)).promise,
       subscribe: (listener) => {
         let active = !closed;
         let unsubscribe: (() => void) | undefined;
@@ -521,7 +577,7 @@ export function createPostMessageTransport(
     },
     close
   };
-  if (bootstrapping) holds.set(self, hold);
+  gates.set(self, gate);
   return self;
 }
 
@@ -531,20 +587,28 @@ let documentTransport: Transport | undefined;
 export const getDocumentTransport = (): Transport =>
   (documentTransport ??= createPostMessageTransport());
 
+/** One client's share of a transport, and the turn its calls take in that transport's order. */
+export interface ClientTransport extends Transport {
+  /**
+   * Runs `dispatch` on the transport that sends, as this call's turn comes: at once, or after the
+   * calls queued before it. Until then the call is queued, and closing this client cancels it.
+   */
+  turn<T>(dispatch: (target: Transport) => Promise<T>): Promise<T>;
+}
+
 /**
- * One client's share of a transport. Closing it ends only what this client started: its waits for
- * the bootstrap or the server's clock reject as lost, and so does each call still waiting for the
- * bootstrap, which then never goes out, and each later call; its route listeners and query
- * subscriptions stop. A call already sent settles with its own outcome. Calls keep the order they
- * were made in, across the bootstrap and across clients. The transport, its port and every other
- * consumer of it stay open.
+ * One client's share of a transport. Closing it ends only what this client started: its queued
+ * calls, as the model above `Gate` describes, its waits for the bootstrap or the server's clock and
+ * its later calls reject as lost, and its route listeners and query subscriptions stop. Its
+ * dispatched calls settle with their own outcome. The transport, its port and every other consumer
+ * of it stay open.
  */
-export function createClientTransport(shared: Transport): Transport {
+export function createClientTransport(shared: Transport): ClientTransport {
   let closed = false;
   const active = new Set<() => void>();
   const waiting = new Set<(error: unknown) => void>();
-  const open = <T>(start: () => Promise<T>): Promise<T> =>
-    closed ? Promise.reject(lost()) : start();
+  // This client's calls in the FIFO, each by the way to cancel it while it is queued.
+  const queued = new Set<() => void>();
   // A wait this client gives up on as it closes, though the transport keeps waiting.
   const wait = <T>(start: () => Promise<T>): Promise<T> => {
     if (closed) return Promise.reject(lost());
@@ -555,12 +619,15 @@ export function createClientTransport(shared: Transport): Transport {
       .finally(() => waiting.delete(reject));
     return promise;
   };
-  // A call goes out as it is made, unless the transport is still waiting for its port. Then it
-  // waits in the transport's queue with every client's calls, and goes out in its turn if this
-  // client is still open.
-  const send = <T>(dispatch: () => Promise<T>): Promise<T> => {
-    const hold = holds.get(shared);
-    return hold === undefined ? open(dispatch) : wait(() => hold(dispatch, () => !closed));
+  const turn = <T>(dispatch: (target: Transport) => Promise<T>): Promise<T> => {
+    if (closed) return Promise.reject(lost());
+    const gate = gates.get(shared);
+    if (gate === undefined) return dispatch(shared);
+    const { promise, cancel } = gate.send(dispatch);
+    queued.add(cancel);
+    const forget = () => queued.delete(cancel);
+    void promise.then(forget, forget);
+    return promise;
   };
   // A subscription's stop, which closing calls too; either way it runs once.
   const track = (stop: () => void): (() => void) => {
@@ -571,7 +638,8 @@ export function createClientTransport(shared: Transport): Transport {
     return end;
   };
   return {
-    call: (op, args, bytes) => send(() => shared.call(op, args, bytes)),
+    turn,
+    call: (op, args, bytes) => turn((target) => target.call(op, args, bytes)),
     ready: () => wait(() => shared.ready()),
     serverTime: () => (closed ? undefined : shared.serverTime()),
     waitForServerTime: () => wait(() => shared.waitForServerTime()),
@@ -590,8 +658,8 @@ export function createClientTransport(shared: Transport): Transport {
       }
     },
     route: {
-      get: () => send(() => shared.route.get()),
-      set: (path) => send(() => shared.route.set(path)),
+      get: () => turn((target) => target.route.get()),
+      set: (path) => turn((target) => target.route.set(path)),
       subscribe: (listener) =>
         closed
           ? () => {}
@@ -604,6 +672,8 @@ export function createClientTransport(shared: Transport): Transport {
     close() {
       if (closed) return;
       closed = true;
+      for (const cancel of queued) cancel();
+      queued.clear();
       for (const reject of waiting) reject(lost());
       waiting.clear();
       for (const end of [...active]) end();
