@@ -64,6 +64,8 @@ import {
   PidgeonSource,
   AttioSource,
   AttioOperations,
+  ImapOperations,
+  ImapSessions,
   ImapSource,
   type ImapNetwork,
   PidgeonOperations
@@ -236,6 +238,7 @@ const services = Layer.mergeAll(
       const posthog = yield* PostHogOperations.makeHandlers;
       const pidgeon = yield* PidgeonOperations.makeHandlers;
       const attio = yield* AttioOperations.makeHandlers;
+      const imap = yield* ImapOperations.makeHandlers;
       const handlers = {
         me,
         ...tables,
@@ -244,7 +247,8 @@ const services = Layer.mergeAll(
         ...postgres,
         ...posthog,
         ...pidgeon,
-        ...attio
+        ...attio,
+        ...imap
       };
       // Runtime tells the streams of each admitted call, which keeps its viewer's documents active.
       const runtime = RuntimeProduction.layer(handlers).pipe(
@@ -294,14 +298,15 @@ const services = Layer.mergeAll(
       identity
     ).pipe(
       // One PostHog, Pidgeon, Attio and IMAP source each, so connection administration and
-      // patches share each project's, address's, workspace's and mailbox's slots.
+      // patches share each project's, address's, workspace's and mailbox's slots, and one pool of
+      // IMAP sessions that published patches and the dev door share.
       Layer.provideMerge(
         SqlConnectionStore.layer.pipe(
           Layer.provide([CredentialKeys.layer, PostgresSource.layer]),
           Layer.provideMerge(PostHogSource.layer),
           Layer.provideMerge(PidgeonSource.layer),
           Layer.provideMerge(AttioSource.layer),
-          Layer.provideMerge(ImapSource.layer)
+          Layer.provideMerge(ImapSessions.layer.pipe(Layer.provideMerge(ImapSource.layer)))
         )
       ),
       Layer.provideMerge(Tables.layer),

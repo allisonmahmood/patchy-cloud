@@ -8,6 +8,7 @@ import { extractHandlerDescriptors, foldAgentArea } from "./handlerDescriptors.j
 import { InvalidManifestError } from "./invalidManifestError.js";
 import { createPidgeonClient } from "./pidgeon.js";
 import { createAttioClient } from "./attio.js";
+import { createImapClient } from "./imap.js";
 import { decodeHandlerError, isHandlerError } from "./handlerError.js";
 import type { Handler, HandlerKindName } from "./server.js";
 
@@ -343,8 +344,8 @@ const dispatch = (modules: Modules, agentFiles: Modules) => {
 /**
  * Worker entry for server bundles, without importing privileged Workers APIs. The build passes
  * `server/` modules by name and `agent/` files by filename stem; the files fold into `agent`.
- * Shared stores and Pidgeon and Attio connections come by alias, since their clients differ from a
- * table's and a Postgres connection's.
+ * Shared stores and Pidgeon, Attio and IMAP connections come by alias, since their clients differ
+ * from a table's and a Postgres connection's.
  *
  * Modules that break the handler contract, such as a name two agent files export, are refused
  * by answering every request with the refusal. A throw here would reach inspection only as a
@@ -355,7 +356,8 @@ export function createGuest(
   sharedStores: readonly string[] = [],
   agentFiles: Modules = {},
   pidgeon: readonly string[] = [],
-  attio: readonly string[] = []
+  attio: readonly string[] = [],
+  imap: readonly string[] = []
 ) {
   let handlers: ReturnType<typeof dispatch>;
   try {
@@ -496,7 +498,9 @@ export function createGuest(
                   ? createPidgeonClient(connection, call, "send")
                   : attio.includes(connection)
                     ? createAttioClient(connection, call)
-                    : connectionClient(call, connection, invalidRequest)
+                    : imap.includes(connection)
+                      ? createImapClient(connection, call)
+                      : connectionClient(call, connection, invalidRequest)
               ),
               run: names((module) =>
                 names(

@@ -323,6 +323,7 @@ export class Overflow extends Schema.TaggedError<Overflow>()("ImapOverflow", {
   host: Schema.String,
   limitId: Schema.Literals([
     "imap.session.bytes",
+    "imap.call.bytes",
     "imap.parser.line",
     "imap.parser.literal",
     "imap.parser.response"
@@ -333,6 +334,7 @@ export class Overflow extends Schema.TaggedError<Overflow>()("ImapOverflow", {
   override get message() {
     const what = {
       "imap.session.bytes": "in one session",
+      "imap.call.bytes": "for one call",
       "imap.parser.line": "in one line",
       "imap.parser.literal": "in one literal",
       "imap.parser.response": "in one response"
@@ -374,6 +376,19 @@ export const settings = (credentials: Credentials): Settings => ({
   password: Redacted.make(credentials.password)
 });
 
+/**
+ * What a session counts the bytes it receives against: past `limit` its socket is destroyed and
+ * `overflow` names `limitId`, as it names a parser bound the session passed. A session opened
+ * without one counts against `imap.session.bytes`; the pool passes its own and re-arms it for
+ * each call it lends the session to.
+ */
+export interface Meter {
+  received: number;
+  limit: number;
+  limitId: Overflow["limitId"];
+  overflow?: Overflow["limitId"];
+}
+
 export class Source extends Context.Service<
   Source,
   {
@@ -387,7 +402,10 @@ export class Source extends Context.Service<
      * against the typed host, capabilities checked before the password is sent. Its parser and
      * byte bounds destroy it when passed.
      */
-    readonly open: (settings: Settings) => Effect.Effect<ImapFlow, OpenError, Scope.Scope>;
+    readonly open: (
+      settings: Settings,
+      meter?: Meter
+    ) => Effect.Effect<ImapFlow, OpenError, Scope.Scope>;
   }
 >()("@patchy/integrations/imap/Source") {}
 
@@ -432,6 +450,10 @@ const parserBounds: Readonly<Record<string, Overflow["limitId"]>> = {
   TooManyTokens: "imap.parser.response",
   TooManyResponses: "imap.parser.response"
 };
+
+/** The parser bound an ImapFlow error names, when it names one: its session is then broken. */
+export const parserBound = (error: unknown): Overflow["limitId"] | undefined =>
+  Object.hasOwn(parserBounds, errorCode(error) ?? "") ? parserBounds[errorCode(error)!] : undefined;
 
 const errorCode = (error: unknown): string | undefined =>
   typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
@@ -501,7 +523,7 @@ const transport = (input: {
   readonly host: string;
   readonly destination: { readonly address: string; readonly port: number };
   readonly ca: ReadonlyArray<string> | undefined;
-  readonly budget: number;
+  readonly meter: Meter;
   readonly progress: Progress;
 }): ImapTransport => {
   const { host, destination, progress } = input;
@@ -510,8 +532,10 @@ const transport = (input: {
   const meter = (socket: Socket) => {
     const count = (chunk: Buffer) => {
       progress.received += chunk.byteLength;
-      if (progress.received > input.budget) {
-        progress.overflow ??= "imap.session.bytes";
+      input.meter.received += chunk.byteLength;
+      if (input.meter.received > input.meter.limit) {
+        progress.overflow ??= input.meter.limitId;
+        input.meter.overflow ??= input.meter.limitId;
         socket.destroy(new Error("The IMAP session passed its byte budget."));
       }
     };
@@ -701,7 +725,7 @@ export const make = Effect.gen(function* () {
   });
 
   /** A logged-in session and how it got there, closed with its scope. */
-  const session = Effect.fn("Imap.session")(function* (settings: Settings) {
+  const session = Effect.fn("Imap.session")(function* (settings: Settings, given?: Meter) {
     const address = yield* admit(settings);
     const bounds = yield* Effect.all({
       connect: ContractLimits.get("imap.session.connect"),
@@ -717,6 +741,11 @@ export const make = Effect.gen(function* () {
       received: 0
     };
     const target: Network.Target = { host: settings.host, address, port: settings.port };
+    const meter: Meter = given ?? {
+      received: 0,
+      limit: bounds.bytes,
+      limitId: "imap.session.bytes"
+    };
     const client = new CheckedImapFlow(
       {
         host: settings.host,
@@ -730,7 +759,7 @@ export const make = Effect.gen(function* () {
           host: settings.host,
           destination: network.destination(target),
           ca: network.ca(settings.host),
-          budget: bounds.bytes,
+          meter,
           progress
         }),
         logger: false,
@@ -748,7 +777,10 @@ export const make = Effect.gen(function* () {
     // A session's errors arrive as events too; one with no listener would throw.
     client.on("error", (error: unknown) => {
       const bound = parserBounds[errorCode(error) ?? ""];
-      if (bound !== undefined) progress.overflow ??= bound;
+      if (bound !== undefined) {
+        progress.overflow ??= bound;
+        meter.overflow ??= bound;
+      }
     });
     yield* Effect.acquireRelease(
       Effect.callback<void, OpenError>((resume) => {
@@ -768,8 +800,8 @@ export const make = Effect.gen(function* () {
     return { client, progress };
   });
 
-  const open = (settings: Settings) =>
-    Effect.map(session(settings), ({ client }): ImapFlow => client);
+  const open = (settings: Settings, meter?: Meter) =>
+    Effect.map(session(settings, meter), ({ client }): ImapFlow => client);
 
   const inspect = Effect.fn("Imap.inspect")(function* (settings: Settings) {
     const deadline = yield* ContractLimits.get("imap.test.deadline");

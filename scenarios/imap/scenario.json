@@ -27,5 +27,12 @@
       "mail": "mail.json"
     }
   ],
-  "patches": []
+  "patches": [
+    {
+      "repo": "invoice-inbox",
+      "tier": 2,
+      "connections": ["imap/invoices"],
+      "description": "Fernhill's supplier invoices since a day, and a search across the inbox, read from the invoices mailbox without changing it."
+    }
+  ]
 }

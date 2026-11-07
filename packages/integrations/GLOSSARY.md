@@ -140,6 +140,26 @@ _Avoid_: email API, inbox call
 One of the reads Patchy writes for an Attio workspace, each its own runtime operation: `attio.listRecords`, `attio.getRecord`, `attio.getManyRecords`, `attio.listEntries`, `attio.getEntry` and `attio.listMembers`. Patchy builds every request from typed arguments and the snapshot the caller's client was generated from, and none writes.
 _Avoid_: CRM API, Attio query (Attio's own word for one request)
 
+**IMAP operation**:
+One of the reads Patchy writes for an IMAP mailbox, each its own runtime operation: `imap.listFolders`, `imap.folderStatus`, `imap.scanMessages`, `imap.listMessages`, `imap.searchMessages` and `imap.getMessages`. Patchy builds every command from typed arguments, opens folders with `EXAMINE` and fetches with `BODY.PEEK`, so none changes the mailbox or marks mail as read.
+_Avoid_: IMAP command (the protocol's own word for what Patchy sends)
+
+**Message ref**:
+How a patch names one IMAP message: `{ connection, folder, uidValidity, uid }`, its UID within the folder under one UIDVALIDITY, on the connection that answered it. One from an earlier UIDVALIDITY fails `mailbox_reset`; a gone UID is `not_found`. Message-ID is threading metadata, never identity.
+_Avoid_: message id
+
+**Scan checkpoint**:
+The durable mark an IMAP scan answers on every page: every message of the folder up to it is covered, under the folder's UIDVALIDITY. A patch stores it after the rows it covers and passes it as `after` to the next scan, which fixes a fresh bound. Its encoding stays readable across releases, since patches keep it.
+_Avoid_: cursor (which continues one call only), sync token
+
+**Mailbox gate**:
+The IMAP reads one server process lets run at once against one mailbox, its normalized host and login, shared by `patchy dev`, published patches and every connection to that mailbox, inside one per mail server and one per process. A call that can't pass them before its deadline is refused busy, having sent nothing.
+_Avoid_: rate limit (the mail server's own)
+
+**Session pool**:
+The logged-in IMAP sessions a server process keeps between reads, by company, connection and credential revision, closed after 30 seconds idle. A read owns the session it borrows until it settles, and one that ended on a deadline, an interruption, a bound or a broken connection is destroyed rather than returned. Test and the other admin steps never use it: they open a fresh session.
+_Avoid_: connection pool (a connection is the admin's credentialed instance)
+
 **Schema check**:
 The read each Attio call makes of its object's or list's current attributes beside its query. It fails `shape_mismatch` naming any snapshot attribute that's gone, archived, renamed, retyped or changed between one value and many, and nothing is decoded until it passes. A name another attribute took since reads under it if its type and cardinality match.
 _Avoid_: validation, schema refresh (an admin's Refresh takes a new snapshot)
@@ -181,7 +201,7 @@ How `patchy dev` runs an integration's operations, chosen per integration ([ADR-
 _Avoid_: Mock integration, production proxy
 
 **Dev read**:
-One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person. An Attio dev read carries the revision the repo was generated from, and the instance decodes by that snapshot of that connection.
+One live dev binding call: the instance runs a read the integration opts into on a connected connection of the machine token's company, as that token's person, and logs it as a machine call with no patch. Both local viewers read as the token's person. An Attio dev read carries the revision the repo was generated from, and the instance decodes by that snapshot of that connection. An IMAP dev read borrows from the same session pool and mailbox gate as published patches.
 _Avoid_: Dev proxy, impersonated read
 
 **Simulated write**:

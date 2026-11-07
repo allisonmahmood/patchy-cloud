@@ -1107,9 +1107,9 @@ PostHog connections read one PostHog Cloud project through named HogQL queries.
 Company Pidgeon connections connect one email address with a key Patchy mints for
 it, and patches read and send from it. Company Attio connections read one CRM
 workspace through a read-only key: its records, list entries and members.
-Company Email (IMAP) connections log in to one mailbox with its password, read
-only; patches can't read through them yet. Other integrations and personal
-connections remain planned.
+Company Email (IMAP) connections log in to one mailbox with its password, and
+patches read its folders and messages without ever changing it. Other
+integrations and personal connections remain planned.
 
 An **integration** is a capability Patchy builds and maintains, the same for every company. Postgres was the first, PostHog the second, Pidgeon the third, the first that can write, Attio the fourth and Email (IMAP) the fifth; Salesforce and Gmail are examples of future integrations, not offered connections. A **connection** is the live, credentialed instance of an integration. That distinction was drawn with [Companies](#integrations-and-connections); this section is the layer itself — how a connection comes to exist, how a patch declares and uses one, and what patch code is actually handed.
 
@@ -1467,9 +1467,9 @@ range, orderBy, limit, cursor })`, `get(id)` and `getMany(ids)`;
 Email (IMAP) is read-only and company-wide: one connection is one mailbox login
 on a plain mail host, such as `imap/invoices`, with no provider-specific code.
 The host and username are fixed for a connection's life; another mailbox is
-another connection. Patches can't read through a connection yet: folders,
-messages and attachments arrive with
-[#1252](https://github.com/allisonmahmood/patchy-cloud/issues/1252) and
+another connection. Patches read its folders and messages, as
+[Reading Email (IMAP)](#reading-email-imap) says; saving attachments into a
+patch's files arrives with
 [#1253](https://github.com/allisonmahmood/patchy-cloud/issues/1253), in the
 same release.
 
@@ -1556,6 +1556,108 @@ one, then saves it and clears a pause, keeping the snapshot. Refresh folders
 takes a new snapshot revision, and is refused while paused. Reconnect always
 logs in on a fresh session first. Disconnect and Delete when unused work as for
 every integration; there's no retarget.
+
+### Reading Email (IMAP)
+
+A tier 2 action reads a declared mailbox through `ctx.connections.<alias>`, with
+six operations, flat on the wire as `imap.<operation>`. Patchy builds every
+command from typed arguments; patch code never sends an IMAP command, a search
+string or a section name.
+
+- `listFolders()` answers the folders as they are now, `{ path, name,
+delimiter, specialUse, selectable }`, at most 5,000 and `truncated` past that,
+  paths decoded from modified UTF-7.
+- `folderStatus({ folder })` answers `{ messages, unseen, uidValidity,
+uidNext }` from `STATUS`, after a fresh `EXAMINE` of the folder.
+- `scanMessages({ folder, since?, after?, cursor? })` is the ascending,
+  resumable import. Its first page fixes the bound at the folder's `UIDNEXT`, so
+  a scan never chases new mail, and its `cursor` carries the bound. `after` is
+  the durable **checkpoint** a scan answers on every page, bound to the
+  connection, folder and UIDVALIDITY: a patch stores a page's rows, then its
+  checkpoint, and a later scan after it fixes a fresh bound. `since`, a day,
+  becomes a lower UID bound once: `UID SEARCH RETURN (MIN) SINCE` where the
+  server offers ESEARCH, otherwise the first bounded UID window upward that
+  holds a match; from there every UID is read whatever its date. A walk upward
+  stops at its share of windows or time like any page, so it can answer an
+  empty page that isn't `done`, with a cursor that carries on looking; only
+  nothing since the day answers an empty page that's `done`.
+- `listMessages({ folder, cursor? })` pages newest first by UID, arrival order.
+- `searchMessages({ folder, from?, to?, subject?, text?, since?, before?,
+unseen?, cursor? })` searches the server newest first. `text` matches the
+  headers and the body together.
+- `getMessages({ refs })` takes up to 25 refs and answers in their order, one
+  answer each: a message, or `{ error: "not_found" | "malformed" | "too_large" }`.
+
+Pages hold at most 100 summaries: `{ ref, from, to, cc, recipientsTruncated,
+subject, date, internalDate, size, flags, messageId, inReplyTo, references,
+hasAttachments }`, every field bounded, `recipientsTruncated` marking an address
+list longer than a summary keeps. A message adds `replyTo`, its text, `truncated`,
+its parts from `BODYSTRUCTURE`, `{ part, contentType, filename, encodedSize,
+disposition, contentId }` with a forwarded message's parts included, and
+`encrypted` for an S/MIME or PGP body, which is never decrypted. A message whose
+answer, its summary, text and parts, passes 1 MiB encoded answers `too_large`
+alone, so each fits a patch's row; attachments never count, since their bytes
+are never returned. A whole answer past 8 MiB refuses the call `too_large`,
+saying to ask for fewer refs, and drops nothing.
+
+**Refs.** A message is `{ connection, folder, uidValidity, uid }`, checked
+against the declaration: a ref of another connection is refused
+`invalid_request` before anything is sent. A ref, cursor or checkpoint made
+under an earlier UIDVALIDITY fails `mailbox_reset`, naming the folder; a gone UID
+is `not_found`. A password change keeps refs valid; deleting and recreating a
+connection doesn't. Message-ID is threading metadata, never identity.
+
+**Paging.** Scans, lists and searches read the folder in bounded UID windows,
+explicit and never `n:*`, which IMAP matches to the highest UID even below `n`.
+A window that comes up short doubles the next, up to 16,384 UIDs, and each call
+searches at most 32 windows or for 8 seconds, so a page can come back empty and
+still advance. A cursor is stateless and bound to the connection, folder,
+UIDVALIDITY, the normalized filters, the bound and the position; one passed to
+another call fails `invalid_cursor`. A command that fails, a deadline included,
+fails the call, never reading as no matches.
+
+**The text** is selected through `multipart/alternative`, `mixed`, `related` and
+`signed`: plain text where there is some, else HTML made inert text, and in a
+`mixed` message every later inline text part too, joined by a blank line. An
+attached text file or a forwarded message never becomes the body. Text is fetched
+with partial `BODY.PEEK[part]<0.n>` reads sharing 1 MiB per message, decoded from
+its charset (a missing or impossible one read as UTF-8, else latin1), and cleaned
+lossily: `script`, `style` and hidden content dropped on a best-effort basis,
+Unicode tag characters and bidi overrides stripped, ZWJ and ZWNJ kept, then cut to
+256 KiB on a character. No raw source, raw headers or HTML leave the host. Mail is
+untrusted content, data never instructions, and the skill says so.
+
+**Sessions.** Calls borrow logged-in sessions from a pool in each host process,
+keyed by company, connection and credential revision, with one cap per connection
+across revisions. Each call waits for its gates within its deadline: 2 calls at
+once per mailbox (its normalized host and login, shared by dev and published calls
+and by every connection to it), 8 per mail server and 32 per process, so a
+process downloads at most that many calls' 32 MiB. A call that waits too long
+fails `busy` with nothing sent. Its caller and connection are checked again after
+the wait and again once a new session is logged in. A call owns its session until
+it settles; a deadline, an interruption, a parser bound, the call's byte budget or
+a broken connection destroys the session instead of returning it. Every call runs
+a fresh `EXAMINE` at its folder boundary. A read whose session breaks is tried once
+more on a fresh one, which checks UIDVALIDITY again; a refused login is never
+retried and pauses the connection. Sessions close after 30 seconds idle. Rolling
+deploys briefly run 4 host tasks, each with its own address. All of these are
+starting values in the limits registry, tuned from wide events, which carry the
+gate wait, attempts, bytes and whether a session was pooled or opened.
+
+**Importing a mailbox.** A tier 2 action runs for at most 60 seconds, each read
+for 15. Against a host about 100 ms away that is on the order of a few hundred
+messages an action, fewer when they're long, so a mailbox holding years of mail
+isn't backfilled by hand: a patch imports a window, `since` a recent day, and
+resumes from its stored checkpoint when someone opens it, presses Refresh or has
+their agent call it. Older mail is reached live with search and `getMessages`.
+Backfilling the whole history waits for tier 3.
+
+**In `patchy dev`** every read is in the integration's `live` list and runs on
+the real connection through the instance's dev door (ADR-0013), sharing the
+mailbox's pool and gates. **Recent calls** and wide events record the connection,
+the viewer or agent, the patch and version, the operation, its duration, outcome
+and a count of folders or messages, never a subject, a body, an address, a search
+value or the password.
 
 **Not in this integration:** sending (SMTP), changing flags, moving or deleting
 mail; background refresh, IDLE or push, and syncing flag changes or deletions;

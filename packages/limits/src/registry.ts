@@ -469,6 +469,285 @@ export const registry = {
     refusal: null,
     overridable: false
   },
+  "runtime.imap.bytes": {
+    kind: "contract",
+    default: 262144,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "IMAP operation arguments: a folder, search values, a cursor or checkpoint, and up to 25 refs",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.call.bytes": {
+    kind: "contract",
+    default: 33554432,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "Raw bytes one IMAP read receives from the mail server across all its commands, its text fetches included; past it the session is destroyed",
+    refusal: "too_large",
+    overridable: false
+  },
+  "imap.calls.concurrent": {
+    kind: "contract",
+    default: 2,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "IMAP reads at once in one server process per mailbox, its normalized host and login, shared by dev and published calls and by every connection to that mailbox; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "imap.server.concurrent": {
+    kind: "contract",
+    default: 8,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "IMAP reads at once in one server process per mail server, across its mailboxes; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "imap.host.concurrent": {
+    kind: "contract",
+    default: 32,
+    unit: "calls",
+    scope: "host",
+    measure:
+      "IMAP reads at once in one server process across every mail server, each within imap.call.bytes, which bounds the mail a process downloads at once; an excess call waits within its deadline",
+    refusal: "busy",
+    overridable: false
+  },
+  "imap.sessions.idle": {
+    kind: "contract",
+    default: 30000,
+    unit: "milliseconds",
+    scope: "host",
+    measure:
+      "How long a logged-in IMAP session waits in a server process's pool for its next call before it logs out",
+    refusal: null,
+    overridable: false
+  },
+  "imap.sessions.pooled": {
+    kind: "contract",
+    default: 2,
+    unit: "sessions",
+    scope: "host",
+    measure:
+      "Idle IMAP sessions a server process keeps per connection, across its credential revisions; past it the oldest logs out",
+    refusal: null,
+    overridable: false
+  },
+  "imap.page.messages": {
+    kind: "contract",
+    default: 100,
+    unit: "messages",
+    scope: "viewer",
+    measure: "Message summaries one scanMessages, listMessages or searchMessages page answers",
+    refusal: null,
+    overridable: false
+  },
+  "imap.window.uids": {
+    kind: "contract",
+    default: 1024,
+    unit: "UIDs",
+    scope: "viewer",
+    measure:
+      "The width of the first UID window an IMAP page searches; a window that comes up short doubles the next",
+    refusal: null,
+    overridable: false
+  },
+  "imap.window.maxUids": {
+    kind: "contract",
+    default: 16384,
+    unit: "UIDs",
+    scope: "viewer",
+    measure:
+      "The widest UID window an IMAP page searches, so no search answers more numbers than this",
+    refusal: null,
+    overridable: false
+  },
+  "imap.scan.windows": {
+    kind: "contract",
+    default: 32,
+    unit: "windows",
+    scope: "viewer",
+    measure:
+      "UID windows one scanMessages, listMessages or searchMessages call searches before it answers what it has, with a cursor to go on",
+    refusal: null,
+    overridable: false
+  },
+  "imap.scan.milliseconds": {
+    kind: "contract",
+    default: 8000,
+    unit: "milliseconds",
+    scope: "viewer",
+    measure:
+      "Time into one scanMessages, listMessages or searchMessages call after which it starts no further UID window; the first always runs",
+    refusal: null,
+    overridable: false
+  },
+  "imap.getMessages.refs": {
+    kind: "contract",
+    default: 25,
+    unit: "refs",
+    scope: "viewer",
+    measure: "Refs one IMAP getMessages call reads",
+    refusal: null,
+    overridable: false
+  },
+  "imap.message.text": {
+    kind: "contract",
+    default: 262144,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "UTF-8 bytes of one message's cleaned text; past it the text is cut on a character and marked truncated",
+    refusal: null,
+    overridable: false
+  },
+  "imap.message.textFetch": {
+    kind: "contract",
+    default: 1048576,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "Raw bytes of one message's text parts a read fetches, shared between them; past it the text is marked truncated",
+    refusal: null,
+    overridable: false
+  },
+  "imap.message.depth": {
+    kind: "contract",
+    default: 10,
+    unit: "levels",
+    scope: "viewer",
+    measure:
+      "MIME nesting a message's structure may have, its root counted; deeper answers malformed",
+    refusal: null,
+    overridable: false
+  },
+  "imap.message.parts": {
+    kind: "contract",
+    default: 500,
+    unit: "parts",
+    scope: "viewer",
+    measure:
+      "Nodes in one message's MIME structure, containers and leaves together; more answers malformed",
+    refusal: null,
+    overridable: false
+  },
+  "imap.summary.addresses": {
+    kind: "contract",
+    default: 100,
+    unit: "addresses",
+    scope: "viewer",
+    measure:
+      "Addresses kept of one From, To, Cc or Reply-To list; a cut list marks the summary recipientsTruncated",
+    refusal: null,
+    overridable: false
+  },
+  "imap.summary.addressBytes": {
+    kind: "contract",
+    default: 16384,
+    unit: "bytes",
+    scope: "viewer",
+    measure:
+      "Encoded bytes of one From, To, Cc or Reply-To list; addresses past it are left off and the summary marked recipientsTruncated",
+    refusal: null,
+    overridable: false
+  },
+  "imap.summary.references": {
+    kind: "contract",
+    default: 32,
+    unit: "message IDs",
+    scope: "viewer",
+    measure:
+      "Message-IDs kept of a References header: the first, which starts the thread, and the latest",
+    refusal: null,
+    overridable: false
+  },
+  "imap.summary.referencesBytes": {
+    kind: "contract",
+    default: 16384,
+    unit: "bytes",
+    scope: "viewer",
+    measure: "Bytes of a message's References header a summary reads",
+    refusal: null,
+    overridable: false
+  },
+  "imap.summary.flags": {
+    kind: "contract",
+    default: 50,
+    unit: "flags",
+    scope: "viewer",
+    measure: "Flags kept of one message",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.name": {
+    kind: "contract",
+    default: 255,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One filename, content type, content ID or address's display name, as display text",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.address": {
+    kind: "contract",
+    default: 320,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One email address; a longer one is left out, never cut",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.subject": {
+    kind: "contract",
+    default: 1000,
+    unit: "characters",
+    scope: "viewer",
+    measure: "A message's subject, as display text",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.messageId": {
+    kind: "contract",
+    default: 255,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One Message-ID with its angle brackets; a longer one is left out, never cut",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.flag": {
+    kind: "contract",
+    default: 64,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One message flag; a longer one is left out",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.folder": {
+    kind: "contract",
+    default: 1024,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One folder path in a call, a ref or a listed folder",
+    refusal: null,
+    overridable: false
+  },
+  "imap.text.search": {
+    kind: "contract",
+    default: 256,
+    unit: "characters",
+    scope: "viewer",
+    measure: "One IMAP search value: from, to, subject or text",
+    refusal: null,
+    overridable: false
+  },
   "tier2.query.deadline": {
     kind: "contract",
     default: 3000,

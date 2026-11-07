@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { attioReads } from "./attio.js";
+import { imapReads } from "./imap.js";
 import { PidgeonDevRead } from "./pidgeon.js";
 import { PostHogDevQuery } from "./posthog.js";
 
@@ -38,6 +39,14 @@ const attio = <const Name extends keyof typeof attioReads>(name: Name) =>
     args: attioReads[name].input
   });
 
+/** An IMAP read: the mailbox as it is now, so the connection needs no revision. */
+const imap = <const Name extends keyof typeof imapReads>(name: Name) =>
+  Schema.Struct({
+    op: Schema.Literal(`imap.${name}`),
+    connection: DevReadConnection,
+    args: imapReads[name].input
+  });
+
 /** Every operation an integration lets dev read live, with its exact arguments. Never a write. */
 export const DevRead = Schema.Union([
   Schema.Struct({
@@ -55,6 +64,12 @@ export const DevRead = Schema.Union([
   attio("getManyRecords"),
   attio("listEntries"),
   attio("getEntry"),
-  attio("listMembers")
+  attio("listMembers"),
+  imap("listFolders"),
+  imap("folderStatus"),
+  imap("scanMessages"),
+  imap("listMessages"),
+  imap("searchMessages"),
+  imap("getMessages")
 ]).annotate({ identifier: "DevRead" });
 export type DevRead = typeof DevRead.Type;

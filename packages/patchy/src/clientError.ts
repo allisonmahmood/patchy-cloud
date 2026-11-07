@@ -34,19 +34,22 @@ export const errorCodes = {
   limit_exceeded: true,
   offset_exhausted: true,
   source_rate_limited: true,
-  idempotency_conflict: true
+  idempotency_conflict: true,
+  auth_failed: true,
+  mailbox_reset: true
 } as const;
 export type ErrorCode = keyof typeof errorCodes;
 export type RelationIdentifier = { readonly schema: string; readonly name: string };
 type ColumnReason = "missing" | "duplicate" | "type" | "null" | "value" | "row_width";
 /**
  * Details follow the integration an operation belongs to. Postgres's are the default, so code
- * that narrows on the code alone keeps its types; PostHog's, Pidgeon's and Attio's need its
+ * that narrows on the code alone keeps its types; PostHog's, Pidgeon's, Attio's and IMAP's need its
  * operation or integration.
  */
 type PostHogOperation = `posthog.${string}`;
 type PidgeonOperation = `pidgeon.${string}`;
 type AttioOperation = `attio.${string}`;
+type ImapOperation = `imap.${string}`;
 /** Pidgeon's refusals that carry its own details. */
 type PidgeonDetails<C extends ErrorCode> = C extends "source_rate_limited"
   ? {
@@ -124,6 +127,22 @@ export type AttioShapeMismatchDetails = AttioWhere & {
     | "value";
   readonly renamedTo?: string;
 };
+/** IMAP's refusals that carry their own details: never a subject, address or search value. */
+type ImapDetails<C extends ErrorCode> = C extends "mailbox_reset" | "not_found"
+  ? {
+      /**
+       * `mailbox_reset`: the folder whose UIDVALIDITY changed, so refs, cursors and checkpoints
+       * from before name other messages now: scan it again from the start. `not_found`: the folder
+       * that can't be opened.
+       */
+      readonly folder: string;
+    }
+  : C extends "source_unavailable"
+    ? {
+        /** The requirement an admin's Test would name, when the mailbox stopped meeting one. */
+        readonly reason?: string;
+      }
+    : Readonly<Record<string, unknown>>;
 export type ShapeMismatchDetails<O extends string = string> = O extends AttioOperation
   ? AttioShapeMismatchDetails
   : O extends PostHogOperation
@@ -135,47 +154,48 @@ export type ShapeMismatchDetails<O extends string = string> = O extends AttioOpe
       }
     : | { readonly column: string; readonly reason: ColumnReason }
       | { readonly relation: RelationIdentifier; readonly reason: "source_schema_changed" };
-export type ErrorDetails<C extends ErrorCode, O extends string = string> = C extends
-  "source_rate_limited" | "access_denied" | "invalid_request"
-  ? O extends PidgeonOperation
-    ? PidgeonDetails<C>
-    : O extends AttioOperation
-      ? AttioDetails<C>
-      : Readonly<Record<string, unknown>>
-  : C extends "idempotency_conflict"
-    ? {
-        /**
-         * `mismatch`: the draft's key already went with different mail, or from another key.
-         * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
-         */
-        readonly reason: "mismatch" | "in_progress";
-      }
-    : C extends "invalid_query"
-      ? O extends PostHogOperation
-        ? { readonly message: string }
-        : O extends AttioOperation
-          ? AttioWhere & {
-              /** Attio's code for a request Patchy built wrong: Patchy's defect, to report. */
-              readonly reason: string;
-            }
-          : { readonly sqlstate: string; readonly message: string; readonly position?: string }
-      : C extends "shape_mismatch"
-        ? ShapeMismatchDetails<O>
-        : C extends "not_found"
-          ? O extends AttioOperation
-            ? AttioWhere
-            : Readonly<Record<string, unknown>>
-          : C extends "relation_unknown"
-            ? { readonly relation: RelationIdentifier }
-            : C extends "offset_exhausted"
-              ? { readonly maxOffset: 10000 }
-              : C extends "too_large"
-                ? {
-                    readonly maxRows?: 1000;
-                    readonly maxItems?: number;
-                    readonly maxBytes?: number;
-                  }
-                : Readonly<Record<string, unknown>>;
+export type ErrorDetails<C extends ErrorCode, O extends string = string> = O extends ImapOperation
+  ? ImapDetails<C>
+  : C extends "source_rate_limited" | "access_denied" | "invalid_request"
+    ? O extends PidgeonOperation
+      ? PidgeonDetails<C>
+      : O extends AttioOperation
+        ? AttioDetails<C>
+        : Readonly<Record<string, unknown>>
+    : C extends "idempotency_conflict"
+      ? {
+          /**
+           * `mismatch`: the draft's key already went with different mail, or from another key.
+           * `in_progress`: the first send is still running; send the same draft after `retryAfter`.
+           */
+          readonly reason: "mismatch" | "in_progress";
+        }
+      : C extends "invalid_query"
+        ? O extends PostHogOperation
+          ? { readonly message: string }
+          : O extends AttioOperation
+            ? AttioWhere & {
+                /** Attio's code for a request Patchy built wrong: Patchy's defect, to report. */
+                readonly reason: string;
+              }
+            : { readonly sqlstate: string; readonly message: string; readonly position?: string }
+        : C extends "shape_mismatch"
+          ? ShapeMismatchDetails<O>
+          : C extends "not_found"
+            ? O extends AttioOperation
+              ? AttioWhere
+              : Readonly<Record<string, unknown>>
+            : C extends "relation_unknown"
+              ? { readonly relation: RelationIdentifier }
+              : C extends "offset_exhausted"
+                ? { readonly maxOffset: 10000 }
+                : C extends "too_large"
+                  ? {
+                      readonly maxRows?: 1000;
+                      readonly maxItems?: number;
+                      readonly maxBytes?: number;
+                    }
+                  : Readonly<Record<string, unknown>>;
 
 export class PatchyError<C extends ErrorCode = ErrorCode, O extends string = string> extends Error {
   override readonly name = "PatchyError";
@@ -203,7 +223,7 @@ export type Errors<C extends ErrorCode, O extends string = string> = {
   [K in C]: PatchyError<K, O>;
 }[C];
 /** The integrations whose refusals carry their own details. */
-type Integration = "postgres" | "posthog" | "pidgeon" | "attio";
+type Integration = "postgres" | "posthog" | "pidgeon" | "attio" | "imap";
 /**
  * An integration or one of its operations. Each names exactly one integration, so the details
  * it narrows to are never a guess.

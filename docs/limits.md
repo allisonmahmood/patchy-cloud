@@ -66,6 +66,35 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `imap.parser.literal` | contract | 4194304 | bytes | company | One IMAP literal in a response; past it the session is destroyed | `too_large` | No | release |
 | `imap.parser.response` | contract | 8388608 | bytes | company | One whole IMAP response, its lines and literals together; past it the session is destroyed | `too_large` | No | release |
 | `imap.snapshot.folders` | contract | 5000 | folders | company | Folders one IMAP snapshot keeps, in the order LIST names them; past it the snapshot is marked truncated | None | No | release |
+| `runtime.imap.bytes` | contract | 262144 | bytes | viewer | IMAP operation arguments: a folder, search values, a cursor or checkpoint, and up to 25 refs | `too_large` | No | release |
+| `imap.call.bytes` | contract | 33554432 | bytes | viewer | Raw bytes one IMAP read receives from the mail server across all its commands, its text fetches included; past it the session is destroyed | `too_large` | No | release |
+| `imap.calls.concurrent` | contract | 2 | calls | host | IMAP reads at once in one server process per mailbox, its normalized host and login, shared by dev and published calls and by every connection to that mailbox; an excess call waits within its deadline | `busy` | No | release |
+| `imap.server.concurrent` | contract | 8 | calls | host | IMAP reads at once in one server process per mail server, across its mailboxes; an excess call waits within its deadline | `busy` | No | release |
+| `imap.host.concurrent` | contract | 32 | calls | host | IMAP reads at once in one server process across every mail server, each within imap.call.bytes, which bounds the mail a process downloads at once; an excess call waits within its deadline | `busy` | No | release |
+| `imap.sessions.idle` | contract | 30000 | milliseconds | host | How long a logged-in IMAP session waits in a server process's pool for its next call before it logs out | None | No | release |
+| `imap.sessions.pooled` | contract | 2 | sessions | host | Idle IMAP sessions a server process keeps per connection, across its credential revisions; past it the oldest logs out | None | No | release |
+| `imap.page.messages` | contract | 100 | messages | viewer | Message summaries one scanMessages, listMessages or searchMessages page answers | None | No | release |
+| `imap.window.uids` | contract | 1024 | UIDs | viewer | The width of the first UID window an IMAP page searches; a window that comes up short doubles the next | None | No | release |
+| `imap.window.maxUids` | contract | 16384 | UIDs | viewer | The widest UID window an IMAP page searches, so no search answers more numbers than this | None | No | release |
+| `imap.scan.windows` | contract | 32 | windows | viewer | UID windows one scanMessages, listMessages or searchMessages call searches before it answers what it has, with a cursor to go on | None | No | release |
+| `imap.scan.milliseconds` | contract | 8000 | milliseconds | viewer | Time into one scanMessages, listMessages or searchMessages call after which it starts no further UID window; the first always runs | None | No | release |
+| `imap.getMessages.refs` | contract | 25 | refs | viewer | Refs one IMAP getMessages call reads | None | No | release |
+| `imap.message.text` | contract | 262144 | bytes | viewer | UTF-8 bytes of one message's cleaned text; past it the text is cut on a character and marked truncated | None | No | release |
+| `imap.message.textFetch` | contract | 1048576 | bytes | viewer | Raw bytes of one message's text parts a read fetches, shared between them; past it the text is marked truncated | None | No | release |
+| `imap.message.depth` | contract | 10 | levels | viewer | MIME nesting a message's structure may have, its root counted; deeper answers malformed | None | No | release |
+| `imap.message.parts` | contract | 500 | parts | viewer | Nodes in one message's MIME structure, containers and leaves together; more answers malformed | None | No | release |
+| `imap.summary.addresses` | contract | 100 | addresses | viewer | Addresses kept of one From, To, Cc or Reply-To list; a cut list marks the summary recipientsTruncated | None | No | release |
+| `imap.summary.addressBytes` | contract | 16384 | bytes | viewer | Encoded bytes of one From, To, Cc or Reply-To list; addresses past it are left off and the summary marked recipientsTruncated | None | No | release |
+| `imap.summary.references` | contract | 32 | message IDs | viewer | Message-IDs kept of a References header: the first, which starts the thread, and the latest | None | No | release |
+| `imap.summary.referencesBytes` | contract | 16384 | bytes | viewer | Bytes of a message's References header a summary reads | None | No | release |
+| `imap.summary.flags` | contract | 50 | flags | viewer | Flags kept of one message | None | No | release |
+| `imap.text.name` | contract | 255 | characters | viewer | One filename, content type, content ID or address's display name, as display text | None | No | release |
+| `imap.text.address` | contract | 320 | characters | viewer | One email address; a longer one is left out, never cut | None | No | release |
+| `imap.text.subject` | contract | 1000 | characters | viewer | A message's subject, as display text | None | No | release |
+| `imap.text.messageId` | contract | 255 | characters | viewer | One Message-ID with its angle brackets; a longer one is left out, never cut | None | No | release |
+| `imap.text.flag` | contract | 64 | characters | viewer | One message flag; a longer one is left out | None | No | release |
+| `imap.text.folder` | contract | 1024 | characters | viewer | One folder path in a call, a ref or a listed folder | None | No | release |
+| `imap.text.search` | contract | 256 | characters | viewer | One IMAP search value: from, to, subject or text | None | No | release |
 | `tier2.query.deadline` | contract | 3000 | milliseconds | viewer | Query caller deadline; read transaction cancellation starts at this deadline | `handler_timeout` | No | release |
 | `tier2.mutation.deadline` | contract | 5000 | milliseconds | viewer | Mutation deadline including queue wait and all attempts; cancellation starts here | `handler_timeout` | No | release |
 | `tier2.action.deadline` | contract | 60000 | milliseconds | viewer | Action caller deadline; children use the lesser of their deadline and the remaining parent budget | `handler_timeout` | No | release |

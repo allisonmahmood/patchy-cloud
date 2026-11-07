@@ -90,7 +90,13 @@ const connections: Readonly<Record<string, true>> = {
   "attio.getManyRecords": true,
   "attio.listEntries": true,
   "attio.getEntry": true,
-  "attio.listMembers": true
+  "attio.listMembers": true,
+  "imap.listFolders": true,
+  "imap.folderStatus": true,
+  "imap.scanMessages": true,
+  "imap.listMessages": true,
+  "imap.searchMessages": true,
+  "imap.getMessages": true
 };
 const allowed = (kind: HandlerKind, op: string) =>
   op === "log" ||
@@ -125,7 +131,8 @@ const bounded = (
     | "runtime.postgres.bytes"
     | "runtime.posthog.bytes"
     | "runtime.pidgeon.bytes"
-    | "runtime.attio.bytes",
+    | "runtime.attio.bytes"
+    | "runtime.imap.bytes",
   value: number
 ): RuntimeFailure => ({
   ok: false,
@@ -162,7 +169,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
     postgresBytes: ContractLimits.get("runtime.postgres.bytes"),
     posthogBytes: ContractLimits.get("runtime.posthog.bytes"),
     pidgeonBytes: ContractLimits.get("runtime.pidgeon.bytes"),
-    attioBytes: ContractLimits.get("runtime.attio.bytes")
+    attioBytes: ContractLimits.get("runtime.attio.bytes"),
+    imapBytes: ContractLimits.get("runtime.imap.bytes")
   });
   const callback = Effect.fn("CallbackGateway.callback")(function* (
     token: string,
@@ -253,7 +261,8 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
       argsLimitId === "runtime.postgres.bytes" ||
       argsLimitId === "runtime.posthog.bytes" ||
       argsLimitId === "runtime.pidgeon.bytes" ||
-      argsLimitId === "runtime.attio.bytes"
+      argsLimitId === "runtime.attio.bytes" ||
+      argsLimitId === "runtime.imap.bytes"
     ) {
       const maxBytes =
         argsLimitId === "runtime.postgres.bytes"
@@ -262,7 +271,9 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
             ? limits.posthogBytes
             : argsLimitId === "runtime.pidgeon.bytes"
               ? limits.pidgeonBytes
-              : limits.attioBytes;
+              : argsLimitId === "runtime.attio.bytes"
+                ? limits.attioBytes
+                : limits.imapBytes;
       if (Buffer.byteLength(encodeJson({ op: request.op, args: request.args })) > maxBytes)
         return remember(bounded(argsLimitId, maxBytes), 413);
     }

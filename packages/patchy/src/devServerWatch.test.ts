@@ -57,7 +57,12 @@ const save = Effect.fnUntraced(function* (file: string, source: string) {
 });
 
 const inspectedChanges = Effect.fn("test.inspectedChanges")(function* (root: string) {
-  const next = yield* watch(root, toolchain, { sharedStores: [], pidgeon: [], attio: [] }, tables);
+  const next = yield* watch(
+    root,
+    toolchain,
+    { sharedStores: [], pidgeon: [], attio: [], imap: [] },
+    tables
+  );
   const observed = next.pipe(
     Effect.flatMap(({ inspect, ...build }) =>
       inspect.pipe(Effect.map((handlers) => ({ ...build, handlers })))
@@ -305,7 +310,8 @@ it.live(
         buildServer(root, ["leads"], ["intake", "leads", "more"], toolchain, {
           sharedStores: [],
           pidgeon: [],
-          attio: []
+          attio: [],
+          imap: []
         })
       );
       assert.deepInclude(yield* Inspection.inspect(published.server).pipe(Effect.flip), {
@@ -370,7 +376,8 @@ it.live(
         buildServer(root, [], ["__proto__", "leads", "more"], toolchain, {
           sharedStores: [],
           pidgeon: [],
-          attio: []
+          attio: [],
+          imap: []
         })
       );
       assert.deepStrictEqual(built.agentTools, { count: "__proto__", read: "leads" });
@@ -477,7 +484,12 @@ export const read = query({ args: {}, result: t.json(), handler: () => optionalM
       );
       const build = Effect.tryPromise({
         try: () =>
-          buildServer(root, ["leads"], [], toolchain, { sharedStores: [], pidgeon: [], attio: [] }),
+          buildServer(root, ["leads"], [], toolchain, {
+            sharedStores: [],
+            pidgeon: [],
+            attio: [],
+            imap: []
+          }),
         catch: (cause) => cause
       });
       assert.deepInclude(yield* build.pipe(Effect.flip), { code: "invalid_manifest" });
