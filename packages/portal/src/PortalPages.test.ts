@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { TestClock } from "effect/testing";
 import * as Cookies from "effect/http/Cookies";
@@ -14,6 +15,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import {
@@ -27,7 +30,13 @@ import {
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import { DeviceLogins, MachineTokens, RequireSession, Session, SetupLinks } from "@patchy/auth";
-import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
+import {
+  clerkEnv,
+  PUBLIC_BASE_URL,
+  publishableKey,
+  signedInCookies,
+  signSession
+} from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
@@ -36,8 +45,9 @@ import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
+import * as SwitcherList from "./SwitcherList.js";
 import { InvocationLog, Prewarm, RuntimeLog, Wakes } from "@patchy/runtime";
-import { NodeCryptography } from "@patchy/core";
+import { Cryptography, NodeCryptography, WhatsNew } from "@patchy/core";
 
 const DAY = 24 * 60 * 60 * 1_000;
 const events: Analytics.AnalyticsEvent[] = [];
@@ -54,8 +64,9 @@ const reported = (patchId: string) =>
       "patchId" in event.properties &&
       event.properties.patchId === patchId
   );
-const routes = Layer.merge(
+const routes = Layer.mergeAll(
   PortalPages.layer,
+  SwitcherList.layer,
   HttpRouter.use((router) => router.add("GET", "/", RequireSession.withViewer(PortalPages.index)))
 );
 /** A company's user lifecycle events, as `[name, principal, user]`. */
@@ -66,9 +77,36 @@ const lifecycleEvents = (companyId: string) =>
       ? [[event.name, event.principalId, event.properties.userId]]
       : []
   );
+/** The cookies Clerk's backend answers a session refresh with, which a case sets. */
+const clerk = { refreshed: [] as Array<string> };
+const clerkBackend = HttpRouter.serve(
+  HttpRouter.use((router) =>
+    router.add(
+      "POST",
+      "/v1/sessions/:sid/refresh",
+      Effect.sync(() =>
+        HttpServerResponse.jsonUnsafe({ object: "cookies", cookies: clerk.refreshed })
+      )
+    )
+  ),
+  { disableLogger: true, disableListenLog: true }
+).pipe(
+  // A server of its own: layers memoize by reference, and the portal's routes use this one.
+  Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest))
+);
+/** Sessions as production reads them, with that stub as Clerk's backend. */
+const session = Layer.unwrap(
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    if (server.address._tag === "UnixPathAddress") return yield* Effect.die("Expected TCP");
+    return Session.layer.pipe(
+      Layer.provide(Layer.succeed(Session.backendApiUrl)(`http://127.0.0.1:${server.address.port}`))
+    );
+  })
+).pipe(Layer.provide(clerkBackend));
 const services = Layer.mergeAll(
   GuestGrants.layer.pipe(Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer))),
-  Session.layer,
+  session,
   Companies.layer,
   InvocationLog.layer,
   MachineTokens.layer,
@@ -4494,6 +4532,239 @@ it.layer(prewarmLayer)("prewarms on a socket", (it) => {
       yield* publish(other.owner, "just-a-page");
       yield* (yield* request("/", other.member)).text;
       assert.strictEqual(prewarms.length, 2);
+    })
+  );
+});
+
+/** `/switcher.json` as a script on a Patchy page asks for it, unless `headers` say otherwise. */
+const switcher = (
+  person: Person | null,
+  headers: Record<string, string> = { "sec-fetch-site": "same-origin" }
+) => request("/switcher.json", person, undefined, headers);
+/** A person's switcher list, which no cache keeps. */
+const switcherList = Effect.fn("PortalPagesTest.switcherList")(function* (person: Person) {
+  const response = yield* switcher(person);
+  assert.strictEqual(response.status, 200);
+  assert.strictEqual(response.headers["cache-control"], "private, no-store");
+  return yield* response.json;
+});
+/** The list's own fields for `person`, a member who has never looked at What's new. */
+const listFor = (person: Person, handle: string) => ({
+  viewer: { id: person.id, companyId: person.companyId, role: person.role },
+  company: { handle, name: "Northwind" },
+  whatsNewUnseen: WhatsNew.changesSince(0).length
+});
+
+it.layer(layer)("the switcher's list", (it) => {
+  it.effect("lists the company's live patches with the viewer's own opens, and no one else's", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const other = yield* company();
+      const patches = yield* Patches.Patches;
+      const sql = yield* SqlClient.SqlClient;
+      const notes = yield* publish(workspace.owner, "team-notes", { title: "Team notes" });
+      const kit = yield* publish(workspace.admin, "press-kit", { scope: "public" });
+      const retired = yield* publish(workspace.owner, "old-board");
+      yield* patches.retire(retired.patchId, actor(workspace.owner));
+      const disabled = yield* publish(workspace.owner, "rota");
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${disabled.patchId}`;
+      yield* publish(other.owner, "their-notes");
+      yield* publish(other.owner, "their-kit", { scope: "public" });
+      yield* patches.recordOpen(workspace.member.id, notes.patchId, notes.versionId);
+      const rows = (viewer: Person) => ({
+        kit: {
+          id: kit.patchId,
+          name: "press-kit",
+          title: "press-kit",
+          tier: 1,
+          mine: viewer === workspace.admin
+        },
+        notes: {
+          id: notes.patchId,
+          name: "team-notes",
+          title: "Team notes",
+          tier: 1,
+          mine: viewer === workspace.owner,
+          ...(viewer === workspace.member ? { openedAt: "2026-01-01T00:00:00.000Z", score: 1 } : {})
+        }
+      });
+
+      // Each viewer's own patches come first; only the member opened Team notes.
+      const { member, owner, admin } = workspace;
+      for (const [viewer, order] of [
+        [member, ["kit", "notes"]],
+        [owner, ["notes", "kit"]],
+        [admin, ["kit", "notes"]]
+      ] as const)
+        assert.deepStrictEqual(yield* switcherList(viewer), {
+          ...listFor(viewer, workspace.handle),
+          patches: order.map((key) => rows(viewer)[key]),
+          shared: []
+        });
+    })
+  );
+
+  it.effect("lists what's shared with a guest while they can open it and it isn't public", () =>
+    Effect.gen(function* () {
+      const guests = yield* company();
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE companies SET name = 'Harbor Works' WHERE id = ${workspace.id}`;
+      const patches = yield* Patches.Patches;
+      const grants = yield* GuestGrants.GuestGrants;
+      const board = yield* publish(workspace.owner, "site-board");
+      const notes = yield* publish(workspace.owner, "site-notes", { title: "Site notes" });
+      const retired = yield* publish(workspace.owner, "old-notes");
+      yield* publish(workspace.owner, "price-list", { scope: "public" });
+      for (const patch of [board, notes, retired])
+        yield* grants.grant({
+          patchId: patch.patchId,
+          userId: guests.member.id,
+          grantedBy: workspace.owner.id
+        });
+      yield* patches.retire(retired.patchId, actor(workspace.owner));
+      const harbor = { handle: workspace.handle, name: "Harbor Works" };
+      const row = {
+        board: {
+          id: board.patchId,
+          company: harbor,
+          name: "site-board",
+          title: "site-board",
+          tier: 1
+        },
+        notes: {
+          id: notes.patchId,
+          company: harbor,
+          name: "site-notes",
+          title: "Site notes",
+          tier: 1
+        }
+      };
+      const listed = (...shared: ReadonlyArray<keyof typeof row>) =>
+        Effect.map(switcherList(guests.member), (body) =>
+          assert.deepStrictEqual(body, {
+            ...listFor(guests.member, guests.handle),
+            patches: [],
+            shared: shared.map((key) => row[key])
+          })
+        );
+
+      // Never Harbor Works' own public patch, nor one the guest can't open now.
+      yield* listed("board", "notes");
+      // The same grant drops a patch while it is public, and lists it once it isn't.
+      yield* patches.setScope(notes.patchId, actor(workspace.owner), "public");
+      yield* listed("board");
+      yield* patches.setScope(notes.patchId, actor(workspace.owner), "company");
+      yield* listed("board", "notes");
+      yield* grants.revoke({ patchId: board.patchId, userId: guests.member.id });
+      yield* listed("notes");
+      yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${notes.patchId}`;
+      yield* listed();
+    })
+  );
+
+  it.effect("answers only this origin's scripts and a signed-in member, in JSON", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const { member } = workspace;
+      const sql = yield* SqlClient.SqlClient;
+      const refused = Effect.fn("PortalPagesTest.refused")(function* (
+        response: HttpClientResponse.HttpClientResponse,
+        status: number,
+        code: string
+      ) {
+        assert.strictEqual(response.status, status);
+        assert.strictEqual(response.headers["cache-control"], "private, no-store");
+        assert.strictEqual(response.headers["content-type"], "application/json");
+        assert.deepInclude(yield* response.json, { ok: false, code });
+      });
+      const now = Math.floor(Date.now() / 1_000);
+      const stale = signedInCookies(
+        signSession({
+          sub: member.clerkUserId,
+          email: member.email,
+          name: member.name,
+          iat: now - 120,
+          nbf: now - 120,
+          exp: now - 60
+        })
+      );
+
+      // Refused before authentication, so a stale session gets no refresh: other sites, a
+      // page the browser opened itself, a request without fetch metadata, and machine tokens.
+      const { token } = yield* (yield* MachineTokens.MachineTokens).mint({
+        userId: member.id,
+        name: "Switcher test machine"
+      });
+      for (const cookie of [sessionCookie(member), stale, ""]) {
+        for (const site of ["cross-site", "same-site", "none"])
+          yield* refused(
+            yield* switcher(null, { cookie, "sec-fetch-site": site }),
+            403,
+            "access_denied"
+          );
+        yield* refused(yield* switcher(null, { cookie }), 403, "access_denied");
+        yield* refused(
+          yield* switcher(null, {
+            cookie,
+            "sec-fetch-site": "same-origin",
+            authorization: `Bearer ${token}`
+          }),
+          403,
+          "access_denied"
+        );
+      }
+
+      const sameOrigin = (cookie: string) =>
+        switcher(null, { cookie, "sec-fetch-site": "same-origin" });
+      yield* refused(yield* sameOrigin(stale), 401, "session_refresh_required");
+      yield* refused(yield* sameOrigin(""), 401, "session_expired");
+      // Signed in to Clerk, but not yet anyone's member.
+      const stranger = sessionCookie({
+        ...member,
+        clerkUserId: "clerk_switcher_stranger",
+        email: "stranger@patchy.local"
+      });
+      yield* refused(yield* sameOrigin(stranger), 403, "access_denied");
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${member.id}`;
+      yield* refused(yield* switcher(member), 403, "access_denied");
+    })
+  );
+
+  it.effect("keeps the session Clerk refreshed on the way", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const { member } = workspace;
+      const now = Math.floor(Date.now() / 1_000);
+      const claims = { sub: member.clerkUserId, email: member.email, name: member.name };
+      // Clerk refreshes an expired session itself when the browser also holds its refresh
+      // cookie, whose name carries the instance's suffix.
+      const digest = yield* (yield* Cryptography.Cryptography).digest("SHA-1", publishableKey());
+      const refresh = `__refresh_${Buffer.from(digest).toString("base64url").slice(0, 8)}`;
+      const token = signSession(claims);
+      clerk.refreshed = [
+        `__session=${token}; Path=/; SameSite=Lax`,
+        `${refresh}=refresh-new; Path=/; HttpOnly; SameSite=Lax`
+      ];
+      const expired = signedInCookies(
+        signSession({ ...claims, iat: now - 120, nbf: now - 120, exp: now - 60 })
+      );
+
+      const response = yield* switcher(null, {
+        cookie: `${expired}; ${refresh}=refresh-old`,
+        "sec-fetch-site": "same-origin"
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepInclude(yield* response.json, {
+        viewer: listFor(member, workspace.handle).viewer
+      });
+      assert.deepStrictEqual(
+        [
+          Cookies.getValue(response.cookies, "__session"),
+          Cookies.getValue(response.cookies, refresh)
+        ],
+        [Option.some(token), Option.some("refresh-new")]
+      );
     })
   );
 });

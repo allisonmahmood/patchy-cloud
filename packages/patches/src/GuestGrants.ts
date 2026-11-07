@@ -137,6 +137,7 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   companyName: Schema.String,
   grantedAt: Schema.Date,
   state: PatchState,
+  scope: SharingScope,
   tier: Schema.Int,
   uses: Manifest.fields.uses
 }) {}
@@ -170,6 +171,8 @@ export interface Shared {
   readonly title: string;
   readonly tier: number;
   readonly company: { readonly handle: string; readonly name: string };
+  /** The patch's sharing scope now: a grant outlives the patch going public and back. */
+  readonly scope: typeof SharingScope.Type;
   readonly grantedAt: Date;
   readonly unavailable: Option.Option<GuestReason>;
 }
@@ -424,7 +427,7 @@ export const make = Effect.gen(function* () {
     Result: SharedRow,
     execute: (userId) => sql`
       SELECT p.id AS "patchId", p.name, p.title, c.handle AS "companyHandle",
-        c.name AS "companyName", g.granted_at AS "grantedAt", ${state} AS state, v.tier,
+        c.name AS "companyName", g.granted_at AS "grantedAt", ${state} AS state, p.scope, v.tier,
         v.manifest->'uses' AS uses
       FROM patch_guest_grants g
       JOIN patches p ON p.id = g.patch_id
@@ -536,6 +539,7 @@ export const make = Effect.gen(function* () {
       title: row.title,
       tier: row.tier,
       company: { handle: row.companyHandle, name: row.companyName },
+      scope: row.scope,
       grantedAt: row.grantedAt,
       unavailable: unavailable(row, versionOf(row), blocked)
     }));
