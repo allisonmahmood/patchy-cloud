@@ -92,7 +92,9 @@ Scalar descriptors are `t.text()`, `t.integer()`, `t.number()`, `t.boolean()`,
 `t.timestamp()` and `t.json()`. Compose them with `t.object(fields)`,
 `t.array(element)`, `t.enum(values)` and `t.nullable(value)`. `t.row("table")`
 validates the full row, including its columns and system fields, not just its id.
-Results are readonly.
+Results are readonly. A row id argument is `t.text()`, a plain `string`; table
+methods take `Id<"table">`, a branded string type that `patchy/config` exports,
+so a `string` reaches them only through a cast such as `as Id<"table">`.
 
 A handler's `description` says what it does, and any handler value takes
 `.describe(text)`, such as `t.text().describe("The customer's legal name.")`.
@@ -140,9 +142,10 @@ All three kinds expose `ctx.members` when `uses.members` is declared. Read
 the assignment check. Only queries track directory dependencies. Directory
 reads use the platform database, outside the query's company-database snapshot.
 
-`ctx.viewer` is never null. Owned resources act as the patch, company data as
-the viewer. Server code holds no credential and has no direct network path;
-reach outside systems through declared company integrations in actions.
+`ctx.viewer` is never null. It is the `Me` a page's `me()` returns:
+`{ user: { id, name, email }, company: { id, handle, name }, admin: boolean, guest?: true }`.
+Owned resources act as the patch, company data as the viewer. Server code holds
+no credential and has no direct network path; reach outside systems through declared company integrations in actions.
 Handler memory is not durable state, and handlers cannot schedule background work.
 
 ### Guests
@@ -285,7 +288,11 @@ visible, with a deliberate repair path. Never claim the file write rolled back.
 
 Declare business error codes in `errors`, then throw `new HandlerError(code,
 details)`. The client exposes `isHandlerError(error, code)` for narrowing declared
-codes. An undeclared code or an invalid result becomes `handler_failed`.
+codes. An undeclared code or an invalid result becomes `handler_failed`, and
+so does anything else a handler throws, a plain `Error` included, except
+Patchy's own refusals, which keep their codes. The page gets only "The handler
+failed. Use the correlation id to find its log.", an agent the same with the
+correlation id, and the thrown message stays in the patch's log.
 Patchy's refusals have `source: "patchy"`; business errors have
 `source: "handler"`. Keep them separate.
 
@@ -418,7 +425,9 @@ it. Page imports from `agent/` are refused, and `agent/` below tier 2 is
 `tier_mismatch`.
 
 Descriptions and schemas are all an agent knows about a tool: what it does, what
-it changes, and when and why it refuses. A refusal reaches the agent with its
+it changes, and when and why it refuses. `t.enum(values)` puts its values in the
+schema; a `t.text()` argument tells the agent nothing about which strings the
+handler accepts. A refusal reaches the agent with its
 code and details only as a `HandlerError` whose code is in `errors`; anything
 else a tool throws is `handler_failed`, with its message left in the patch's
 log. The ids it holds come from earlier results or from the person. The agent
