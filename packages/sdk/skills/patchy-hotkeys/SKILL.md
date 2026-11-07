@@ -331,7 +331,8 @@ viewer who finds it once learns Mod+/.
 - Other hotkeys wait while it is open. Escape, its close button or a tap outside it closes the
   sheet alone, never a dialog under it, and focus goes back to where it was.
 - `title` sets its heading and accessible name, "Keyboard shortcuts" by default. `hotkey` sets
-  the key that opens it, checked like `useHotkey`'s, in place of `?` and Mod+/.
+  the key that opens it, checked like `useHotkey`'s, in place of `?`. Mod+/ always opens it, ahead
+  of every other hotkey, so a hotkey of the page's that takes Mod+/ never fires while it is mounted.
 - A hotkey's `group` option lists it under that heading. Groups appear in the order they are
   first registered, an element's before the page's, and ungrouped hotkeys come last under
   General. With no groups at all, the
