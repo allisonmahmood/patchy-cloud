@@ -794,11 +794,11 @@ function mount(frame: HTMLIFrameElement): void {
     }
   };
   // Keys go to the focused document. The frame waits, unclickable and out of Tab order, until its
-  // document's relay says hello, and then takes focus, so the patch hears a key once it is on
-  // screen, before its load event; until then the shell's own relay claims Mod+Shift+K. Shell UI
-  // that holds focus, such as the starting cover, keeps it.
+  // document's relay says hello; the shell's own relay, whose listeners run first, then shows it,
+  // and it takes focus here, so the patch hears a key once it is on screen, before its load event.
+  // Until then the shell's relay claims Mod+Shift+K. Shell UI that holds focus, such as the
+  // starting cover, keeps it.
   const handOffKeys = () => {
-    frame.removeAttribute("data-waiting");
     if (document.activeElement === null || document.activeElement === document.body) frame.focus();
   };
   // The relay's window messages, apart from the port. They carry no authority: a document that
