@@ -101,6 +101,8 @@ const shellNotice = (
   options: {
     readonly status?: number;
     readonly viewer?: RequireSession.Viewer["Service"] | undefined;
+    /** The patch the notice is about, when Serving knows it. */
+    readonly patchId?: string;
     readonly session: Session.Session["Service"];
   }
 ) => {
@@ -112,6 +114,7 @@ const shellNotice = (
       viewer && {
         userId: viewer.user.id,
         companyId: viewer.company.id,
+        patchId: options.patchId,
         session: sessionScripts(session)
       }
     ),
@@ -323,8 +326,10 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     return withCookies(
       shellNotice("needs_rebuild", request.url, {
         status: 409,
-        // A frame's notice keeps the relay alone.
+        // A frame's notice keeps the relay alone. The switcher treats the patch that can't open as
+        // the one on screen: never a row, and never the flip back.
         viewer: kind === "address" ? viewer : undefined,
+        patchId: served.value.patch.id,
         session
       }),
       isPublic ? [] : cookies

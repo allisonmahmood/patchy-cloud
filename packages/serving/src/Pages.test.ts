@@ -1257,7 +1257,7 @@ it.layer(services)("pages in memory", (it) => {
   const forViewer = Effect.fn(function* (
     response: Response,
     code: ShellNotice,
-    viewer: { readonly userId: string; readonly companyId: string },
+    viewer: { readonly userId: string; readonly companyId: string; readonly patchId?: string },
     { returnTo = "/", status = 200 }: { readonly returnTo?: string; readonly status?: number } = {}
   ) {
     assert.strictEqual(response.status, status);
@@ -1333,6 +1333,15 @@ it.layer(services)("pages in memory", (it) => {
         [`__session=${token}`, `${refreshCookie}=refresh-new`]
       );
   };
+  /** A development handshake's verified return, carrying a fresh session for the dev user. */
+  const handshakeReturn = () => {
+    const directives = [
+      `__session=${signSession()}; Path=/; SameSite=Lax`,
+      `__client_uat=${Math.floor(Date.now() / 1_000)}; Path=/; SameSite=Lax`,
+      "__clerk_db_jwt=offline-browser; Path=/; SameSite=Lax"
+    ];
+    return { directives, handshake: signHandshake(directives) };
+  };
   const navigation = { "sec-fetch-dest": "document", accept: "text/html" };
   const dev = { userId: DEV_SEED.userId, companyId: DEV_SEED.companyId };
 
@@ -1348,6 +1357,17 @@ it.layer(services)("pages in memory", (it) => {
       const renewed = yield* notice(expired(true));
       refreshed(renewed);
       yield* forViewer(renewed, "stream_replaced", dev);
+
+      // Back from a handshake Clerk verified: the notice admits it at once, with the cookies
+      // that complete it, rather than through Clerk's cleanup hop.
+      const returned = handshakeReturn();
+      const completed = yield* send(
+        `${path}&__clerk_handshake=${encodeURIComponent(returned.handshake)}`,
+        { headers: navigation }
+      );
+      assert.isNull(completed.headers.get("location"));
+      assert.deepStrictEqual(completed.headers.getSetCookie(), returned.directives);
+      yield* forViewer(completed, "stream_replaced", dev);
 
       // Stale with nothing to refresh it, Clerk wants a handshake. The notice never redirects
       // for one, and sets none of its cookies.
@@ -1396,11 +1416,13 @@ it.layer(services)("pages in memory", (it) => {
       const open = (cookie: string, at = path) =>
         send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
       const rebuild = { status: 409 };
-      yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", dev, rebuild);
+      // The switcher treats the patch that can't open as the one on screen.
+      const about = { ...dev, patchId };
+      yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", about, rebuild);
       const refreshed = refreshes();
       const renewed = yield* open(expired(true));
       refreshed(renewed);
-      yield* forViewer(renewed, "needs_rebuild", dev, rebuild);
+      yield* forViewer(renewed, "needs_rebuild", about, rebuild);
 
       // A guest's switcher keys their own company's list.
       const companies = yield* Companies.Companies;
@@ -1423,7 +1445,7 @@ it.layer(services)("pages in memory", (it) => {
       yield* forViewer(
         yield* open(guest),
         "needs_rebuild",
-        { userId: guestCompany.user.id, companyId: guestCompany.company.id },
+        { userId: guestCompany.user.id, companyId: guestCompany.company.id, patchId },
         rebuild
       );
 
@@ -1439,7 +1461,12 @@ it.layer(services)("pages in memory", (it) => {
       // Anyone else meets the address's door as before: sign in, the deactivated page.
       assert.strictEqual((yield* send(path)).status, 401);
       const other = yield* colleague("rebuild-switch");
-      yield* forViewer(yield* open(other.cookie()), "needs_rebuild", other.ids, rebuild);
+      yield* forViewer(
+        yield* open(other.cookie()),
+        "needs_rebuild",
+        { ...other.ids, patchId },
+        rebuild
+      );
       yield* other.deactivate;
       const deactivated = yield* open(other.cookie());
       assert.strictEqual(deactivated.status, 403);

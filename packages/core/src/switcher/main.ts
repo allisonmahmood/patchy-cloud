@@ -2,10 +2,10 @@
 // @effect-diagnostics globalFetch:off globalDate:off
 // This browser entry owns fetch and the clock; it never creates an Effect runtime.
 /**
- * `/~shell/switcher.js`: Patchy's switcher on a signed-in page, an app page or a company shell.
- * Its tag names the viewer and company the page was rendered for (`switcherTag`), and a company
- * shell's frame names the patch on screen. `scripts/build-core-scripts.mjs` bundles it, plain DOM
- * code with no dependencies.
+ * `/~shell/switcher.js`: Patchy's switcher on a signed-in page: an app page, a company shell or a
+ * notice. Its tag names the viewer and company the page was rendered for (`switcherTag`). A company
+ * shell's frame names the patch on screen, and a notice about one patch names it in the tag.
+ * `scripts/build-core-scripts.mjs` bundles it, plain DOM code with no dependencies.
  *
  * The relay holds a press made before this loads, so the menu opens as soon as it starts,
  * whatever Clerk is doing; from then on the chord opens it at once, through the `Switcher` this
@@ -25,7 +25,7 @@ if (viewer !== undefined && company !== undefined) {
     element instanceof HTMLIFrameElement && element.dataset.scope === "company"
       ? element
       : undefined;
-  const patch = frame?.dataset.patchId;
+  const patch = frame?.dataset.patchId ?? tag?.dataset.patch;
   const client = switcherClient({
     who: { viewer, company },
     here: patch,

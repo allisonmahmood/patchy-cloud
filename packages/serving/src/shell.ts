@@ -181,6 +181,8 @@ export interface NoticeViewer {
   readonly userId: string;
   /** Their own company, a guest's included, which keys the switcher's list. */
   readonly companyId: string;
+  /** The patch a needs-rebuild notice is about, which the switcher treats as the one on screen. */
+  readonly patchId?: string | undefined;
   readonly session: string;
 }
 
