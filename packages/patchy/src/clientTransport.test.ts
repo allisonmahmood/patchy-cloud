@@ -637,7 +637,7 @@ const unbootstrapped = () => {
     location: { href: "https://instance/~content/p/v?n=document-one" }
   });
   const shared = createPostMessageTransport({ window: frame as unknown as Window });
-  const bootstrap = (port: FakePort) => {
+  const bootstrap = (port: Port) => {
     const event = new Event("message");
     Object.assign(event, {
       source: parent,
@@ -707,6 +707,69 @@ it("never sends what a tier 2 client queued before the bootstrap once it has clo
   await expect(moved).resolves.toBeNull();
   staying.close();
   shared.close();
+});
+
+it("sends every client's calls in call order across the bootstrap, none overtaken by a later one", async () => {
+  const { shared, bootstrap } = unbootstrapped();
+  const config = defineConfig({
+    name: "notes",
+    tier: 1,
+    tables: { notes: table("Notes.", { title: t.text() }) }
+  });
+  const page = createClient<typeof config>(config, { transport: shared });
+  const server = createServerClient({ transport: shared });
+  const closing = createClient<typeof config>(config, { transport: shared });
+  // The shell's end of a real channel, answering each call in the order it arrives.
+  const channel = new MessageChannel();
+  const received: string[] = [];
+  channel.port2.onmessage = ({ data }: MessageEvent) => {
+    if (data.kind === "ready") return;
+    received.push(data.op === "route.set" ? `route.set ${data.args.path}` : data.op);
+    const value = data.op === "tables.insert" ? { id: "note", ...data.args.row } : null;
+    channel.port2.postMessage({ v: 1, id: data.id, kind: "result", value });
+  };
+  try {
+    const upload = { token: "staged", size: 1, contentType: "text/plain" } as Upload;
+    const first = page.route.set("/first");
+    page.tables.notes.list.subscribe(undefined, () => {});
+    const queued = [
+      first,
+      server.files.discard(upload),
+      closing.tables.notes.insert({ title: "never" }),
+      page.tables.notes.insert({ title: "after" })
+    ];
+    closing.close();
+    // The route's first callback comes as the bootstrap lands, and sets a later path.
+    const later = new Promise<unknown>((resolve) => {
+      let first = true;
+      page.route.subscribe(() => {
+        if (first) resolve(server.route.set("/second"));
+        first = false;
+      });
+    });
+    bootstrap(channel.port1);
+    const settled = await Promise.allSettled([...queued, later]);
+    expect(settled.map((result) => result.status)).toEqual([
+      "fulfilled",
+      "fulfilled",
+      "rejected",
+      "fulfilled",
+      "fulfilled"
+    ]);
+    expect(received).toEqual([
+      "route.set /first",
+      "subscriptions.subscribe",
+      "files.discard",
+      "tables.insert",
+      "route.set /second"
+    ]);
+    await expect(page.route.get()).resolves.toBe("/second");
+  } finally {
+    page.close();
+    server.close();
+    shared.close();
+    channel.port2.close();
+  }
 });
 
 it.each([
