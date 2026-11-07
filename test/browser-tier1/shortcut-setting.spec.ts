@@ -10,8 +10,10 @@ import type { Instance } from "./instance.js";
 // a viewer's frame with it, patchy/hotkeys obeys that name, and the shell confirms a change in its
 // own dialog. Each engine sets a frame's name for itself, so these also run in Firefox and WebKit.
 //
-// Playwright's own calls into a page count as a press there, and in the shell above it, for about
-// five seconds. A step that needs nothing pressed waits that out without touching the page.
+// Playwright's own calls into a page count as a press there for about five seconds, and in the
+// shell above it only while the two share a process, as in Chromium's headless shell. Desktop
+// Chromium runs a sandboxed frame in its own process, so a step that needs a press clicks in the
+// page, as a person would, and a step that needs none waits five seconds without touching it.
 const packageRoot = fileURLToPath(new URL("../../packages/patchy", import.meta.url));
 const hotkeys = `import { render } from "patchy/preact";
 import { createClient } from "patchy/client";
@@ -219,6 +221,7 @@ test("a dialog needs a press: none, one already open, or the press a Cancel answ
   });
 
   await test.step("one dialog at a time", async () => {
+    await frame.locator("h1").click();
     await ask(frame, instance.wire, "first");
     await expect(dialog).toBeVisible();
     await ask(frame, instance.wire, "second");
@@ -248,6 +251,7 @@ test("a dialog needs a press: none, one already open, or the press a Cancel answ
 
   await test.step("once that press has lapsed, a new one opens it", async () => {
     await sleep(6_500);
+    await frame.locator("h1").click();
     await ask(frame, instance.wire, "later");
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Turn off" }).click();
@@ -367,6 +371,7 @@ export default createGuest({ rows: { ping } });`,
     instance.holdStreamFrames(false);
     await expect(cover).toBeHidden();
     await page.clock.resume();
+    await frame.locator("h1").click();
     await ask(frame, instance.wire, "ready");
     await expect(shellDialog(page)).toBeVisible();
   });
