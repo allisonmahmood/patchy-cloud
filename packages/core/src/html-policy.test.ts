@@ -98,7 +98,16 @@ describe("headStart", () => {
     ["only a doctype", "<!doctype html>"],
     ["only an html tag", '<!doctype html><html lang="en">'],
     ["nothing", ""],
-    ["a byte order mark alone", "\u{FEFF}"]
+    ["a byte order mark alone", "\u{FEFF}"],
+    ["a finished comment at the end", "<!doctype html><!-- done -->"],
+    ["an unfinished comment", "<!doctype html><!-- unfinished"],
+    ["an unfinished comment that nearly closes", "<!doctype html><!-- unfinished ->"],
+    ["an unfinished bogus comment", "<!doctype html><?xml version"],
+    ["an unfinished root tag", '<!doctype html><html lang="en"'],
+    ["an unfinished attribute value", '<!doctype html><html lang="en'],
+    ["an unfinished head tag after a comment", '<!doctype html><!-- c --><head data-x="y'],
+    ["an unfinished doctype", "<!doctype html"],
+    ["a lone angle bracket", "<!doctype html><"]
   ])("puts markup first in the head, and changes nothing else: %s", (_, html) => {
     const at = headStart(html);
     const before = read(html);

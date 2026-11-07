@@ -220,6 +220,9 @@ describe("patch pages", () => {
     ).toEqual([expect.stringMatching(/^\/~shell\/broker\.js\?v=/)]);
     expect(withoutRelay(html)).not.toMatch(/<script\b[^>]*>[^<]+<\/script>/);
     expect(html).toMatch(/<head>\s*<meta charset="utf-8">\s*<script>/);
+    // Out of reach until its document can claim the switcher key, with a deadline in the style.
+    expect(html).toMatch(/<iframe id="patch"[^>]* data-waiting[\s>]/);
+    expect(html).toContain("animation: patch-frame-waiting 0s 10s forwards");
 
     expect(html).toContain(`<!-- patch:${patch.id} version:2 -->`);
   });

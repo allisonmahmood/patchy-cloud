@@ -16,7 +16,7 @@ import {
 } from "@patchy/api";
 import type { RuntimeBodyLimitId, RuntimeCode, RuntimeMe, RuntimePrincipal } from "@patchy/api";
 import { serverReplyTimeoutMs } from "@patchy/api/query-config";
-import { requestSwitcher, switcherMessageKind } from "@patchy/core/switcher";
+import { openSwitcher, switcherMessageKind } from "@patchy/core/switcher";
 import * as Schema from "effect/Schema";
 import { registry } from "@patchy/limits/registry";
 import { openDocumentStream, type DocumentStream } from "./stream.js";
@@ -793,11 +793,12 @@ function mount(frame: HTMLIFrameElement): void {
       release(reserved);
     }
   };
-  // Keys go to the focused document. The frame takes focus once its document's relay says hello,
-  // so the patch hears a key once it is on screen, before its load event, and until then the
-  // shell's own relay claims Mod+Shift+K. Shell UI that holds focus, such as the starting cover,
-  // keeps it.
+  // Keys go to the focused document. The frame waits, unclickable and out of Tab order, until its
+  // document's relay says hello, and then takes focus, so the patch hears a key once it is on
+  // screen, before its load event; until then the shell's own relay claims Mod+Shift+K. Shell UI
+  // that holds focus, such as the starting cover, keeps it.
   const handOffKeys = () => {
+    frame.removeAttribute("data-waiting");
     if (document.activeElement === null || document.activeElement === document.body) frame.focus();
   };
   // The relay's window messages, apart from the port. They carry no authority: a document that
@@ -808,7 +809,8 @@ function mount(frame: HTMLIFrameElement): void {
     const kind = switcherMessageKind(event.data, ["hello", "open"]);
     if (kind === "hello") return handOffKeys();
     if (kind !== "open" || frame.dataset.scope === "public") return;
-    if (frame.dataset.scope === "company") requestSwitcher(window);
+    // Only ever opens: a patch can post this itself, and must not close the menu under the person.
+    if (frame.dataset.scope === "company") openSwitcher(window);
     if (explained) return;
     explained = true;
     // oxlint-disable-next-line no-console -- for the builder or person who wonders where the key went.
