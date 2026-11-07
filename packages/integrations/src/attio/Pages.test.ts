@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { switcherRelay } from "@patchy/core";
 import { ContractLimits } from "@patchy/limits";
 import * as Effect from "effect/Effect";
 import * as AttioDouble from "../test/attio.js";
@@ -42,7 +43,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
         '<button class="btn btn-primary" type="submit">Test and connect</button>'
       ])
         assert.include(page.html, part);
-      assert.notMatch(page.html, /<script(?![^>]*\bsrc=)/);
+      assert.notMatch(page.html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
       assert.notInclude(page.html, "attio-connect");
       const catalogue = yield* read("/company/connections/connect", owner.user);
       assert.include(catalogue.html, "A workspace's objects, lists and members, read-only.");

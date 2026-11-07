@@ -17,6 +17,11 @@
       ],
       "outputs": ["dist/**", "artifacts/**", "skills/**", "LICENSE"]
     },
+    "@patchy/core#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/build-core-scripts.mjs"],
+      "outputs": ["dist/**", "src/generated/**"]
+    },
     "@patchy/execution#build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/build-execution-loader.mjs"],

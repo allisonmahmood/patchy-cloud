@@ -1,10 +1,12 @@
-export { documentTitle } from "./html-policy.js";
+export { documentTitle, headStart } from "./html-policy.js";
 export {
   escapeAttribute,
   escapeHtml,
   framedDocument,
   htmlPage,
   sentenceList,
+  SWITCHER_RELAY_SOURCE,
+  switcherRelay,
   whatsNewKind
 } from "./html.js";
 export type { AppShell } from "./html.js";

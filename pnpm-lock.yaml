@@ -373,6 +373,9 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
     devDependencies:
+      '@tanstack/hotkeys':
+        specifier: 0.19.0
+        version: 0.19.0(patch_hash=bcb3b09693350b2aa37d3aa60001ef9a9a22ab740f3a81c638195b0ca7fe0e1d)
       '@types/css-tree':
         specifier: ^3.2.0
         version: 3.2.0

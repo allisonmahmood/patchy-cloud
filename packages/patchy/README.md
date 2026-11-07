@@ -164,8 +164,9 @@ and Ctrl elsewhere; modifiers come in the order Mod, Alt, Shift, and match
 exactly, so `"J"` doesn't fire on Shift+J. A string that isn't a hotkey fails
 typecheck, naming the step to fix and what to write; `Chord` types hotkeys
 built from data, and `HotkeyBinding<Chord | "G H">[]` a table of them that
-names its sequences. Patchy keeps `"Mod+Shift+K"`: the types
-refuse it, and one cast past them is skipped with a console warning. Two enabled
+names its sequences. Patchy keeps `"Mod+Shift+K"` for its switcher, and the
+key never reaches patch code, whatever listens for it, `patchy dev` included:
+the types refuse it, and one cast past them is skipped with a console warning. Two enabled
 hotkeys with the same keys in one scope both fire, and the console warns once
 naming both. `within: ref` ties a hotkey to one element, any element including
 SVG: it fires only while focus is on it or inside it, as `:focus-within` reads

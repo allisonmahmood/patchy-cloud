@@ -154,8 +154,8 @@ A keyboard shortcut a page registers through `patchy/hotkeys`: one chord such as
 `G H`. It fires while its component is mounted; while a `HotkeyScope` is mounted, only
 the hotkeys inside it fire. One `within` an element fires only while focus is inside it,
 and the narrowest place wins: element, then dialog, then page. A text field keeps the
-keys that type or edit text, whatever a hotkey asks. Patchy keeps `Mod+Shift+K` for its own
-shortcuts.
+keys that type or edit text, whatever a hotkey asks. Patchy keeps `Mod+Shift+K` for its
+switcher; the key never reaches patch code.
 _Avoid_: keybinding, shortcut key, accelerator
 
 **Shortcuts sheet**:

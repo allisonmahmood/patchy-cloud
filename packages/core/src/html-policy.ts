@@ -139,6 +139,56 @@ function boundedTreeAdapter(): parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> 
   };
 }
 
+/** Stops the head search at the first location it needs. */
+class HeadFound extends Error {
+  constructor(readonly offset: number) {
+    super("The head was found.");
+  }
+}
+
+/**
+ * Where markup becomes the first child of a document's real `<head>`: just past an explicit
+ * `<head …>` start tag, so its attributes survive, or else where the parser implies the head,
+ * before the first thing that goes in or after it. That is always past a byte order mark,
+ * comments, the doctype and an explicit `<html …>` start tag, so the document keeps its mode and
+ * its root element. The parse stops there, so it costs the document's first few tags. Markup past
+ * the parser's bounds before then gets the end of its doctype, or the start.
+ */
+export function headStart(html: string): number {
+  const bom = html.startsWith("\u{FEFF}") ? 1 : 0;
+  const tree = boundedTreeAdapter();
+  let head: HtmlNode | undefined;
+  let doctypeEnd = 0;
+  const treeAdapter: parse5.TreeAdapter<parse5.DefaultTreeAdapterMap> = {
+    ...tree,
+    createElement(tagName, namespaceURI, attrs) {
+      const element = tree.createElement(tagName, namespaceURI, attrs);
+      if (tagName === "head" && head === undefined) head = element;
+      return element;
+    },
+    // An explicit head is located as it is created; an implied one is not, and the next node to
+    // be located is what implied it.
+    setNodeSourceCodeLocation(node, location) {
+      tree.setNodeSourceCodeLocation(node, location);
+      if (!location) return;
+      if (tree.isDocumentTypeNode(node)) doctypeEnd = location.endOffset;
+      if (head === undefined) return;
+      throw new HeadFound(
+        node === head ? (location.startTag?.endOffset ?? location.endOffset) : location.startOffset
+      );
+    }
+  };
+  try {
+    BoundedParser.parse(html.slice(bom), { sourceCodeLocationInfo: true, treeAdapter });
+  } catch (error) {
+    if (error instanceof HeadFound) return bom + error.offset;
+    if (error instanceof ParseLimitExceeded) return bom + doctypeEnd;
+    throw error;
+  }
+  // Nothing followed the head's place.
+  return html.length;
+}
+
 /** A page's title comes before its inline code, which runs to megabytes. */
 const TITLE_SEARCH_CHARACTERS = 64 * 1024;
 

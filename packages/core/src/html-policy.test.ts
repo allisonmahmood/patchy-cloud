@@ -1,5 +1,6 @@
+import * as parse5 from "parse5";
 import { describe, expect, it } from "vitest";
-import { documentTitle } from "./html-policy.js";
+import { documentTitle, headStart } from "./html-policy.js";
 
 /** A page's title is read under the parser's bounds: within them it reads, past one it is null. */
 const titled = (markup: string) => documentTitle(`<title>Bounded</title>${markup}`);
@@ -54,5 +55,68 @@ describe("documentTitle", () => {
     const title = "<title>Fish &amp; chips</title>";
     expect(documentTitle(`${title}<script>${" ".repeat(limit)}</script>`)).toBe("Fish & chips");
     expect(documentTitle(`${" ".repeat(limit - 15)}${title}`)).toBeNull();
+  });
+});
+
+describe("headStart", () => {
+  const marker = "<script>marker</script>";
+  type Element = parse5.DefaultTreeAdapterMap["element"];
+  const child = (parent: parse5.DefaultTreeAdapterMap["parentNode"], name: string) =>
+    parent.childNodes.find((node): node is Element => node.nodeName === name)!;
+  /** How a browser reads a document: its decoder takes the byte order mark. */
+  const read = (html: string) => {
+    const document = parse5.parse(html.replace(/^\u{FEFF}/u, ""));
+    const root = child(document, "html");
+    const head = child(root, "head");
+    return { mode: document.mode, root: root.attrs, head: head.attrs, first: head.childNodes[0] };
+  };
+
+  it.each([
+    [
+      "an explicit head, keeping its attributes",
+      '<!doctype html><html lang="en"><head data-theme="dark"><title>t</title></head>'
+    ],
+    [
+      "a head tag split across lines",
+      '<!doctype html>\n<HEAD\n  data-a="<x>">\n<meta charset="utf-8">'
+    ],
+    ["a self-closed head", "<html><head/>text"],
+    [
+      "a byte order mark, comments and whitespace",
+      '\u{FEFF}\n<!-- licence -->\n<!doctype html>\n<!-- x -->\n<html lang="fr">\n<!-- y -->\n<head>'
+    ],
+    ["no head", '<!doctype html><html lang="en"><title>t</title><body>b</body>'],
+    ["no head, opened by text", "<!doctype html>hello"],
+    ["no head, opened by a table", "<!doctype html><table>x<tr>"],
+    ["no head, closed before it opens", "<!doctype html></head><!-- c --><p>p"],
+    ["no html or head", "<!doctype html><meta charset=utf-8><p>p"],
+    [
+      "a head tag after content, which the parser ignores",
+      '<!doctype html><title>t</title><head data-late="1">'
+    ],
+    ["no doctype", '<html lang="en"><body>quirks</body>'],
+    ["only a doctype", "<!doctype html>"],
+    ["only an html tag", '<!doctype html><html lang="en">'],
+    ["nothing", ""],
+    ["a byte order mark alone", "\u{FEFF}"]
+  ])("puts markup first in the head, and changes nothing else: %s", (_, html) => {
+    const at = headStart(html);
+    const before = read(html);
+    const after = read(html.slice(0, at) + marker + html.slice(at));
+    expect(after.mode).toBe(before.mode);
+    expect(after.root).toEqual(before.root);
+    expect(after.head).toEqual(before.head);
+    expect(after.first).toMatchObject({ nodeName: "script", childNodes: [{ value: "marker" }] });
+  });
+
+  it("reads no further than the head", () => {
+    // Past the head, markup over the bounds is the page's own business.
+    expect(headStart(`<!doctype html><head><title>t</title>${"<div>".repeat(600)}`)).toBe(21);
+  });
+
+  it("falls back to just past the doctype when the start of the page is over the bounds", () => {
+    const attributes = Array.from({ length: 300 }, (_, index) => ` a${index}`).join("");
+    expect(headStart(`\u{FEFF}<!doctype html><html${attributes}><head>`)).toBe(16);
+    expect(headStart(`<html${attributes}><head>`)).toBe(0);
   });
 });

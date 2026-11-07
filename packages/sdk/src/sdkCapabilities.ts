@@ -239,7 +239,7 @@ export const sdkCapabilities: readonly SdkCapability[] = [
     entrypoints: ["patchy/hotkeys"],
     runs: "Page import graph; tier 1 and 2 Preact pages, in the hosted shell and patchy dev",
     limits:
-      "Chords such as Mod+K and space-separated sequences such as G H, checked when the page typechecks. Mod is ⌘ on a Mac and Ctrl elsewhere; Patchy keeps Mod+Shift+K. Hotkeys fire while their component is mounted; single keys wait while the viewer types in a field. HotkeyScope holds back the rest of the page's hotkeys for a dialog; useHotkeyList lists labelled hotkeys for a shortcuts sheet. Keys the browser keeps, such as Mod+T and Mod+W, never reach the page. Viewers can't rebind keys."
+      "Chords such as Mod+K and space-separated sequences such as G H, checked when the page typechecks. Mod is ⌘ on a Mac and Ctrl elsewhere; Patchy keeps Mod+Shift+K for its switcher, and the page never hears it. Hotkeys fire while their component is mounted; single keys wait while the viewer types in a field. HotkeyScope holds back the rest of the page's hotkeys for a dialog; useHotkeyList lists labelled hotkeys for a shortcuts sheet. Keys the browser keeps, such as Mod+T and Mod+W, never reach the page. Viewers can't rebind keys."
   }
 ];
 

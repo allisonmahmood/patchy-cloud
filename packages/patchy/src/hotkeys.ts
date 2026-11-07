@@ -115,7 +115,7 @@ type Punctuation =
 /** A key as written in a hotkey. Letters match either case; a symbol is the character it types. */
 export type Key = Letter | Lowercase<Letter> | Digit | Named | Punctuation;
 
-// Patchy keeps it for its own shortcuts.
+// Patchy keeps it for its switcher, and the page never hears it.
 type Reserved = "Mod+Shift+K" | "Mod+Shift+k";
 
 /**
