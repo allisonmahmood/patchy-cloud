@@ -1132,11 +1132,16 @@ it.layer(Layer.fresh(publishLayer))("patch discovery over machine tokens", (it) 
                 indexes: { byTitle: { columns: ["title"], unique: true } },
                 shared: true
               },
-              privateNotes: { description: "Private notes.", columns: {}, indexes: {} }
+              privateNotes: {
+                description: "Private notes.",
+                columns: {},
+                indexes: {},
+                shared: false
+              }
             },
             files: {
               photos: { description: "Receipt photos.", shared: true },
-              privateFiles: { description: "Private documents." }
+              privateFiles: { description: "Private documents.", shared: false }
             }
           }
         })
@@ -1384,8 +1389,8 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.strictEqual(second.schemaRevision, first.schemaRevision);
         const expected = {
           schemaRevision: first.schemaRevision,
-          tables: { notes: { ...revised.tables.notes, shared: false } },
-          files: { attachments: { ...revised.files.attachments, shared: false } }
+          tables: { notes: { ...revised.tables.notes, shared: true } },
+          files: { attachments: { ...revised.files.attachments, shared: true } }
         };
         expect(yield* owner.inventory({ params })).toEqual(expected);
         const omitted = yield* owner.publish({
@@ -1443,7 +1448,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
         assert.deepStrictEqual(baseline.tables.notes?.indexes.byTitle?.columns, ["title"]);
         assert.strictEqual(baseline.tables.notes?.shared, true);
         assert.deepStrictEqual(baseline.files, {
-          attachments: { ...manifest.files.attachments, shared: false }
+          attachments: { ...manifest.files.attachments, shared: true }
         });
         assert.deepStrictEqual(yield* other.inventory({ params }), baseline);
         assert.deepStrictEqual(
@@ -1589,7 +1594,7 @@ it.layer(publishLayer)("publish attempts", (it) => {
       assert.strictEqual(inventory.schemaRevision, 1);
       assert.strictEqual(inventory.tables.notes?.columns.title?.kind, "text");
       assert.deepStrictEqual(inventory.files, {
-        attachments: { description: "Attachments keyed by file name.", shared: false }
+        attachments: { description: "Attachments keyed by file name.", shared: true }
       });
     })
   );

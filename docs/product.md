@@ -2,7 +2,7 @@
 
 The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [auth map](https://github.com/allisonmahmood/patchy-cloud/issues/112), [SDK map](https://github.com/allisonmahmood/patchy-cloud/issues/164), [portal map](https://github.com/allisonmahmood/patchy-cloud/issues/230), [tier 2 map](https://github.com/allisonmahmood/patchy-cloud/issues/294) and [Patchy MCP map](https://github.com/allisonmahmood/patchy-cloud/issues/730) record the decisions. The tier 2 spec is [#384](https://github.com/allisonmahmood/patchy-cloud/issues/384). Each `GLOSSARY.md` defines its context's terms; this file describes the product.
 
-Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages that run in a sandboxed browser frame, tier 2 tools with hosted query, mutation and action handlers, and [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches. A single HTML file publishes as a tier 1 page; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches only its own patch: its tables and files through the shell broker as the viewer, the viewer's identity and routing. Tier 2 pages call handlers that enforce the patch's rules, and those handlers also reach read-only shared tables and stores, the member directory and company Postgres, PostHog, Pidgeon and Attio connections. Both tiers support live queries.
+Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages that run in a sandboxed browser frame, tier 2 tools with hosted query, mutation and action handlers, and [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches. A single HTML file publishes as a tier 1 page; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches only its own patch: its tables and files through the shell broker as the viewer, the viewer's identity and routing. Tier 2 pages call handlers that enforce the patch's rules, and those handlers also reach other patches' tables and stores, read-only and shared unless their patch opts them out, the member directory and company Postgres, PostHog, Pidgeon and Attio connections. Both tiers support live queries.
 
 Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Admins can manage and reassign every company patch in the portal, but must become its owner to publish. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
@@ -335,7 +335,7 @@ Primitive descriptions stay in `patchy.config.ts`. At refresh, a new dev start a
 
 ### Patches and other patches
 
-A patch may declare and read another patch's shared table or shared file store in the same company. The declaration names the source patch's stable id and resource, never its address or name; it grants no access of its own. The viewer must be able to open the source and the resource must remain shared. Extending shared rows means defining an owned table keyed by source ids and joining the two reads, not changing the source. Calling another patch's code and extensions that plug into another patch remain promised, not designed.
+A patch may declare and read another patch's shared table or shared file store in the same company. Every table and file store is shared unless its definition says `shared: false`, so a tier 2 patch can build on any patch its builder can open without the source's owner republishing. Tables never leave your company. A shared table can be read by your company's other patches; an unshared table is reached only through its own patch. Unsharing is not privacy from colleagues: anyone who can open the patch still reaches its rows through it. Only tier 2 declares and reads other patches' tables and stores, from tier 1 and tier 2 sources alike; to depend on another patch, use tier 2. The declaration names the source patch's stable id and resource, never its address or name; it grants no access of its own. The viewer must be able to open the source and the resource must remain shared. Extending shared rows means defining an owned table keyed by source ids and joining the two reads, not changing the source. Calling another patch's code and extensions that plug into another patch remain promised, not designed.
 
 ### What a patch is not
 
@@ -934,8 +934,9 @@ that update refuses rather than risking a file-mode overwrite.
 
 The inventory's schema revision advances when table definitions change structurally,
 sharing changes or a store is added, not on description edits, every version or file
-write. The inventory's `shared` flag changes only when a publish defines that
-table or store with a different flag. Omission and rollback preserve sharing.
+write. A publish that defines a table or store sets its inventory `shared` flag:
+shared unless the definition says `shared: false`. Omission and rollback preserve
+sharing.
 
 ### Who reads and writes
 
@@ -944,7 +945,10 @@ by the loaded version, acting as themselves rather than the patch owner.
 UI filtering is not access control. On tier 2, the page has no direct resource
 operations; handlers enforce rules and own-resource callbacks act as the patch.
 Shared resources, connections and members, which only tier 2 handlers reach, still
-require the initiating viewer's live authority.
+require the initiating viewer's live authority. The company's other tier 2 patches
+read a shared table or store read-only and straight from the table, with none of
+its own patch's handlers in between, so they cannot change its rows or its shape;
+an unshared one is reached only through its own patch.
 
 The runtime records resource mutations before execution; table and file reads
 have no operation log row. Tier 2 invocation records separately capture mutations,
@@ -957,8 +961,9 @@ its attribution log, described under Tier 2. It is not an access audit.
 
 ### Shared tables
 
-A table defined with `shared: true`, on any tier, can be declared by another tier 2
-patch in the same company and read from its handlers. `uses` is keyed by local alias; its shared-table entry carries
+Every table, on any tier, is shared unless its definition says `shared: false`,
+and another tier 2 patch in the same company can declare a shared table and read it
+from its handlers. `uses` is keyed by local alias; its shared-table entry carries
 `{ kind: "sharedTable", patchId, table, id, revision }`. The resolved id is
 `<patchId>/<table>` and `revision` stamps the source's cumulative schema revision.
 `t.ref("<patchId>/<table>")` carries the resolved source identity as a typed ref;
@@ -981,7 +986,8 @@ preserves input order, duplicates and nulls for dangling ids.
 Omitting a shared table from a source version keeps its identity, definition
 and sharing. Unsharing requires defining it with `shared: false`; publish
 lists distinct live declaring patches across retained versions and refuses
-unless forced. Their next read is denied; their own rows are untouched.
+unless forced. Their next read is denied; their own rows are untouched. Defining
+the table again without `shared: false` shares it.
 Rolling back the source never changes sharing. Deleting the source and creating
 a new patch under its old name never rebinds existing consumers.
 
@@ -1074,8 +1080,9 @@ that nothing was saved.
 
 ### Shared file stores
 
-`files(description, { shared: true })` shares a store whole. This publishes read
-access to every file in the store, including later additions. There is no prefix
+A store is shared whole unless its definition says
+`files(description, { shared: false })`. Sharing publishes read access to every
+file in the store, including later additions. There is no prefix
 sharing and no shared write operation.
 
 `patchy add shared-store <patchId>/<store> --as <alias>` declares the source.

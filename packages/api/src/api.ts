@@ -270,11 +270,12 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           'Shared-table uses carry `{ kind: "sharedTable", patchId, table, id, revision }`, keyed by alias. ' +
           'Shared-store uses carry `{ kind: "sharedStore", patchId, store, id, revision }`. ' +
           "The resolved id is `<patchId>/<table>` or `<patchId>/<store>`, never a patch name; " +
-          "revision stamps the source inventory. `files(description, { shared: true })` publishes " +
-          "read access to every file in the store. Publish requires a live same-company source " +
+          "revision stamps the source inventory. A table or store definition shares it with the company's " +
+          "other tier 2 patches unless it says `shared: false`; a shared store publishes read access to " +
+          "every file in it. Publish requires a live same-company source " +
           "the publisher can open and an inventory resource marked shared, otherwise " +
           "`patch_not_openable`. A stamp behind the source revision warns, not refuses. " +
-          "Unsharing a defined table or store refuses with `has_dependants` and the distinct live declaring " +
+          "A definition with `shared: false` unshares, refusing with `has_dependants` and the distinct live declaring " +
           "patches, including declarations in retained versions, unless `force` is true. Ask the person you " +
           "are working for before forcing. Omission and rollback never change sharing. " +
           "Ownership and lifecycle are checked before validating HTML and again at commit: another company's " +

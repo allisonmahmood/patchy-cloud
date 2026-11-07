@@ -5,7 +5,7 @@ description: Declare another patch's shared table, read its generated client, au
 
 # Shared-table reads
 
-Read `../patchy-loop/SKILL.md` first. Reading another patch's shared table is tier 2's: queries and actions read it through `ctx.shared`, with live viewer authorization on each callback, and the page calls those handlers. A tier 1 page reaches only its own patch, so declaring a shared table on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says. Any tier can share its own tables out. Build with invented local fixtures, never production rows, and never manually edit generated clients, context or revision stamps.
+Read `../patchy-loop/SKILL.md` first. Reading another patch's shared table is tier 2's: queries and actions read it through `ctx.shared`, with live viewer authorization on each callback, and the page calls those handlers. A tier 1 page reaches only its own patch, so declaring a shared table on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says. Every patch's tables, on any tier, are shared unless their definition says `shared: false`. Build with invented local fixtures, never production rows, and never manually edit generated clients, context or revision stamps.
 
 ## Declare, seed locally, read
 

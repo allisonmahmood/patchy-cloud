@@ -400,6 +400,14 @@ export const FileStoreDefinition = Schema.Struct({
   shared: Schema.optionalKey(Schema.Boolean)
 });
 
+/**
+ * Whether a table or file store definition shares it with the company's other tier 2
+ * patches. Shared unless it says `shared: false`; publish, the dev loop and the CLI's
+ * reminders all decide sharing through this.
+ */
+export const isShared = (definition: { readonly shared?: boolean | undefined }): boolean =>
+  definition.shared ?? true;
+
 export const FileContentType = Schema.String.check(
   Schema.makeFilter(
     (value) =>

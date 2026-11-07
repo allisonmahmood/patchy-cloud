@@ -30,6 +30,8 @@ that several people change at once) or server-side work, and for anything
 outside the patch: company connections, other patches' shared tables and stores,
 and the member directory with its member columns. Below tier 2, `uses` declares
 nothing: refresh, dev and publish refuse a declaration with `tier_mismatch`.
+To depend on another patch, use tier 2: every table and store can be read by the
+company's other tier 2 patches unless its patch opted it out with `shared: false`.
 
 - To move from tier 1 to 2, set `tier: 2` in `patchy.config.ts`, create handler
   modules in `server/`, then run `pnpm patchy refresh`. It adds the exact
