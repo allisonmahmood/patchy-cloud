@@ -106,6 +106,7 @@ export const layer: Layer.Layer<
               UnsafeGeneratedPath: rejected,
               SdkConnectionNotConnected: rejected,
               SdkPatchNotOpenable: rejected,
+              NotShared: rejected,
               GenerationUnavailable: (error) =>
                 Effect.succeed(
                   refuse(

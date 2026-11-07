@@ -349,7 +349,7 @@ it.layer(
           })
         )
       );
-      assert.instanceOf(failed, Patches.PatchNotOpenable);
+      assert.instanceOf(failed, Patches.NotShared);
       const service = yield* patches;
       assert.strictEqual(
         Option.getOrThrow(yield* service.find(consumer.patchId)).version.id,
@@ -398,7 +398,7 @@ it.layer(
           yield* service
             .sharedTable(source.patchId, "contacts", uploader.company.id)
             .pipe(Effect.flip),
-          Patches.PatchNotOpenable
+          Patches.NotShared
         );
         const retried = yield* publish("<p>retry records without resharing</p>", source.patchId, {
           manifest: unsharedManifest
@@ -424,7 +424,7 @@ it.layer(
           yield* service
             .sharedTable(source.patchId, "contacts", uploader.company.id)
             .pipe(Effect.flip),
-          Patches.PatchNotOpenable
+          Patches.NotShared
         );
       })
   );

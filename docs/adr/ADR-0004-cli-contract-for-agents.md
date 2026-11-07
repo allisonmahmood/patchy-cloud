@@ -434,8 +434,11 @@ Store declarations have `kind: "sharedStore"`, `patchId`, `store`, the canonical
 Stale stamps warn as for shared tables. Removing the last store declaration
 removes `patchy-shared-stores`, independently of the shared-table skill.
 Connection setup, reconnection and credential forms are browser-only for admins;
-no CLI command accepts connection secrets. A shared-source refusal names the
-source-access repair path.
+no CLI command accepts connection secrets. A shared-source refusal is exit 2,
+`rejected`, and follows discovery's `reason`: `not_shared` names the source, the
+resource and the owner to ask; `source_off` names the retired or deleted source to
+restore; a source the person can't open, or a resource it doesn't have, is
+`patch_not_openable` and names the source-access repair path.
 
 `patchy add members` accepts no target and its alias must remain `members`.
 Config validation rejects a `t.member()` column without that declaration.
@@ -729,8 +732,11 @@ A file publish onto cumulative table/store inventory is `has_primitives`
 (422, exit 2, `rejected`), even if the current version omits every resource:
 publish from its repo. Repo manifests may provision at tier 1 or 2; tier is about
 code. Additive refusals name each object, change and fix. A `patch_not_openable`
-refusal means a declared shared source is unavailable; correct the declaration
-or restore access. Postgres declarations must be connected at the current
+refusal means a declared shared source is one the publisher can't open, or lacks
+that table or store, and says nothing more; correct the declaration or restore
+access. A `not_shared` refusal means the publisher can open the source but it
+doesn't share that table or store; its message names the source, the resource
+and the owner to ask, or an admin, as discovery's hint does. Postgres declarations must be connected at the current
 generated metadata revision; reconnect on `/company/connections` or refresh
 before a fresh attempt. The [definitive-refusal list](#definitive-publish-refusals)
 specifies which wire responses clear the matching attempt.
@@ -850,7 +856,7 @@ attempt. Any wire code is retained in the CLI's JSON failure document.
 
 - **413**, regardless of code: reduce the payload.
 - **422** with `release_mismatch`, `invalid_manifest`, `tier_mismatch`,
-  `has_primitives`, `patch_not_openable`, `connection_not_connected`,
+  `has_primitives`, `patch_not_openable`, `not_shared`, `connection_not_connected`,
   `stale_generated`, `not_additive`, `reserved_name`, `invalid_description` or `tier2_not_public`,
   or any 422 carrying `errors`: repair the
   reported release, manifest, tier, inventory, declaration or HTML validation

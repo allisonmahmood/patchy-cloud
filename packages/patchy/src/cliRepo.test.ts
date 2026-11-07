@@ -129,33 +129,45 @@ describe("patch-repo commands", () => {
     }
   );
 
-  // Every declarable refusal shares one branch; an unavailable inventory is its own.
+  // An openable source says what discovery says; an unavailable inventory is its own failure.
+  const people = projectSource.inventory.tables[0];
   it.each([
     {
       availability: "unshared",
-      inventory: {
-        tables: [
-          {
-            ...projectSource.inventory.tables[0],
-            shared: false,
-            declarable: false,
-            reason: "not_shared"
-          }
-        ],
-        stores: []
+      source: {
+        inventory: {
+          tables: [{ ...people, shared: false, declarable: false, reason: "not_shared" }],
+          stores: []
+        }
       },
-      code: "patch_not_openable"
+      code: "not_shared",
+      error: `\`people\` in directory isn't shared with other patches. Ask ${projectSource.owner.name}, the patch's owner, or an admin to share it.`
     },
-    { availability: "unavailable", inventory: null, code: "source_unavailable" }
+    {
+      availability: "retired",
+      source: {
+        state: "retired",
+        inventory: {
+          tables: [{ ...people, declarable: false, reason: "source_off" }],
+          stores: []
+        }
+      },
+      code: "source_off",
+      error: `directory is retired. Ask ${projectSource.owner.name}, its owner, or an admin to restore it.`
+    },
+    {
+      availability: "missing",
+      source: { inventory: { tables: [], stores: [] } },
+      code: "patch_not_openable",
+      error: "That shared table is not available to you."
+    },
+    { availability: "unavailable", source: { inventory: null }, code: "source_unavailable" }
   ])(
     "refuses a $availability shared source without enumerating connections",
-    async ({ inventory, code }) => {
+    async ({ source, code, error }) => {
       const instance = await stubInstance((request, respond, disconnect) => {
         if (request.url.split("?")[0] === "/api/patches/directory")
-          return respond(200, {
-            ...projectSource,
-            inventory
-          });
+          return respond(200, { ...projectSource, ...source });
         projectHandler(request, respond, disconnect);
       });
       const dir = projectTree(instance.url);
@@ -163,12 +175,15 @@ describe("patch-repo commands", () => {
         cwd: dir,
         env
       });
-      expect(result).toMatchObject({ status: inventory === null ? 3 : 2, stdout: "" });
-      expect(JSON.parse(result.stderr)).toMatchObject({
+      const unavailable = source.inventory === null;
+      expect(result).toMatchObject({ status: unavailable ? 3 : 2, stdout: "" });
+      const failure = JSON.parse(result.stderr);
+      expect(failure).toMatchObject({
         ok: false,
-        kind: inventory === null ? "unreachable" : "rejected",
+        kind: unavailable ? "unreachable" : "rejected",
         code
       });
+      if (error !== undefined) expect(failure.error).toContain(error);
       expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
       expect(instance.requests.map((request) => request.url)).toEqual([
         "/api/patches/directory?state=all"
@@ -671,6 +686,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       if (request.url.split("?")[0] === "/api/patches/directory")
         return respond(200, {
           ...projectSource,
+          state: "retired",
           inventory: {
             tables: [],
             stores: [
@@ -691,7 +707,7 @@ tables: { tasks: table("Assigned tasks.", { owner: t.member().optional() }) } })
       env
     });
     expect(result).toMatchObject({ status: 2, stdout: "" });
-    expect(JSON.parse(result.stderr)).toMatchObject({ code: "patch_not_openable" });
+    expect(JSON.parse(result.stderr)).toMatchObject({ kind: "rejected", code: "source_off" });
     expect(readFileSync(path.join(dir, "patchy.config.ts"), "utf8")).toBe(projectConfig);
     expect(instance.requests.map((request) => request.url)).toEqual([
       "/api/patches/directory?state=all"

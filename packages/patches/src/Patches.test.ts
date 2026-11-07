@@ -958,13 +958,18 @@ it.layer(
       const denied = yield* service
         .sharedStore(source.patchId, "photos", uploader.company.id)
         .pipe(Effect.flip);
-      assert.instanceOf(denied, Patches.PatchNotOpenable);
-      assert.strictEqual(denied.store, "photos");
+      assert.instanceOf(denied, Patches.NotShared);
+      assert.deepInclude(denied, {
+        patchId: source.patchId,
+        name: source.name,
+        owner: uploader.user.name,
+        store: "photos"
+      });
       assert.isUndefined(denied.table);
       yield* service.rollback(source.patchId, owner, 1);
       assert.instanceOf(
         yield* service.sharedStore(source.patchId, "photos", uploader.company.id).pipe(Effect.flip),
-        Patches.PatchNotOpenable
+        Patches.NotShared
       );
       yield* update(source.patchId, { manifest });
       assert.isTrue(
