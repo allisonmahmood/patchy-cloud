@@ -797,8 +797,9 @@ function mount(frame: HTMLIFrameElement): void {
   // frame in its own process and drops focus given before the patch's document commits there:
   // the shell's window takes focus back with the iframe still its active element, where focusing
   // the iframe again does nothing. Focusing the frame's window moves focus into the document.
+  // A closed broker hands nothing over, including a handoff queued before it closed.
   const focusPatch = () => {
-    if (document.activeElement === frame) frame.contentWindow?.focus();
+    if (!closed && document.activeElement === frame) frame.contentWindow?.focus();
   };
   // The commit finishes after the window's focus event, so the handoff waits a task. The event
   // also fires when the viewer comes back to the tab with the shell's focus on the iframe.
