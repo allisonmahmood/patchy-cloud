@@ -277,6 +277,54 @@ test("a frame's open only ever opens the switcher; only the shell's own press to
   expect(await states()).toEqual([true, true, true, false]);
 });
 
+test("the relay holds the keys after the chord only where the shell says a switcher will take them", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", listening, undefined, tier1);
+  await page.goto(patch.address);
+  // The page dispatches the shell's `available` itself, claiming the shell as its source: ignored.
+  await patchFrame(page).evaluate(() =>
+    dispatchEvent(
+      new MessageEvent("message", {
+        data: { patchy: "switcher", v: 1, kind: "available" },
+        source: parent,
+        origin: "null"
+      })
+    )
+  );
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await page.keyboard.press("a");
+  await expect(field(page)).toHaveValue("a");
+  // The shell's own: the key after the chord belongs to the switcher, and `closed` ends that.
+  await page.evaluate(() =>
+    (document.getElementById("patch") as HTMLIFrameElement).contentWindow!.postMessage(
+      { patchy: "switcher", v: 1, kind: "available" },
+      "*"
+    )
+  );
+  await settled(page);
+  await page.keyboard.press(chord);
+  // A blur the page forges, while the frame still has focus, releases nothing.
+  await patchFrame(page).evaluate(() => {
+    dispatchEvent(new Event("blur"));
+    document.dispatchEvent(new Event("blur"));
+  });
+  await page.keyboard.press("b");
+  await settled(page);
+  expect(await heard(page)).not.toContain("field b");
+  await page.evaluate(() =>
+    (document.getElementById("patch") as HTMLIFrameElement).contentWindow!.postMessage(
+      { patchy: "switcher", v: 1, kind: "closed" },
+      "*"
+    )
+  );
+  await expect.poll(() => patchFrame(page).evaluate(() => document.hasFocus())).toBe(true);
+  await page.keyboard.press("c");
+  await expect(field(page)).toHaveValue("ac");
+});
+
 test("a document cut short inside a comment or tag still starts with the relay", async ({
   page,
   instance
