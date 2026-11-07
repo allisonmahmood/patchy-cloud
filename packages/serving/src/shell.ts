@@ -73,10 +73,15 @@ export function renderPatchWrapper(options: PatchPage): string {
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }
+    /* Until its document can claim Mod+Shift+K, the frame takes no click or Tab: its empty first
+       document would hand the key to the browser. The broker shows it once the relay says hello,
+       or on load for a document without one, and if neither comes it shows after 10 s anyway. */
+    .patch-frame[data-waiting] { visibility: hidden; animation: patch-frame-waiting 0s 10s forwards; }
+    @keyframes patch-frame-waiting { to { visibility: visible; } }
   </style>
 </head>
 <body>
-  <iframe id="patch" class="patch-frame" title="${title}"
+  <iframe id="patch" class="patch-frame" title="${title}" data-waiting
     sandbox="allow-scripts allow-modals" referrerpolicy="no-referrer"
     allow="clipboard-write *"
     data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"

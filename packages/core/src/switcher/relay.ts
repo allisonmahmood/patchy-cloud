@@ -6,12 +6,12 @@
  *
  * Its one capture listener on `window` is the first any script registers, so it hears every key
  * before page code can: it claims Mod+Shift+K and on an activating press asks for the switcher.
- * In a frame, that is a message to the shell, which also learns the relay is running from its
- * `hello`; at the top it is this page's own request. When the shell says the switcher closed, the
- * relay puts focus and the selection back where the press found them.
+ * In a frame, that is an `open` message to the shell, which also learns the relay is running from
+ * its `hello`; at the top it toggles this page's own switcher. When the shell says the switcher
+ * closed, the relay puts focus and the selection back where the press found them.
  */
 import { activates, claims, platformOf } from "./key.js";
-import { requestSwitcher, switcherMessage, switcherMessageKind } from "./messages.js";
+import { switcherMessage, switcherMessageKind, toggleSwitcher } from "./messages.js";
 
 const platform = platformOf(navigator);
 // Read once, before page code runs, which could shadow it.
@@ -76,7 +76,8 @@ addEventListener(
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!activates(event, platform)) return;
-    if (!framed) return requestSwitcher(window);
+    // At the top, the press is the page's own, so it toggles; a frame's only ever asks to open.
+    if (!framed) return toggleSwitcher(window);
     remember();
     shell.postMessage(switcherMessage("open"), "*");
   },

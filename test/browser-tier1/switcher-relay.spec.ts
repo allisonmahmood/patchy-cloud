@@ -139,7 +139,7 @@ test("the shell ignores switcher messages from anywhere but its frame's relay", 
   ).toEqual([undefined, true]);
 });
 
-test("the shell holds the key until the patch's relay says hello, then hands the patch focus", async ({
+test("the frame takes no click or Tab until the patch's relay says hello, and the shell holds the key", async ({
   page,
   instance
 }) => {
@@ -160,18 +160,109 @@ test("the shell holds the key until the patch's relay says hello, then hands the
     );
   });
   await page.goto(patch.address, { waitUntil: "domcontentloaded" });
-  // The frame is still empty, so the shell keeps focus, and its own relay claims the key.
-  await page.keyboard.press(chord);
+  // The frame is still empty: a click on it or Tab toward it leaves focus with the shell, whose
+  // own relay claims the key.
+  const claimedAfter = async (move: () => Promise<void>) => {
+    await move();
+    await page.keyboard.press(chord);
+    return page.evaluate(() => {
+      const shell = window as Listening;
+      const claimed = [document.activeElement === document.body, shell.patchySwitcher];
+      delete shell.patchySwitcher;
+      return claimed;
+    });
+  };
+  const viewport = page.viewportSize()!;
   expect(
-    await page.evaluate(() => [
-      document.activeElement === document.body,
-      (window as Listening).patchySwitcher
-    ])
+    await claimedAfter(() => page.mouse.click(viewport.width / 2, viewport.height / 2))
   ).toEqual([true, true]);
+  expect(await claimedAfter(() => page.keyboard.press("Tab"))).toEqual([true, true]);
+  await expect(page.locator("#patch")).toBeHidden();
   content.resolve();
   await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("patch");
   await page.keyboard.press("a");
   await expect.poll(() => heard(page)).toContain("window a");
+});
+
+test("a frame whose document never arrives takes clicks again after its deadline", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", listening, undefined, tier1);
+  const content = Promise.withResolvers<void>();
+  await page.route("**/~content/**", async (route) => {
+    await content.promise;
+    await route.continue().catch(() => {});
+  });
+  await page.goto(patch.address, { waitUntil: "domcontentloaded" });
+  const frame = page.locator("#patch");
+  await expect(frame).toBeHidden();
+  // Neither hello nor load: the shell's own style lets the frame go after 10 s, whatever broker
+  // the page loaded.
+  await expect(frame).toBeVisible({ timeout: 15_000 });
+  content.resolve();
+});
+
+test("a frame's open only ever opens the switcher; only the shell's own press toggles it", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", listening, undefined, tier1);
+  await page.goto(patch.address);
+  // A loaded switcher, recording whether it is open after each call.
+  await page.evaluate(() => {
+    const shell = window as Listening & { states?: boolean[] };
+    const states: boolean[] = [];
+    let open = false;
+    shell.states = states;
+    shell.patchySwitcher = {
+      open: () => states.push((open = true)),
+      toggle: () => states.push((open = !open))
+    };
+  });
+  const states = () => page.evaluate(() => (window as Listening & { states?: boolean[] }).states);
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await page.keyboard.press(chord);
+  await patchFrame(page).evaluate(() =>
+    parent.postMessage({ patchy: "switcher", v: 1, kind: "open" }, "*")
+  );
+  await settled(page);
+  expect(await states()).toEqual([true, true, true]);
+  // The shell's own press, as with the open menu holding focus, closes it.
+  await page.evaluate(() => {
+    const control = Object.assign(document.createElement("button"), { textContent: "Shell" });
+    document.body.append(control);
+    control.focus();
+  });
+  await page.keyboard.press(chord);
+  expect(await states()).toEqual([true, true, true, false]);
+});
+
+test("a document cut short inside a comment or tag still starts with the relay", async ({
+  page,
+  instance
+}) => {
+  for (const html of ["<!doctype html><!-- unfinished", '<!doctype html><html lang="en']) {
+    const patch = await instance.publish("company", html, undefined, tier1);
+    await page.goto(patch.address);
+    await expect(page.locator("#patch")).toBeVisible();
+    // A listener the page adds later, behind the relay's.
+    await patchFrame(page).evaluate(() => {
+      const frame = window as Listening;
+      frame.heard = [];
+      addEventListener("keydown", (event) => frame.heard!.push(event.key), true);
+    });
+    await page.locator("#patch").click();
+    await page.keyboard.press(chord);
+    await page.keyboard.press("a");
+    await settled(page);
+    expect(
+      (await heard(page)).filter((key) => /^[ak]$/i.test(key)),
+      html
+    ).toEqual(["a"]);
+    expect(await requested(page), html).toBe(true);
+  }
 });
 
 test("the relay puts the cursor back where the press found it once the switcher closes", async ({

@@ -4,5 +4,5 @@
  */
 export { activates, claims, platformOf } from "./key.js";
 export type { Platform, Press } from "./key.js";
-export { requestSwitcher, switcherMessage, switcherMessageKind } from "./messages.js";
-export type { FrameMessage, ShellMessage } from "./messages.js";
+export { openSwitcher, switcherMessage, switcherMessageKind, toggleSwitcher } from "./messages.js";
+export type { FrameMessage, ShellMessage, Switcher } from "./messages.js";

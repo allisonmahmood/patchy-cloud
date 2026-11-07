@@ -26,19 +26,41 @@ export const switcherMessageKind = <Kind extends FrameMessage | ShellMessage>(
   return "kind" in data ? kinds.find((kind) => kind === data.kind) : undefined;
 };
 
+/**
+ * What a loaded switcher installs as `window.patchySwitcher`. A patch's frame can only ever reach
+ * `open`; only a press of the chord in the page itself reaches `toggle`.
+ */
+export interface Switcher {
+  /** Opens the switcher; one already open stays open. */
+  readonly open: () => void;
+  /** Opens the switcher, or closes it when open. */
+  readonly toggle: () => void;
+}
+
 declare global {
   interface Window {
     /**
-     * The page's switcher. A switcher that loads installs itself here as the function the chord
-     * calls, toggling it; until one does, `true` records that the chord asked for it, so it
-     * opens as soon as it starts.
+     * This page's switcher. Until one loads, `true` holds a request to open it, which it takes as
+     * it starts; a press or frame message before then sets nothing more. A switcher that loads
+     * replaces it with itself.
      */
-    patchySwitcher?: true | (() => void);
+    patchySwitcher?: true | Switcher;
   }
 }
 
-/** Asks this document's switcher to open, or to close when open, holding the request until one loads. */
-export const requestSwitcher = (page: Window) => {
-  if (typeof page.patchySwitcher === "function") page.patchySwitcher();
+type Page = Pick<Window, "patchySwitcher">;
+
+/** Opens this page's switcher, idempotently, holding the request until one loads: a frame's `open`. */
+export const openSwitcher = (page: Page) => {
+  if (typeof page.patchySwitcher === "object") page.patchySwitcher.open();
+  else page.patchySwitcher = true;
+};
+
+/**
+ * Opens this page's switcher, or closes it when open, holding the request until one loads: the
+ * chord pressed in the page itself, which the open menu's own focus guarantees is the person's.
+ */
+export const toggleSwitcher = (page: Page) => {
+  if (typeof page.patchySwitcher === "object") page.patchySwitcher.toggle();
   else page.patchySwitcher = true;
 };
