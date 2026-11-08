@@ -25,7 +25,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.15",
     "@patchy/analytics": "workspace:*",
     "@patchy/api": "workspace:*",
     "@patchy/auth": "workspace:*",
