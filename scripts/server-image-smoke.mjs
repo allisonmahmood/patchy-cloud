@@ -245,6 +245,34 @@ try {
   const identity = docker("top", "smoke-host-a", "-o", "pid,uid,comm");
   if (!/^\s*\d+\s+1000\s+bun\b/m.test(identity))
     throw new Error(`The host should run Bun as uid 1000:\n${identity}`);
+  // The app's fonts ship in the image: a signed-out page preloads one, and it loads as Geist
+  // should, for good and without a cookie, on GET and HEAD.
+  const door = await fetch(`http://127.0.0.1:${portA}/nothing-here`);
+  const policy = door.headers.get("content-security-policy") ?? "";
+  const font = /<link rel="preload" href="([^"]+)" as="font"/.exec(await door.text())?.[1];
+  if (!policy.includes("font-src 'self'") || font === undefined)
+    throw new Error(`A signed-out page should preload a font it may load:\n${policy}`);
+  for (const method of ["GET", "HEAD"]) {
+    const response = await fetch(`http://127.0.0.1:${portA}${font}`, { method });
+    const body = new Uint8Array(await response.arrayBuffer());
+    const wanted = {
+      status: 200,
+      type: "font/woff2",
+      cache: "public, max-age=31536000, immutable",
+      cookie: null,
+      signature: method === "GET" ? "wOF2" : ""
+    };
+    const got = {
+      status: response.status,
+      type: response.headers.get("content-type"),
+      cache: response.headers.get("cache-control"),
+      cookie: response.headers.get("set-cookie"),
+      signature: Buffer.from(body.subarray(0, 4)).toString("latin1")
+    };
+    if (JSON.stringify(got) !== JSON.stringify(wanted))
+      throw new Error(`${method} ${font} answered ${JSON.stringify(got)}`);
+  }
+  say(`a signed-out page loads ${font} from the image`);
   start("smoke-host-b", { env: host(portB, callbackB, "smoke-b") });
   say(`host b (smoke-b) served /healthz ${await healthy("smoke-host-b", portB)} ms after start`);
   for (const [label, database] of [

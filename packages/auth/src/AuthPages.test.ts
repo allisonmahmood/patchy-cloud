@@ -161,6 +161,8 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(html, "/auth/session.js");
       // Clerk refreshes the session cookie from a blob worker; blocking it signs out form POSTs.
       assert.include(page.headers.get("content-security-policy")!, "worker-src blob:");
+      // The app's fonts, from this origin, on a signed-in door as on every first-party page.
+      assert.include(page.headers.get("content-security-policy")!, "font-src 'self'");
       const created = yield* send(
         enrollment,
         post({ action: "create", name: "Acme <Studio>", handle: "acme-enroll" }, sessionCookie)

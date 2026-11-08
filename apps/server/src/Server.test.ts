@@ -3,6 +3,7 @@
  * the API and comes out as a served page, with the headers a socket sees.
  * What each route does is its package's test; this proves the wiring.
  */
+import { readFile } from "node:fs/promises";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +18,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
+import { fontFile, fontUrl, fonts } from "@patchy/core";
 import {
   FRONTEND_API_HOST,
   signedInCookies,
@@ -168,6 +170,38 @@ it.layer(
         status: 401,
         body: { ok: false, error: "Missing or invalid API token." }
       });
+    })
+  );
+
+  it.effect("serves the app's fonts to anyone, for good, without a cookie", () =>
+    Effect.gen(function* () {
+      // A signed-out page names the text face and may load it.
+      const door = yield* send(HttpClientRequest.get("/nothing-here"));
+      assert.strictEqual(door.status, 404);
+      assert.include(door.headers["content-security-policy"]!, "font-src 'self'");
+      assert.include(
+        yield* door.text,
+        `<link rel="preload" href="${fontUrl(fonts[0])}" as="font" type="font/woff2" crossorigin>`
+      );
+      for (const font of fonts) {
+        const bytes = new Uint8Array(yield* Effect.promise(() => readFile(fontFile(font))));
+        const get = yield* send(HttpClientRequest.get(fontUrl(font)));
+        assert.strictEqual(get.status, 200, font.file);
+        assert.strictEqual(get.headers["content-type"], "font/woff2");
+        assert.strictEqual(get.headers["cache-control"], "public, max-age=31536000, immutable");
+        assert.strictEqual(get.headers["x-content-type-options"], "nosniff");
+        assert.isUndefined(get.headers["set-cookie"]);
+        assert.deepStrictEqual(new Uint8Array(yield* get.arrayBuffer), bytes);
+        const head = yield* send(HttpClientRequest.head(fontUrl(font)));
+        assert.strictEqual(head.status, 200);
+        assert.strictEqual(head.headers["content-type"], "font/woff2");
+        assert.strictEqual(head.headers["cache-control"], get.headers["cache-control"]);
+        assert.isUndefined(head.headers["set-cookie"]);
+        assert.strictEqual(yield* head.text, "");
+      }
+      // Only the release's own bytes have a URL.
+      const stale = fontUrl(fonts[0]).replace(/-[0-9a-f]{16}\.woff2$/, "-0000000000000000.woff2");
+      assert.strictEqual((yield* send(HttpClientRequest.get(stale))).status, 404);
     })
   );
 

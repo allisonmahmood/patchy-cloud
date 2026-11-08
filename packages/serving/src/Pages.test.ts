@@ -57,7 +57,7 @@ import * as Wakes from "../../runtime/src/Wakes.js";
 import * as Pages from "./Pages.js";
 import {
   CONTENT_SECURITY_POLICY,
-  PATCH_CONTENT_SECURITY_POLICY,
+  NOTICE_SECURITY_POLICY,
   SHELL_SECURITY_POLICY,
   noticeContentSecurityPolicy,
   servingHeaders,
@@ -634,7 +634,23 @@ it.layer(layer)("pages", (it) => {
         assert.strictEqual(elsewhere.headers["cache-control"], "no-store");
         assert.isUndefined(elsewhere.headers["x-patchy-sign-in-url"]);
         assert.include(elsewhere.headers["content-type"], "text/html");
+        // A first-party notice: it draws in the app's fonts, and nothing else loads.
+        assert.strictEqual(elsewhere.headers["content-security-policy"], NOTICE_SECURITY_POLICY);
       }
+      // A content URL's 404 stays under the frame's sandbox.
+      const content = yield* get("/~content/patchmissing1/ver_1", {});
+      assert.strictEqual(content.status, 404);
+      assert.strictEqual(content.headers["content-security-policy"], CONTENT_SECURITY_POLICY);
+    })
+  );
+
+  it.effect("serves stopping notices as first-party pages that may draw in the app's fonts", () =>
+    Effect.gen(function* () {
+      const notice = yield* get("/~shell/notice/stream_limit?return=/acme/kudos", {});
+      assert.strictEqual(notice.status, 200);
+      assert.strictEqual(notice.headers["content-security-policy"], NOTICE_SECURITY_POLICY);
+      assert.include(NOTICE_SECURITY_POLICY, "font-src 'self'");
+      assert.include(yield* notice.text, 'data-notice="stream_limit"');
     })
   );
 
@@ -1264,10 +1280,7 @@ it.layer(services)("pages in memory", (it) => {
     { returnTo = "/", status = 200 }: { readonly returnTo?: string; readonly status?: number } = {}
   ) {
     assert.strictEqual(response.status, status);
-    assert.strictEqual(
-      response.headers.get("content-security-policy"),
-      PATCH_CONTENT_SECURITY_POLICY
-    );
+    assert.strictEqual(response.headers.get("content-security-policy"), NOTICE_SECURITY_POLICY);
     assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
     assert.strictEqual(
       yield* Effect.promise(() => response.text()),

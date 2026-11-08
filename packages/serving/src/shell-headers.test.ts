@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SWITCHER_RELAY_SOURCE } from "@patchy/core/html";
 import {
   CONTENT_SECURITY_POLICY,
-  PATCH_CONTENT_SECURITY_POLICY,
+  NOTICE_SECURITY_POLICY,
   noticeContentSecurityPolicy,
   shellContentSecurityPolicy
 } from "./shell-headers.js";
@@ -22,7 +22,7 @@ describe("the switcher relay's hash", () => {
       "https://clerk.example.test",
       SWITCHER_RELAY_SOURCE
     ]);
-    expect(scriptSources(PATCH_CONTENT_SECURITY_POLICY)).toEqual([SWITCHER_RELAY_SOURCE]);
+    expect(scriptSources(NOTICE_SECURITY_POLICY)).toEqual([SWITCHER_RELAY_SOURCE]);
   });
 
   it("admits a signed-in viewer's notice scripts from Patchy and Clerk, and nothing else new", () => {
@@ -38,7 +38,7 @@ describe("the switcher relay's hash", () => {
     // Otherwise it is the notice's own policy: no frames, no forms, no other origin.
     const rest = (policy: ReadonlyArray<string>) =>
       policy.filter((directive) => !/^(script|connect|worker)-src /.test(directive));
-    expect(rest(clerk)).toEqual(rest(PATCH_CONTENT_SECURITY_POLICY.split("; ")));
+    expect(rest(clerk)).toEqual(rest(NOTICE_SECURITY_POLICY.split("; ")));
   });
 
   it("stays out of a patch's own document, whose inline script a hash would switch off", () => {

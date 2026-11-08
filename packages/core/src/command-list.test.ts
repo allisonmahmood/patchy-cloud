@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandGroup, commandIcon, commandList, commandRow, kbd } from "./command-list.js";
-import { htmlPage, shellStyles } from "./html.js";
+import { htmlPage, servedStyles } from "./html.js";
 import { patchMark } from "./patch-marks.js";
 
 describe("the command list", () => {
@@ -88,7 +88,7 @@ describe("the command list", () => {
       ".field {",
       ".field-group {"
     ])
-      expect(shellStyles).toContain(selector);
-    expect(htmlPage({ title: "Home", body: "" })).toContain(shellStyles);
+      expect(servedStyles).toContain(selector);
+    expect(htmlPage({ title: "Home", body: "" })).toContain(servedStyles);
   });
 });
