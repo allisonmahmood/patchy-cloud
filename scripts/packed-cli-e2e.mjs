@@ -38,6 +38,8 @@ const npmCliEntry = path.join(repoRoot, "node_modules/npm/bin/npm-cli.js");
 const buildTimeoutMs = 120_000;
 let DEV_SEED;
 let authTesting;
+/** The script Serving puts first in every document it serves, from core as this checkout built it. */
+let switcherRelay;
 const activeChildren = new Set();
 const trackedProcessGroups = new Set();
 let latchedSignal;
@@ -958,6 +960,7 @@ async function startServerAttempt({ publicBaseUrl, objectDir }) {
   throwIfSignalLatched();
 
   authTesting ??= await tsImport("../packages/auth/src/testing.ts", import.meta.url);
+  switcherRelay ??= (await tsImport("../packages/core/src/html.ts", import.meta.url)).switcherRelay;
   const databaseUrl = await startPostgres();
 
   const serverEnv = environment(
@@ -1762,7 +1765,10 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
     assert.ok(source);
     const response = await context.request.get(new URL(source, publicBaseUrl).href);
     assert.equal(response.status(), 200);
-    const bytes = await response.body();
+    // The receipt names the stored artifact; Serving adds only the switcher relay to it.
+    const served = (await response.body()).toString("utf8");
+    assert.ok(served.includes(switcherRelay), "the frame's document carries the switcher relay");
+    const bytes = Buffer.from(served.replace(switcherRelay, ""), "utf8");
     const { repo, ...artifacts } = receipt.artifacts;
     assert.deepEqual(artifacts, {
       html: { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length }
@@ -1951,7 +1957,13 @@ async function assertPublicViewer(viewer, { patchId, versionNumber, html }) {
   assert.ok(src, "the shell must name the frame's content URL");
   const content = await fetchViewer(new URL(src, viewer.response.url));
   assert.equal(content.response.status, 200);
-  assert.equal(content.body, html, "the frame must load the complete uploaded version");
+  // The uploaded version whole, with only Patchy's switcher relay added first in its head.
+  const head = html.indexOf("<head>") + "<head>".length;
+  assert.equal(
+    content.body,
+    `${html.slice(0, head)}${switcherRelay}${html.slice(head)}`,
+    "the frame must load the complete uploaded version, led by the switcher relay"
+  );
   assert.match(
     content.response.headers.get("content-security-policy") ?? "",
     /^sandbox allow-scripts allow-modals;/

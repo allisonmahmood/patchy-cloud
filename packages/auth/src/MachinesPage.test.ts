@@ -18,7 +18,7 @@ import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
 import { clerkEnv, signedInCookies, signSession } from "./testing.js";
-import { NodeCryptography } from "@patchy/core";
+import { NodeCryptography, switcherRelay } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -174,9 +174,10 @@ it.layer(services)("Your agents", (it) => {
       // Nothing tracks the steps, so none is lit as the current one.
       assert.notInclude(mainOf(claude), "step-current");
       assert.notInclude(mainOf(claude), 'aria-current="step"');
-      // The tabs are links: the page adds no inline script, only the shell's copy buttons.
+      // The tabs are links: the page adds no inline script beyond the switcher relay every page
+      // carries, only the shell's copy buttons.
       assert.include(claude, '<script defer src="/assets/copy.js"></script>');
-      assert.notMatch(claude, /<script(?![^>]*\bsrc=)/);
+      assert.notMatch(claude.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
 
       const codex = yield* page("/machines?agent=codex", member.cookie);
       assert.include(

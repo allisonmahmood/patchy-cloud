@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { switcherRelay } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as AttioSource from "../attio/Source.js";
@@ -104,7 +105,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           "refreshes on its own",
           "<script>"
         ])
-          assert.notInclude(page.html, gone);
+          assert.notInclude(page.html.replace(switcherRelay, ""), gone);
         const catalogue = yield* read("/company/connections/connect", owner.user);
         assert.include(catalogue.html, `href="${connectPath}"`);
       })

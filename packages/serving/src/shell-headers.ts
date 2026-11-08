@@ -1,4 +1,6 @@
 /** Policy shared by the hosted shell and local patch runtime; no server dependencies. */
+import { SWITCHER_RELAY_SOURCE } from "@patchy/core/html";
+
 export const PATCH_ROBOTS_TAG = "noindex";
 export const NO_REFERRER_POLICY = "no-referrer";
 export const PATCH_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()";
@@ -7,11 +9,12 @@ export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
 export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
 
 /**
- * Patchy's own notices in place of a patch: no script, no frames, no forms, fonts only from their
- * own bytes.
+ * Patchy's own notices in place of a patch: no script but the switcher relay, no frames, no
+ * forms, fonts only from their own bytes.
  */
 export const PATCH_CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
+  `script-src ${SWITCHER_RELAY_SOURCE}`,
   "style-src 'unsafe-inline'",
   "img-src https: data:",
   "font-src data:",
@@ -20,7 +23,11 @@ export const PATCH_CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'"
 ].join("; ");
 
-/** A patch's document in its frame. Both the HTTP policy and iframe sandbox must grant a capability. */
+/**
+ * A patch's document in its frame. Both the HTTP policy and iframe sandbox must grant a capability.
+ * Its own inline script runs, so the switcher relay Serving puts ahead of it needs no hash; a hash
+ * here would switch `'unsafe-inline'` off.
+ */
 export const CONTENT_SECURITY_POLICY = [
   "sandbox allow-scripts allow-modals",
   "default-src 'none'",
@@ -33,21 +40,27 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'self'"
 ].join("; ");
 
-/** The shell around the frame. frame-src is egress containment even for script-initiated child navigation. */
+/**
+ * The shell around the frame. frame-src is egress containment even for script-initiated child
+ * navigation. Its one inline script is the switcher relay, admitted by hash.
+ */
 export const SHELL_SECURITY_POLICY = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
   // The tab's icon is an inline data: URL.
   "img-src data:",
   "frame-src 'self'",
-  "script-src 'self'",
+  `script-src 'self' ${SWITCHER_RELAY_SOURCE}`,
   "connect-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'"
 ].join("; ");
 
-/** Clerk keeps the session cookie fresh from a blob worker wherever the shell loads it. */
+/**
+ * Clerk keeps the session cookie fresh from a blob worker wherever the shell loads it. Its sources
+ * join `'self'` at the head of the shell's script and connect sources.
+ */
 export function shellContentSecurityPolicy(frontendApiHost?: string): string {
   if (frontendApiHost === undefined) return SHELL_SECURITY_POLICY;
   const sources = `https://${frontendApiHost}`;

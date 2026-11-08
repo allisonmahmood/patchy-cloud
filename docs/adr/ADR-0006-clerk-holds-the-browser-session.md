@@ -42,7 +42,9 @@ shows a sign-in failure rather than starting a loop.
 
 **Content-security policies.** Every shell loads Patchy's broker. A doored page's
 shell also allows the external initializer from its own origin and Clerk
-script/connect sources from the Frontend API host, never inline shell script.
+script/connect sources from the Frontend API host. Its only inline script is
+the switcher relay, admitted by its hash, as on every first-party page
+([ADR-0010](./ADR-0010-sandboxed-frame-and-broker.md#the-switcher-relay)).
 Patch content runs script only inside the opaque-origin sandbox.
 [ADR-0010](./ADR-0010-sandboxed-frame-and-broker.md) owns that boundary. A public
 shell runs only Patchy's own shell script, never analytics; company shells also

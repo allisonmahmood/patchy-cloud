@@ -54,7 +54,9 @@ typecheck. Single keys wait while the viewer types; a `HotkeyScope` holds back
 the rest of the page for a dialog. `HotkeySheet` is a ready-made `?` shortcuts
 sheet in the company look, listing labelled hotkeys by group; `useHotkeyList`
 lists them for a sheet of the builder's own. Patchy keeps `Mod+Shift+K` for its
-own shortcuts. Viewers can't rebind keys, and there is no server-side surface.
+switcher: the key never reaches patch code, whatever listens for it, nor the
+browser, whose own use of it (Zen closes unpinned tabs) never runs on a Patchy
+page. Viewers can't rebind keys, and there is no server-side surface.
 
 The generated client's `download(name, data)` accepts a Blob or bytes on
 tier 1 and 2 pages, including public tier 1 patches. The shell enforces
@@ -351,7 +353,7 @@ A tier changes where code runs, not patch ownership, declarations, versioning or
 
 Tier 1 can be **public**, open to anyone with the link. A public tier 1 patch can run browser code and use the shell's route bridge, and reaches no data: its `me()` answers null, and tables and files are unavailable on public versions. **Public tier 2 is deferred**: the patch identity grants no anonymous access. `tier2_not_public` refuses public sharing of a served tier 2 version, and a tier 2 publish to a public patch requires explicit `--share company`.
 
-The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public shell starts only Patchy's broker, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer; a public shell loads neither. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in, and remembers what each member opened so their own Home can put their usual patches first; nobody else, owner or admin, sees that record. Of opens, the one business event is each member's first open of a colleague's patch, by ids, to count [activation](#analytics); the request diagnostics every page already sends to Patchy's analytics, as `wide.request`, carry the viewer's and the patch's ids on every company-page open, repeats and owners included.
+The [serving guarantees](../packages/serving/GLOSSARY.md) distinguish patch content from its first-party shell: a public shell starts only Patchy's broker and switcher relay, never analytics. A company shell also loads Clerk's headless client and Patchy's external session initializer; a public shell loads neither. Only the current version of a public patch is public; older versions stay behind the company door. Caching is keyed to sharing: a minute at most for the current public version at its address and numbered version URL, never for a doored page. Pages stay open to any agent that may open them, never bot-blocked; an agent reads a company page through its user's signed-in browser, not a machine token. The host knows who opened a company page in order to let them in, and remembers what each member opened so their own Home can put their usual patches first; nobody else, owner or admin, sees that record. Of opens, the one business event is each member's first open of a colleague's patch, by ids, to count [activation](#analytics); the request diagnostics every page already sends to Patchy's analytics, as `wide.request`, carry the viewer's and the patch's ids on every company-page open, repeats and owners included.
 
 The supported browser is Chromium desktop. Other browsers and mobile are outside
 this release's supported runtime.
@@ -721,7 +723,7 @@ A patch's **name** is 3–32 lowercase letters, digits or hyphens, with no leadi
 
 Company sharing protects patch content, not address existence. A signed-out request for a retained company patch or an off patch gets the 401 login door; a missing, disabled or reclaimed patch gets 404. Someone probing names can therefore distinguish a retained address from an absent one. This follows the requirement that reclamation leaves no row or name and answers 404 for everyone: a reclaimed address cannot be distinguished from one that never existed.
 
-Only the current public version is public and caches for at most a minute at both its address and numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting content URL, never the link to share. It serves that version's bytes with its content security policy, door and sharing-based caching. Every shell frames the content URL with a document nonce and `sandbox="allow-scripts allow-modals"`, so a page's same-page links scroll within it. Historical pages always render with their own version's tier.
+Only the current public version is public and caches for at most a minute at both its address and numbered version URL; older versions stay behind the company door. `/~content/<patchId>/<versionId>` is an internal, non-redirecting content URL, never the link to share. It serves that version's bytes, with only the [switcher relay](../packages/serving/GLOSSARY.md) added first in their head, with its content security policy, door and sharing-based caching. Every shell frames the content URL with a document nonce and `sandbox="allow-scripts allow-modals"`, so a page's same-page links scroll within it. Historical pages always render with their own version's tier.
 
 ### The operator
 

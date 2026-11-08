@@ -121,7 +121,7 @@ class BrokerBuildFailed extends Schema.TaggedError<BrokerBuildFailed>()("BrokerB
   exitCode: Schema.Number
 }) {
   override get message() {
-    return `The shell broker failed to build (exit ${this.exitCode}); see its errors above.`;
+    return `The shell's scripts failed to build (exit ${this.exitCode}); see their errors above.`;
   }
 }
 
@@ -342,24 +342,27 @@ const dev = Command.make(
 ).pipe(Command.withDescription("Start this worktree's local Patchy Cloud instance (idempotent)"));
 
 /**
- * Bundles the shell broker the server serves. Start and reset call it before
- * they record, stop or wipe anything, so a broker that does not compile
- * leaves the instance as it was; stop, status and logs never wait on it.
- * Errors go to stderr; stdout stays the plan for `--json`.
+ * Bundles the browser scripts the server serves: the shell broker, then core's
+ * switcher relay. Start and reset call it before they record, stop or wipe
+ * anything, so a script that does not compile leaves the instance as it was;
+ * stop, status and logs never wait on it. Errors go to stderr; stdout stays
+ * the plan for `--json`.
  */
 const buildBroker = Effect.fn("buildBroker")(function* (worktree: string) {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const node = yield* realNode();
-  const exitCode = yield* spawner.exitCode(
-    ChildProcess.make(node.execPath, [path.join(worktree, "scripts/build-serving-broker.mjs")], {
-      cwd: worktree,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "inherit"
-    })
-  );
-  if (exitCode !== 0) return yield* new BrokerBuildFailed({ exitCode });
+  for (const script of ["build-serving-broker.mjs", "build-core-scripts.mjs"]) {
+    const exitCode = yield* spawner.exitCode(
+      ChildProcess.make(node.execPath, [path.join(worktree, "scripts", script)], {
+        cwd: worktree,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "inherit"
+      })
+    );
+    if (exitCode !== 0) return yield* new BrokerBuildFailed({ exitCode });
+  }
 });
 
 /**

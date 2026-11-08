@@ -29,8 +29,9 @@ useHotkey("Enter", saveTitle, { within: titleField });
 - A chord's modifiers match exactly: an extra one held stops it. `"ArrowLeft"` doesn't fire
   with Shift or Alt held, and `"J"` doesn't fire on Shift+J. The Shift a symbol takes to
   type, as for `"?"`, isn't extra.
-- Patchy keeps `"Mod+Shift+K"` for its own shortcuts. The type checker refuses it, and one
-  that arrives through a cast is skipped with a console warning.
+- Patchy keeps `"Mod+Shift+K"` for its switcher, and the key never reaches patch code, whatever
+  listens for it. The type checker refuses it, and one that arrives through a cast is skipped
+  with a console warning.
 - A sequence is chords separated by single spaces: `"G H"`, `"C T"`. Each step must follow
   the last within a second. A single-key hotkey fires on its own press even when it starts
   a sequence, so `"G"` beside `"G H"` fires on every `G H`.

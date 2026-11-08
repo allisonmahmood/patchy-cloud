@@ -1,6 +1,12 @@
 import * as Cookies from "effect/http/Cookies";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { type AppShell, escapeAttribute, escapeHtml, htmlPage } from "@patchy/core";
+import {
+  type AppShell,
+  escapeAttribute,
+  escapeHtml,
+  htmlPage,
+  SWITCHER_RELAY_SOURCE
+} from "@patchy/core";
 
 export interface Page {
   readonly title: string;
@@ -98,18 +104,19 @@ export function pageResponse(
           "base-uri 'none'",
           ["form-action 'self'", ...(page.formActions ?? [])].join(" "),
           "frame-ancestors 'none'",
-          // App pages run the shell's own What's new script, which posts back here.
+          // Every page runs the switcher relay, inline, admitted by its hash. App pages also run
+          // the shell's own What's new script, which posts back here.
           ...(clerk
             ? [
-                `script-src 'self' https://${clerk.frontendApiHost}`,
+                `script-src 'self' https://${clerk.frontendApiHost} ${SWITCHER_RELAY_SOURCE}`,
                 `connect-src ${page.app ? "'self' " : ""}https://${clerk.frontendApiHost}`,
                 // Clerk's session poller runs on a blob worker; without it the 60s
                 // session cookie goes stale and the page's next form POST is signed out.
                 "worker-src blob:"
               ]
             : page.app
-              ? ["script-src 'self'", "connect-src 'self'"]
-              : [])
+              ? [`script-src 'self' ${SWITCHER_RELAY_SOURCE}`, "connect-src 'self'"]
+              : [`script-src ${SWITCHER_RELAY_SOURCE}`])
         ].join("; ")
       }
     }
