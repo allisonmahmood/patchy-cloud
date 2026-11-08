@@ -70,18 +70,9 @@ export const make: Effect.Effect<StreamAdmission["Service"], never, Dependencies
         .authenticate(browserRequest)
         .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })));
       const signedIn = yield* authenticate;
-      if (signedIn.status !== "signed-in") {
-        if (
-          signedIn.status === "handshake" ||
-          signedIn.reason === "token-expired" ||
-          signedIn.reason === "session-token-expired" ||
-          signedIn.reason?.startsWith("session-token-expired-refresh-")
-        )
-          return yield* new Runtime.SessionRefreshRequired({});
-        return yield* new Runtime.SessionExpired({});
-      }
-      if (signedIn.claims.exp * 1_000 <= (yield* Clock.currentTimeMillis))
+      if (Session.refreshable(signedIn, yield* Clock.currentTimeMillis))
         return yield* new Runtime.SessionRefreshRequired({});
+      if (signedIn.status !== "signed-in") return yield* new Runtime.SessionExpired({});
       const person = yield* RequireSession.resolveViewer.pipe(
         Effect.provideContext(viewerContext),
         Effect.provideService(RequireSession.SignedIn, signedIn.claims),

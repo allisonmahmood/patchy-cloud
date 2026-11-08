@@ -59,6 +59,19 @@ export type SessionResult =
       readonly completed: boolean;
     };
 
+/**
+ * Whether a script's request with this result should refresh the session and ask again, rather
+ * than count as signed out: Clerk wants a handshake, or the short-lived token expired, by Clerk
+ * or by `now`. A page would redirect for the handshake; a script can't follow one.
+ */
+export const refreshable = (result: SessionResult, now: number) =>
+  result.status === "handshake" ||
+  (result.status === "signed-in"
+    ? result.claims.exp * 1_000 <= now
+    : result.reason === "token-expired" ||
+      result.reason === "session-token-expired" ||
+      result.reason?.startsWith("session-token-expired-refresh-") === true);
+
 const decodeClaims = Schema.decodeUnknownOption(SessionClaims);
 const FrontendHost = Schema.String.check(
   Schema.isPattern(
