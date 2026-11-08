@@ -109,22 +109,68 @@ it.layer(configured())("Session", (it) => {
     })
   );
 
-  it.effect("tells a session's handshake from one that only sets up a development browser", () =>
-    Effect.gen(function* () {
-      const session = yield* Session.Session;
-      const now = Math.floor(Date.now() / 1_000);
-      const expired = signSession({ iat: now - 120, nbf: now - 120, exp: now - 60 });
-      const navigation = { accept: "text/html", "sec-fetch-dest": "document" };
-      const kinds = yield* Effect.forEach(
-        // A browser Clerk hasn't met, signed in or not, then a lapsed session.
-        [undefined, signedInCookies(expired)],
-        (cookie) =>
-          Effect.map(session.authenticate(request(cookie, undefined, navigation)), (result) =>
-            result.status === "handshake" ? result.kind : result.status
-          )
-      );
-      assert.deepStrictEqual(kinds, ["browser", "session"]);
-    })
+  it.effect(
+    "calls a handshake a session's only when the browser holds one, and never Clerk's own hops",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* Session.Session;
+        const now = Math.floor(Date.now() / 1_000);
+        const fresh = signedInCookies();
+        const lapsed = signedInCookies(
+          signSession({ iat: now - 120, nbf: now - 120, exp: now - 60 })
+        );
+        const navigation = { accept: "text/html", "sec-fetch-dest": "document" };
+        const sync = "?__clerk_redirect_url=https%3A%2F%2Fexample.com%2F";
+        // Each request, the reason Clerk gives on its redirect (or where it goes), and its kind.
+        const cases = [
+          // Clerk's work on the browser itself, which a URL alone asks of anyone.
+          [undefined, "", {}, "dev-browser-missing", "browser"],
+          [undefined, "?__clerk_db_jwt=offline-browser", {}, "dev-browser-sync", "browser"],
+          [undefined, sync, {}, "https://example.com", "browser"],
+          [fresh, "?__clerk_db_jwt=offline-browser", {}, "dev-browser-sync", "browser"],
+          [fresh, sync, {}, "https://example.com", "browser"],
+          // A session the browser holds, which only Clerk can bring up to date.
+          [
+            lapsed,
+            "",
+            {},
+            "session-token-expired-refresh-non-eligible-no-refresh-cookie",
+            "session"
+          ],
+          [
+            `__clerk_db_jwt=offline-browser; __client_uat=${now}`,
+            "",
+            {},
+            "client-uat-but-no-session-token",
+            "session"
+          ],
+          [
+            `__session=${signSession({ iat: now - 30, nbf: now - 30 })}; __client_uat=${now}; __clerk_db_jwt=offline-browser`,
+            "",
+            {},
+            "session-token-iat-before-client-uat",
+            "session"
+          ],
+          [
+            fresh,
+            "",
+            { referer: "https://elsewhere.example/" },
+            "primary-domain-cross-origin-sync",
+            "session"
+          ]
+        ] as const;
+        for (const [cookie, query, headers, reason, kind] of cases) {
+          const result = yield* session.authenticate(
+            request(cookie, `${PUBLIC_BASE_URL}/acme/page${query}`, { ...navigation, ...headers })
+          );
+          if (result.status !== "handshake") return assert.fail(`${reason}: ${result.status}`);
+          const to = new URL(result.response.headers.get("location")!);
+          assert.deepStrictEqual(
+            [to.searchParams.get("__clerk_hs_reason") ?? to.origin, result.kind],
+            [reason, kind]
+          );
+        }
+      })
   );
 
   it.effect("pins the handshake return origin and drives development hops by hand", () =>

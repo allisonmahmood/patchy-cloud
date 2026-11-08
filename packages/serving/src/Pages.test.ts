@@ -1662,6 +1662,13 @@ it.layer(services)("pages in memory", (it) => {
         assert.strictEqual(back.headers.get("location"), `${PUBLIC_BASE_URL}${path}`);
         assert.deepStrictEqual(back.headers.getSetCookie(), returned.directives);
         yield* viewerShell(yield* visit(cookieOf(returned.directives)), dev, "public");
+        // Clerk's own work on a browser never moves a public reader: setting up a development
+        // browser, or a sync hop that would send them to whatever site the link names.
+        for (const query of [
+          "?__clerk_db_jwt=offline-browser",
+          "?__clerk_redirect_url=https%3A%2F%2Fexample.com%2F"
+        ])
+          yield* publicShell(yield* visit("", `${path}${query}`));
         // The frame's content never starts one.
         const content = yield* visit(expired(false), `/~content/${patchId}/${versionId}?n=b`);
         assert.strictEqual(content.status, 200);

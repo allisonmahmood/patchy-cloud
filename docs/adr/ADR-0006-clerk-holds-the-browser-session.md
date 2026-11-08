@@ -37,10 +37,11 @@ locally against Clerk's public key, using the handshake for a browser that
 returns cold. `CLERK_JWT_KEY` supplies that public key without a JWKS fetch;
 without it, the SDK retrieves Clerk's signing keys. A failed returning handshake
 shows a sign-in failure rather than starting a loop. A public patch's address
-follows only a handshake for a session the browser already holds, so its own
-members come back recognised, never Clerk's set-up of a browser it hasn't met;
-its content URL never starts one, and a failed or foreign sign-in ends on the
-public page. A top-level notice reads the session but never redirects: it never
+follows only a handshake for a session the browser already holds, as its session
+token or signed-in client shows, so its own members come back recognised. It
+never follows Clerk's own work on the browser, such as setting up or syncing a
+development browser, which a link alone can ask of anyone; its content URL never
+starts one, and a failed or foreign sign-in ends on the public page. A top-level notice reads the session but never redirects: it never
 starts a handshake, and it takes a verified return as it is, setting its cookies
 without the cleanup hop. A person stopped on one always sees it, and it loads the
 pair and their switcher only when the session verifies as an active member's.

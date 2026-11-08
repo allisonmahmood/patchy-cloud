@@ -43,11 +43,23 @@ export const SessionClaims = Schema.Struct({
 /**
  * Why Clerk sends a page through a handshake. `completed` is a development instance's verified
  * return, whose cleanup hop sets its cookies; production verifies a return without one, as a
- * plain sign-in. `session` renews or confirms a session the browser already holds. `browser` is a
- * development instance setting up a browser it hasn't met, which it asks of anyone, signed in or
- * not.
+ * plain sign-in. `session` renews or confirms a session the browser holds: one that carries a
+ * session token or a client that signed in, as Clerk reads them. `browser` is everything else:
+ * Clerk's work on the browser itself, setting up a development browser or syncing it across
+ * domains, which a URL alone can ask of anyone, and any handshake for a browser without a session.
  */
 export type Handshake = "completed" | "session" | "browser";
+
+/**
+ * Handshake reasons that are Clerk's work on the browser rather than a session it holds, whatever
+ * cookies it carries. All but the last are a development instance's; a satellite domain syncs.
+ */
+const browserHandshakes: ReadonlySet<string> = new Set([
+  "dev-browser-missing",
+  "dev-browser-sync",
+  "primary-responds-to-syncing",
+  "satellite-needs-syncing"
+]);
 
 export type SessionResult =
   | {
@@ -376,6 +388,15 @@ export const make = Effect.gen(function* () {
       }
       const responseHeaders = new Headers({ location });
       for (const cookie of cookies) responseHeaders.append("set-cookie", cookie);
+      // Clerk's own evidence of a session, under this instance's suffixed names or the plain ones:
+      // a session token, or a client that says it signed in.
+      const named = (name: string) => [
+        canonical.cookies.get(`${name}_${suffix}`),
+        canonical.cookies.get(name)
+      ];
+      const holdsSession =
+        named(constants.Cookies.Session).some((token) => !!token) ||
+        named(constants.Cookies.ClientUat).some((uat) => Number.parseInt(uat ?? "", 10) > 0);
       const verified = state.status === "signed-in" ? claimsOf(state.toAuth()) : Option.none();
       return {
         status: "handshake",
@@ -383,9 +404,9 @@ export const make = Effect.gen(function* () {
         kind:
           state.status === "signed-in"
             ? "completed"
-            : state.reason === "dev-browser-missing"
-              ? "browser"
-              : "session",
+            : holdsSession && !browserHandshakes.has(state.reason ?? "")
+              ? "session"
+              : "browser",
         ...(Option.isSome(verified) ? { claims: verified.value } : {})
       };
     }
