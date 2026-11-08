@@ -509,7 +509,7 @@ it.layer(
   );
 
   it.effect(
-    "completes a public patch's handshake into its member's company page, cached for no one",
+    "completes a public patch's handshake into the page with its member's switcher, cached for no one",
     () =>
       Effect.gen(function* () {
         const created = yield* publish(DEV_SEED.token, {
@@ -538,11 +538,14 @@ it.layer(
           assert.strictEqual(response.headers["cache-control"], "private, no-store");
           assert.strictEqual(response.headers.location, `${publicBaseUrl}${target}`);
           const cookie = Cookies.toCookieHeader(response.cookies);
-          // The patch's own member gets their company page: their switcher, then the session.
+          // The patch's own member gets the public page with their switcher, then the session,
+          // on top; its frame stays public.
           const page = yield* send(signedRequest(target, cookie));
           assert.strictEqual(page.status, 200);
           assert.strictEqual(page.headers["cache-control"], "private, no-store");
-          assert.deepStrictEqual(scripts(yield* page.text), [
+          const body = yield* page.text;
+          assert.include(body, 'data-scope="public"');
+          assert.deepStrictEqual(scripts(body), [
             "/~shell/switcher.js",
             `https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js`,
             "/auth/session.js",

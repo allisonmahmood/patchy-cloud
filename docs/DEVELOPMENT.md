@@ -713,9 +713,8 @@ can quote it.
   `x-patchy-sign-in-url` and `Cache-Control: private, no-store`, and no
   `Location`. Only the current version of a public patch answers 200 with
   `public, max-age=60`, `Vary: Cookie` and no `Set-Cookie`; older versions keep
-  the door. A member's session gets that address as their company page,
-  `private, no-store`, with the switcher; anyone else's still gets the public
-  page. Cover `share … public`, a new publish and `share … company`, and a
+  the door. A member's session gets the same public page with their switcher
+  and session on top, `private, no-store`; anyone else's gets it bare. Cover `share … public`, a new publish and `share … company`, and a
   reader from another company, who gets the same 404 as a missing patch.
 - **Consent.** Open the consent page as a member and as an admin, with agent
   access on and off, for a hosted redirect and a `127.0.0.1` one, at desktop

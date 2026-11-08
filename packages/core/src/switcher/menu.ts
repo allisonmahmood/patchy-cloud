@@ -38,7 +38,7 @@ const markOf = (row: Row) =>
 
 export const switcherMenu = (
   client: SwitcherClient,
-  /** The company shell's frame and the patch it shows; neither on an app page. */
+  /** The shell's frame and the patch it shows; neither on an app page. */
   here: { readonly frame?: HTMLIFrameElement | undefined; readonly patch?: string | undefined }
 ): SwitcherMenu => {
   const { frame } = here;

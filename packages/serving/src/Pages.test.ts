@@ -689,7 +689,7 @@ it.layer(layer)("pages", (it) => {
         const recorded = yield* scores;
         assert.closeTo(recorded.get(company.patchId)!, 1, 1e-9);
         assert.isFalse(recorded.has(open.patchId));
-        // A member opens their own company's public patch as a company page, and it counts.
+        // A member opening their own company's public patch signed in counts.
         assert.strictEqual((yield* get(open.path)).status, 200);
         assert.closeTo((yield* scores).get(open.patchId)!, 1, 1e-9);
         // A colleague reading v1 after v2 is out hasn't seen what changed.
@@ -743,7 +743,7 @@ it.layer(layer)("pages", (it) => {
         firstOpens(welcome.patchId).map((event) => event.properties),
         [{ patchId: welcome.patchId, ownerUserId: DEV_SEED.userId, tier: 1, welcomePage: true }]
       );
-      // A colleague opens the company's public patch as a company page, so it counts too.
+      // A colleague's first open of the company's public patch, signed in, counts too.
       assert.strictEqual((yield* get(shared.path, colleague)).status, 200);
       assert.deepStrictEqual(
         firstOpens(shared.patchId).map((event) => event.principalId),
@@ -1213,7 +1213,8 @@ it.layer(services)("pages in memory", (it) => {
         for (const scope of ["company", "public", "company"] as const) {
           yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, scope);
           for (const path of [patchPath, `${patchPath}/~v/1`]) {
-            // A member gets the session shell at either scope; the public shell is everyone else's.
+            // A member gets their switcher and session at either scope, over the public page
+            // while it is public; signed out, it is the bare public shell.
             const member = yield* send(path, { headers: { cookie: signedInCookies() } });
             const signedOut = yield* send(path);
             assert.strictEqual(member.status, 200);
@@ -1226,12 +1227,15 @@ it.layer(services)("pages in memory", (it) => {
               member.headers.get("content-security-policy"),
               shellContentSecurityPolicy(FRONTEND_API_HOST)
             );
+            assert.include(body, `data-scope="${scope}"`);
+            // Only a company shell pins its viewer for the broker.
+            assert.strictEqual(body.includes("data-viewer-id"), scope === "company");
             assert.include(
               body,
               `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
             );
             assert.include(body, 'src="/auth/session.js"');
-            // The company shell alone loads the viewer's switcher.
+            // A shell rendered for its viewer alone loads their switcher.
             assert.include(body, `src="/~shell/switcher.js?v=${switcherDigest}"`);
             assert.strictEqual((body.match(/<script\b/g) ?? []).length, 5);
             // The relay is the one inline script, admitted by its hash.
@@ -1501,10 +1505,15 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
-  /** A company shell for `viewer`: their switcher, the session's scripts, never stored. */
-  const companyShell = Effect.fn(function* (
+  /**
+   * A shell rendered for `viewer`: their switcher and the session's scripts, never stored. A
+   * company shell pins them as its frame's viewer; a public one, their company's public patch,
+   * pins no one, so its document is the one everyone reads.
+   */
+  const viewerShell = Effect.fn(function* (
     response: Response,
-    viewer: { readonly userId: string; readonly companyId: string }
+    viewer: { readonly userId: string; readonly companyId: string },
+    scope: "company" | "public"
   ) {
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
@@ -1514,8 +1523,9 @@ it.layer(services)("pages in memory", (it) => {
       shellContentSecurityPolicy(FRONTEND_API_HOST)
     );
     const html = yield* Effect.promise(() => response.text());
-    assert.include(html, 'data-scope="company"');
-    assert.include(html, `data-viewer-id="${viewer.userId}"`);
+    assert.include(html, `data-scope="${scope}"`);
+    assert.strictEqual(html.includes("data-viewer-id"), scope === "company");
+    assert.include(html, " data-switcher ");
     assert.include(html, switcherTag(viewer));
     assert.include(html, 'src="/auth/session.js"');
   });
@@ -1533,6 +1543,7 @@ it.layer(services)("pages in memory", (it) => {
     if (cached) assert.deepStrictEqual(response.headers.getSetCookie(), []);
     const html = yield* Effect.promise(() => response.text());
     assert.include(html, 'data-scope="public"');
+    assert.notInclude(html, "data-switcher");
     assert.deepStrictEqual(
       [...html.matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag),
       ["<script>", `<script defer src="${brokerSrc}">`]
@@ -1560,7 +1571,7 @@ it.layer(services)("pages in memory", (it) => {
   });
 
   it.effect(
-    "opens a public patch's address as a company page for its own members, the public page for anyone else",
+    "puts a member's switcher and session on their company's public page, and nothing on anyone else's",
     () =>
       Effect.gen(function* () {
         const patches = yield* Patches.Patches;
@@ -1585,7 +1596,7 @@ it.layer(services)("pages in memory", (it) => {
         );
 
         assert.isFalse(yield* opened);
-        yield* companyShell(yield* visit(signedInCookies()), dev);
+        yield* viewerShell(yield* visit(signedInCookies()), dev, "public");
         assert.isTrue(yield* opened);
         // Its frame's content stays everyone's, even for a member.
         const content = yield* visit(signedInCookies(), `/~content/${patchId}/${versionId}?n=b`);
@@ -1614,8 +1625,8 @@ it.layer(services)("pages in memory", (it) => {
         // Every version URL of the current version is public; an older one is not, as before.
         yield* publish("Open timetable, again", undefined, patchId);
         yield* publicShell(yield* visit(elsewhere.cookie, `${path}/~v/2`));
-        yield* companyShell(yield* visit(signedInCookies(), `${path}/~v/2`), dev);
-        yield* companyShell(yield* visit(signedInCookies(), `${path}/~v/1`), dev);
+        yield* viewerShell(yield* visit(signedInCookies(), `${path}/~v/2`), dev, "public");
+        yield* viewerShell(yield* visit(signedInCookies(), `${path}/~v/1`), dev, "company");
         assert.strictEqual((yield* send(`${path}/~v/1`)).status, 401);
         assert.strictEqual((yield* visit(elsewhere.cookie, `${path}/~v/1`)).status, 404);
       })
@@ -1635,7 +1646,7 @@ it.layer(services)("pages in memory", (it) => {
           send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
 
         // A member whose token lapsed, as after following a link from elsewhere, goes through
-        // Clerk's handshake at the address and comes back to their company page.
+        // Clerk's handshake at the address and comes back to the page with their switcher.
         const lapsed = yield* visit(expired(false));
         assert.strictEqual(lapsed.status, 307);
         assert.strictEqual(lapsed.headers.get("cache-control"), "private, no-store");
@@ -1650,7 +1661,7 @@ it.layer(services)("pages in memory", (it) => {
         assert.strictEqual(back.status, 307);
         assert.strictEqual(back.headers.get("location"), `${PUBLIC_BASE_URL}${path}`);
         assert.deepStrictEqual(back.headers.getSetCookie(), returned.directives);
-        yield* companyShell(yield* visit(cookieOf(returned.directives)), dev);
+        yield* viewerShell(yield* visit(cookieOf(returned.directives)), dev, "public");
         // The frame's content never starts one.
         const content = yield* visit(expired(false), `/~content/${patchId}/${versionId}?n=b`);
         assert.strictEqual(content.status, 200);
@@ -1660,7 +1671,7 @@ it.layer(services)("pages in memory", (it) => {
         const refreshed = refreshes();
         const renewed = yield* visit(expired(true));
         refreshed(renewed);
-        yield* companyShell(renewed, dev);
+        yield* viewerShell(renewed, dev, "public");
 
         // A verified return for someone outside the company ends on the public page, through
         // the same cleanup hop.

@@ -419,8 +419,6 @@ test("sharing publicly preserves an admitted company document across reconnect",
     })
   ).toBe("not_available_on_public");
   await expect(frame.locator("#pasted-copy")).toHaveValue("Company draft after sharing");
-  // A new reader of the now-public patch, signed out: a member would get their company page.
-  await instance.session(context, "none");
   const publicPage = await context.newPage();
   const requests = instance.runtimeRequests.filter((request) =>
     request.path.startsWith("/api/runtime/stream")
@@ -431,6 +429,68 @@ test("sharing publicly preserves an admitted company document across reconnect",
     instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
   ).toHaveLength(requests);
   expect(await generations(publicFrame)).toEqual([]);
+});
+
+/** What a patch's own table answers, or the code it was refused with. */
+const listRows = (frame: Frame) =>
+  frame.evaluate(async () => {
+    try {
+      await (window as unknown as FixtureWindow).harness.client.tables.rows!.list();
+      return "accepted";
+    } catch (error) {
+      return error && typeof error === "object" && "code" in error ? error.code : "unexpected";
+    }
+  });
+/** How many times this host opened a document stream. */
+const streamsOpened = (instance: Instance) =>
+  instance.runtimeRequests.filter((request) => request.path.startsWith("/api/runtime/stream"))
+    .length;
+
+test("a member's public patch keeps its document and local state when their session ends", async ({
+  page,
+  context,
+  instance
+}) => {
+  const patch = await instance.publish("public");
+  const opened = streamsOpened(instance);
+  const frame = await open(page, patch);
+  // Their switcher sits on top of the public document anyone reads, which opens no stream.
+  await expect(page.locator("#patch")).toHaveAttribute("data-switcher", "");
+  await frame.locator("#pasted-copy").fill("Draft on a public page");
+  // Signed out elsewhere, then where a company document's stream would reconnect.
+  await instance.session(context, "none");
+  instance.pauseStreams(true);
+  instance.pauseStreams(false);
+  expect(await frame.evaluate(() => (window as unknown as FixtureWindow).harness.client.me())).toBe(
+    null
+  );
+  expect(await listRows(frame)).toBe("not_available_on_public");
+  await page.waitForTimeout(500);
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft on a public page");
+  expect(page.url()).toBe(patch.address);
+  expect(await generations(frame)).toEqual([]);
+  expect(streamsOpened(instance)).toBe(opened);
+});
+
+test("a member's public patch that goes back to company refuses the patch, not the page, as for any public reader", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("public");
+  const frame = await open(page, patch);
+  await frame.locator("#pasted-copy").fill("Draft while it was public");
+  expect(await frame.evaluate(() => (window as unknown as FixtureWindow).harness.client.me())).toBe(
+    null
+  );
+  await instance.share(patch.patchId, "company");
+  // The loaded document stays public: it was opened for no principal, so its call is refused,
+  // and the refusal is the patch's to show. Nothing stops the page or loses the draft.
+  expect(await listRows(frame)).toBe("principal_changed");
+  await page.waitForTimeout(500);
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(frame.locator("#pasted-copy")).toHaveValue("Draft while it was public");
+  expect(page.url()).toBe(patch.address);
 });
 
 test("a missed retirement frame is enforced when the document reconnects", async ({

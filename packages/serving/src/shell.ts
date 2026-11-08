@@ -40,8 +40,15 @@ interface PatchPage {
     readonly wireVersion: number;
   };
   readonly scope: "company" | "public" | "local";
+  /**
+   * Whom the shell is rendered for. A company or local shell pins them as its frame's viewer; a
+   * public shell pins no one, and names them only to load their switcher.
+   */
   readonly viewerId?: string;
-  /** The viewer's own company, a guest's included: a company shell loads their switcher. */
+  /**
+   * Their own company, a guest's included. With it, a company shell, or a public one rendered for
+   * a member of the patch's company, loads their switcher.
+   */
   readonly companyId?: string;
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
@@ -52,22 +59,29 @@ interface PatchPage {
   readonly base: string;
 }
 
-/** A company shell's switcher, for its admitted viewer at their own company. */
+/**
+ * The switcher of the person a shell is rendered for, at their own company: always on a company
+ * shell, on a public one only when it names them, and never in `patchy dev`.
+ */
 const switcherOf = ({ scope, viewerId, companyId }: PatchPage) => {
-  if (scope !== "company") return "";
-  if (!viewerId || !companyId) throw new Error("A company shell needs its viewer's company.");
-  return switcherTag({ userId: viewerId, companyId });
+  if (scope === "local") return "";
+  if (scope === "company" && (!viewerId || !companyId))
+    throw new Error("A company shell needs its viewer's company.");
+  return viewerId && companyId ? switcherTag({ userId: viewerId, companyId }) : "";
 };
 
 /**
  * One renderer: the shell frames the loaded version's content URL, whatever the patch serves now.
  * Its one inline script is the switcher relay, which its CSP admits by hash. A company shell also
- * loads the switcher, ahead of the session's scripts; a public or local one only claims the key.
+ * loads the switcher, ahead of the session's scripts, as does a public one rendered for a member
+ * of the patch's company; its frame then says `data-switcher`. Any other public or local shell
+ * only claims the key.
  */
 export function renderPatchWrapper(options: PatchPage): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
   if (options.scope !== "public" && !options.viewerId)
     throw new Error("A company or local shell needs its admitted viewer.");
+  const switcher = switcherOf(options);
   const content = `/~content/${encodeURIComponent(options.patch.id)}/${encodeURIComponent(options.version.id)}?n=${encodeURIComponent(options.nonce)}`;
   return `<!doctype html>
 <html lang="en">
@@ -77,7 +91,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
   ${faviconLink}
-  ${switcherOf(options)}
+  ${switcher}
   ${options.head ?? ""}
   <script defer src="${brokerSrc}"></script>
   <style>
@@ -95,7 +109,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   <iframe id="patch" class="patch-frame" title="${title}" data-waiting
     sandbox="allow-scripts allow-modals" referrerpolicy="no-referrer"
     allow="clipboard-write *"
-    data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"
+    data-patch-id="${escapeAttribute(options.patch.id)}" data-version-id="${escapeAttribute(options.version.id)}" data-tier="${options.version.tier}" data-scope="${options.scope}"${options.scope !== "public" ? ` data-viewer-id="${escapeAttribute(options.viewerId)}"` : ""}${switcher ? " data-switcher" : ""} data-wire="${options.version.wireVersion}" data-nonce="${escapeAttribute(options.nonce)}" data-base="${escapeAttribute(options.base)}" data-route="${escapeAttribute(options.route ?? "/")}" data-content-src="${escapeAttribute(content)}"
     ${options.version.tier === 2 ? `data-handler-kinds="${escapeAttribute(JSON.stringify(options.handlerKinds ?? {}))}"` : ""}></iframe>
   <!-- patch:${escapeHtml(options.patch.id)} version:${Number(options.version.versionNumber)} -->
 </body>

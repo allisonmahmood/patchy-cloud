@@ -32,7 +32,7 @@ Whatever a patch runs, it runs inside its sandboxed frame; the shell around it
 is Patchy's own document. A doored patch's shell loads
 Clerk's headless frontend script from the instance's Frontend API host and
 Patchy's same-origin external initializer. The same pair keeps first-party
-pages fresh. The server calls `authenticateRequest` and verifies the session
+pages fresh, and a public patch's page for its own signed-in members. The server calls `authenticateRequest` and verifies the session
 locally against Clerk's public key, using the handshake for a browser that
 returns cold. `CLERK_JWT_KEY` supplies that public key without a JWKS fetch;
 without it, the SDK retrieves Clerk's signing keys. A failed returning handshake
@@ -55,7 +55,7 @@ the switcher relay, admitted by its hash, as on every first-party page
 Patch content runs script only inside the opaque-origin sandbox.
 [ADR-0010](./ADR-0010-sandboxed-frame-and-broker.md) owns that boundary. A public
 shell runs only Patchy's own shell script, never analytics; company shells also
-maintain the session. Tier 0, whose pages ran no script in an empty sandbox and
+maintain the session, as does a public one for the patch's own members. Tier 0, whose pages ran no script in an empty sandbox and
 whose public shell loaded none, became tier 1 in #986.
 
 **Revocation reach is asymmetric, and honest.** Anything Patchy decides — a user
@@ -69,9 +69,10 @@ plus the next load or runtime call.
 server.** The server verifies with a public key; the browser's refresh goes to
 the Frontend API. A doored response is per-viewer and may carry `Set-Cookie`,
 so it is `private, no-store`. Only the current version of a public patch is public;
-older versions stay behind the company door. Its own members get it as a doored
-page. Everyone else's copy uses `public, max-age=60` with `Vary: Cookie` at both
-its latest and version URLs, unless it sets a cookie, so a scope or
+older versions stay behind the company door. Its own members' copy carries their
+switcher and the session's scripts, so it is private too. Everyone else's uses
+`public, max-age=60` with `Vary: Cookie` at both its latest and version URLs,
+unless it sets a cookie, so a scope or
 current-version change takes a page back inside within a minute without a CDN purge.
 
 **Sign-out is a browser operation, not a machine logout.** `POST /logout` needs

@@ -810,7 +810,10 @@ function mount(frame: HTMLIFrameElement): void {
     if (kind === "hello") return handOffKeys();
     if (kind !== "open") return;
     // Only ever opens: a patch can post this itself, and must not close the menu under the person.
-    if (frame.dataset.scope === "company") return openSwitcher(window);
+    // A shell that loads a switcher says so on its frame; every company shell loads one, those
+    // rendered before they said so included.
+    if (frame.dataset.switcher !== undefined || frame.dataset.scope === "company")
+      return openSwitcher(window);
     // `patchy dev` has no switcher, so it says once where the key went; a public page says nothing.
     if (frame.dataset.scope !== "local" || explained) return;
     explained = true;

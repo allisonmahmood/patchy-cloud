@@ -69,7 +69,7 @@ export const litAtOpen = (sections: ReadonlyArray<Section>): number => {
 
 /** Where the menu opened. */
 export interface Here {
-  /** The patch a company shell shows. */
+  /** The patch a shell shows. */
   readonly patch?: string | undefined;
   /** The page's path, which leaves its own place out. */
   readonly path: string;

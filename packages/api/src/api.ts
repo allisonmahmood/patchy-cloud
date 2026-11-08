@@ -794,9 +794,8 @@ const runtimeAdmission =
   "Browser-only: no bearer middleware, and machine tokens are refused. Every request requires " +
   "`X-Patchy-Wire` (the decimal wire version) and `X-Patchy-Principal` (JSON `null` or " +
   '`{"userId":"..."}`). Admission resolves the loaded patch/version before validating an operation. ' +
-  "A public version answers `me` with null, even inside the company shell its own members get, " +
-  "and every other operation, including unknown ones, returns `not_available_on_public`. Its " +
-  "public page's HTML contains no viewer identity. " +
+  "A public version answers `me` with null, and every other operation, including unknown ones, " +
+  "returns `not_available_on_public`. Public HTML contains no viewer identity. " +
   "Company versions require a browser session " +
   "(`session_expired`), a viewer who can open the patch (`access_denied`), and a principal " +
   "matching that session's user (`principal_changed`); company `me` may bootstrap with null. " +

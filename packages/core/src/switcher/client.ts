@@ -2,7 +2,7 @@
 /**
  * The switcher's list in the browser: what the tab keeps (`cache.ts`), refreshed from
  * `/switcher.json` with the page's session. Any signed-in page can run one, a notice as well as
- * an app page or a company shell; the menu reads it and never waits on it.
+ * an app page or a patch's shell; the menu reads it and never waits on it.
  *
  * - It asks once as the page loads, and again when the menu opens if its copy is over a minute
  *   old or the last ask kept it.
@@ -51,7 +51,7 @@ type Answer = { readonly list: SwitcherList } | "refresh" | "keep" | "forget";
 
 export const switcherClient = (options: {
   readonly who: Who;
-  /** The patch this page's company shell shows, which moves the tab's pointers. */
+  /** The patch this page's shell shows, which moves the tab's pointers. */
   readonly here?: string | undefined;
   readonly storage: Storage | undefined;
   readonly fetch: typeof fetch;

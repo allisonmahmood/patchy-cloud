@@ -261,20 +261,10 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
   }
-  const publicVersion =
+  const isPublic =
     served.value.patch.state === "live" &&
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
-  // Whether this is the public page, the same for everyone. A member of the patch's own company
-  // opens its address as the company page any of its patches gives them, with their switcher and
-  // session; the frame's content stays everyone's.
-  const isPublic =
-    publicVersion &&
-    !(
-      kind === "address" &&
-      !HttpServerResponse.isHttpServerResponse(admission) &&
-      admission.company.id === served.value.patch.companyId
-    );
   const isAlias = Option.isSome(resolved) && !resolved.value.current;
   // A public page follows the redirect that completes a verified sign-in, and its address the
   // handshake Clerk starts for a session the browser holds, so a member whose token lapsed is
@@ -339,9 +329,15 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       pageCookies
     );
   }
-  // Whom a company page was admitted for, a guest included. The public page is served without one.
-  const viewer =
-    !isPublic && !HttpServerResponse.isHttpServerResponse(admission) ? admission : undefined;
+  // Whom the page is rendered for: a company page's admitted viewer, a guest included, or a public
+  // patch's own signed-in member at its address. The member gets the public page as anyone does,
+  // with their switcher and session on top, so the document they read is everyone's. Anyone
+  // else's public page, and every public frame's content, is rendered for no one.
+  const viewer = HttpServerResponse.isHttpServerResponse(admission)
+    ? undefined
+    : !isPublic || (kind === "address" && admission.company.id === served.value.patch.companyId)
+      ? admission
+      : undefined;
   if (served.value.version.wireVersion !== WIRE_VERSION) {
     return withCookies(
       shellNotice("needs_rebuild", request.url, {
@@ -384,8 +380,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   );
   // An admitted member opening the current version's address, not an older version or the
   // frame's content request, is an open for their own Home: it is what clears "new to you". A
-  // public patch's member opens it as a company page, so theirs counts; the public page is served
-  // without a session, so it records none.
+  // public patch's member counts too; a public page rendered for no one records none.
   const viewerId = viewer?.user.id;
   // A guest has no Home in the patch's company to record an open for.
   const member =
@@ -421,17 +416,20 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     );
   }
 
-  // The public page caches for a minute unless it sets a cookie or reloads a stale shell. One
-  // address is also its members' company page, so it varies by Cookie: a cache never hands a
-  // member, or anyone whose session changed, the copy it kept for someone else.
+  // The public page caches for a minute when it is no one's, sets no cookie and isn't reloading a
+  // stale shell. Its members' copy carries their switcher, so it varies by Cookie: a cache never
+  // hands a member, or anyone whose session changed, the copy it kept for someone else.
   const cacheable =
-    isPublic && pageCookies.length === 0 && url?.searchParams.get("__patchy_shell_reload") !== "1";
+    isPublic &&
+    viewer === undefined &&
+    pageCookies.length === 0 &&
+    url?.searchParams.get("__patchy_shell_reload") !== "1";
   const headers = {
     ...patchUrlHeaders,
     "content-security-policy":
       kind === "content"
         ? CONTENT_SECURITY_POLICY
-        : shellContentSecurityPolicy(isPublic ? undefined : session.clerk?.frontendApiHost),
+        : shellContentSecurityPolicy(viewer && session.clerk?.frontendApiHost),
     ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
     "cache-control": cacheable ? PUBLIC_PATCH_CACHE_CONTROL : PRIVATE_PATCH_CACHE_CONTROL,
     ...(cacheable && kind === "address" ? { vary: "Cookie" } : {})
@@ -455,7 +453,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
           viewerId,
           // The viewer's own company, a guest's too, keys the switcher's list.
           companyId: viewer?.company.id,
-          head: isPublic ? undefined : sessionScripts(session),
+          head: viewer && sessionScripts(session),
           // Only an address renders a shell, so its route selection is always there.
           nonce: yield* cryptography.internalId("boot"),
           base: `/${served.value.patch.companyHandle}/${served.value.patch.name}${selection?.versionNumber === undefined ? "" : `/~v/${selection.versionNumber}`}`,
