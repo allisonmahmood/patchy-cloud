@@ -1,12 +1,9 @@
 import * as DateTime from "effect/DateTime";
-import { escapeAttribute, escapeHtml } from "./html.js";
+import { escapeAttribute, escapeHtml } from "./escape.js";
 
-/**
- * What people see a patch called: its title, else its name. Addresses, and anything typed to
- * confirm, use the name.
- */
-export const patchTitle = (patch: { readonly name: string; readonly title: string }): string =>
-  patch.title.trim() || patch.name;
+import { isPage } from "./patch-marks.js";
+
+export { isPage, patchTitle } from "./patch-marks.js";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -27,12 +24,6 @@ export const ago = (iso: string, now: number): string => {
   if (seconds < 86_400) return unit(Math.round(seconds / 3600), "hour");
   return unit(Math.round(seconds / 86_400), "day");
 };
-
-/**
- * A page runs only in the viewer's browser: a tier 1 patch. A tool is tier 2, with code on the
- * server. Shelves and marks tell them apart.
- */
-export const isPage = (patch: { readonly tier: number }): boolean => patch.tier === 1;
 
 /**
  * A person's welcome page, as onboarding publishes it: a page named `welcome`, or `welcome-<n>`

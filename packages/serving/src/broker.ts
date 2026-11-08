@@ -808,12 +808,13 @@ function mount(frame: HTMLIFrameElement): void {
     if (event.source !== frame.contentWindow || event.origin !== "null") return;
     const kind = switcherMessageKind(event.data, ["hello", "open"]);
     if (kind === "hello") return handOffKeys();
-    if (kind !== "open" || frame.dataset.scope === "public") return;
+    if (kind !== "open") return;
     // Only ever opens: a patch can post this itself, and must not close the menu under the person.
-    if (frame.dataset.scope === "company") openSwitcher(window);
-    if (explained) return;
+    if (frame.dataset.scope === "company") return openSwitcher(window);
+    // `patchy dev` has no switcher, so it says once where the key went; a public page says nothing.
+    if (frame.dataset.scope !== "local" || explained) return;
     explained = true;
-    // oxlint-disable-next-line no-console -- for the builder or person who wonders where the key went.
+    // oxlint-disable-next-line no-console -- for the builder who wonders where the key went.
     console.info("Mod+Shift+K is Patchy's switcher key; it never reaches the patch's own code.");
   });
   frame.addEventListener("load", () => {

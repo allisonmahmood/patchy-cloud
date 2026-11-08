@@ -4,7 +4,8 @@ import {
   faviconLink,
   htmlPage,
   shellStyles,
-  switcherRelay
+  switcherRelay,
+  switcherTag
 } from "@patchy/core/html";
 import { headStart } from "@patchy/core";
 import type { HandlerKind } from "@patchy/api";
@@ -40,6 +41,8 @@ interface PatchPage {
   };
   readonly scope: "company" | "public" | "local";
   readonly viewerId?: string;
+  /** The viewer's own company, a guest's included: a company shell loads their switcher. */
+  readonly companyId?: string;
   readonly handlerKinds?: Readonly<Record<string, HandlerKind>>;
   /** Trusted host markup; the standalone renderer has no session dependency. */
   readonly head?: string;
@@ -49,9 +52,17 @@ interface PatchPage {
   readonly base: string;
 }
 
+/** A company shell's switcher, for its admitted viewer at their own company. */
+const switcherOf = ({ scope, viewerId, companyId }: PatchPage) => {
+  if (scope !== "company") return "";
+  if (!viewerId || !companyId) throw new Error("A company shell needs its viewer's company.");
+  return switcherTag({ userId: viewerId, companyId });
+};
+
 /**
  * One renderer: the shell frames the loaded version's content URL, whatever the patch serves now.
- * Its one inline script is the switcher relay, which its CSP admits by hash.
+ * Its one inline script is the switcher relay, which its CSP admits by hash. A company shell also
+ * loads the switcher, ahead of the session's scripts; a public or local one only claims the key.
  */
 export function renderPatchWrapper(options: PatchPage): string {
   const title = escapeHtml(options.patch.title || "Patchy patch");
@@ -66,6 +77,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
   ${faviconLink}
+  ${switcherOf(options)}
   ${options.head ?? ""}
   <script defer src="${brokerSrc}"></script>
   <style>

@@ -1,9 +1,7 @@
-import { escapeAttribute, escapeHtml } from "./html.js";
-import { isPage } from "./patch-presentation.js";
+import { escapeAttribute, escapeHtml } from "./escape.js";
+import { pick } from "./patch-marks.js";
 
-/** Picks one of `choices` from a key, so the same person or patch always gets the same one. */
-const pick = <T>(key: string, choices: readonly [T, ...T[]]): T =>
-  choices[Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0) % choices.length]!;
+export { monogram, monogramTint, patchMark } from "./patch-marks.js";
 
 /** A person's initials, tinted from `key`; `waiting` dashes an invitation and `off` mutes a deactivated user. */
 export const avatar = (key: string, label: string, variant?: "waiting" | "off") => {
@@ -23,27 +21,6 @@ export const agentIcon =
 
 /** An agent's mark beside its name, as `avatar` is a person's. */
 export const agentMark = `<span class="agent-mark" aria-hidden="true">${agentIcon}</span>`;
-
-/**
- * The tint class a patch's monogram wears, picked from its name; `""` is the plain one. Anything
- * that draws a patch's mark in the browser uses this, so it matches the pages Patchy renders.
- */
-export const monogramTint = (name: string) =>
-  pick(name, ["", "mono-blue", "mono-green", "mono-amber", "mono-pink"] as const);
-
-/** Two letters from `name` on a tint picked from it. `large` is the size beside a page heading. */
-export const monogram = (name: string, large = false) => {
-  const words = name.split("-").filter((word) => word !== "");
-  const letters = words.length > 1 ? `${words[0]![0]}${words[1]![0]}` : name.slice(0, 2);
-  const tint = monogramTint(name);
-  return `<span class="mono${tint === "" ? "" : ` ${tint}`}${large ? " mono-lg" : ""}" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
-};
-
-/** A patch's mark: a ruled sheet for a page, else its monogram. */
-export const patchMark = (name: string, tier: number, large = false) =>
-  isPage({ tier })
-    ? `<span class="page-mark${large ? " page-mark-lg" : ""}" aria-hidden="true"></span>`
-    : monogram(name, large);
 
 const dots =
   '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';

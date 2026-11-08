@@ -52,7 +52,8 @@ import {
   servingHeaders,
   shellContentSecurityPolicy
 } from "./serving-headers.js";
-import { switcherRelay } from "@patchy/core/html";
+import { switcherRelay, switcherTag } from "@patchy/core/html";
+import { switcherDigest, switcherScript } from "@patchy/core/switcher-script";
 import { brokerScript, brokerSrc, withSwitcherRelay } from "./shell.js";
 import { compress } from "./compression.js";
 
@@ -873,6 +874,27 @@ it.layer(services)("pages in memory", (it) => {
     })
   );
 
+  it.effect("serves the switcher as it serves the broker, immutable only under its digest", () =>
+    Effect.gen(function* () {
+      const src = switcherTag({ userId: "usr", companyId: "cmp" }).match(/src="([^"]+)"/)![1]!;
+      assert.strictEqual(src, `/~shell/switcher.js?v=${switcherDigest}`);
+      const bytes = new TextEncoder().encode(switcherScript);
+      assert.strictEqual(createHash("sha256").update(bytes).digest("hex"), switcherDigest);
+      for (const [url, cache] of [
+        [src, IMMUTABLE],
+        ["/~shell/switcher.js", "no-cache"],
+        [`/~shell/switcher.js?v=${"0".repeat(64)}`, "no-cache"]
+      ] as const) {
+        const response = yield* send(url, { headers: { "accept-encoding": "br" } });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers.get("content-type"), "text/javascript");
+        assert.strictEqual(response.headers.get("cache-control"), cache, url);
+        assert.strictEqual(response.headers.get("content-encoding"), "br");
+        assert.isTrue(Buffer.from(yield* decoded(response)).equals(bytes), url);
+      }
+    })
+  );
+
   it.effect("loads a new shell's broker from a host still on the previous release", () =>
     Effect.gen(function* () {
       // The previous release's route, on the same router: it never read the query.
@@ -1156,7 +1178,9 @@ it.layer(services)("pages in memory", (it) => {
                 `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
               );
               assert.include(body, 'src="/auth/session.js"');
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 4);
+              // The company shell alone loads the viewer's switcher.
+              assert.include(body, `src="/~shell/switcher.js?v=${switcherDigest}"`);
+              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 5);
               // The relay is the one inline script, admitted by its hash.
               assert.include(body, switcherRelay);
               assert.notMatch(body.replace(switcherRelay, ""), /<script\b[^>]*>[^<]+<\/script>/);

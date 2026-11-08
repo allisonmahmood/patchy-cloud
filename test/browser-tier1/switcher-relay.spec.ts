@@ -6,7 +6,14 @@ import { test, expect } from "./fixtures.js";
 // from their first byte. Playwright's key presses are trusted, as a person's are; on Linux, where
 // these run, Mod is Ctrl.
 const chord = "ControlOrMeta+Shift+K";
+// Only `patchy dev`, which has no switcher, says where the key went.
 const explained = "Mod+Shift+K is Patchy's switcher key; it never reaches the patch's own code.";
+
+// The relay on its own, as on a host that serves no switcher: what it asks for stays pending.
+// `switcher.spec.ts` covers the menu that answers it.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/~shell/switcher.js*", (route) => route.fulfill({ status: 404 }));
+});
 
 // A patch listening everywhere a key can be heard, its own capture listener first in its head.
 const listening = `<!doctype html><html lang="en"><head data-theme="patch"><script>
@@ -105,7 +112,7 @@ test("the shell takes the relay's open at company scope and ignores it on a publ
   await page.keyboard.press(chord);
   await settled(page);
   expect(await requested(page)).toBe(true);
-  await expect.poll(() => log.lines.filter((line) => line === explained)).toHaveLength(1);
+  expect(log.lines).not.toContain(explained);
 
   log.lines.length = 0;
   const open = await instance.publish("public", listening, undefined, tier1);
@@ -268,6 +275,54 @@ test("a frame's open only ever opens the switcher; only the shell's own press to
   });
   await page.keyboard.press(chord);
   expect(await states()).toEqual([true, true, true, false]);
+});
+
+test("the relay holds the keys after the chord only where the shell says a switcher will take them", async ({
+  page,
+  instance
+}) => {
+  const patch = await instance.publish("company", listening, undefined, tier1);
+  await page.goto(patch.address);
+  // The page dispatches the shell's `available` itself, claiming the shell as its source: ignored.
+  await patchFrame(page).evaluate(() =>
+    dispatchEvent(
+      new MessageEvent("message", {
+        data: { patchy: "switcher", v: 1, kind: "available" },
+        source: parent,
+        origin: "null"
+      })
+    )
+  );
+  await field(page).click();
+  await page.keyboard.press(chord);
+  await page.keyboard.press("a");
+  await expect(field(page)).toHaveValue("a");
+  // The shell's own: the key after the chord belongs to the switcher, and `closed` ends that.
+  await page.evaluate(() =>
+    (document.getElementById("patch") as HTMLIFrameElement).contentWindow!.postMessage(
+      { patchy: "switcher", v: 1, kind: "available" },
+      "*"
+    )
+  );
+  await settled(page);
+  await page.keyboard.press(chord);
+  // A blur the page forges, while the frame still has focus, releases nothing.
+  await patchFrame(page).evaluate(() => {
+    dispatchEvent(new Event("blur"));
+    document.dispatchEvent(new Event("blur"));
+  });
+  await page.keyboard.press("b");
+  await settled(page);
+  expect(await heard(page)).not.toContain("field b");
+  await page.evaluate(() =>
+    (document.getElementById("patch") as HTMLIFrameElement).contentWindow!.postMessage(
+      { patchy: "switcher", v: 1, kind: "closed" },
+      "*"
+    )
+  );
+  await expect.poll(() => patchFrame(page).evaluate(() => document.hasFocus())).toBe(true);
+  await page.keyboard.press("c");
+  await expect(field(page)).toHaveValue("ac");
 });
 
 test("a document cut short inside a comment or tag still starts with the relay", async ({
