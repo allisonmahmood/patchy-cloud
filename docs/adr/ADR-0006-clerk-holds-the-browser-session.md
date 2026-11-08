@@ -36,11 +36,14 @@ pages fresh. The server calls `authenticateRequest` and verifies the session
 locally against Clerk's public key, using the handshake for a browser that
 returns cold. `CLERK_JWT_KEY` supplies that public key without a JWKS fetch;
 without it, the SDK retrieves Clerk's signing keys. A failed returning handshake
-shows a sign-in failure rather than starting a loop. A top-level notice reads the
-session but never redirects: it never starts a handshake, and it takes a verified
-return as it is, setting its cookies without the cleanup hop. A person stopped on
-one always sees it, and it loads the pair and their switcher only when the session
-verifies as an active member's.
+shows a sign-in failure rather than starting a loop. A public patch's address
+follows only a handshake for a session the browser already holds, so its own
+members come back recognised, never Clerk's set-up of a browser it hasn't met;
+its content URL never starts one, and a failed or foreign sign-in ends on the
+public page. A top-level notice reads the session but never redirects: it never
+starts a handshake, and it takes a verified return as it is, setting its cookies
+without the cleanup hop. A person stopped on one always sees it, and it loads the
+pair and their switcher only when the session verifies as an active member's.
 
 ## Consequences
 
@@ -66,8 +69,9 @@ plus the next load or runtime call.
 server.** The server verifies with a public key; the browser's refresh goes to
 the Frontend API. A doored response is per-viewer and may carry `Set-Cookie`,
 so it is `private, no-store`. Only the current version of a public patch is public;
-older versions stay behind the company door. The current public version uses
-`public, max-age=60` at both its latest and version URLs, so a scope or
+older versions stay behind the company door. Its own members get it as a doored
+page. Everyone else's copy uses `public, max-age=60` with `Vary: Cookie` at both
+its latest and version URLs, unless it sets a cookie, so a scope or
 current-version change takes a page back inside within a minute without a CDN purge.
 
 **Sign-out is a browser operation, not a machine logout.** `POST /logout` needs

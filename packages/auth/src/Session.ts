@@ -40,6 +40,15 @@ export const SessionClaims = Schema.Struct({
   exp: Schema.Int
 });
 
+/**
+ * Why Clerk sends a page through a handshake. `completed` is a development instance's verified
+ * return, whose cleanup hop sets its cookies; production verifies a return without one, as a
+ * plain sign-in. `session` renews or confirms a session the browser already holds. `browser` is a
+ * development instance setting up a browser it hasn't met, which it asks of anyone, signed in or
+ * not.
+ */
+export type Handshake = "completed" | "session" | "browser";
+
 export type SessionResult =
   | {
       readonly status: "signed-in";
@@ -55,8 +64,7 @@ export type SessionResult =
   | {
       readonly status: "handshake";
       readonly response: Response;
-      /** A verified return must set its cookies even when the destination is public. */
-      readonly completed: boolean;
+      readonly kind: Handshake;
       /**
        * A verified return's session, which its response's cookies set: a page that never
        * redirects, such as a notice, admits it without Clerk's cleanup hop.
@@ -372,7 +380,12 @@ export const make = Effect.gen(function* () {
       return {
         status: "handshake",
         response: new Response(null, { status: 307, headers: responseHeaders }),
-        completed: state.status === "signed-in",
+        kind:
+          state.status === "signed-in"
+            ? "completed"
+            : state.reason === "dev-browser-missing"
+              ? "browser"
+              : "session",
         ...(Option.isSome(verified) ? { claims: verified.value } : {})
       };
     }

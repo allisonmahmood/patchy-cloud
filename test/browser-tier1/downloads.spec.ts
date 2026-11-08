@@ -14,6 +14,7 @@ interface DownloadWindow extends Window {
 
 test("generated files wait for shell approval on both tiers, refuse 21 MiB and stay shell-local", async ({
   page,
+  context,
   instance,
   browserName
 }) => {
@@ -58,6 +59,8 @@ window.download = client.download; window.outcome = "idle";`,
       { tier, tables: {}, files: {}, uses: {}, ...(tier === 2 ? { handlers: {} } : {}) },
       server ? { server: server.outputFiles[0]!.text } : undefined
     );
+    // The public broker's, signed out: a member gets their company page on a public patch too.
+    await instance.session(context, scope === "public" ? "none" : "owner");
     await page.goto(patch.address);
     const frame = page.frameLocator("#patch");
     await expect(frame.getByRole("heading", { name: "Generated reports" })).toBeVisible();

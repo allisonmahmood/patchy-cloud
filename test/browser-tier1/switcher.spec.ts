@@ -590,19 +590,40 @@ test("on a patch's needs-rebuild notice, the menu treats that patch as the one o
   expect(blocked).toEqual([]);
 });
 
-test("a public patch's shell claims the key and loads no switcher", async ({ page, instance }) => {
-  const open = await publish(instance, "Timetable", "public");
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(new URL(request.url()).pathname));
+test("a member leaves their company's public patch with the key; anyone else's shell loads no switcher", async ({
+  page,
+  context,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  const open = await publish(instance, "Timetable");
+  // Its guest, granted while it was company-only: a public patch takes no new guests.
+  await instance.guest(open.patchId, true);
+  await instance.share(open.patchId, "public");
+  // The company's own member opens it as any company patch: ⌘⇧K ↵ flips back.
+  await visit(page, crew);
   await visit(page, open);
-  await field(page).click();
-  // No switcher here, so the patch keeps every key after the chord.
-  await page.keyboard.press(chord);
-  await page.keyboard.press("a");
-  await expect(field(page)).toHaveValue("a");
-  await expect(page.locator("#patchy-switcher")).toHaveCount(0);
-  expect(requested).not.toContain("/~shell/switcher.js");
-  expect(requested).not.toContain("/switcher.json");
+  await openAt(page, "Crew rota");
+  await expect(group(page, "This patch")).toHaveText(["Overview", "Versions", "Log", "Settings"]);
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(crew.address);
+
+  // Signed out, or its guest from another company: no switcher, so the patch keeps every key.
+  for (const user of ["none", "guest"] as const) {
+    await instance.session(context, user);
+    const requested: string[] = [];
+    const record = (request: { url(): string }) => requested.push(new URL(request.url()).pathname);
+    page.on("request", record);
+    await visit(page, open);
+    await field(page).click();
+    await page.keyboard.press(chord);
+    await page.keyboard.press("a");
+    await expect(field(page)).toHaveValue("a");
+    await expect(page.locator("#patchy-switcher")).toHaveCount(0);
+    expect(requested).not.toContain("/~shell/switcher.js");
+    expect(requested).not.toContain("/switcher.json");
+    page.off("request", record);
+  }
 });
 
 test.describe("over the starting cover", () => {

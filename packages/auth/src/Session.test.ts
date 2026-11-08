@@ -109,6 +109,24 @@ it.layer(configured())("Session", (it) => {
     })
   );
 
+  it.effect("tells a session's handshake from one that only sets up a development browser", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Session;
+      const now = Math.floor(Date.now() / 1_000);
+      const expired = signSession({ iat: now - 120, nbf: now - 120, exp: now - 60 });
+      const navigation = { accept: "text/html", "sec-fetch-dest": "document" };
+      const kinds = yield* Effect.forEach(
+        // A browser Clerk hasn't met, signed in or not, then a lapsed session.
+        [undefined, signedInCookies(expired)],
+        (cookie) =>
+          Effect.map(session.authenticate(request(cookie, undefined, navigation)), (result) =>
+            result.status === "handshake" ? result.kind : result.status
+          )
+      );
+      assert.deepStrictEqual(kinds, ["browser", "session"]);
+    })
+  );
+
   it.effect("pins the handshake return origin and drives development hops by hand", () =>
     Effect.gen(function* () {
       const session = yield* Session.Session;
@@ -150,6 +168,7 @@ it.layer(configured())("Session", (it) => {
         request(undefined, returning.href, { accept: "text/html" })
       );
       const second = handshake(back);
+      assert.strictEqual(back.status === "handshake" ? back.kind : undefined, "completed");
       // Verified already, so a page that never redirects can admit it without the cleanup hop.
       assert.strictEqual(
         back.status === "handshake" ? back.claims?.sid : undefined,

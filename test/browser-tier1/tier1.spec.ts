@@ -323,6 +323,8 @@ test("Back to a cached public patch leaves a working client", async ({
   try {
     const context = await browser.newContext();
     await prepare(context, instance);
+    // Signed out: a member's page of their own company's public patch is never stored.
+    await instance.session(context, "none");
     const page = await context.newPage();
     const patch = await instance.publish("public");
     const frame = await open(page, patch, "/items/2");
@@ -721,6 +723,8 @@ test("real sessions: login door, logout, expiry, account switch, revocation and 
     await instance.platform.query("UPDATE users SET deactivated_at=NULL WHERE id='usr_dev'");
   }
   const publicPatch = await instance.publish("public");
+  // Signed out it is the public page; the owner gets their company page. Either way the patch
+  // sees a public document: no viewer and no data.
   for (const user of ["none", "owner"] as const) {
     await instance.session(context, user);
     const anonymous = await open(page, publicPatch, "/items/2?filter=public");

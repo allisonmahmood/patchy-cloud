@@ -419,6 +419,8 @@ test("sharing publicly preserves an admitted company document across reconnect",
     })
   ).toBe("not_available_on_public");
   await expect(frame.locator("#pasted-copy")).toHaveValue("Company draft after sharing");
+  // A new reader of the now-public patch, signed out: a member would get their company page.
+  await instance.session(context, "none");
   const publicPage = await context.newPage();
   const requests = instance.runtimeRequests.filter((request) =>
     request.path.startsWith("/api/runtime/stream")

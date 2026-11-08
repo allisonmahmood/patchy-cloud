@@ -7,29 +7,35 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { RequireSession, Session, pageResponse, returnPath } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 
-/** Admission is optional here: only the handler knows whether the patch is public. */
+/**
+ * Who is asking, or the response that stands in for them: a sign-in door, a redirect to join, a
+ * handshake or a refusal. Admission is optional here: only the handler knows whether the patch is
+ * public. A public page asks it only whether the reader is one of the patch's own members, and
+ * follows only the handshakes that `handshake` says recognise one.
+ */
 export class Admission extends Context.Service<
   Admission,
   {
     readonly result: RequireSession.Viewer["Service"] | HttpServerResponse.HttpServerResponse;
     readonly cookies: ReadonlyArray<string>;
-    readonly completedHandshake: boolean;
+    /** Which handshake a redirecting `result` is; see `Session.Handshake`. */
+    readonly handshake: Session.Handshake | undefined;
   }
 >()("@patchy/serving/Door/Admission") {}
 
 const admission = Effect.gen(function* () {
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const decision = yield* RequireSession.admission;
-  const { result } = decision;
-  if (HttpServerResponse.isHttpServerResponse(result)) return decision;
+  const { result, cookies, handshake } = yield* RequireSession.admission;
+  if (HttpServerResponse.isHttpServerResponse(result)) return { result, cookies, handshake };
   const viewer = yield* RequireSession.resolveViewer.pipe(
     Effect.provideService(RequireSession.SignedIn, result)
   );
   if (viewer !== null && !HttpServerResponse.isHttpServerResponse(viewer))
     yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
   return {
-    ...decision,
+    cookies,
+    handshake,
     result:
       viewer ??
       HttpServerResponse.redirect(
@@ -49,7 +55,7 @@ const admission = Effect.gen(function* () {
           status: 502
         }),
         cookies: [],
-        completedHandshake: false
+        handshake: undefined
       }),
     SqlError: () =>
       Effect.succeed({
@@ -59,7 +65,7 @@ const admission = Effect.gen(function* () {
           status: 503
         }),
         cookies: [],
-        completedHandshake: false
+        handshake: undefined
       })
   })
 );
@@ -98,7 +104,7 @@ export const noticeViewer = Effect.gen(function* () {
       ? result
       : result.status === "signed-out"
         ? { claims: undefined, cookies: result.cookies }
-        : result.completed
+        : result.kind === "completed"
           ? { claims: result.claims, cookies: result.response.headers.getSetCookie() }
           : { claims: undefined, cookies: [] };
   if (claims === undefined) return { viewer: undefined, cookies };

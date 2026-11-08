@@ -66,7 +66,10 @@ export function door(
   }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }
 
-/** Shared cookie admission; a page's handler decides whether the result is required. */
+/**
+ * Shared cookie admission; a page's handler decides whether the result is required. `handshake`
+ * says which handshake a redirecting `result` is, for a page that follows only some.
+ */
 export const admission = Effect.gen(function* () {
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -87,7 +90,7 @@ export const admission = Effect.gen(function* () {
         }
       }),
       cookies: result.response.headers.getSetCookie(),
-      completedHandshake: result.completed
+      handshake: result.kind
     };
   }
   if (result.status === "signed-out") {
@@ -98,10 +101,10 @@ export const admission = Effect.gen(function* () {
     return {
       result: door(session, path, result.handshakeFailed),
       cookies: result.cookies,
-      completedHandshake: false
+      handshake: undefined
     };
   }
-  return { result: result.claims, cookies: result.cookies, completedHandshake: false };
+  return { result: result.claims, cookies: result.cookies, handshake: undefined };
 });
 
 /** Session-only admission also serves logout, which must work before a user row exists. */

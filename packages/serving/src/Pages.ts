@@ -91,7 +91,7 @@ const patchUrlHeaders = {
 
 /**
  * A stopping or needs-rebuild notice. A top-level one for an active signed-in viewer loads their
- * switcher and the session's scripts under the policy that admits them; anyone else's, a public
+ * switcher and the session's scripts under the policy that admits them; anyone else's, the public
  * page's and a framed one carry the relay alone. Each is private and never stored, so one viewer's
  * notice can't reach anyone else.
  */
@@ -223,7 +223,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   const cryptography = yield* Cryptography.Cryptography;
   const patches = yield* Patches.Patches;
   const analytics = yield* Analytics.Analytics;
-  const { result: admission, cookies, completedHandshake } = yield* Door.Admission;
+  const { result: admission, cookies, handshake } = yield* Door.Admission;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = yield* HttpRouter.params;
@@ -261,14 +261,28 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
   if (Option.isNone(served) || served.value.patch.disabledAt !== null) {
     return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
   }
-  const isPublic =
+  const publicVersion =
     served.value.patch.state === "live" &&
     served.value.patch.scope === "public" &&
     served.value.version.id === served.value.patch.currentVersionId;
+  // Whether this is the public page, the same for everyone. A member of the patch's own company
+  // opens its address as the company page any of its patches gives them, with their switcher and
+  // session; the frame's content stays everyone's.
+  const isPublic =
+    publicVersion &&
+    !(
+      kind === "address" &&
+      !HttpServerResponse.isHttpServerResponse(admission) &&
+      admission.company.id === served.value.patch.companyId
+    );
   const isAlias = Option.isSome(resolved) && !resolved.value.current;
-  // Finish a verified sign-in before serving a public document, but never require
-  // a public reader to start a handshake or pass company admission.
-  if (!isPublic || completedHandshake) {
+  // A public page follows the redirect that completes a verified sign-in, and its address the
+  // handshake Clerk starts for a session the browser holds, so a member whose token lapsed is
+  // known on the way back. Nothing else admission says reaches a public reader: a content URL
+  // never starts a handshake, and no one is asked to sign in or join.
+  const followsHandshake =
+    handshake === "completed" || (kind === "address" && handshake === "session");
+  if (!isPublic || followsHandshake) {
     if (HttpServerResponse.isHttpServerResponse(admission)) {
       return withCookies(
         HttpServerResponse.setHeaders(admission, {
@@ -312,14 +326,20 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       );
     }
   }
+  // Clerk's cookies, which renew or end the session or finish a handshake, go out on every page,
+  // and a page that sets one is never publicly cached. A handshake's own cookies belong to its
+  // redirect, so a public page that didn't follow one drops them.
+  const pageCookies = handshake === undefined ? cookies : [];
   if (url !== undefined && isAlias) {
-    const response = HttpServerResponse.redirect(
-      `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
-      { status: 308, headers: patchUrlHeaders }
+    return withCookies(
+      HttpServerResponse.redirect(
+        `/${served.value.patch.companyHandle}/${served.value.patch.name}${suffix}${url.search}`,
+        { status: 308, headers: patchUrlHeaders }
+      ),
+      pageCookies
     );
-    return isPublic ? response : withCookies(response, cookies);
   }
-  // Whom a company page was admitted for, a guest included. Public pages are served without one.
+  // Whom a company page was admitted for, a guest included. The public page is served without one.
   const viewer =
     !isPublic && !HttpServerResponse.isHttpServerResponse(admission) ? admission : undefined;
   if (served.value.version.wireVersion !== WIRE_VERSION) {
@@ -332,7 +352,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         patchId: served.value.patch.id,
         session
       }),
-      isPublic ? [] : cookies
+      pageCookies
     );
   }
   const { version } = served.value;
@@ -363,8 +383,9 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     })
   );
   // An admitted member opening the current version's address, not an older version or the
-  // frame's content request, is an open for their own Home: it is what clears "new to you".
-  // Public pages are served without a session, so they record none.
+  // frame's content request, is an open for their own Home: it is what clears "new to you". A
+  // public patch's member opens it as a company page, so theirs counts; the public page is served
+  // without a session, so it records none.
   const viewerId = viewer?.user.id;
   // A guest has no Home in the patch's company to record an open for.
   const member =
@@ -400,6 +421,11 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     );
   }
 
+  // The public page caches for a minute unless it sets a cookie or reloads a stale shell. One
+  // address is also its members' company page, so it varies by Cookie: a cache never hands a
+  // member, or anyone whose session changed, the copy it kept for someone else.
+  const cacheable =
+    isPublic && pageCookies.length === 0 && url?.searchParams.get("__patchy_shell_reload") !== "1";
   const headers = {
     ...patchUrlHeaders,
     "content-security-policy":
@@ -407,10 +433,8 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         ? CONTENT_SECURITY_POLICY
         : shellContentSecurityPolicy(isPublic ? undefined : session.clerk?.frontendApiHost),
     ...(kind === "content" ? { "permissions-policy": PATCH_PERMISSIONS_POLICY } : {}),
-    "cache-control":
-      isPublic && url?.searchParams.get("__patchy_shell_reload") !== "1"
-        ? PUBLIC_PATCH_CACHE_CONTROL
-        : PRIVATE_PATCH_CACHE_CONTROL
+    "cache-control": cacheable ? PUBLIC_PATCH_CACHE_CONTROL : PRIVATE_PATCH_CACHE_CONTROL,
+    ...(cacheable && kind === "address" ? { vary: "Cookie" } : {})
   };
   const sent = document && negotiated(document, request.headers["accept-encoding"]);
   if (sent) yield* WideEvents.enrich({ contentEncoding: sent.coding });
@@ -439,7 +463,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         }),
         { contentType: "text/html", headers }
       );
-  return isPublic ? response : withCookies(response, cookies);
+  return withCookies(response, pageCookies);
 });
 
 /** Match the positive PostgreSQL INTEGER range before a version reaches the lookup. */

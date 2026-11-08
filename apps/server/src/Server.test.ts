@@ -508,66 +508,79 @@ it.layer(
     })
   );
 
-  it.effect("completes a public patch handshake before serving its cacheable document", () =>
-    Effect.gen(function* () {
-      const created = yield* publish(DEV_SEED.token, {
-        html: html("Public handshake"),
-        scope: "public"
-      });
-      const { address } = (yield* created.json) as { address: string };
-      const patchPath = new URL(address).pathname;
-      const privatePublish = yield* publish(DEV_SEED.token, {
-        html: html("Signed-in destination")
-      });
-      const privatePatch = (yield* privatePublish.json) as { address: string };
-      for (const path of [patchPath, `${patchPath}/~v/1`]) {
-        const target = `${path}?view=chart`;
-        const directives = sessionCookie()
-          .split("; ")
-          .map((value) => `${value}; Path=/; SameSite=Lax`);
-        const response = yield* send(
-          HttpClientRequest.get(
-            `${target}&__clerk_handshake=${encodeURIComponent(signHandshake(directives))}`
-          )
-        );
-        assert.strictEqual(response.status, 307);
-        assert.strictEqual(response.headers["cache-control"], "private, no-store");
-        assert.strictEqual(response.headers.location, `${publicBaseUrl}${target}`);
-        const cookie = Cookies.toCookieHeader(response.cookies);
-        const page = yield* send(signedRequest(target, cookie));
-        assert.strictEqual(page.status, 200);
-        assert.strictEqual(page.headers["cache-control"], "public, max-age=60");
-        assert.deepStrictEqual(Cookies.toSetCookieHeaders(page.cookies), []);
-        // The cacheable page is everyone's: it loads the broker, never the session.
-        assert.deepStrictEqual(
-          [...(yield* page.text).matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(
-            ([, src]) => src!.split("?")[0]
-          ),
-          ["/~shell/broker.js"]
-        );
-        const companyPage = yield* send(
-          signedRequest(new URL(privatePatch.address).pathname, cookie)
-        );
-        assert.strictEqual(
-          companyPage.status,
-          200,
-          "the completed handshake must establish the session"
-        );
-        assert.include(yield* companyPage.text, "Signed-in destination");
+  it.effect(
+    "completes a public patch's handshake into its member's company page, cached for no one",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* publish(DEV_SEED.token, {
+          html: html("Public handshake"),
+          scope: "public"
+        });
+        const { address } = (yield* created.json) as { address: string };
+        const patchPath = new URL(address).pathname;
+        const privatePublish = yield* publish(DEV_SEED.token, {
+          html: html("Signed-in destination")
+        });
+        const privatePatch = (yield* privatePublish.json) as { address: string };
+        const scripts = (body: string) =>
+          [...body.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(([, src]) => src!.split("?")[0]);
+        for (const path of [patchPath, `${patchPath}/~v/1`]) {
+          const target = `${path}?view=chart`;
+          const directives = sessionCookie()
+            .split("; ")
+            .map((value) => `${value}; Path=/; SameSite=Lax`);
+          const response = yield* send(
+            HttpClientRequest.get(
+              `${target}&__clerk_handshake=${encodeURIComponent(signHandshake(directives))}`
+            )
+          );
+          assert.strictEqual(response.status, 307);
+          assert.strictEqual(response.headers["cache-control"], "private, no-store");
+          assert.strictEqual(response.headers.location, `${publicBaseUrl}${target}`);
+          const cookie = Cookies.toCookieHeader(response.cookies);
+          // The patch's own member gets their company page: their switcher, then the session.
+          const page = yield* send(signedRequest(target, cookie));
+          assert.strictEqual(page.status, 200);
+          assert.strictEqual(page.headers["cache-control"], "private, no-store");
+          assert.deepStrictEqual(scripts(yield* page.text), [
+            "/~shell/switcher.js",
+            `https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js`,
+            "/auth/session.js",
+            "/~shell/broker.js"
+          ]);
+          const companyPage = yield* send(
+            signedRequest(new URL(privatePatch.address).pathname, cookie)
+          );
+          assert.strictEqual(
+            companyPage.status,
+            200,
+            "the completed handshake must establish the session"
+          );
+          assert.include(yield* companyPage.text, "Signed-in destination");
 
-        // A cold browser may initiate a handshake, but public access must not require it.
-        const cold = yield* send(
-          signedRequest(
-            path,
-            signedInCookies(signSession({ azp: publicBaseUrl, iat: 1, nbf: 1, exp: 2 }))
-          ).pipe(HttpClientRequest.setHeader("accept", "text/html"))
-        );
-        assert.strictEqual(cold.status, 200);
-        assert.strictEqual(cold.headers["cache-control"], "public, max-age=60");
-        assert.isUndefined(cold.headers.location);
-        assert.deepStrictEqual(Cookies.toSetCookieHeaders(cold.cookies), []);
-      }
-    })
+          // The cacheable page is everyone else's: it loads the broker, never the session. A
+          // browser Clerk hasn't met is never sent to meet it.
+          const anyone = yield* send(
+            HttpClientRequest.get(target).pipe(HttpClientRequest.setHeader("accept", "text/html"))
+          );
+          assert.strictEqual(anyone.status, 200);
+          assert.strictEqual(anyone.headers["cache-control"], "public, max-age=60");
+          assert.strictEqual(anyone.headers.vary, "Cookie");
+          assert.deepStrictEqual(Cookies.toSetCookieHeaders(anyone.cookies), []);
+          assert.deepStrictEqual(scripts(yield* anyone.text), ["/~shell/broker.js"]);
+
+          // A browser whose session lapsed goes through Clerk's handshake to be known again.
+          const cold = yield* send(
+            signedRequest(
+              path,
+              signedInCookies(signSession({ azp: publicBaseUrl, iat: 1, nbf: 1, exp: 2 }))
+            ).pipe(HttpClientRequest.setHeader("accept", "text/html"))
+          );
+          assert.strictEqual(cold.status, 307);
+          assert.strictEqual(cold.headers["cache-control"], "private, no-store");
+          assert.strictEqual(new URL(cold.headers.location!).host, FRONTEND_API_HOST);
+        }
+      })
   );
 
   // What each refusal answers is serving's (Pages.test); this proves the composed
