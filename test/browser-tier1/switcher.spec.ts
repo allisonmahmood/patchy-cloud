@@ -47,12 +47,16 @@ const openAt = async (page: Page, title: string) => {
   await page.keyboard.press(chord);
   await expect(lit(page)).toHaveText(title);
 };
-/** When the tab's copy of the list was last saved, in the page's clock. */
+/** When the tab's copy of the list was last saved, in the page's clock; none on a blank tab. */
 const savedAt = (page: Page) =>
-  page.evaluate(
-    () =>
-      JSON.parse(sessionStorage.getItem("patchy.switcher") ?? "{}").savedAt as number | undefined
-  );
+  page.evaluate(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("patchy.switcher") ?? "{}").savedAt as
+        number | undefined;
+    } catch {
+      return undefined;
+    }
+  });
 /** Goes to `path` and waits for its switcher to keep the list it asked for. */
 const listedAt = async (page: Page, path: string) => {
   const before = (await savedAt(page)) ?? 0;
@@ -325,6 +329,36 @@ test("opens on Home, flips to the patch the tab left, and puts focus back where 
   await expect(group(page, "Patchy")).toHaveText(places.filter((place) => place !== "Home"));
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(crew.address);
+});
+
+test("someone who has opened nothing yet sees patches with nothing typed, none of them lit", async ({
+  page,
+  context,
+  instance
+}) => {
+  const crew = await publish(instance, "Crew rota");
+  await publish(instance, "Bunk plan");
+  await instance.guest(crew.patchId, true);
+  // A colleague new to the company: its patches, by title, and Patchy's first place lit.
+  await instance.session(context, "colleague");
+  await listedAt(page, `${instance.origin}/patches`);
+  await page.keyboard.press(chord);
+  await expect(titles(page)).toHaveText([
+    "Bunk plan",
+    "Crew rota",
+    ...places.slice(0, 1),
+    ...places.slice(2)
+  ]);
+  await expect(lit(page)).toHaveText("Home");
+  await page.keyboard.press("Escape");
+  // A guest: what's shared with them, named with its company.
+  await instance.session(context, "guest");
+  await listedAt(page, `${instance.origin}/patches`);
+  await page.keyboard.press(chord);
+  const first = menu(page).locator('[role="option"]').first();
+  await expect(first.locator(".command-title")).toHaveText("Crew rota");
+  await expect(first.locator(".command-detail")).toHaveText("Patchy Dev");
+  await expect(lit(page)).toHaveText("Home");
 });
 
 test("a guest's menu holds the patches shared with them, never This patch, and a revoked one goes on refresh", async ({

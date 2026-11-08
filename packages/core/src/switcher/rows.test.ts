@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Kept } from "./cache.js";
 import type { SwitcherList } from "./list.js";
-import { hold, type Section, sections, sinceLabel } from "./rows.js";
+import { hold, litAtOpen, type Section, sections, sinceLabel } from "./rows.js";
 
 // Friday 6 November 2026, noon, in the test's own time zone.
 const now = new Date(2026, 10, 6, 12, 0).getTime();
@@ -225,6 +225,114 @@ describe("what the switcher lists", () => {
     expect(view(sections(kept(), here, "go", now))).toEqual([["", ["Galley Orders"]]]);
     expect(view(sections(kept(), here, "peo", now))).toEqual([["", ["People"]]]);
     expect(sections(kept(), here, "payroll", now)).toEqual([]);
+  });
+});
+
+describe("patches never opened, with nothing typed", () => {
+  const patch = (id: string, title: string, openedAt?: string) => ({
+    id,
+    name: id,
+    title,
+    tier: 2,
+    mine: false,
+    ...(openedAt === undefined ? {} : { openedAt, score: 1 })
+  });
+  const shared = (id: string, title: string) => ({
+    id,
+    company: { handle: "pine", name: "Pine Studio" },
+    name: id,
+    title,
+    tier: 2
+  });
+  const of = (patches: SwitcherList["patches"], sharedWith: SwitcherList["shared"] = []): Kept => ({
+    viewer: "usr_jonah",
+    company: "cmp_ns",
+    list: { ...list, patches, shared: sharedWith },
+    savedAt: now
+  });
+  const first = (result: ReadonlyArray<Section>) => result[0]!;
+
+  it("fill a new member's menu, up to six by title, with none of them lit", () => {
+    const result = sections(
+      of(
+        ["Tide", "anchor", "Ballast", "Crew", "Deck", "Engine", "Fuel", "Galley"].map((title) =>
+          patch(title.toLowerCase(), title)
+        )
+      ),
+      { path: "/" },
+      "",
+      now
+    );
+    expect(first(result).rows.map((row) => row.title)).toEqual([
+      "anchor",
+      "Ballast",
+      "Crew",
+      "Deck",
+      "Engine",
+      "Fuel"
+    ]);
+    expect(first(result).rows.every((row) => row.detail === undefined)).toBe(true);
+    expect(first(result).quiet).toBe(true);
+    // The menu opens on Patchy's first place, as before any patch was listed.
+    expect(result.flatMap((section) => section.rows)[litAtOpen(result)]!.title).toBe("All patches");
+  });
+
+  it("show a guest the patches shared with them, named with their company", () => {
+    const result = sections(
+      of([], [shared("s2", "Onboard Menu"), shared("s1", "Galley Orders")]),
+      { path: "/patches" },
+      "",
+      now
+    );
+    expect(first(result).rows.map((row) => [row.title, row.detail])).toEqual([
+      ["Galley Orders", "Pine Studio"],
+      ["Onboard Menu", "Pine Studio"]
+    ]);
+    expect(first(result).quiet).toBe(true);
+    expect(result.flatMap((section) => section.rows)[litAtOpen(result)]!.title).toBe("Home");
+  });
+
+  it("come after the flip and every opened patch, the company's before the shared, six in all", () => {
+    const result = sections(
+      {
+        ...of(
+          [
+            patch("crew", "Crew Rota", ago(0)),
+            patch("sail", "Sailings Today", ago(30)),
+            patch("fuel", "Fuel Log", ago(90)),
+            patch("zinc", "Zinc Stock"),
+            patch("bunk", "Bunk Plan"),
+            patch("tide", "Tide Tables")
+          ],
+          [shared("s1", "Galley Orders"), shared("s2", "Allergens")]
+        ),
+        current: "crew",
+        previous: "fuel"
+      },
+      { patch: "crew", path: "/northsound/crew-rota" },
+      "",
+      now
+    );
+    expect(first(result).rows.map((row) => row.title)).toEqual([
+      "Fuel Log",
+      "Sailings Today",
+      "Bunk Plan",
+      "Tide Tables",
+      "Zinc Stock",
+      "Allergens"
+    ]);
+    expect(first(result).quiet).toBeUndefined();
+    expect(litAtOpen(result)).toBe(0);
+  });
+
+  it("still never list the patch on screen", () => {
+    const result = sections(
+      of([patch("crew", "Crew Rota"), patch("deck", "Deck Log")]),
+      { patch: "crew", path: "/northsound/crew-rota" },
+      "",
+      now
+    );
+    expect(first(result).rows.map((row) => row.title)).toEqual(["Deck Log"]);
   });
 });
 

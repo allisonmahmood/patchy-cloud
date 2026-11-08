@@ -60,19 +60,19 @@ export const matchTier = (query: string, item: Rankable): Tier | undefined => {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Items by title, case and accents folded, then as written, then by id: how ties break. */
+export const byTitle = (a: Rankable, b: Rankable): number =>
+  compare(fold(a.title), fold(b.title)) || compare(a.title, b.title) || compare(a.id, b.id);
+
 /** The items `query` matches, best first. */
 export const rank = <Item extends Rankable>(query: string, items: ReadonlyArray<Item>): Item[] =>
   items
     .flatMap((item) => {
       const tier = matchTier(query, item);
-      return tier === undefined ? [] : [{ item, tier: order[tier], title: fold(item.title) }];
+      return tier === undefined ? [] : [{ item, tier: order[tier] }];
     })
     .sort(
       (a, b) =>
-        a.tier - b.tier ||
-        (b.item.score ?? 0) - (a.item.score ?? 0) ||
-        compare(a.title, b.title) ||
-        compare(a.item.title, b.item.title) ||
-        compare(a.item.id, b.item.id)
+        a.tier - b.tier || (b.item.score ?? 0) - (a.item.score ?? 0) || byTitle(a.item, b.item)
     )
     .map(({ item }) => item);

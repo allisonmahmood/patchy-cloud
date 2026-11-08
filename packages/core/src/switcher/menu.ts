@@ -21,7 +21,7 @@ import type { SwitcherClient } from "./client.js";
 import { SWITCHER_CLOSED, SWITCHER_ID } from "./dialog.js";
 import { icons } from "./icons.js";
 import { switcherMessage } from "./messages.js";
-import { allPatchesRow, hold, type Row, sections } from "./rows.js";
+import { allPatchesRow, hold, litAtOpen, type Row, sections } from "./rows.js";
 
 export interface SwitcherMenu {
   /** Opens the menu; a no-op while it is open. */
@@ -121,7 +121,7 @@ export const switcherMenu = (
     const previous = selected;
     filled = client.kept().list !== undefined;
     rows = next.flatMap((section) => section.rows);
-    const still = refresh ? rows.findIndex((row) => row.key === lit) : 0;
+    const still = refresh ? rows.findIndex((row) => row.key === lit) : litAtOpen(next);
     select(still >= 0 ? still : previous);
   };
 

@@ -3,8 +3,10 @@
 /**
  * What the switcher lists, as data the menu draws.
  *
- * Nothing typed: the patch to flip back to, selected, then the next five the viewer opened last,
- * then "This patch", the card pages of the patch on screen (Log and Settings for its owner and
+ * Nothing typed: the patch to flip back to, selected, then the next five the viewer opened last;
+ * slots they haven't filled go to patches the viewer has never opened, the company's before those
+ * shared with them, each by title, six patches in all. Without a patch to flip back to, none of
+ * them is lit. Then "This patch", the card pages of the patch on screen (Log and Settings for its owner and
  * admins), shown once the list confirms the viewer is a member of its company, so never to a
  * guest, then "Patchy", Patchy's own places. Typed: everything filters into one ranked list
  * (`rank.ts`). The patch on screen is never a row, nor the place the page is.
@@ -15,7 +17,7 @@
 import { patchTitle } from "../patch-marks.js";
 import { places, whatsNewPath } from "../places.js";
 import type { Kept } from "./cache.js";
-import { rank } from "./rank.js";
+import { byTitle, rank } from "./rank.js";
 
 /** An icon a row may wear instead of a patch's mark. */
 export type Icon =
@@ -51,7 +53,19 @@ export interface Row {
 export interface Section {
   readonly label?: "This patch" | "Patchy";
   readonly rows: ReadonlyArray<Row>;
+  /** None of these rows is lit when the menu opens: patches with no flip to lead them. */
+  readonly quiet?: boolean;
 }
+
+/** The row the menu lights when it opens on `sections`: the first one not in a quiet section. */
+export const litAtOpen = (sections: ReadonlyArray<Section>): number => {
+  let index = 0;
+  for (const section of sections) {
+    if (section.quiet !== true) return index;
+    index += section.rows.length;
+  }
+  return 0;
+};
 
 /** Where the menu opened. */
 export interface Here {
@@ -121,9 +135,10 @@ const path = (handle: string, name: string) =>
 /** The menu's sections for `query`, from what the tab keeps, as at `now`. */
 export const sections = (kept: Kept, here: Here, query: string, now: number): Section[] => {
   const { list } = kept;
-  const patchRows: Row[] = list
-    ? [
-        ...list.patches.map((patch) => {
+  const notHere = (row: Row) => row.key !== `patch:${here.patch}`;
+  const companyRows: Row[] = list
+    ? list.patches
+        .map((patch) => {
           const openedAt = patch.openedAt === undefined ? undefined : Date.parse(patch.openedAt);
           return {
             key: `patch:${patch.id}`,
@@ -135,8 +150,12 @@ export const sections = (kept: Kept, here: Here, query: string, now: number): Se
             score: patch.score,
             openedAt
           };
-        }),
-        ...list.shared.map((patch) => ({
+        })
+        .filter(notHere)
+    : [];
+  const sharedRows: Row[] = list
+    ? list.shared
+        .map((patch) => ({
           key: `patch:${patch.id}`,
           href: path(patch.company.handle, patch.name),
           title: patchTitle(patch),
@@ -144,8 +163,9 @@ export const sections = (kept: Kept, here: Here, query: string, now: number): Se
           detail: patch.company.name,
           name: patch.name
         }))
-      ].filter((row) => row.key !== `patch:${here.patch}`)
+        .filter(notHere)
     : [];
+  const patchRows = [...companyRows, ...sharedRows];
   const mine = list?.patches.find((patch) => patch.id === here.patch);
   const manages = mine !== undefined && (mine.mine || list?.viewer.role === "admin");
   const cardRows: Row[] =
@@ -182,10 +202,25 @@ export const sections = (kept: Kept, here: Here, query: string, now: number): Se
     .map((id) => (id === undefined || id === here.patch ? undefined : byKey.get(`patch:${id}`)))
     .find((row) => row !== undefined);
   const flip = pointed ?? recent[0];
-  const first =
-    flip === undefined ? [] : [flip, ...recent.filter((row) => row !== flip).slice(0, 5)];
+  // Patches never opened fill what opens leave, so a new member or a guest has some at once.
+  // Guests record no opens, so every shared patch counts as never opened.
+  const titled = (rows: ReadonlyArray<Row>) =>
+    rows
+      .map((row) => ({ id: row.key, title: row.title, row }))
+      .sort(byTitle)
+      .map(({ row }) => row);
+  const unopened = [
+    ...titled(companyRows.filter((row) => row.openedAt === undefined)),
+    ...titled(sharedRows)
+  ];
+  const first = [
+    ...(flip === undefined ? [] : [flip]),
+    ...[...recent, ...unopened].filter((row) => row !== flip)
+  ].slice(0, 6);
   return [
-    ...(first.length === 0 ? [] : [{ rows: first }]),
+    ...(first.length === 0
+      ? []
+      : [{ rows: first, ...(flip === undefined ? { quiet: true } : {}) }]),
     ...(cardRows.length === 0 ? [] : [{ label: "This patch" as const, rows: cardRows }]),
     { label: "Patchy" as const, rows: placesRows }
   ];
