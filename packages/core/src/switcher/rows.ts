@@ -132,8 +132,18 @@ export const sinceLabel = (at: number, now: number): string => {
 const path = (handle: string, name: string) =>
   `/${encodeURIComponent(handle)}/${encodeURIComponent(name)}`;
 
-/** The menu's sections for `query`, from what the tab keeps, as at `now`. */
-export const sections = (kept: Kept, here: Here, query: string, now: number): Section[] => {
+/**
+ * The menu's sections for `query`, from what the tab keeps, as at `now`. On a refresh of an open
+ * menu, `shown` is the rows it shows: those still listed keep their slots ahead of newcomers, so
+ * the six-patch cap never pushes out a row the person may have lit.
+ */
+export const sections = (
+  kept: Kept,
+  here: Here,
+  query: string,
+  now: number,
+  shown: ReadonlyArray<string> = []
+): Section[] => {
   const { list } = kept;
   const notHere = (row: Row) => row.key !== `patch:${here.patch}`;
   const companyRows: Row[] = list
@@ -213,9 +223,14 @@ export const sections = (kept: Kept, here: Here, query: string, now: number): Se
     ...titled(companyRows.filter((row) => row.openedAt === undefined)),
     ...titled(sharedRows)
   ];
-  const first = [
+  const lead = [
     ...(flip === undefined ? [] : [flip]),
     ...[...recent, ...unopened].filter((row) => row !== flip)
+  ];
+  const onScreen = new Set(shown);
+  const first = [
+    ...lead.filter((row) => onScreen.has(row.key)),
+    ...lead.filter((row) => !onScreen.has(row.key))
   ].slice(0, 6);
   return [
     ...(first.length === 0

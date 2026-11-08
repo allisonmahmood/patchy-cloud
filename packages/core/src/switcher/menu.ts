@@ -84,12 +84,15 @@ export const switcherMenu = (
   /** Draws the rows for the query; `refresh` keeps those already shown in place. */
   const render = (refresh: boolean) => {
     const lit = rows[selected]?.key;
-    let next = sections(client.kept(), { patch: here.patch, path: location.pathname }, query, now);
-    if (refresh)
-      next = hold(
-        next,
-        rows.map((row) => row.key)
-      );
+    const shown = refresh ? rows.map((row) => row.key) : [];
+    let next = sections(
+      client.kept(),
+      { patch: here.patch, path: location.pathname },
+      query,
+      now,
+      shown
+    );
+    if (refresh) next = hold(next, shown);
     const none = next.length === 0;
     if (none) next = [{ rows: [allPatchesRow()] }];
     empty.textContent = none ? `No patches match “${query.trim()}”` : "";

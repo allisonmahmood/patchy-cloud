@@ -325,6 +325,41 @@ describe("patches never opened, with nothing typed", () => {
     expect(litAtOpen(result)).toBe(0);
   });
 
+  it("keep the rows an open menu shows when a refresh brings one that sorts ahead", () => {
+    const six = ["Bunk", "Crew", "Deck", "Engine", "Fuel", "Galley"].map((title) =>
+      patch(title.toLowerCase(), title)
+    );
+    const here = { path: "/" };
+    const before = sections(of(six), here, "", now);
+    const shown = before.flatMap((section) => section.rows.map((row) => row.key));
+    // Galley, the sixth, is lit; Anchor arrives and sorts first.
+    const after = hold(
+      sections(of([patch("anchor", "Anchor"), ...six]), here, "", now, shown),
+      shown
+    );
+    expect(first(after).rows.map((row) => row.title)).toEqual([
+      "Bunk",
+      "Crew",
+      "Deck",
+      "Engine",
+      "Fuel",
+      "Galley"
+    ]);
+    // A row that is gone frees its slot for the newcomer.
+    const gone = hold(
+      sections(of([patch("anchor", "Anchor"), ...six.slice(0, 5)]), here, "", now, shown),
+      shown
+    );
+    expect(first(gone).rows.map((row) => row.title)).toEqual([
+      "Bunk",
+      "Crew",
+      "Deck",
+      "Engine",
+      "Fuel",
+      "Anchor"
+    ]);
+  });
+
   it("still never list the patch on screen", () => {
     const result = sections(
       of([patch("crew", "Crew Rota"), patch("deck", "Deck Log")]),
