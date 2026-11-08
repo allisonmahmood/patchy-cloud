@@ -60,6 +60,32 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 40,
+    date: "2026-11-08",
+    through: "08e1fd9e2dc8d1786f5f9d4fee3c009add22d564",
+    changes: [
+      {
+        kind: "New",
+        title: "Jump anywhere with ⌘⇧K",
+        detail:
+          "Press ⌘⇧K (Ctrl+Shift+K away from a Mac) on any Patchy page, even inside a patch or while you're typing, to open Go to…. The patch you were last in is already picked, so ⌘⇧K then Enter flips straight back to it. Type a few letters to find any of your company's patches, the ones shared with you, or a page like People or Integrations, and press Enter to go. Escape, or ⌘⇧K again, closes it and puts your cursor back where it was.",
+        prs: [1294, 1298, 1304, 1307]
+      },
+      {
+        kind: "Improved",
+        title: "Your usual stays yours",
+        detail:
+          "Opening a patch again within 10 minutes no longer counts as another visit, so flipping between two patches doesn't push the tools you use most out of Your usual on Home.",
+        prs: [1295]
+      }
+    ],
+    behindTheScenes: [],
+    patchChanges: [
+      "Mod+Shift+K (⌘⇧K on a Mac, Ctrl+Shift+K elsewhere) no longer reaches patch code: Patchy claims it in every patch for its switcher. `patchy/hotkeys` already refused it; a patch that listened for it with its own `keydown` handler should move that action to another key.",
+      "Patchy now serves one small script first in every patch document's `<head>`, ahead of the patch's own code. The stored file and its digest are unchanged; a patch that assumes its own script is the document's first should not."
+    ]
+  },
+  {
     id: 39,
     date: "2026-11-07",
     through: "17b1ad85f33fc61509342500b24ee9dd97dc650b",
