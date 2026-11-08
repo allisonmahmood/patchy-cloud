@@ -8,20 +8,38 @@ export const NO_STORE_CACHE_CONTROL = "no-store";
 export const PUBLIC_PATCH_CACHE_CONTROL = "public, max-age=60";
 export const PRIVATE_PATCH_CACHE_CONTROL = "private, no-store";
 
+/** A top-level notice's policy, given the script sources it admits and any directives beyond. */
+const noticePolicy = (scripts: string, more: ReadonlyArray<string> = []) =>
+  [
+    "default-src 'none'",
+    `script-src ${scripts}`,
+    "style-src 'unsafe-inline'",
+    "img-src https: data:",
+    "font-src data:",
+    ...more,
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'"
+  ].join("; ");
+
 /**
- * Patchy's own notices in place of a patch: no script but the switcher relay, no frames, no
- * forms, fonts only from their own bytes.
+ * Patchy's own notices in place of a patch, as anyone but their active signed-in viewer gets
+ * them: no script but the switcher relay, no frames, no forms, fonts only from their own bytes.
  */
-export const PATCH_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  `script-src ${SWITCHER_RELAY_SOURCE}`,
-  "style-src 'unsafe-inline'",
-  "img-src https: data:",
-  "font-src data:",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'"
-].join("; ");
+export const PATCH_CONTENT_SECURITY_POLICY = noticePolicy(SWITCHER_RELAY_SOURCE);
+
+/**
+ * A top-level notice for an active signed-in viewer, which loads their switcher and the session's
+ * scripts from Patchy's own origin and asks it for their list. Clerk keeps the session fresh from
+ * a blob worker, so its sources join `'self'` along with the worker allowance.
+ */
+export function noticeContentSecurityPolicy(frontendApiHost?: string): string {
+  const own = frontendApiHost === undefined ? "'self'" : `'self' https://${frontendApiHost}`;
+  return noticePolicy(`${own} ${SWITCHER_RELAY_SOURCE}`, [
+    `connect-src ${own}`,
+    ...(frontendApiHost === undefined ? [] : ["worker-src blob:"])
+  ]);
+}
 
 /**
  * A patch's document in its frame. Both the HTTP policy and iframe sandbox must grant a capability.

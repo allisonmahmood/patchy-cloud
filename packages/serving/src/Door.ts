@@ -64,6 +64,58 @@ const admission = Effect.gen(function* () {
   })
 );
 
+/** Who a top-level notice is for: an active signed-in viewer, or no one. */
+interface NoticeAdmission {
+  readonly viewer: RequireSession.Viewer["Service"] | undefined;
+  readonly cookies: ReadonlyArray<string>;
+}
+const nobody: NoticeAdmission = { viewer: undefined, cookies: [] };
+
+/**
+ * Who a top-level notice at `/~shell/notice/:code` is for, if anyone, and the cookies Clerk set
+ * reading the session, so a session it refreshed on the way stays refreshed. Unlike `Admission`
+ * it never answers for the page, and never redirects:
+ *
+ * - A verified handshake return is admitted at once, with the cookies that complete it, rather
+ *   than through Clerk's cleanup hop.
+ * - A handshake Clerk wants to start is no one, and its cookies, which belong to the redirect,
+ *   are dropped.
+ * - So are a failed sign-in, no membership and a deactivated account.
+ *
+ * A person stopped on a notice always sees the notice.
+ */
+export const noticeViewer = Effect.gen(function* () {
+  const session = yield* Session.Session;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const result = yield* session.authenticate(
+    new Request(new URL(request.url, session.publicBaseUrl), {
+      method: request.method,
+      headers: request.headers
+    })
+  );
+  const { claims, cookies } =
+    result.status === "signed-in"
+      ? result
+      : result.status === "signed-out"
+        ? { claims: undefined, cookies: result.cookies }
+        : result.completed
+          ? { claims: result.claims, cookies: result.response.headers.getSetCookie() }
+          : { claims: undefined, cookies: [] };
+  if (claims === undefined) return { viewer: undefined, cookies };
+  const viewer = yield* RequireSession.resolveViewer.pipe(
+    Effect.provideService(RequireSession.SignedIn, claims)
+  );
+  if (viewer === null || HttpServerResponse.isHttpServerResponse(viewer))
+    return { viewer: undefined, cookies };
+  yield* WideEvents.enrich({ viewerId: viewer.user.id, companyId: viewer.company.id });
+  return { viewer, cookies };
+}).pipe(
+  Effect.catchTags({
+    SessionError: () => Effect.succeed(nobody),
+    SqlError: () => Effect.succeed(nobody)
+  })
+);
+
 /** Installed only on patch addresses and content URLs; handlers own scope and cookies. */
 export const layer = HttpRouter.middleware<{ provides: Admission }>()(
   Effect.gen(function* () {
