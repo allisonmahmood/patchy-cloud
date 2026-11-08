@@ -103,6 +103,7 @@ test("a patch's own listeners and fields never hear the switcher key", async ({
 
 test("the shell takes the relay's open at company scope and ignores it on a public page", async ({
   page,
+  context,
   instance
 }) => {
   const log = watch(page);
@@ -116,6 +117,8 @@ test("the shell takes the relay's open at company scope and ignores it on a publ
 
   log.lines.length = 0;
   const open = await instance.publish("public", listening, undefined, tier1);
+  // Signed out: a member's copy of their own company's public patch loads their switcher.
+  await instance.session(context, "none");
   await page.goto(open.address);
   await field(page).click();
   await page.keyboard.press(chord);

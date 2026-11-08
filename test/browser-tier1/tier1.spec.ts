@@ -323,6 +323,9 @@ test("Back to a cached public patch leaves a working client", async ({
   try {
     const context = await browser.newContext();
     await prepare(context, instance);
+    // Signed out: a member's copy of their own company's public patch carries their switcher, so
+    // it is never stored.
+    await instance.session(context, "none");
     const page = await context.newPage();
     const patch = await instance.publish("public");
     const frame = await open(page, patch, "/items/2");

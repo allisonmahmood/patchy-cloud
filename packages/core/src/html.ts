@@ -18,11 +18,12 @@ export const SWITCHER_RELAY_SOURCE = relayScriptHash;
 export const SWITCHER_PATH = "/~shell/switcher.js";
 
 /**
- * The switcher's script on a signed-in page: app pages, company shells and notices. It names the
- * viewer the page was rendered for, so the switcher keeps only that person's list, and `v` names
- * its bytes. A notice about one patch, such as its needs-rebuild notice, also names that patch,
- * which the menu then treats as the patch on screen, as a company shell's frame names it. Put it
- * before Clerk's and the session's scripts, so the menu never waits behind Clerk.
+ * The switcher's script on a signed-in page: app pages, notices, company shells and a public
+ * shell shown to a member of the patch's company. It names the viewer the page was rendered for,
+ * so the switcher keeps only that person's list, and `v` names its bytes. A notice about one
+ * patch, such as its needs-rebuild notice, also names that patch, which the menu then treats as
+ * the patch on screen, as a shell's frame names it. Put it before Clerk's and the session's
+ * scripts, so the menu never waits behind Clerk.
  */
 export const switcherTag = (viewer: {
   readonly userId: string;

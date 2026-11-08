@@ -183,7 +183,7 @@ it.layer(layer)("stream HTTP admission", (it) => {
             Effect.succeed<Session.SessionResult>({
               status: "handshake",
               response: new Response(null, { status: 307 }),
-              completed: false
+              kind: "session"
             })
         })
       );

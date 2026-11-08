@@ -669,27 +669,34 @@ it.layer(layer)("pages", (it) => {
       })
   );
 
-  it.effect("records a member's open of the address, never the content URL or a public page", () =>
-    Effect.gen(function* () {
-      const patches = yield* Patches.Patches;
-      const company = yield* publish("Opened by a member");
-      const open = yield* publish("Opened by anyone", "public");
-      const scores = Effect.map(
-        patches.opens(DEV_SEED.userId),
-        (opens) => new Map(opens.map((entry) => [entry.patchId, entry.score]))
-      );
-      assert.strictEqual((yield* get(company.path)).status, 200);
-      yield* get(`/~content/${company.patchId}/${company.versionId}`);
-      yield* get(company.path, {});
-      assert.strictEqual((yield* get(open.path)).status, 200);
-      const recorded = yield* scores;
-      assert.closeTo(recorded.get(company.patchId)!, 1, 1e-9);
-      assert.isFalse(recorded.has(open.patchId));
-      // A colleague reading v1 after v2 is out hasn't seen what changed.
-      yield* publish("Opened by a member, again", undefined, company.patchId);
-      assert.strictEqual((yield* get(`${company.path}/~v/1`)).status, 200);
-      assert.closeTo((yield* scores).get(company.patchId)!, 1, 1e-9);
-    })
+  it.effect(
+    "records a member's open of the address, a public patch's too, never the content URL",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const company = yield* publish("Opened by a member");
+        const open = yield* publish("Opened by anyone", "public");
+        const scores = Effect.map(
+          patches.opens(DEV_SEED.userId),
+          (opens) => new Map(opens.map((entry) => [entry.patchId, entry.score]))
+        );
+        assert.strictEqual((yield* get(company.path)).status, 200);
+        yield* get(`/~content/${company.patchId}/${company.versionId}`);
+        yield* get(company.path, {});
+        // The public page is served without a session, so reading it signed out records nothing.
+        assert.strictEqual((yield* get(open.path, {})).status, 200);
+        yield* get(`/~content/${open.patchId}/${open.versionId}`);
+        const recorded = yield* scores;
+        assert.closeTo(recorded.get(company.patchId)!, 1, 1e-9);
+        assert.isFalse(recorded.has(open.patchId));
+        // A member opening their own company's public patch signed in counts.
+        assert.strictEqual((yield* get(open.path)).status, 200);
+        assert.closeTo((yield* scores).get(open.patchId)!, 1, 1e-9);
+        // A colleague reading v1 after v2 is out hasn't seen what changed.
+        yield* publish("Opened by a member, again", undefined, company.patchId);
+        assert.strictEqual((yield* get(`${company.path}/~v/1`)).status, 200);
+        assert.closeTo((yield* scores).get(company.patchId)!, 1, 1e-9);
+      })
   );
 
   it.effect("reports a colleague's first open of a patch, and no other open", () =>
@@ -706,9 +713,10 @@ it.layer(layer)("pages", (it) => {
       const welcome = yield* publish("Your welcome page", undefined, null, "welcome");
       const shared = yield* publish("Public at its first open", "public");
 
-      // The owner's own first open, a public patch and an older version report nothing.
+      // The owner's own first open, a public patch read signed out and an older version report
+      // nothing.
       assert.strictEqual((yield* get(patch.path)).status, 200);
-      assert.strictEqual((yield* get(shared.path, colleague)).status, 200);
+      assert.strictEqual((yield* get(shared.path, {})).status, 200);
       yield* publish("First opened by a colleague, again", undefined, patch.patchId);
       assert.strictEqual((yield* get(`${patch.path}/~v/1`, colleague)).status, 200);
       assert.deepStrictEqual(firstOpens(patch.patchId), []);
@@ -734,6 +742,12 @@ it.layer(layer)("pages", (it) => {
       assert.deepStrictEqual(
         firstOpens(welcome.patchId).map((event) => event.properties),
         [{ patchId: welcome.patchId, ownerUserId: DEV_SEED.userId, tier: 1, welcomePage: true }]
+      );
+      // A colleague's first open of the company's public patch, signed in, counts too.
+      assert.strictEqual((yield* get(shared.path, colleague)).status, 200);
+      assert.deepStrictEqual(
+        firstOpens(shared.patchId).map((event) => event.principalId),
+        [colleagueId]
       );
     })
   );
@@ -1199,37 +1213,44 @@ it.layer(services)("pages in memory", (it) => {
         for (const scope of ["company", "public", "company"] as const) {
           yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, scope);
           for (const path of [patchPath, `${patchPath}/~v/1`]) {
-            const response = yield* send(path, { headers: { cookie: signedInCookies() } });
-            assert.strictEqual(response.status, 200);
-            const body = yield* Effect.promise(() => response.text());
+            // A member gets their switcher and session at either scope, over the public page
+            // while it is public; signed out, it is the bare public shell.
+            const member = yield* send(path, { headers: { cookie: signedInCookies() } });
+            const signedOut = yield* send(path);
+            assert.strictEqual(member.status, 200);
+            assert.strictEqual(signedOut.status, scope === "public" ? 200 : 401);
+            const body = yield* Effect.promise(() => member.text());
             assert.include(body, 'sandbox="allow-scripts allow-modals"');
             assert.include(body, "<title>Sharing boundary</title>");
+            assert.strictEqual(member.headers.get("cache-control"), "private, no-store");
+            assert.strictEqual(
+              member.headers.get("content-security-policy"),
+              shellContentSecurityPolicy(FRONTEND_API_HOST)
+            );
+            assert.include(body, `data-scope="${scope}"`);
+            // Only a company shell pins its viewer for the broker.
+            assert.strictEqual(body.includes("data-viewer-id"), scope === "company");
+            assert.include(
+              body,
+              `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
+            );
+            assert.include(body, 'src="/auth/session.js"');
+            // A shell rendered for its viewer alone loads their switcher.
+            assert.include(body, `src="/~shell/switcher.js?v=${switcherDigest}"`);
+            assert.strictEqual((body.match(/<script\b/g) ?? []).length, 5);
+            // The relay is the one inline script, admitted by its hash.
+            assert.include(body, switcherRelay);
+            assert.notMatch(body.replace(switcherRelay, ""), /<script\b[^>]*>[^<]+<\/script>/);
             if (scope === "public") {
-              assert.strictEqual(response.headers.get("cache-control"), "public, max-age=60");
+              const open = yield* Effect.promise(() => signedOut.text());
+              assert.include(open, 'sandbox="allow-scripts allow-modals"');
+              assert.strictEqual(signedOut.headers.get("cache-control"), "public, max-age=60");
               assert.strictEqual(
-                response.headers.get("content-security-policy"),
+                signedOut.headers.get("content-security-policy"),
                 SHELL_SECURITY_POLICY
               );
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 2);
-              assert.deepStrictEqual(response.headers.getSetCookie(), []);
-            } else {
-              assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
-              assert.strictEqual(
-                response.headers.get("content-security-policy"),
-                shellContentSecurityPolicy(FRONTEND_API_HOST)
-              );
-              assert.include(
-                body,
-                `src="https://${FRONTEND_API_HOST}/npm/@clerk/clerk-js@5/dist/clerk.headless.browser.js"`
-              );
-              assert.include(body, 'src="/auth/session.js"');
-              // The company shell alone loads the viewer's switcher.
-              assert.include(body, `src="/~shell/switcher.js?v=${switcherDigest}"`);
-              assert.strictEqual((body.match(/<script\b/g) ?? []).length, 5);
-              // The relay is the one inline script, admitted by its hash.
-              assert.include(body, switcherRelay);
-              assert.notMatch(body.replace(switcherRelay, ""), /<script\b[^>]*>[^<]+<\/script>/);
-              assert.strictEqual((yield* send(path)).status, 401);
+              assert.strictEqual((open.match(/<script\b/g) ?? []).length, 2);
+              assert.deepStrictEqual(signedOut.headers.getSetCookie(), []);
             }
           }
         }
@@ -1472,14 +1493,239 @@ it.layer(services)("pages in memory", (it) => {
       assert.strictEqual(deactivated.status, 403);
       assert.notInclude(yield* Effect.promise(() => deactivated.text()), "switcher.js");
 
-      // A public page carries no viewer data, nor any cookie, even for a signed-in member.
+      // A public patch's own member still gets their switcher. Its guest, the deactivated and the
+      // signed out get the public page's notice, with no viewer data and no cookie.
       yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
-      for (const cookie of [signedInCookies(), expired(false), ""]) {
+      yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", about, rebuild);
+      for (const cookie of [guest, other.cookie(), ""]) {
         const response = yield* open(cookie);
         assert.deepStrictEqual(response.headers.getSetCookie(), []);
         yield* forAnyone(response, "needs_rebuild", rebuild);
       }
     })
+  );
+
+  /**
+   * A shell rendered for `viewer`: their switcher and the session's scripts, never stored. A
+   * company shell pins them as its frame's viewer; a public one, their company's public patch,
+   * pins no one, so its document is the one everyone reads.
+   */
+  const viewerShell = Effect.fn(function* (
+    response: Response,
+    viewer: { readonly userId: string; readonly companyId: string },
+    scope: "company" | "public"
+  ) {
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
+    assert.isNull(response.headers.get("vary"));
+    assert.strictEqual(
+      response.headers.get("content-security-policy"),
+      shellContentSecurityPolicy(FRONTEND_API_HOST)
+    );
+    const html = yield* Effect.promise(() => response.text());
+    assert.include(html, `data-scope="${scope}"`);
+    assert.strictEqual(html.includes("data-viewer-id"), scope === "company");
+    assert.include(html, " data-switcher ");
+    assert.include(html, switcherTag(viewer));
+    assert.include(html, 'src="/auth/session.js"');
+  });
+  /** The public shell, the relay and the broker alone: cached for anyone unless it sets a cookie. */
+  const publicShell = Effect.fn(function* (response: Response, { cached = true } = {}) {
+    assert.strictEqual(response.status, 200);
+    assert.isNull(response.headers.get("location"));
+    assert.strictEqual(response.headers.get("content-security-policy"), SHELL_SECURITY_POLICY);
+    assert.strictEqual(
+      response.headers.get("cache-control"),
+      cached ? "public, max-age=60" : "private, no-store"
+    );
+    // One address, two pages: a cache keeps the public one only for the cookies it came with.
+    assert.strictEqual(response.headers.get("vary"), cached ? "Cookie" : null);
+    if (cached) assert.deepStrictEqual(response.headers.getSetCookie(), []);
+    const html = yield* Effect.promise(() => response.text());
+    assert.include(html, 'data-scope="public"');
+    assert.notInclude(html, "data-switcher");
+    assert.deepStrictEqual(
+      [...html.matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag),
+      ["<script>", `<script defer src="${brokerSrc}">`]
+    );
+  });
+  /** A browser's request for one of `directives`' cookies, as it sends them back. */
+  const cookieOf = (directives: ReadonlyArray<string>) =>
+    directives.map((directive) => directive.split(";")[0]!).join("; ");
+  /** Someone signed in at another company, by `handle`, with their session cookies. */
+  const outsider = Effect.fn(function* (handle: string) {
+    const { user, company } = yield* (yield* Companies.Companies).create({
+      name: handle,
+      handle,
+      clerkUserId: `user_${handle}`,
+      email: `${handle}@example.com`,
+      userName: handle
+    });
+    const claims = { sub: `user_${handle}`, email: `${handle}@example.com`, sid: `sess_${handle}` };
+    return {
+      user,
+      company,
+      claims,
+      cookie: signedInCookies(signSession(claims))
+    };
+  });
+
+  it.effect(
+    "puts a member's switcher and session on their company's public page, and nothing on anyone else's",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const { patchId, versionId, path } = yield* publish(
+          "Open timetable",
+          undefined,
+          null,
+          "open-timetable"
+        );
+        // Granted while company-only: a public patch takes no new guests.
+        const guest = yield* outsider("public-guest");
+        yield* (yield* GuestGrants.GuestGrants).grant({
+          patchId,
+          userId: guest.user.id,
+          grantedBy: DEV_SEED.userId
+        });
+        yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+        const visit = (cookie: string, at = path) =>
+          send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
+        const opened = Effect.map(patches.opens(DEV_SEED.userId), (opens) =>
+          opens.some((entry) => entry.patchId === patchId)
+        );
+
+        assert.isFalse(yield* opened);
+        yield* viewerShell(yield* visit(signedInCookies()), dev, "public");
+        assert.isTrue(yield* opened);
+        // Its frame's content stays everyone's, even for a member.
+        const content = yield* visit(signedInCookies(), `/~content/${patchId}/${versionId}?n=b`);
+        assert.strictEqual(content.status, 200);
+        assert.strictEqual(content.headers.get("cache-control"), "public, max-age=60");
+        assert.strictEqual(content.headers.get("vary"), "Accept-Encoding");
+
+        // No one else is asked to sign in, join or start a handshake: not the signed out, whether
+        // or not Clerk has met their browser, someone at another company, someone with no
+        // company, a deactivated member or the patch's guest.
+        const elsewhere = yield* outsider("public-elsewhere");
+        const deactivated = yield* colleague("public-deactivated");
+        yield* deactivated.deactivate;
+        for (const cookie of [
+          "",
+          "__clerk_db_jwt=offline-browser; __client_uat=0",
+          elsewhere.cookie,
+          signedInCookies(signSession({ sub: "user_public_nobody", email: "nobody@example.com" })),
+          deactivated.cookie(),
+          guest.cookie
+        ])
+          yield* publicShell(yield* visit(cookie));
+        // A shell reloading itself past the cache still gets the public page.
+        yield* publicShell(yield* visit("", `${path}?__patchy_shell_reload=1`), { cached: false });
+
+        // Every version URL of the current version is public; an older one is not, as before.
+        yield* publish("Open timetable, again", undefined, patchId);
+        yield* publicShell(yield* visit(elsewhere.cookie, `${path}/~v/2`));
+        yield* viewerShell(yield* visit(signedInCookies(), `${path}/~v/2`), dev, "public");
+        yield* viewerShell(yield* visit(signedInCookies(), `${path}/~v/1`), dev, "company");
+        assert.strictEqual((yield* send(`${path}/~v/1`)).status, 401);
+        assert.strictEqual((yield* visit(elsewhere.cookie, `${path}/~v/1`)).status, 404);
+      })
+  );
+
+  it.effect(
+    "follows a public address's handshake only for a session, and sets Clerk's cookies privately",
+    () =>
+      Effect.gen(function* () {
+        const { patchId, versionId, path } = yield* publish(
+          "Open rota",
+          "public",
+          null,
+          "open-rota"
+        );
+        const visit = (cookie: string, at = path) =>
+          send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
+
+        // A member whose token lapsed, as after following a link from elsewhere, goes through
+        // Clerk's handshake at the address and comes back to the page with their switcher.
+        const lapsed = yield* visit(expired(false));
+        assert.strictEqual(lapsed.status, 307);
+        assert.strictEqual(lapsed.headers.get("cache-control"), "private, no-store");
+        const upstream = new URL(lapsed.headers.get("location")!);
+        assert.strictEqual(upstream.host, FRONTEND_API_HOST);
+        assert.strictEqual(upstream.searchParams.get("redirect_url"), `${PUBLIC_BASE_URL}${path}`);
+        const returned = handshakeReturn();
+        const back = yield* visit(
+          "",
+          `${path}?__clerk_handshake=${encodeURIComponent(returned.handshake)}`
+        );
+        assert.strictEqual(back.status, 307);
+        assert.strictEqual(back.headers.get("location"), `${PUBLIC_BASE_URL}${path}`);
+        assert.deepStrictEqual(back.headers.getSetCookie(), returned.directives);
+        yield* viewerShell(yield* visit(cookieOf(returned.directives)), dev, "public");
+        // Clerk's own work on a browser never moves a public reader: setting up a development
+        // browser, or a sync hop that would send them to whatever site the link names.
+        for (const query of [
+          "?__clerk_db_jwt=offline-browser",
+          "?__clerk_redirect_url=https%3A%2F%2Fexample.com%2F"
+        ])
+          yield* publicShell(yield* visit("", `${path}${query}`));
+        // The frame's content never starts one.
+        const content = yield* visit(expired(false), `/~content/${patchId}/${versionId}?n=b`);
+        assert.strictEqual(content.status, 200);
+        assert.deepStrictEqual(content.headers.getSetCookie(), []);
+        assert.strictEqual(content.headers.get("cache-control"), "public, max-age=60");
+        // A session Clerk renewed on the way keeps its cookies on the member's page.
+        const refreshed = refreshes();
+        const renewed = yield* visit(expired(true));
+        refreshed(renewed);
+        yield* viewerShell(renewed, dev, "public");
+
+        // A verified return for someone outside the company ends on the public page, through
+        // the same cleanup hop.
+        const elsewhere = yield* outsider("public-returning");
+        const directives = [
+          `__session=${signSession(elsewhere.claims)}; Path=/; SameSite=Lax`,
+          `__client_uat=${Math.floor(Date.now() / 1_000)}; Path=/; SameSite=Lax`,
+          "__clerk_db_jwt=offline-browser; Path=/; SameSite=Lax"
+        ];
+        const theirs = yield* visit(
+          "",
+          `${path}?__clerk_handshake=${encodeURIComponent(signHandshake(directives))}`
+        );
+        assert.strictEqual(theirs.status, 307);
+        assert.deepStrictEqual(theirs.headers.getSetCookie(), directives);
+        yield* publicShell(yield* visit(cookieOf(directives)));
+        // Production verifies a return without that hop, as a sign-in carrying its cookies, as
+        // when Clerk renews a session on the way: the public page sets them, and is private.
+        const now = Math.floor(Date.now() / 1_000);
+        const token = signSession(elsewhere.claims);
+        clerk.refreshed = [
+          `__session=${token}; Path=/; SameSite=Lax`,
+          `${refreshCookie}=refresh-new; Path=/; HttpOnly; SameSite=Lax`
+        ];
+        const stale = signSession({
+          ...elsewhere.claims,
+          iat: now - 120,
+          nbf: now - 120,
+          exp: now - 60
+        });
+        const carried = yield* visit(`${signedInCookies(stale)}; ${refreshCookie}=refresh-old`);
+        assert.includeMembers(
+          carried.headers.getSetCookie().map((cookie) => cookie.split(";")[0]),
+          [`__session=${token}`, `${refreshCookie}=refresh-new`]
+        );
+        yield* publicShell(carried, { cached: false });
+        // A failed sign-in ends there too, with the cookies that clear it.
+        const failed = yield* visit(
+          "",
+          `${path}?__clerk_handshake=${encodeURIComponent(signHandshake(["__session=; Max-Age=0; Path=/"]))}`
+        );
+        assert.deepStrictEqual(
+          failed.headers.getSetCookie().map((cookie) => cookie.split(";")[0]),
+          ["__session="]
+        );
+        yield* publicShell(failed, { cached: false });
+      })
   );
 
   /** A published tier 1 version's content URL, with its stored document. */

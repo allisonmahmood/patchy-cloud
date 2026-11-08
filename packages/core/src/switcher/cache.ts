@@ -19,7 +19,7 @@ export interface Kept extends Who {
   /** The last list adopted for them, and when, in epoch milliseconds. */
   readonly list?: SwitcherList | undefined;
   readonly savedAt?: number | undefined;
-  /** The patch this tab's last company shell showed, and the one before it, by id. */
+  /** The patch this tab's last shell showed, and the one before it, by id. */
   readonly current?: string | undefined;
   readonly previous?: string | undefined;
 }
@@ -114,7 +114,7 @@ export const forgetKept = (storage: Storage | undefined) => {
 };
 
 /**
- * The tab opened a company shell for `patch`: a different patch moves the current one to
+ * The tab opened a shell for `patch`: a different patch moves the current one to
  * previous, while a reload or a route change in the same patch leaves both alone.
  */
 export const arrive = (kept: Kept, patch: string): Kept =>

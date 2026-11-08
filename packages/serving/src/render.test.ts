@@ -367,4 +367,28 @@ describe("patch pages", () => {
     expect(html).not.toContain("private-viewer");
     expect(html).not.toContain("/~shell/switcher.js");
   });
+
+  it("loads a member's switcher on a public shell without pinning them, and says so on its frame", () => {
+    const options = {
+      patch,
+      version: { ...version, tier: 1 },
+      nonce: "document-nonce",
+      base: "/acme/report",
+      viewerId: "usr_member"
+    };
+    const member = renderPatchWrapper({ ...options, scope: "public", companyId: "cmp_acme" });
+    expect(member).toContain(switcherTag({ userId: "usr_member", companyId: "cmp_acme" }));
+    expect(member).toMatch(/<iframe id="patch"[^>]* data-scope="public" data-switcher /);
+    expect(member).not.toContain("data-viewer-id");
+    expect(renderPatchWrapper({ ...options, scope: "company", companyId: "cmp_acme" })).toContain(
+      " data-switcher "
+    );
+    for (const shell of [
+      renderPatchWrapper({ ...options, scope: "public" }),
+      renderPatchWrapper({ ...options, scope: "local", companyId: "cmp_acme" })
+    ]) {
+      expect(shell).not.toContain("/~shell/switcher.js");
+      expect(shell).not.toContain("data-switcher");
+    }
+  });
 });

@@ -6,14 +6,18 @@
  * `X-Robots-Tag: noindex` keeps every patch out of search results.
  *
  * Every shell loads Patchy's broker, and company shells also maintain the
- * session. None runs analytics. Content URLs carry the frame's sandbox policy.
+ * session, as does a public patch's shell for its own members. None runs
+ * analytics. Content URLs carry the frame's sandbox policy.
  * Every document, the patch's own included, starts with the switcher relay, so
  * Mod+Shift+K reaches neither page code nor the browser.
  *
  * Only a public patch's current version is public, at its latest and version
- * URLs; older versions stay behind the company door. Public pages cache for at
- * most a minute, so a scope or current-version change takes effect within a
- * minute without a CDN purge. Doored responses are private, no-store.
+ * URLs; older versions stay behind the company door. Its own company's
+ * signed-in members get that page with their switcher and session on top,
+ * privately. The public page caches for at most a minute, varying by Cookie, so
+ * a scope or current-version change takes effect within a minute without a CDN
+ * purge. Doored responses, members' copies and any public page that sets a
+ * cookie are private, no-store.
  */
 import * as Effect from "effect/Effect";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
