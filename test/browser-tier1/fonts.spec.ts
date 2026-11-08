@@ -55,3 +55,21 @@ test("a running patch's shell fetches none of the app's fonts", async ({ page, i
   await page.evaluate(() => document.fonts.ready);
   expect(fonts).toEqual([]);
 });
+
+test("a refusal at a content URL stays in the frame's sandbox and asks for no font", async ({
+  page,
+  context,
+  instance
+}) => {
+  await watchRefusals(context);
+  const fonts: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/assets/fonts/")) fonts.push(request.url());
+  });
+  const refusal = await page.goto(`${instance.origin}/~content/patchmissing1/ver_1`);
+  expect(refusal?.status()).toBe(404);
+  expect(refusal?.headers()["content-security-policy"]).toContain("sandbox");
+  await expect(page.getByRole("heading", { name: "This page isn't available" })).toBeVisible();
+  expect((await typeface(page)).refused).toEqual([]);
+  expect(fonts).toEqual([]);
+});

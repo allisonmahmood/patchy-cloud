@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
-import { fontFaces, fontFile, fontPreload, fontUrl, fonts } from "./fonts.js";
+import { htmlPage } from "./html.js";
+import { fontFaces, fontFile, fontPreload, fontUrl, fonts, withoutAppFonts } from "./fonts.js";
 
 describe("the app's fonts", () => {
   it("names each committed file's bytes in its URL", async () => {
@@ -26,5 +27,12 @@ describe("the app's fonts", () => {
     expect(fontPreload).toBe(
       `<link rel="preload" href="${fontUrl(fonts[0])}" as="font" type="font/woff2" crossorigin>`
     );
+  });
+
+  it("leaves a page with nothing that asks for them, where a policy refuses them", () => {
+    const page = htmlPage({ title: "Not found", body: "<main>Gone</main>" });
+    const drawn = withoutAppFonts(page);
+    expect(drawn).not.toMatch(/@font-face|rel="preload"|\/assets\/fonts\//);
+    expect(drawn).toContain("<main>Gone</main>");
   });
 });

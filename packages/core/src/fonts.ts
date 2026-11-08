@@ -43,3 +43,11 @@ export const fontFaces = `
 
 /** Every page's text is Geist, so it is fetched with the document rather than after the CSS. */
 export const fontPreload = `<link rel="preload" href="${fontUrl(geist)}" as="font" type="font/woff2" crossorigin>`;
+
+/**
+ * A first-party document without the app's fonts, for one drawn under a policy that refuses
+ * them, such as a refusal at a content URL inside the frame's sandbox. Its text falls back to
+ * the system fonts the stack names after Geist.
+ */
+export const withoutAppFonts = (html: string) =>
+  html.replace(fontPreload, "").replace(fontFaces, "");

@@ -45,6 +45,7 @@ import {
   PUBLIC_BASE_URL
 } from "@patchy/auth/testing";
 import { Companies, InviteMail, Users } from "@patchy/companies";
+import { withoutAppFonts } from "@patchy/core";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
@@ -637,10 +638,18 @@ it.layer(layer)("pages", (it) => {
         // A first-party notice: it draws in the app's fonts, and nothing else loads.
         assert.strictEqual(elsewhere.headers["content-security-policy"], NOTICE_SECURITY_POLICY);
       }
-      // A content URL's 404 stays under the frame's sandbox.
+      // A content URL's 404 stays under the frame's sandbox, which admits no font of the app's,
+      // so the page asks for none.
       const content = yield* get("/~content/patchmissing1/ver_1", {});
       assert.strictEqual(content.status, 404);
       assert.strictEqual(content.headers["content-security-policy"], CONTENT_SECURITY_POLICY);
+      const page = yield* content.text;
+      assert.include(page, "This page isn't available");
+      assert.notMatch(page, /@font-face|rel="preload"|\/assets\/fonts\//);
+      assert.strictEqual(
+        Number(content.headers["content-length"]),
+        new TextEncoder().encode(page).length
+      );
     })
   );
 
@@ -1125,7 +1134,12 @@ it.layer(services)("pages in memory", (it) => {
         assert.isNull(door.headers.get("location"));
         assert.isNull(door.headers.get("www-authenticate"));
         const body = yield* Effect.promise(() => door.text());
-        assert.strictEqual(body, yield* Effect.promise(() => login.text()));
+        const loginBody = yield* Effect.promise(() => login.text());
+        // In the frame's sandbox the door asks for none of the app's fonts, which it would be refused.
+        assert.strictEqual(
+          body,
+          path.startsWith("/~content/") ? withoutAppFonts(loginBody) : loginBody
+        );
         assert.notInclude(body, "Hidden title");
         assert.strictEqual(
           (body.match(/<a /g) ?? []).length,
@@ -1483,13 +1497,14 @@ it.layer(services)("pages in memory", (it) => {
         rebuild
       );
 
-      // The frame's notice keeps the relay alone, under the content policy.
+      // The frame's notice keeps the relay alone, under the content policy, which admits none of
+      // the app's fonts, so it asks for none.
       const framed = yield* open(signedInCookies(), `/~content/${patchId}/${versionId}?n=boot_x`);
       assert.strictEqual(framed.status, 409);
       assert.strictEqual(framed.headers.get("content-security-policy"), CONTENT_SECURITY_POLICY);
       assert.strictEqual(
         yield* Effect.promise(() => framed.text()),
-        renderShellNotice("needs_rebuild", "")
+        withoutAppFonts(renderShellNotice("needs_rebuild", ""))
       );
 
       // Anyone else meets the address's door as before: sign in, the deactivated page.
