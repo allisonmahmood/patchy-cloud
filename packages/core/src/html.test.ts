@@ -27,12 +27,14 @@ describe("htmlPage app body", () => {
       ["/", "Home"],
       ["/patches", "All patches"],
       ["/machines", "Your agents"],
+      ["/settings/company", "Company"],
+      ["/settings/company/teams", "Teams"],
       ["/company", "People"],
       ["/company/connections", "Integrations"],
       ["/company/agent-access", "Agent access"]
     ]);
     expect(body).toContain(
-      'aria-labelledby="app-group-company"><p class="app-group-label" id="app-group-company">Company</p>'
+      'aria-labelledby="app-group-settings"><p class="app-group-label" id="app-group-settings">Settings</p>'
     );
     expect(body.match(/aria-current="page"/g)).toHaveLength(1);
     expect(body).toContain('<a class="app-place" href="/company/connections" aria-current="page">');
