@@ -2125,7 +2125,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           changed = "description changed";
         } else if (action === "scope") {
           fields = { scope: "company", expectedScope: "company" };
-          yield* service.setScope(patch.patchId, actor(workspace.admin), "public");
+          yield* service.setSharing({
+            patchId: patch.patchId,
+            actor: actor(workspace.admin),
+            scope: "public"
+          });
           changed = "sharing changed";
         } else if (action === "rollback") {
           yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
@@ -4716,9 +4720,17 @@ it.layer(layer)("the switcher's list", (it) => {
       // Never Harbor Works' own public patch, nor one the guest can't open now.
       yield* listed("board", "notes");
       // The same grant drops a patch while it is public, and lists it once it isn't.
-      yield* patches.setScope(notes.patchId, actor(workspace.owner), "public");
+      yield* patches.setSharing({
+        patchId: notes.patchId,
+        actor: actor(workspace.owner),
+        scope: "public"
+      });
       yield* listed("board");
-      yield* patches.setScope(notes.patchId, actor(workspace.owner), "company");
+      yield* patches.setSharing({
+        patchId: notes.patchId,
+        actor: actor(workspace.owner),
+        scope: "company"
+      });
       yield* listed("board", "notes");
       yield* grants.revoke({ patchId: board.patchId, userId: guests.member.id });
       yield* listed("notes");

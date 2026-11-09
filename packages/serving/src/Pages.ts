@@ -285,11 +285,12 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
     }
     if (
       served.value.patch.companyId === admission.company.id &&
-      !(yield* Audiences.canOpen(
-        served.value.patch.id,
-        admission.company.id,
-        admission.user.id
-      ).pipe(Effect.catchTags({ SqlError: Effect.die })))
+      !(yield* Audiences.forAuthenticatedMember(admission.company.id, admission.user.id, [
+        served.value.patch.audience
+      ]).pipe(
+        Effect.map((admitted) => admitted(served.value.patch.audience)),
+        Effect.catchTags({ SqlError: Effect.die })
+      ))
     ) {
       return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }

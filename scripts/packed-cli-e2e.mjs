@@ -475,6 +475,7 @@ try {
     ok: true,
     patchId: first.patchId,
     scope: "public",
+    audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } },
     publicUrl: first.address
   });
   for (const version of publicVersions) {
@@ -497,14 +498,14 @@ try {
   assert.equal(freshUpload.stderr, "", "--json success must leave stderr empty");
   const fresh = JSON.parse(freshUpload.stdout);
   assert.equal(fresh.ok, true);
-  assert.equal(fresh.scope, "company", "a new upload without --share defaults to company");
+  assert.equal(fresh.scope, "company", "an explicit Company audience stays company-scoped");
   assert.equal(fresh.versionNumber, 1);
   assert.notEqual(fresh.patchId, first.patchId);
   assert.equal(fresh.name, "review-artifact-2", "a new same-file patch must get an available name");
   assert.equal(fresh.address, `${publicBaseUrl}/${DEV_SEED.companyHandle}/${fresh.name}`);
   assert.equal(fresh.publicUrl, fresh.address);
 
-  console.log("[packed-cli-e2e] validating the default-company publish's login door");
+  console.log("[packed-cli-e2e] validating the Company publish's login door");
   for (const url of [fresh.address, `${fresh.address}/~v/1`]) {
     assertViewerDoor(await fetchViewer(url));
   }

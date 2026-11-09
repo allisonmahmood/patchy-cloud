@@ -121,7 +121,8 @@ it.layer(
     {
       name: "scope",
       allowed: ["live"],
-      run: (service, id, actor) => service.setScope(id, actor, "public")
+      run: (service, id, actor) =>
+        service.setSharing({ patchId: id, actor: actor, scope: "public" })
     },
     {
       name: "description",
@@ -158,7 +159,7 @@ it.layer(
       yield* Fixtures.record(request);
       yield* update(request.patchId, { manifest: tableManifest(manifest.name!, false) });
       yield* update(request.patchId, { manifest });
-      yield* service.setScope(request.patchId, owner, "public");
+      yield* service.setSharing({ patchId: request.patchId, actor: owner, scope: "public" });
       yield* service.rollback(request.patchId, owner, 1);
       const retired = yield* service.retire(request.patchId, owner);
       assert.strictEqual(retired.lifecycleRevision, "6");
@@ -205,9 +206,9 @@ it.layer(
       const service = yield* Patches.Patches;
       const patch = yield* create();
       const { patchId } = patch;
-      yield* service.setScope(patchId, owner, "company");
+      yield* service.setSharing({ patchId: patchId, actor: owner, scope: "company" });
       yield* service.rollback(patchId, owner, 1);
-      yield* service.setScope(patchId, administrator, "public");
+      yield* service.setSharing({ patchId: patchId, actor: administrator, scope: "public" });
       yield* update(patchId);
       yield* service.rollback(patchId, owner, 1);
       yield* service.retire(patchId, administrator);
@@ -782,9 +783,13 @@ it.layer(
         const service = yield* Patches.Patches;
         const patch = yield* create();
         assert.strictEqual(patch.scope, "company");
-        yield* service.setScope(patch.patchId, administrator, "public");
+        yield* service.setSharing({
+          patchId: patch.patchId,
+          actor: administrator,
+          scope: "public"
+        });
         const before = Option.getOrThrow(yield* service.find(patch.patchId));
-        yield* service.setScope(patch.patchId, owner, "company");
+        yield* service.setSharing({ patchId: patch.patchId, actor: owner, scope: "company" });
         assert.deepStrictEqual(
           Option.getOrThrow(yield* service.find(patch.patchId)).version,
           before.version

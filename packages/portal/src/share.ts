@@ -31,6 +31,7 @@ export const shareStyles = `
   .share-change p { margin: 0; }
   /* The step after picking the other audience shows once it is picked; without :has() it always shows. */
   .share-audience:has(input[data-current]:checked) .share-change { display: none; }
+  .share-audience:not(:has(input[name="scope"][value="public"]:checked)) .share-public-confirmation { display: none; }
   .share-audience:has(input[name="guestMode"][value="all"]:checked) .share-specific { display: none; }
   .share-audience:has(input[name="guestMode"][value="specific"]:checked) .share-exclusions { display: none; }
   .share-audience:not(:has(input[name="scope"][value="teams"]:checked)) .share-team-choices { display: none; }
@@ -124,7 +125,7 @@ export const renderShareDialog = (input: {
     ? '<div class="actions share-change"><button class="btn" type="submit">Save</button></div>'
     : row.tier >= 2
       ? ""
-      : `<div class="note note-warn share-change" role="group" aria-labelledby="share-public-title"><strong class="note-title" id="share-public-title">Make ${escapeHtml(title)} public?</strong><p>Anyone with the link can open it without signing in.</p><div class="actions"><button class="btn btn-primary" type="submit" name="confirm" value="public">Make public</button><button class="btn btn-quiet" type="reset">Cancel</button></div></div>`;
+      : `<div class="note note-warn share-change share-public-confirmation" role="group" aria-labelledby="share-public-title"><strong class="note-title" id="share-public-title">Make ${escapeHtml(title)} public?</strong><p>Anyone with the link can open it without signing in.</p><div class="actions"><button class="btn btn-primary" type="submit" name="confirm" value="public">Make public</button><button class="btn btn-quiet" type="reset">Cancel</button></div></div>`;
   const selectedTeams = new Set(
     patch.audience.members.kind === "teams" ? patch.audience.members.teamIds : []
   );

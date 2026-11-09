@@ -1147,14 +1147,13 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
           return yield* again({ confirmPublic: true });
         }
-        yield* patches.setScope(
-          selected.patch.id,
-          actor,
-          fields.scope,
-          fields.expectedScope,
-          audience,
-          form.expectedAudienceRevision
-        );
+        yield* patches.setSharing({
+          patchId: selected.patch.id,
+          actor: actor,
+          audience: audience,
+          expectedScope: fields.expectedScope,
+          expectedAudienceRevision: form.expectedAudienceRevision
+        });
         return reopened(
           audience.members.kind === "teams"
             ? `Shared ${title} with selected teams`
@@ -1164,7 +1163,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
     }
   });
   const nothing = (notice: string) => `${notice} Nothing was done.`;
-  // setScope's type names every lifecycle refusal; one that can't answer a scope change still says why.
+  // setSharing's type names every lifecycle refusal; one that can't answer a scope change still says why.
   const onCard = (error: { readonly message: string }) =>
     render(name, { status: 409, notice: nothing(error.message) });
   return yield* run.pipe(

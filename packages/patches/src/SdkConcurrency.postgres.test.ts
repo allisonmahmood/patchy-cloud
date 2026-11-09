@@ -689,11 +689,11 @@ it.layer(services, { timeout: "60 seconds" })("SDK orchestration / real PostgreS
           .withTransaction(
             Effect.gen(function* () {
               yield* platform`SELECT id FROM patches WHERE id = ${original.patchId} FOR UPDATE`;
-              yield* patches.setScope(
-                original.patchId,
-                { userId: uploader.user.id, admin: false },
-                "public"
-              );
+              yield* patches.setSharing({
+                patchId: original.patchId,
+                actor: { userId: uploader.user.id, admin: false },
+                scope: "public"
+              });
               yield* Deferred.succeed(scopePid, yield* backendPid(platform));
               yield* scopeHeld.pause;
             })

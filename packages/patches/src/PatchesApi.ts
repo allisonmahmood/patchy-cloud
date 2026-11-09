@@ -1209,14 +1209,19 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
+          if (
+            payload.audience !== undefined &&
+            Audiences.scopeOf(payload.audience) !== payload.scope
+          )
+            return yield* audienceFailure(new Audiences.AudienceScopeMismatch());
           const shared = yield* patches
-            .setScope(
-              params.patchId,
-              { userId: identity.user.id, admin: false },
-              payload.scope,
-              undefined,
-              payload.audience
-            )
+            .setSharing({
+              patchId: params.patchId,
+              actor: { userId: identity.user.id, admin: false },
+              ...(payload.audience === undefined
+                ? { scope: payload.scope }
+                : { audience: payload.audience })
+            })
             .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures, ...audienceFailures }));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           yield* WideEvents.enrich(Patches.eventFields(shared));

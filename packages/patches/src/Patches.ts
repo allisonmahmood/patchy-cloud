@@ -308,6 +308,17 @@ export interface Patch {
   readonly disabledReason: string | null;
 }
 
+/** A compatibility scope change retains guests; a full audience derives its scope. */
+export type SharingChange = {
+  readonly patchId: string;
+  readonly actor: Actor;
+  readonly expectedScope?: Patch["scope"] | undefined;
+  readonly expectedAudienceRevision?: string | undefined;
+} & (
+  | { readonly scope: Patch["scope"]; readonly audience?: never }
+  | { readonly audience: PatchAudience; readonly scope?: never }
+);
+
 export interface ReadAccess {
   readonly companyId: string;
   readonly userId: string;
@@ -904,13 +915,8 @@ export class Patches extends Context.Service<
       actor: Actor
     ) => Effect.Effect<Patch, PatchUnavailable | NotOwner | SqlError>;
     /** Changes a live patch's audience without creating a version. */
-    readonly setScope: (
-      patchId: string,
-      actor: Actor,
-      scope: Patch["scope"],
-      expectedScope?: Patch["scope"],
-      audience?: PatchAudience,
-      expectedAudienceRevision?: string
+    readonly setSharing: (
+      input: SharingChange
     ) => Effect.Effect<
       Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId" | "audience">,
       LifecycleError | Audiences.InvalidAudience | Tier2NotPublic | SqlError
@@ -1113,6 +1119,15 @@ const toVersion = (row: VersionRow): PatchVersion => ({
 
 /** A `SchemaError` on a row is a bug in the query or the schema, never a caller's fault. */
 const dieOnSchemaError = { SchemaError: Effect.die } as const;
+
+const decodeLockedAudience = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      companyId: Schema.String,
+      audience: PatchAudience
+    })
+  )
+);
 
 /** The columns of `patches`, aliased to the record's names. */
 const PATCH_COLUMNS = `
@@ -1478,13 +1493,15 @@ export const make = Effect.gen(function* () {
       // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
       // Callers keep both statements in one transaction; its patch lock preserves
       // the company and disabled-state checks through the owner lookup.
-      const locked = yield* sql`SELECT id FROM patches
+      const locked = yield* sql`SELECT company_id AS "companyId", audience FROM patches
         WHERE id = ${patchId} AND disabled_at IS NULL
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
         FOR UPDATE`;
       if (locked.length === 0) return [];
-      const who = yield* sql`SELECT company_id AS id FROM users WHERE id = ${userId}`;
-      if (!who.length || !(yield* audienceOpen(patchId, String(who[0]!.id), userId))) return [];
+      const facts = yield* decodeLockedAudience(locked).pipe(Effect.catchTags(dieOnSchemaError));
+      const current = facts[0]!;
+      if (!(yield* audienceOpen({ ...current, disabledAt: null }, current.companyId, userId)))
+        return [];
       return yield* sql`
         SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName"
         FROM patches JOIN companies ON companies.id = patches.company_id
@@ -1636,7 +1653,7 @@ export const make = Effect.gen(function* () {
     const row = yield* companyPatchRow({ companyId: access.companyId, patchId });
     if (
       Option.isNone(row) ||
-      !(yield* audienceOpen(patchId, access.companyId, access.userId)) ||
+      !(yield* audienceOpen(toPatch(row.value), access.companyId, access.userId)) ||
       !access.canOpen(toPatch(row.value))
     )
       return yield* new PatchUnavailable({ patchId });
@@ -1675,7 +1692,11 @@ export const make = Effect.gen(function* () {
       userId: options.userId,
       sharing
     });
-    const admitted = yield* memberAudience(options.companyId, options.userId);
+    const admitted = yield* memberAudience(
+      options.companyId,
+      options.userId,
+      rows.map((row) => row.audience)
+    );
     const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
@@ -1960,7 +1981,7 @@ export const make = Effect.gen(function* () {
     const patch = toPatch(row.value);
     if (
       patch.state === "live" ||
-      !(yield* audienceOpen(patchId, access.companyId, access.userId)) ||
+      !(yield* audienceOpen(toPatch(row.value), access.companyId, access.userId)) ||
       !access.canOpen(patch)
     )
       return Option.none();
@@ -2463,14 +2484,8 @@ export const make = Effect.gen(function* () {
   const manage = Effect.fn("Patches.manage")((patchId: string, actor: Actor) =>
     manageable(patchId, actor).pipe(Effect.map(toPatch))
   );
-  const setScope = Effect.fn("Patches.setScope")(function* (
-    patchId: string,
-    actor: Actor,
-    scope: Patch["scope"],
-    expectedScope?: Patch["scope"],
-    audience?: PatchAudience,
-    expectedAudienceRevision?: string
-  ) {
+  const setSharing = Effect.fn("Patches.setSharing")(function* (input: SharingChange) {
+    const { patchId, actor, expectedScope, expectedAudienceRevision } = input;
     yield* lockDependencies(actor.userId);
     yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${actor.userId}) FOR NO KEY UPDATE`;
     const row = yield* manageable(patchId, actor);
@@ -2479,14 +2494,14 @@ export const make = Effect.gen(function* () {
       return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
+    const chosen = input.audience ?? { ...row.audience, members: { kind: input.scope } };
+    const scope = Audiences.scopeOf(chosen);
     if (scope === "public" && row.currentVersionId !== null) {
       const served = yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(
         Effect.catchTags(dieOnSchemaError)
       );
       if (Option.isSome(served) && served.value.tier === 2) return yield* new Tier2NotPublic();
     }
-    const chosen = audience ?? { ...row.audience, members: { kind: scope } };
-    yield* sql`SELECT id FROM companies WHERE id = ${row.companyId} FOR NO KEY UPDATE`;
     yield* validateAudience({
       audience: chosen,
       scope,
@@ -2903,7 +2918,7 @@ export const make = Effect.gen(function* () {
     completeObject,
     record,
     manage,
-    setScope,
+    setSharing,
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,

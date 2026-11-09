@@ -258,16 +258,14 @@ it.layer(layer)("pages", (it) => {
           added: true
         });
         const initial = yield* publish("Restricted original", "company", null, "audience-original");
-        yield* patches.setScope(
-          initial.patchId,
-          { userId: DEV_SEED.userId, admin: true },
-          "company",
-          undefined,
-          {
+        yield* patches.setSharing({
+          patchId: initial.patchId,
+          actor: { userId: DEV_SEED.userId, admin: true },
+          audience: {
             members: { kind: "teams", teamIds: [team.id] },
             guests: { kind: "specific", userIds: [] }
           }
-        );
+        });
         const latest = yield* publish(
           "Restricted renamed",
           undefined,
@@ -480,11 +478,11 @@ it.layer(layer)("pages", (it) => {
       Effect.gen(function* () {
         const { patchId, path, versionId: olderVersionId } = yield* publish("Company-only history");
         const current = yield* publish("Serving Guarantees", undefined, patchId);
-        yield* (yield* Patches.Patches).setScope(
-          patchId,
-          { userId: DEV_SEED.userId, admin: false },
-          "public"
-        );
+        yield* (yield* Patches.Patches).setSharing({
+          patchId: patchId,
+          actor: { userId: DEV_SEED.userId, admin: false },
+          scope: "public"
+        });
         for (const [url, content] of [
           [path, false],
           [`${path}/~v/2`, false],
@@ -1276,7 +1274,11 @@ it.layer(services)("pages in memory", (it) => {
         const { patchId, path: patchPath } = yield* publish("Sharing boundary");
         const patches = yield* Patches.Patches;
         for (const scope of ["company", "public", "company"] as const) {
-          yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, scope);
+          yield* patches.setSharing({
+            patchId: patchId,
+            actor: { userId: DEV_SEED.userId, admin: false },
+            scope: scope
+          });
           for (const path of [patchPath, `${patchPath}/~v/1`]) {
             // A member gets their switcher and session at either scope, over the public page
             // while it is public; signed out, it is the bare public shell.
@@ -1561,7 +1563,11 @@ it.layer(services)("pages in memory", (it) => {
 
       // A public patch's own member still gets their switcher. Its guest, the deactivated and the
       // signed out get the public page's notice, with no viewer data and no cookie.
-      yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+      yield* patches.setSharing({
+        patchId: patchId,
+        actor: { userId: DEV_SEED.userId, admin: false },
+        scope: "public"
+      });
       yield* forViewer(yield* open(signedInCookies()), "needs_rebuild", about, rebuild);
       for (const cookie of [guest, other.cookie(), ""]) {
         const response = yield* open(cookie);
@@ -1654,7 +1660,11 @@ it.layer(services)("pages in memory", (it) => {
           userId: guest.user.id,
           grantedBy: DEV_SEED.userId
         });
-        yield* patches.setScope(patchId, { userId: DEV_SEED.userId, admin: false }, "public");
+        yield* patches.setSharing({
+          patchId: patchId,
+          actor: { userId: DEV_SEED.userId, admin: false },
+          scope: "public"
+        });
         const visit = (cookie: string, at = path) =>
           send(at, { headers: { ...navigation, ...(cookie === "" ? {} : { cookie }) } });
         const opened = Effect.map(patches.opens(DEV_SEED.userId), (opens) =>
@@ -1934,7 +1944,7 @@ it.layer(services)("pages in memory", (it) => {
 
   it.effect("shares one read between simultaneous content loads and keeps no failure", () =>
     Effect.gen(function* () {
-      const { url, html } = yield* scripted("Joined once", "public");
+      const { url, html } = yield* scripted("Joined once");
       const { control, request, loads } = yield* host();
       let found = 0;
       const bothFound = yield* Deferred.make<void>();
@@ -1943,7 +1953,6 @@ it.layer(services)("pages in memory", (it) => {
       );
       const opened = yield* Deferred.make<void>();
       control.beforeRead = Deferred.await(opened);
-      // Use a public document so admission does not add SQL waits after afterFind.
       // Neither request yields on its op budget: past its lookup, the second runs straight on
       // to wait on the first one's read before this fiber's next turn.
       const both = yield* Effect.all([request(url), request(url)], {

@@ -8,7 +8,6 @@
  * admins' acts, checked as every lifecycle act is; People lists the company's guests and lets its
  * admins end all of one person's grants at once.
  */
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -143,8 +142,6 @@ class SharedRow extends Schema.Class<SharedRow>("SharedRow")({
   tier: Schema.Int,
   uses: Manifest.fields.uses
 }) {}
-
-class RevokedRow extends Schema.Class<RevokedRow>("RevokedRow")({ userId: Schema.String }) {}
 
 /** One active grant on a company's patch, with its guest and who shared it. */
 class CompanyGrantRow extends Schema.Class<CompanyGrantRow>("CompanyGrantRow")({
@@ -349,14 +346,6 @@ export const make = Effect.gen(function* () {
   const granted = sql`EXISTS (SELECT 1 FROM company_patch_guests g
     WHERE g.company_id = p.company_id AND patch_guest_allowed(p, g.user_id, ${assembled}))`;
 
-  const revoked = SqlSchema.findOneOption({
-    Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String, at: Schema.Number }),
-    Result: RevokedRow,
-    execute: ({ patchId, userId, at }) => sql`
-      UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
-      WHERE patch_id = ${patchId} AND user_id = ${userId} AND revoked_at IS NULL
-      RETURNING user_id AS "userId"`
-  });
   const activeGuests = sql`SELECT g.user_id AS "userId", u.name, u.email,
       c.name AS "companyName", COALESCE(named.granted_at, g.added_at) AS "grantedAt"
     FROM company_patch_guests g
@@ -422,7 +411,7 @@ export const make = Effect.gen(function* () {
       LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
       JOIN users s ON s.id = COALESCE(named.granted_by, g.added_by)
       WHERE g.company_id = ${companyId} AND patch_guest_allowed(p, g.user_id, ${assembled}, true)
-      ORDER BY u.name, u.email, g.user_id, g.added_at DESC, p.name`
+      ORDER BY u.name, u.email, g.user_id, COALESCE(named.granted_at, g.added_at) DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -441,12 +430,13 @@ export const make = Effect.gen(function* () {
     Result: SharedRow,
     execute: (userId) => sql`
       SELECT p.id AS "patchId", p.name, p.title, c.handle AS "companyHandle",
-        c.name AS "companyName", g.added_at AS "grantedAt", ${state} AS state, p.scope, v.tier,
+        c.name AS "companyName", COALESCE(named.granted_at, g.added_at) AS "grantedAt", ${state} AS state, p.scope, v.tier,
         v.manifest->'uses' AS uses
       FROM company_patch_guests g
       JOIN patches p ON p.company_id = g.company_id
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN companies c ON c.id = g.company_id
+      LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
       WHERE g.user_id = ${userId} AND patch_guest_allowed(p, g.user_id, ${assembled})
         AND p.deleted_at IS NULL AND p.disabled_at IS NULL
       ORDER BY c.name, p.name`
@@ -477,65 +467,29 @@ export const make = Effect.gen(function* () {
       WHERE p.id = ${patchId} AND p.company_id = ${companyId} AND ${granted}`
   });
 
-  const grant = Effect.fn("GuestGrants.grant")(function* ({
-    patchId,
-    userId,
-    grantedBy
-  }: {
-    readonly patchId: string;
-    readonly userId: string;
-    readonly grantedBy: string;
-  }) {
-    const at = yield* Clock.currentTimeMillis;
-    yield* sql`INSERT INTO company_patch_guests(company_id, user_id, added_by)
-      SELECT company_id, ${userId}, ${grantedBy} FROM patches WHERE id = ${patchId}
-      ON CONFLICT(company_id, user_id) DO UPDATE SET removed_at = NULL, added_by = EXCLUDED.added_by WHERE company_patch_guests.removed_at IS NOT NULL`;
-    const audienceChanges =
-      yield* sql`UPDATE patches SET audience = CASE WHEN audience->'guests'->>'kind' = 'all'
-      THEN jsonb_set(audience, '{guests,excludedUserIds}', (audience->'guests'->'excludedUserIds') - ${userId})
-      ELSE jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') || to_jsonb(${userId}::text)) END,
-      audience_revision = audience_revision + 1 WHERE id = ${patchId} AND NOT patch_guest_allowed(patches, ${userId}, ${assembled}, true) RETURNING id`;
-    if (audienceChanges.length)
-      yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`patch:${patchId}`}])::text)`;
-    yield* sql`
-      INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by, granted_at)
-      SELECT id, company_id, ${userId}, ${grantedBy}, to_timestamp(${at / 1_000})
-      FROM patches WHERE id = ${patchId}
-      ON CONFLICT (patch_id, user_id) DO UPDATE SET granted_by = EXCLUDED.granted_by,
-        granted_at = EXCLUDED.granted_at, revoked_at = NULL
-      WHERE patch_guest_grants.revoked_at IS NOT NULL`;
-  }, sql.withTransaction);
-  const revoke = Effect.fn("GuestGrants.revoke")(
-    function* (input: { readonly patchId: string; readonly userId: string }) {
-      const at = yield* Clock.currentTimeMillis;
-      const changed =
-        yield* sql`UPDATE patches SET audience = CASE WHEN audience->'guests'->>'kind' = 'all'
-      THEN jsonb_set(audience, '{guests,excludedUserIds}', (audience->'guests'->'excludedUserIds') || to_jsonb(${input.userId}::text))
-      ELSE jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') - ${input.userId}) END,
-      audience_revision = audience_revision + 1 WHERE id = ${input.patchId} AND patch_guest_allowed(patches, ${input.userId}, ${assembled}, true) RETURNING id`;
-      const ended = Option.isSome(yield* revoked({ ...input, at }));
-      if (changed.length)
-        yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`patch:${input.patchId}`}])::text)`;
-      return changed.length > 0 || ended;
-    },
-    sql.withTransaction,
-    Effect.catchTags(dieOnSchemaError)
+  const grant = Effect.fn("GuestGrants.grant")(
+    (input: { readonly patchId: string; readonly userId: string; readonly grantedBy: string }) =>
+      Audiences.changeGuest({
+        patchId: input.patchId,
+        userId: input.userId,
+        actorId: input.grantedBy,
+        added: true
+      }).pipe(Effect.asVoid, sql.withTransaction, Effect.provideService(SqlClient.SqlClient, sql))
   );
-  const revokeAll = Effect.fn("GuestGrants.revokeAll")(function* (input: {
-    readonly companyId: string;
-    readonly userId: string;
-  }) {
-    const at = yield* Clock.currentTimeMillis;
-    yield* sql`WITH changed AS (
-      UPDATE patches SET audience = jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') - ${input.userId}), audience_revision = audience_revision + 1
-      WHERE company_id = ${input.companyId} AND audience->'guests'->>'kind' = 'specific' AND audience->'guests'->'userIds' ? ${input.userId} RETURNING id
-    ) SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY['patch:' || id])::text) FROM changed`;
-    yield* sql`UPDATE company_patch_guests SET removed_at = to_timestamp(${at / 1_000}) WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND removed_at IS NULL`;
-    yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`members:${input.companyId}`}])::text)`;
-    yield* sql`
-      UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
-      WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND revoked_at IS NULL`;
-  }, sql.withTransaction);
+  const revoke = Effect.fn("GuestGrants.revoke")(
+    (input: { readonly patchId: string; readonly userId: string }) =>
+      Audiences.changeGuest({ ...input, actorId: input.userId, added: false }).pipe(
+        sql.withTransaction,
+        Effect.provideService(SqlClient.SqlClient, sql)
+      )
+  );
+  const revokeAll = Effect.fn("GuestGrants.revokeAll")(
+    (input: { readonly companyId: string; readonly userId: string }) =>
+      Audiences.removeCompanyGuest(input).pipe(
+        sql.withTransaction,
+        Effect.provideService(SqlClient.SqlClient, sql)
+      )
+  );
   const guests = Effect.fn("GuestGrants.guests")(
     (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named(Guest))),
     Effect.catchTags(dieOnSchemaError)

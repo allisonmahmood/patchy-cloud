@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { Analytics } from "@patchy/analytics";
 import { Companies, Teams, Users } from "@patchy/companies";
 import type { PatchAudience } from "@patchy/api";
@@ -35,6 +36,52 @@ const services = GuestGrants.layer.pipe(
   Layer.provide(Layer.succeed(Audiences.Activation, true))
 );
 it.layer(services)("Patch audiences", (it) => {
+  it.effect(
+    "reuses authenticated patch facts and loads memberships only once for team audiences",
+    () =>
+      Effect.gen(function* () {
+        const t = yield* team("Query budget", [uploader.user.id]);
+        const queries: string[] = [];
+        const trace: Statement.Transformer = (statement) => {
+          queries.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        };
+        yield* Effect.gen(function* () {
+          const admitted = yield* Audiences.forAuthenticatedMember(
+            viewer.companyId,
+            uploader.user.id,
+            [Audiences.company(), Audiences.company("public")]
+          );
+          assert.isTrue(admitted(Audiences.company()));
+          assert.isTrue(admitted(Audiences.company("public")));
+          assert.lengthOf(queries, 0);
+          const selected = teamAudience([t.id]);
+          const teamGrant = yield* Audiences.forAuthenticatedMember(
+            viewer.companyId,
+            uploader.user.id,
+            [selected, selected]
+          );
+          assert.isTrue(teamGrant(selected));
+          assert.isTrue(teamGrant(selected));
+          assert.lengthOf(queries, 1);
+          assert.include(queries[0]!, "company_team_members");
+          queries.length = 0;
+          assert.isTrue(
+            yield* Audiences.canOpen(
+              { companyId: viewer.companyId, audience: Audiences.company(), disabledAt: null },
+              viewer.companyId,
+              uploader.user.id
+            )
+          );
+          assert.lengthOf(queries, 1);
+          assert.include(queries[0]!, "FROM users");
+          assert.notInclude(queries[0]!, "FROM patches");
+        }).pipe(
+          Effect.provideService(Statement.CurrentTransformer, trace),
+          Effect.provideService(Audiences.Activation, true)
+        );
+      })
+  );
   it.effect(
     "requires an explicit first audience and refuses activation before downstream enforcement",
     () =>
@@ -84,14 +131,26 @@ it.layer(services)("Patch audiences", (it) => {
           userIds: [reader.user.id],
           added: false
         });
-        assert.isFalse(yield* Audiences.canOpen(input.patchId, viewer.companyId, reader.user.id));
+        assert.isFalse(
+          yield* Audiences.canOpen(
+            Option.getOrThrow(yield* patches.find(input.patchId)).patch,
+            viewer.companyId,
+            reader.user.id
+          )
+        );
         yield* Teams.setMemberships({
           ...viewer,
           teamId: engineering.id,
           userIds: [reader.user.id],
           added: true
         });
-        assert.isTrue(yield* Audiences.canOpen(input.patchId, viewer.companyId, reader.user.id));
+        assert.isTrue(
+          yield* Audiences.canOpen(
+            Option.getOrThrow(yield* patches.find(input.patchId)).patch,
+            viewer.companyId,
+            reader.user.id
+          )
+        );
         yield* Teams.rename({ ...viewer, teamId: design.id, name: "Renamed design union" });
         assert.isTrue(yield* Audiences.references(viewer.companyId, design.id));
         for (const t of [design, engineering])
@@ -101,7 +160,13 @@ it.layer(services)("Patch audiences", (it) => {
             userIds: [uploader.user.id],
             added: false
           });
-        assert.isFalse(yield* Audiences.canOpen(input.patchId, viewer.companyId, uploader.user.id));
+        assert.isFalse(
+          yield* Audiences.canOpen(
+            Option.getOrThrow(yield* patches.find(input.patchId)).patch,
+            viewer.companyId,
+            uploader.user.id
+          )
+        );
         assert.equal(
           (yield* Effect.flip(patches.authorizePublish({ ...input, intent: "update" })))._tag,
           "PatchUnavailable"
@@ -127,7 +192,11 @@ it.layer(services)("Patch audiences", (it) => {
         for (const ids of [["unknown-team"], [other.id]]) {
           assert.equal(
             (yield* Effect.flip(
-              patches.setScope(input.patchId, actor, "company", undefined, teamAudience(ids))
+              patches.setSharing({
+                patchId: input.patchId,
+                actor: actor,
+                audience: teamAudience(ids)
+              })
             ))._tag,
             "InvalidAudienceTeams"
           );
@@ -162,13 +231,11 @@ it.layer(services)("Patch audiences", (it) => {
         yield* sql
           .withTransaction(
             patches
-              .setScope(
-                input.patchId,
-                { userId: uploader.user.id, admin: false },
-                "company",
-                undefined,
-                Audiences.company()
-              )
+              .setSharing({
+                patchId: input.patchId,
+                actor: { userId: uploader.user.id, admin: false },
+                audience: Audiences.company()
+              })
               .pipe(Effect.andThen(Effect.fail("abort")))
           )
           .pipe(Effect.catch(() => Effect.void));
@@ -197,6 +264,20 @@ it.layer(services)("Patch audiences", (it) => {
       yield* sql`INSERT INTO company_patch_guests(company_id, user_id, added_by)
         SELECT ${viewer.companyId}, 'many-guest-' || n, ${uploader.user.id} FROM generate_series(1, 100) n`;
       const selected = Array.from({ length: 100 }, (_, i) => `many-guest-${i + 1}`);
+      const validationQueries: string[] = [];
+      yield* Audiences.validate({
+        companyId: viewer.companyId,
+        actorId: uploader.user.id,
+        ownerId: uploader.user.id,
+        audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: selected } }
+      }).pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          validationQueries.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        })
+      );
+      assert.lengthOf(validationQueries, 2, "one actor/owner lookup and one batch of 100 guests");
+
       const input = Fixtures.recordInput(uploader, {
         audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: selected } }
       });
@@ -213,7 +294,13 @@ it.layer(services)("Patch audiences", (it) => {
         (yield* grants.sharedBefore(viewer.companyId)).some((p) => p.userId === selected[0])
       );
       assert.isAtLeast((yield* grants.sharedBefore(viewer.companyId)).length, 101);
-      assert.isTrue(yield* Audiences.canOpen(input.patchId, viewer.companyId, uploader.user.id));
+      assert.isTrue(
+        yield* Audiences.canOpen(
+          Option.getOrThrow(yield* patches.find(input.patchId)).patch,
+          viewer.companyId,
+          uploader.user.id
+        )
+      );
       yield* grants.remove({
         patchId: input.patchId,
         actor: { userId: uploader.user.id, admin: false },
@@ -253,14 +340,22 @@ it.layer(services)("Patch audiences", (it) => {
           reader.user.name
         );
         yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
-        const shared = yield* patches.setScope(first.patchId, actor, "public");
+        const shared = yield* patches.setSharing({
+          patchId: first.patchId,
+          actor: actor,
+          scope: "public"
+        });
         assert.deepStrictEqual(shared.audience.guests, {
           kind: "specific",
           userIds: [outside.user.id]
         });
-        yield* patches.setScope(first.patchId, actor, "company", undefined, {
-          ...shared.audience,
-          members: { kind: "company" }
+        yield* patches.setSharing({
+          patchId: first.patchId,
+          actor: actor,
+          audience: {
+            ...shared.audience,
+            members: { kind: "company" }
+          }
         });
         yield* Fixtures.record(
           Fixtures.recordInput(uploader, {
@@ -303,7 +398,7 @@ it.layer(services)("Patch audiences", (it) => {
           members: { kind: "company" },
           guests: { kind: "all", excludedUserIds: [] }
         };
-        yield* patches.setScope(patchId, actor, "company", undefined, all);
+        yield* patches.setSharing({ patchId: patchId, actor: actor, audience: all });
         assert.isFalse((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
         const invitation = yield* Fixtures.record(Fixtures.recordInput(uploader));
         yield* grants.share({ patchId: invitation.patchId, actor, email: "gina@audience.example" });

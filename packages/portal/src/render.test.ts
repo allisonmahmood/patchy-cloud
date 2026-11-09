@@ -169,6 +169,7 @@ describe("renderShareDialog audiences", () => {
     const html = renderShareDialog({ ...state, confirmPublic: true });
     expect(html).toContain('name="scope" value="public" checked');
     expect(html).toContain('name="confirm" value="public">Make public');
+    expect(html).toContain("share-change share-public-confirmation");
     const tool = renderShareDialog({ ...state, row: { ...state.row, tier: 2 } });
     expect(tool).toContain('name="scope" value="public" disabled');
     expect(tool).not.toContain('name="confirm"');

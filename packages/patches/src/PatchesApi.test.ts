@@ -307,6 +307,20 @@ it.layer(layer)("patches group", (it) => {
           "public"
         );
 
+        const mismatched = yield* owner.share({
+          params: { patchId: created.patchId },
+          payload: new ShareRequest({
+            scope: "company",
+            audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } }
+          }),
+          responseMode: "response-only"
+        });
+        assert.equal(mismatched.status, 400);
+        expect(yield* mismatched.json).toEqual({
+          ok: false,
+          error: "The sharing scope must match the audience."
+        });
+        assert.equal(Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope, "public");
         const params = { patchId: created.patchId };
         // Sharing to the scope it already has changes nothing and reports nothing.
         for (const scope of ["company", "public", "public"] as const) {
