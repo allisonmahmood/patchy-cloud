@@ -233,3 +233,42 @@ export const memberships = Effect.fn("Teams.memberships")(function* (
 export const changes = Effect.fn("Teams.changes")((companyId: string, after: string) =>
   changeRows({ companyId, after }).pipe(Effect.catchTags(schemaError))
 );
+
+/** Internal batch authority facts, including active people with no team memberships. */
+const membershipFactRows = SqlSchema.findAll({
+  Request: Schema.Struct({ companyId: Schema.String, userIds: Schema.Array(Schema.String) }),
+  Result: Schema.Struct({ userId: Schema.String, teamIds: Schema.Array(Schema.String) }),
+  execute: ({ companyId, userIds }) =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`
+    SELECT u.id AS "userId", COALESCE(array_agg(m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
+    FROM users u LEFT JOIN company_team_members m ON m.company_id = u.company_id AND m.user_id = u.id
+    WHERE u.company_id = ${companyId} AND u.id = ANY(${userIds}::text[]) AND u.deactivated_at IS NULL GROUP BY u.id`
+    )
+});
+
+const selfJoinRows = SqlSchema.findAll({
+  Request: Schema.Struct({ companyId: Schema.String, teamIds: Schema.Array(Schema.String) }),
+  Result: Schema.Struct({ ...MembershipChange.fields, teamName: Schema.String }),
+  execute: ({ companyId, teamIds }) =>
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`
+    SELECT c.revision::text, c.team_id AS "teamId", c.user_id AS "userId", c.actor_id AS "actorId", c.added,
+      c.created_at AS "createdAt", t.name AS "teamName"
+    FROM company_team_changes c JOIN company_teams t ON t.id = c.team_id AND t.company_id = c.company_id
+    WHERE c.company_id = ${companyId} AND c.team_id = ANY(${teamIds}::text[]) AND c.added AND c.actor_id = c.user_id
+    ORDER BY c.revision`
+    )
+});
+/** Internal owner-history facts, scoped before reading; callers authorize disclosure. */
+export const selfJoins = Effect.fn("Teams.selfJoins")(
+  (companyId: string, teamIds: readonly string[]) =>
+    selfJoinRows({ companyId, teamIds }).pipe(Effect.catchTags(schemaError))
+);
+
+export const membershipFacts = Effect.fn("Teams.membershipFacts")(
+  (companyId: string, userIds: readonly string[]) =>
+    membershipFactRows({ companyId, userIds }).pipe(Effect.catchTags(schemaError))
+);

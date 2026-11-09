@@ -66,7 +66,7 @@ export const matches = (row: Patches.ReadPatch, query: string): boolean => {
 };
 
 /** Whether the viewer may manage this patch: its owner, or any admin. */
-export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
+export const manages = (row: Pick<Patches.ReadPatch, "owner">, viewer: Viewer) =>
   viewer.role !== "member" || row.owner.id === viewer.user.id;
 
 /** A deletion the owner or an admin can still undo: before its reclamation deadline. */

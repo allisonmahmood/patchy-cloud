@@ -59,7 +59,7 @@ export const firstClause = (description: string): string => {
 /** What lists, tiles, search results, menus and headings call a patch: core's `patchTitle`. */
 export { patchTitle };
 
-const cardPath = (patch: Patches.Patch, action = "") =>
+const cardPath = (patch: Pick<Patches.Patch, "name">, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
   card.owner.id === viewer.user.id || viewer.role !== "member";
@@ -74,7 +74,11 @@ export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "rollback" | ConfirmationAction;
 
 /** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
-const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
+const actionForm = (
+  patch: Pick<Patches.Patch, "id" | "name">,
+  action: PatchAction,
+  className?: string
+): string =>
   `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, action))}">${hidden("expectedPatchId", patch.id)}`;
 
 const descriptionBlock = (card: Patches.PortalCard): string => {
@@ -96,10 +100,10 @@ interface DependantGroup {
   readonly resources: string[];
 }
 
-const dependantGroups = (card: Patches.PortalCard) => {
+const dependantGroups = (card: Pick<Patches.ManagementCard, "dependants">) => {
   const groups = new Map<string, DependantGroup>();
   for (const dependant of card.dependants) {
-    const resource = dependant.table ?? dependant.store;
+    const resource = dependant.table ?? dependant.store ?? "shared resources";
     const existing = groups.get(dependant.patchId);
     if (existing === undefined) {
       groups.set(dependant.patchId, {
@@ -372,7 +376,7 @@ export const confirmationAcknowledgement = (text: string, checked: boolean): str
   `<label class="confirmation-acknowledgement"><input class="field-checkbox" type="checkbox" name="ack" value="1" required${checked ? " checked" : ""}><span>${escapeHtml(text)}</span></label>`;
 
 export const renderConfirmation = (input: {
-  readonly card: Patches.PortalCard;
+  readonly card: Patches.ManagementCard;
   readonly viewer: RequireSession.Viewer["Service"];
   readonly now: number;
   readonly action: ConfirmationAction;
@@ -463,5 +467,5 @@ export const renderConfirmation = (input: {
   }
 
   const title = escapeHtml(patchTitle(patch));
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}${"companyId" in patch ? "" : hidden("expectedOwnerUserId", patch.ownerUserId)}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };

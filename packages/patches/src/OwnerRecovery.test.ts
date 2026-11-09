@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Statement from "effect/sql/Statement";
 import { Analytics } from "@patchy/analytics";
 import { Companies, Teams, Users } from "@patchy/companies";
 import type { PatchAudience } from "@patchy/api";
@@ -92,7 +93,30 @@ it.layer(services)("Owner recovery", (it) => {
           "NotOwner"
         );
         yield* users.setRole({ ...viewer, userId: reader.user.id, role: "admin" });
-        const eligible = yield* patches.eligibleOwners(input.patchId, actor);
+        const queries: string[] = [];
+        const trace: Statement.Transformer = (statement) => {
+          queries.push(statement.compile()[0]);
+          return Effect.succeed(statement);
+        };
+        const eligible = yield* patches
+          .eligibleOwners(input.patchId, actor)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
+        assert.equal(
+          queries.filter((query) => query.includes("LEFT JOIN company_team_members")).length,
+          1
+        );
+        queries.length = 0;
+        const single = yield* patches
+          .management(viewer.companyId, admin.user.id, input.patchId)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
+        assert.lengthOf(single, 1);
+        assert.equal(
+          queries.filter((query) => query.includes("LEFT JOIN company_team_members")).length,
+          1
+        );
+        assert.isTrue(
+          queries.some((query) => query.includes("p.id =") && query.includes("p.name ="))
+        );
         assert.deepEqual(
           eligible.map((p) => p.id),
           [reader.user.id]
@@ -137,6 +161,13 @@ it.layer(services)("Owner recovery", (it) => {
         const unrelated = yield* team("Unrelated history", []);
         const input = Fixtures.recordInput(uploader, { audience: teamAudience([t.id]) });
         yield* Fixtures.record(input);
+        for (let i = 0; i < 102; i++)
+          yield* Teams.setMemberships({
+            ...viewer,
+            teamId: unrelated.id,
+            userIds: [admin.user.id],
+            added: i % 2 === 0
+          });
         for (const teamId of [t.id, unrelated.id])
           yield* Teams.setMemberships({ ...viewer, teamId, userIds: [admin.user.id], added: true });
         yield* Teams.setMemberships({

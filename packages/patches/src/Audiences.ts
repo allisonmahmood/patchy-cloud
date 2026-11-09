@@ -68,6 +68,24 @@ export const encode = Schema.encodeSync(Schema.fromJsonString(PatchAudience));
 const restricted = (audience: PatchAudience) =>
   audience.members.kind === "teams" || audience.guests.kind === "all";
 
+const admits = (audience: PatchAudience, teamIds: ReadonlySet<string>, enabled: boolean) =>
+  (!restricted(audience) || enabled) &&
+  (audience.members.kind !== "teams" || audience.members.teamIds.some((id) => teamIds.has(id)));
+
+/** One Companies batch supplies current eligibility for all candidate owners. */
+export const forPeople = Effect.fn("Audiences.forPeople")(function* (
+  companyId: string,
+  userIds: readonly string[]
+) {
+  const enabled = yield* Activation;
+  const facts = yield* Teams.membershipFacts(companyId, userIds);
+  const people = new Map(facts.map((fact) => [fact.userId, new Set(fact.teamIds)]));
+  return (userId: string, audience: PatchAudience) => {
+    const teams = people.get(userId);
+    return teams !== undefined && admits(audience, teams, enabled);
+  };
+});
+
 /** Reuse current authentication; Company/Public need no membership query. */
 export const forAuthenticatedMember = Effect.fn("Audiences.forAuthenticatedMember")(function* (
   companyId: string,
@@ -77,9 +95,7 @@ export const forAuthenticatedMember = Effect.fn("Audiences.forAuthenticatedMembe
   const enabled = yield* Activation;
   const needsTeams = enabled && audiences.some((audience) => audience.members.kind === "teams");
   const teamIds = new Set(needsTeams ? yield* Teams.memberships(companyId, userId) : []);
-  return (audience: PatchAudience) =>
-    (!restricted(audience) || enabled) &&
-    (audience.members.kind !== "teams" || audience.members.teamIds.some((id) => teamIds.has(id)));
+  return (audience: PatchAudience) => admits(audience, teamIds, enabled);
 });
 
 /** One current-person lookup and at most one membership lookup for the whole result set. */

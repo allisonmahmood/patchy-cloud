@@ -30,7 +30,7 @@ import {
   escapeHtml,
   rowMenu
 } from "@patchy/core";
-import { Companies, Teams, Users } from "@patchy/companies";
+import { Companies, Teams, TeamsPage, Users } from "@patchy/companies";
 import { Audiences, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
@@ -368,9 +368,7 @@ const recoveryPage = Effect.fn("PortalPages.recoveryPage")(function* (
 ) {
   const { viewer, session, url } = yield* context;
   const patches = yield* Patches.Patches;
-  const view = (yield* patches.management(viewer.company.id, viewer.user.id)).find(
-    (v) => v.record.name === name
-  );
+  const view = (yield* patches.management(viewer.company.id, viewer.user.id, name))[0];
   if (!view) return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const r = view.record;
   const path = `/patches/${encodeURIComponent(name)}`;
@@ -392,24 +390,15 @@ const recoveryPage = Effect.fn("PortalPages.recoveryPage")(function* (
       r.deletedAt.getTime() + Duration.toMillis(Patches.RECOVERY_WINDOW) >
         (yield* Clock.currentTimeMillis))
   ) {
-    const eligible = yield* patches
-      .eligibleOwners(r.id, { userId: viewer.user.id, admin: viewer.role !== "member" })
-      .pipe(Effect.catchTags({ NotOwner: Effect.die }));
-    const options = eligible
-      .map(
-        (person) =>
-          `<option value="${escapeAttribute(person.id)}">${escapeHtml(person.name)}</option>`
-      )
-      .join("");
     const versions = yield* patches
       .managementVersions(r.id, { userId: viewer.user.id, admin: viewer.role !== "member" })
       .pipe(Effect.catchTags({ NotOwner: Effect.die }));
     const versionHtml = `<section class="section"><h2 class="section-heading">Served versions</h2><ul>${versions.map((v) => `<li>Version ${v.versionNumber} · ${escapeHtml(v.publisherName)} · ${escapeHtml(v.createdAt)}${v.id === r.currentVersionId ? " · Serving" : !r.retiredAt && !r.deletedAt ? form("rollback", `${hidden("expectedCurrentVersionId", r.currentVersionId)}${hidden("versionNumber", String(v.versionNumber))}<button class="btn" type="submit">Serve version ${v.versionNumber}</button>`) : ""}</li>`).join("")}</ul></section>`;
     controls =
       versionHtml +
-      `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(r.ownerName)}</p>${form("reassign", `<label class="field-label" for="new-owner">Reassign to</label><select class="field" id="new-owner" name="user" required>${options}</select><button class="btn" type="submit">Reassign</button>`)}<a class="btn" href="/company/teams">Manage team membership</a></section>
+      `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(r.ownerName)}</p><a class="btn" href="${path}/reassign">Reassign…</a><a class="btn" href="${TeamsPage.path}">Manage team membership</a></section>
       <section class="section"><h2 class="section-heading">Sharing</h2>${!r.retiredAt && !r.deletedAt ? `<a class="btn" href="${path}?share=${encodeURIComponent(name)}">Share…</a>` : ""}</section>
-      <section class="section"><h2 class="section-heading">Lifecycle</h2>${r.deletedAt ? form("restore", '<button class="btn" type="submit">Restore</button>') : r.retiredAt ? form("restore", '<button class="btn" type="submit">Restore</button>') : form("retire", '<button class="btn" type="submit">Retire</button>')}${!r.deletedAt ? form("delete", `<label class="field-label" for="delete-name">Type ${escapeHtml(name)} to delete</label><input class="field" id="delete-name" name="confirm" required><button class="btn btn-danger" type="submit">Delete</button>`) : ""}</section>`;
+      <section class="section"><h2 class="section-heading">Lifecycle</h2>${r.deletedAt || r.retiredAt ? `<a class="btn" href="${path}/restore">Restore…</a>` : `<a class="btn" href="${path}/retire">Retire…</a>`}${!r.deletedAt ? `<a class="btn btn-danger" href="${path}/delete">Delete…</a>` : ""}</section>`;
   }
   const showSharing = sharing ?? asked(url);
   const grants = yield* GuestGrants.GuestGrants;
@@ -452,108 +441,22 @@ const recoveryPage = Effect.fn("PortalPages.recoveryPage")(function* (
   );
 });
 
-const recoveryPost = Effect.fn("PortalPages.recoveryPost")(function* (
-  name: string,
-  action: string
-) {
-  const { viewer } = yield* context;
+/** Shared action target: content readers and entitled oversight use the same handlers. */
+const actionSelection = Effect.fn("PortalPages.actionSelection")(function* (name: string) {
+  const { viewer, access } = yield* context;
   const patches = yield* Patches.Patches;
-  const view = (yield* patches.management(viewer.company.id, viewer.user.id)).find(
-    (v) => v.record.name === name
-  );
-  if (!view?.canManage)
-    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = new URLSearchParams(
-    yield* request.text.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
-    )
-  );
-  const r = view.record;
-  if (form.get("expectedPatchId") !== r.id || form.get("expectedOwnerUserId") !== r.ownerId)
-    return yield* recoveryPage(name, "This form is out of date. Nothing was done.");
-  const actor = { userId: viewer.user.id, admin: viewer.role !== "member" };
-  const result = yield* Effect.gen(function* () {
-    switch (action) {
-      case "reassign":
-        return yield* patches.reassign(r.id, actor, form.get("user") ?? "", r.ownerId);
-      case "retire":
-        return yield* patches.retire(r.id, actor, false, r.ownerId);
-      case "delete":
-        if (form.get("confirm") !== name) return yield* new Patches.StaleAction({ patchId: r.id });
-        return yield* patches.delete(r.id, actor, false, r.ownerId);
-      case "restore":
-        return yield* patches.restore(
-          r.id,
-          actor,
-          false,
-          r.deletedAt ? "deleted" : "retired",
-          r.ownerId
-        );
-      case "rollback": {
-        const fields = yield* decodeRollback(Object.fromEntries(form));
-        return yield* patches.rollback(
-          r.id,
-          actor,
-          fields.versionNumber,
-          fields.expectedCurrentVersionId,
-          r.ownerId
-        );
-      }
-      case "add-guest":
-        return yield* (yield* GuestGrants.GuestGrants).share({
-          patchId: r.id,
-          actor,
-          email: form.get("email") ?? ""
-        });
-      case "remove-guest":
-        return yield* (yield* GuestGrants.GuestGrants).remove({
-          patchId: r.id,
-          actor,
-          guest: form.get("guest") ?? ""
-        });
-      case "scope": {
-        const fields = yield* decodeScope({
-          scope: form.get("scope") === "teams" ? "company" : form.get("scope"),
-          expectedScope: form.get("expectedScope")
-        });
-        if (fields.scope === "public" && form.get("confirm") !== "public")
-          return yield* new Patches.StaleAction({ patchId: r.id });
-        const members =
-          form.get("scope") === "teams"
-            ? { kind: "teams" as const, teamIds: form.getAll("teamIds") }
-            : { kind: fields.scope };
-        const guests =
-          form.get("guestMode") === "all"
-            ? { kind: "all" as const, excludedUserIds: form.getAll("excludedGuestIds") }
-            : { kind: "specific" as const, userIds: form.getAll("guestIds") };
-        return yield* patches.setSharing({
-          patchId: r.id,
-          actor,
-          expectedScope: fields.expectedScope,
-          expectedAudienceRevision: form.get("expectedAudienceRevision") ?? "",
-          expectedOwnerUserId: r.ownerId,
-          audience: { members, guests }
-        });
-      }
-      default:
-        return yield* new Patches.StaleAction({ patchId: r.id });
-    }
-  }).pipe(Effect.result);
-  if (result._tag === "Failure") {
-    if (result.failure._tag === "SqlError" || result.failure._tag === "ConnectionStorageFailed")
-      return yield* errorPage(503, "Patches unavailable", "Please try again.");
-    return yield* recoveryPage(
-      name,
-      result.failure._tag === "SchemaError"
-        ? "Check the submitted fields. Nothing was done."
-        : result.failure.message
-    );
-  }
-  return HttpServerResponse.redirect(`/patches/${encodeURIComponent(name)}`, {
-    status: 303,
-    headers: { "cache-control": "private, no-store" }
-  });
+  const view = (yield* patches.management(viewer.company.id, viewer.user.id, name))[0];
+  if (view?.canManage && !view.canOpen)
+    return yield* patches.managementCard(view.record.id, {
+      userId: viewer.user.id,
+      admin: viewer.role !== "member"
+    });
+  const resolved = yield* patches.resolveName(viewer.company.handle, name);
+  if (Option.isNone(resolved) || resolved.value.name !== name)
+    return yield* new Patches.PatchUnavailable({ patchId: name });
+  const rows = yield* patches.read({ ...access, state: "all", patchRef: resolved.value.patchId });
+  if (rows[0]) return rows[0];
+  return yield* new Patches.PatchUnavailable({ patchId: name });
 });
 
 const render = Effect.fn("PortalPages.render")(function* (
@@ -575,6 +478,9 @@ const render = Effect.fn("PortalPages.render")(function* (
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const patches = yield* Patches.Patches;
+  const management = (yield* patches.management(viewer.company.id, viewer.user.id, name))[0];
+  if (management && !management.canOpen)
+    return yield* recoveryPage(name, options.notice, options.sharing, options.status);
   const selected = (yield* patches.read({ ...access, state: "all" })).find(
     (row) => row.patch.name === name
   );
@@ -916,11 +822,15 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
-  const selected = rows.find((row) => row.patch.name === name);
-  if (selected === undefined) return yield* recoveryPage(name, form.notice);
-  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
-  const card = yield* patches.portalCard(selected.patch.id, access);
+  const selected = yield* actionSelection(name);
+  if ("companyId" in selected.patch) yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  const card =
+    "companyId" in selected.patch
+      ? yield* patches.portalCard(selected.patch.id, access)
+      : yield* patches.managementCard(selected.patch.id, {
+          userId: viewer.user.id,
+          admin: viewer.role !== "member"
+        });
   if (viewer.role === "member" && (action === "reassign" || card.owner.id !== viewer.user.id))
     return yield* render(name, {
       status: 403,
@@ -1076,12 +986,10 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const { viewer, session, access } = yield* context;
+  const { viewer, session } = yield* context;
   const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
-  const selected = rows.find((row) => row.patch.name === name);
-  if (!selected) return yield* recoveryPost(name, action);
-  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  const selected = yield* actionSelection(name);
+  if ("companyId" in selected.patch) yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = Object.fromEntries(
     new URLSearchParams(
@@ -1093,7 +1001,10 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
   // Every form carries the id of the patch it was rendered for. A form without it, or
   // whose name now belongs to another patch, stops on the card before any other check:
   // a re-rendered form would post at whichever patch holds the name now.
-  if (form.expectedPatchId !== selected.patch.id)
+  if (
+    form.expectedPatchId !== selected.patch.id ||
+    (!("companyId" in selected.patch) && form.expectedOwnerUserId !== selected.owner.id)
+  )
     return yield* render(name, {
       status: 409,
       readOnly: true,
@@ -1152,19 +1063,26 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           selected.patch.id,
           actor,
           fields.versionNumber,
-          fields.expectedCurrentVersionId || null
+          fields.expectedCurrentVersionId || null,
+          form.expectedOwnerUserId
         );
         yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
         return landed(`${patchTitle(rolledBack.patch)} now serves v${rolledBack.currentVersion}`);
       }
       case "restore": {
         const fields = yield* decodeRestore(form);
-        yield* patches.restore(selected.patch.id, actor, form.ack === "1", fields.expectedState);
+        yield* patches.restore(
+          selected.patch.id,
+          actor,
+          form.ack === "1",
+          fields.expectedState,
+          form.expectedOwnerUserId
+        );
         return landed(`Restored ${title}`);
       }
       case "retire": {
         yield* decodeRetire(form);
-        yield* patches.retire(selected.patch.id, actor, form.ack === "1");
+        yield* patches.retire(selected.patch.id, actor, form.ack === "1", form.expectedOwnerUserId);
         return landed(`Retired ${title}`);
       }
       case "delete": {
@@ -1173,7 +1091,7 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
           const message = `Type ${selected.patch.name} to confirm. Nothing was done.`;
           return yield* redisplay(422, message, message);
         }
-        yield* patches.delete(selected.patch.id, actor, form.ack === "1");
+        yield* patches.delete(selected.patch.id, actor, form.ack === "1", form.expectedOwnerUserId);
         return landed(`Deleted ${title}; it can be restored for 30 days`);
       }
       case "reassign": {
@@ -1240,7 +1158,11 @@ const staleNotice = Effect.fn("PortalPages.staleNotice")(function* (
   patchId: string,
   state?: Patches.Patch["state"]
 ) {
-  const { access } = yield* context;
+  const { access, viewer } = yield* context;
+  const patches = yield* Patches.Patches;
+  const metadata = (yield* patches.management(viewer.company.id, viewer.user.id, patchId))[0];
+  if (metadata && !metadata.canOpen)
+    return "This patch changed while you had this page open. Nothing was done.";
   const fresh = yield* (yield* Patches.Patches).portalCard(patchId, access);
   const when =
     fresh.patch.lastChangedAt === null
@@ -1261,13 +1183,10 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
   if (name.length > maxNameLength) return yield* overlongName;
   if (!isName(name))
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const { viewer, session, access } = yield* context;
+  const { viewer, session } = yield* context;
   const patches = yield* Patches.Patches;
-  const selected = (yield* patches.read({ ...access, state: "all" })).find(
-    (row) => row.patch.name === name
-  );
-  if (!selected) return yield* recoveryPost(name, act);
-  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
+  const selected = yield* actionSelection(name);
+  if ("companyId" in selected.patch) yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
   const values = new URLSearchParams(
     yield* request.text.pipe(
@@ -1276,7 +1195,10 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
   );
   const form = Object.fromEntries(values);
   // As every patch form: one rendered for whichever patch had this name stops here.
-  if (form.expectedPatchId !== selected.patch.id)
+  if (
+    form.expectedPatchId !== selected.patch.id ||
+    (!("companyId" in selected.patch) && form.expectedOwnerUserId !== selected.owner.id)
+  )
     return yield* render(name, {
       status: 409,
       readOnly: true,
@@ -1306,6 +1228,8 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
   /** The page behind again, with the dialog open and what it has to say. */
   const again = Effect.fnUntraced(function* (sharing: Omit<Sharing, "name" | "at">) {
     const shown = { ...sharing, name, at };
+    if (!("companyId" in selected.patch))
+      return yield* recoveryPage(name, undefined, shown, sharing.status);
     if (at.pathname === "/") return yield* home(shown);
     if (at.pathname === "/patches") return yield* allPatchesPage(shown);
     const tab = at.pathname.endsWith("/versions")
@@ -1372,7 +1296,8 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           actor: actor,
           audience: audience,
           expectedScope: fields.expectedScope,
-          expectedAudienceRevision: form.expectedAudienceRevision
+          expectedAudienceRevision: form.expectedAudienceRevision,
+          expectedOwnerUserId: form.expectedOwnerUserId
         });
         return reopened(
           audience.members.kind === "teams"
@@ -1484,6 +1409,7 @@ export const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerRes
 const pageErrors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
   app.pipe(
     Effect.catchTags({
+      NotOwner: () => errorPage(404, "Patch not found", "The requested patch is unavailable."),
       PatchUnavailable: () =>
         errorPage(404, "Patch not found", "The requested patch is unavailable."),
       WrongState: () =>
