@@ -173,7 +173,7 @@ Responses:
 
 ### `POST /api/patches/:patchId/share`
 
-Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
+Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. Narrowing to teams returns 409 `has_dependants` before changing anything when declared dependants are within the actor’s management authority. Review those dependants, then retry with `force: true` to accept possible shared-read failures. `company` requires a company member's browser session; `public` lets anyone with the link open the current version. Only the current version of a public patch is public; older versions stay behind the company door. Public sharing while the served version is tier 2 answers `tier2_not_public`. A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are `private, no-store` and answer 401 without a session. The JSON body is bounded at 1.5 MiB; the larger bundle cap applies only to publishing. An oversized declared body answers 413; streaming bodies are cut off at the cap. Rejected requests leave the scope unchanged.
 
 Request body: [ShareRequest](#sharerequest)
 
@@ -184,7 +184,7 @@ Responses:
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `403` { ok: false, error: string, code: "not_owner", owner: { id: string, name: string } }
 - `404` { ok: false, error: string }
-- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" }
+- `409` { ok: false, error: string, code: "wrong_state", state: "live" | "retired" | "deleted" } | { ok: false, error: string, code: "has_dependants", dependants: { patchId: string, name: string, owner: { id: string, name: string } }[] }
 - `413` { ok: false, error: string }
 - `414` { ok: false, error: string }
 - `422` { ok: false, error: string, code: "tier2_not_public" }
@@ -1196,6 +1196,7 @@ RuntimeSuccess | HandlerFailure
 
 ```
 {
+  force?: boolean,
   scope: "company" | "public",
   audience?: {
     members: { kind: "company" } | { kind: "public" } | { kind: "teams", teamIds: string[] },

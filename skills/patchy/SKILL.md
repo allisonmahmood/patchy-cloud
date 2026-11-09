@@ -571,6 +571,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `publish --json` prints the instance's response as it is on the wire
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
+  When a team-audience change returns `has_dependants`, show the affected tools to the person before retrying `patchy share` with `--force`. The refused call changes nothing.
   `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.

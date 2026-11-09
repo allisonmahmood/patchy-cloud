@@ -346,7 +346,7 @@ Both forms deliver `{ status, data, error, loading }`, with status `"loading"`,
 An error keeps the last successful data; an initially failing query has no data.
 `busy`, `rate_limited`, `source_unavailable` and `handler_timeout` back off.
 A refusal inside a handler, such as an unshared source, keeps the subscription
-so a reshare can recover it without a reload, even when its first run was refused.
+so restored sharing or source-team membership can recover it without a reload, even when its first run was refused. Source reads use the initiating viewer’s current audience access, independently of the consuming patch’s audience or owner.
 `handler_failed`, invalid results and a removed handler end only that subscription.
 Its last data and error remain visible to mounted consumers; mounting another
 consumer or reconnecting does not restart it. Loss of permission to open the

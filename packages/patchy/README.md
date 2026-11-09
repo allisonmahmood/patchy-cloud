@@ -1396,7 +1396,7 @@ patchy publish ./plan.html                 # updates content, stays public
 patchy publish ./plan.html --share company # updates content, takes it back inside
 ```
 
-### `patchy share <file> <company|public>` or `patchy share --patch <patch-id> <company|public>`
+### `patchy share <file> <company|public> [--force]` or `patchy share --patch <patch-id> <company|public> [--force]`
 
 Change an existing patch's sharing without publishing a version, or its [guests](#guests-patchy-share-file---add-email---remove-email-or-user-id-or---list). Name the file it was published from to use the CLI's per-instance cache, or pass `--patch <patch-id>`; one or the other, not both. Only the owner user can change sharing, through any of their machine tokens. Company membership or an admin role alone does not grant that right.
 
@@ -1422,6 +1422,8 @@ patchy share ./plan.html public
 patchy share --patch k7f2m9x1a3b8 company --json
 # {"ok":true,"patchId":"k7f2m9x1a3b8","scope":"company","publicUrl":"https://pages.example.com/acme/plan"}
 ```
+
+Narrowing a source to selected teams returns `has_dependants` (exit 2) before changing anything when declared dependants are within your management authority. Review the reported tools, then repeat with `--force` to accept possible shared-read failures. JSON refusals carry the same `dependants` array. Widening access and changes without visible dependants need no acknowledgement.
 
 Share uses the same credential chain as publish. With no key it exits 1 (`local`), `Run: patchy login`; a missing cached file target is also `local`. A same-company non-owner receives `not_owner`, a non-live patch receives `wrong_state`, and a foreign or gone patch answers 404. Each is `rejected`, exit 2.
 

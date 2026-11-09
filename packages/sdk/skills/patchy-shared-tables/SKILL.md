@@ -61,3 +61,9 @@ A declaration grants no authority. Each call requires an admitted viewer who can
 Generation and fixtures use the source's cumulative inventory, not its active version's manifest. A source table omitted from a newer config still exists and remains shared until its owner explicitly changes sharing. Unsharing takes effect live; rollback does not restore sharing. A consumer's revision records the definition it generated against; the server validates source availability at publish and warns about an older shared-table stamp. Refresh to update client and context, never change stamps yourself.
 
 `pnpm patchy remove contacts` removes the declaration and generated files, and removes this skill when no shared-table declarations remain. It deliberately leaves `fixtures/shared-contacts.sql` for you. Refresh never overwrites that existing fixture; amend its invented rows when the source definition changes.
+
+Each read checks the initiating viewer against the source patch’s current audience. Declaring
+this source never grants access: team removal refuses that viewer’s next read and protected
+live delivery; restoration can recover the existing subscription even after a refused first
+read. Other entitled viewers keep working. Deliberately copied data follows its destination’s
+permissions; revoking source access does not retract those copies.

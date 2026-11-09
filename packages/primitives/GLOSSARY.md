@@ -45,7 +45,7 @@ A table column holding a user id, checked against the candidates on insertion or
 _Avoid_: user ref, owner field
 
 **Shared table**:
-A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the source remains openable and the table shared. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
+A source patch's table, on any tier, that another tier 2 patch may declare and read from its handlers, never write, while the initiating viewer can currently open the live source and the table remains shared. The declaration grants no viewer access. Its identity is the source patch and table; its sharing authority and cumulative definition belong to [Company database's Inventory](../company-database/GLOSSARY.md), independent of the source's active version.
 _Avoid_: public table, copied table
 
 **File store**:
@@ -71,3 +71,8 @@ _Avoid_: server upload, attachment cache, direct put
 **The patch's filter**:
 Which files and rows a patch's server code chooses to return, distinct from Patchy's live access checks. Redemption does not rerun this filter. To cut off a previously selected file when a record becomes private, changes hands or is deleted, the patch must re-put or delete the file. Already delivered bytes cannot be recalled.
 _Avoid_: permission, scope, access rule
+
+Shared reads trace source-patch audience and company membership authority even when the first
+read is refused. Committed changes reuse Runtime’s revision fences and wakes; restoration does
+not require a new declaration. Deliberately copied data follows its destination’s permissions;
+source revocation does not retract those copies.

@@ -4,9 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import { CompanyDatabases } from "@patchy/company-database";
 import { Analytics } from "@patchy/analytics";
 import { Companies, Teams, Users } from "@patchy/companies";
-import type { PatchAudience } from "@patchy/api";
+import { sharedTableId, type PatchAudience } from "@patchy/api";
+import * as LoadedVersions from "./LoadedVersions.js";
 import * as Audiences from "./Audiences.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
@@ -36,6 +38,99 @@ const services = GuestGrants.layer.pipe(
   Layer.provide(Layer.succeed(Audiences.Activation, true))
 );
 it.layer(services)("Patch audiences", (it) => {
+  it.effect("rechecks source access and membership restoration through the Runtime port", () =>
+    Effect.gen(function* () {
+      const selected = yield* team("Shared source design", [uploader.user.id, reader.user.id]);
+      const input = Fixtures.recordInput(uploader, { audience: teamAudience([selected.id]) });
+      yield* Fixtures.record(input);
+      const versions = yield* LoadedVersions.make;
+      const member = { companyId: viewer.companyId, userId: reader.user.id };
+      assert.isTrue(Option.isSome(yield* versions.find(input.patchId, undefined, member)));
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: selected.id,
+        userIds: [reader.user.id],
+        added: false
+      });
+      assert.isTrue(Option.isNone(yield* versions.find(input.patchId, undefined, member)));
+      assert.isTrue(
+        Option.isSome(
+          yield* versions.find(input.patchId, undefined, { ...member, userId: uploader.user.id })
+        )
+      );
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: selected.id,
+        userIds: [reader.user.id],
+        added: true
+      });
+      assert.isTrue(Option.isSome(yield* versions.find(input.patchId, undefined, member)));
+    }).pipe(Effect.provideService(Audiences.Activation, true))
+  );
+
+  it.effect("limits source sharing warnings to dependants the actor can manage", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(viewer.companyId);
+      const source = Fixtures.recordInput(uploader, {
+        manifest: {
+          ...Fixtures.manifest,
+          tier: 1,
+          tables: { notes: { description: "Notes", columns: {}, indexes: {}, shared: true } },
+          files: {},
+          uses: {}
+        }
+      });
+      yield* Fixtures.record(source);
+      const manifest = {
+        ...Fixtures.manifest,
+        tier: 2,
+        tables: {},
+        files: {},
+        uses: {
+          notes: {
+            kind: "sharedTable",
+            patchId: source.patchId,
+            table: "notes",
+            id: sharedTableId(source.patchId, "notes"),
+            revision: 1
+          }
+        }
+      } as const;
+      const own = Fixtures.recordInput(uploader, { manifest });
+      const other = Fixtures.recordInput(reader, { manifest });
+      yield* Fixtures.record(own);
+      yield* Fixtures.record(other);
+      const queries: string[] = [];
+      const trace: Statement.Transformer = (statement) => {
+        queries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const visible = yield* patches
+        .sharingDependants(source.patchId, {
+          userId: uploader.user.id,
+          admin: false
+        })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
+      const selection = queries.filter((query) => query.includes('AS "ownerId"'));
+      assert.lengthOf(selection, 1);
+      assert.include(selection[0]!.toLowerCase(), '"p"."id" in');
+      assert.isFalse(queries.some((query) => query.includes("LEFT JOIN patches source")));
+      assert.deepStrictEqual(
+        visible.map((row) => row.patchId),
+        [own.patchId]
+      );
+      const oversight = yield* patches.sharingDependants(source.patchId, {
+        userId: admin.user.id,
+        admin: true
+      });
+      assert.sameMembers(
+        oversight.map((row) => row.patchId),
+        [own.patchId, other.patchId]
+      );
+    })
+  );
+
   it.effect(
     "reuses authenticated patch facts and loads memberships only once for team audiences",
     () =>

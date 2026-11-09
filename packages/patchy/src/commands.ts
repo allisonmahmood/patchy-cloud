@@ -422,7 +422,7 @@ const status = Command.make("status", {}, () =>
 
 const fileArgument = Argument.String("file").pipe(Argument.withDescription("HTML file path"));
 
-/** `--force` on publish, delete, retire and restore. */
+/** `--force` accepts reported dependency impact on publication, sharing and lifecycle changes. */
 const forceFlag = Flag.Boolean("force").pipe(
   Flag.withDescription("Accept the reported dependant or source breakage; ask the person first"),
   Flag.withDefault(false)
@@ -991,6 +991,7 @@ const share = Command.make(
       Argument.optional
     ),
     audience: audienceFlag,
+    force: forceFlag,
     share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
@@ -1024,6 +1025,8 @@ const share = Command.make(
     return (untargeted ? runProject : run)(
       Effect.gen(function* () {
         const operation = yield* Effect.fromResult(decoded);
+        if (options.force && operation._tag !== "Scope")
+          return yield* new LocalError({ message: "--force applies only to audience changes." });
         const yieldAudience = yield* chosenAudience(options.audience);
         const patchId = yield* patchTarget(operation.file, options.patch);
         const client = yield* Api.client(yield* requiredToken());
@@ -1032,7 +1035,11 @@ const share = Command.make(
             client
               .share({
                 params: { patchId },
-                payload: new ShareRequest({ scope, ...yieldAudience })
+                payload: new ShareRequest({
+                  scope,
+                  ...yieldAudience,
+                  ...(options.force ? { force: true } : {})
+                })
               })
               .pipe(
                 Effect.catch((error) => refused(error, "Sharing failed.")),

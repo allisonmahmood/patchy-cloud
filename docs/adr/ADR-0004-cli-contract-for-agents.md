@@ -935,3 +935,9 @@ selectable teams and company guests, and `publish`/`share --audience <json>` sel
 Malformed JSON is local, exit 1. Successful publication and sharing report `audience`;
 private `scope: company` alone no longer describes readership. Persisted older publish
 receipts may omit `audience` and remain replayable without changing their bytes.
+
+Sharing a source to a narrower team audience uses the existing `has_dependants` refusal
+(exit 2, with `dependants` in JSON) before changing anything. Only declared dependants within
+the actor’s management authority are reported. After reviewing those tools with the person,
+`patchy share ... --force` acknowledges possible shared-read failures. The corresponding
+share request accepts optional `force: true`; ordinary success JSON is unchanged.

@@ -138,6 +138,17 @@ describe("renderShareDialog audiences", () => {
       { id: "sales", companyId: "company", name: "Sales", createdAt: new Date(0) }
     ]
   });
+  it("warns inline about declared dependants before saving an audience", () => {
+    const html = renderShareDialog({
+      ...input({ members: { kind: "company" }, guests: { kind: "specific", userIds: [] } }),
+      dependants: [{ patchId: "consumer", name: "Project board" }]
+    });
+    expect(html).toContain("Some people may lose shared reads");
+    expect(html).toContain("Project board");
+    expect(html.indexOf("Some people may lose shared reads")).toBeLessThan(
+      html.indexOf("Save sharing")
+    );
+  });
   it("restores saved teams and specific guests absent from suggestions", () => {
     const state = input({
       members: { kind: "teams", teamIds: ["design"] },

@@ -41,3 +41,9 @@ A source publishes sharing with `files(description, { shared: true })`. Omitting
 After forced unshare or loss of source access, the next read returns `access_denied`, including bytes and downloads. Do not turn that refusal into an empty successful listing. Resharing or restoring the same source lets consumers recover unchanged. A new patch under its old name never replaces the canonical source id. Public patches cannot use shared stores.
 
 Generation uses cumulative source inventory, not only its active manifest. A stale revision produces a publish warning; refresh updates the declaration metadata and stamp without replacing invented files. `pnpm patchy remove assets` removes the declaration and generated files, and this skill when no shared-store declarations remain. It leaves the fixture directory for you.
+
+Each read checks the initiating viewer against the source patch’s current audience. Declaring
+this source never grants access: team removal refuses that viewer’s next read and protected
+live delivery; restoration can recover the existing subscription even after a refused first
+read. Other entitled viewers keep working. Deliberately copied data follows its destination’s
+permissions; revoking source access does not retract those copies.

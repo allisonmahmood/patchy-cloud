@@ -4942,7 +4942,8 @@ it.layer(layer.pipe(Layer.provideMerge(Layer.succeed(Audiences.Activation, true)
             yield* patches.setSharing({
               patchId: patch.patchId,
               actor: actor(workspace.owner),
-              audience
+              audience,
+              force: true
             });
           yield* Teams.setMemberships({
             ...viewer,

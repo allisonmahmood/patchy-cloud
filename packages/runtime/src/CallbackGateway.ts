@@ -226,9 +226,11 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         if (declaration?.kind === "sharedTable") {
           capability.onDependency(`table:${declaration.patchId}:${declaration.table}`);
           capability.onDependency(`patch:${declaration.patchId}`);
+          capability.onDependency(`members:${binding.companyId}`);
         } else if (declaration?.kind === "sharedStore") {
           capability.onDependency(`store:${declaration.patchId}:${declaration.store}`);
           capability.onDependency(`patch:${declaration.patchId}`);
+          capability.onDependency(`members:${binding.companyId}`);
         }
       }
     }
