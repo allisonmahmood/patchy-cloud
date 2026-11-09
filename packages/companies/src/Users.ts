@@ -69,13 +69,16 @@ const administrator = SqlSchema.findOneOption({
   })
 });
 
-/** Call within a transaction. All company role/lifecycle writes take this lock first. */
+/**
+ * Call within a transaction. Serialize administration before target rows without blocking
+ * foreign-key checks: an invitation join may already hold its invite before inserting a user.
+ */
 export const lockAdministrator = Effect.fn("Users.lockAdministrator")(function* (input: {
   readonly companyId: string;
   readonly actorId: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR UPDATE`;
+  yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
   const actor = yield* administrator(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
   if (Option.isNone(actor) || actor.value.role === "member") return yield* new RoleForbidden(input);
   return actor.value.role;

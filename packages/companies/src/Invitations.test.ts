@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Testing from "@patchy/sql/testing";
@@ -372,6 +375,53 @@ it.layer(
           { operation: "create", email: input.email, id: other.invite.clerkInvitationId }
         ]);
       }).pipe(Effect.provide(InviteMail.layerRecording))
+  );
+
+  it.effect("finishes an invitation join while a revocation waits for its invite lock", () =>
+    Effect.gen(function* () {
+      const companies = yield* Companies.Companies;
+      const sql = yield* SqlClient.SqlClient;
+      const { company, user } = yield* companies.create(companyInput("join-revoke-locks"));
+      const created = yield* Invitations.create({
+        companyId: company.id,
+        invitedBy: user.id,
+        email: "joining@example.com"
+      });
+      const locked = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      const joining = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT id FROM invites WHERE id = ${created.invite.id} FOR UPDATE`;
+            yield* Deferred.succeed(locked, undefined);
+            yield* Deferred.await(proceed);
+            return yield* companies.consumeInvite({
+              inviteId: created.invite.id,
+              clerkUserId: "clerk_join_revoke",
+              email: created.invite.email,
+              name: "Joining"
+            });
+          })
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(locked);
+      const revoking = yield* Invitations.revoke({
+        companyId: company.id,
+        inviteId: created.invite.id,
+        actorId: user.id
+      }).pipe(
+        Effect.match({ onSuccess: () => "revoked", onFailure: (error) => error._tag }),
+        Effect.forkScoped
+      );
+      yield* sql`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`.pipe(
+        Effect.repeat({ until: (rows) => rows.length > 0 }),
+        Effect.timeout("3 seconds"),
+        TestClock.withLive
+      );
+      yield* Deferred.succeed(proceed, undefined);
+      assert.strictEqual((yield* Fiber.join(joining)).companyId, company.id);
+      assert.strictEqual(yield* Fiber.join(revoking), "InviteUnavailable");
+    }).pipe(Effect.scoped, Effect.provide(InviteMail.layerRecording))
   );
 
   it.effect("serializes a resend racing with revoke so the final delivery is revoked", () =>

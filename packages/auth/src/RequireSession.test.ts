@@ -63,7 +63,7 @@ it.layer(
             handle: created.company.handle,
             name: created.company.name
           },
-          role: "admin",
+          role: "super_admin",
           whatsNewSeen: created.user.whatsNewSeen
         });
       const sub = created.user.clerkUserId;

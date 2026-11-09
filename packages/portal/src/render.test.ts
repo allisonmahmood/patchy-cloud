@@ -18,7 +18,7 @@ describe("firstClause", () => {
 });
 
 describe("renderAgentPanel", () => {
-  const viewer = (role: "admin" | "member") =>
+  const viewer = (role: RequireSession.Viewer["Service"]["role"]) =>
     ({
       user: { id: "usr_jordan", email: "jordan@brightline.example", name: "Jordan Lee" },
       company: { id: "cmp_brightline", handle: "brightline", name: "Bright & <Co>" },
@@ -48,7 +48,7 @@ describe("renderAgentPanel", () => {
   });
 
   it("names every admin while access is off, the viewer first as you", () => {
-    const html = renderAgentPanel({ tools, viewer: viewer("admin"), admins });
+    const html = renderAgentPanel({ tools, viewer: viewer("super_admin"), admins });
     expect(html).toContain("Agent access is off at Bright &amp; &lt;Co&gt;");
     expect(html).toContain(
       "At Bright &amp; &lt;Co&gt; that’s you, Allison &lt;A&gt; and Priya Shah."

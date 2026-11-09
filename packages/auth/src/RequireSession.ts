@@ -166,7 +166,7 @@ export const resolveViewer = Effect.gen(function* () {
     return pageResponse(
       {
         title: "Your account is deactivated",
-        body: `<p>Your account at ${escapeHtml(company.name)} is deactivated. Ask an admin to reactivate it.</p>${signOutForm()}`,
+        body: `<p>Your account at ${escapeHtml(company.name)} is deactivated. Ask ${user.role === "member" ? "an admin" : "a super admin"} to reactivate it.</p>${signOutForm()}`,
         status: 403
       },
       session

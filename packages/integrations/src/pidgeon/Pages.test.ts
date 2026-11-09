@@ -256,7 +256,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       assert.strictEqual(found.status, 403);
       assert.include(
         yield* Effect.promise(() => found.text()),
-        "Only an admin can manage company connections."
+        "Only a super admin can manage company connections."
       );
       for (const response of [
         yield* send(

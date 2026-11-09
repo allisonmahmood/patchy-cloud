@@ -121,7 +121,7 @@ top-level tool arguments warn at publish. A publish with agent tools prints
 `Agent tools: <tool> (read|change), …. People's agents use these through
 Patchy's MCP at <instance>/mcp.`, from the manifest it sent; its JSON adds no
 field, since `handlers` already lists the `agent.*` handlers. While agent
-access is off, the instance's warnings say so and where an admin turns it on.
+access is off, the instance's warnings say so and where a super admin turns it on.
 Dev and test instances admit tier 2 publication. The server inspects
 the stored server bytes in a throwaway process. A descriptor disagreement,
 top-level throw, unresolved module or unfinished initializer is HTTP 422
@@ -314,7 +314,7 @@ detail includes `shared`, `declarable`, `reason` and the add hint. Unshared
 resources name the owner; off sources need restoration. Connected entries get
 `patchy add <integration>/<handle>`; disconnected ones point to `/company/connections`.
 A paused IMAP connection, whose server refused its password, is marked `paused: true`
-(and `paused.at` on its detail) and its hint asks an admin to Test it or replace the
+(and `paused.at` on its detail) and its hint asks a super admin to Test it or replace the
 password instead. JSON agents branch on `declarable`, `reason` and `paused`, never parse `hint`. Shared reads
 name their resource in `table` or `store`, never label a store as a table.
 
@@ -415,7 +415,7 @@ repo's revision with the publish and ships the repo's own, and when that isn't
 the company's current revision the publish response adds a `warnings` entry
 naming `patchy refresh`, exit 0. A patch with guests holding an active grant
 that publishes a version they can't open, such as one declaring a connection an
-admin set to block guests, gets a `warnings` entry saying why, exit 0 as well;
+super admin set to block guests, gets a `warnings` entry saying why, exit 0 as well;
 a patch without guests, or a public one, gets none. That entry comes from the publish response, so
 a failed local build or an unsuccessful upload carries none; the warnings of a
 publish the instance accepted are reported even when a later local write fails.
@@ -435,7 +435,7 @@ Store declarations have `kind: "sharedStore"`, `patchId`, `store`, the canonical
 `id` as `<patchId>/<store>`, and the source inventory's `revision` stamp.
 Stale stamps warn as for shared tables. Removing the last store declaration
 removes `patchy-shared-stores`, independently of the shared-table skill.
-Connection setup, reconnection and credential forms are browser-only for admins;
+Connection setup, reconnection and credential forms are browser-only for super admins;
 no CLI command accepts connection secrets. A shared-source refusal names the
 source-access repair path.
 

@@ -171,7 +171,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         headers: { cookie: sessionCookie }
       });
       const identity = yield* Effect.promise(() => viewer.json());
-      assert.deepInclude(identity, { role: "admin" });
+      assert.deepInclude(identity, { role: "super_admin" });
       const joined = yield* send("/join", { headers: { cookie: sessionCookie } });
       assert.strictEqual(joined.status, 303);
       assert.strictEqual(joined.headers.get("location"), "/company");
@@ -198,7 +198,11 @@ it.layer(services)("first-party pages in memory", (it) => {
         events.filter((event) => event.principalId === user!.id),
         [
           { name: "company.created", ...attribution, properties: {} },
-          { name: "user.joined", ...attribution, properties: { via: "create", role: "admin" } }
+          {
+            name: "user.joined",
+            ...attribution,
+            properties: { via: "create", role: "super_admin" }
+          }
         ]
       );
     })

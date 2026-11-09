@@ -59,7 +59,7 @@ it.layer(Platform)("scenarios", (it) => {
     })
   );
 
-  it.effect("refuses a publisher who is not an admin", () =>
+  it.effect("refuses a publisher who is not a super admin", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -71,7 +71,7 @@ it.layer(Platform)("scenarios", (it) => {
           "people":[{"key":"m","name":"M","email":"m@bad.example","role":"member"}]}`
       );
       const error = yield* Effect.flip(loadScenario(root, "bad"));
-      expect(error.message).toContain("the publisher must be an admin");
+      expect(error.message).toContain("the publisher must be a super admin");
     }).pipe(Effect.scoped)
   );
 

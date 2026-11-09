@@ -195,12 +195,13 @@ describe("what the switcher lists", () => {
 
   it("gives an admin Log and Settings on a colleague's patch, and a member only Overview and Versions", () => {
     const here = { patch: "sail", path: "/northsound/sailings-today" };
-    const cards = (role: "member" | "admin") =>
+    const cards = (role: SwitcherList["viewer"]["role"]) =>
       sections(kept({ list: { ...list, viewer: { ...list.viewer, role } } }), here, "", now)
         .find((section) => section.label === "This patch")!
         .rows.map((row) => row.title);
     expect(cards("member")).toEqual(["Overview", "Versions"]);
     expect(cards("admin")).toEqual(["Overview", "Versions", "Log", "Settings"]);
+    expect(cards("super_admin")).toEqual(["Overview", "Versions", "Log", "Settings"]);
   });
 
   it("with no list yet, or none at all, lists Patchy's places", () => {
