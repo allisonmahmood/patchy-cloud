@@ -574,7 +574,7 @@ export interface RecordInput extends PublishTarget {
   readonly companyId: string;
   readonly versionId: string;
   readonly machineTokenId: string;
-  /** Creates require an explicit scope or audience; omitted updates retain the audience under lock. */
+  /** Omitted creates default to Company; omitted updates retain the audience under lock. */
   readonly scope?: Patch["scope"] | undefined;
   readonly audience?: PatchAudience | undefined;
   readonly title: string;
@@ -2083,8 +2083,6 @@ export const make = Effect.gen(function* () {
 
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
-    if (input.intent === "create" && input.audience === undefined && input.scope === undefined)
-      return yield* new Audiences.AudienceRequired();
     if (input.audience !== undefined) {
       const previous =
         input.intent === "update"
@@ -2273,8 +2271,6 @@ export const make = Effect.gen(function* () {
         // Lock company authority before any patch/user row, matching team management.
         yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
         const existing = input.intent === "update" ? yield* publishable(input) : null;
-        if (existing === null && input.audience === undefined && input.scope === undefined)
-          return yield* new Audiences.AudienceRequired();
         const audience =
           input.audience ??
           (existing !== null && (input.scope === undefined || input.scope === existing.scope)

@@ -913,8 +913,8 @@ once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
 
-Scenario publication explicitly selects Company for synthetic patches. First publication
-through the ordinary CLI requires `--share company|public` or an explicit `--audience`.
+Scenario publication explicitly selects Company for synthetic patches. Ordinary first
+publishes default to Company-only when no scope or audience is supplied.
 Team/all-guests audiences are blocked in ordinary instances until the access-enforcement
 stack is assembled; audience suites supply the internal assembly reference in their test
 layers. Do not enable it on a daily-driver or production instance for partial-stack testing.

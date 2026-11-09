@@ -25,7 +25,7 @@ An admin changing a patch's owner to an active member of the same company, inclu
 _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
-The serving boundary: `company` is private and subject to the patch audience; `public` admits anyone with the link to the current version without signing in. Historical versions retain audience protection. First publish requires an explicit audience; updates retain it. An entitled owner or administrator changes sharing without publishing.
+The serving boundary: `company` is private and subject to the patch audience; `public` admits anyone with the link to the current version without signing in. Historical versions retain audience protection. An omitted first-publish audience defaults to Company; agents offer a choice, and updates retain it. An entitled owner or administrator changes sharing without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:

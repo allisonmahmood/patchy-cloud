@@ -79,7 +79,6 @@ const html = (title: string) =>
 type PublishPayload = Pick<PublishRequest, "html"> & Partial<PublishRequest>;
 const publishRequest = (payload: PublishPayload) =>
   new PublishRequest({
-    ...(payload.patchId ? {} : { scope: "company" as const }),
     manifest: Fixtures.manifest,
     publishKey: crypto.randomUUID(),
     metadata: {},
@@ -197,6 +196,10 @@ it.layer(layer)("patches group", (it) => {
       assert.instanceOf(created, PublishCreated);
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
+      assert.deepStrictEqual(created.audience, {
+        members: { kind: "company" },
+        guests: { kind: "specific", userIds: [] }
+      });
       assert.strictEqual(created.name, "launch-plan");
       assert.strictEqual(
         created.address,

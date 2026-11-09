@@ -2070,8 +2070,8 @@ removing them company-wide ends it. Guest grants remain subject to existing reso
 handler, connection and current-version restrictions. Public remains current-version-only,
 with no public tier 2; exclusions do not restrict anonymous Public access.
 
-First publication requires an explicit audience (a supplied Company/Public scope counts)
-and commits audience and version atomically. File and repo publishes report the committed
+Agents offer the first-publish audience choice unless already supplied. For compatibility,
+omitted API/CLI audiences default to Company-only. Audience and version commit atomically. File and repo publishes report the committed
 audience; lost-response receipts remain replayable. Updates retain the audience. Publication
 requires ownership and current content access. An owner/member can select only teams they
 can access; an admin with patch access can select other teams, provided the owner remains

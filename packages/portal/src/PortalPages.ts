@@ -1406,7 +1406,6 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
         ),
       StaleAction: () =>
         Effect.flatMap(staleNotice(selected.patch.id), (notice) => again({ status: 409, notice })),
-      AudienceRequired: (error) => again({ status: 422, notice: nothing(error.message) }),
       AudienceInactive: (error) => again({ status: 422, notice: nothing(error.message) }),
       InvalidAudienceTeams: (error) => again({ status: 422, notice: nothing(error.message) }),
       InvalidAudienceGuests: (error) => again({ status: 422, notice: nothing(error.message) }),

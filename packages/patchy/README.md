@@ -1860,7 +1860,8 @@ All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/pat
 
 ### Patch audiences
 
-First publication requires an explicit `--share company|public` or `--audience`.
+First publication without `--share` or `--audience` defaults to Company-only.
+Agents offer the audience choice unless the user already supplied it.
 Later publication retains the audience unless a sharing change is supplied. The owner
 must still be able to open the patch; an administrator or teammate cannot publish it.
 `patchy audiences --json` returns `{ ok, teams: [{ id, name }], guests: [{ userId, name, email, companyName }] }`.
@@ -1880,7 +1881,6 @@ membership and all grants; independent grants elsewhere survive. Existing guest 
 resource, current-version and connection restrictions still apply.
 
 Publish and sharing JSON include the committed `audience`. Text output reports it too.
-Malformed audience JSON is local (exit 1); a refused selection or missing first-publish
-choice is rejected (exit 2). Team and All guests audiences remain unavailable until
+Malformed audience JSON is local (exit 1); a refused selection is rejected (exit 2). Team and All guests audiences remain unavailable until
 #1287–#1291 complete enforcement; an internal assembly barrier refuses their writes
 and admission rather than widening them to Company. This stack must land together.
