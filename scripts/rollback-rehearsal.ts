@@ -756,7 +756,7 @@ export const addNote = mutation({
     timeoutMs: 300_000
   });
   const published = decodeRepoPublish(
-    await run(process.execPath, [pinned, "publish", "--json"], {
+    await run(process.execPath, [pinned, "publish", "--share", "company", "--json"], {
       cwd: repo,
       env,
       timeoutMs: 300_000

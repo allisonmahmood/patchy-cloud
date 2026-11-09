@@ -1141,7 +1141,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
                 : { kind: "specific" as const, userIds: values.getAll("guestIds") }
         };
         if (audience.members.kind === "teams" && !audience.members.teamIds.length)
-          return yield* new Audiences.InvalidAudience({ reason: "teams" });
+          return yield* new Audiences.InvalidAudienceTeams();
         // Going public asks first, and only its answer applies it, re-running every check.
         if (fields.scope === "public" && form.confirm !== "public") {
           if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
@@ -1187,7 +1187,12 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
         ),
       StaleAction: () =>
         Effect.flatMap(staleNotice(selected.patch.id), (notice) => again({ status: 409, notice })),
-      InvalidAudience: (error) => again({ status: 422, notice: nothing(error.message) }),
+      AudienceRequired: (error) => again({ status: 422, notice: nothing(error.message) }),
+      AudienceInactive: (error) => again({ status: 422, notice: nothing(error.message) }),
+      InvalidAudienceTeams: (error) => again({ status: 422, notice: nothing(error.message) }),
+      InvalidAudienceGuests: (error) => again({ status: 422, notice: nothing(error.message) }),
+      AudienceExcludesOwner: (error) => again({ status: 422, notice: nothing(error.message) }),
+      AudienceScopeMismatch: (error) => again({ status: 422, notice: nothing(error.message) }),
       Tier2NotPublic: (error) => again({ status: 422, notice: nothing(error.message) }),
       SchemaError: () =>
         again({ status: 422, notice: nothing("Check the submitted fields and try again.") }),

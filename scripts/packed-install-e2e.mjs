@@ -341,7 +341,9 @@ try {
     assert.equal(whoami.status, 0, show(whoami));
     assert.deepEqual(JSON.parse(whoami.stdout), identity);
     fs.writeFileSync(path.join(m.dir, "quarterly plan.html"), fs.readFileSync(page));
-    const first = await session(`publish 'quarterly plan.html' --name quarterly-plan --json`);
+    const first = await session(
+      `publish 'quarterly plan.html' --name quarterly-plan --share company --json`
+    );
     assert.equal(first.status, 0, show(first));
     assert.equal(JSON.parse(first.stdout).versionNumber, 1);
     // The patch id cached in the state directory turns the second into an update.

@@ -1019,11 +1019,11 @@ export const PatchAudience = Schema.Struct({
   guests: Schema.Union([
     Schema.Struct({
       kind: Schema.Literal("specific"),
-      userIds: Schema.Array(NonEmptyText).check(Schema.isMaxLength(100))
+      userIds: Schema.Array(NonEmptyText)
     }),
     Schema.Struct({
       kind: Schema.Literal("all"),
-      excludedUserIds: Schema.Array(NonEmptyText).check(Schema.isMaxLength(100))
+      excludedUserIds: Schema.Array(NonEmptyText)
     })
   ])
 });

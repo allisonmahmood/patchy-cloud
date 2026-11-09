@@ -140,12 +140,21 @@ export const renderShareDialog = (input: {
   const excludedGuests = new Set(
     patch.audience.guests.kind === "all" ? patch.audience.guests.excludedUserIds : []
   );
+  const people = [
+    ...new Map(
+      [...input.suggestions, ...input.guests].map((guest) => [guest.userId, guest])
+    ).values()
+  ];
   const guestChoices = (excluded: boolean) =>
-    input.suggestions
+    people
       .map(
         (guest) =>
           `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="${excluded ? "excludedGuestIds" : "guestIds"}" value="${escapeAttribute(guest.userId)}"${(excluded ? excludedGuests : selectedGuests).has(guest.userId) ? " checked" : ""}>${escapeHtml(guest.name)} · ${escapeHtml(guest.companyName)}</label>`
       )
+      .join("") +
+    [...(excluded ? excludedGuests : selectedGuests)]
+      .filter((id) => !people.some((person) => person.userId === id))
+      .map((id) => hidden(excluded ? "excludedGuestIds" : "guestIds", id))
       .join("");
   const audience = form(
     "scope",

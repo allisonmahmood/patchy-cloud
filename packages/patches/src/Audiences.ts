@@ -10,26 +10,61 @@ import { Teams } from "@patchy/companies";
 export const Activation = Context.Reference<boolean>("@patchy/patches/AudienceActivation", {
   defaultValue: () => false
 });
-export class InvalidAudience extends Schema.TaggedError<InvalidAudience>()("InvalidAudience", {
-  reason: Schema.Literals(["required", "inactive", "teams", "guests", "owner", "scope"])
-}) {
+export class AudienceRequired extends Schema.TaggedError<AudienceRequired>()(
+  "AudienceRequired",
+  {}
+) {
   override get message() {
-    switch (this.reason) {
-      case "required":
-        return "Choose who can open this patch before its first publish.";
-      case "inactive":
-        return "Team and company-guest audiences are unavailable until access enforcement is complete.";
-      case "teams":
-        return "Choose existing teams in this company that you can access.";
-      case "guests":
-        return "Choose active guests invited into this company space.";
-      case "owner":
-        return "Choose an audience the owner can open.";
-      case "scope":
-        return "The sharing scope must match the audience.";
-    }
+    return "Choose who can open this patch before its first publish.";
   }
 }
+export class AudienceInactive extends Schema.TaggedError<AudienceInactive>()(
+  "AudienceInactive",
+  {}
+) {
+  override get message() {
+    return "Team and company-guest audiences are unavailable until access enforcement is complete.";
+  }
+}
+export class InvalidAudienceTeams extends Schema.TaggedError<InvalidAudienceTeams>()(
+  "InvalidAudienceTeams",
+  {}
+) {
+  override get message() {
+    return "Choose existing teams in this company that you can access.";
+  }
+}
+export class InvalidAudienceGuests extends Schema.TaggedError<InvalidAudienceGuests>()(
+  "InvalidAudienceGuests",
+  {}
+) {
+  override get message() {
+    return "Choose active guests invited into this company space.";
+  }
+}
+export class AudienceExcludesOwner extends Schema.TaggedError<AudienceExcludesOwner>()(
+  "AudienceExcludesOwner",
+  {}
+) {
+  override get message() {
+    return "Choose an audience the owner can open.";
+  }
+}
+export class AudienceScopeMismatch extends Schema.TaggedError<AudienceScopeMismatch>()(
+  "AudienceScopeMismatch",
+  {}
+) {
+  override get message() {
+    return "The sharing scope must match the audience.";
+  }
+}
+export type InvalidAudience =
+  | AudienceRequired
+  | AudienceInactive
+  | InvalidAudienceTeams
+  | InvalidAudienceGuests
+  | AudienceExcludesOwner
+  | AudienceScopeMismatch;
 export const company = (scope: "company" | "public" = "company"): PatchAudience => ({
   members: { kind: scope },
   guests: { kind: "specific", userIds: [] }
@@ -92,42 +127,50 @@ export const validate = Effect.fn("Audiences.validate")(
     readonly actorId: string;
     readonly ownerId: string;
     readonly scope?: "company" | "public" | undefined;
-    readonly retained?: boolean;
+    readonly previous?: PatchAudience;
   }) {
     const { audience, companyId, actorId, ownerId } = input;
     if (input.scope !== undefined && input.scope !== scopeOf(audience))
-      return yield* new InvalidAudience({ reason: "scope" });
-    if (restricted(audience) && !(yield* Activation))
-      return yield* new InvalidAudience({ reason: "inactive" });
+      return yield* new AudienceScopeMismatch();
+    if (restricted(audience) && !(yield* Activation)) return yield* new AudienceInactive();
     const sql = yield* SqlClient.SqlClient;
     const actor =
       yield* sql`SELECT id FROM users WHERE id = ${actorId} AND company_id = ${companyId} AND deactivated_at IS NULL`;
-    if (!actor.length) return yield* new InvalidAudience({ reason: "owner" });
-    if (!input.retained && audience.members.kind === "teams") {
+    if (!actor.length) return yield* new AudienceExcludesOwner();
+    const previousTeams =
+      input.previous?.members.kind === "teams" ? input.previous.members.teamIds : [];
+    const newTeams =
+      audience.members.kind === "teams"
+        ? audience.members.teamIds.filter((id) => !previousTeams.includes(id))
+        : [];
+    if (newTeams.length) {
       const teams = yield* Teams.list({ companyId, actorId });
       const allowed = new Set(teams.map((t) => t.id));
-      if (audience.members.teamIds.some((id) => !allowed.has(id)))
-        return yield* new InvalidAudience({ reason: "teams" });
+      if (newTeams.some((id) => !allowed.has(id))) return yield* new InvalidAudienceTeams();
       const admins =
         yield* sql`SELECT id FROM users WHERE id = ${actorId} AND (role = 'admin' OR is_regular_admin)`;
       if (!admins.length) {
         const memberships = new Set(yield* Teams.memberships(companyId, actorId));
-        if (audience.members.teamIds.some((id) => !memberships.has(id)))
-          return yield* new InvalidAudience({ reason: "teams" });
+        if (newTeams.some((id) => !memberships.has(id))) return yield* new InvalidAudienceTeams();
       }
     }
     if (!(yield* forMember(companyId, ownerId))(audience))
-      return yield* new InvalidAudience({ reason: "owner" });
-    if (input.retained) return;
+      return yield* new AudienceExcludesOwner();
     const ids =
       audience.guests.kind === "all" ? audience.guests.excludedUserIds : audience.guests.userIds;
-    for (const userId of new Set(ids)) {
+    const previousIds =
+      input.previous?.guests.kind === audience.guests.kind
+        ? input.previous.guests.kind === "specific"
+          ? input.previous.guests.userIds
+          : input.previous.guests.excludedUserIds
+        : [];
+    for (const userId of new Set(ids.filter((id) => !previousIds.includes(id)))) {
       const guests =
         yield* sql`SELECT g.user_id FROM company_patch_guests g JOIN users u ON u.id = g.user_id WHERE g.company_id = ${companyId} AND g.user_id = ${userId} AND g.removed_at IS NULL AND u.deactivated_at IS NULL AND u.company_id <> ${companyId}`;
-      if (!guests.length) return yield* new InvalidAudience({ reason: "guests" });
+      if (!guests.length) return yield* new InvalidAudienceGuests();
     }
   },
-  Effect.catchTags({ RoleForbidden: () => Effect.fail(new InvalidAudience({ reason: "owner" })) })
+  Effect.catchTags({ RoleForbidden: () => Effect.fail(new AudienceExcludesOwner()) })
 );
 
 /** Called inside the patch transaction. Revision, references and wake commit together. */

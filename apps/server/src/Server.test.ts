@@ -362,7 +362,13 @@ it.layer(
       const shared = yield* send(share.pipe(HttpClientRequest.bodyJsonUnsafe({ scope: "public" })));
       assert.deepStrictEqual(yield* answer(shared), {
         status: 200,
-        body: { ok: true, patchId, scope: "public", publicUrl: address }
+        body: {
+          ok: true,
+          patchId,
+          scope: "public",
+          audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } },
+          publicUrl: address
+        }
       });
       const page = yield* send(HttpClientRequest.get(patchPath));
       assert.strictEqual(page.status, 200);

@@ -149,7 +149,9 @@ const chosenAudience = Effect.fn("chosenAudience")(function* (value: Option.Opti
   return { audience };
 });
 const audienceLine = (audience: PatchAudience | undefined, scope: typeof SharingScope.Type) =>
-  audience === undefined ? scopeLines[scope] : `Audience: ${JSON.stringify(audience)}`;
+  audience === undefined
+    ? scopeLines[scope]
+    : `${scopeLines[scope]}\nAudience: ${JSON.stringify(audience)}`;
 
 const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",

@@ -1,5 +1,6 @@
 /**
- * Guests: people at another company whom a company shares one patch with. A grant names the
+ * Guests are existing accounts invited into a company space. Patch audiences select them
+ * specifically or include the whole company guest pool. A legacy named grant records the
  * person and the patch; revoking it keeps the row, ended, so history still names them, and
  * sharing again restores it. Whether guests may open a patch at all is `unavailable`, the one
  * rule every door and surface asks, answered as `@patchy/api`'s `GuestReason`; the service reads
@@ -393,8 +394,17 @@ export const make = Effect.gen(function* () {
         WHERE company_id = ${companyId} AND removed_at IS NULL) g
       JOIN users u ON u.id = g.user_id AND u.deactivated_at IS NULL
       JOIN companies c ON c.id = u.company_id
-      ORDER BY g.at DESC, u.id
-      LIMIT 50`
+      ORDER BY g.at DESC, u.id`
+  });
+  const companyPeople = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Person,
+    execute: (companyId) => sql`
+      SELECT u.id AS "userId", u.name, u.email, c.name AS "companyName"
+      FROM company_patch_guests g JOIN users u ON u.id = g.user_id
+      JOIN companies c ON c.id = u.company_id
+      WHERE g.company_id = ${companyId} AND g.removed_at IS NULL AND u.company_id <> ${companyId}
+      ORDER BY u.name, u.email, u.id`
   });
   const companyGrantRows = SqlSchema.findAll({
     Request: Schema.String,
@@ -403,13 +413,14 @@ export const make = Effect.gen(function* () {
       SELECT g.user_id AS "userId", u.name, u.email, c.name AS "companyName",
         p.name AS "patchName", p.title, v.tier,
         CASE WHEN p.disabled_at IS NOT NULL THEN 'disabled' ELSE ${state} END AS state,
-        s.name AS "sharerName", s.email AS "sharerEmail", g.added_at AS "sharedAt"
+        s.name AS "sharerName", s.email AS "sharerEmail", COALESCE(named.granted_at, g.added_at) AS "sharedAt"
       FROM company_patch_guests g
       JOIN users u ON u.id = g.user_id
       JOIN companies c ON c.id = u.company_id
       JOIN patches p ON p.company_id = g.company_id
       JOIN patch_versions v ON v.id = p.current_version_id
-      JOIN users s ON s.id = g.added_by
+      LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
+      JOIN users s ON s.id = COALESCE(named.granted_by, g.added_by)
       WHERE g.company_id = ${companyId} AND patch_guest_allowed(p, g.user_id, ${assembled}, true)
       ORDER BY u.name, u.email, g.user_id, g.added_at DESC, p.name`
   });
@@ -539,6 +550,10 @@ export const make = Effect.gen(function* () {
   }, Effect.catchTags(dieOnSchemaError));
   const companyGuests = Effect.fn("GuestGrants.companyGuests")(function* (companyId: string) {
     const found = new Map<string, CompanyPage.Guest & { patches: CompanyPage.GuestPatch[] }>();
+    for (const person of yield* companyPeople(companyId)) {
+      const guest = named(Person)(person);
+      found.set(guest.userId, { ...guest, patches: [] });
+    }
     for (const row of yield* companyGrantRows(companyId)) {
       const patch: CompanyPage.GuestPatch = {
         name: row.patchName,
@@ -550,11 +565,6 @@ export const make = Effect.gen(function* () {
       };
       const guest = found.get(row.userId);
       if (guest) guest.patches.push(patch);
-      else {
-        const { userId, name, email, companyName } = row;
-        const guestName = Users.displayName({ name, email });
-        found.set(userId, { userId, name: guestName, email, companyName, patches: [patch] });
-      }
     }
     return [...found.values()];
   }, Effect.catchTags(dieOnSchemaError));

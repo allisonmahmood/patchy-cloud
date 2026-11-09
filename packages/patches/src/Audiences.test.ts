@@ -41,14 +41,14 @@ it.layer(services)("Patch audiences", (it) => {
       Effect.gen(function* () {
         const patches = yield* Patches.Patches;
         const input = Fixtures.recordInput(uploader, { scope: undefined });
-        assert.equal((yield* Effect.flip(patches.preflight(input)))._tag, "InvalidAudience");
+        assert.equal((yield* Effect.flip(patches.preflight(input)))._tag, "AudienceRequired");
         const t = yield* team("Barrier", [uploader.user.id]);
         const error = yield* Effect.flip(
           patches
             .preflight({ ...input, audience: teamAudience([t.id]) })
             .pipe(Effect.provideService(Audiences.Activation, false))
         );
-        assert.equal(error._tag, "InvalidAudience");
+        assert.equal(error._tag, "AudienceInactive");
         assert.equal(
           (yield* patches.list(access(uploader.user.id))).some(
             (row) => row.patch.id === input.patchId
@@ -129,7 +129,7 @@ it.layer(services)("Patch audiences", (it) => {
             (yield* Effect.flip(
               patches.setScope(input.patchId, actor, "company", undefined, teamAudience(ids))
             ))._tag,
-            "InvalidAudience"
+            "InvalidAudienceTeams"
           );
         }
         const [found] = yield* patches.list({
@@ -179,6 +179,102 @@ it.layer(services)("Patch audiences", (it) => {
         assert.deepStrictEqual(found!.patch.audience, input.audience);
         assert.isTrue(yield* Audiences.references(viewer.companyId, t.id));
       }).pipe(Effect.provideService(Audiences.Activation, true))
+  );
+  it.effect("keeps more than 100 guests readable and every company guest selectable", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const grants = yield* GuestGrants.GuestGrants;
+      const sql = yield* SqlClient.SqlClient;
+      const outside = yield* (yield* Companies.Companies).create({
+        handle: "many-guests",
+        name: "Outside",
+        clerkUserId: "many-owner",
+        email: "owner@many.example",
+        userName: "Outside"
+      });
+      yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role)
+        SELECT 'many-guest-' || n, 'many-clerk-' || n, ${outside.company.id}, 'guest-' || n || '@many.example', 'Guest ' || n, 'member' FROM generate_series(1, 101) n`;
+      yield* sql`INSERT INTO company_patch_guests(company_id, user_id, added_by)
+        SELECT ${viewer.companyId}, 'many-guest-' || n, ${uploader.user.id} FROM generate_series(1, 100) n`;
+      const selected = Array.from({ length: 100 }, (_, i) => `many-guest-${i + 1}`);
+      const input = Fixtures.recordInput(uploader, {
+        audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: selected } }
+      });
+      yield* Fixtures.record(input);
+      yield* grants.share({
+        patchId: input.patchId,
+        actor: { userId: uploader.user.id, admin: false },
+        email: "guest-101@many.example"
+      });
+      const loaded = Option.getOrThrow(yield* patches.find(input.patchId));
+      assert.equal(loaded.patch.audience.guests.kind, "specific");
+      assert.lengthOf(yield* grants.guests(input.patchId), 101);
+      assert.isTrue(
+        (yield* grants.sharedBefore(viewer.companyId)).some((p) => p.userId === selected[0])
+      );
+      assert.isAtLeast((yield* grants.sharedBefore(viewer.companyId)).length, 101);
+      assert.isTrue(yield* Audiences.canOpen(input.patchId, viewer.companyId, uploader.user.id));
+      yield* grants.remove({
+        patchId: input.patchId,
+        actor: { userId: uploader.user.id, admin: false },
+        guest: "many-guest-101"
+      });
+      assert.lengthOf(yield* grants.guests(input.patchId), 100);
+    })
+  );
+  it.effect(
+    "retains inactive guest grants through scope changes and keeps each patch's attribution",
+    () =>
+      Effect.gen(function* () {
+        const patches = yield* Patches.Patches;
+        const grants = yield* GuestGrants.GuestGrants;
+        const sql = yield* SqlClient.SqlClient;
+        const outside = yield* (yield* Companies.Companies).create({
+          handle: "inactive-guest",
+          name: "Outside",
+          clerkUserId: "inactive-guest",
+          email: "inactive@guests.example",
+          userName: "Inactive"
+        });
+        const first = yield* Fixtures.record(Fixtures.recordInput(uploader));
+        const second = yield* Fixtures.record(Fixtures.recordInput(reader));
+        const actor = { userId: uploader.user.id, admin: false };
+        yield* grants.share({ patchId: first.patchId, actor, email: outside.user.email });
+        yield* grants.share({
+          patchId: second.patchId,
+          actor: { userId: reader.user.id, admin: false },
+          email: outside.user.email
+        });
+        const listed = (yield* grants.companyGuests(viewer.companyId)).find(
+          (g) => g.userId === outside.user.id
+        )!;
+        assert.equal(
+          listed.patches.find((p) => p.name === second.name)?.sharedBy,
+          reader.user.name
+        );
+        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
+        const shared = yield* patches.setScope(first.patchId, actor, "public");
+        assert.deepStrictEqual(shared.audience.guests, {
+          kind: "specific",
+          userIds: [outside.user.id]
+        });
+        yield* patches.setScope(first.patchId, actor, "company", undefined, {
+          ...shared.audience,
+          members: { kind: "company" }
+        });
+        yield* Fixtures.record(
+          Fixtures.recordInput(uploader, {
+            intent: "update",
+            patchId: first.patchId,
+            scope: "public"
+          })
+        );
+        assert.lengthOf(yield* grants.guests(first.patchId), 1);
+        assert.isFalse(
+          (yield* grants.sharedWith(outside.user.id)).some((p) => p.patchId === first.patchId)
+        );
+        yield* grants.revokeAll({ companyId: viewer.companyId, userId: outside.user.id });
+      })
   );
   it.effect(
     "all company guests includes future guests, supports exclusions and preserves named grants independently",

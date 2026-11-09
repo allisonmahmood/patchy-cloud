@@ -67,6 +67,7 @@ const publish = (patchId: string, intent: "create" | "update") =>
   Fixtures.record({
     ...Fixtures.publishRecord(),
     intent,
+    ...(intent === "create" ? { scope: "company" as const } : {}),
     patchId,
     versionId: newInternalId("ver"),
     companyId: identity.company.id,

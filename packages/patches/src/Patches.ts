@@ -2002,15 +2002,23 @@ export const make = Effect.gen(function* () {
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
     if (input.intent === "create" && input.audience === undefined && input.scope === undefined)
-      return yield* new Audiences.InvalidAudience({ reason: "required" });
-    if (input.audience !== undefined)
+      return yield* new Audiences.AudienceRequired();
+    if (input.audience !== undefined) {
+      const previous =
+        input.intent === "update"
+          ? yield* companyPatchRow({ companyId: input.companyId, patchId: input.patchId }).pipe(
+              Effect.catchTags(dieOnSchemaError)
+            )
+          : Option.none();
       yield* validateAudience({
         audience: input.audience,
         scope: input.scope,
         companyId: input.companyId,
         actorId: input.ownerUserId,
-        ownerId: input.ownerUserId
+        ownerId: input.ownerUserId,
+        ...(Option.isSome(previous) ? { previous: previous.value.audience } : {})
       });
+    }
     // Before anything uploads; `record` checks again under the lock.
     if (input.intent === "update" && input.baseVersion !== undefined) {
       const { nextVersion } = yield* nextVersionNumber(input.patchId).pipe(
@@ -2184,7 +2192,7 @@ export const make = Effect.gen(function* () {
         yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
         const existing = input.intent === "update" ? yield* publishable(input) : null;
         if (existing === null && input.audience === undefined && input.scope === undefined)
-          return yield* new Audiences.InvalidAudience({ reason: "required" });
+          return yield* new Audiences.AudienceRequired();
         const audience =
           input.audience ??
           (existing !== null && (input.scope === undefined || input.scope === existing.scope)
@@ -2198,10 +2206,7 @@ export const make = Effect.gen(function* () {
           companyId: input.companyId,
           actorId: input.ownerUserId,
           ownerId: input.ownerUserId,
-          retained:
-            existing !== null &&
-            input.audience === undefined &&
-            (input.scope === undefined || input.scope === existing.scope)
+          ...(existing === null ? {} : { previous: existing.audience })
         });
         if (input.manifest.tier === 2 && Audiences.scopeOf(audience) === "public")
           return yield* new Tier2NotPublic();
@@ -2487,7 +2492,8 @@ export const make = Effect.gen(function* () {
       scope,
       companyId: row.companyId,
       actorId: actor.userId,
-      ownerId: row.ownerUserId
+      ownerId: row.ownerUserId,
+      previous: row.audience
     });
     yield* saveAudience(patchId, row.companyId, chosen, actor.userId);
     const at = yield* now;

@@ -329,7 +329,9 @@ export const publish = Effect.fn("DoorTest.publish")(function* (
     filename: null,
     title: options.title ?? `${name} title`,
     ...(options.description === undefined ? {} : { description: options.description }),
-    ...(options.scope === undefined ? {} : { scope: options.scope }),
+    ...(options.update === true && options.scope === undefined
+      ? {}
+      : { scope: options.scope ?? "company" }),
     repoOrg: null,
     repoName: null,
     cliVersion: null,

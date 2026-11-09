@@ -1796,8 +1796,8 @@ it.layer(services)("pages in memory", (it) => {
 
   /** A published tier 1 version's content URL, with its stored document. */
   /** A tier 1 patch: its `stored` document, and its `html` as a reader receives it, with the relay. */
-  const scripted = Effect.fn(function* (title: string) {
-    const { patchId, versionId, path } = yield* publish(title);
+  const scripted = Effect.fn(function* (title: string, scope?: Patches.Patch["scope"]) {
+    const { patchId, versionId, path } = yield* publish(title, scope);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE patch_versions SET tier = 1 WHERE id = ${versionId}`;
     const stored = yield* (yield* ContentStore.ContentStore).get(
@@ -1934,7 +1934,7 @@ it.layer(services)("pages in memory", (it) => {
 
   it.effect("shares one read between simultaneous content loads and keeps no failure", () =>
     Effect.gen(function* () {
-      const { url, html } = yield* scripted("Joined once");
+      const { url, html } = yield* scripted("Joined once", "public");
       const { control, request, loads } = yield* host();
       let found = 0;
       const bothFound = yield* Deferred.make<void>();
@@ -1943,6 +1943,7 @@ it.layer(services)("pages in memory", (it) => {
       );
       const opened = yield* Deferred.make<void>();
       control.beforeRead = Deferred.await(opened);
+      // Use a public document so admission does not add SQL waits after afterFind.
       // Neither request yields on its op budget: past its lookup, the second runs straight on
       // to wait on the first one's read before this fiber's next turn.
       const both = yield* Effect.all([request(url), request(url)], {
