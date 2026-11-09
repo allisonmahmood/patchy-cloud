@@ -247,7 +247,7 @@ it.layer(layer)("pages", (it) => {
           ["usr_audience_inside", "member"],
           ["usr_audience_outside", "admin"]
         ] as const) {
-          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${role})`;
+          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role, is_regular_admin) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${Users.roleToStorage(role)}, ${role === "admin"})`;
         }
         const manager = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
         const team = yield* Teams.create({ ...manager, name: "Serving audience" });
@@ -284,6 +284,8 @@ it.layer(layer)("pages", (it) => {
         for (const url of urls) {
           const inside = yield* get(url, headers("usr_audience_inside"));
           assert.equal(inside.status, url === initial.path ? 308 : 200, url);
+          const superAdmin = yield* get(url, { cookie: signedInCookies() });
+          assert.equal(superAdmin.status, url === initial.path ? 308 : 200, url);
           const outside = yield* get(url, headers("usr_audience_outside"));
           assert.equal(outside.status, 404, url);
           assert.notInclude(yield* outside.text, "Restricted");

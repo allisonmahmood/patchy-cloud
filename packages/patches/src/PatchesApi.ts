@@ -1180,16 +1180,11 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             companyId: identity.company.id,
             actorId: identity.user.id
           }).pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
-          const memberships = new Set(
-            yield* Teams.memberships(identity.company.id, identity.user.id)
-          );
           return HttpServerResponse.jsonUnsafe(
             encodeAudienceOptions(
               new AudienceOptions({
                 ok: true,
-                teams: teams
-                  .filter((team) => identity.role !== "member" || memberships.has(team.id))
-                  .map(({ id, name }) => ({ id, name })),
+                teams: teams.map(({ id, name }) => ({ id, name })),
                 guests: yield* guestGrants.sharedBefore(identity.company.id)
               })
             ),

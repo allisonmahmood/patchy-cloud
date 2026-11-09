@@ -62,14 +62,22 @@ const find = SqlSchema.findOneOption({
 });
 // Explicit rows remain independent of the role-derived entitlement. Never materialize
 // automatic rows: demotion must drop only that entitlement, including on existing teams.
-const effectiveMemberships = (sql: SqlClient.SqlClient, companyId: string) => sql`
+const effectiveMemberships = (
+  sql: SqlClient.SqlClient,
+  companyId: string,
+  selection: { readonly userIds?: readonly string[]; readonly teamId?: string } = {}
+) => sql`
   SELECT m.company_id, m.team_id, m.user_id FROM company_team_members m
   JOIN users u ON u.company_id = m.company_id AND u.id = m.user_id
   WHERE m.company_id = ${companyId} AND u.deactivated_at IS NULL
+    ${selection.userIds ? sql`AND m.user_id = ANY(${selection.userIds}::text[])` : sql``}
+    ${selection.teamId ? sql`AND m.team_id = ${selection.teamId}` : sql``}
   UNION
   SELECT t.company_id, t.id AS team_id, u.id AS user_id FROM company_teams t
   JOIN users u ON u.company_id = t.company_id
-  WHERE t.company_id = ${companyId} AND u.role = 'admin' AND u.deactivated_at IS NULL`;
+  WHERE t.company_id = ${companyId} AND u.role = 'admin' AND u.deactivated_at IS NULL
+    ${selection.userIds ? sql`AND u.id = ANY(${selection.userIds}::text[])` : sql``}
+    ${selection.teamId ? sql`AND t.id = ${selection.teamId}` : sql``}`;
 
 // Both directory and roster queries apply this decision in their own SQL snapshot.
 const visibleTeams = (sql: SqlClient.SqlClient, viewer: Viewer) => sql`
@@ -77,7 +85,7 @@ const visibleTeams = (sql: SqlClient.SqlClient, viewer: Viewer) => sql`
   JOIN users u ON u.company_id = t.company_id AND u.id = ${viewer.actorId}
   WHERE t.company_id = ${viewer.companyId} AND u.deactivated_at IS NULL
   AND (u.role = 'admin' OR u.is_regular_admin OR EXISTS (
-    SELECT 1 FROM effective_memberships m WHERE m.team_id = t.id AND m.user_id = u.id
+    SELECT 1 FROM (${effectiveMemberships(sql, viewer.companyId, { userIds: [viewer.actorId] })}) m WHERE m.team_id = t.id
   ))`;
 const listRows = SqlSchema.findAll({
   Request: Schema.Struct({ companyId: Schema.String, actorId: Schema.String }),
@@ -86,7 +94,7 @@ const listRows = SqlSchema.findAll({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`WITH effective_memberships AS (${effectiveMemberships(sql, viewer.companyId)}) SELECT id, company_id AS "companyId", name, created_at AS "createdAt" FROM (${visibleTeams(sql, viewer)}) visible ORDER BY lower(name), id`
+        sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt" FROM (${visibleTeams(sql, viewer)}) visible ORDER BY lower(name), id`
     )
 });
 const active = SqlSchema.findAll({
@@ -99,14 +107,18 @@ const active = SqlSchema.findAll({
         sql`SELECT id, ${sql.unsafe(roleFromStorage)} AS role FROM users WHERE company_id = ${companyId} AND id = ${userId} AND deactivated_at IS NULL`
     )
 });
-const memberRows = SqlSchema.findAll({
+const memberRows = SqlSchema.findOneOption({
   Request: Schema.Struct({ ...ref.fields, actorId: Schema.String }),
-  Result: Schema.Struct({ id: Schema.String }),
+  Result: Schema.Struct({ ids: Schema.Array(Schema.String) }),
   execute: (input) =>
     Effect.flatMap(
       SqlClient.SqlClient,
-      (sql) =>
-        sql`WITH effective_memberships AS (${effectiveMemberships(sql, input.companyId)}) SELECT m.user_id AS id FROM effective_memberships m JOIN (${visibleTeams(sql, input)}) t ON t.id = m.team_id WHERE m.team_id = ${input.teamId} ORDER BY m.user_id`
+      (sql) => sql`
+        SELECT ARRAY(
+          SELECT m.user_id FROM (${effectiveMemberships(sql, input.companyId, { teamId: input.teamId })}) m
+          ORDER BY m.user_id
+        ) AS ids
+        FROM (${visibleTeams(sql, input)}) visible WHERE visible.id = ${input.teamId}`
     )
 });
 const membershipRows = SqlSchema.findAll({
@@ -116,7 +128,7 @@ const membershipRows = SqlSchema.findAll({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`SELECT team_id AS id FROM (${effectiveMemberships(sql, companyId)}) m WHERE user_id = ${userId} ORDER BY team_id`
+        sql`SELECT team_id AS id FROM (${effectiveMemberships(sql, companyId, { userIds: [userId] })}) m WHERE user_id = ${userId} ORDER BY team_id`
     )
 });
 const changeRows = SqlSchema.findAll({
@@ -208,10 +220,9 @@ export const rename = Effect.fn("Teams.rename")(function* (
 });
 export const members = Effect.fn("Teams.members")(function* (input: TeamRef) {
   yield* requireViewer(input);
-  const visible = yield* listRows(input).pipe(Effect.catchTags(schemaError));
-  if (!visible.some((team) => team.id === input.teamId))
-    return yield* new TeamNotFound({ teamId: input.teamId });
-  return (yield* memberRows(input).pipe(Effect.catchTags(schemaError))).map((row) => row.id);
+  const roster = yield* memberRows(input).pipe(Effect.catchTags(schemaError));
+  if (Option.isNone(roster)) return yield* new TeamNotFound({ teamId: input.teamId });
+  return roster.value.ids;
 });
 /** Shared by rendered controls and the locked write path; a role never overrides required membership. */
 export const canRemoveMembership = (
@@ -279,7 +290,7 @@ const membershipFactRows = SqlSchema.findAll({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) => sql`
-    WITH effective_memberships AS (${effectiveMemberships(sql, companyId)})
+    WITH effective_memberships AS (${effectiveMemberships(sql, companyId, { userIds })})
     SELECT u.id AS "userId", COALESCE(array_agg(m.team_id ORDER BY m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
     FROM users u LEFT JOIN effective_memberships m ON m.company_id = u.company_id AND m.user_id = u.id
     WHERE u.company_id = ${companyId} AND u.id = ANY(${userIds}::text[]) AND u.deactivated_at IS NULL GROUP BY u.id`
