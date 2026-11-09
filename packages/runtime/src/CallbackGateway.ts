@@ -335,7 +335,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         GuestProtocol.CallbackReply,
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
-        if (viewerAuthority(request.op)) {
+        {
           const identity = yield* capability.binding.reauthorize;
           if (
             identity.company.id !== binding.companyId ||

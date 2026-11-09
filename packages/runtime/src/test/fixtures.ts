@@ -46,7 +46,12 @@ const manifest = {
   tables: {},
   files: {},
   uses: {
-    sales: { kind: "postgres" as const, handle: "warehouse", id: "connection-runtime", revision: 1 }
+    sales: {
+      kind: "postgres" as const,
+      handle: "warehouse",
+      id: "connection-runtime",
+      revision: 1
+    }
   }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
@@ -91,6 +96,7 @@ const seed = Layer.effectDiscard(
 
 /** Suites without Patches hold no grants: nobody from another company is its guest. */
 export const noGuests = Layer.succeed(GrantedGuests.GrantedGuests, {
+  member: () => Effect.succeed(true),
   host: () => Effect.succeed(Option.none())
 });
 

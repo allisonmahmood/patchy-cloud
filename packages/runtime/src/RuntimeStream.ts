@@ -813,7 +813,11 @@ export const make: Effect.Effect<RuntimeStream["Service"], never, Dependencies |
         const patches = new Set<string>();
         for (const entry of entries.values()) {
           yield* entry.subscriptions.reconcile("invalidation", keys, cause);
-          if (keys.length === 0 || keys.includes(`patch:${entry.patchId}`))
+          if (
+            keys.length === 0 ||
+            keys.includes(`patch:${entry.patchId}`) ||
+            keys.includes(`members:${entry.companyId}`)
+          )
             patches.add(entry.patchId);
         }
         for (const patchId of patches) {

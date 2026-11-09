@@ -78,7 +78,11 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     yield* decoded.pipe(Effect.mapError((cause) => new Runtime.InvalidRequest({ cause })));
     const name = input.args.table;
     if (typeof name !== "string") return yield* new Runtime.InvalidRequest({});
-    const keys = [`table:${input.binding.patchId}:${name}`, `patch:${input.binding.patchId}`];
+    const keys = [
+      `table:${input.binding.patchId}:${name}`,
+      `patch:${input.binding.patchId}`,
+      `members:${input.binding.companyId}`
+    ];
     for (const key of keys) input.onDependency?.(key);
     return { keys, name, op: input.op };
   });
@@ -112,10 +116,14 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
   });
   const read = Effect.fn("SubscriptionReads.read")(function* (input: SubscriptionReads.Input) {
     const dependency = yield* dependencies(input);
-    const patchKeys = dependency.keys.filter((key) => key.startsWith("patch:"));
-    const resourceKeys = dependency.keys.filter((key) => !key.startsWith("patch:"));
+    const patchKeys = dependency.keys.filter(
+      (key) => key.startsWith("patch:") || key.startsWith("members:")
+    );
+    const resourceKeys = dependency.keys.filter(
+      (key) => !key.startsWith("patch:") && !key.startsWith("members:")
+    );
     // Platform lifecycle is outside the company snapshot. A changed fence refuses this run.
-    const before = yield* lifecycle(input.binding.companyId, patchKeys);
+    const before = yield* revisions(input.binding.companyId, patchKeys);
     const snapshot = yield* withCompany(
       input.binding.companyId,
       Effect.gen(function* () {
@@ -140,7 +148,7 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
         })
       )
     );
-    const after = yield* lifecycle(input.binding.companyId, patchKeys);
+    const after = yield* revisions(input.binding.companyId, patchKeys);
     const changed = patchKeys.find((key) => before[key] !== after[key]);
     if (changed !== undefined) return yield* new LifecycleChanged({ resource: changed });
     return { result: snapshot.result, vector: { ...snapshot.vector, ...before } };
@@ -166,7 +174,7 @@ export const make: Effect.Effect<
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
     Result: ResourceRevisions.RevisionRow,
     execute: ({ companyId, patchIds }) => sql`SELECT 'patch:' || id AS key,
-      lifecycle_revision::text AS revision FROM patches
+      lifecycle_revision::text || ':' || audience_revision::text AS revision FROM patches
       WHERE company_id = ${companyId} AND ${sql.in("id", patchIds)}`
   });
   return yield* makeReader(

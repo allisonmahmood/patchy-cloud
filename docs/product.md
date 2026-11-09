@@ -2088,3 +2088,23 @@ for team/all-guests audiences. Tests can assemble those paths explicitly; Hostin
 enable them in this partial stack. Remove the barrier only with the completed enforcement
 stack; unknown/inactive audiences never become Company. #1291 verifies activation and
 rollback. These PRs land together; no deployment is implied.
+
+### Runtime audience revocation
+
+Runtime's Hosting adapter asks Patches' current audience decision for same-company viewers
+on admission and reauthorization, including owned-resource callbacks, nested handler calls and
+MCP tool callbacks. Role and ownership do not confer content access. Existing guest and public
+restrictions remain separate.
+
+Live reads include the destination patch lifecycle/audience revision and Companies' committed
+member-directory revision even without a declared directory dependency. They use the existing
+wakes, periodic durable reconciliation and snapshot fences; shared-resource and connection
+authority can extend that same dependency vector. A changed authority during a snapshot
+discards the result, and the next admission checks current eligibility. Failed authority reads
+refuse delivery rather than reuse a previous admission. Reconnects reauthorize.
+
+A protected request/callback admitted before a removal commits may finish, including an atomic
+mutation. Removal does not cancel or undo such a transaction, retract copied data or erase bytes
+already delivered. Subsequent admission refuses the removed viewer, and subscription results
+are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
+The internal audience assembly barrier stays disabled pending the complete access stack.

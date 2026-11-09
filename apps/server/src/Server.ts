@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
@@ -73,6 +74,7 @@ import {
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
 import {
+  Audiences,
   Content,
   LoadedVersions,
   DeletionSweep,
@@ -172,13 +174,29 @@ const resourceChanges = Layer.effect(
 );
 
 /**
- * Runtime's doors admit a patch's guests by Patches' grants, which Runtime cannot depend on.
- * Runtime loads only live patches, so its loaded version says all the rule needs of the patch.
+ * Runtime's doors ask Patches for current member and guest admission through a Runtime port.
+ * Loaded versions are execution inputs, never permanent audience grants.
  */
 const grantedGuests = Layer.effect(
   GrantedGuests.GrantedGuests,
-  Effect.map(GuestGrants.GuestGrants, (grants) =>
-    GrantedGuests.GrantedGuests.of({
+  Effect.gen(function* () {
+    const grants = yield* GuestGrants.GuestGrants;
+    const patches = yield* Patches.Patches;
+    const sql = yield* SqlClient.SqlClient;
+    const enabled = yield* Audiences.Activation;
+    return GrantedGuests.GrantedGuests.of({
+      member: (loaded, userId) =>
+        Effect.gen(function* () {
+          const current = yield* patches.find(loaded.patchId);
+          return (
+            Option.isSome(current) &&
+            (yield* Audiences.canOpen(current.value.patch, loaded.companyId, userId))
+          );
+        }).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.provideService(Audiences.Activation, enabled),
+          Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
+        ),
       host: (loaded, userId) =>
         grants
           .host({
@@ -189,8 +207,8 @@ const grantedGuests = Layer.effect(
             version: { tier: loaded.manifest.tier, manifest: loaded.manifest }
           })
           .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })))
-    })
-  )
+    });
+  })
 );
 
 /** The Company page's Patches column comes from Patches, which Companies cannot depend on. */

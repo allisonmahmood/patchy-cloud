@@ -216,6 +216,8 @@ export const reach = Effect.fn("Calls.reach")(
  * clock: the connection still works, its person is still theirs, and their company still
  * allows agents. It answers the person as they are now, so a role change shows at once.
  */
+const isPatchUnavailable = Schema.is(Patches.PatchUnavailable);
+
 const recheck = Effect.fn("Calls.recheck")(function* (identity: AgentConnections.AgentIdentity) {
   // Both reads at once, so a callback waits for one round trip.
   const [current, access] = yield* Effect.all(
@@ -255,10 +257,15 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
 ): Effect.fn.Return<
   ServerCallReply,
   Runtime.RuntimeError,
-  AgentConnections.AgentConnections | Companies.Companies | Cryptography.Cryptography
+  | AgentConnections.AgentConnections
+  | Companies.Companies
+  | Cryptography.Cryptography
+  | Patches.Patches
 > {
   if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
   const services = yield* Effect.context<AgentConnections.AgentConnections | Companies.Companies>();
+  const patches = yield* Patches.Patches;
+  const canOpen = yield* Patches.Openability;
   return yield* Invocation.callAgent({
     version: target.version,
     person: personOf(identity),
@@ -266,7 +273,23 @@ export const invoke = Effect.fn("Calls.invoke")(function* (
     tool: target.tool,
     args: target.args,
     ...options,
-    recheck: recheck(identity).pipe(Effect.provideContext(services))
+    recheck: Effect.gen(function* () {
+      const person = yield* recheck(identity).pipe(Effect.provideContext(services));
+      yield* patches
+        .portalCard(target.version.patchId, {
+          companyId: person.company.id,
+          userId: person.user.id,
+          canOpen: (patch) => canOpen(patch, person.user.id)
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            isPatchUnavailable(cause)
+              ? new Runtime.AccessDenied({})
+              : new Runtime.SourceUnavailable({ cause })
+          )
+        );
+      return person;
+    })
   }).pipe(Effect.provideService(Invocation.Invocation, invocation.value));
 });
 

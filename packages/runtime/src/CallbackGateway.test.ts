@@ -300,74 +300,72 @@ it.layer(
     }).pipe(Effect.scoped)
   );
 
-  it.effect(
-    "own callbacks inherit admission while company callbacks require the same live viewer and fresh authority",
-    () =>
-      Effect.gen(function* () {
-        const capabilities = yield* InvocationCapabilities.make;
-        let live = Fixtures.identity;
-        let sessionValid = true;
-        let authorizations = 0;
-        const reauthorize = Effect.suspend(() => {
-          authorizations++;
-          return sessionValid ? Effect.succeed(live) : Effect.fail(new Runtime.SessionExpired({}));
-        });
-        const handler: Runtime.JsonHandler = {
-          kind: "read",
-          run: () =>
-            Effect.gen(function* () {
-              const binding = yield* Binding.Binding;
-              return binding.effectivePrincipal === "patch"
-                ? "own"
-                : binding.identity!.admin
-                  ? "admin"
-                  : "member";
-            })
-        };
-        const gateway = yield* CallbackGateway.make({
-          "tables.get": handler,
-          "shared.get": handler
-        }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
-        const capability = yield* Fixtures.issue(capabilities, { reauthorize });
-        sessionValid = false;
-        assert.deepStrictEqual(
-          yield* gateway.callback(capability.token, capability.attempt, {
-            op: "tables.get",
-            args: {}
-          }),
-          { ok: true, value: "own" }
-        );
-        assert.strictEqual(authorizations, 0);
+  it.effect("own and company callbacks require the same live viewer and fresh authority", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* InvocationCapabilities.make;
+      let live = Fixtures.identity;
+      let sessionValid = true;
+      let authorizations = 0;
+      const reauthorize = Effect.suspend(() => {
+        authorizations++;
+        return sessionValid ? Effect.succeed(live) : Effect.fail(new Runtime.SessionExpired({}));
+      });
+      const handler: Runtime.JsonHandler = {
+        kind: "read",
+        run: () =>
+          Effect.gen(function* () {
+            const binding = yield* Binding.Binding;
+            return binding.effectivePrincipal === "patch"
+              ? "own"
+              : binding.identity!.admin
+                ? "admin"
+                : "member";
+          })
+      };
+      const gateway = yield* CallbackGateway.make({
+        "tables.get": handler,
+        "shared.get": handler
+      }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      const capability = yield* Fixtures.issue(capabilities, { reauthorize });
+      sessionValid = false;
+      assert.include(
+        yield* gateway.callback(capability.token, capability.attempt, {
+          op: "tables.get",
+          args: {}
+        }),
+        { ok: false, code: "session_expired" }
+      );
+      assert.strictEqual(authorizations, 1);
+      assert.include(
+        yield* gateway.callback(capability.token, capability.attempt, {
+          op: "shared.get",
+          args: {}
+        }),
+        { ok: false, code: "session_expired" }
+      );
+      sessionValid = true;
+      live = { ...Fixtures.identity, admin: true };
+      assert.deepStrictEqual(
+        yield* gateway.callback(capability.token, capability.attempt, {
+          op: "shared.get",
+          args: {}
+        }),
+        { ok: true, value: "admin" }
+      );
+      for (const identity of [
+        { ...live, user: { ...live.user, id: "usr_other" } },
+        { ...live, company: { ...live.company, id: "cmp_other" } }
+      ]) {
+        live = identity;
         assert.include(
           yield* gateway.callback(capability.token, capability.attempt, {
             op: "shared.get",
             args: {}
           }),
-          { ok: false, code: "session_expired" }
+          { ok: false, code: "access_denied" }
         );
-        sessionValid = true;
-        live = { ...Fixtures.identity, admin: true };
-        assert.deepStrictEqual(
-          yield* gateway.callback(capability.token, capability.attempt, {
-            op: "shared.get",
-            args: {}
-          }),
-          { ok: true, value: "admin" }
-        );
-        for (const identity of [
-          { ...live, user: { ...live.user, id: "usr_other" } },
-          { ...live, company: { ...live.company, id: "cmp_other" } }
-        ]) {
-          live = identity;
-          assert.include(
-            yield* gateway.callback(capability.token, capability.attempt, {
-              op: "shared.get",
-              args: {}
-            }),
-            { ok: false, code: "access_denied" }
-          );
-        }
-      }).pipe(Effect.scoped)
+      }
+    }).pipe(Effect.scoped)
   );
 
   it.effect("traces refused shared-store reads and reauthorizes metadata and action bytes", () =>
@@ -439,7 +437,10 @@ it.layer(
             }),
             op === "shared.files.get"
               ? { ok: true, body }
-              : { ok: true, value: op === "shared.files.list" ? { files: [], cursor: null } : null }
+              : {
+                  ok: true,
+                  value: op === "shared.files.list" ? { files: [], cursor: null } : null
+                }
           );
         }
       }
@@ -617,7 +618,11 @@ it.layer(
             transport: "bytes-get",
             run: () => Effect.succeed({ bytes: new Uint8Array(11), contentType: "text/plain" })
           },
-          "files.put": { kind: "mutation", transport: "bytes-put", run: () => Effect.succeed(null) }
+          "files.put": {
+            kind: "mutation",
+            transport: "bytes-put",
+            run: () => Effect.succeed(null)
+          }
         }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
         const count = yield* Fixtures.issue(capabilities);
         for (let index = 0; index < 2; index++)
@@ -739,9 +744,11 @@ it.layer(
           run: () => Effect.die("A refused viewer must not execute an integration")
         }
       }).pipe(Effect.provideService(InvocationCapabilities.InvocationCapabilities, capabilities));
+      let ownWriteDone = false;
       const capability = yield* Fixtures.issue(capabilities, {
         kind: "action",
         reauthorize: Effect.gen(function* () {
+          if (!ownWriteDone) return Fixtures.identity;
           const [pending] = yield* log
             .recent({ companyId: Fixtures.identity.company.id, connectionId: "integration-order" })
             .pipe(Effect.orDie);
@@ -756,6 +763,7 @@ it.layer(
         }),
         { ok: true, value: null }
       );
+      ownWriteDone = true;
       const refusal = yield* gateway.callback(capability.token, capability.attempt, {
         op: "postgres.query",
         args: {}

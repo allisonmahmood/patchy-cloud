@@ -274,7 +274,9 @@ const makeWithOptions = Effect.fn("Invocation.make")(function* (
     if (binding.scope === "public") return yield* new Runtime.PublicUnavailable({});
     if (binding.identity === null || binding.manifest.tier !== 2)
       return yield* new Runtime.AccessDenied({});
-    const viewer = binding.identity;
+    const viewer = yield* binding.reauthorize;
+    if (viewer.user.id !== binding.identity.user.id || viewer.company.id !== binding.companyId)
+      return yield* new Runtime.AccessDenied({});
     const input = yield* decodeCall(args).pipe(
       Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
     );

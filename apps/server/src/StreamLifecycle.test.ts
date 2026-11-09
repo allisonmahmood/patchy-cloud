@@ -134,6 +134,7 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
               Layer.provide([
                 DurableVersions.layer,
                 Layer.succeed(GrantedGuests.GrantedGuests, {
+                  member: () => Effect.succeed(true),
                   host: () => Effect.succeed(Option.none())
                 })
               ])

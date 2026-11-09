@@ -69,8 +69,11 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new Runtime.InvalidRequest({ cause }))
     );
     if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
-    if (input.dependencies === undefined || input.dependencies.length === 0) return [];
+    if (input.dependencies === undefined || input.dependencies.length === 0)
+      return [`patch:${binding.patchId}`, `members:${binding.companyId}`];
+    const authority = [`patch:${binding.patchId}`, `members:${binding.companyId}`];
     const allowed = new Set([
+      ...authority,
       ...Object.keys(binding.manifest.tables).map((name) => `table:${binding.patchId}:${name}`),
       ...Object.keys(binding.manifest.files).map((name) => `store:${binding.patchId}:${name}`)
     ]);
@@ -85,7 +88,7 @@ export const make = Effect.gen(function* () {
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still
     // trace the actual dependencies, including accesses which fail.
-    return input.dependencies.filter((key) => allowed.delete(key));
+    return [...new Set([...authority, ...input.dependencies.filter((key) => allowed.delete(key))])];
   });
   const read = Effect.fn("QuerySubscriptions.read")(function* (input: SubscriptionReads.Input) {
     if (input.op !== "server.call") return yield* reads.read(input);
@@ -93,13 +96,14 @@ export const make = Effect.gen(function* () {
     const { binding } = input;
     // Platform authority is outside the company snapshot. Fence every possible source
     // before invocation, then keep only the sources actually attempted by the guest.
-    const sources = new Set<string>();
+    const sources = new Set<string>([`patch:${binding.patchId}`, `members:${binding.companyId}`]);
     for (const declaration of Object.values(binding.manifest.uses))
       if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
         sources.add(`patch:${declaration.patchId}`);
       else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
-    const attempted = new Set<string>();
+    const attempted = new Set<string>([`patch:${binding.patchId}`, `members:${binding.companyId}`]);
+    for (const key of attempted) input.onDependency?.(key);
     let watermark: Readonly<Record<string, string>> = {};
     const reply = yield* invocation.value.call(
       input.args,

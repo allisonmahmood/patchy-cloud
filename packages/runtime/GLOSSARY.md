@@ -29,7 +29,7 @@ The decision that a live viewer, or their worker agent while agent access is on,
 _Avoid_: callback authorisation, presence lease
 
 **Callback authorisation**:
-The decision about one operation requested by an invocation. Owned resources inherit invocation admission; company resources require the initiating viewer's current authority.
+The decision about one operation requested by an invocation. Every callback rechecks the initiating viewer’s current patch admission. Owned resources then use the patch principal; company resources additionally require the viewer’s current resource authority.
 _Avoid_: invocation admission, guest permission
 
 **Query**:
