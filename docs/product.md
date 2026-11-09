@@ -639,8 +639,9 @@ Existing admins and their pending administrator invitations migrate to super adm
 
 Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Regular-admin status does not add content admission; active super admins receive team admission through required membership. Patch audiences are persisted by Patches, with team/all-guests activation blocked until the whole #1192 enforcement stack is assembled. Separate super-admin oversight and removed-owner recovery remain #1288; connection grants remain #1289.
 
-Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
-in one table, with how many live patches each person owns among those the reader
+Today **People**, at `/company`, lists users, roles, active/deactivated state, pending invites
+and outside guests in All, counting each guest once regardless of patch grants. Guest rows
+retain their shared-patch details and authorized removal actions in the combined table, with how many live patches each person owns among those the reader
 can open. Tabs narrow it to admins, invites or deactivated users, and a search
 matches names and emails. Invites that need an admin, because their email did
 not go out or they expired, come first with Resend beside them. Admins invite
