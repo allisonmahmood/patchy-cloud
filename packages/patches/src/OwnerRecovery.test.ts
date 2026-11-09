@@ -72,12 +72,12 @@ it.layer(services)("Owner recovery", (it) => {
           )!.canManage,
           true
         );
-        assert.isFalse(
+        assert.isTrue(
           (yield* patches.list(access(admin.user.id))).some((v) => v.patch.id === input.patchId)
         );
         assert.equal(
           (yield* Effect.flip(
-            patches.reassign(input.patchId, actor, admin.user.id, uploader.user.id)
+            patches.reassign(input.patchId, actor, uploader.user.id, uploader.user.id)
           ))._tag,
           "InvalidOwner"
         );
@@ -102,7 +102,7 @@ it.layer(services)("Owner recovery", (it) => {
           .eligibleOwners(input.patchId, actor)
           .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
         assert.equal(
-          queries.filter((query) => query.includes("LEFT JOIN company_team_members")).length,
+          queries.filter((query) => query.includes("LEFT JOIN effective_memberships")).length,
           1
         );
         queries.length = 0;
@@ -111,7 +111,7 @@ it.layer(services)("Owner recovery", (it) => {
           .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
         assert.lengthOf(single, 1);
         assert.equal(
-          queries.filter((query) => query.includes("LEFT JOIN company_team_members")).length,
+          queries.filter((query) => query.includes("LEFT JOIN effective_memberships")).length,
           1
         );
         assert.isTrue(
@@ -119,7 +119,7 @@ it.layer(services)("Owner recovery", (it) => {
         );
         assert.deepEqual(
           eligible.map((p) => p.id),
-          [reader.user.id]
+          [admin.user.id, reader.user.id]
         );
         yield* patches.reassign(
           input.patchId,
@@ -157,19 +157,22 @@ it.layer(services)("Owner recovery", (it) => {
     () =>
       Effect.gen(function* () {
         const patches = yield* Patches.Patches;
+        const users = yield* Users.Users;
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "admin" });
+        const self = { ...viewer, actorId: reader.user.id };
         const t = yield* team("History", [uploader.user.id]);
         const unrelated = yield* team("Unrelated history", []);
         const input = Fixtures.recordInput(uploader, { audience: teamAudience([t.id]) });
         yield* Fixtures.record(input);
         for (let i = 0; i < 102; i++)
           yield* Teams.setMemberships({
-            ...viewer,
+            ...self,
             teamId: unrelated.id,
-            userIds: [admin.user.id],
+            userIds: [reader.user.id],
             added: i % 2 === 0
           });
         for (const teamId of [t.id, unrelated.id])
-          yield* Teams.setMemberships({ ...viewer, teamId, userIds: [admin.user.id], added: true });
+          yield* Teams.setMemberships({ ...self, teamId, userIds: [reader.user.id], added: true });
         yield* Teams.setMemberships({
           ...viewer,
           teamId: t.id,
@@ -178,7 +181,7 @@ it.layer(services)("Owner recovery", (it) => {
         });
         const history = yield* patches.managementHistory(input.patchId, uploader.user.id);
         assert.equal(history.length, 1);
-        assert.equal(history[0]!.actorId, admin.user.id);
+        assert.equal(history[0]!.actorId, reader.user.id);
         assert.equal(history[0]!.teamId, t.id);
         assert.equal(
           (yield* Effect.flip(patches.managementHistory(input.patchId, reader.user.id)))._tag,
@@ -191,6 +194,7 @@ it.layer(services)("Owner recovery", (it) => {
           added: true
         });
         yield* patches.authorizePublish({ ...input, intent: "update" });
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "member" });
       }).pipe(Effect.provideService(Audiences.Activation, true))
   );
 });

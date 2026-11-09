@@ -1864,6 +1864,7 @@ First publication without `--share` or `--audience` defaults to Company-only.
 Agents offer the audience choice unless the user already supplied it.
 Later publication retains the audience unless a sharing change is supplied. The owner
 must still be able to open the patch; an administrator or teammate cannot publish it.
+Ordinary members see only their current teams in audience choices; administrators retain the company team directory. Active super admins belong to every team; regular-admin status alone grants no patch access.
 `patchy audiences --json` returns `{ ok, teams: [{ id, name }], guests: [{ userId, name, email, companyName }] }`.
 Use those IDs rather than names. Team renaming preserves access.
 

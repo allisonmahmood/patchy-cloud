@@ -247,7 +247,9 @@ it.layer(services)("company page and actions", (it) => {
         303
       );
       const after = yield* send(location, { headers: { cookie: cookie(admin) } });
-      assert.include(yield* Effect.promise(() => after.text()), "No people yet.");
+      const afterHtml = yield* Effect.promise(() => after.text());
+      assert.include(afterHtml, "All teams");
+      assert.notInclude(afterHtml, `aria-label="Remove ${member.name} from`);
     })
   );
   it.effect(
@@ -275,7 +277,9 @@ it.layer(services)("company page and actions", (it) => {
         });
         assert.strictEqual(response.status, 409);
         const page = yield* send(location, { headers: { cookie: cookie(owner.user) } });
-        assert.include(yield* Effect.promise(() => page.text()), "No people yet.");
+        const pageHtml = yield* Effect.promise(() => page.text());
+        assert.include(pageHtml, "All teams");
+        assert.notInclude(pageHtml, `aria-label="Remove ${member.name} from`);
         assert.strictEqual(
           (yield* send(`${root}/create`, post(owner.user, { name: " design " }))).status,
           409

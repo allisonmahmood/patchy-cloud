@@ -83,6 +83,34 @@ it.layer(services)("Patch audiences", (it) => {
       })
   );
   it.effect(
+    "rechecks role-derived grants on the next call without changing the patch audience",
+    () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const patches = yield* Patches.Patches;
+        const selected = yield* team("Role entitlement", [uploader.user.id]);
+        const input = Fixtures.recordInput(uploader, { audience: teamAudience([selected.id]) });
+        yield* Fixtures.record(input);
+        const loaded = Option.getOrThrow(yield* patches.find(input.patchId)).patch;
+        const admitted = Audiences.canOpen(loaded, viewer.companyId, reader.user.id);
+        assert.isFalse(yield* admitted);
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "super_admin" });
+        assert.isTrue(yield* admitted);
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "admin" });
+        assert.isFalse(yield* admitted);
+        yield* Teams.setMemberships({
+          ...viewer,
+          teamId: selected.id,
+          userIds: [reader.user.id],
+          added: true
+        });
+        assert.isTrue(yield* admitted);
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "super_admin" });
+        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "member" });
+        assert.isTrue(yield* admitted);
+      }).pipe(Effect.provideService(Audiences.Activation, true))
+  );
+  it.effect(
     "defaults omitted first-publish audiences to Company and still refuses inactive team audiences",
     () =>
       Effect.gen(function* () {
@@ -124,7 +152,7 @@ it.layer(services)("Patch audiences", (it) => {
             (row) => row.patch.id === input.patchId
           )
         );
-        assert.isFalse(
+        assert.isTrue(
           (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
         assert.isTrue(yield* Audiences.references(viewer.companyId, design.id));
@@ -178,7 +206,7 @@ it.layer(services)("Patch audiences", (it) => {
           (yield* patches.manage(input.patchId, { userId: admin.user.id, admin: true })).id,
           input.patchId
         );
-        assert.isFalse(
+        assert.isTrue(
           (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
       }).pipe(Effect.provideService(Audiences.Activation, true))

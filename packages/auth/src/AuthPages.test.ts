@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, TeamsPage, Users } from "@patchy/companies";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
 import * as AgentConnections from "./AgentConnections.js";
@@ -604,5 +604,106 @@ it.layer(
       assert.strictEqual(response.status, 303);
       assert.strictEqual(response.headers.get("location"), "/login");
     })
+  );
+});
+
+it.layer(services)("team membership policy through real page handlers", (it) => {
+  it.effect(
+    "hides protected controls and refuses forged removals; members lose directory and direct access",
+    () =>
+      Effect.gen(function* () {
+        const companies = yield* Companies.Companies;
+        const created = yield* companies.create({
+          handle: "team-policy",
+          name: "Policy Co",
+          clerkUserId: "policy-super",
+          email: "super@policy.example",
+          userName: "Sam"
+        });
+        const add = Effect.fn(function* (name: string) {
+          const invite = yield* companies.createInvite({
+            companyId: created.company.id,
+            invitedBy: created.user.id,
+            email: `${name}@policy.example`,
+            role: "member"
+          });
+          return yield* companies.consumeInvite({
+            inviteId: invite.id,
+            clerkUserId: `policy-${name}`,
+            email: invite.email,
+            name
+          });
+        });
+        const workspace = {
+          id: created.company.id,
+          admin: created.user,
+          owner: yield* add("Jordan"),
+          member: yield* add("Priya")
+        };
+        const request = Effect.fn(function* (path: string, person: Users.User) {
+          const response = yield* send(path, {
+            headers: { cookie: cookie(person.clerkUserId, person.email, person.name) }
+          });
+          return { status: response.status, text: Effect.promise(() => response.text()) };
+        });
+        const submit = (path: string, person: Users.User, body: Record<string, string>) =>
+          send(path, post(body, cookie(person.clerkUserId, person.email, person.name)));
+        const users = yield* Users.Users;
+        const ref = { companyId: workspace.id, actorId: workspace.admin.id };
+        yield* users.setRole({ ...ref, userId: workspace.owner.id, role: "admin" });
+        const team = yield* Teams.create({ ...ref, name: "Finance" });
+        const hidden = yield* Teams.create({ ...ref, name: "Engineering" });
+        const input = {
+          ...ref,
+          teamId: team.id,
+          userIds: [workspace.owner.id, workspace.member.id],
+          added: true
+        };
+        yield* Teams.setMemberships(input);
+        const address = `${TeamsPage.path}?team=${team.id}`;
+        const adminHtml = yield* (yield* request(address, workspace.owner)).text;
+        assert.notInclude(adminHtml, `aria-label="Remove ${workspace.admin.name} from Finance"`);
+        assert.include(adminHtml, "All teams");
+        assert.include(adminHtml, "Leave team");
+        assert.include(adminHtml, `aria-label="Remove ${workspace.member.name} from Finance"`);
+        assert.equal(
+          (yield* submit(`${TeamsPage.path}/remove?team=${team.id}`, workspace.owner, {
+            userId: workspace.admin.id
+          })).status,
+          403
+        );
+        const memberHtml = yield* (yield* request(address, workspace.member)).text;
+        assert.include(memberHtml, "Finance");
+        assert.notInclude(memberHtml, "Engineering");
+        assert.notInclude(memberHtml, "Add people");
+        assert.equal(
+          (yield* request(`${TeamsPage.path}?team=${hidden.id}`, workspace.member)).status,
+          404
+        );
+        yield* Teams.setMemberships({ ...input, userIds: [workspace.member.id], added: false });
+        assert.equal((yield* request(address, workspace.member)).status, 404);
+        assert.notInclude(
+          yield* (yield* request(TeamsPage.path, workspace.member)).text,
+          "Finance"
+        );
+        yield* Teams.setMemberships(input);
+        assert.equal((yield* request(address, workspace.member)).status, 200);
+        // A second regular admin's controls and a stale direct POST are both restricted.
+        yield* users.setRole({ ...ref, userId: workspace.member.id, role: "admin" });
+        const current = yield* (yield* request(address, workspace.owner)).text;
+        assert.notInclude(current, `aria-label="Remove ${workspace.member.name} from Finance"`);
+        assert.equal(
+          (yield* submit(`${TeamsPage.path}/remove?team=${team.id}`, workspace.owner, {
+            userId: workspace.member.id
+          })).status,
+          403
+        );
+        assert.equal(
+          (yield* submit(`${TeamsPage.path}/remove?team=${team.id}`, workspace.admin, {
+            userId: workspace.member.id
+          })).status,
+          303
+        );
+      })
   );
 });

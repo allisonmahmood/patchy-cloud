@@ -61,11 +61,11 @@ A throwaway page an agent builds while capturing a look, from the candidate's `l
 _Avoid_: mockup, demo patch
 
 **Team**:
-A named, company-owned set of people, with a stable identity across renames. People may belong to several teams. Admins and super admins manage membership, including their own; members cannot self-assign. Teams own no patches or connections.
+A named, company-owned set of people, with a stable identity across renames. People may belong to several teams. Admins and super admins manage membership; regular admins may leave teams but cannot remove another admin or a super admin. Members discover only their own teams and cannot self-assign. Teams own no patches or connections.
 _Avoid_: group, department, role, space
 
 **Team membership**:
-One company person belonging to one team. Removing it leaves their other memberships intact; restoring it joins the same team again. An inactive person has no effective team membership.
+One company person belonging to one team. Removing it leaves their other memberships intact; restoring it joins the same team again. Effective membership combines independent assignments with required membership in every company team for active super admins. Required membership is derived from the current role, so demotion removes it without deleting independent assignments. An inactive person has no effective team membership.
 _Avoid_: team role, ownership
 
 **Membership change**:

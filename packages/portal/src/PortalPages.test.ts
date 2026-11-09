@@ -37,7 +37,7 @@ import {
   signedInCookies,
   signSession
 } from "@patchy/auth/testing";
-import { Companies, Teams, TeamsPage, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
@@ -4885,23 +4885,25 @@ it.layer(layer.pipe(Layer.provideMerge(Layer.succeed(Audiences.Activation, true)
           const attention = yield* (yield* request("/patches?show=attention", workspace.admin))
             .text;
           assert.include(attention, "owns this patch and cannot open it");
-          const oversight = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
-          assert.include(oversight, "Management access does not grant access");
+          const overview = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
+          assert.include(overview, "PROTECTED_DESCRIPTION");
+          const oversight = yield* (yield* request(
+            `${cardPath(patch.name)}/settings`,
+            workspace.admin
+          )).text;
           assert.include(oversight, `/patches/${patch.name}/reassign`);
-          assert.include(oversight, TeamsPage.path);
           const confirmation = yield* (yield* request(
             `${cardPath(patch.name)}/reassign`,
             workspace.admin
           )).text;
           assert.include(confirmation, `value="${workspace.member.id}"`);
-          assert.notInclude(oversight, "PROTECTED_DESCRIPTION");
-          assert.notInclude(oversight, `value="${workspace.admin.id}"`);
+          assert.include(confirmation, `value="${workspace.admin.id}"`);
           const sharing = yield* (yield* request(
             `${cardPath(patch.name)}?share=${patch.name}`,
             workspace.admin
           )).text;
           assert.include(sharing, "Save sharing");
-          assert.notInclude(sharing, "PROTECTED_DESCRIPTION");
+          assert.include(sharing, "PROTECTED_DESCRIPTION");
           const reassigned = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
             expectedPatchId: patch.patchId,
             expectedOwnerUserId: workspace.owner.id,
