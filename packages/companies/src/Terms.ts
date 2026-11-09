@@ -13,12 +13,13 @@ export interface Revisions {
 }
 
 /**
- * The Patchy Cloud terms and privacy notice in force. Moving either is a release: the website
- * publishes the dated page first and makes it current only once that release is live
- * (docs/OPERATIONS.md › Legal consent). Everyone who hasn't accepted these, or later ones, is
- * asked to on their next page in a browser.
+ * The Patchy Cloud terms and privacy notice in force. The website publishes a dated page and
+ * makes it current at once; a release then moves this line, never to an id whose page doesn't
+ * answer yet (docs/OPERATIONS.md › Legal consent). Someone who signs up in between is recorded
+ * with the older ids. Everyone who hasn't accepted these, or later ones, is asked to on their
+ * next page in a browser.
  */
-export const current = { terms: "2026-11-03", privacy: "2026-11-02" } as const satisfies Revisions;
+export const current = { terms: "2026-11-10", privacy: "2026-11-10" } as const satisfies Revisions;
 
 /** The page holding a revision's exact words, which never change once published. */
 export const url = (document: keyof Revisions, revision: string) =>

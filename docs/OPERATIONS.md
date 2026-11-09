@@ -461,11 +461,12 @@ to the app's host and keeps the Clerk domain and keys.
   revisions in force are one line, `current` in
   `packages/companies/src/Terms.ts`; each names the dated page
   `https://patchyhq.com/cloud/terms/<revision>` or `…/privacy/<revision>`. A
-  change goes in this order: the website publishes the new dated page; a
-  release moves `current`, and everyone is asked on their next page in a
-  browser; once that release is live, the website switches `/cloud/terms` or
-  `/cloud/privacy` to the new text, so a new sign-up never accepts a revision
-  the running release doesn't know.
+  change goes in this order: the website publishes the new dated page and
+  switches `/cloud/terms` or `/cloud/privacy` to it when its change merges; a
+  release then moves `current`, and everyone is asked on their next page in a
+  browser. A release never names a revision whose dated page doesn't answer
+  yet. Someone who signs up in between is recorded with the older revisions,
+  the ones the running release names, and is asked once after the release.
 - **Sign-in** is by email code. Clerk's shared OAuth credentials work only in
   development, so cloning carries social providers over without credentials.
   Production keeps them off until it has its own
