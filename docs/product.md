@@ -623,11 +623,11 @@ files, shared resources, connections and members remain behind handlers.
 
 ## Companies
 
-A company is the tenant for its patches, users and connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing, groups and a company usage view are not built.
+A company is the tenant for its patches, users and connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing and a company usage view are not built.
 
 A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first super admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
-### Users, admins, groups
+### Users, admins, teams
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
@@ -637,7 +637,7 @@ An **admin** invites ordinary members, deactivates/reactivates ordinary members,
 
 Existing admins and their pending administrator invitations migrate to super admins; existing members retain their roles. Storage retains the legacy `member`/`admin` values with an additive regular-admin flag: super admins remain stored admins, and regular admins are stored members with the flag. An older server therefore keeps its last-admin safeguard and sees regular admins as ordinary members. Invitation acceptance preserves the flag across rollback; later legacy role changes clear prior flags. Returning to this release restores the three-role interpretation. New company creators start as super admins. Multiple super admins are allowed, and company-before-user locking ensures concurrent demotions/deactivations retain at least one active super admin. Reactivation keeps revoked credentials ended.
 
-Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Team audiences, separate super-admin oversight and audience-aware patch management remain the following stages of #1192 (#1286/#1288). Groups and group permissions remain future work.
+Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Team audiences, separate super-admin oversight and audience-aware patch management remain the following stages of #1192 (#1286/#1288). Team-based patch and connection grants remain future work.
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
@@ -658,7 +658,11 @@ inactive, but someone whose grants have all ended is no longer listed. The last 
 deactivated. Reactivation restores sign-in to the same company and data, but
 machine tokens revoked by deactivation remain revoked.
 
-A **group** will be a named set of users an admin creates; a user can be in many. "Team", "department", "north-american-sales" are names companies give their groups, not concepts of their own. A group is purely a grant surface — access to patches and connections — never a container that owns anything.
+A **team** is a durable, named set of company people with a stable identity across renames. A person may belong to several teams. Admins and super admins create, rename and manage memberships, including themselves and other admins; ordinary members see teams but cannot self-assign. Teams own no patches or connections.
+
+**Settings → Company → Teams** (`/settings/company/teams`) shows a team directory beside the selected team's people. Creation, rename and Add people use plain forms. Members get the same directory without editing controls. Company settings at `/settings/company` links to People and Teams; existing People routes remain valid.
+
+Effective membership edits atomically store attribution (actor, person, team, add/remove and time) and advance the existing Companies directory authority revision. PostgreSQL announces the existing `members:<companyId>` wake only after the outermost commit. No-op and rolled-back writes announce nothing. Internal audience consumers can read current active memberships and committed change facts, paged by revision. Deactivation retains membership rows but makes them ineffective; reactivation restores their eligibility. Team deletion/recovery is unavailable until the later lifecycle stage assembles resource-reference guards. This core work does not activate team audiences or change patch, connection, guest or public access.
 
 ### Ownership and deactivation
 
@@ -703,7 +707,7 @@ editing the description, disconnecting and deleting each open their own page, as
 the portal confirms retire and delete. Members see the index without Last call,
 the attention notice or Unused, and connection pages without recent calls or
 actions. Connections are company-wide, not per patch. Personal connections and
-group grants remain future work.
+team grants remain future work.
 
 ### The company look
 
@@ -777,7 +781,7 @@ Later, an admin may verify the company's **domain** — proven by email, never a
 
 ### Roles
 
-Three roles, **member**, **admin** and **super admin**, with the [company powers above](#users-admins-groups). Every company member may build and publish. Only super admins change roles, manage admin account lifecycle, administer connections and operate agent access. The last active super admin can neither be demoted nor deactivated. Groups, domains and SSO remain future work; there is no separate builder or viewer role.
+Three roles, **member**, **admin** and **super admin**, with the [company powers above](#users-admins-teams). Every company member may build and publish. Only super admins change roles, manage admin account lifecycle, administer connections and operate agent access. The last active super admin can neither be demoted nor deactivated. Team audiences, domains and SSO remain future work; there is no separate builder or viewer role.
 
 ### Access to a patch
 

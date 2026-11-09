@@ -173,5 +173,39 @@ export const migrations: Migrations = {
     $$`,
     `CREATE TRIGGER companies_admin_role_changed AFTER UPDATE OF is_regular_admin ON users
       FOR EACH ROW EXECUTE FUNCTION companies_admin_role_changed()`
+  ),
+  // Core teams are additive. Audiences and guarded team deletion land later in the stack.
+  "0037_company_teams": ddl(
+    `CREATE TABLE company_teams (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (company_id, id)
+    )`,
+    `CREATE UNIQUE INDEX company_teams_name ON company_teams(company_id, lower(name))`,
+    `ALTER TABLE users ADD CONSTRAINT users_company_identity UNIQUE (company_id, id)`,
+    `CREATE TABLE company_team_members (
+      company_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      PRIMARY KEY (company_id, team_id, user_id),
+      FOREIGN KEY (company_id, team_id) REFERENCES company_teams(company_id, id),
+      FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id)
+    )`,
+    `CREATE INDEX company_team_members_user ON company_team_members(company_id, user_id, team_id)`,
+    `CREATE TABLE company_team_changes (
+      company_id TEXT NOT NULL,
+      revision BIGINT NOT NULL,
+      team_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      added BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (company_id, revision),
+      FOREIGN KEY (company_id, team_id) REFERENCES company_teams(company_id, id),
+      FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id),
+      FOREIGN KEY (company_id, actor_id) REFERENCES users(company_id, id)
+    )`
   )
 };

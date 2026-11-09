@@ -8,7 +8,16 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
-import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
+import { type Cryptography } from "@patchy/core";
+import {
+  CompanyPage,
+  Teams,
+  TeamsPage,
+  Join,
+  type Companies,
+  type InviteMail,
+  type Users
+} from "@patchy/companies";
 import type * as AgentConnections from "./AgentConnections.js";
 import * as BetaLinks from "./BetaLinks.js";
 import * as DevicePages from "./DevicePages.js";
@@ -161,6 +170,7 @@ export const layer: Layer.Layer<
   | HttpRouter.Request.From<
       "Requires",
       | Session.Session
+      | Cryptography.Cryptography
       | Companies.Companies
       | Users.Users
       | InviteMail.InviteMail
@@ -276,6 +286,59 @@ export const layer: Layer.Layer<
                 )
               )
             )
+          )
+        );
+      }
+      yield* router.add(
+        "GET",
+        "/settings/company",
+        errors(
+          RequireSession.withViewer(
+            Effect.gen(function* () {
+              const viewer = yield* RequireSession.Viewer;
+              const session = yield* Session.Session;
+              return pageResponse(
+                {
+                  title: "Company",
+                  body: `<div class="list"><a class="list-row list-link" href="/company">People</a><a class="list-row list-link" href="${TeamsPage.path}">Teams</a></div>`,
+                  app: { viewer, section: "company-settings" }
+                },
+                session
+              );
+            })
+          )
+        )
+      );
+      for (const action of ["view", "create", "rename", "add", "remove"] as const) {
+        const show = Effect.gen(function* () {
+          const viewer = yield* RequireSession.Viewer;
+          const session = yield* Session.Session;
+          const page = yield* TeamsPage.handle(viewer, action);
+          if ("redirect" in page && page.redirect) {
+            const response = HttpServerResponse.redirect(page.redirect, {
+              status: 303,
+              headers: { "cache-control": "private, no-store" }
+            });
+            return "receipt" in page && page.receipt
+              ? Receipt.set(response, {
+                  userId: viewer.user.id,
+                  text: page.receipt,
+                  publicBaseUrl: session.publicBaseUrl
+                })
+              : response;
+          }
+          return pageResponse(
+            { ...page, styles: TeamsPage.styles, app: { viewer, section: "teams" } },
+            session
+          );
+        }).pipe(Effect.provide(Teams.layer));
+        yield* router.add(
+          action === "view" ? "GET" : "POST",
+          action === "view" ? TeamsPage.path : `${TeamsPage.path}/${action}`,
+          errors(
+            action === "view"
+              ? RequireSession.withViewer(show)
+              : RequireSession.sameOrigin(RequireSession.withViewer(show))
           )
         );
       }

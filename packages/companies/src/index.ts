@@ -8,3 +8,5 @@ export * as InviteMail from "./InviteMail.js";
 export * as Invitations from "./Invitations.js";
 export * as Looks from "./Looks.js";
 export * as LookApi from "./LookApi.js";
+export * as Teams from "./Teams.js";
+export * as TeamsPage from "./TeamsPage.js";

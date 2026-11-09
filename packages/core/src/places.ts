@@ -15,8 +15,10 @@ export const places = [
     ]
   },
   {
-    label: "Company",
+    label: "Settings",
     items: [
+      { href: "/settings/company", label: "Company", section: "company-settings" },
+      { href: "/settings/company/teams", label: "Teams", section: "teams" },
       { href: "/company", label: "People", section: "people" },
       { href: "/company/connections", label: "Integrations", section: "integrations" },
       { href: "/company/agent-access", label: "Agent access", section: "agent-access" }

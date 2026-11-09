@@ -155,6 +155,88 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("company page and actions", (it) => {
+  it.effect("manages durable teams through settings and keeps ordinary members read-only", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("teams-settings");
+      const admin = yield* addUser(owner, "teams-admin", "admin");
+      const member = yield* addUser(owner, "teams-member");
+      const root = "/settings/company/teams";
+      const created = yield* send(`${root}/create`, post(admin, { name: "Design <studio>" }));
+      assert.strictEqual(created.status, 303);
+      const location = created.headers.get("location")!;
+      const teamId = new URL(location, base).searchParams.get("team")!;
+      assert.strictEqual(
+        (yield* send(`${root}/add?team=${teamId}`, post(admin, { userId: member.id }))).status,
+        303
+      );
+      const page = yield* send(location, { headers: { cookie: cookie(admin) } });
+      const html = yield* Effect.promise(() => page.text());
+      assert.include(html, "Design &lt;studio&gt;");
+      assert.include(html, member.name);
+      assert.include(html, `${root}/rename?team=`);
+      assert.notInclude(html, `${root}/delete`);
+      const readonly = yield* send(location, { headers: { cookie: cookie(member) } });
+      const readonlyHtml = yield* Effect.promise(() => readonly.text());
+      assert.include(readonlyHtml, "Design &lt;studio&gt;");
+      assert.notInclude(readonlyHtml, `action="${root}/`);
+      for (const [action, body] of [
+        ["create", { name: "Bad" }],
+        ["rename", { name: "Bad" }],
+        ["add", { userId: member.id }],
+        ["remove", { userId: member.id }]
+      ] as const) {
+        assert.strictEqual(
+          (yield* send(`${root}/${action}?team=${teamId}`, post(member, body))).status,
+          403
+        );
+      }
+      const other = yield* createCompany("teams-settings-other");
+      assert.strictEqual(
+        (yield* send(location, { headers: { cookie: cookie(other.user) } })).status,
+        404
+      );
+      assert.strictEqual(
+        (yield* send(`${root}/remove?team=${teamId}`, post(admin, { userId: member.id }))).status,
+        303
+      );
+      const after = yield* send(location, { headers: { cookie: cookie(admin) } });
+      assert.include(yield* Effect.promise(() => after.text()), "No people yet.");
+    })
+  );
+  it.effect(
+    "guards team settings forms against cross-origin writes and rolls back a stale multi-person selection",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("teams-settings-atomic");
+        const member = yield* addUser(owner, "teams-active");
+        const root = "/settings/company/teams";
+        const refused = yield* send(`${root}/create`, {
+          ...post(owner.user, { name: "No" }),
+          headers: { cookie: cookie(owner.user), origin: "https://other.example" }
+        });
+        assert.strictEqual(refused.status, 403);
+        const created = yield* send(`${root}/create`, post(owner.user, { name: "Design" }));
+        const location = created.headers.get("location")!;
+        const teamId = new URL(location, base).searchParams.get("team")!;
+        const response = yield* send(`${root}/add?team=${teamId}`, {
+          method: "POST",
+          headers: { cookie: cookie(owner.user), origin },
+          body: new URLSearchParams([
+            ["userId", member.id],
+            ["userId", "missing-person"]
+          ])
+        });
+        assert.strictEqual(response.status, 409);
+        const page = yield* send(location, { headers: { cookie: cookie(owner.user) } });
+        assert.include(yield* Effect.promise(() => page.text()), "No people yet.");
+        assert.strictEqual(
+          (yield* send(`${root}/create`, post(owner.user, { name: " design " }))).status,
+          409
+        );
+        const signedOut = yield* send(root);
+        assert.strictEqual(signedOut.status, 401);
+      })
+  );
   it.effect(
     "lets regular admins invite ordinary members, but refuses elevated invitations and role changes",
     () =>
