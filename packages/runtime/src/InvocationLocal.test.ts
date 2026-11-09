@@ -704,7 +704,7 @@ it.live(
       assert.strictEqual(replays, 0);
       assert.isTrue(saved.ok);
       if (saved.ok) assert.deepStrictEqual(saved.value, claude);
-      // A failing recheck stops the call at its next company callback.
+      // Admission rechecks first; revocation before the first callback prevents member reads.
       let rechecks = 0;
       const refused = yield* agentCall("member", {
         recheck: Effect.suspend(() =>
@@ -712,7 +712,7 @@ it.live(
         )
       }).pipe(Effect.flip);
       assert.strictEqual(refused.code, "access_denied");
-      assert.deepStrictEqual([rechecks, memberReads], [2, 1]);
+      assert.deepStrictEqual([rechecks, memberReads], [2, 0]);
       // Every logged invocation of the agent's calls, nested ones included, names the agent
       // beside its person; its write names the agent connection as its credential.
       const log = yield* InvocationLog.InvocationLog;

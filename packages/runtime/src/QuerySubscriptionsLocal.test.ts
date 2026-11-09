@@ -255,6 +255,8 @@ it.live(
       if (first.type !== "snapshot") return;
       assert.strictEqual(first.result, "same");
       assert.deepStrictEqual(Object.keys(first.vector).sort(), [
+        "members:cmp_dev",
+        "patch:query403local",
         "table:query403local:left",
         "table:query403local:route"
       ]);
@@ -263,6 +265,8 @@ it.live(
       assert.strictEqual(equal.type, "up-to-date");
       if (equal.type !== "up-to-date") return;
       assert.deepStrictEqual(Object.keys(equal.vector).sort(), [
+        "members:cmp_dev",
+        "patch:query403local",
         "table:query403local:right",
         "table:query403local:route"
       ]);

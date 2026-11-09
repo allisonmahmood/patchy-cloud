@@ -130,7 +130,8 @@ const fixture = Effect.gen(function* () {
     Effect.provideService(SubscriptionReads.SubscriptionReads, {
       admit: () => Effect.die("Unexpected table subscription admission"),
       read: () => Effect.die("Unexpected table subscription read"),
-      revisions: () => Effect.succeed({})
+      revisions: (_companyId, keys) =>
+        Effect.succeed(Object.fromEntries(keys.map((key) => [key, "0"])))
     }),
     Effect.provide(StreamLimits.layerLocal),
     Effect.provide(WideEvents.layerNoop),
@@ -150,6 +151,7 @@ const fixture = Effect.gen(function* () {
       ...Fixtures.binding,
       companyId: viewer.company.id,
       identity: viewer,
+      reauthorize: Effect.succeed(viewer),
       principal: { userId: viewer.user.id },
       patchId,
       manifest: {
@@ -297,7 +299,7 @@ it.layer(services)("Subscription invocation settlement", (it) => {
           id: "query",
           revision: "1",
           result: "recovered",
-          vector: {}
+          vector: { "patch:settlement-unknown": "0", [`members:${viewer.company.id}`]: "0" }
         });
         assert.strictEqual(f.held.size, 0);
         assert.deepStrictEqual(f.peaks, { company: 1, patch: 1 });
