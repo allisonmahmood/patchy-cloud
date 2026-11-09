@@ -137,14 +137,15 @@ export const make = Effect.gen(function* () {
   });
   // NOTIFY is transactional in PostgreSQL: even an enclosing transaction/savepoint must commit.
   // Reuse the directory revision and members wake; there is no independent permission bus.
-  const advanceRevision = SqlSchema.single({
+  const advanceRevision = SqlSchema.findAll({
     Request: Schema.String,
     Result: Schema.Struct({ revision: Schema.String }),
     execute: (companyId) =>
       sql`INSERT INTO companies_directory(company_id, revision) VALUES (${companyId}, 1) ON CONFLICT(company_id) DO UPDATE SET revision = companies_directory.revision + 1 RETURNING revision::text`
   });
   const changed = Effect.fn("Teams.changed")(function* (companyId: string) {
-    const { revision } = yield* advanceRevision(companyId).pipe(Effect.catchTags(schemaError));
+    const rows = yield* advanceRevision(companyId).pipe(Effect.catchTags(schemaError));
+    const revision = rows[0]!.revision;
     yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`members:${companyId}`}])::text)`;
     return revision;
   });
