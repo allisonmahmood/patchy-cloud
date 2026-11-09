@@ -97,9 +97,12 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
     companyId: string,
     keys: readonly string[]
   ) {
-    const patchKeys = keys.filter((key) => key.startsWith("patch:"));
+    const patchKeys = keys.filter(
+      (key) => key.startsWith("patch:") || key.startsWith("connection:")
+    );
     const resources = keys.filter(
-      (key) => !key.startsWith("patch:") && !key.startsWith("members:")
+      (key) =>
+        !key.startsWith("patch:") && !key.startsWith("members:") && !key.startsWith("connection:")
     );
     const members: Record<string, string> = {};
     for (const key of keys) {
@@ -120,7 +123,8 @@ const makeReader = Effect.fn("SubscriptionReads.makeReader")(function* (lifecycl
       (key) => key.startsWith("patch:") || key.startsWith("members:")
     );
     const resourceKeys = dependency.keys.filter(
-      (key) => !key.startsWith("patch:") && !key.startsWith("members:")
+      (key) =>
+        !key.startsWith("patch:") && !key.startsWith("members:") && !key.startsWith("connection:")
     );
     // Platform lifecycle is outside the company snapshot. A changed fence refuses this run.
     const before = yield* revisions(input.binding.companyId, patchKeys);
@@ -176,6 +180,8 @@ export const make: Effect.Effect<
     Result: ResourceRevisions.RevisionRow,
     execute: ({ companyId, patchIds }) => sql`SELECT 'patch:' || id AS key,
       (lifecycle_revision + audience_revision)::text AS revision FROM patches
+      WHERE company_id = ${companyId} AND ${sql.in("id", patchIds)}
+      UNION ALL SELECT 'connection:' || id AS key, authority_revision::text AS revision FROM connections
       WHERE company_id = ${companyId} AND ${sql.in("id", patchIds)}`
   });
   return yield* makeReader(
@@ -185,11 +191,14 @@ export const make: Effect.Effect<
     ) {
       const vector: Record<string, string> = Object.fromEntries(keys.map((key) => [key, "-1"]));
       if (keys.length > 0) {
-        const rows = yield* find({ companyId, patchIds: keys.map((key) => key.slice(6)) }).pipe(
+        const rows = yield* find({
+          companyId,
+          patchIds: keys.map((key) => key.slice(key.indexOf(":") + 1))
+        }).pipe(
           Effect.catchTags({ SchemaError: Effect.die }),
           Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
         );
-        for (const row of rows) vector[row.key] = row.revision;
+        for (const row of rows) if (Object.hasOwn(vector, row.key)) vector[row.key] = row.revision;
       }
       return vector;
     })

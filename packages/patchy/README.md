@@ -1885,3 +1885,10 @@ Publish and sharing JSON include the committed `audience`. Text output reports i
 Malformed audience JSON is local (exit 1); a refused selection is rejected (exit 2). Team and All guests audiences remain unavailable until
 #1287–#1291 complete enforcement; an internal assembly barrier refuses their writes
 and admission rather than widening them to Company. This stack must land together.
+
+Connection discovery (`list connections`, including detail and schema generation)
+shows only connections the current person can use. Company/team audiences are set
+by super admins in the browser, separately from Block guests. Declaring a connection
+does not grant it; runtime and cloud-backed dev reads recheck current membership.
+Publish and share report informative connection-audience mismatch warnings. Share's
+JSON response may include `warnings`; the human output prints each warning.

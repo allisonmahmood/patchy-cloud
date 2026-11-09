@@ -41,6 +41,20 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
             companyId: identity.company.id,
             lookup: { integration, handle }
           });
+        const row = (yield* connections.list(identity.company.id)).find(
+          (row) => row.integration === integration && row.handle === handle
+        );
+        if (
+          !row ||
+          !(yield* connections.canUse(identity.company.id, row.id, {
+            userId: identity.user.id,
+            guest: false
+          }))
+        )
+          return yield* new ConnectionStore.ConnectionNotFound({
+            companyId: identity.company.id,
+            lookup: { integration, handle }
+          });
         const found = yield* connections.detail(identity.company.id, integration, handle);
         return HttpServerResponse.jsonUnsafe(encodeDetail(found), noStore);
       }).pipe(
@@ -48,7 +62,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           ConnectionStorageFailed: unavailable,
           ConnectionNotFound: (error) =>
             Effect.succeed(refuse(NotFound, { ok: false, error: error.message }, noStore.headers))
-        })
+        }),
+        Effect.orDie
       );
     return handlers
       .handle("listConnections", ({ query }) =>
@@ -63,9 +78,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
             asked.includes(integration)
           );
-          const rows = (yield* connections.list(identity.company.id)).filter((row) =>
-            shown.includes(row.integration)
-          );
+          const rows = (yield* Effect.filter(yield* connections.list(identity.company.id), (row) =>
+            connections.canUse(identity.company.id, row.id, {
+              userId: identity.user.id,
+              guest: false
+            })
+          )).filter((row) => shown.includes(row.integration));
           return HttpServerResponse.jsonUnsafe(
             encodeConnections({
               connections: rows.map((row) => {

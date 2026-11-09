@@ -127,6 +127,18 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       disconnect: unavailable,
       reconnect: unavailable,
       describe: unavailable,
+      audience: () => Effect.succeed({ kind: "company" as const }),
+      setAudience: unavailable,
+      canUse: (companyId, id, viewer) =>
+        Effect.succeed(
+          metadata.some(
+            (item) =>
+              item.connection.id === id &&
+              item.connection.companyId === companyId &&
+              (!viewer.guest || !item.connection.blockGuests)
+          )
+        ),
+      teamReferences: () => Effect.succeed([]),
       blockGuests: unavailable,
       blockingGuests: (ids) =>
         Effect.succeed(

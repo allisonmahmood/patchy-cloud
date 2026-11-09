@@ -990,10 +990,10 @@ export class Patches extends Context.Service<
       actor: Actor
     ) => Effect.Effect<Patch, PatchUnavailable | NotOwner | SqlError>;
     /** Changes a live patch's audience without creating a version. */
-    readonly setSharing: (
-      input: SharingChange
-    ) => Effect.Effect<
-      Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId" | "audience">,
+    readonly setSharing: (input: SharingChange) => Effect.Effect<
+      Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId" | "audience"> & {
+        readonly warnings: readonly string[];
+      },
       LifecycleError | Audiences.InvalidAudience | Tier2NotPublic | SqlError
     >;
     /** A retained name or redirect, including off and operator-disabled patches. */
@@ -1945,6 +1945,34 @@ export const make = Effect.gen(function* () {
     } satisfies SharedStore;
   });
 
+  const connectionWarnings = Effect.fn("Patches.connectionWarnings")(function* (
+    manifest: typeof Manifest.Type,
+    companyId: string,
+    userId: string,
+    audience: PatchAudience
+  ) {
+    const warnings: string[] = [];
+    for (const declaration of Object.values(manifest.uses)) {
+      if (!("handle" in declaration)) continue;
+      const warning = yield* Effect.gen(function* () {
+        if (!(yield* connections.canUse(companyId, declaration.id, { userId, guest: false })))
+          return "A declared connection has restricted access. Some viewers may be unable to use this patch.";
+        const selected = yield* connections.audience(companyId, declaration.id);
+        if (selected.kind === "company") return null;
+        if (
+          audience.members.kind === "teams" &&
+          audience.members.teamIds.every((id) => selected.teamIds.includes(id))
+        )
+          return null;
+        return `Connection ${declaration.kind}/${declaration.handle} is restricted to selected teams. Some viewers may be unable to use this patch.`;
+      }).pipe(
+        Effect.catch(() => Effect.succeed("Could not check a declared connection's audience."))
+      );
+      if (warning !== null && !warnings.includes(warning)) warnings.push(warning);
+    }
+    return warnings;
+  });
+
   const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
     manifest: typeof Manifest.Type,
     companyId: string
@@ -2464,6 +2492,7 @@ export const make = Effect.gen(function* () {
             : {}),
           warnings: [
             ...input.warnings,
+            ...(yield* connectionWarnings(input.manifest, companyId, input.ownerUserId, audience)),
             ...declarationWarnings,
             ...resources.warnings,
             ...sharingWarnings
@@ -2726,6 +2755,15 @@ export const make = Effect.gen(function* () {
       ownerId: row.ownerUserId,
       previous: row.audience
     });
+    const current =
+      row.currentVersionId === null
+        ? Option.none()
+        : yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(
+            Effect.catchTags(dieOnSchemaError)
+          );
+    const warnings = Option.isSome(current)
+      ? yield* connectionWarnings(current.value.manifest, row.companyId, actor.userId, chosen)
+      : [];
     yield* saveAudience(patchId, row.companyId, chosen, actor.userId);
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
@@ -2744,6 +2782,7 @@ export const make = Effect.gen(function* () {
       id: row.id,
       scope,
       audience: chosen,
+      warnings,
       name: row.name,
       companyHandle: row.companyHandle,
       currentVersionId: row.currentVersionId

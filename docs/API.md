@@ -1180,6 +1180,7 @@ RuntimeSuccess | HandlerFailure
 
 ```
 {
+  warnings?: string[],
   ok: true,
   patchId: string,
   scope: "company" | "public",

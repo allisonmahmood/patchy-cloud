@@ -569,7 +569,7 @@ const linkButton = (path: string, label: string, tone = "") =>
 const adminActions = (connection: Connection, actions: Actions) => {
   const path = (action: string) => connectionPath(connection.id, action);
   const connected = connection.status === "connected";
-  return `<div class="connection-actions">${postButton(path("test"), "Test connection")}${connected ? postButton(path("refresh"), actions.refresh) : ""}${actions.access === undefined ? "" : linkButton(path("access"), `${actions.access}…`)}${linkButton(path("rotate"), `${actions.rotate}…`)}${actions.retarget === undefined ? "" : linkButton(path("retarget"), `${actions.retarget}…`)}${linkButton(path("description"), "Edit description…")}${connection.blockGuests ? postButton(path("allow-guests"), "Allow guests") : postButton(path("block-guests"), "Block guests")}${connected ? linkButton(path("disconnect"), "Disconnect…", " btn-danger") : postButton(path("reconnect"), "Reconnect")}${connection.declared ? "" : linkButton(path("delete"), "Delete…", " btn-quiet")}</div>${connection.declared ? '<p class="supporting-text">Delete is offered once no stored patch version declares this connection.</p>' : ""}${connected ? "" : '<p class="supporting-text">Reconnecting tests the stored credentials before restoring access.</p>'}`;
+  return `<div class="connection-actions">${postButton(path("test"), "Test connection")}${connected ? postButton(path("refresh"), actions.refresh) : ""}${actions.access === undefined ? "" : linkButton(path("access"), `${actions.access}…`)}${linkButton(path("rotate"), `${actions.rotate}…`)}${actions.retarget === undefined ? "" : linkButton(path("retarget"), `${actions.retarget}…`)}${linkButton(path("audience"), "Edit audience…")}${linkButton(path("description"), "Edit description…")}${connection.blockGuests ? postButton(path("allow-guests"), "Allow guests") : postButton(path("block-guests"), "Block guests")}${connected ? linkButton(path("disconnect"), "Disconnect…", " btn-danger") : postButton(path("reconnect"), "Reconnect")}${connection.declared ? "" : linkButton(path("delete"), "Delete…", " btn-quiet")}</div>${connection.declared ? '<p class="supporting-text">Delete is offered once no stored patch version declares this connection.</p>' : ""}${connected ? "" : '<p class="supporting-text">Reconnecting tests the stored credentials before restoring access.</p>'}`;
 };
 
 /** The label after a connection's name, such as a test connection's. */
@@ -618,7 +618,7 @@ export const renderConnection = (input: {
 // ---------- confirmations ----------
 
 export type Confirmation =
-  "rotate" | "retarget" | "access" | "description" | "disconnect" | "delete";
+  "rotate" | "retarget" | "access" | "description" | "disconnect" | "delete" | "audience";
 
 /**
  * A risky or form-backed action on its own page, as the portal confirms retire and delete. The
@@ -649,6 +649,12 @@ export const renderConfirmation = (input: {
       ? '<p class="supporting-text">No live patch declares it now.</p>'
       : `<p>These patches lose access on their next call:</p><ul class="confirmation-list">${connection.usedBy.map((patch) => `<li>${patchLink(patch)}</li>`).join("")}</ul>`;
   const page = {
+    audience: {
+      title: input.form?.title ?? "Connection audience",
+      consequence: "",
+      fields: input.form?.fields ?? "",
+      submit: ["btn-primary", "Save audience"]
+    },
     rotate: {
       title: input.form?.title ?? label,
       consequence: input.form?.consequence ?? "",

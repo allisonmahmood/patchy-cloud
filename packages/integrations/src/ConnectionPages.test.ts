@@ -18,7 +18,7 @@ import { PostgresDeclaration } from "@patchy/api";
 import { Session } from "@patchy/auth";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { clerkEnv, signedInCookies, signSession } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Teams, Companies, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as ConnectionPages from "./ConnectionPages.js";
@@ -32,7 +32,7 @@ import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
-import { NodeCryptography } from "@patchy/core";
+import { AudienceActivation, NodeCryptography } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -286,6 +286,49 @@ const storeVersion = Effect.fn(function* (
 });
 
 it.layer(services)("company connection pages", (it) => {
+  it.effect("edits audiences only as a super admin and conceals restricted direct pages", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("connection-audience-page");
+      const admin = yield* addUser(owner, "regular", "admin");
+      const member = yield* addUser(owner, "reader");
+      const { connection, path } = yield* connect(owner.user, "audience-page");
+      const team = yield* Teams.create({
+        companyId: owner.company.id,
+        actorId: owner.user.id,
+        name: "Design & Engineering"
+      });
+      const editing = yield* send(`${path}/audience`, { headers: { cookie: cookie(owner.user) } });
+      const html = yield* Effect.promise(() => editing.text());
+      assert.equal(editing.status, 200);
+      assert.include(html, "Design &amp; Engineering");
+      assert.include(html, 'name="audience" value="company"');
+      const fields = { audience: "teams", [`team-${team.id}`]: "yes" };
+      assert.equal((yield* send(`${path}/audience`, post(admin, fields))).status, 403);
+      const saved = yield* send(`${path}/audience`, post(owner.user, fields));
+      assert.equal(saved.status, 303);
+      const store = yield* ConnectionStore.ConnectionStore;
+      assert.deepEqual(yield* store.audience(owner.company.id, connection.id), {
+        kind: "teams",
+        teamIds: [team.id]
+      });
+      assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 404);
+      const listed = yield* send("/company/connections", { headers: { cookie: cookie(member) } });
+      assert.notInclude(yield* Effect.promise(() => listed.text()), "postgres/audience-page");
+      yield* Teams.setMemberships({
+        companyId: owner.company.id,
+        actorId: owner.user.id,
+        teamId: team.id,
+        userIds: [member.id],
+        added: true
+      });
+      assert.equal((yield* send(path, { headers: { cookie: cookie(member) } })).status, 200);
+      assert.equal(
+        (yield* send(`${path}/audience`, post(owner.user, { audience: "company" }))).status,
+        303
+      );
+      assert.deepEqual(yield* store.audience(owner.company.id, connection.id), { kind: "company" });
+    }).pipe(Effect.provideService(AudienceActivation, true))
+  );
   it.effect("refuses regular-admin connection setup and every direct management request", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("regular-admin-connections");

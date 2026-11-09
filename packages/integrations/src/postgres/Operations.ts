@@ -1,3 +1,4 @@
+import { ViewerRefusal } from "../definition.js";
 import { Buffer } from "node:buffer";
 import {
   PostgresGet,
@@ -18,7 +19,7 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation } from "../definition.js";
+import { connectionRecheck, operation } from "../definition.js";
 import * as Execution from "./Execution.js";
 import {
   acceptedSourceTypes,
@@ -123,6 +124,7 @@ export class SourceSchemaChanged extends Schema.TaggedError<SourceSchemaChanged>
 }
 
 export const Errors = Schema.Union([
+  ViewerRefusal,
   Execution.Errors,
   ConnectionNotDeclared,
   RelationUnknown,
@@ -225,6 +227,7 @@ const resolve = Effect.fn("PostgresOperations.resolve")(function* (alias: string
     connection.status !== "connected"
   )
     return yield* new Runtime.AccessDenied({});
+  yield* connectionRecheck(binding, declaration.id);
   return { binding, declaration };
 });
 
@@ -261,7 +264,14 @@ const execute = Effect.fn("PostgresOperations.execute")(function* (
       companyId: resolved.binding.companyId,
       declaration: resolved.declaration,
       text,
-      parameters
+      parameters,
+      recheck: connectionRecheck(resolved.binding, resolved.declaration.id).pipe(
+        Effect.provideService(
+          ConnectionStore.ConnectionStore,
+          yield* ConnectionStore.ConnectionStore
+        ),
+        Effect.mapError(() => new Execution.AccessDenied({}))
+      )
     })
     .pipe(
       Effect.catchTags({

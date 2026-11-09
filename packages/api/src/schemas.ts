@@ -1114,6 +1114,7 @@ export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
 }) {}
 
 export class Shared extends Schema.Class<Shared>("Shared")({
+  warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ok: Schema.Literal(true),
   patchId: PatchId,
   scope: SharingScope,

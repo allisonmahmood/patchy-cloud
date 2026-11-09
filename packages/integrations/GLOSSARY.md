@@ -211,3 +211,17 @@ _Avoid_: dry run, fake send, test send (a test-mode key's send, which does land 
 **Fixture**:
 Builder-authored synthetic data for a declaration's local shape, with invented rows for connections and shared tables, or files for shared stores. Fixtures establish local behavior, not production data, authority or volume guarantees; view fixtures contain explicit rows rather than recomputed source data.
 _Avoid_: Sample of production, mock response
+
+**Connection audience**:
+Company or a union of selected company teams, configured only by a super admin.
+It restricts members' connection calls independently of the consuming patch's audience.
+Outside guests retain their existing handler/resource restrictions and the separate
+Block guests control; team grants never turn them into company members. Stable team
+references survive rename and credential replacement/reconnection.
+
+**Connection authority revision**:
+A durable counter committed with connection-audience, guest-control and availability
+changes. Existing runtime wakes and reconciliation fence traced connection dependencies
+alongside membership revisions before protected live delivery. Failed/no-op audience
+changes do not advance it. Integrations supplies team-reference knowledge for Hosting's
+later guarded team lifecycle assembly.

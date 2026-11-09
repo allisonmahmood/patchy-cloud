@@ -1291,7 +1291,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
           return yield* again({ confirmPublic: true });
         }
-        yield* patches.setSharing({
+        const shared = yield* patches.setSharing({
           patchId: selected.patch.id,
           actor: actor,
           audience: audience,
@@ -1300,9 +1300,10 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           expectedOwnerUserId: form.expectedOwnerUserId
         });
         return reopened(
-          audience.members.kind === "teams"
+          (audience.members.kind === "teams"
             ? `Shared ${title} with selected teams`
-            : `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
+            : `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`) +
+            (shared.warnings.length ? ` ${shared.warnings.join(" ")}` : "")
         );
       }
     }

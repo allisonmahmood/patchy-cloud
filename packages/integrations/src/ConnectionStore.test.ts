@@ -19,7 +19,8 @@ import * as PostHogDouble from "./test/posthog.js";
 import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
-import { NodeCryptography } from "@patchy/core";
+import { Teams } from "@patchy/companies";
+import { AudienceActivation, NodeCryptography } from "@patchy/core";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -94,6 +95,145 @@ const fixture = SqlConnectionStore.layer.pipe(
 );
 
 it.layer(fixture)("ConnectionStore", (it) => {
+  it.effect(
+    "connection audiences revoke and restore current effective membership without widening guests",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore.ConnectionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const connection = yield* store.connect(input("team-audience"));
+        const actor = { companyId: who.companyId, actorId: who.userId };
+        const design = yield* Teams.create({ ...actor, name: "Connection Design" });
+        const engineering = yield* Teams.create({ ...actor, name: "Connection Engineering" });
+        const member = "connection-audience-member";
+        const admin = "connection-audience-admin";
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role, is_regular_admin) VALUES
+        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member', false),
+        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'member', true)`;
+        assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
+        const target = {
+          ...identity(connection),
+          audience: { kind: "teams" as const, teamIds: [design.id, engineering.id] }
+        };
+        const disabled = yield* store.setAudience(target).pipe(Effect.flip);
+        assert.equal(disabled._tag, "InvalidConnectionAudience");
+        const configure = store
+          .setAudience(target)
+          .pipe(Effect.provideService(AudienceActivation, true));
+        yield* configure;
+        assert.equal(
+          (yield* store.setAudience({ ...target, userId: admin }).pipe(Effect.flip))._tag,
+          "InvalidConnectionAudience"
+        );
+        const canUse = (userId: string) =>
+          store
+            .canUse(who.companyId, connection.id, { userId, guest: false })
+            .pipe(Effect.provideService(AudienceActivation, true));
+        assert.equal(yield* canUse(member), false);
+        assert.equal(yield* canUse(who.userId), true);
+        assert.equal(yield* canUse(admin), false);
+        yield* Teams.setMemberships({
+          ...actor,
+          teamId: design.id,
+          userIds: [member],
+          added: true
+        });
+        assert.equal(yield* canUse(member), true);
+        yield* Teams.setMemberships({
+          ...actor,
+          teamId: engineering.id,
+          userIds: [member],
+          added: true
+        });
+        yield* Teams.setMemberships({
+          ...actor,
+          teamId: design.id,
+          userIds: [member],
+          added: false
+        });
+        assert.equal(yield* canUse(member), true);
+        yield* Teams.setMemberships({
+          ...actor,
+          teamId: engineering.id,
+          userIds: [member],
+          added: false
+        });
+        assert.equal(yield* canUse(member), false);
+        yield* Teams.setMemberships({
+          ...actor,
+          teamId: design.id,
+          userIds: [member],
+          added: true
+        });
+        assert.equal(yield* canUse(member), true);
+        assert.equal(
+          yield* store.canUse(who.companyId, connection.id, { userId: member, guest: false }),
+          false
+        );
+        assert.equal(
+          yield* store
+            .canUse(who.companyId, connection.id, { userId: "outside", guest: true })
+            .pipe(Effect.provideService(AudienceActivation, true)),
+          true
+        );
+        yield* store.blockGuests({ ...identity(connection), block: true });
+        assert.equal(
+          yield* store
+            .canUse(who.companyId, connection.id, { userId: "outside", guest: true })
+            .pipe(Effect.provideService(AudienceActivation, true)),
+          false
+        );
+        assert.deepEqual(yield* store.teamReferences(who.companyId, design.id), [connection.id]);
+        const revision =
+          yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`;
+        yield* configure;
+        assert.deepEqual(
+          yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`,
+          revision
+        );
+        yield* store.disconnect(identity(connection));
+        yield* store.reconnect(identity(connection));
+        assert.deepEqual(
+          yield* store.audience(who.companyId, connection.id),
+          target.audience.kind === "teams"
+            ? { kind: "teams", teamIds: [...target.audience.teamIds].sort() }
+            : target.audience
+        );
+      })
+  );
+  it.effect("audience revisions and references roll back together", () =>
+    Effect.gen(function* () {
+      const store = yield* ConnectionStore.ConnectionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const connection = yield* store.connect(input("audience-rollback"));
+      const team = yield* Teams.create({
+        companyId: who.companyId,
+        actorId: who.userId,
+        name: "Rollback audience"
+      });
+      const before =
+        yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`;
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* store
+              .setAudience({
+                ...identity(connection),
+                audience: { kind: "teams", teamIds: [team.id] }
+              })
+              .pipe(Effect.provideService(AudienceActivation, true));
+            return yield* Effect.fail("rollback");
+          })
+        )
+        .pipe(Effect.flip);
+      assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
+      assert.deepEqual(yield* store.teamReferences(who.companyId, team.id), []);
+      assert.deepEqual(
+        yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`,
+        before
+      );
+    })
+  );
   it.effect(
     "pool creation checks live identity and credentials without rebinding published metadata",
     () =>

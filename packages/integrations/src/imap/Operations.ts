@@ -37,7 +37,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { FetchQueryObject, ImapFlow, ImapFlowError, ListResponse } from "imapflow";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, viewerRecheck, ViewerRefusal, type DevRead } from "../definition.js";
+import { operation, connectionRecheck, ViewerRefusal, type DevRead } from "../definition.js";
 import {
   ForeignRef,
   InvalidCheckpoint,
@@ -768,7 +768,12 @@ const admitted = <A, R>(
         revision: declaration.revision
       },
       deadline,
-      recheck: viewerRecheck(binding)
+      recheck: connectionRecheck(binding, declaration.id).pipe(
+        Effect.provideService(
+          ConnectionStore.ConnectionStore,
+          yield* ConnectionStore.ConnectionStore
+        )
+      )
     });
   }).pipe(
     Effect.catchTags({

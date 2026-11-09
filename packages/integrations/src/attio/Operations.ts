@@ -29,7 +29,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ConnectionStore from "../ConnectionStore.js";
-import { operation, viewerRecheck, ViewerRefusal, type DevRead } from "../definition.js";
+import { operation, connectionRecheck, ViewerRefusal, type DevRead } from "../definition.js";
 import * as Calls from "./Calls.js";
 import {
   Changed,
@@ -637,7 +637,9 @@ const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioR
     return yield* new Runtime.AccessDenied({});
   // The caller's own deadline bounds the wait for a slot, so a refused wait is never a timeout.
   const deadline = binding.deadline ?? (yield* Clock.currentTimeMillis) + DEADLINE_MS;
-  const recheck = viewerRecheck(binding);
+  const recheck = connectionRecheck(binding, declaration.id).pipe(
+    Effect.provideService(ConnectionStore.ConnectionStore, yield* ConnectionStore.ConnectionStore)
+  );
   return yield* atWorkspace(
     {
       companyId,

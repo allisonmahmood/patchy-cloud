@@ -25,6 +25,15 @@ export const Description = Schema.String.check(
   Schema.isMaxLength(500),
   Schema.makeFilter((value) => !/[\r\n]/.test(value))
 );
+export const Audience = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("company") }),
+  Schema.Struct({
+    kind: Schema.Literal("teams"),
+    teamIds: Schema.Array(Schema.String).check(Schema.isMinLength(1))
+  })
+]);
+export type Audience = typeof Audience.Type;
+
 const fields = {
   id: Schema.String,
   companyId: Schema.String,
@@ -215,6 +224,16 @@ export class ConnectionMutationUnavailable extends Schema.TaggedError<Connection
     return "Connection administration is unavailable in the local development runtime. Use the company's connections page.";
   }
 }
+export class InvalidConnectionAudience extends Schema.TaggedError<InvalidConnectionAudience>()(
+  "InvalidConnectionAudience",
+  {}
+) {
+  readonly code = "invalid_connection_audience";
+  readonly status = 403;
+  override get message() {
+    return "Only a super admin can select Company or existing company teams. Team audiences require completed access enforcement.";
+  }
+}
 export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorageFailed>()(
   "ConnectionStorageFailed",
   {
@@ -235,6 +254,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
       "describe",
       "blockGuests",
       "blockingGuests",
+      "audience",
       "delete",
       "resolve",
       "poolCredentials",
@@ -254,6 +274,7 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
 
 export type ResolveError = ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
 export type ConnectionError =
+  | InvalidConnectionAudience
   | ResolveError
   | ConnectionNotFound
   | ConnectionChanged
@@ -323,6 +344,19 @@ export interface Deleted {
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   {
+    readonly audience: (companyId: string, id: string) => Effect.Effect<Audience, ConnectionError>;
+    readonly setAudience: (
+      input: Identity & { readonly audience: Audience }
+    ) => Effect.Effect<void, ConnectionError>;
+    readonly canUse: (
+      companyId: string,
+      id: string,
+      viewer: { readonly userId: string; readonly guest: boolean }
+    ) => Effect.Effect<boolean, ConnectionError>;
+    readonly teamReferences: (
+      companyId: string,
+      teamId: string
+    ) => Effect.Effect<readonly string[], ConnectionError>;
     readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
     /** Each declared connection's usage by id; a connection with no entry is `unused`. */

@@ -93,6 +93,7 @@ export const Errors = Schema.Union([
 ]);
 export type ExecutionError = typeof Errors.Type;
 export interface QueryInput {
+  readonly recheck?: Effect.Effect<void, ExecutionError>;
   readonly companyId: string;
   readonly declaration: typeof PostgresDeclaration.Type;
   readonly text: string;
@@ -522,6 +523,7 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
           const reserved = entry;
           const ready = yield* restore(
             Effect.gen(function* () {
+              yield* input.recheck ?? Effect.void;
               if (reserved.client === undefined) {
                 const settings = yield* reserved.credentials;
                 reserved.settings = settings;
@@ -536,6 +538,7 @@ export const makeWithClient = Effect.fn("Postgres.makeWithClient")(function* <R>
                 );
               }
               // Connection creation and queueing can race a rotation, retarget or disconnect.
+              yield* input.recheck ?? Effect.void;
               const latest = yield* live(input);
               if (latest.credentialRevision !== reserved.revision)
                 return yield* new ConnectionStore.ConnectionChanged({});

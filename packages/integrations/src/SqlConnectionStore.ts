@@ -10,7 +10,8 @@ import {
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
-import { Cryptography } from "@patchy/core";
+import { AudienceActivation, Cryptography } from "@patchy/core";
+import { Teams, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
@@ -1545,6 +1546,114 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       },
       Effect.catchTags(safe("describe"))
     );
+    const decodeAudienceRows = Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          kind: Schema.Literals(["company", "teams"]),
+          teamIds: Schema.Array(Schema.String)
+        })
+      )
+    );
+    const audience = Effect.fn("ConnectionStore.audience")(
+      function* (
+        companyId: string,
+        id: string
+      ): Effect.fn.Return<
+        ConnectionStore.Audience,
+        ConnectionStore.ConnectionError | SqlError | Schema.SchemaError
+      > {
+        const rows =
+          yield* sql`SELECT c.audience_kind AS kind, ARRAY(SELECT team_id FROM connection_team_grants WHERE connection_id = c.id ORDER BY team_id) AS "teamIds" FROM connections c WHERE c.company_id = ${companyId} AND c.id = ${id}`.pipe(
+            Effect.flatMap(decodeAudienceRows)
+          );
+        const row = rows[0];
+        if (!row) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
+        return row.kind === "company"
+          ? { kind: "company" }
+          : { kind: "teams", teamIds: row.teamIds };
+      },
+      Effect.catchTags(safe("audience"))
+    );
+    const canUse = Effect.fn("ConnectionStore.canUse")(
+      function* (
+        companyId: string,
+        id: string,
+        viewer: { readonly userId: string; readonly guest: boolean }
+      ) {
+        const connection = yield* get(companyId, id);
+        const selected = yield* audience(companyId, id);
+        if (selected.kind === "teams" && !(yield* AudienceActivation)) return false;
+        if (viewer.guest) return !connection.blockGuests;
+        if (selected.kind === "company") return true;
+        const teams = yield* Teams.memberships(companyId, viewer.userId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
+        return selected.teamIds.some((id) => teams.includes(id));
+      },
+      Effect.catchTags({ SqlError: safe("audience").SqlError })
+    );
+    const setAudience = Effect.fn("ConnectionStore.setAudience")(
+      function* (input: Identity & { readonly audience: ConnectionStore.Audience }) {
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const role = yield* Users.lockAdministrator({
+              companyId: input.companyId,
+              actorId: input.userId
+            }).pipe(
+              Effect.catchTags({
+                RoleForbidden: () => Effect.fail(new ConnectionStore.InvalidConnectionAudience())
+              })
+            );
+            if (role !== "super_admin")
+              return yield* new ConnectionStore.InvalidConnectionAudience();
+            yield* lock(input);
+            const selected = input.audience;
+            if (selected.kind === "teams") {
+              if (!(yield* AudienceActivation) || selected.teamIds.length === 0)
+                return yield* new ConnectionStore.InvalidConnectionAudience();
+              const teams = yield* Teams.list({
+                companyId: input.companyId,
+                actorId: input.userId
+              }).pipe(
+                Effect.catchTags({
+                  RoleForbidden: () => Effect.fail(new ConnectionStore.InvalidConnectionAudience())
+                })
+              );
+              if (selected.teamIds.some((id) => !teams.some((team) => team.id === id)))
+                return yield* new ConnectionStore.InvalidConnectionAudience();
+            }
+            const previous = yield* audience(input.companyId, input.id);
+            const ids = selected.kind === "teams" ? [...new Set(selected.teamIds)].sort() : [];
+            if (
+              previous.kind === selected.kind &&
+              (previous.kind === "company" ||
+                (previous.teamIds.length === ids.length &&
+                  previous.teamIds.every((id, index) => id === ids[index])))
+            )
+              return;
+            yield* sql`DELETE FROM connection_team_grants WHERE connection_id = ${input.id}`;
+            for (const teamId of ids)
+              yield* sql`INSERT INTO connection_team_grants(connection_id, company_id, team_id) VALUES (${input.id}, ${input.companyId}, ${teamId})`;
+            yield* sql`UPDATE connections SET audience_kind = ${selected.kind}, authority_revision = authority_revision + 1 WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+          })
+        );
+      },
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.catchTags(safe("audience"))
+    );
+    const decodeTeamReferences = Schema.decodeUnknownEffect(
+      Schema.Array(Schema.Struct({ id: Schema.String }))
+    );
+    const teamReferences = Effect.fn("ConnectionStore.teamReferences")(
+      function* (companyId: string, teamId: string) {
+        const rows =
+          yield* sql`SELECT connection_id AS id FROM connection_team_grants WHERE company_id = ${companyId} AND team_id = ${teamId}`.pipe(
+            Effect.flatMap(decodeTeamReferences)
+          );
+        return rows.map((row) => row.id);
+      },
+      Effect.catchTags(safe("audience"))
+    );
     const blockGuests = Effect.fn("ConnectionStore.blockGuests")(
       function* (input: Identity & { readonly block: boolean }) {
         return yield* sql.withTransaction(
@@ -1712,6 +1821,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     );
 
     return ConnectionStore.ConnectionStore.of({
+      audience,
+      setAudience,
+      canUse,
+      teamReferences,
       list,
       get,
       usage,

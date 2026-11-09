@@ -85,6 +85,7 @@ export const make = Effect.gen(function* () {
         allowed.add(`store:${declaration.patchId}:${declaration.store}`);
         allowed.add(`patch:${declaration.patchId}`);
       } else if (declaration.kind === "members") allowed.add(`members:${binding.companyId}`);
+      else if ("handle" in declaration) allowed.add(`connection:${declaration.id}`);
     }
     // Resume keys are untrusted. Only fence declared resources; callbacks still
     // trace the actual dependencies, including accesses which fail.
@@ -101,6 +102,7 @@ export const make = Effect.gen(function* () {
       if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
         sources.add(`patch:${declaration.patchId}`);
       else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
+      else if ("handle" in declaration) sources.add(`connection:${declaration.id}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
     const attempted = new Set<string>([`patch:${binding.patchId}`, `members:${binding.companyId}`]);
     for (const key of attempted) input.onDependency?.(key);
@@ -120,7 +122,8 @@ export const make = Effect.gen(function* () {
     );
     if (!reply.ok) return yield* new SubscriptionReads.HandlerRefusal({ failure: reply });
     const sourceKeys = [...attempted].filter(
-      (key) => key.startsWith("patch:") || key.startsWith("members:")
+      (key) =>
+        key.startsWith("patch:") || key.startsWith("members:") || key.startsWith("connection:")
     );
     const after = yield* reads.revisions(binding.companyId, sourceKeys);
     const changed = sourceKeys.find((key) => before[key] !== after[key]);
@@ -128,8 +131,9 @@ export const make = Effect.gen(function* () {
     const vector: Record<string, string> = {};
     for (const key of attempted)
       vector[key] =
-        (key.startsWith("patch:") || key.startsWith("members:") ? before[key] : watermark[key]) ??
-        "-1";
+        (key.startsWith("patch:") || key.startsWith("members:") || key.startsWith("connection:")
+          ? before[key]
+          : watermark[key]) ?? "-1";
     return { result: reply.value, vector };
   });
   return { admit, read, revisions: reads.revisions };

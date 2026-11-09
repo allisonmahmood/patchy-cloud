@@ -180,7 +180,8 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
       sourcePatch,
       sharedStore,
       storeSource,
-      memberDirectory
+      memberDirectory,
+      "connection:connection"
     ]);
     for (const keys of f.revisionReads) {
       assert.isAtMost(keys.length, allowed.size);
@@ -306,4 +307,36 @@ it.effect(
         vector: { "patch:consumer": "0", [memberDirectory]: "2" }
       });
     }).pipe(Effect.provide(NodeCryptography.layer))
+);
+
+it.effect(
+  "rechecks traced connection authority and recovers after a connection grant is restored",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const key = "connection:connection";
+      f.state.dependencies = [key];
+      f.state.revisions[key] = "0";
+      yield* f.subscribe();
+      assert.equal((yield* f.next).type, "admitted");
+      const snapshot = yield* f.next;
+      assert.equal(snapshot.type, "snapshot");
+      if (snapshot.type === "snapshot") assert.equal(snapshot.vector[key], "0");
+      f.state.failure = new Runtime.AccessDenied({});
+      f.state.revisions[key] = "1";
+      yield* f.document.reconcile("invalidation", [key]);
+      const denied = yield* f.next;
+      assert.equal(denied.type, "error");
+      if (denied.type === "error") {
+        assert.equal(denied.error.code, "access_denied");
+        assert.equal(denied.permanent, false);
+      }
+      f.state.failure = undefined;
+      f.state.revisions[key] = "2";
+      yield* f.document.reconcile("invalidation", [key]);
+      const restored = yield* f.next;
+      assert.equal(restored.type, "up-to-date");
+      if (restored.type === "up-to-date") assert.equal(restored.vector[key], "2");
+      assert.equal(f.state.calls, 3);
+    }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );

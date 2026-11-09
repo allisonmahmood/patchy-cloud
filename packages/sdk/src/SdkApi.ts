@@ -90,7 +90,11 @@ export const layer: Layer.Layer<
             })
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          const result = yield* Generation.generate(identity.company.id, payload).pipe(
+          const result = yield* Generation.generate(
+            identity.company.id,
+            payload,
+            identity.user.id
+          ).pipe(
             Effect.catchTags({
               Busy: (error) =>
                 Effect.succeed(

@@ -1,6 +1,6 @@
 /** Patches owns audience authority. Callers consume this decision, never a role-based bypass. */
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
+import { AudienceActivation } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -9,9 +9,7 @@ import { Teams } from "@patchy/companies";
 import type { Patch } from "./Patches.js";
 
 /** Temporary assembly barrier. Hosting must not enable this until #1287–#1291 are complete. */
-export const Activation = Context.Reference<boolean>("@patchy/patches/AudienceActivation", {
-  defaultValue: () => false
-});
+export const Activation = AudienceActivation;
 export class AudienceInactive extends Schema.TaggedError<AudienceInactive>()(
   "AudienceInactive",
   {}

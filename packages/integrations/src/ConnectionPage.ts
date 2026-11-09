@@ -7,8 +7,9 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Analytics } from "@patchy/analytics";
 import { Integration, integrations } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
-import { Users } from "@patchy/companies";
+import { Teams, Users } from "@patchy/companies";
 import { ContractLimits } from "@patchy/limits";
+import { escapeHtml, escapeAttribute } from "@patchy/core";
 import { RuntimeLog } from "@patchy/runtime";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
@@ -248,7 +249,11 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "super_admin";
-  const connections = yield* store.list(viewer.company.id);
+  const connections = yield* Effect.filter(yield* store.list(viewer.company.id), (connection) =>
+    admin
+      ? Effect.succeed(true)
+      : store.canUse(viewer.company.id, connection.id, { userId: viewer.user.id, guest: false })
+  );
   const usage = yield* store.usage(viewer.company.id);
   // Members can see connection status, but must never read the call log.
   const lastCalls: View.LastCalls | undefined = admin
@@ -297,7 +302,12 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
-  const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
+  const store = yield* ConnectionStore.ConnectionStore;
+  const connections = yield* Effect.filter(yield* store.list(viewer.company.id), (connection) =>
+    viewer.role === "super_admin"
+      ? Effect.succeed(true)
+      : store.canUse(viewer.company.id, connection.id, { userId: viewer.user.id, guest: false })
+  );
   return {
     title: "Connect an integration",
     body: View.renderCatalogue({
@@ -354,6 +364,21 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const connection = yield* store.get(viewer.company.id, id);
+  if (
+    viewer.role !== "super_admin" &&
+    !(yield* store.canUse(viewer.company.id, id, { userId: viewer.user.id, guest: false }))
+  )
+    return yield* new ConnectionStore.ConnectionNotFound({
+      companyId: viewer.company.id,
+      lookup: { id }
+    });
+  const selected = yield* store.audience(viewer.company.id, id);
+  const teams =
+    selected.kind === "teams"
+      ? yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
+          Effect.catchTags({ RoleForbidden: Effect.die })
+        )
+      : [];
   const page = pages[connection.integration];
   const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
   // Deactivated people keep their names: they still added connections and made calls. A
@@ -402,7 +427,19 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
         people === null
           ? "Unknown"
           : (people.get(connection.createdBy) ?? "Someone no longer in the company"),
-      facts: [...known.facts, ...sends],
+      facts: [
+        ...known.facts,
+        ...sends,
+        [
+          "Audience",
+          selected.kind === "company"
+            ? "Company"
+            : teams
+                .filter((team) => selected.teamIds.includes(team.id))
+                .map((team) => team.name)
+                .join(", ")
+        ]
+      ],
       ...(standing === undefined ? {} : { standing }),
       ...(known.tag === undefined ? {} : { tag: known.tag }),
       ...usage
@@ -503,6 +540,27 @@ const confirmationPage = Effect.fn("ConnectionPage.confirmationPage")(function* 
   const { connection, page, view } = yield* connectionView(viewer, id);
   // Delete is offered only while nothing declares the connection; a stale link says why.
   if (action === "delete" && view.declared) return yield* connectionPage(viewer, id, inUse(id));
+  if (action === "audience") {
+    if (viewer.role !== "super_admin") return yield* connectionPage(viewer, id, forbidden);
+    const selected = yield* (yield* ConnectionStore.ConnectionStore).audience(
+      viewer.company.id,
+      id
+    );
+    const teams = yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
+      Effect.catchTags({ RoleForbidden: Effect.die })
+    );
+    const fields = `<fieldset><legend class="field-label">Who can use this connection?</legend><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="company" ${selected.kind === "company" ? "checked" : ""}> Company</label><label class="field-choice"><input class="field-radio" type="radio" name="audience" value="teams" ${selected.kind === "teams" ? "checked" : ""}> Selected teams</label>${teams.map((team) => `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="team-${escapeAttribute(team.id)}" value="yes" ${selected.kind === "teams" && selected.teamIds.includes(team.id) ? "checked" : ""}> ${escapeHtml(team.name)}</label>`).join("")}</fieldset>`;
+    return {
+      title: "Connection audience",
+      body: View.renderConfirmation({
+        connection: view,
+        action,
+        actions: page.actions,
+        form: { title: "Connection audience", consequence: "", fields, submit: "Save audience" },
+        notice: form.notice
+      })
+    } satisfies Page;
+  }
   const credentials =
     action === "rotate" || action === "retarget" || action === "access" ? page[action] : undefined;
   if ((action === "retarget" || action === "access") && credentials === undefined)
@@ -745,6 +803,21 @@ const act = Effect.fn("ConnectionPage.act")(function* (
       if (!Redacted.isRedacted(credentials)) return yield* refused(credentials);
       if (kind === "retarget") yield* store.retarget({ ...input, credentials });
       else yield* store.rotate({ ...input, credentials });
+    } else if (kind === "audience") {
+      if (form.audience !== "company" && form.audience !== "teams")
+        return yield* new ConnectionStore.InvalidConnectionAudience();
+      const teamIds = Object.keys(form)
+        .filter((key) => key.startsWith("team-") && form[key] === "yes")
+        .map((key) => key.slice(5));
+      yield* store.setAudience({
+        ...input,
+        audience: form.audience === "company" ? { kind: "company" } : { kind: "teams", teamIds }
+      });
+      return {
+        title: "Connection audience",
+        body: "",
+        redirect: View.connectionPath(id)
+      } satisfies Page;
     } else if (kind === "description") {
       const fields = yield* decodeDescription(form);
       yield* store.describe({ ...input, description: fields.description });
@@ -784,7 +857,9 @@ const act = Effect.fn("ConnectionPage.act")(function* (
                   label: "Point it elsewhere instead"
                 }
               }
-            : refusal(error)
+            : error._tag === "SqlError"
+              ? { message: "Company service unavailable.", code: "source_unavailable", status: 503 }
+              : refusal(error)
       )
     )
   );

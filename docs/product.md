@@ -2110,3 +2110,27 @@ mutation. Removal does not cancel or undo such a transaction, retract copied dat
 already delivered. Subsequent admission refuses the removed viewer, and subscription results
 are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
 The internal audience assembly barrier stays disabled pending the complete access stack.
+
+### Connection audiences
+
+Each connection starts with the Company audience. A super admin may select one or
+more existing company teams; membership uses Companies' effective membership model,
+including required super-admin membership. The patch's declaration or audience grants
+no connection access. Ordinary discovery, schema generation and connection details
+omit inaccessible connections; super-admin browser management remains separate.
+
+Runtime callbacks (including MCP and nested handlers) and cloud-backed dev reads
+check the real viewer on each call, then again after queueing. Outside guests keep
+the separate Block guests control and existing handler/resource restrictions.
+Publish and share warn when a connection's selected teams may not cover the patch's
+audience; warnings grant nothing and conceal restricted metadata from other viewers.
+
+Connection audiences and team references commit atomically under the company
+administration lock and connection lock. Credential replacement, retargeting and
+reconnection preserve the audience. Integrations exposes team references for #1291's
+lifecycle assembly; it does not choose the still-unsettled team deletion policy.
+Connection authority revisions feed the existing live dependency traces, wakes and
+delivery fences. Already admitted work may finish; subsequent admission and protected
+delivery use current authority. The common internal audience activation barrier
+remains off until the full stack is assembled. Rolling back to a server that ignores
+connection grants after activating team audiences would widen access.

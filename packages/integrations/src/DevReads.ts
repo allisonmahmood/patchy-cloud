@@ -169,7 +169,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       readonly sql?: string | undefined;
       readonly run:
         | ((
-            target: Target<KeyRefused>
+            target: Target<KeyRefused | Runtime.AccessDenied | Runtime.SourceUnavailable>
           ) => Effect.Effect<
             A,
             | Runtime.RuntimeError
@@ -223,13 +223,26 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
       const recheck = Authorization.identify("build").pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(MachineTokens.MachineTokens, tokens),
-        Effect.flatMap((current) =>
-          Option.isSome(current) &&
-          current.value.user.id === identity.user.id &&
-          current.value.company.id === identity.company.id &&
-          current.value.machine.id === identity.machine.id
-            ? Effect.void
-            : Effect.fail(new KeyRefused({}))
+        Effect.flatMap(
+          (
+            current
+          ): Effect.Effect<void, KeyRefused | Runtime.AccessDenied | Runtime.SourceUnavailable> =>
+            Option.isSome(current) &&
+            current.value.user.id === identity.user.id &&
+            current.value.company.id === identity.company.id &&
+            current.value.machine.id === identity.machine.id
+              ? connections
+                  .canUse(identity.company.id, call.connection.id, {
+                    userId: identity.user.id,
+                    guest: false
+                  })
+                  .pipe(
+                    Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+                    Effect.flatMap((allowed) =>
+                      allowed ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
+                    )
+                  )
+              : Effect.fail(new KeyRefused({}))
         )
       );
       const run = Effect.gen(function* () {

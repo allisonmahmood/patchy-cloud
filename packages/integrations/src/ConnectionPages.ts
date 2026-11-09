@@ -100,6 +100,7 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
   });
 
 const confirmations = [
+  "audience",
   "rotate",
   "retarget",
   "access",
