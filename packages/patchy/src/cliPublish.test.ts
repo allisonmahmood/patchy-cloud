@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -1028,7 +1029,7 @@ describe("patchy share", () => {
     );
     const dir = tempDir();
     // Sharing only needs the cached path, not the original file's contents.
-    const file = path.join(dir, "page.html");
+    const file = path.join(realpathSync(dir), "page.html");
     const cached = { patchId, publicUrl, latestVersionNumber: 7, updatedAt: "unchanged" };
     const cachePath = path.join(dir, "patches.json");
     const cache = JSON.stringify({
@@ -1041,7 +1042,7 @@ describe("patchy share", () => {
     const env = { PATCHY_API_URL: instance.url, PATCHY_API_TOKEN: "pp_owner" };
 
     const shared = await runCli(["share", "page.html", "public"], { stateDir: dir, env });
-    expect(shared.status).toBe(0);
+    expect(shared.status, shared.stderr).toBe(0);
     expect(shared.stderr).toBe("");
     expect(shared.stdout).toContain(`URL: ${publicUrl}`);
     expect(shared.stdout).toContain("Scope: public (anyone with the link)");

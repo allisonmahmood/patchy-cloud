@@ -309,14 +309,25 @@ recovery retains the saved attempt's notices.
 For the single-file flow, keep secrets, private URLs, local filesystem paths and
 production documentation of record off the published page; a tool that keeps data
 is a patch repo. Publish only material the intended audience may read: the
-user's company by default, anyone with the link only by explicit choice.
+user's explicitly chosen audience; Public only by explicit choice.
 
 ## Publishing
 
 The `patchy` CLI publishes one self-contained HTML document as a page and returns its
 view URL.
-New patches default to company scope; use `--share public` only when the user wants
-anyone with the link to read the page.
+Before the first publish, ask who may open it unless the user already specified: Company,
+Company plus guests, one team or multiple teams. Pass `--share company|public` for the simple
+choices, or `--audience` JSON for teams and guest choices. Discover existing IDs with
+`patchy audiences --json`. Never invent teams or guest IDs. Later publishes retain the
+committed audience; do not ask again. Every publish reports its committed audience.
+
+Audience JSON has `members: { kind: "company" | "public" }` or
+`members: { kind: "teams", teamIds: ["<id>"] }`, plus
+`guests: { kind: "specific", userIds: [] }` (no guests or named company guests), or
+`guests: { kind: "all", excludedUserIds: [] }` (current and future guests invited into
+this company space, except named exclusions). Guests need existing active Patchy accounts.
+Team and all-guests activation is refused while the access-enforcement stack is incomplete;
+report the refusal and never substitute Company.
 
 Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
 If the CLI is missing or its release differs from the intended instance,
@@ -511,9 +522,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `not_on_patchy` means the email has no Patchy account yet, `already_member` that they're
   in the company already, and `guests_unavailable` says, in its `reason`, what keeps guests
   out of the current version and how to let them in.
-- Announce the returned `scope`, not an assumed default: `company` means signed-in
-  colleagues in the user's company can open the link; `public` means anyone with
-  the link can open it without signing in. Text output names both scope and readership.
+- Announce the returned `audience`, including selected teams and guest exceptions. `scope: company` is the private serving boundary and does not mean every colleague has access. `scope: public` admits anyone with the link only at the current version.
   Publish returns `name` and `address`; `publicUrl` equals the address, not a grant of public access.
 - Only the current version of a public patch is public; older versions stay behind the company door.
   The current version is public at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`.

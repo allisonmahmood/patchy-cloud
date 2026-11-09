@@ -229,6 +229,7 @@ const publish = Effect.fn("PortalPagesTest.publish")(function* (
   const ordinal = ++counter;
   const patchId = overrides.patchId ?? `p${String(ordinal).padStart(11, "0")}`;
   const input: Patches.RecordInput = {
+    scope: overrides.intent === "update" ? undefined : "company",
     intent: "create",
     patchId,
     companyId: person.companyId,
@@ -1324,6 +1325,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           expectedPatchId: patch.patchId,
           back: "/patches",
           expectedScope: "company",
+          expectedAudienceRevision: before.patch.audienceRevision,
           scope: "public"
         });
         // Make public is the confirmation, in the dialog, and only its answer applies.
@@ -1381,7 +1383,8 @@ it.layer(layer)("portal pages on a socket", (it) => {
         const back = yield* post(scopePath, workspace.owner, {
           ...fields,
           scope: "company",
-          expectedScope: "public"
+          expectedScope: "public",
+          expectedAudienceRevision: saved.patch.audienceRevision
         });
         assert.strictEqual(back.status, 303);
         assert.strictEqual(

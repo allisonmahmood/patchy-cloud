@@ -86,6 +86,8 @@ describe("patch pages", () => {
     name: "render-fixture",
     ownerUserId: DEV_SEED.userId,
     scope: "public",
+    audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } },
+    audienceRevision: "0",
     title: "",
     currentVersionId: "ver_1",
     repoOrg: null,

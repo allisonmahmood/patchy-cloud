@@ -1,4 +1,5 @@
 import { guestReasonText } from "@patchy/api";
+import type { Teams } from "@patchy/companies";
 import type { RequireSession } from "@patchy/auth";
 import { avatar, escapeAttribute, escapeHtml, patchMark, patchTitle } from "@patchy/core";
 import type { GuestGrants, Patches } from "@patchy/patches";
@@ -30,6 +31,10 @@ export const shareStyles = `
   .share-change p { margin: 0; }
   /* The step after picking the other audience shows once it is picked; without :has() it always shows. */
   .share-audience:has(input[data-current]:checked) .share-change { display: none; }
+  .share-audience:has(input[name="guestMode"][value="all"]:checked) .share-specific { display: none; }
+  .share-audience:has(input[name="guestMode"][value="specific"]:checked) .share-exclusions { display: none; }
+  .share-audience:not(:has(input[name="scope"][value="teams"]:checked)) .share-team-choices { display: none; }
+  .share-audience:has(input[name="scope"][value="public"]:checked):not(:has(input[name="scope"][value="public"][data-current])) .share-save { display: none; }
   .share-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }
   .share-foot > [hidden] { display: none; }
   .share-foot > :last-child { margin-left: auto; }
@@ -62,6 +67,7 @@ export const renderShareDialog = (input: {
   readonly back: string;
   readonly guests: readonly GuestGrants.Guest[];
   readonly suggestions: readonly GuestGrants.Person[];
+  readonly teams?: readonly Teams.Team[];
   /** What the last form here did. */
   readonly receipt?: string;
   /** Why the dialog's last act was refused, when it wasn't adding someone. */
@@ -110,19 +116,41 @@ export const renderShareDialog = (input: {
     : "";
 
   // The saved audience carries data-current, so picking the other one shows what comes next.
-  const picked = input.confirmPublic === true ? "public" : patch.scope;
-  const choice = (scope: Patches.Patch["scope"], label: string, disabled = false) =>
-    `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${scope}"${scope === picked ? " checked" : ""}${scope === patch.scope ? " data-current" : ""}${disabled ? " disabled" : ""}>${escapeHtml(label)}</label>`;
+  const picked = input.confirmPublic === true ? "public" : patch.audience.members.kind;
+  const choice = (scope: Patches.Patch["scope"] | "teams", label: string, disabled = false) =>
+    `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${scope}"${scope === picked ? " checked" : ""}${scope === patch.audience.members.kind ? " data-current" : ""}${disabled ? " disabled" : ""}>${escapeHtml(label)}</label>`;
   // Tier 2 can't be public, so for a tool that choice is never one to make.
   const next = isPublic
     ? '<div class="actions share-change"><button class="btn" type="submit">Save</button></div>'
     : row.tier >= 2
       ? ""
       : `<div class="note note-warn share-change" role="group" aria-labelledby="share-public-title"><strong class="note-title" id="share-public-title">Make ${escapeHtml(title)} public?</strong><p>Anyone with the link can open it without signing in.</p><div class="actions"><button class="btn btn-primary" type="submit" name="confirm" value="public">Make public</button><button class="btn btn-quiet" type="reset">Cancel</button></div></div>`;
+  const selectedTeams = new Set(
+    patch.audience.members.kind === "teams" ? patch.audience.members.teamIds : []
+  );
+  const teamChoices = (input.teams ?? [])
+    .map(
+      (team) =>
+        `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="teamIds" value="${escapeAttribute(team.id)}"${selectedTeams.has(team.id) ? " checked" : ""}>${escapeHtml(team.name)}</label>`
+    )
+    .join("");
+  const selectedGuests = new Set(
+    patch.audience.guests.kind === "specific" ? patch.audience.guests.userIds : []
+  );
+  const excludedGuests = new Set(
+    patch.audience.guests.kind === "all" ? patch.audience.guests.excludedUserIds : []
+  );
+  const guestChoices = (excluded: boolean) =>
+    input.suggestions
+      .map(
+        (guest) =>
+          `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="${excluded ? "excludedGuestIds" : "guestIds"}" value="${escapeAttribute(guest.userId)}"${(excluded ? excludedGuests : selectedGuests).has(guest.userId) ? " checked" : ""}>${escapeHtml(guest.name)} · ${escapeHtml(guest.companyName)}</label>`
+      )
+      .join("");
   const audience = form(
     "scope",
     "share-audience",
-    `${hidden("expectedScope", patch.scope)}<fieldset><legend class="field-label">Who can open it</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset>${next}`
+    `${hidden("expectedScope", patch.scope)}${hidden("expectedAudienceRevision", patch.audienceRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset><fieldset><legend class="field-label">Guests</legend><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="specific"${patch.audience.guests.kind === "specific" ? " checked" : ""}>Specific guests</label><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="all"${patch.audience.guests.kind === "all" ? " checked" : ""}>All current and future company guests</label></fieldset><fieldset class="share-specific"><legend class="field-label">Include</legend>${guestChoices(false)}</fieldset><fieldset class="share-exclusions"><legend class="field-label">Except</legend>${guestChoices(true)}</fieldset>${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
   );
 
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;

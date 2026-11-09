@@ -1,3 +1,4 @@
+import { Audiences } from "@patchy/patches";
 /**
  * The routes a reader hits: the health checks, patch addresses
  * (`/:company/:name[/~v/:n][/route]`) and exact-version content URLs.
@@ -281,6 +282,16 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         }),
         cookies
       );
+    }
+    if (
+      served.value.patch.companyId === admission.company.id &&
+      !(yield* Audiences.canOpen(
+        served.value.patch.id,
+        admission.company.id,
+        admission.user.id
+      ).pipe(Effect.catchTags({ SqlError: Effect.die })))
+    ) {
+      return withCookies(HttpServerResponse.setHeaders(notFound, patchUrlHeaders), cookies);
     }
     // Someone from another company opens only the current version of a patch shared with them,
     // while its guests can open it; anyone else gets the same 404 as a stranger.

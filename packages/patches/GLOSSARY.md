@@ -25,7 +25,7 @@ An admin changing a patch's owner to an active member of the same company, inclu
 _Avoid_: transfer (a patch never moves companies), republish, claim
 
 **Sharing scope**:
-Who may open a patch: `company` means signed-in colleagues in its company, and its [guests](../companies/GLOSSARY.md) at its current version; `public` means anyone with the link to its current version, without signing in. Older versions stay behind the company door; new patches default to company sharing, and the owner or an admin may change a live patch's scope without publishing.
+The serving boundary: `company` is private and subject to the patch audience; `public` admits anyone with the link to the current version without signing in. Historical versions retain audience protection. First publish requires an explicit audience; updates retain it. An entitled owner or administrator changes sharing without publishing.
 _Avoid_: visibility, token scope (a publishing key does not grant reading access)
 
 **Guest grant**:
@@ -33,7 +33,7 @@ One person's access to one patch of another company, written by Share, the owner
 _Avoid_: invitation (no acceptance step), membership, permission (a grant has none)
 
 **Openable patch**:
-A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. Today every company member has that reach; openability grants neither ownership nor permission to serve an off patch.
+A patch in the credential's company, within its sharing reach and neither disabled nor gone, eligible for discovery and inventory reads in any lifecycle state. The persisted audience and current membership determine that reach; roles and ownership do not grant content access. Openability grants neither ownership nor permission to serve an off patch.
 _Avoid_: serving (requires live), publishable (requires the live patch's owner), manageable (owner or admin)
 
 **Patch repo**:
@@ -135,3 +135,16 @@ _Avoid_: patch limit (the per-minute one), storage quota (this counts patches, n
 **Patch event**:
 A committed publish, update or owner deletion, attributed to the user who acted; reclamation belongs to the instance. Events contain ids, sizes, counts and states, never content, a filename, a URL or an address.
 _Avoid_: audit log, activity feed
+
+**Patch audience**:
+The patch's persisted internal audience (Company, selected teams by union, or eligible
+Public) and independent guest audience (specific company-space guests, or all current
+and future guests minus exclusions). Owner and company role confer no content grant.
+An audience authority revision commits with every effective change; team-reference rows
+let Hosting compose later team deletion without Companies importing Patches.
+
+**Company-space guest**:
+An existing Patchy account at another company invited into this company's guest pool.
+Membership survives removal from an individual patch; removal from the company ends
+it. Existing named grants migrate into the pool. All guests includes future pool members.
+The pool itself grants no patch access and never bypasses guest resource restrictions.

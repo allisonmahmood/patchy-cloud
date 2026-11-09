@@ -39,6 +39,8 @@ import {
   Shared,
   ShareRequest,
   SharingScope,
+  PatchAudience,
+  AudienceOptions,
   GuestRemoved,
   GuestRequest,
   GuestShared,
@@ -125,6 +127,30 @@ const decodeLookNote = Schema.decodeUnknownEffect(LookNote);
 const decodePublishName = Schema.decodeUnknownEffect(PatchName);
 /** A guest in one line: "Jo Rivera (jo@pine.example), Pine Studio". */
 const guestLine = (guest: PatchGuest) => `${guest.name} (${guest.email}), ${guest.company.name}`;
+const decodeAudience = Schema.decodeUnknownEffect(Schema.fromJsonString(PatchAudience));
+const audienceFlag = Flag.String("audience").pipe(
+  Flag.withDescription(
+    "Audience JSON: members (company, teams or public) and guests (specific or all, with exclusions)"
+  ),
+  Flag.optional
+);
+const chosenAudience = Effect.fn("chosenAudience")(function* (value: Option.Option<string>) {
+  if (Option.isNone(value)) return {};
+  const audience = yield* decodeAudience(value.value).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalError({
+          message:
+            "Invalid --audience JSON. Supply members and guests as documented in patchy publish --help.",
+          cause
+        })
+    )
+  );
+  return { audience };
+});
+const audienceLine = (audience: PatchAudience | undefined, scope: typeof SharingScope.Type) =>
+  audience === undefined ? scopeLines[scope] : `Audience: ${JSON.stringify(audience)}`;
+
 const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",
   public: "Scope: public (anyone with the link)"
@@ -540,7 +566,7 @@ const sendPublish = Effect.fn("sendPublish")(function* (
     [
       attempt.request.patchId !== undefined ? "Updated patch" : "Published patch",
       `URL: ${published.address}`,
-      scopeLines[published.scope],
+      audienceLine(published.audience, published.scope),
       `Patch ID: ${published.patchId}`,
       `Tier: ${published.tier}`,
       `Version: ${published.versionNumber}`,
@@ -651,6 +677,22 @@ const dryRunPublish = Effect.fn("dryRunPublish")(function* (
   for (const warning of warnings) yield* Output.warn(`Warning: ${warning}`);
 });
 
+const encodeAudienceOptions = Schema.encodeSync(AudienceOptions);
+const audiences = Command.make("audiences", {}, () =>
+  run(
+    Effect.gen(function* () {
+      const client = yield* Api.client(yield* requiredToken());
+      const choices = yield* client
+        .audienceOptions()
+        .pipe(Effect.catch((error) => refused(error, "Could not read audience choices.")));
+      yield* Output.report(encodeAudienceOptions(choices), [
+        ...choices.teams.map((team) => `Team: ${team.name} (${team.id})`),
+        ...choices.guests.map((guest) => `Guest: ${guest.name} (${guest.userId})`)
+      ]);
+    })
+  )
+).pipe(Command.withDescription("List existing teams and company guests for --audience"));
+
 const publish = Command.make(
   "publish",
   {
@@ -663,6 +705,7 @@ const publish = Command.make(
       Flag.withDescription("Update an existing patch only; never creates a patch"),
       Flag.optional
     ),
+    audience: audienceFlag,
     share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
@@ -740,6 +783,7 @@ const publish = Command.make(
                 ? {}
                 : { baseVersion: project.version }),
               ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+              ...(yield* chosenAudience(options.audience)),
               ...(options.force ? { force: true } : {}),
               publishKey: yield* cryptography.internalId("pub"),
               metadata: new PublishMetadata({
@@ -819,6 +863,7 @@ const publish = Command.make(
             html,
             ...(patchId !== null ? { patchId } : {}),
             ...(Option.isSome(options.share) ? { scope: options.share.value } : {}),
+            ...(yield* chosenAudience(options.audience)),
             ...(options.force ? { force: true } : {}),
             publishKey: yield* cryptography.internalId("pub"),
             metadata: new PublishMetadata({
@@ -943,6 +988,7 @@ const share = Command.make(
       Argument.withDescription("company or public, after the published HTML file"),
       Argument.optional
     ),
+    audience: audienceFlag,
     share: Flag.Literals("share", SharingScope.literals).pipe(
       Flag.withDescription("Who can open the patch: your company or anyone with the link"),
       Flag.optional
@@ -976,21 +1022,27 @@ const share = Command.make(
     return (untargeted ? runProject : run)(
       Effect.gen(function* () {
         const operation = yield* Effect.fromResult(decoded);
+        const yieldAudience = yield* chosenAudience(options.audience);
         const patchId = yield* patchTarget(operation.file, options.patch);
         const client = yield* Api.client(yield* requiredToken());
         yield* Match.valueTags(operation, {
           Scope: ({ scope }) =>
-            client.share({ params: { patchId }, payload: new ShareRequest({ scope }) }).pipe(
-              Effect.catch((error) => refused(error, "Sharing failed.")),
-              Effect.flatMap((shared) =>
-                Output.report(encodeShared(shared), [
-                  "Changed patch sharing",
-                  `URL: ${shared.publicUrl}`,
-                  scopeLines[shared.scope],
-                  `Patch ID: ${shared.patchId}`
-                ])
-              )
-            ),
+            client
+              .share({
+                params: { patchId },
+                payload: new ShareRequest({ scope, ...yieldAudience })
+              })
+              .pipe(
+                Effect.catch((error) => refused(error, "Sharing failed.")),
+                Effect.flatMap((shared) =>
+                  Output.report(encodeShared(shared), [
+                    "Changed patch sharing",
+                    `URL: ${shared.publicUrl}`,
+                    audienceLine(shared.audience, shared.scope),
+                    `Patch ID: ${shared.patchId}`
+                  ])
+                )
+              ),
           Add: ({ email }) =>
             client.addGuest({ params: { patchId }, payload: new GuestRequest({ email }) }).pipe(
               Effect.catch((error) => refused(error, "Sharing failed.")),
@@ -1927,6 +1979,7 @@ const withCommandHeader = <Name extends CliCommand, Input, ContextInput, E, R>(
 export const root = Command.make("patchy").pipe(
   Command.withDescription("Build patch repos and publish patches to a Patchy Cloud instance."),
   Command.withSubcommands([
+    withCommandHeader(audiences),
     withCommandHeader(login),
     withCommandHeader(logout),
     auth,

@@ -178,7 +178,13 @@ export const stage = Effect.fn("Eval.stage")(function* (input: {
       );
       yield* fs.writeFileString(agentsFile, agentsTemplate);
       yield* step(`Refreshing ${patch.repo}`, inRepo, "pnpm", ["patchy", "refresh", "--json"]);
-      yield* step(`Publishing ${patch.repo}`, inRepo, "pnpm", ["patchy", "publish", "--json"]);
+      yield* step(`Publishing ${patch.repo}`, inRepo, "pnpm", [
+        "patchy",
+        "publish",
+        "--share",
+        "company",
+        "--json"
+      ]);
       const project = decodeProject(
         yield* fs.readFileString(path.join(workspace, patch.repo, "patchy.json"))
       );

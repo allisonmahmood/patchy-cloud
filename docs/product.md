@@ -631,13 +631,13 @@ A company comes to exist on **create-or-join**, after sign-in: a person without 
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-Company roles are **member**, **admin** and **super admin** (`member`, `admin`, `super_admin` on the wire). Everyone inside a company may build. Outside guests remain named patch guests, not a company role.
+Company roles are **member**, **admin** and **super admin** (`member`, `admin`, `super_admin` on the wire). Everyone inside a company may build. Outside guests are existing Patchy accounts invited into a company guest space, not a company role.
 
 An **admin** invites ordinary members, deactivates/reactivates ordinary members, removes outside guests from all patches and changes the company look. A **super admin** also changes roles (including appointing other super admins), manages admin account lifecycle, administers connections and operates **agent access** ([Patchy MCP](#patchy-mcp)). A regular admin cannot appoint, demote, deactivate or reactivate any admin account, including their own. Pending administrator invitations are managed only by super admins.
 
 Existing admins and their pending administrator invitations migrate to super admins; existing members retain their roles. Storage retains the legacy `member`/`admin` values with an additive regular-admin flag: super admins remain stored admins, and regular admins are stored members with the flag. An older server therefore keeps its last-admin safeguard and sees regular admins as ordinary members. Invitation acceptance preserves the flag across rollback; later legacy role changes clear prior flags. Returning to this release restores the three-role interpretation. New company creators start as super admins. Multiple super admins are allowed, and company-before-user locking ensures concurrent demotions/deactivations retain at least one active super admin. Reactivation keeps revoked credentials ended.
 
-Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Team audiences, separate super-admin oversight and audience-aware patch management remain the following stages of #1192 (#1286/#1288). Team-based patch and connection grants remain future work.
+Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Patch audiences are persisted by Patches, with team/all-guests activation blocked until the whole #1192 enforcement stack is assembled. Separate super-admin oversight and removed-owner recovery remain #1288; connection grants remain #1289.
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
@@ -2058,3 +2058,33 @@ Patchy reports its business moments, such as a publish, a join or a share, to it
 In PostHog, activation is one query. Take the people whose `user.joined` falls in the week; its principal is the new user. Each one is activated when a `patch.first_opened` whose `ownerUserId` is that user, with `welcomePage` false, arrives within 7 days of their `user.joined`. Activation is the activated share of the week's joiners.
 
 **The known gap.** A public patch's public page is served without a session, so a colleague who reads it signed out records no open, and that read never counts towards activation. That false negative is accepted rather than attributing session-free public pages. Opens recorded before `patch.first_opened` existed report nothing either, so people who joined before it shipped can read as not activated.
+
+### Patch audience assembly (#1286)
+
+A patch stores its audience independently of its immutable versions: Company, one or
+more existing teams by union, or eligible Public, plus specific company-space guests
+or all current/future guests minus named exclusions. Guests need existing active Patchy
+accounts. Existing named grants seed the company guest pool; adding a patch guest also
+invites them into that space. Removing a guest from one patch leaves that membership;
+removing them company-wide ends it. Guest grants remain subject to existing resource,
+handler, connection and current-version restrictions. Public remains current-version-only,
+with no public tier 2; exclusions do not restrict anonymous Public access.
+
+First publication requires an explicit audience (a supplied Company/Public scope counts)
+and commits audience and version atomically. File and repo publishes report the committed
+audience; lost-response receipts remain replayable. Updates retain the audience. Publication
+requires ownership and current content access. An owner/member can select only teams they
+can access; an admin with patch access can select other teams, provided the owner remains
+entitled. Ownership and administrative role alone never grant content admission. Later
+membership removal can make an owner inaccessible; #1288 supplies recovery.
+
+Patches owns one current member audience decision with batched team-membership reads,
+audience revisions, transactional patch wakes and team references. Browser discovery,
+cards, direct/alias/version/raw-content routes and inventory use it. CLI/MCP/runtime
+and shared-source integration/live fencing remain with #1287/#1290 and consume this
+same decision through Hosting adapters, not imports from Runtime into Patches/Companies.
+A temporary internal assembly barrier defaults off and refuses both writes and admission
+for team/all-guests audiences. Tests can assemble those paths explicitly; Hosting does not
+enable them in this partial stack. Remove the barrier only with the completed enforcement
+stack; unknown/inactive audiences never become Company. #1291 verifies activation and
+rollback. These PRs land together; no deployment is implied.

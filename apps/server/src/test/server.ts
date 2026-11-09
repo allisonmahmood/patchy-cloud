@@ -71,6 +71,7 @@ export const html = (title: string) =>
   `<!doctype html><html><head><title>${title}</title></head><body><p>${title}</p></body></html>`;
 
 export const publishBody = (body: Record<string, unknown>) => ({
+  ...(body.patchId ? {} : { scope: "company" }),
   manifest: {
     manifestVersion: MANIFEST_VERSION,
     release: CURRENT_RELEASE,

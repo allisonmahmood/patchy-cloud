@@ -1006,6 +1006,41 @@ export class PublishMetadata extends Schema.Class<PublishMetadata>("PublishMetad
   look: Schema.optionalKey(Schema.NullOr(LookStamp))
 }) {}
 
+/** Internal members and outside company-space guests are independent grants. */
+export const PatchAudience = Schema.Struct({
+  members: Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("company") }),
+    Schema.Struct({ kind: Schema.Literal("public") }),
+    Schema.Struct({
+      kind: Schema.Literal("teams"),
+      teamIds: Schema.Array(NonEmptyText).check(Schema.isMinLength(1), Schema.isMaxLength(100))
+    })
+  ]),
+  guests: Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("specific"),
+      userIds: Schema.Array(NonEmptyText).check(Schema.isMaxLength(100))
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("all"),
+      excludedUserIds: Schema.Array(NonEmptyText).check(Schema.isMaxLength(100))
+    })
+  ])
+});
+export type PatchAudience = typeof PatchAudience.Type;
+export class AudienceOptions extends Schema.Class<AudienceOptions>("AudienceOptions")({
+  ok: Schema.Literal(true),
+  teams: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  guests: Schema.Array(
+    Schema.Struct({
+      userId: Schema.String,
+      name: Schema.String,
+      email: Schema.String,
+      companyName: Schema.String
+    })
+  )
+}) {}
+
 /** One durable attempt, resent unchanged after a lost acknowledgement. */
 export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest")({
   manifest: Manifest,
@@ -1023,6 +1058,7 @@ export class PublishRequest extends Schema.Class<PublishRequest>("PublishRequest
   baseVersion: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   patchId: Schema.optionalKey(PatchId),
   scope: Schema.optionalKey(SharingScope),
+  audience: Schema.optionalKey(PatchAudience),
   force: Schema.optionalKey(Schema.Boolean),
   publishKey: NonEmptyText,
   metadata: PublishMetadata
@@ -1048,6 +1084,7 @@ const publishFields = {
   address: Schema.String,
   publicUrl: Schema.String,
   scope: SharingScope,
+  audience: Schema.optionalKey(PatchAudience),
   tier: Manifest.fields.tier,
   schemaRevision: Schema.Int,
   provisioned: ProvisioningReport,
@@ -1072,13 +1109,15 @@ export class PublishUpdated extends Schema.Class<PublishUpdated>("PublishUpdated
 
 /** Change an owned patch's sharing without publishing a version. */
 export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
-  scope: SharingScope
+  scope: SharingScope,
+  audience: Schema.optionalKey(PatchAudience)
 }) {}
 
 export class Shared extends Schema.Class<Shared>("Shared")({
   ok: Schema.Literal(true),
   patchId: PatchId,
   scope: SharingScope,
+  audience: Schema.optionalKey(PatchAudience),
   publicUrl: Schema.String
 }) {}
 

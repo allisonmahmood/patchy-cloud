@@ -8,6 +8,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -15,6 +16,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
+  AudienceOptions,
   Behind,
   Conflict,
   CurrentIdentity,
@@ -84,11 +86,12 @@ import {
   type HandlerDescriptors,
   type RepoFile
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Teams, Users } from "@patchy/companies";
 import { Cryptography, documentTitle } from "@patchy/core";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { InvocationLog } from "@patchy/runtime";
+import * as Audiences from "./Audiences.js";
 import * as Content from "./Content.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
@@ -101,6 +104,7 @@ const databaseUnavailable = () =>
     code: "source_unavailable",
     error: "Company database is unavailable."
   });
+const encodeAudienceOptions = Schema.encodeSync(AudienceOptions);
 const encodeInventory = Schema.encodeSync(PatchInventory);
 const encodeSummaries = Schema.encodeSync(Schema.Array(PatchSummary));
 const encodeDetail = Schema.encodeSync(PatchDetail);
@@ -189,6 +193,10 @@ const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: s
   code: S["Type"]["code"],
   fields: Omit<S["~type.make.in"], "ok" | "code">
 ) => Effect.succeed(refuse(schema, { ok: false, code, ...fields }));
+const audienceFailures = {
+  InvalidAudience: (error: Audiences.InvalidAudience) =>
+    Effect.succeed(refuse(BadRequest, { ok: false, error: error.message }))
+};
 const lifecycleFailures = {
   NotOwner: (error: Patches.NotOwner) =>
     lifecycleFailure(NotOwner, "not_owner", { error: error.message, owner: error.owner }),
@@ -439,6 +447,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
   Effect.gen(function* () {
     const cryptography = yield* Cryptography.Cryptography;
     const content = yield* Content.Content;
+    const sql = yield* SqlClient.SqlClient;
     const patches = yield* Patches.Patches;
     const openability = yield* Patches.Openability;
     const limits = yield* Limits.Limits;
@@ -764,6 +773,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               ownerUserId: identity.user.id,
               machineTokenId: identity.machine.id,
               scope: payload.scope,
+              audience: payload.audience,
               force: payload.force,
               description: metadata.description ?? manifest.description,
               title,
@@ -789,6 +799,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .pipe(
               Effect.catchTags({
                 ...lifecycleFailures,
+                ...audienceFailures,
                 ...tierFailures,
                 PatchUnavailable: () => replayOrRespond(notFound()),
                 PatchConflict: () =>
@@ -1157,6 +1168,33 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
         })
       )
+      .handleRaw("audienceOptions", () =>
+        Effect.gen(function* () {
+          const identity = yield* CurrentIdentity;
+          const teams = yield* Teams.list({
+            companyId: identity.company.id,
+            actorId: identity.user.id
+          }).pipe(Effect.catchTags({ RoleForbidden: Effect.die }));
+          const memberships = new Set(
+            yield* Teams.memberships(identity.company.id, identity.user.id)
+          );
+          return HttpServerResponse.jsonUnsafe(
+            encodeAudienceOptions(
+              new AudienceOptions({
+                ok: true,
+                teams: teams
+                  .filter((team) => identity.role !== "member" || memberships.has(team.id))
+                  .map(({ id, name }) => ({ id, name })),
+                guests: yield* guestGrants.sharedBefore(identity.company.id)
+              })
+            ),
+            { headers: readHeaders }
+          );
+        }).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.catchTags({ SqlError: Effect.die })
+        )
+      )
       .handleRaw("share", ({ params }) =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;
@@ -1166,14 +1204,21 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
           const shared = yield* patches
-            .setScope(params.patchId, { userId: identity.user.id, admin: false }, payload.scope)
-            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures }));
+            .setScope(
+              params.patchId,
+              { userId: identity.user.id, admin: false },
+              payload.scope,
+              undefined,
+              payload.audience
+            )
+            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures, ...audienceFailures }));
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           yield* WideEvents.enrich(Patches.eventFields(shared));
           return new Shared({
             ok: true,
             patchId: params.patchId,
             scope: shared.scope,
+            audience: shared.audience,
             publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
           });
         })

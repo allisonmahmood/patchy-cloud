@@ -19,6 +19,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { GuestReason, guestReasonText, Manifest, PatchState, SharingScope } from "@patchy/api";
 import { type CompanyPage, Users } from "@patchy/companies";
 import { ConnectionStore } from "@patchy/integrations";
+import * as Audiences from "./Audiences.js";
 import * as Patches from "./Patches.js";
 
 /** What publish warns, and Share refuses with, when guests can't open a version. */
@@ -343,8 +344,9 @@ export const make = Effect.gen(function* () {
   // A patch is in one state: deleted, then retired, else live. Only People's guests mark disabled.
   const state = sql`CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted'
     WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END`;
-  const granted = sql`EXISTS (SELECT 1 FROM patch_guest_grants g
-    WHERE g.patch_id = p.id AND g.revoked_at IS NULL)`;
+  const assembled = yield* Audiences.Activation;
+  const granted = sql`EXISTS (SELECT 1 FROM company_patch_guests g
+    WHERE g.company_id = p.company_id AND patch_guest_allowed(p, g.user_id, ${assembled}))`;
 
   const revoked = SqlSchema.findOneOption({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String, at: Schema.Number }),
@@ -355,22 +357,24 @@ export const make = Effect.gen(function* () {
       RETURNING user_id AS "userId"`
   });
   const activeGuests = sql`SELECT g.user_id AS "userId", u.name, u.email,
-      c.name AS "companyName", g.granted_at AS "grantedAt"
-    FROM patch_guest_grants g
+      c.name AS "companyName", COALESCE(named.granted_at, g.added_at) AS "grantedAt"
+    FROM company_patch_guests g
     JOIN users u ON u.id = g.user_id
     JOIN companies c ON c.id = u.company_id
-    WHERE g.revoked_at IS NULL`;
+    JOIN patches p ON p.company_id = g.company_id
+    LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
+    WHERE patch_guest_allowed(p, g.user_id, ${assembled}, true)`;
   const patchGuests = SqlSchema.findAll({
     Request: Schema.String,
     Result: Guest,
-    execute: (patchId) => sql`${activeGuests} AND g.patch_id = ${patchId}
-      ORDER BY g.granted_at, g.user_id`
+    execute: (patchId) => sql`${activeGuests} AND p.id = ${patchId}
+      ORDER BY g.added_at, g.user_id`
   });
   const patchGuest = SqlSchema.findOne({
     Request: Schema.Struct({ patchId: Schema.String, userId: Schema.String }),
     Result: Guest,
     execute: ({ patchId, userId }) => sql`${activeGuests}
-      AND g.patch_id = ${patchId} AND g.user_id = ${userId}`
+      AND p.id = ${patchId} AND g.user_id = ${userId}`
   });
   const currentVersion = SqlSchema.findOne({
     Request: Schema.String,
@@ -385,8 +389,8 @@ export const make = Effect.gen(function* () {
     Result: Person,
     execute: (companyId) => sql`
       SELECT u.id AS "userId", u.name, u.email, c.name AS "companyName"
-      FROM (SELECT user_id, max(granted_at) AS at FROM patch_guest_grants
-        WHERE company_id = ${companyId} GROUP BY user_id) g
+      FROM (SELECT user_id, added_at AS at FROM company_patch_guests
+        WHERE company_id = ${companyId} AND removed_at IS NULL) g
       JOIN users u ON u.id = g.user_id AND u.deactivated_at IS NULL
       JOIN companies c ON c.id = u.company_id
       ORDER BY g.at DESC, u.id
@@ -399,15 +403,15 @@ export const make = Effect.gen(function* () {
       SELECT g.user_id AS "userId", u.name, u.email, c.name AS "companyName",
         p.name AS "patchName", p.title, v.tier,
         CASE WHEN p.disabled_at IS NOT NULL THEN 'disabled' ELSE ${state} END AS state,
-        s.name AS "sharerName", s.email AS "sharerEmail", g.granted_at AS "sharedAt"
-      FROM patch_guest_grants g
+        s.name AS "sharerName", s.email AS "sharerEmail", g.added_at AS "sharedAt"
+      FROM company_patch_guests g
       JOIN users u ON u.id = g.user_id
       JOIN companies c ON c.id = u.company_id
-      JOIN patches p ON p.id = g.patch_id
+      JOIN patches p ON p.company_id = g.company_id
       JOIN patch_versions v ON v.id = p.current_version_id
-      JOIN users s ON s.id = g.granted_by
-      WHERE g.company_id = ${companyId} AND g.revoked_at IS NULL
-      ORDER BY u.name, u.email, g.user_id, g.granted_at DESC, p.name`
+      JOIN users s ON s.id = g.added_by
+      WHERE g.company_id = ${companyId} AND patch_guest_allowed(p, g.user_id, ${assembled}, true)
+      ORDER BY u.name, u.email, g.user_id, g.added_at DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
     Request: Schema.Struct({
@@ -417,23 +421,22 @@ export const make = Effect.gen(function* () {
     }),
     Result: HolderRow,
     execute: ({ companyId, patchId, userIds }) => sql`
-      SELECT user_id AS "userId", bool_or(patch_id = ${patchId} AND revoked_at IS NULL) AS active
-      FROM patch_guest_grants
-      WHERE company_id = ${companyId} AND ${sql.in("user_id", userIds)}
-      GROUP BY user_id`
+      SELECT g.user_id AS "userId", patch_guest_allowed(p, g.user_id, ${assembled}) AS active
+      FROM company_patch_guests g JOIN patches p ON p.id = ${patchId} AND p.company_id = g.company_id
+      WHERE g.company_id = ${companyId} AND ${sql.in("g.user_id", userIds)}`
   });
   const sharedRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: SharedRow,
     execute: (userId) => sql`
       SELECT p.id AS "patchId", p.name, p.title, c.handle AS "companyHandle",
-        c.name AS "companyName", g.granted_at AS "grantedAt", ${state} AS state, p.scope, v.tier,
+        c.name AS "companyName", g.added_at AS "grantedAt", ${state} AS state, p.scope, v.tier,
         v.manifest->'uses' AS uses
-      FROM patch_guest_grants g
-      JOIN patches p ON p.id = g.patch_id
+      FROM company_patch_guests g
+      JOIN patches p ON p.company_id = g.company_id
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN companies c ON c.id = g.company_id
-      WHERE g.user_id = ${userId} AND g.revoked_at IS NULL
+      WHERE g.user_id = ${userId} AND patch_guest_allowed(p, g.user_id, ${assembled})
         AND p.deleted_at IS NULL AND p.disabled_at IS NULL
       ORDER BY c.name, p.name`
   });
@@ -442,8 +445,8 @@ export const make = Effect.gen(function* () {
     Result: Host,
     execute: ({ patchId, userId }) => sql`
       SELECT c.id, c.handle, c.name
-      FROM patch_guest_grants g JOIN companies c ON c.id = g.company_id
-      WHERE g.patch_id = ${patchId} AND g.user_id = ${userId} AND g.revoked_at IS NULL`
+      FROM patches p JOIN companies c ON c.id = p.company_id
+      WHERE p.id = ${patchId} AND patch_guest_allowed(p, ${userId}, ${assembled})`
   });
   const sharedPatchRows = SqlSchema.findAll({
     Request: Schema.String,
@@ -473,6 +476,16 @@ export const make = Effect.gen(function* () {
     readonly grantedBy: string;
   }) {
     const at = yield* Clock.currentTimeMillis;
+    yield* sql`INSERT INTO company_patch_guests(company_id, user_id, added_by)
+      SELECT company_id, ${userId}, ${grantedBy} FROM patches WHERE id = ${patchId}
+      ON CONFLICT(company_id, user_id) DO UPDATE SET removed_at = NULL, added_by = EXCLUDED.added_by WHERE company_patch_guests.removed_at IS NOT NULL`;
+    const audienceChanges =
+      yield* sql`UPDATE patches SET audience = CASE WHEN audience->'guests'->>'kind' = 'all'
+      THEN jsonb_set(audience, '{guests,excludedUserIds}', (audience->'guests'->'excludedUserIds') - ${userId})
+      ELSE jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') || to_jsonb(${userId}::text)) END,
+      audience_revision = audience_revision + 1 WHERE id = ${patchId} AND NOT patch_guest_allowed(patches, ${userId}, ${assembled}, true) RETURNING id`;
+    if (audienceChanges.length)
+      yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`patch:${patchId}`}])::text)`;
     yield* sql`
       INSERT INTO patch_guest_grants (patch_id, company_id, user_id, granted_by, granted_at)
       SELECT id, company_id, ${userId}, ${grantedBy}, to_timestamp(${at / 1_000})
@@ -480,23 +493,38 @@ export const make = Effect.gen(function* () {
       ON CONFLICT (patch_id, user_id) DO UPDATE SET granted_by = EXCLUDED.granted_by,
         granted_at = EXCLUDED.granted_at, revoked_at = NULL
       WHERE patch_guest_grants.revoked_at IS NOT NULL`;
-  });
-  const revoke = Effect.fn("GuestGrants.revoke")(function* (input: {
-    readonly patchId: string;
-    readonly userId: string;
-  }) {
-    const at = yield* Clock.currentTimeMillis;
-    return Option.isSome(yield* revoked({ ...input, at }));
-  }, Effect.catchTags(dieOnSchemaError));
+  }, sql.withTransaction);
+  const revoke = Effect.fn("GuestGrants.revoke")(
+    function* (input: { readonly patchId: string; readonly userId: string }) {
+      const at = yield* Clock.currentTimeMillis;
+      const changed =
+        yield* sql`UPDATE patches SET audience = CASE WHEN audience->'guests'->>'kind' = 'all'
+      THEN jsonb_set(audience, '{guests,excludedUserIds}', (audience->'guests'->'excludedUserIds') || to_jsonb(${input.userId}::text))
+      ELSE jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') - ${input.userId}) END,
+      audience_revision = audience_revision + 1 WHERE id = ${input.patchId} AND patch_guest_allowed(patches, ${input.userId}, ${assembled}, true) RETURNING id`;
+      const ended = Option.isSome(yield* revoked({ ...input, at }));
+      if (changed.length)
+        yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`patch:${input.patchId}`}])::text)`;
+      return changed.length > 0 || ended;
+    },
+    sql.withTransaction,
+    Effect.catchTags(dieOnSchemaError)
+  );
   const revokeAll = Effect.fn("GuestGrants.revokeAll")(function* (input: {
     readonly companyId: string;
     readonly userId: string;
   }) {
     const at = yield* Clock.currentTimeMillis;
+    yield* sql`WITH changed AS (
+      UPDATE patches SET audience = jsonb_set(audience, '{guests,userIds}', (audience->'guests'->'userIds') - ${input.userId}), audience_revision = audience_revision + 1
+      WHERE company_id = ${input.companyId} AND audience->'guests'->>'kind' = 'specific' AND audience->'guests'->'userIds' ? ${input.userId} RETURNING id
+    ) SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY['patch:' || id])::text) FROM changed`;
+    yield* sql`UPDATE company_patch_guests SET removed_at = to_timestamp(${at / 1_000}) WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND removed_at IS NULL`;
+    yield* sql`SELECT pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY[${`members:${input.companyId}`}])::text)`;
     yield* sql`
       UPDATE patch_guest_grants SET revoked_at = to_timestamp(${at / 1_000})
       WHERE company_id = ${input.companyId} AND user_id = ${input.userId} AND revoked_at IS NULL`;
-  });
+  }, sql.withTransaction);
   const guests = Effect.fn("GuestGrants.guests")(
     (patchId: string) => Effect.map(patchGuests(patchId), (rows) => rows.map(named(Guest))),
     Effect.catchTags(dieOnSchemaError)

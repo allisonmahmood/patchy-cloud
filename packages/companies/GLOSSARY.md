@@ -107,3 +107,7 @@ _Avoid_: freeze, lock, deactivate (an admin's act on a user)
 **Operator**:
 Patchy, running the platform, rather than a role inside a company or the driver of the CLI. Its future surfaces are its own login and dashboards, outside the company product and the `patchy` CLI.
 _Avoid_: admin (a company role), superuser, staff, the CLI's user
+
+Company-space guests are existing outside accounts kept by Patches separately from these
+company roles and team memberships. Their pool membership alone grants no patch access;
+Patches' audience selects specific guests or all current/future guests minus exclusions.

@@ -95,7 +95,11 @@ it.layer(
       actor: Patches.Actor
     ) => Effect.Effect<
       unknown,
-      Patches.LifecycleError | Patches.AdminRequired | Patches.Tier2NotPublic | SqlError
+      | import("./Audiences.js").InvalidAudience
+      | Patches.LifecycleError
+      | Patches.AdminRequired
+      | Patches.Tier2NotPublic
+      | SqlError
     >;
   }> = [
     { name: "retire", allowed: ["live"], run: (service, id, actor) => service.retire(id, actor) },
@@ -1546,6 +1550,9 @@ it.layer(
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${reader.user.id}`;
       const selected = new Set([colleague.patchId, mine.patchId]);
+      assert.deepStrictEqual(yield* service.read({ ...access, state: "live" }), []);
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${reader.user.id}`;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${uploader.user.id}`;
       const rows = yield* service.read({
         ...access,
         state: "live",
@@ -1555,9 +1562,9 @@ it.layer(
         rows.map(({ patch }) => patch.id),
         [mine.patchId, colleague.patchId]
       );
-      assert.deepStrictEqual(rows[0]!.owner, {
-        id: reader.user.id,
-        name: reader.user.name,
+      assert.deepStrictEqual(rows[1]!.owner, {
+        id: uploader.user.id,
+        name: uploader.user.name,
         deactivated: true
       });
       assert.strictEqual(rows[0]!.currentVersion, 1);
@@ -1572,7 +1579,7 @@ it.layer(
         })).map(({ patch }) => patch.id),
         [mine.patchId]
       );
-      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${reader.user.id}`;
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${uploader.user.id}`;
     })
   );
 

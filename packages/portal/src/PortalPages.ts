@@ -29,8 +29,8 @@ import {
   escapeHtml,
   rowMenu
 } from "@patchy/core";
-import { Companies, Users } from "@patchy/companies";
-import { GuestGrants, Patches } from "@patchy/patches";
+import { Companies, Teams, Users } from "@patchy/companies";
+import { Audiences, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
@@ -315,6 +315,9 @@ const shareOverlay = Effect.fn("PortalPages.shareOverlay")(function* (
     back: pagePath(sharing.at),
     guests: yield* grants.guests(row.patch.id),
     suggestions: yield* grants.sharedBefore(viewer.company.id),
+    teams: yield* Teams.list({ companyId: viewer.company.id, actorId: viewer.user.id }).pipe(
+      Effect.catchTags({ RoleForbidden: Effect.die })
+    ),
     ...(viewer.receipt === undefined ? {} : { receipt: viewer.receipt }),
     ...(sharing.notice === undefined ? {} : { notice: sharing.notice }),
     ...(sharing.refused === undefined ? {} : { refused: sharing.refused }),
@@ -1046,13 +1049,12 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const form = Object.fromEntries(
-    new URLSearchParams(
-      yield* request.text.pipe(
-        Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
-      )
+  const values = new URLSearchParams(
+    yield* request.text.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, ByteSize.bytes(16_384))
     )
   );
+  const form = Object.fromEntries(values);
   // As every patch form: one rendered for whichever patch had this name stops here.
   if (form.expectedPatchId !== selected.patch.id)
     return yield* render(name, {
@@ -1117,15 +1119,46 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
         return reopened(named === undefined ? undefined : `Stopped sharing ${title} with ${named}`);
       }
       case "scope": {
-        const fields = yield* decodeScope(form);
+        const fields = yield* decodeScope({
+          ...form,
+          scope: form.scope === "teams" ? "company" : form.scope
+        });
+        if (
+          form.expectedAudienceRevision !== undefined &&
+          form.expectedAudienceRevision !== selected.patch.audienceRevision
+        )
+          return yield* new Patches.StaleAction({ patchId: selected.patch.id });
+        const audience = {
+          members:
+            form.scope === "teams"
+              ? { kind: "teams" as const, teamIds: values.getAll("teamIds") }
+              : { kind: fields.scope },
+          guests:
+            form.guestMode === undefined
+              ? selected.patch.audience.guests
+              : form.guestMode === "all"
+                ? { kind: "all" as const, excludedUserIds: values.getAll("excludedGuestIds") }
+                : { kind: "specific" as const, userIds: values.getAll("guestIds") }
+        };
+        if (audience.members.kind === "teams" && !audience.members.teamIds.length)
+          return yield* new Audiences.InvalidAudience({ reason: "teams" });
         // Going public asks first, and only its answer applies it, re-running every check.
         if (fields.scope === "public" && form.confirm !== "public") {
           if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
           return yield* again({ confirmPublic: true });
         }
-        yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
+        yield* patches.setScope(
+          selected.patch.id,
+          actor,
+          fields.scope,
+          fields.expectedScope,
+          audience,
+          form.expectedAudienceRevision
+        );
         return reopened(
-          `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
+          audience.members.kind === "teams"
+            ? `Shared ${title} with selected teams`
+            : `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
         );
       }
     }
@@ -1154,6 +1187,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
         ),
       StaleAction: () =>
         Effect.flatMap(staleNotice(selected.patch.id), (notice) => again({ status: 409, notice })),
+      InvalidAudience: (error) => again({ status: 422, notice: nothing(error.message) }),
       Tier2NotPublic: (error) => again({ status: 422, notice: nothing(error.message) }),
       SchemaError: () =>
         again({ status: 422, notice: nothing("Check the submitted fields and try again.") }),

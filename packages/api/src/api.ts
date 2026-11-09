@@ -73,6 +73,7 @@ import {
   StartDeviceLoginRequest,
   Unauthorized,
   PublishCreated,
+  AudienceOptions,
   PublishRequest,
   PublishUpdated,
   PublishRefused,
@@ -218,6 +219,13 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
 
 export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true })
   .add(
+    HttpApiEndpoint.get("audienceOptions", "/patches/audiences", {
+      success: AudienceOptions
+    }).annotateMerge(
+      describe(
+        "Available existing teams and company-space guests for publication. Members see their teams; administrators can select any existing team, subject to owner access."
+      )
+    ),
     HttpApiEndpoint.post("publish", "/publish", {
       payload: PublishRequest,
       success: [PublishCreated, PublishUpdated],
@@ -304,8 +312,8 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "HTML bundles are stored raw, without validation or transformation. " +
           "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
-          "and live-patch quota; updates do not. Omitted scope defaults to company on creates " +
-          "and remains unchanged on updates. `manifest.name` is an exact company-scoped name " +
+          "and live-patch quota; updates do not. Creates require an explicit scope or audience; updates retain their audience unless explicitly changed. " +
+          "Audience commits atomically with the first version and every publish reports it. Team and all-company-guest audiences remain blocked until downstream enforcement is assembled. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
           "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +

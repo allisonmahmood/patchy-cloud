@@ -31,6 +31,7 @@ import {
   Manifest,
   PatchInventory,
   PatchName,
+  PatchAudience,
   PatchState as PatchStateSchema,
   PatchSourceState,
   PublishCreated,
@@ -43,6 +44,7 @@ import {
   sharedStoreId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import * as Audiences from "./Audiences.js";
 import { Tables } from "@patchy/primitives";
 import { Wakes } from "@patchy/runtime/core";
 import { ConnectionStore } from "@patchy/integrations";
@@ -280,6 +282,8 @@ export interface Patch {
   readonly name: string;
   readonly ownerUserId: string;
   readonly scope: typeof SharingScope.Type;
+  readonly audience: PatchAudience;
+  readonly audienceRevision: string;
   readonly title: string;
   readonly currentVersionId: string | null;
   readonly repoOrg: string | null;
@@ -519,6 +523,7 @@ export interface PublishPreflight extends PublishTarget {
   readonly baseVersion?: number | undefined;
   readonly filename: string | null;
   readonly scope?: Patch["scope"] | undefined;
+  readonly audience?: PatchAudience | undefined;
   readonly force?: boolean;
   readonly description?: string;
 }
@@ -536,8 +541,9 @@ export interface RecordInput extends PublishTarget {
   readonly companyId: string;
   readonly versionId: string;
   readonly machineTokenId: string;
-  /** Omitted creates are company-scoped; omitted updates retain the scope under the row lock. */
+  /** Creates require an explicit scope or audience; omitted updates retain the audience under lock. */
   readonly scope?: Patch["scope"] | undefined;
+  readonly audience?: PatchAudience | undefined;
   readonly title: string;
   readonly objectKey: string;
   readonly contentHash: string;
@@ -625,6 +631,8 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   name: PatchName,
   ownerUserId: Schema.String,
   scope: SharingScope,
+  audience: PatchAudience,
+  audienceRevision: Schema.String,
   title: Schema.String,
   currentVersionId: Schema.NullOr(Schema.String),
   repoOrg: Schema.NullOr(Schema.String),
@@ -790,6 +798,7 @@ export class Patches extends Context.Service<
       input: PublishPreflight
     ) => Effect.Effect<
       void,
+      | Audiences.InvalidAudience
       | LifecycleError
       | Tier2NotPublic
       | PatchConflict
@@ -880,6 +889,7 @@ export class Patches extends Context.Service<
       | PatchQuotaReached
       | PendingObjectExpired
       | ResourceError
+      | Audiences.InvalidAudience
       | LifecycleError
       | Tier2NotPublic
       | Behind
@@ -898,10 +908,12 @@ export class Patches extends Context.Service<
       patchId: string,
       actor: Actor,
       scope: Patch["scope"],
-      expectedScope?: Patch["scope"]
+      expectedScope?: Patch["scope"],
+      audience?: PatchAudience,
+      expectedAudienceRevision?: string
     ) => Effect.Effect<
-      Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId">,
-      LifecycleError | Tier2NotPublic | SqlError
+      Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId" | "audience">,
+      LifecycleError | Audiences.InvalidAudience | Tier2NotPublic | SqlError
     >;
     /** A retained name or redirect, including off and operator-disabled patches. */
     readonly resolveName: (
@@ -1031,6 +1043,8 @@ const toPatch = (row: PatchRow): Patch => ({
   name: row.name,
   ownerUserId: row.ownerUserId,
   scope: row.scope,
+  audience: row.audience,
+  audienceRevision: row.audienceRevision,
   title: row.title,
   currentVersionId: row.currentVersionId,
   repoOrg: row.repoOrg,
@@ -1104,7 +1118,7 @@ const dieOnSchemaError = { SchemaError: Effect.die } as const;
 const PATCH_COLUMNS = `
   patches.id, patches.company_id AS "companyId",
   companies.handle AS "companyHandle", patches.name,
-  patches.owner_user_id AS "ownerUserId", patches.scope, patches.title,
+  patches.owner_user_id AS "ownerUserId", patches.scope, patches.audience, patches.audience_revision::text AS "audienceRevision", patches.title,
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
@@ -1174,6 +1188,14 @@ export const backfillNames = Effect.fn("Patches.backfillNames")(function* () {
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const memberAudience = (...args: Parameters<typeof Audiences.forMember>) =>
+    Audiences.forMember(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+  const audienceOpen = (...args: Parameters<typeof Audiences.canOpen>) =>
+    Audiences.canOpen(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+  const validateAudience = (...args: Parameters<typeof Audiences.validate>) =>
+    Audiences.validate(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+  const saveAudience = (...args: Parameters<typeof Audiences.save>) =>
+    Audiences.save(...args).pipe(Effect.provideService(SqlClient.SqlClient, sql));
   const databases = yield* CompanyDatabases.CompanyDatabases;
   const inventoryStore = yield* Inventory.Inventory;
   const tables = yield* Tables.Tables;
@@ -1461,6 +1483,8 @@ export const make = Effect.gen(function* () {
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
         FOR UPDATE`;
       if (locked.length === 0) return [];
+      const who = yield* sql`SELECT company_id AS id FROM users WHERE id = ${userId}`;
+      if (!who.length || !(yield* audienceOpen(patchId, String(who[0]!.id), userId))) return [];
       return yield* sql`
         SELECT ${sql.unsafe(PATCH_COLUMNS)}, owner.name AS "ownerName"
         FROM patches JOIN companies ON companies.id = patches.company_id
@@ -1610,7 +1634,11 @@ export const make = Effect.gen(function* () {
     access: ReadAccess
   ) {
     const row = yield* companyPatchRow({ companyId: access.companyId, patchId });
-    if (Option.isNone(row) || !access.canOpen(toPatch(row.value)))
+    if (
+      Option.isNone(row) ||
+      !(yield* audienceOpen(patchId, access.companyId, access.userId)) ||
+      !access.canOpen(toPatch(row.value))
+    )
       return yield* new PatchUnavailable({ patchId });
     // Recover company inventory failures, not platform patch-query failures.
     return yield* databases
@@ -1647,12 +1675,13 @@ export const make = Effect.gen(function* () {
       userId: options.userId,
       sharing
     });
+    const admitted = yield* memberAudience(options.companyId, options.userId);
     const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
       const patch = toPatch(row);
       sourceStates.set(patch.id, patch.state);
-      if (patch.disabledAt === null && options.canOpen(patch))
+      if (patch.disabledAt === null && admitted(patch.audience) && options.canOpen(patch))
         openable.set(patch.id, { row, patch });
     }
     let selected: Array<{ row: ReadPatchRow; patch: Patch }>;
@@ -1929,7 +1958,12 @@ export const make = Effect.gen(function* () {
     const row = yield* companyPatchRow({ patchId, companyId: access.companyId });
     if (Option.isNone(row)) return Option.none();
     const patch = toPatch(row.value);
-    if (patch.state === "live" || !access.canOpen(patch)) return Option.none();
+    if (
+      patch.state === "live" ||
+      !(yield* audienceOpen(patchId, access.companyId, access.userId)) ||
+      !access.canOpen(patch)
+    )
+      return Option.none();
     const metadata = yield* portalMetadataRow({ patchId, companyId: access.companyId });
     if (Option.isNone(metadata)) return Option.none();
     const sources = yield* offSources({ patchId, companyId: access.companyId });
@@ -1967,6 +2001,16 @@ export const make = Effect.gen(function* () {
 
   const preflight = Effect.fn("Patches.preflight")(function* (input: PublishPreflight) {
     yield* authorizePublish(input);
+    if (input.intent === "create" && input.audience === undefined && input.scope === undefined)
+      return yield* new Audiences.InvalidAudience({ reason: "required" });
+    if (input.audience !== undefined)
+      yield* validateAudience({
+        audience: input.audience,
+        scope: input.scope,
+        companyId: input.companyId,
+        actorId: input.ownerUserId,
+        ownerId: input.ownerUserId
+      });
     // Before anything uploads; `record` checks again under the lock.
     if (input.intent === "update" && input.baseVersion !== undefined) {
       const { nextVersion } = yield* nextVersionNumber(input.patchId).pipe(
@@ -1975,7 +2019,11 @@ export const make = Effect.gen(function* () {
       if (nextVersion - 1 > input.baseVersion)
         return yield* behind(input.patchId, input.baseVersion);
     }
-    if (input.manifest.tier === 2 && input.scope === "public") return yield* new Tier2NotPublic();
+    if (
+      input.manifest.tier === 2 &&
+      (input.scope === "public" || input.audience?.members.kind === "public")
+    )
+      return yield* new Tier2NotPublic();
     const description = input.description ?? input.manifest.description;
     if (description !== undefined) yield* normalizeDescription(description);
     if (input.manifest.name !== undefined && reservedName(input.manifest.name))
@@ -1996,7 +2044,12 @@ export const make = Effect.gen(function* () {
         : yield* sql.withTransaction(
             Effect.gen(function* () {
               const locked = yield* publishable(input);
-              if (input.manifest.tier === 2 && (input.scope ?? locked.scope) === "public")
+              if (
+                input.manifest.tier === 2 &&
+                (input.audience === undefined
+                  ? (input.scope ?? locked.scope)
+                  : Audiences.scopeOf(input.audience)) === "public"
+              )
                 return yield* new Tier2NotPublic();
               return {
                 companyId: locked.companyId,
@@ -2127,8 +2180,30 @@ export const make = Effect.gen(function* () {
         yield* sql`SET LOCAL statement_timeout = '60s'`;
         yield* lockDependencies(input.ownerUserId);
         const millis = yield* Clock.currentTimeMillis;
+        // Lock company authority before any patch/user row, matching team management.
+        yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR NO KEY UPDATE`;
         const existing = input.intent === "update" ? yield* publishable(input) : null;
-        if (input.manifest.tier === 2 && (input.scope ?? existing?.scope ?? "company") === "public")
+        if (existing === null && input.audience === undefined && input.scope === undefined)
+          return yield* new Audiences.InvalidAudience({ reason: "required" });
+        const audience =
+          input.audience ??
+          (existing !== null && (input.scope === undefined || input.scope === existing.scope)
+            ? existing.audience
+            : existing !== null
+              ? { ...existing.audience, members: { kind: input.scope! } }
+              : Audiences.company(input.scope));
+        yield* validateAudience({
+          audience,
+          scope: input.scope,
+          companyId: input.companyId,
+          actorId: input.ownerUserId,
+          ownerId: input.ownerUserId,
+          retained:
+            existing !== null &&
+            input.audience === undefined &&
+            (input.scope === undefined || input.scope === existing.scope)
+        });
+        if (input.manifest.tier === 2 && Audiences.scopeOf(audience) === "public")
           return yield* new Tier2NotPublic();
         const incomingDescription = input.description ?? input.manifest.description;
         const normalizedDescription =
@@ -2159,7 +2234,7 @@ export const make = Effect.gen(function* () {
           if (pending.length === 0) return yield* new PendingObjectExpired({ objectKey: key });
         }
         let versionNumber: number;
-        let scope: Patch["scope"] = input.scope ?? "company";
+        let scope: Patch["scope"] = Audiences.scopeOf(audience);
         let companyId = input.companyId;
         let companyHandle: string;
         let name: string;
@@ -2170,7 +2245,7 @@ export const make = Effect.gen(function* () {
           // version number is allocated after it, so each waits its turn and
           // then sees the committed version before it.
           const locked = existing!;
-          scope = input.scope ?? locked.scope;
+          scope = Audiences.scopeOf(audience);
           companyId = locked.companyId;
           companyHandle = locked.companyHandle;
           name = input.manifest.name ?? locked.name;
@@ -2223,6 +2298,7 @@ export const make = Effect.gen(function* () {
           yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
         }
+        yield* saveAudience(input.patchId, companyId, audience, input.ownerUserId);
         const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
         const resources = yield* provision({ ...input, companyId });
         const declaringPatches = resources.sharing.some(
@@ -2248,6 +2324,7 @@ export const make = Effect.gen(function* () {
           versionNumber,
           title: input.title,
           scope,
+          audience,
           name,
           description,
           descriptionUpdatedAt,
@@ -2385,10 +2462,16 @@ export const make = Effect.gen(function* () {
     patchId: string,
     actor: Actor,
     scope: Patch["scope"],
-    expectedScope?: Patch["scope"]
+    expectedScope?: Patch["scope"],
+    audience?: PatchAudience,
+    expectedAudienceRevision?: string
   ) {
+    yield* lockDependencies(actor.userId);
+    yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${actor.userId}) FOR NO KEY UPDATE`;
     const row = yield* manageable(patchId, actor);
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
+    if (expectedAudienceRevision !== undefined && row.audienceRevision !== expectedAudienceRevision)
+      return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
     if (scope === "public" && row.currentVersionId !== null) {
@@ -2397,6 +2480,16 @@ export const make = Effect.gen(function* () {
       );
       if (Option.isSome(served) && served.value.tier === 2) return yield* new Tier2NotPublic();
     }
+    const chosen = audience ?? { ...row.audience, members: { kind: scope } };
+    yield* sql`SELECT id FROM companies WHERE id = ${row.companyId} FOR NO KEY UPDATE`;
+    yield* validateAudience({
+      audience: chosen,
+      scope,
+      companyId: row.companyId,
+      actorId: actor.userId,
+      ownerId: row.ownerUserId
+    });
+    yield* saveAudience(patchId, row.companyId, chosen, actor.userId);
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
         lifecycle_revision = lifecycle_revision + 1,
@@ -2413,6 +2506,7 @@ export const make = Effect.gen(function* () {
     return {
       id: row.id,
       scope,
+      audience: chosen,
       name: row.name,
       companyHandle: row.companyHandle,
       currentVersionId: row.currentVersionId

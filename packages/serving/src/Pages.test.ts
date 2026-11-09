@@ -44,11 +44,11 @@ import {
   FRONTEND_API_HOST,
   PUBLIC_BASE_URL
 } from "@patchy/auth/testing";
-import { Companies, InviteMail, Users } from "@patchy/companies";
+import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
-import { Content, GuestGrants, Patches } from "@patchy/patches";
+import { Audiences, Content, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
@@ -183,6 +183,7 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(services),
+  Layer.provideMerge(Layer.succeed(Audiences.Activation, true)),
   Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
 );
 
@@ -221,7 +222,7 @@ const publish = (
         ownerUserId: DEV_SEED.userId,
         machineTokenId: DEV_SEED.tokenId,
         title,
-        ...(scope === undefined ? {} : { scope }),
+        scope: scope ?? (patchId === null ? "company" : undefined),
         html: `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`,
         filename: null,
         repoOrg: null,
@@ -236,6 +237,69 @@ const publish = (
   );
 
 it.layer(layer)("pages", (it) => {
+  it.effect(
+    "team audiences protect direct, alias, historical and raw-content URLs after membership removal",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const patches = yield* Patches.Patches;
+        for (const [id, role] of [
+          ["usr_audience_inside", "member"],
+          ["usr_audience_outside", "admin"]
+        ] as const) {
+          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${id}, ${id}, ${DEV_SEED.companyId}, ${`${id}@example.test`}, ${id}, ${role})`;
+        }
+        const manager = { companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId };
+        const team = yield* Teams.create({ ...manager, name: "Serving audience" });
+        yield* Teams.setMemberships({
+          ...manager,
+          teamId: team.id,
+          userIds: [DEV_SEED.userId, "usr_audience_inside"],
+          added: true
+        });
+        const initial = yield* publish("Restricted original", "company", null, "audience-original");
+        yield* patches.setScope(
+          initial.patchId,
+          { userId: DEV_SEED.userId, admin: true },
+          "company",
+          undefined,
+          {
+            members: { kind: "teams", teamIds: [team.id] },
+            guests: { kind: "specific", userIds: [] }
+          }
+        );
+        const latest = yield* publish(
+          "Restricted renamed",
+          undefined,
+          initial.patchId,
+          "audience-renamed"
+        );
+        const urls = [
+          initial.path,
+          latest.path,
+          `${latest.path}/~v/1`,
+          `/~content/${initial.patchId}/${initial.versionId}`
+        ];
+        const headers = (id: string) => ({
+          cookie: signedInCookies(signSession({ sub: id, email: `${id}@example.test`, name: id }))
+        });
+        for (const url of urls) {
+          const inside = yield* get(url, headers("usr_audience_inside"));
+          assert.equal(inside.status, url === initial.path ? 308 : 200, url);
+          const outside = yield* get(url, headers("usr_audience_outside"));
+          assert.equal(outside.status, 404, url);
+          assert.notInclude(yield* outside.text, "Restricted");
+        }
+        yield* Teams.setMemberships({
+          ...manager,
+          teamId: team.id,
+          userIds: ["usr_audience_inside"],
+          added: false
+        });
+        for (const url of urls)
+          assert.equal((yield* get(url, headers("usr_audience_inside"))).status, 404, url);
+      })
+  );
   it.effect(
     "shows off notices only to active colleagues and limits Restore to owner or admin",
     () =>

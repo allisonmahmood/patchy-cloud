@@ -926,3 +926,12 @@ owns the CI commands and their required checks.
   callers do not branch on the signal number.
 - **Branching on refusal prose or retaining old command aliases.** Rejected:
   stable codes and one publish verb keep the agent contract unambiguous.
+
+### Audience selection
+
+First publish requires an explicit scope or audience; an omitted choice is a rejected
+request, exit 2. Updates retain the current audience. `audiences --json` lists existing
+selectable teams and company guests, and `publish`/`share --audience <json>` select them.
+Malformed JSON is local, exit 1. Successful publication and sharing report `audience`;
+private `scope: company` alone no longer describes readership. Persisted older publish
+receipts may omit `audience` and remain replayable without changing their bytes.

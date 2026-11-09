@@ -19,6 +19,7 @@ export const CliCommand = Schema.Literals([
   "logout",
   "whoami",
   "publish",
+  "audiences",
   "share",
   "delete",
   "retire",

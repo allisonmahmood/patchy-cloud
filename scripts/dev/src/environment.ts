@@ -1067,10 +1067,15 @@ const materialize = Effect.fn("materialize")(function* (
           env
         });
         const result = yield* decodePublish(
-          yield* run(`Publishing ${patch.repo}`, node, [pinned, "publish", "--json"], {
-            cwd: repo,
-            env
-          })
+          yield* run(
+            `Publishing ${patch.repo}`,
+            node,
+            [pinned, "publish", "--share", "company", "--json"],
+            {
+              cwd: repo,
+              env
+            }
+          )
         );
         entry = { key, ...result, sampled: patch.sampleData !== true };
         yield* record(entry);
@@ -1098,7 +1103,17 @@ const materialize = Effect.fn("materialize")(function* (
           yield* run(
             `Publishing ${patch.file}`,
             "patchy",
-            ["publish", file, "--name", patch.name, "--description", patch.description, "--json"],
+            [
+              "publish",
+              file,
+              "--name",
+              patch.name,
+              "--description",
+              patch.description,
+              "--share",
+              "company",
+              "--json"
+            ],
             { cwd: layout.workspace, env }
           )
         );

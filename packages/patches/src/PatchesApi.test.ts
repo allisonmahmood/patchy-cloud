@@ -79,6 +79,7 @@ const html = (title: string) =>
 type PublishPayload = Pick<PublishRequest, "html"> & Partial<PublishRequest>;
 const publishRequest = (payload: PublishPayload) =>
   new PublishRequest({
+    ...(payload.patchId ? {} : { scope: "company" as const }),
     manifest: Fixtures.manifest,
     publishKey: crypto.randomUUID(),
     metadata: {},
@@ -312,7 +313,13 @@ it.layer(layer)("patches group", (it) => {
           const shared = yield* sameUser.share({ params, payload: new ShareRequest({ scope }) });
           assert.deepStrictEqual(
             { ...shared },
-            { ok: true, patchId: created.patchId, scope, publicUrl: created.publicUrl }
+            {
+              ok: true,
+              patchId: created.patchId,
+              scope,
+              audience: { members: { kind: scope }, guests: { kind: "specific", userIds: [] } },
+              publicUrl: created.publicUrl
+            }
           );
           assert.strictEqual(
             Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope,
@@ -3125,6 +3132,7 @@ it.layer(Layer.fresh(publishLayer))("tier 2 publishing", (it) => {
         const publicPublish = yield* api.publish({
           payload: publishRequest({
             ...payload,
+            scope: "public",
             patchId: created.patchId,
             publishKey: crypto.randomUUID()
           }),

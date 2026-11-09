@@ -1,3 +1,4 @@
+export * as Audiences from "./Audiences.js";
 export * as Content from "./Content.js";
 export * as DeletionSweep from "./DeletionSweep.js";
 export * as GuestGrants from "./GuestGrants.js";
