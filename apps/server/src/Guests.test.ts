@@ -333,6 +333,44 @@ const page = (person: Person, path: string) =>
   });
 
 it.layer(layer())("People's guests", (it) => {
+  it.effect(
+    "includes guests once in All with search, aligned columns and live removal counts",
+    () =>
+      Effect.gen(function* () {
+        const { guest, member } = yield* peopleWithGuests("all-people");
+        const all = yield* page(admin, "/company");
+        assert.include(all, 'All <span class="count">3</span>');
+        assert.include(all, 'Guests <span class="count">1</span>');
+        assert.strictEqual(all.split(`<strong>${guest.user.name}</strong>`).length - 1, 1);
+        assert.include(all, "<td>Guest</td><td></td><td>");
+        assert.include(all, '<td colspan="5"><details class="company-guest">');
+        assert.include(all, "2 patches");
+        const removal = `/company/guests/${guest.user.id}/remove`;
+        assert.include(all, removal);
+        const memberAll = yield* page(member, "/company");
+        assert.notInclude(memberAll, removal);
+        assert.include(memberAll, '<td colspan="4"><details class="company-guest">');
+        for (const query of [guest.user.name, guest.user.email]) {
+          const searched = yield* page(admin, `/company?q=${encodeURIComponent(query)}`);
+          assert.include(searched, guest.user.email);
+          assert.include(searched, "1 match for");
+        }
+        assert.notInclude(yield* page(admin, "/company?show=admins"), guest.user.email);
+        const guests = yield* page(admin, "/company?show=guests");
+        assert.include(guests, guest.user.email);
+        assert.notInclude(guests, "<strong>Max</strong>");
+        assert.include(guests, '<td colspan="2"><details class="company-guest">');
+        yield* people(admin, removal, "POST");
+        const after = yield* page(admin, "/company");
+        assert.notInclude(after, guest.user.email);
+        assert.include(after, 'All <span class="count">2</span>');
+        assert.include(
+          yield* page(admin, "/company?show=guests"),
+          'Guests <span class="count">0</span>'
+        );
+      })
+  );
+
   it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
     Effect.gen(function* () {
       const { grants, guest, notes, board, theirs, member } = yield* peopleWithGuests("fjord");

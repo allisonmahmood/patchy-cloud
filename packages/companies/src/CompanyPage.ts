@@ -335,7 +335,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
     all: [
       ...openInvites.map((invite): Entry => ({ kind: "invite", invite })),
       ...people(active),
-      ...people(deactivated)
+      ...people(deactivated),
+      ...guests.map((guest): Entry => ({ kind: "guest", guest }))
     ],
     admins: people(active.filter((user) => user.role !== "member")),
     invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
@@ -439,7 +440,12 @@ const render = Effect.fn("CompanyPage.render")(function* (
     const remove = admin
       ? `<a class="btn btn-quiet btn-danger" href="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}">Remove from all patches…</a>`
       : "";
-    return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${escapeHtml(guest.companyName)}</td></tr><tr class="table-expand"><td colspan="2"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
+    const guestColumns =
+      show === "guests"
+        ? `<td>${escapeHtml(guest.companyName)}</td>`
+        : `<td>Guest</td>${owned ? "<td></td>" : ""}<td>${escapeHtml(guest.companyName)}</td>${admin ? "<td></td>" : ""}`;
+    const columnCount = show === "guests" ? 2 : 3 + Number(Boolean(owned)) + Number(admin);
+    return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td>${guestColumns}</tr><tr class="table-expand"><td colspan="${columnCount}"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
   };
   const row = (entry: Entry) => {
     switch (entry.kind) {
@@ -453,7 +459,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
   };
 
   const counts: Record<Show, number> = {
-    all: invites.length + users.length,
+    all: lists.all.length,
     admins: lists.admins.length,
     invited: invites.length,
     deactivated: deactivated.length,
