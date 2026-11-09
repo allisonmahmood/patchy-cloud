@@ -1212,11 +1212,19 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             .setSharing({
               patchId: params.patchId,
               actor: { userId: identity.user.id, admin: false },
+              force: payload.force,
               ...(payload.audience === undefined
                 ? { scope: payload.scope }
                 : { audience: payload.audience })
             })
-            .pipe(Effect.catchTags({ ...ownerFailures, ...tierFailures, ...audienceFailures }));
+            .pipe(
+              Effect.catchTags({
+                ...ownerFailures,
+                ...tierFailures,
+                ...audienceFailures,
+                HasDependants: lifecycleFailures.HasDependants
+              })
+            );
           if (HttpServerResponse.isHttpServerResponse(shared)) return shared;
           yield* WideEvents.enrich(Patches.eventFields(shared));
           return new Shared({

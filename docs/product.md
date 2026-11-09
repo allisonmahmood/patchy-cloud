@@ -2117,6 +2117,7 @@ a live source and a shared resource; outside guests retain their existing refusa
 grants no content access. Source audience and company membership revisions fence protected live
 results, including a refused first source read, so restoration recovers without redeclaration.
 The sharing dialog warns about declared dependants within the acting manager’s authority before
-an audience change. This is a warning about declared reads, not a complete map of copied data:
+an audience change. CLI/API team narrowing returns `has_dependants` before changing anything;
+an explicit `--force` / `force: true` retry acknowledges that impact. This is a warning about declared reads, not a complete map of copied data:
 data deliberately copied into a destination follows that destination’s permissions. Revoking
 source access does not retract old copies. The team-audience activation barrier remains off.

@@ -1307,6 +1307,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           patchId: selected.patch.id,
           actor: actor,
           audience: audience,
+          force: form.force === "true",
           expectedScope: fields.expectedScope,
           expectedAudienceRevision: form.expectedAudienceRevision,
           expectedOwnerUserId: form.expectedOwnerUserId

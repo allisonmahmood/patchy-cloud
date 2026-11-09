@@ -1109,6 +1109,7 @@ export class PublishUpdated extends Schema.Class<PublishUpdated>("PublishUpdated
 
 /** Change an owned patch's sharing without publishing a version. */
 export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
+  force: Schema.optionalKey(Schema.Boolean),
   scope: SharingScope,
   audience: Schema.optionalKey(PatchAudience)
 }) {}

@@ -47,7 +47,7 @@ import {
   sharedStoreId,
   repoLimits
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Users, Teams } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -59,6 +59,8 @@ import * as Content from "./Content.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
 import * as PatchesApi from "./PatchesApi.js";
+import * as Audiences from "./Audiences.js";
+import { CompanyDatabases } from "@patchy/company-database";
 import * as PatchesConfig from "./PatchesConfig.js";
 import * as DeletionSweep from "./DeletionSweep.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -917,6 +919,86 @@ it.layer(Layer.fresh(publishLayer))("owner lifecycle over machine tokens", (it) 
       }
     })
   );
+  it.effect("warns before narrowing shared sources and applies only an acknowledged retry", () =>
+    Effect.gen(function* () {
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(uploader.company.id);
+      const team = yield* Teams.create({
+        companyId: uploader.company.id,
+        actorId: Fixtures.identities.admin.user.id,
+        name: "Source sharing"
+      });
+      yield* Teams.setMemberships({
+        companyId: uploader.company.id,
+        actorId: Fixtures.identities.admin.user.id,
+        teamId: team.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const source = Fixtures.recordInput(uploader, {
+        manifest: {
+          ...Fixtures.manifest,
+          tables: { notes: { description: "Notes", columns: {}, indexes: {}, shared: true } }
+        }
+      });
+      yield* Fixtures.record(source);
+      const consumer = Fixtures.recordInput(uploader, {
+        manifest: {
+          ...Fixtures.manifest,
+          tier: 2,
+          uses: {
+            notes: {
+              kind: "sharedTable",
+              patchId: source.patchId,
+              table: "notes",
+              id: sharedTableId(source.patchId, "notes"),
+              revision: 1
+            }
+          }
+        }
+      });
+      yield* Fixtures.record(consumer);
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const payload = new ShareRequest({
+        scope: "company",
+        audience: {
+          members: { kind: "teams", teamIds: [team.id] },
+          guests: { kind: "specific", userIds: [] }
+        }
+      });
+      const response = yield* owner.share({
+        params: { patchId: source.patchId },
+        payload,
+        responseMode: "response-only"
+      });
+      assert.strictEqual(response.status, 409);
+      expect(yield* response.json).toMatchObject({
+        code: "has_dependants",
+        dependants: [{ patchId: consumer.patchId }]
+      });
+      const patches = yield* Patches.Patches;
+      assert.strictEqual(
+        Option.getOrThrow(yield* patches.find(source.patchId)).patch.audience.members.kind,
+        "company"
+      );
+      const update = Fixtures.recordInput(uploader, {
+        intent: "update",
+        patchId: source.patchId,
+        manifest: source.manifest,
+        audience: payload.audience
+      });
+      assert.strictEqual(
+        (yield* patches.preflight(update).pipe(Effect.flip))._tag,
+        "HasDependants"
+      );
+      assert.strictEqual((yield* Fixtures.record(update).pipe(Effect.flip))._tag, "HasDependants");
+      const changed = yield* owner.share({
+        params: { patchId: source.patchId },
+        payload: new ShareRequest({ ...payload, force: true })
+      });
+      assert.strictEqual(changed.audience?.members.kind, "teams");
+    }).pipe(Effect.provideService(Audiences.Activation, true))
+  );
+
   it.effect("names dependants and off sources and admits force only when requested", () =>
     Effect.gen(function* () {
       const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));

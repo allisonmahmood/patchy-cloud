@@ -101,10 +101,21 @@ it.layer(services)("Patch audiences", (it) => {
       const other = Fixtures.recordInput(reader, { manifest });
       yield* Fixtures.record(own);
       yield* Fixtures.record(other);
-      const visible = yield* patches.sharingDependants(source.patchId, {
-        userId: uploader.user.id,
-        admin: false
-      });
+      const queries: string[] = [];
+      const trace: Statement.Transformer = (statement) => {
+        queries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const visible = yield* patches
+        .sharingDependants(source.patchId, {
+          userId: uploader.user.id,
+          admin: false
+        })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
+      const selection = queries.filter((query) => query.includes('AS "ownerId"'));
+      assert.lengthOf(selection, 1);
+      assert.include(selection[0]!.toLowerCase(), '"p"."id" in');
+      assert.isFalse(queries.some((query) => query.includes("LEFT JOIN patches source")));
       assert.deepStrictEqual(
         visible.map((row) => row.patchId),
         [own.patchId]

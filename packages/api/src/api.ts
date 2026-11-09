@@ -482,10 +482,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       params: patchParams,
       payload: ShareRequest,
       success: Shared,
-      error: [...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
+      error: [...ownerRouteErrors, Tier2NotPublic, HasDependants, PayloadTooLarge]
     }).annotateMerge(
       describe(
         "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
+          "Narrowing to teams returns 409 `has_dependants` before changing anything when declared dependants are within the actor’s management authority. Review those dependants, then retry with `force: true` to accept possible shared-read failures. " +
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
           "Public sharing while the served version is tier 2 answers `tier2_not_public`. " +
