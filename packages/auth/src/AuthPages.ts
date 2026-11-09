@@ -11,7 +11,6 @@ import type { Analytics } from "@patchy/analytics";
 import { type Cryptography } from "@patchy/core";
 import {
   CompanyPage,
-  Teams,
   TeamsPage,
   Join,
   type Companies,
@@ -331,7 +330,7 @@ export const layer: Layer.Layer<
             { ...page, styles: TeamsPage.styles, app: { viewer, section: "teams" } },
             session
           );
-        }).pipe(Effect.provide(Teams.layer));
+        });
         yield* router.add(
           action === "view" ? "GET" : "POST",
           action === "view" ? TeamsPage.path : `${TeamsPage.path}/${action}`,

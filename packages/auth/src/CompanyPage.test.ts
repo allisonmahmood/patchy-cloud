@@ -155,6 +155,53 @@ const services = Layer.mergeAll(
 );
 
 it.layer(services)("company page and actions", (it) => {
+  it.effect(
+    "keeps rejected team names in the expanded form with the selected team and accessible field error",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("teams-name-recovery");
+        const root = "/settings/company/teams";
+        yield* send(`${root}/create`, post(owner.user, { name: "Design <studio>" }));
+        const created = yield* send(`${root}/create`, post(owner.user, { name: "Engineering" }));
+        const teamId = new URL(created.headers.get("location")!, base).searchParams.get("team")!;
+        const name = " design <studio> ";
+        for (const action of ["create", "rename"] as const) {
+          const response = yield* send(
+            `${root}/${action}?team=${teamId}`,
+            post(owner.user, { name })
+          );
+          assert.strictEqual(response.status, 409);
+          const html = yield* Effect.promise(() => response.text());
+          const id = action === "create" ? "team-name-Create-team" : "team-name-Save-name";
+          assert.include(html, `id="${id}" name="name" value=" design &lt;studio&gt; "`);
+          assert.include(html, `aria-invalid="true" aria-describedby="${id}-error" autofocus`);
+          assert.include(
+            html,
+            `class="note note-refused field-callout" id="${id}-error" role="alert"`
+          );
+          assert.include(html, '<details class="teams-form" open>');
+          assert.include(html, "<h2>Engineering</h2>");
+          assert.include(html, `${root}/${action}?team=${teamId}`);
+          assert.include(html, "novalidate");
+        }
+        const invalid = yield* send(
+          `${root}/rename?team=${teamId}`,
+          post(owner.user, { name: "x".repeat(101) })
+        );
+        assert.strictEqual(invalid.status, 400);
+        const invalidHtml = yield* Effect.promise(() => invalid.text());
+        assert.include(invalidHtml, `value="${"x".repeat(101)}"`);
+        assert.include(invalidHtml, 'aria-describedby="team-name-Save-name-error"');
+        assert.include(invalidHtml, "Use a team name between 1 and 100 characters.");
+        const current = yield* send(`${root}?team=${teamId}`, {
+          headers: { cookie: cookie(owner.user) }
+        });
+        const currentHtml = yield* Effect.promise(() => current.text());
+        assert.include(currentHtml, "<h2>Engineering</h2>");
+        assert.notInclude(main(currentHtml), 'aria-invalid="true"');
+      })
+  );
+
   it.effect("manages durable teams through settings and keeps ordinary members read-only", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("teams-settings");

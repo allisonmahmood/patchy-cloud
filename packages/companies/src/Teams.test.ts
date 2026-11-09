@@ -41,48 +41,80 @@ const setup = Effect.fn(function* (handle: string) {
     member: yield* add("Cleo", "member")
   };
 });
-const services = Layer.mergeAll(Companies.layer, Users.layer, Teams.layer, Directory.layer).pipe(
+const services = Layer.mergeAll(Companies.layer, Users.layer, Directory.layer).pipe(
   Layer.provideMerge(Testing.layer()),
   Layer.provideMerge(NodeCryptography.layer)
 );
 it.layer(services)("Teams", (it) => {
   it.effect(
-    "keeps independent overlapping memberships and stable identities across service reconstruction",
+    "owns atomic batch edits, preserving attribution and authority on a failed selection",
+    () =>
+      Effect.gen(function* () {
+        const { ref, admin, member } = yield* setup("teams-batch");
+        const directory = yield* Directory.Directory;
+        const team = yield* Teams.create({ ...ref, name: "Design" });
+        const input = { ...ref, teamId: team.id, userIds: [admin.id, member.id], added: true };
+        const before = yield* directory.revision(ref.companyId);
+        const failed = yield* Teams.setMemberships({
+          ...input,
+          userIds: [admin.id, "missing-person"]
+        }).pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "UserNotFound");
+        assert.deepStrictEqual(yield* Teams.members({ ...ref, teamId: team.id }), []);
+        assert.deepStrictEqual(yield* Teams.changes(ref.companyId, before), []);
+        assert.strictEqual(yield* directory.revision(ref.companyId), before);
+        assert.strictEqual(
+          yield* Teams.setMemberships({ ...input, userIds: [admin.id, admin.id, member.id] }),
+          2
+        );
+        const facts = yield* Teams.changes(ref.companyId, before);
+        assert.strictEqual(facts.length, 2);
+        assert.isTrue(facts.every((change) => change.actorId === ref.actorId));
+        const committed = yield* directory.revision(ref.companyId);
+        assert.strictEqual(yield* Teams.setMemberships(input), 0);
+        assert.strictEqual(yield* Teams.setMemberships({ ...input, userIds: [] }), 0);
+        assert.strictEqual(yield* directory.revision(ref.companyId), committed);
+        assert.deepStrictEqual(yield* Teams.changes(ref.companyId, committed), []);
+        assert.strictEqual(yield* Teams.setMemberships({ ...input, added: false }), 2);
+        assert.deepStrictEqual(yield* Teams.members({ ...ref, teamId: team.id }), []);
+      })
+  );
+
+  it.effect(
+    "keeps independent overlapping memberships and stable identities in durable storage",
     () =>
       Effect.gen(function* () {
         const { ref, admin, member } = yield* setup("teams-overlap");
-        const teams = yield* Teams.Teams;
-        const design = yield* teams.create({ ...ref, name: " Design " });
-        const engineering = yield* teams.create({ ...ref, name: "Engineering" });
+        const design = yield* Teams.create({ ...ref, name: " Design " });
+        const engineering = yield* Teams.create({ ...ref, name: "Engineering" });
         const asAdmin = { ...ref, actorId: admin.id };
         for (const teamId of [design.id, engineering.id]) {
-          yield* teams.setMembership({ ...asAdmin, teamId, userId: admin.id, added: true });
-          yield* teams.setMembership({ ...asAdmin, teamId, userId: member.id, added: true });
+          yield* Teams.setMemberships({ ...asAdmin, teamId, userIds: [admin.id], added: true });
+          yield* Teams.setMemberships({ ...asAdmin, teamId, userIds: [member.id], added: true });
         }
-        yield* teams.rename({ ...asAdmin, teamId: design.id, name: "Product Design" });
-        yield* teams.setMembership({
+        yield* Teams.rename({ ...asAdmin, teamId: design.id, name: "Product Design" });
+        yield* Teams.setMemberships({
           ...asAdmin,
           teamId: design.id,
-          userId: member.id,
+          userIds: [member.id],
           added: false
         });
-        const rebuilt = yield* Teams.make;
         assert.deepStrictEqual(
-          (yield* rebuilt.list(ref)).map((team) => team.id).sort(),
+          (yield* Teams.list(ref)).map((team) => team.id).sort(),
           [design.id, engineering.id].sort()
         );
-        assert.deepStrictEqual(yield* rebuilt.members({ ...ref, teamId: design.id }), [admin.id]);
-        assert.deepStrictEqual(yield* rebuilt.memberships(ref.companyId, member.id), [
+        assert.deepStrictEqual(yield* Teams.members({ ...ref, teamId: design.id }), [admin.id]);
+        assert.deepStrictEqual(yield* Teams.memberships(ref.companyId, member.id), [
           engineering.id
         ]);
-        yield* rebuilt.setMembership({
+        yield* Teams.setMemberships({
           ...asAdmin,
           teamId: design.id,
-          userId: member.id,
+          userIds: [member.id],
           added: true
         });
-        assert.strictEqual((yield* rebuilt.memberships(ref.companyId, member.id)).length, 2);
-        const changes = yield* rebuilt.changes(ref.companyId, "0");
+        assert.strictEqual((yield* Teams.memberships(ref.companyId, member.id)).length, 2);
+        const changes = yield* Teams.changes(ref.companyId, "0");
         assert.strictEqual(changes.length, 6);
         assert.isTrue(changes.every((change) => change.actorId === admin.id));
         assert.isTrue(changes.some((change) => change.userId === admin.id && change.added));
@@ -94,29 +126,39 @@ it.layer(services)("Teams", (it) => {
       Effect.gen(function* () {
         const { ref, admin, member } = yield* setup("teams-authority");
         const other = yield* setup("teams-foreign");
-        const teams = yield* Teams.Teams;
         const users = yield* Users.Users;
-        const team = yield* teams.create({ ...ref, name: "Design" });
-        const input = { ...ref, teamId: team.id, userId: member.id, added: true };
-        for (const action of [
-          teams.create({ ...ref, actorId: member.id, name: "Hidden" }).pipe(Effect.asVoid),
-          teams.rename({ ...input, actorId: member.id, name: "Hidden" }).pipe(Effect.asVoid),
-          teams.setMembership({ ...input, actorId: member.id }).pipe(Effect.asVoid)
-        ]) {
-          assert.strictEqual((yield* action.pipe(Effect.flip))._tag, "RoleForbidden");
-        }
+        const team = yield* Teams.create({ ...ref, name: "Design" });
+        const input = { ...ref, teamId: team.id, userIds: [member.id], added: true };
         assert.strictEqual(
-          (yield* teams.setMembership({ ...input, userId: other.user.id }).pipe(Effect.flip))._tag,
+          (yield* Teams.create({ ...ref, actorId: member.id, name: "Hidden" }).pipe(Effect.flip))
+            ._tag,
+          "RoleForbidden"
+        );
+        assert.strictEqual(
+          (yield* Teams.rename({ ...input, actorId: member.id, name: "Hidden" }).pipe(Effect.flip))
+            ._tag,
+          "RoleForbidden"
+        );
+        assert.strictEqual(
+          (yield* Teams.setMemberships({ ...input, actorId: member.id }).pipe(Effect.flip))._tag,
+          "RoleForbidden"
+        );
+        assert.strictEqual(
+          (yield* Teams.setMemberships({ ...input, userIds: [other.user.id] }).pipe(Effect.flip))
+            ._tag,
           "UserNotFound"
         );
         assert.strictEqual(
-          (yield* teams
-            .setMembership({ ...other.ref, teamId: team.id, userId: other.user.id, added: true })
-            .pipe(Effect.flip))._tag,
+          (yield* Teams.setMemberships({
+            ...other.ref,
+            teamId: team.id,
+            userIds: [other.user.id],
+            added: true
+          }).pipe(Effect.flip))._tag,
           "TeamNotFound"
         );
         assert.strictEqual(
-          (yield* teams.members({ ...other.ref, teamId: team.id }).pipe(Effect.flip))._tag,
+          (yield* Teams.members({ ...other.ref, teamId: team.id }).pipe(Effect.flip))._tag,
           "TeamNotFound"
         );
         yield* users.setRole({
@@ -126,22 +168,22 @@ it.layer(services)("Teams", (it) => {
           role: "member"
         });
         assert.strictEqual(
-          (yield* teams.setMembership({ ...input, actorId: admin.id }).pipe(Effect.flip))._tag,
+          (yield* Teams.setMemberships({ ...input, actorId: admin.id }).pipe(Effect.flip))._tag,
           "RoleForbidden"
         );
-        yield* teams.setMembership(input);
+        yield* Teams.setMemberships(input);
         yield* users.deactivate({ ...ref, userId: member.id });
-        assert.deepStrictEqual(yield* teams.memberships(ref.companyId, member.id), []);
+        assert.deepStrictEqual(yield* Teams.memberships(ref.companyId, member.id), []);
         assert.strictEqual(
-          (yield* teams.setMembership(input).pipe(Effect.flip))._tag,
+          (yield* Teams.setMemberships(input).pipe(Effect.flip))._tag,
           "UserNotFound"
         );
         assert.strictEqual(
-          (yield* teams.list({ ...ref, actorId: member.id }).pipe(Effect.flip))._tag,
+          (yield* Teams.list({ ...ref, actorId: member.id }).pipe(Effect.flip))._tag,
           "RoleForbidden"
         );
         yield* users.reactivate({ ...ref, userId: member.id });
-        assert.deepStrictEqual(yield* teams.memberships(ref.companyId, member.id), [team.id]);
+        assert.deepStrictEqual(yield* Teams.memberships(ref.companyId, member.id), [team.id]);
       })
   );
   it.effect(
@@ -149,29 +191,28 @@ it.layer(services)("Teams", (it) => {
     () =>
       Effect.gen(function* () {
         const { ref } = yield* setup("teams-names");
-        const teams = yield* Teams.Teams;
-        const team = yield* teams.create({ ...ref, name: "  Product   Design " });
+        const team = yield* Teams.create({ ...ref, name: "  Product   Design " });
         assert.strictEqual(team.name, "Product Design");
         assert.strictEqual(
-          (yield* teams.create({ ...ref, name: "product design" }).pipe(Effect.flip))._tag,
+          (yield* Teams.create({ ...ref, name: "product design" }).pipe(Effect.flip))._tag,
           "TeamNameTaken"
         );
         for (const name of ["   ", "x".repeat(101)])
           assert.strictEqual(
-            (yield* teams.create({ ...ref, name }).pipe(Effect.flip))._tag,
+            (yield* Teams.create({ ...ref, name }).pipe(Effect.flip))._tag,
             "InvalidTeamName"
           );
-        const other = yield* teams.create({ ...ref, name: "Engineering" });
+        const other = yield* Teams.create({ ...ref, name: "Engineering" });
         assert.strictEqual(
-          (yield* teams
-            .rename({ ...ref, teamId: other.id, name: "Product Design" })
-            .pipe(Effect.flip))._tag,
+          (yield* Teams.rename({ ...ref, teamId: other.id, name: "Product Design" }).pipe(
+            Effect.flip
+          ))._tag,
           "TeamNameTaken"
         );
         const directory = yield* Directory.Directory;
         const before = yield* directory.revision(ref.companyId);
         assert.strictEqual(
-          (yield* teams.rename({ ...ref, teamId: team.id, name: team.name })).id,
+          (yield* Teams.rename({ ...ref, teamId: team.id, name: team.name })).id,
           team.id
         );
         assert.strictEqual(yield* directory.revision(ref.companyId), before);
@@ -180,14 +221,16 @@ it.layer(services)("Teams", (it) => {
   it.effect("serializes concurrent membership edits into one effective fact", () =>
     Effect.gen(function* () {
       const { ref, member } = yield* setup("teams-concurrent");
-      const teams = yield* Teams.Teams;
-      const team = yield* teams.create({ ...ref, name: "Design" });
-      const input = { ...ref, teamId: team.id, userId: member.id, added: true };
-      const results = yield* Effect.all([teams.setMembership(input), teams.setMembership(input)], {
-        concurrency: 2
-      });
-      assert.deepStrictEqual([...results].sort(), [false, true]);
-      assert.strictEqual((yield* teams.changes(ref.companyId, "0")).length, 1);
+      const team = yield* Teams.create({ ...ref, name: "Design" });
+      const input = { ...ref, teamId: team.id, userIds: [member.id], added: true };
+      const results = yield* Effect.all(
+        [Teams.setMemberships(input), Teams.setMemberships(input)],
+        {
+          concurrency: 2
+        }
+      );
+      assert.deepStrictEqual([...results].sort(), [0, 1]);
+      assert.strictEqual((yield* Teams.changes(ref.companyId, "0")).length, 1);
     })
   );
   it.effect(
@@ -195,12 +238,11 @@ it.layer(services)("Teams", (it) => {
     () =>
       Effect.gen(function* () {
         const { ref, member } = yield* setup("teams-commit");
-        const teams = yield* Teams.Teams;
         const directory = yield* Directory.Directory;
         const sql = yield* SqlClient.SqlClient;
         const pg = yield* PgClient.PgClient;
-        const team = yield* teams.create({ ...ref, name: "Design" });
-        const input = { ...ref, teamId: team.id, userId: member.id, added: true };
+        const team = yield* Teams.create({ ...ref, name: "Design" });
+        const input = { ...ref, teamId: team.id, userIds: [member.id], added: true };
         const initial = yield* directory.revision(ref.companyId);
         const notifications = yield* pg.listen("patchy_runtime_wakes");
         const barrier = Effect.gen(function* () {
@@ -210,7 +252,7 @@ it.layer(services)("Teams", (it) => {
         yield* sql
           .withTransaction(
             Effect.gen(function* () {
-              yield* teams.setMembership(input);
+              yield* Teams.setMemberships(input);
               yield* barrier;
               return yield* Effect.fail("rollback");
             })
@@ -218,24 +260,24 @@ it.layer(services)("Teams", (it) => {
           .pipe(Effect.flip);
         yield* barrier;
         assert.strictEqual(yield* directory.revision(ref.companyId), initial);
-        assert.deepStrictEqual(yield* teams.changes(ref.companyId, "0"), []);
-        assert.deepStrictEqual(yield* teams.memberships(ref.companyId, member.id), []);
+        assert.deepStrictEqual(yield* Teams.changes(ref.companyId, "0"), []);
+        assert.deepStrictEqual(yield* Teams.memberships(ref.companyId, member.id), []);
         yield* sql.withTransaction(
           Effect.gen(function* () {
-            yield* teams.setMembership(input);
+            yield* Teams.setMemberships(input);
             yield* barrier;
           })
         );
         assert.include((yield* Queue.take(notifications)).payload, `members:${ref.companyId}`);
         const committed = yield* directory.revision(ref.companyId);
-        const facts = yield* teams.changes(ref.companyId, initial);
+        const facts = yield* Teams.changes(ref.companyId, initial);
         assert.strictEqual(facts.length, 1);
         assert.strictEqual(facts[0]!.revision, committed);
         assert.strictEqual(facts[0]!.actorId, ref.actorId);
-        assert.isFalse(yield* teams.setMembership(input));
+        assert.strictEqual(yield* Teams.setMemberships(input), 0);
         yield* barrier;
         assert.strictEqual(yield* directory.revision(ref.companyId), committed);
-        assert.deepStrictEqual(yield* teams.changes(ref.companyId, committed), []);
+        assert.deepStrictEqual(yield* Teams.changes(ref.companyId, committed), []);
       }).pipe(Effect.scoped)
   );
 });
