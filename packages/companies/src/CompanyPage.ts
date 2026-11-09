@@ -266,7 +266,7 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
     ? `Anyone at ${company} can connect their own agent to use patches’ agent tools as themselves.`
     : "Agents can’t use any patch; connections stay and work again when it’s on.";
   let control: string;
-  if (viewer.role === "admin") {
+  if (viewer.role === "super_admin") {
     const next = access.on ? "off" : "on";
     // What the button does, before it is pressed: turning off refuses every agent but keeps connections.
     const effect = access.on
@@ -275,10 +275,10 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
     control = `${effect}<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
   } else {
     const admins = (yield* (yield* Users.Users).list(viewer.company.id))
-      .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+      .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
       .map(displayName)
       .sort((a, b) => a.localeCompare(b));
-    control = `<p class="supporting-text">Only an admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/machines">Connect your agent</a></div>' : ""}`;
+    control = `<p class="supporting-text">Only a super admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/machines">Connect your agent</a></div>' : ""}`;
   }
   return {
     title: "Agent access",
@@ -307,7 +307,8 @@ const render = Effect.fn("CompanyPage.render")(function* (
       ? undefined
       : yield* ownedPatches({ companyId: viewer.company.id, userId: viewer.user.id });
   const now = yield* Clock.currentTimeMillis;
-  const admin = viewer.role === "admin";
+  const admin = viewer.role !== "member";
+  const superAdmin = viewer.role === "super_admin";
   const { show, query } = view.filter ?? { show: "all", query: "" };
 
   const byName = (a: Users.User, b: Users.User) =>
@@ -336,7 +337,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
       ...people(active),
       ...people(deactivated)
     ],
-    admins: people(active.filter((user) => user.role === "admin")),
+    admins: people(active.filter((user) => user.role !== "member")),
     invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
     deactivated: people(deactivated),
     guests: guests.map((guest): Entry => ({ kind: "guest", guest }))
@@ -370,23 +371,33 @@ const render = Effect.fn("CompanyPage.render")(function* (
       : joinedOnly
         ? time(user.createdAt)
         : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
-    const role = user.role === "admin" ? "member" : "admin";
-    const lifecycle = user.deactivatedAt
-      ? menuLink(`${path}/reactivate`, "Reactivate…")
-      : user.id === viewer.user.id
+
+    const lifecycle =
+      !superAdmin && user.role !== "member"
         ? ""
-        : menuLink(`${path}/deactivate`, "Deactivate…", true);
+        : user.deactivatedAt
+          ? menuLink(`${path}/reactivate`, "Reactivate…")
+          : user.id === viewer.user.id
+            ? ""
+            : menuLink(`${path}/deactivate`, "Deactivate…", true);
+    const items = [
+      ...(superAdmin
+        ? Users.Role.literals
+            .filter((role) => role !== user.role)
+            .map((role) =>
+              menuPost(
+                `${path}/role`,
+                `Make ${role === "super_admin" ? "super admin" : role}`,
+                `<input type="hidden" name="role" value="${role}">`
+              )
+            )
+        : []),
+      ...(lifecycle ? [...(superAdmin ? ['<hr class="menu-rule">'] : []), lifecycle] : [])
+    ];
     const actions = admin
-      ? `<td class="company-row-actions">${rowMenu(user.id, label, [
-          menuPost(
-            `${path}/role`,
-            role === "admin" ? "Make admin" : "Make member",
-            `<input type="hidden" name="role" value="${role}">`
-          ),
-          ...(lifecycle ? ['<hr class="menu-rule">', lifecycle] : [])
-        ])}</td>`
+      ? `<td class="company-row-actions">${items.length ? rowMenu(user.id, label, items) : ""}</td>`
       : "";
-    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
+    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "super_admin" ? "Super admin" : user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
   };
   const inviteRow = (invite: Companies.Invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
@@ -399,19 +410,22 @@ const render = Effect.fn("CompanyPage.render")(function* (
           ? '<span class="pill pill-failed">Email didn’t send</span>'
           : '<span class="pill pill-progress">Invited</span>';
     const stuck = state !== "waiting";
-    const actions = admin
-      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit" aria-label="${escapeAttribute(`Resend the invite to ${invite.email}`)}">Resend</button></form>` : ""}${rowMenu(
-          invite.id,
-          invite.email,
-          [
-            ...(stuck
-              ? []
-              : [menuPost(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
-            menuPost(`${path}/revoke`, "Revoke invite", "", true)
-          ]
-        )}</div></td>`
-      : "";
-    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
+    const actions =
+      admin && (superAdmin || invite.role === "member")
+        ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit" aria-label="${escapeAttribute(`Resend the invite to ${invite.email}`)}">Resend</button></form>` : ""}${rowMenu(
+            invite.id,
+            invite.email,
+            [
+              ...(stuck
+                ? []
+                : [menuPost(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
+              menuPost(`${path}/revoke`, "Revoke invite", "", true)
+            ]
+          )}</div></td>`
+        : admin
+          ? "<td></td>"
+          : "";
+    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "super_admin" ? "Super admin" : invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
   };
 
   // `#guest-<id>` opens a guest's row: browsers expand a closed details to show a fragment's target.
@@ -486,9 +500,9 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>`
     : `<p class="field-hint" id="invite-email-note">Up to ${inviteBatch} at once. Invites expire after ${lifetimeDays} days.</p>`;
   const invite = admin
-    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
+    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option>${superAdmin ? `<option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option><option value="super_admin"${draft?.role === "super_admin" ? " selected" : ""}>Super admin</option>` : ""}</select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
     : "";
-  const admins = active.filter((user) => user.role === "admin");
+  const admins = active.filter((user) => user.role !== "member");
   return {
     title: "People",
     body: `<p class="supporting-text">${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${noticeHtml(view.notice)}<div class="company-tools">${search}<nav class="tabs" aria-label="Show">${tabs}</nav>${invite}</div>${matches}${table}`,
@@ -532,8 +546,8 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
 const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer: Viewer) {
   const refused = (message: string, status: number) =>
     renderAgentAccess(viewer, { message: escapeHtml(message), status });
-  if (viewer.role !== "admin")
-    return yield* refused("Only an admin can turn agent access on or off.", 403);
+  if (viewer.role !== "super_admin")
+    return yield* refused("Only a super admin can turn agent access on or off.", 403);
   const request = yield* HttpServerRequest.HttpServerRequest;
   const form = yield* decodeAgentAccess(Object.fromEntries(yield* request.urlParamsBody)).pipe(
     Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
@@ -578,8 +592,13 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     });
   }
   if (action.kind === "view-agent-access") return yield* renderAgentAccess(viewer);
-  if (action.kind === "agent-access") return yield* setAgentAccess(viewer);
-  if (viewer.role !== "admin")
+  if (action.kind === "agent-access")
+    return yield* setAgentAccess(viewer).pipe(
+      Effect.catchTags({
+        RoleForbidden: (error) => renderAgentAccess(viewer, { message: error.message, status: 403 })
+      })
+    );
+  if (viewer.role === "member")
     return yield* refuse(viewer, "Only an admin can manage this company.", 403);
   // Narrowed here, so the effect below keeps the forms that remain.
   const act = action;
@@ -597,7 +616,10 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
         Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
       );
       if (role === null)
-        return yield* refuse(viewer, "Choose Member or Admin.", 422, { text, role: "member" });
+        return yield* refuse(viewer, "Choose Member, Admin or Super admin.", 422, {
+          text,
+          role: "member"
+        });
       const list = addresses(text);
       const invalid = list.filter((entry) => !isEmail(entry));
       const problem =
@@ -673,7 +695,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     if (act.kind === "revoke") {
       const result = yield* Invitations.revoke({
         companyId: viewer.company.id,
-        inviteId: act.id
+        inviteId: act.id,
+        actorId: viewer.user.id
       }).pipe(
         Effect.tap(({ invite }) =>
           analytics.track({ name: "invite.revoked", ...admin, properties: { inviteId: invite.id } })
@@ -692,7 +715,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     if (act.kind === "resend") {
       const result = yield* Invitations.resend({
         companyId: viewer.company.id,
-        inviteId: act.id
+        inviteId: act.id,
+        actorId: viewer.user.id
       }).pipe(
         Effect.tap(({ invite, mailFailed }) =>
           analytics.track({
@@ -731,7 +755,12 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       return done(`Removed ${guest.name} from all patches`, filterHref("guests", ""));
     }
     const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
-    const change = users.setRole({ companyId: viewer.company.id, userId: act.id, role });
+    const change = users.setRole({
+      companyId: viewer.company.id,
+      userId: act.id,
+      actorId: viewer.user.id,
+      role
+    });
     const { user } = yield* withReportedCommit(change, ({ changed }) =>
       changed
         ? analytics.track({
@@ -741,14 +770,17 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
           })
         : Effect.void
     );
-    return done(`${displayName(user)} is now ${user.role === "admin" ? "an admin" : "a member"}`);
+    return done(
+      `${displayName(user)} is now ${user.role === "super_admin" ? "a super admin" : user.role === "admin" ? "an admin" : "a member"}`
+    );
   }).pipe(
     Effect.catchTags({
-      SchemaError: () => refuse(viewer, "Choose Member or Admin.", 422),
+      SchemaError: () => refuse(viewer, "Choose Member, Admin or Super admin.", 422),
       InviteUnavailable: (error) => refuse(viewer, error.message, 404),
       CompanyNotFound: (error) => refuse(viewer, error.message, 404),
       UserNotFound: (error) => refuse(viewer, error.message, 404),
-      LastAdmin: (error) => refuse(viewer, error.message, 409)
+      RoleForbidden: (error) => refuse(viewer, error.message, 403),
+      LastSuperAdmin: (error) => refuse(viewer, error.message, 409)
     })
   );
 });

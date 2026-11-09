@@ -221,7 +221,7 @@ only with `key=<it>` and otherwise answers 403 without naming anyone.
 `pnpm patchy` runs the CLI from source and finds this worktree's
 `.local/dev/env` from any directory beneath it. A command uses
 `PATCHY_API_TOKEN`, then a stored login for the instance, then the seed's
-**Dev Machine** key, which publishes as `dev@patchy.local`, the admin of
+**Dev Machine** key, which publishes as `dev@patchy.local`, the super admin of
 **Patchy Dev** (`patchy-dev`). `--api-url` bypasses discovery and the seed. Set
 `PATCHY_STATE_DIR` to keep a check's logins out of your shared `~/.patchy`.
 For `curl` or `psql`, load the env in a separate shell:

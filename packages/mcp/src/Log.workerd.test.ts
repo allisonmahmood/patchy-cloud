@@ -84,7 +84,7 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })("the log on w
     "an agent's quiet query leaves no row, and everything else it does is its person's via the agent",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("log-workerd", [["Jordan Lee", "admin"]]);
+        const acme = yield* company("log-workerd", [["Jordan Lee", "super_admin"]]);
         const jordan = acme.people[0]!;
         const text = yield* bundled;
         const published = yield* publish(acme.id, jordan, "call-log", {

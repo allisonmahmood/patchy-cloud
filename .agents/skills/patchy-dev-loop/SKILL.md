@@ -33,7 +33,7 @@ Done when `pnpm dev status` exits 0.
 ## 2. Exercise the change
 
 - **The CLI.** `pnpm patchy …` runs from source and publishes as **Dev
-  Machine**, `dev@patchy.local`, the admin of Patchy Dev. For login or logout
+  Machine**, `dev@patchy.local`, the super admin of Patchy Dev. For login or logout
   checks, keep `PATCHY_API_TOKEN` unset and set
   `PATCHY_STATE_DIR="$PWD/.local/cli-check"` on every command.
 - **A server-rendered page as a person.** Sign in with a cookie jar, then fetch.

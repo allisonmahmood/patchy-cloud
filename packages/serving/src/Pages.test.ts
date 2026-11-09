@@ -1186,6 +1186,7 @@ it.layer(services)("pages in memory", (it) => {
         });
         yield* (yield* Users.Users).deactivate({
           companyId: DEV_SEED.companyId,
+          actorId: DEV_SEED.userId,
           userId: inactive.id
         });
         const deactivated = yield* send(path, {
@@ -1328,6 +1329,7 @@ it.layer(services)("pages in memory", (it) => {
       cookie,
       deactivate: (yield* Users.Users).deactivate({
         companyId: DEV_SEED.companyId,
+        actorId: DEV_SEED.userId,
         userId: user.id
       })
     };
@@ -1963,7 +1965,11 @@ it.layer(services)("pages in memory", (it) => {
       });
       for (const [reason, [headers, status]] of Object.entries(refusals))
         yield* refused(reason, headers, status);
-      yield* (yield* Users.Users).deactivate({ companyId: DEV_SEED.companyId, userId: memberId });
+      yield* (yield* Users.Users).deactivate({
+        companyId: DEV_SEED.companyId,
+        actorId: DEV_SEED.userId,
+        userId: memberId
+      });
       yield* refused("deactivated", member, 403);
       // An operator-disabled patch is absent even to an active colleague.
       yield* sql`UPDATE patches SET disabled_at = now() WHERE id = ${patchId}`;

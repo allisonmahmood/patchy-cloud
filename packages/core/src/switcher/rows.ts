@@ -177,7 +177,9 @@ export const sections = (
     : [];
   const patchRows = [...companyRows, ...sharedRows];
   const mine = list?.patches.find((patch) => patch.id === here.patch);
-  const manages = mine !== undefined && (mine.mine || list?.viewer.role === "admin");
+  const manages =
+    mine !== undefined &&
+    (mine.mine || list?.viewer.role === "admin" || list?.viewer.role === "super_admin");
   const cardRows: Row[] =
     mine === undefined
       ? []

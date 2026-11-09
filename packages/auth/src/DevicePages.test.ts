@@ -705,7 +705,11 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         email: "device-deactivated-member@example.com",
         name: "Departed"
       });
-      yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: user.id });
+      yield* (yield* Users.Users).deactivate({
+        companyId: owner.company.id,
+        actorId: owner.user.id,
+        userId: user.id
+      });
       const cookie = signedInCookies(
         signSession({ sub: user.clerkUserId, email: user.email, name: user.name })
       );

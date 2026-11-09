@@ -68,7 +68,7 @@ it.layer(harness)("admission", (it) => {
         const acme = yield* company(
           "calls-minute",
           [
-            ["Priya Shah", "admin"],
+            ["Priya Shah", "super_admin"],
             ["Ben Okafor", "member"]
           ],
           { name: "Acme" }
@@ -77,7 +77,7 @@ it.layer(harness)("admission", (it) => {
         const published = yield* publish(acme.id, priya, "new-business", { handlers: deals });
         yield* publish(acme.id, priya, "renewals", { handlers: deals });
         // Another company keeps the default: an override reaches only its own company's people.
-        const globex = yield* company("calls-minute-other", [["Sam Lee", "admin"]]);
+        const globex = yield* company("calls-minute-other", [["Sam Lee", "super_admin"]]);
         const sam = globex.people[0]!;
         yield* publish(globex.id, sam, "new-business", { handlers: deals });
         yield* override(acme.id, "mcp.calls.perMinute", 2);
@@ -154,7 +154,7 @@ it.layer(harness)("admission", (it) => {
     () =>
       Effect.gen(function* () {
         const acme = yield* company("in-flight", [
-          ["Priya Shah", "admin"],
+          ["Priya Shah", "super_admin"],
           ["Ben Okafor", "member"]
         ]);
         const [priya, ben] = acme.people as [(typeof acme.people)[0], (typeof acme.people)[0]];
@@ -315,7 +315,7 @@ it.layer(harness)("admission", (it) => {
 
   it.effect("spends the company's admission with its pages", () =>
     Effect.gen(function* () {
-      const acme = yield* company("company-admission", [["Priya Shah", "admin"]], {
+      const acme = yield* company("company-admission", [["Priya Shah", "super_admin"]], {
         name: "Acme"
       });
       const priya = acme.people[0]!;
@@ -360,7 +360,7 @@ it.layer(harness)("admission", (it) => {
 
   it.effect("keeps an action's key when Runtime refuses it before it starts", () =>
     Effect.gen(function* () {
-      const acme = yield* company("action-admission", [["Priya Shah", "admin"]]);
+      const acme = yield* company("action-admission", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       yield* publish(acme.id, priya, "new-business", { handlers: deals });
       const refusals: ReadonlyArray<Runtime.RuntimeError> = [

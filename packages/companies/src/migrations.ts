@@ -4,7 +4,7 @@
  * directory's revision counter. Squashed into one baseline before launch;
  * id 9 adds each person's What's new marker, id 10 the company look, id 15
  * names the people stored without one, id 16 records the look's latest restore and id 20
- * adds the agent access switch.
+ * adds the agent access switch; id 36 separates company roles.
  */
 import { ddl, type Migrations } from "@patchy/sql";
 
@@ -137,5 +137,14 @@ export const migrations: Migrations = {
       ADD CONSTRAINT companies_agent_access_change_check CHECK (
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
+  ),
+  // Preserve every pre-split administrator's authority, including pending invites.
+  "0036_company_roles": ddl(
+    `ALTER TABLE users DROP CONSTRAINT users_role_check`,
+    `ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
+    `ALTER TABLE invites DROP CONSTRAINT invites_role_check`,
+    `ALTER TABLE invites ADD CONSTRAINT invites_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
+    `UPDATE users SET role = 'super_admin' WHERE role = 'admin'`,
+    `UPDATE invites SET role = 'super_admin' WHERE role = 'admin'`
   )
 };

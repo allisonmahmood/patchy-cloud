@@ -114,6 +114,35 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
   "Users",
   (it) => {
     it.effect(
+      "refuses role changes and admin lifecycle by a regular admin, including themselves",
+      () =>
+        Effect.gen(function* () {
+          const users = yield* Users.Users;
+          const {
+            company,
+            admin: founder,
+            member: admin
+          } = yield* companyWithMember("role-authority", "admin");
+          const ref = { companyId: company.id, userId: admin.id, actorId: admin.id };
+          assert.strictEqual(
+            (yield* users.setRole({ ...ref, role: "member" }).pipe(Effect.flip))._tag,
+            "RoleForbidden"
+          );
+          assert.strictEqual(
+            (yield* users.deactivate(ref).pipe(Effect.flip))._tag,
+            "RoleForbidden"
+          );
+          yield* users.deactivate({ ...ref, actorId: founder.id });
+          assert.strictEqual(
+            (yield* users.reactivate(ref).pipe(Effect.flip))._tag,
+            "RoleForbidden"
+          );
+          yield* users.reactivate({ ...ref, actorId: founder.id });
+          assert.strictEqual((yield* users.findByClerkId(admin.clerkUserId))?.role, "admin");
+        })
+    );
+
+    it.effect(
       "refreshes changed claims, matches email case-insensitively, and performs no update for unchanged claims",
       () =>
         Effect.gen(function* () {
@@ -224,8 +253,8 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         const users = yield* Users.Users;
         const companies = yield* Companies.Companies;
         const sql = yield* SqlClient.SqlClient;
-        const { company, member } = yield* companyWithMember("claim-wait", "admin");
-        const ref = { companyId: company.id, userId: member.id };
+        const { company, admin, member } = yield* companyWithMember("claim-wait", "admin");
+        const ref = { companyId: company.id, userId: member.id, actorId: admin.id };
         // Holds `change` until a refresh with new claims, `name`, waits on the row.
         const refreshDuring = <A, E>(change: Effect.Effect<A, E>, name: string) =>
           Effect.gen(function* () {
@@ -283,11 +312,11 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
-        const { company, member } = yield* companyWithMember("claim-unblocked");
+        const { company, admin, member } = yield* companyWithMember("claim-unblocked");
         yield* auditClaimRefresh;
         const held = yield* hold(
           "the deactivation",
-          users.deactivate({ companyId: company.id, userId: member.id })
+          users.deactivate({ companyId: company.id, userId: member.id, actorId: admin.id })
         );
         // Answers while the deactivation still holds the row: the active row it can see.
         const answer = yield* within(
@@ -316,12 +345,12 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
-        const { company, member } = yield* companyWithMember("claim-queue");
+        const { company, admin, member } = yield* companyWithMember("claim-queue");
         yield* auditClaimRefresh;
         const claims = { clerkUserId: member.clerkUserId, email: member.email, name: "Queued" };
         const held = yield* hold(
           "the deactivation",
-          users.deactivate({ companyId: company.id, userId: member.id })
+          users.deactivate({ companyId: company.id, userId: member.id, actorId: admin.id })
         );
         // Both read the active row and queue on the held one. Once it commits, either may take
         // the row and write the claims; the other then has nothing to write, and its answer
@@ -352,20 +381,24 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         Effect.gen(function* () {
           const users = yield* Users.Users;
           const { company, admin, member } = yield* companyWithMember("roles-company");
-          const adminRef = { companyId: company.id, userId: admin.id };
-          const memberRef = { companyId: company.id, userId: member.id };
+          const adminRef = { companyId: company.id, userId: admin.id, actorId: admin.id };
+          assert.strictEqual(
+            (yield* users.setRole({ ...adminRef, role: "admin" }).pipe(Effect.flip))._tag,
+            "LastSuperAdmin"
+          );
+          const memberRef = { companyId: company.id, userId: member.id, actorId: admin.id };
           assert.strictEqual(
             (yield* users.setRole({ ...adminRef, role: "member" }).pipe(Effect.flip))._tag,
-            "LastAdmin"
+            "LastSuperAdmin"
           );
           assert.strictEqual(
             (yield* users.deactivate(adminRef).pipe(Effect.flip))._tag,
-            "LastAdmin"
+            "LastSuperAdmin"
           );
-          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "admin" }), {
+          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "super_admin" }), {
             changed: true
           });
-          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "admin" }), {
+          assert.deepInclude(yield* users.setRole({ ...memberRef, role: "super_admin" }), {
             changed: false
           });
           assert.strictEqual(
@@ -373,46 +406,79 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
             "member"
           );
           assert.strictEqual(
-            (yield* users.setRole({ ...memberRef, role: "member" }).pipe(Effect.flip))._tag,
-            "LastAdmin"
+            (yield* users
+              .setRole({ ...memberRef, actorId: member.id, role: "member" })
+              .pipe(Effect.flip))._tag,
+            "LastSuperAdmin"
           );
-          assert.strictEqual((yield* users.findByClerkId(member.clerkUserId))?.role, "admin");
+          assert.strictEqual((yield* users.findByClerkId(member.clerkUserId))?.role, "super_admin");
           assert.strictEqual(
             (yield* users
-              .setRole({ companyId: "cmp_elsewhere", userId: member.id, role: "member" })
+              .setRole({
+                companyId: "cmp_elsewhere",
+                actorId: member.id,
+                userId: member.id,
+                role: "member"
+              })
               .pipe(Effect.flip))._tag,
-            "UserNotFound"
+            "RoleForbidden"
           );
           assert.strictEqual(
             (yield* users
-              .deactivate({ companyId: "cmp_elsewhere", userId: admin.id })
+              .deactivate({ companyId: "cmp_elsewhere", actorId: member.id, userId: admin.id })
               .pipe(Effect.flip))._tag,
-            "UserNotFound"
+            "RoleForbidden"
           );
           assert.strictEqual(
             (yield* users
-              .reactivate({ companyId: "cmp_elsewhere", userId: admin.id })
+              .reactivate({ companyId: "cmp_elsewhere", actorId: member.id, userId: admin.id })
               .pipe(Effect.flip))._tag,
-            "UserNotFound"
+            "RoleForbidden"
           );
         })
+    );
+
+    it.effect("rechecks the actor after a concurrent super-admin demotion commits", () =>
+      Effect.gen(function* () {
+        const users = yield* Users.Users;
+        const { company, admin, member } = yield* companyWithMember(
+          "actor-role-race",
+          "super_admin"
+        );
+        const demotion = yield* hold(
+          "the actor's demotion",
+          users.setRole({
+            companyId: company.id,
+            userId: member.id,
+            actorId: admin.id,
+            role: "admin"
+          })
+        );
+        const stale = yield* users
+          .setRole({ companyId: company.id, userId: admin.id, actorId: member.id, role: "member" })
+          .pipe(Effect.match(outcome), Effect.forkScoped);
+        yield* within("the stale role change waiting", lockWaits(1), demotion.fiber, stale);
+        yield* demotion.release;
+        assert.strictEqual(yield* Fiber.join(stale), "RoleForbidden");
+        assert.strictEqual((yield* users.findByClerkId(admin.clerkUserId))?.role, "super_admin");
+      }).pipe(Effect.scoped)
     );
 
     it.effect("leaves one active admin when two admins are concurrently demoted", () =>
       Effect.gen(function* () {
         const users = yield* Users.Users;
-        const { company, admin, member } = yield* companyWithMember("demotion-race", "admin");
+        const { company, admin, member } = yield* companyWithMember("demotion-race", "super_admin");
         const results = yield* Effect.all(
           [admin, member].map((user) =>
             users
-              .setRole({ companyId: company.id, userId: user.id, role: "member" })
+              .setRole({ companyId: company.id, userId: user.id, actorId: user.id, role: "member" })
               .pipe(Effect.match(outcome))
           ),
           { concurrency: "unbounded" }
         );
-        assert.deepStrictEqual(results.sort(), ["LastAdmin", "ok"]);
+        assert.deepStrictEqual(results.sort(), ["LastSuperAdmin", "ok"]);
         const remaining = (yield* users.list(company.id)).filter(
-          (user) => user.role === "admin" && user.deactivatedAt === null
+          (user) => user.role === "super_admin" && user.deactivatedAt === null
         );
         assert.strictEqual(remaining.length, 1);
       })
@@ -423,22 +489,30 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       () =>
         Effect.gen(function* () {
           const users = yield* Users.Users;
-          const { company, admin, member } = yield* companyWithMember("deactivation-race", "admin");
+          const { company, admin, member } = yield* companyWithMember(
+            "deactivation-race",
+            "super_admin"
+          );
           const results = yield* Effect.all(
             [
               users
-                .deactivate({ companyId: company.id, userId: admin.id })
+                .deactivate({ companyId: company.id, userId: admin.id, actorId: admin.id })
                 .pipe(Effect.match(outcome)),
               users
-                .setRole({ companyId: company.id, userId: member.id, role: "member" })
+                .setRole({
+                  companyId: company.id,
+                  userId: member.id,
+                  actorId: member.id,
+                  role: "member"
+                })
                 .pipe(Effect.match(outcome))
             ],
             { concurrency: "unbounded" }
           );
-          assert.deepStrictEqual(results.sort(), ["LastAdmin", "ok"]);
+          assert.deepStrictEqual(results.sort(), ["LastSuperAdmin", "ok"]);
           assert.strictEqual(
             (yield* users.list(company.id)).filter(
-              (user) => user.role === "admin" && user.deactivatedAt === null
+              (user) => user.role === "super_admin" && user.deactivatedAt === null
             ).length,
             1
           );
@@ -450,7 +524,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
         const { company, admin, member } = yield* companyWithMember("deactivation-check");
-        const input = { companyId: company.id, userId: member.id };
+        const input = { companyId: company.id, userId: member.id, actorId: admin.id };
         yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
           VALUES ('tok_deactivation_check', ${member.id}, 'Laptop', 'deactivation-check-hash', now(), now() + interval '90 days', now())`;
@@ -458,15 +532,15 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         assert.deepStrictEqual(yield* users.checkDeactivation(input), member);
         assert.strictEqual(
           (yield* users
-            .checkDeactivation({ companyId: company.id, userId: admin.id })
+            .checkDeactivation({ companyId: company.id, userId: admin.id, actorId: admin.id })
             .pipe(Effect.flip))._tag,
-          "LastAdmin"
+          "LastSuperAdmin"
         );
         assert.strictEqual(
           (yield* users
-            .checkDeactivation({ companyId: "cmp_elsewhere", userId: member.id })
+            .checkDeactivation({ companyId: "cmp_elsewhere", userId: member.id, actorId: admin.id })
             .pipe(Effect.flip))._tag,
-          "UserNotFound"
+          "RoleForbidden"
         );
         assert.deepStrictEqual(yield* users.findByClerkId(member.clerkUserId), member);
         assert.deepStrictEqual(yield* users.findByClerkId(admin.clerkUserId), admin);
@@ -481,8 +555,8 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
-        const { company, member } = yield* companyWithMember("lifecycle-outer-transaction");
-        const input = { companyId: company.id, userId: member.id };
+        const { company, admin, member } = yield* companyWithMember("lifecycle-outer-transaction");
+        const input = { companyId: company.id, userId: member.id, actorId: admin.id };
         yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
           VALUES ('tok_lifecycle_outer', ${member.id}, 'Laptop', 'lifecycle-outer-hash', now(), now() + interval '90 days', now())`;
@@ -541,9 +615,9 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
           const sql = yield* SqlClient.SqlClient;
           const { company, admin, member } = yield* companyWithMember(
             "reactivation-company",
-            "admin"
+            "super_admin"
           );
-          const input = { companyId: company.id, userId: member.id };
+          const input = { companyId: company.id, userId: member.id, actorId: admin.id };
           const endedAt = sql<{
             endedAt: Date;
           }>`SELECT credentials_ended_at AS "endedAt" FROM users WHERE id = ${member.id}`;
@@ -568,9 +642,10 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
           const [stamped] = yield* endedAt;
           assert.instanceOf(stamped?.endedAt, Date);
           assert.strictEqual(
-            (yield* users.deactivate({ companyId: company.id, userId: admin.id }).pipe(Effect.flip))
-              ._tag,
-            "LastAdmin"
+            (yield* users
+              .deactivate({ companyId: company.id, userId: admin.id, actorId: admin.id })
+              .pipe(Effect.flip))._tag,
+            "LastSuperAdmin"
           );
           assert.deepStrictEqual(
             yield* sql`SELECT revoked_at IS NULL AS live FROM machine_tokens WHERE id = 'tok_reactivate_admin'`,
@@ -583,7 +658,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
           );
           const restored = yield* users.reactivate(input);
           assert.isNull(restored.deactivatedAt);
-          assert.strictEqual(restored.role, "admin");
+          assert.strictEqual(restored.role, "super_admin");
           assert.strictEqual(restored.companyId, company.id);
           assert.deepStrictEqual(yield* users.reactivate(input), restored);
           // A repeat deactivation ended nothing new, and reactivation keeps the stamp.
@@ -599,8 +674,13 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
             [{ preserved: true }]
           );
           // A restored admin counts again, so the other admin can now step down.
-          yield* users.setRole({ companyId: company.id, userId: admin.id, role: "member" });
-          assert.strictEqual((yield* users.findByClerkId(member.clerkUserId))?.role, "admin");
+          yield* users.setRole({
+            companyId: company.id,
+            userId: admin.id,
+            actorId: admin.id,
+            role: "member"
+          });
+          assert.strictEqual((yield* users.findByClerkId(member.clerkUserId))?.role, "super_admin");
         })
     );
 
@@ -608,7 +688,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
       Effect.gen(function* () {
         const users = yield* Users.Users;
         const sql = yield* SqlClient.SqlClient;
-        const { company, member } = yield* companyWithMember("deactivation-atomic");
+        const { company, admin, member } = yield* companyWithMember("deactivation-atomic");
         yield* sql`
           INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
           VALUES ('tok_deactivation_atomic', ${member.id}, 'Laptop', 'deactivation-atomic-hash', now(), now() + interval '90 days', now())`;
@@ -625,8 +705,9 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
                 FOR EACH ROW EXECUTE FUNCTION refuse_atomic_revocation()`
         );
         assert.strictEqual(
-          (yield* users.deactivate({ companyId: company.id, userId: member.id }).pipe(Effect.flip))
-            ._tag,
+          (yield* users
+            .deactivate({ companyId: company.id, userId: member.id, actorId: admin.id })
+            .pipe(Effect.flip))._tag,
           "SqlError"
         );
         assert.isNull((yield* users.findByClerkId(member.clerkUserId))?.deactivatedAt);

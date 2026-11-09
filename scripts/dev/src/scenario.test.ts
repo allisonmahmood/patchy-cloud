@@ -84,7 +84,7 @@ it.layer(Platform)("scenarios", (it) => {
       yield* fs.writeFileString(
         path.join(root, "scenarios", "loose", "scenario.json"),
         `{"company":{"name":"Loose","handle":"loose"},"publisher":"a",
-          "people":[{"key":"a","name":"A","email":"a@loose.example","role":"admin"}],
+          "people":[{"key":"a","name":"A","email":"a@loose.example","role":"super_admin"}],
           "patches":[{"repo":"desk","tier":1,"description":"Desk","connections":["pidgeon/support"]}]}`
       );
       const error = yield* Effect.flip(loadScenario(root, "loose"));
@@ -101,7 +101,7 @@ it.layer(Platform)("scenarios", (it) => {
       yield* fs.writeFileString(
         path.join(root, "scenarios", "inside", "scenario.json"),
         `{"company":{"name":"Inside","handle":"inside"},"publisher":"a",
-          "people":[{"key":"a","name":"A","email":"a@inside.example","role":"admin"}],
+          "people":[{"key":"a","name":"A","email":"a@inside.example","role":"super_admin"}],
           "patches":[{"repo":"desk","tier":1,"description":"Desk","guests":["a"]}]}`
       );
       const error = yield* Effect.flip(loadScenario(root, "inside"));

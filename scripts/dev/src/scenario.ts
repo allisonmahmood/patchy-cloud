@@ -18,7 +18,7 @@ export const Person = Schema.Struct({
   key: Slug,
   name: Schema.NonEmptyString,
   email: Email,
-  role: Schema.Literals(["admin", "member"]),
+  role: Schema.Literals(["super_admin", "admin", "member"]),
   /** One of the scenario's other companies, by handle; absent, the scenario's own. */
   company: Schema.optionalKey(Slug)
 });
@@ -166,10 +166,10 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
       problem: `${stranger.key} is at ${stranger.company}, which isn't one of its companies.`
     });
   const publisher = scenario.people.find((person) => person.key === scenario.publisher);
-  if (publisher?.role !== "admin" || publisher.company !== undefined)
+  if (publisher?.role !== "super_admin" || publisher.company !== undefined)
     return yield* new ScenarioInvalid({
       name,
-      problem: "the publisher must be an admin of the scenario's own company."
+      problem: "the publisher must be a super admin of the scenario's own company."
     });
   const connections = new Set(
     (scenario.connections ?? []).map(

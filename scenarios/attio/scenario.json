@@ -8,7 +8,7 @@
       "key": "allison",
       "name": "Allison Mahmood",
       "email": "allison@northwind.example",
-      "role": "admin"
+      "role": "super_admin"
     },
     {
       "key": "priya",

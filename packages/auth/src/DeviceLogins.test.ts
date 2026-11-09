@@ -51,8 +51,8 @@ const endings = [
     "deactivate",
     Effect.fn("DeviceLogins.test.deactivate")(function* (userId: string) {
       const users = yield* Users.Users;
-      yield* users.deactivate({ companyId: DEV_SEED.companyId, userId });
-      yield* users.reactivate({ companyId: DEV_SEED.companyId, userId });
+      yield* users.deactivate({ companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId, userId });
+      yield* users.reactivate({ companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId, userId });
     })
   ]
 ] as const;
@@ -531,7 +531,7 @@ it.layer(layer)("DeviceLogins", (it) => {
       const userId = yield* addUser("deactivated");
       const login = yield* logins.start({ machineNameHint: "departed" });
       yield* logins.confirm({ userCode: login.userCode, userId, machineName: "No access" });
-      yield* users.deactivate({ companyId: DEV_SEED.companyId, userId });
+      yield* users.deactivate({ companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId, userId });
       assert.strictEqual(
         (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
         "DeviceLoginUnknown"
@@ -548,7 +548,7 @@ it.layer(layer)("DeviceLogins", (it) => {
         events.filter((event) => event.principalId === userId),
         []
       );
-      yield* users.reactivate({ companyId: DEV_SEED.companyId, userId });
+      yield* users.reactivate({ companyId: DEV_SEED.companyId, actorId: DEV_SEED.userId, userId });
       assert.strictEqual(
         (yield* logins.poll(login.deviceCode).pipe(Effect.flip))._tag,
         "DeviceLoginUnknown"

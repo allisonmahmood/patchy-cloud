@@ -75,14 +75,14 @@ export const layer = HttpApiBuilder.group(PatchyApi, "look", (handlers) =>
     /** Who can change the company's look. */
     const activeAdmins = Effect.fn("LookApi.activeAdmins")(function* (companyId: string) {
       return (yield* users.list(companyId))
-        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .filter((user) => user.role !== "member" && user.deactivatedAt === null)
         .map(({ id, name }) => ({ id, name }));
     });
 
     /** The refusal a member gets, or null for an admin. */
     const adminOnly = Effect.fn("LookApi.adminOnly")(function* () {
       const identity = yield* CurrentIdentity;
-      if (identity.role === "admin") return null;
+      if (identity.role !== "member") return null;
       const admins = yield* activeAdmins(identity.company.id);
       return refuse(AdminRequired, {
         ok: false,

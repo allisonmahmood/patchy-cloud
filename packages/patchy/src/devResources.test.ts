@@ -34,7 +34,7 @@ const decodeFiles = Schema.decodeUnknownEffect(FilePage);
 const viewerOf = ({ identity }: Pick<Prepared, "identity">) => ({
   user: identity.user,
   company: identity.company,
-  admin: identity.role === "admin"
+  admin: identity.role !== "member"
 });
 // These Prepared versions are tier 1 even where they declare `uses`, which refresh, dev and
 // publish now refuse below tier 2: preparing a tier 2 version also requires a server bundle and

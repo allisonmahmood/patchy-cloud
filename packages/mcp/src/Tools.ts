@@ -168,11 +168,11 @@ export const agentAccessOff = (off: {
   toolRefusal({
     code: "agent_access_off",
     from: "patchy",
-    message: `Agent access is off at ${off.company}, so Patchy refuses every agent until an admin turns it on at ${off.turnOnAt}.${
+    message: `Agent access is off at ${off.company}, so Patchy refuses every agent until a super admin turns it on at ${off.turnOnAt}.${
       off.admins.length === 0
         ? " Tell the person."
         : off.admins.length === 1
-          ? ` ${off.company}'s admin is ${off.admins[0]}; tell the person to ask them.`
-          : ` ${off.company}'s admins are ${listed(off.admins)}; tell the person to ask one of them.`
+          ? ` ${off.company}'s super admin is ${off.admins[0]}; tell the person to ask them.`
+          : ` ${off.company}'s super admins are ${listed(off.admins)}; tell the person to ask one of them.`
     }`
   });

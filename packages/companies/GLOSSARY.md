@@ -5,7 +5,7 @@ The tenant and who is in it: companies, users, roles, invitations, deactivation 
 ## Language
 
 **Company**:
-The tenant every user and patch belongs to: exactly one company each, with nothing crossing that line except a patch made public. A company has a display name, a globally unique handle and at least one active admin.
+The tenant every user and patch belongs to: exactly one company each, with nothing crossing that line except a patch made public. A company has a display name, a globally unique handle and at least one active super admin.
 _Avoid_: organization, workspace, team, tenant (this document's word for the concept, never the product's)
 
 **Handle**:
@@ -13,7 +13,7 @@ A company's globally unique short name, fixed once created. It uses 3–32 lower
 _Avoid_: slug, subdomain, namespace (what the handle opens, not the handle)
 
 **User**:
-One individual's Patchy account in exactly one company, carrying the member or admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
+One individual's Patchy account in exactly one company, carrying the member, admin or super admin role. Every active user can build; their machines act for them through [machine tokens](../auth/GLOSSARY.md), and their agents through agent connections. A user's name is never blank: someone whose sign-in carries none is named by their email's local part until it does.
 _Avoid_: account, person (a user is the account, not the human), builder (every user is one)
 
 **Member**:
@@ -21,8 +21,12 @@ The role every user has who is not an admin. A member builds — publishes patch
 _Avoid_: viewer (the [Auth](../auth/GLOSSARY.md) identity, whatever the user's role), builder (a description, not a role), guest
 
 **Admin**:
-A user with the role that manages the company's invitations, roles, deactivation, reactivation, guests, [connections](../integrations/GLOSSARY.md), look and agent access, and every [patch](../patches/GLOSSARY.md) in the company except publishing it. A company always has at least one active admin, and the last one can neither be demoted nor deactivated.
-_Avoid_: owner (patches have owners; companies have admins), operator (Patchy, never a company role), superadmin
+A company administrator who invites ordinary members, deactivates and reactivates ordinary members, manages guests and the company look, and manages patches they can open. Admin account lifecycle and role changes belong to super admins. Publishing stays with the entitled patch owner.
+_Avoid_: owner (patches have owners), operator (Patchy, never a company role)
+
+**Super admin**:
+A company administrator who also appoints and demotes administrators, deactivates and reactivates admin accounts, manages connections and controls agent access. A company retains at least one active super admin; the last cannot be demoted or deactivated. Administrative role alone is not a grant to open patch content.
+_Avoid_: superadmin, company owner, sole admin
 
 **Guest**:
 A user of another company whom this company has shared one [patch](../patches/GLOSSARY.md) with, by a guest grant. They open it as themselves in this company, never its admin, and gain no membership or other patch. The company's directory names them as a guest while they hold any of its grants, ended ones included, but shows their email only in a patch whose grant is active, and shows them active there only while their account is too; that patch's pickers and member columns offer and accept them while their grant is active. People's Guests tab lists them, with what they hold, while any grant is active, and an admin can end all their grants in the company there at once. Not the [Runtime](../runtime/GLOSSARY.md)'s sandboxed patch code, which "guest time" and the guest wire name.
@@ -65,7 +69,7 @@ An invitation for one email address to join a company with a role: Clerk sends t
 _Avoid_: add user, share the company
 
 **Create-or-join**:
-The choice a signed-in person without a company makes: accept a live invitation for their email or, without an invitation, name a company and choose its handle as its first admin. The person becomes a user in the chosen company at that moment.
+The choice a signed-in person without a company makes: accept a live invitation for their email or, without an invitation, name a company and choose its handle as its first super admin. The person becomes a user in the chosen company at that moment.
 _Avoid_: onboarding wizard, organization picker
 
 **Verified domain**:
@@ -77,11 +81,11 @@ Company sign-in through its own identity provider instead of the ordinary sign-i
 _Avoid_: enterprise connection (Clerk's word), SAML (one of the two shapes)
 
 **Agent access**:
-A company's switch, off until an admin turns it on, that lets its people's worker agents use the company's patches through Patchy MCP. Off refuses every agent's calls and new connections and cancels consents in progress, but ends no agent connection; on again, the same connections work. Admins turn it on and off on its own page, Agent access, which shows every member the state, who made the latest change and when, and who the admins are.
+A company's switch, off until a super admin turns it on, that lets its people's worker agents use the company's patches through Patchy MCP. Off refuses every agent's calls and new connections and cancels consents in progress, but ends no agent connection; on again, the same connections work. Super admins turn it on and off on its own page, Agent access, which shows every member the state, who made the latest change and when, and who the super admins are.
 _Avoid_: MCP enabled, agent permission, agent mode
 
 **Deactivation**:
-An admin ending a user's company access and revoking every machine token, agent connection and approval not yet collected while keeping their data, reversible except that the last active admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
+An admin ending a user's company access and revoking every machine token, agent connection and approval not yet collected while keeping their data, reversible except that the last active super admin cannot be deactivated. The pick page offers to keep their patches live or retire some or all in the same act, with confirmation of what breaks outside the selection.
 _Avoid_: ban, suspend (the operator's act on a company), delete (the later act)
 
 **Reactivation**:

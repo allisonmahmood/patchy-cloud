@@ -73,7 +73,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
             const created = yield* companies.create(companyInput(handle));
             assert.strictEqual((yield* companies.findById(created.company.id))?.handle, handle);
             assert.strictEqual(created.user.companyId, created.company.id);
-            assert.strictEqual(created.user.role, "admin");
+            assert.strictEqual(created.user.role, "super_admin");
           }
         })
     );
@@ -103,7 +103,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
             (yield* users.findByEmail("FOUNDER@example.com"))?.id,
             created.user.id
           );
-          assert.strictEqual((yield* users.findByClerkId(input.clerkUserId))?.role, "admin");
+          assert.strictEqual((yield* users.findByClerkId(input.clerkUserId))?.role, "super_admin");
           assert.strictEqual(
             (yield* companies
               .create({ ...input, handle: "duplicate-clerk", email: "other@example.com" })
@@ -159,7 +159,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         const rows = yield* sql`
           SELECT count(DISTINCT c.id)::int AS companies, count(u.id)::int AS admins
           FROM companies c JOIN users u ON u.company_id = c.id
-          WHERE c.handle = 'handle-race' AND u.role = 'admin'`;
+          WHERE c.handle = 'handle-race' AND u.role = 'super_admin'`;
         assert.deepStrictEqual(rows, [{ companies: 1, admins: 1 }]);
       })
     );
@@ -409,7 +409,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
           companyId: company.id,
           invitedBy: admin.id,
           email: "agent-access-second@example.com",
-          role: "admin"
+          role: "super_admin"
         });
         const second = yield* companies.consumeInvite({
           inviteId: invite.id,
@@ -449,7 +449,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         };
         assert.deepStrictEqual(off, { access: turnedOff, changed: true });
         // Leaving keeps the name on the latest change.
-        yield* users.deactivate({ companyId: company.id, userId: second.id });
+        yield* users.deactivate({ companyId: company.id, userId: second.id, actorId: admin.id });
         assert.deepStrictEqual(yield* companies.agentAccess(company.id), turnedOff);
       })
     );

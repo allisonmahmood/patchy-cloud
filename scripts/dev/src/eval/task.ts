@@ -35,7 +35,7 @@ export interface RunPerson {
   readonly key: string;
   readonly name: string;
   readonly email: string;
-  readonly role: "admin" | "member";
+  readonly role: "super_admin" | "admin" | "member";
 }
 
 /** The patch a run is graded on: its final published version. */

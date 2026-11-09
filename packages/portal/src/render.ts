@@ -62,7 +62,7 @@ export { patchTitle };
 const cardPath = (patch: Patches.Patch, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
-  card.owner.id === viewer.user.id || viewer.role === "admin";
+  card.owner.id === viewer.user.id || viewer.role !== "member";
 export const hidden = (name: string, value: string | number | null) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value ?? "")}">`;
 export const refusal = (notice: string | undefined) =>
@@ -259,7 +259,7 @@ export const renderAgentPanel = (input: {
   const off =
     admins === null
       ? ""
-      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/company/agent-access">Turn it on at Company</a></div>' : ""}</div>`;
+      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only super admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "super_admin" ? '<div class="actions"><a class="btn" href="/company/agent-access">Turn it on at Company</a></div>' : ""}</div>`;
   const connect =
     admins === null
       ? '<p class="supporting-text"><a href="/machines?agent=claude#connect-an-agent">Connect your agent</a></p>'
@@ -305,7 +305,7 @@ export const renderOverview = (input: {
       : off.recoveryEnded ||
         (off.restoreHint ? `<p class="supporting-text">${off.restoreHint}</p>` : "");
   const deactivated =
-    viewer.role === "admin" && card.owner.deactivated
+    viewer.role !== "member" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
   const turnedAway =
@@ -327,14 +327,14 @@ export const renderSettings = (input: {
   const live = patch.state === "live";
   const groups = dependantGroups(card);
   const adminLine =
-    viewer.role === "admin" && viewer.user.id !== card.owner.id
+    viewer.role !== "member" && viewer.user.id !== card.owner.id
       ? '<p class="supporting-text">You can do everything an owner can from here, except publish.</p>'
       : "";
   const deactivated =
-    viewer.role === "admin" && card.owner.deactivated
+    viewer.role !== "member" && card.owner.deactivated
       ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
       : "";
-  const owner = `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</p>${viewer.role === "admin" ? `<div class="actions"><a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a></div>` : ""}</section>`;
+  const owner = `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</p>${viewer.role !== "member" ? `<div class="actions"><a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a></div>` : ""}</section>`;
   const stop = live
     ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables or stores and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
     : patch.state === "retired"

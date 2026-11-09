@@ -1,7 +1,7 @@
 {
   "company": { "name": "Kestrel Films", "handle": "kestrel" },
   "people": [
-    { "key": "ada", "name": "Ada Park", "email": "ada@kestrel.example", "role": "admin" },
+    { "key": "ada", "name": "Ada Park", "email": "ada@kestrel.example", "role": "super_admin" },
     { "key": "ben", "name": "Ben Ortiz", "email": "ben@kestrel.example", "role": "member" },
     { "key": "cleo", "name": "Cleo Shah", "email": "cleo@kestrel.example", "role": "member" }
   ],

@@ -255,7 +255,7 @@ const make = Effect.fn("DevResources.make")(function* (
     const publisher = {
       user: prepared.identity.user,
       company: prepared.identity.company,
-      admin: prepared.identity.role === "admin"
+      admin: prepared.identity.role !== "member"
     };
     const binding = Binding.Binding.of({
       ...source,

@@ -174,7 +174,7 @@ interface Person {
   readonly clerkUserId: string;
   readonly email: string;
   readonly name: string;
-  readonly role: "member" | "admin";
+  readonly role: Users.Role;
   readonly machineTokenId: string;
 }
 let counter = 0;
@@ -188,7 +188,7 @@ const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: stri
   for (const [name, role] of [
     ["Priya", "member"],
     ["Alex", "member"],
-    ["Sam", "admin"]
+    ["Sam", "super_admin"]
   ] as const) {
     const userId = `usr_portal_${++counter}`;
     const person: Person = {
@@ -211,7 +211,7 @@ const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: stri
 });
 const actor = (person: Person): Patches.Actor => ({
   userId: person.id,
-  admin: person.role === "admin"
+  admin: person.role !== "member"
 });
 const manifest = {
   manifestVersion: MANIFEST_VERSION,
@@ -1634,7 +1634,10 @@ it.layer(layer)("portal pages on a socket", (it) => {
         Effect.gen(function* () {
           const workspace = yield* company();
           for (const person of [workspace.owner, workspace.admin]) {
-            const patch = yield* publish(workspace.owner, `${action}-${person.role}`);
+            const patch = yield* publish(
+              workspace.owner,
+              `${action}-${person.role.replaceAll("_", "-")}`
+            );
             const path = `${cardPath(patch.name)}/${action}`;
             const before = yield* readPatch(workspace.owner, patch.patchId);
             const page = yield* request(path, person);
@@ -2415,7 +2418,11 @@ it.layer(layer)("portal pages on a socket", (it) => {
           "nobody-has-this-name"
         );
         assert.match(empty, /<button\b(?=[^>]*type="submit")(?=[^>]*\bdisabled)[^>]*>/);
-        yield* users.deactivate({ companyId: workspace.id, userId: workspace.member.id });
+        yield* users.deactivate({
+          companyId: workspace.id,
+          actorId: workspace.admin.id,
+          userId: workspace.member.id
+        });
         const before = yield* readPatch(workspace.owner, patch.patchId);
         for (const target of [workspace.member.id, foreign.owner.id, "usr_missing"]) {
           const refused = yield* post(`${path}?q=Alex`, workspace.admin, {
@@ -3271,7 +3278,7 @@ it.layer(layer)("what agents can do on a socket", (it) => {
       );
       assert.include(
         text(member ?? ""),
-        "Agent access is off at Northwind No agent can use these yet. Only admins can turn it on. At Northwind that’s Sam."
+        "Agent access is off at Northwind No agent can use these yet. Only super admins can turn it on. At Northwind that’s Sam."
       );
       assert.deepStrictEqual(links(member ?? ""), []);
       assert.strictEqual(agentTools(member ?? "").length, 4);
@@ -3609,6 +3616,43 @@ it.layer(layer)("patch log on a socket", (it) => {
 
 it.layer(layer)("user lifecycle pages on a socket", (it) => {
   for (const action of ["deactivate", "reactivate"] as const) {
+    it.effect("restricts regular admins to ordinary-member lifecycle on direct requests", () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const users = yield* Users.Users;
+        yield* users.setRole({
+          companyId: workspace.id,
+          actorId: workspace.admin.id,
+          userId: workspace.owner.id,
+          role: "admin"
+        });
+        for (const action of ["deactivate", "reactivate"] as const) {
+          for (const target of [workspace.admin, workspace.owner]) {
+            const path = userPath(target, action);
+            assert.strictEqual((yield* request(path, workspace.owner)).status, 403);
+            assert.strictEqual(
+              (yield* post(path, workspace.owner, { choice: "keep" })).status,
+              403
+            );
+          }
+        }
+        assert.strictEqual(
+          (yield* post(userPath(workspace.member, "deactivate"), workspace.owner, {
+            choice: "keep"
+          })).status,
+          303
+        );
+        assert.isNotNull((yield* readUser(workspace.member)).deactivatedAt);
+        assert.strictEqual(
+          (yield* post(userPath(workspace.member, "reactivate"), workspace.owner, {
+            choice: "keep"
+          })).status,
+          303
+        );
+        assert.isNull((yield* readUser(workspace.member)).deactivatedAt);
+      })
+    );
+
     it.effect(
       `refuses ${action} when a selected patch is reassigned while confirmation waits`,
       () =>
@@ -3623,7 +3667,11 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
           if (action === "reactivate") {
             yield* patches.retire(first.patchId, actor(workspace.admin));
             yield* patches.retire(moved.patchId, actor(workspace.admin));
-            yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+            yield* users.deactivate({
+              companyId: workspace.id,
+              actorId: workspace.admin.id,
+              userId: workspace.owner.id
+            });
           }
           const beforeUser = yield* readUser(workspace.owner);
           const beforeFirst = yield* readPatch(workspace.admin, first.patchId);
@@ -3751,7 +3799,11 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
       for (const action of ["deactivate", "reactivate"] as const) {
         if (action === "reactivate") {
           yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
-          yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+          yield* users.deactivate({
+            companyId: workspace.id,
+            actorId: workspace.admin.id,
+            userId: workspace.owner.id
+          });
         }
         const before = yield* readUser(workspace.owner);
         yield* patches.withDependencyLock(workspace.admin.id)(
@@ -4103,6 +4155,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         yield* service.reassign(moved.patchId, actor(workspace.admin), workspace.member.id);
         yield* (yield* Users.Users).deactivate({
           companyId: workspace.id,
+          actorId: workspace.admin.id,
           userId: workspace.owner.id
         });
         const beforeDeleted = yield* readPatch(workspace.admin, deleted.patchId);
@@ -4198,6 +4251,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
       yield* service.retire(source.patchId, actor(workspace.admin));
       yield* (yield* Users.Users).deactivate({
         companyId: workspace.id,
+        actorId: workspace.admin.id,
         userId: workspace.owner.id
       });
       const path = userPath(workspace.owner, "reactivate");
@@ -4231,6 +4285,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
       yield* service.retire(reader.patchId, actor(workspace.owner));
       yield* (yield* Users.Users).deactivate({
         companyId: workspace.id,
+        actorId: workspace.admin.id,
         userId: workspace.owner.id
       });
       const path = userPath(workspace.owner, "reactivate");
@@ -4281,16 +4336,21 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
         const page = yield* request(path, workspace.admin);
         assert.strictEqual(page.status, 409);
         const html = yield* page.text;
-        assert.include(text(html), "The last active admin cannot be demoted or deactivated.");
+        assert.include(text(html), "The last active super admin cannot be demoted or deactivated.");
         assert.notInclude(forms(html), path);
         assert.strictEqual((yield* post(path, workspace.admin, { choice: "keep" })).status, 409);
         yield* users.setRole({
           companyId: workspace.id,
+          actorId: workspace.admin.id,
           userId: workspace.owner.id,
-          role: "admin"
+          role: "super_admin"
         });
         assert.strictEqual((yield* request(path, workspace.admin)).status, 200);
-        yield* users.deactivate({ companyId: workspace.id, userId: workspace.owner.id });
+        yield* users.deactivate({
+          companyId: workspace.id,
+          actorId: workspace.admin.id,
+          userId: workspace.owner.id
+        });
         const refused = yield* post(path, workspace.admin, {
           choice: "confirm",
           patch: [patch.patchId]
@@ -4315,6 +4375,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
             yield* service.retire(patch.patchId, actor(workspace.admin));
             yield* (yield* Users.Users).deactivate({
               companyId: workspace.id,
+              actorId: workspace.admin.id,
               userId: workspace.owner.id
             });
           }

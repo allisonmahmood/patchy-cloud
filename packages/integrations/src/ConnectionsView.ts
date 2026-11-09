@@ -294,7 +294,7 @@ export const renderIndex = (input: {
     const head = `<h1 class="page-heading">Integrations</h1>${notice(input.notice)}`;
     return admin
       ? `${head}<section class="section"><h2 class="section-heading">Connect an integration</h2>${catalogue(input.offers, all, true)}${onRequest}</section>`
-      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only admins can connect integrations.${input.admins.length === 0 ? "" : ` At ${input.company} that's ${listed(input.admins)}.`}`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
+      : `${head}<div class="note"><strong class="note-title">Nothing is connected yet</strong><p>${escapeHtml(`Only super admins can connect integrations.${input.admins.length === 0 ? "" : ` At ${input.company} that's ${listed(input.admins)}.`}`)}</p></div><section class="section"><h2 class="section-heading">What Patchy can connect</h2>${catalogue(input.offers, all, false)}</section>`;
   }
   const many = all.length >= CONTROLS_AT;
   // A member's link to Unused shows everything rather than a view they cannot choose.
@@ -321,7 +321,7 @@ export const renderCatalogue = (input: {
   readonly rows: ReadonlyArray<Row>;
   readonly offers: ReadonlyArray<Offer>;
 }): string =>
-  `<article class="connections-subpage"><p><a href="${indexPath}">Integrations</a></p><h1 class="page-heading">Connect an integration</h1>${input.admin ? "" : '<p class="supporting-text">Only admins can connect integrations.</p>'}${catalogue(input.offers, input.rows, input.admin)}${onRequest}</article>`;
+  `<article class="connections-subpage"><p><a href="${indexPath}">Integrations</a></p><h1 class="page-heading">Connect an integration</h1>${input.admin ? "" : '<p class="supporting-text">Only super admins can connect integrations.</p>'}${catalogue(input.offers, input.rows, input.admin)}${onRequest}</article>`;
 
 /** One step of a connect walkthrough that happens outside the form. */
 export interface Step {
@@ -534,7 +534,7 @@ const recentCalls = (
     calls !== "unavailable" && calls.length >= RECENT_CALLS
       ? `The latest ${RECENT_CALLS} calls`
       : "Calls";
-  const intro = `<p class="supporting-text">${escapeHtml(`${latest}, newest first. Only admins see this. ${logged}`)}</p>`;
+  const intro = `<p class="supporting-text">${escapeHtml(`${latest}, newest first. Only super admins see this. ${logged}`)}</p>`;
   const body =
     calls === "unavailable"
       ? '<div class="note note-warn" role="alert">Recent calls could not be loaded. Reload the page to try again.</div>'

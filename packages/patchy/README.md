@@ -593,7 +593,7 @@ into `patchy add shared-table <patchId>/<table>` or
 retired or deleted sources must be restored.
 Agents branch on `declarable`, `reason` and a connection's `paused`, not the human `hint`.
 A paused IMAP connection's server refused its password: every call fails `auth_failed`
-until an admin's Test or Replace password, so `list connections` says so instead of an add hint.
+until a super admin's Test or Replace password, so `list connections` says so instead of an add hint.
 
 Names and canonical ids are accepted; a pasted URL resolves by its final path
 segment. Names resolve only non-deleted patches. A deleted patch needs its id
@@ -659,7 +659,7 @@ outside the repo builds tier 2 as the pinned `pnpm patchy` does.
 Use actual connection names from `list connections`; inspect one with
 `list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
-Connection setup and reconnection belong to an admin's browser at
+Connection setup and reconnection belong to a super admin's browser at
 `/company/connections`; no CLI command accepts a
 connection string. A shared source must be openable; restore its access with its
 owner or correct the declaration. With no publishing key, non-interactive init
@@ -1109,13 +1109,13 @@ printf '%s' "$PATCHY_SETUP_TOKEN" | patchy auth set --token-stdin --api-url "$PA
 
 ### `patchy whoami [--api-url <url>]`
 
-Verify the configured credentials against the instance. Prints the user, company, role and machine.
+Verify the configured credentials against the instance. Prints the user, company, role (`member`, `admin` or `super_admin`) and machine.
 
 ```sh
 patchy whoami
 # User: Patchy Dev (dev@patchy.local)
 # Company: Patchy Dev (patchy-dev)
-# Role: admin
+# Role: super_admin
 # Machine: Dev Machine (tok_dev)
 ```
 
@@ -1278,8 +1278,8 @@ publish with agent tools adds a line built from the manifest it sent, such as
 through Patchy's MCP at <instance>/mcp.`; JSON gains no field, since `handlers`
 lists them as `agent.<export>` with their handler `kind`. While the company's
 agent access is off, publish warns that no agent can use them yet and that an
-admin turns it on at `<instance>/company`. When the patch has guests and the
-version would close it to them, such as by declaring a connection an admin set to
+super admin turns it on at `<instance>/company`. When the patch has guests and the
+version would close it to them, such as by declaring a connection a super admin set to
 block guests, publish still succeeds, exit 0, and a `warnings` entry says why.
 
 Every publish JSON success includes `artifacts.html: { sha256, bytes }`.
@@ -1383,9 +1383,9 @@ File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo, now supported by this CLI.
 For `patch_not_openable`, correct the shared-table declaration or restore source
-access. For `connection_not_connected`, an admin reconnects at
+access. For `connection_not_connected`, a super admin reconnects at
 `/company/connections`; `stale_generated` requires `pnpm patchy refresh`.
-Connection secrets belong only in the admin's browser connect/rotate form,
+Connection secrets belong only in the super admin's browser connect/rotate form,
 never CLI arguments or an agent transcript.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:

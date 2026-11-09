@@ -67,7 +67,7 @@ export const matches = (row: Patches.ReadPatch, query: string): boolean => {
 
 /** Whether the viewer may manage this patch: its owner, or any admin. */
 export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
-  viewer.role === "admin" || row.owner.id === viewer.user.id;
+  viewer.role !== "member" || row.owner.id === viewer.user.id;
 
 /** A deletion the owner or an admin can still undo: before its reclamation deadline. */
 export const recoverable = (patch: Patches.Patch, now: number) =>
@@ -121,7 +121,7 @@ const attentionOf = (
         act: `<form method="post" action="${escapeAttribute(cardPath(patch, "restore"))}">${restoreForm(patch)}<button class="btn" type="submit">Restore</button></form>`
       };
   }
-  if (row.owner.deactivated && viewer.role === "admin")
+  if (row.owner.deactivated && viewer.role !== "member")
     return {
       title: "Its owner is deactivated",
       detail: "Nobody can publish to it until someone else owns it.",
@@ -207,7 +207,7 @@ const actions = (
   const title = patchTitle(patch);
   const manage = [
     menuLink(cardPath(patch, "settings"), "Settings", false, title),
-    ...(viewer.role === "admin"
+    ...(viewer.role !== "member"
       ? [menuLink(cardPath(patch, "reassign"), "Reassign…", false, title)]
       : []),
     ...(patch.state === "live"

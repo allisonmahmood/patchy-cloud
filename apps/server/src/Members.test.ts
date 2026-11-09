@@ -152,7 +152,11 @@ it.layer(layer, { excludeTestServices: true })("hosted member directory", (it) =
           joined.vector[`members:${DEV_SEED.companyId}`],
           initial.vector[`members:${DEV_SEED.companyId}`]
         );
-        yield* users.deactivate({ companyId: DEV_SEED.companyId, userId: anna.id });
+        yield* users.deactivate({
+          companyId: DEV_SEED.companyId,
+          actorId: DEV_SEED.userId,
+          userId: anna.id
+        });
         const deactivated = yield* next("snapshot");
         if (deactivated.type !== "snapshot") throw new Error("Expected deactivation snapshot");
         assert.deepStrictEqual(

@@ -56,7 +56,7 @@ it.layer(harness)("read_patch", (it) => {
         const acme = yield* company(
           "read",
           [
-            ["Priya Shah", "admin"],
+            ["Priya Shah", "super_admin"],
             ["Ben Okafor", "member"]
           ],
           { name: "Acme" }
@@ -130,7 +130,7 @@ it.layer(harness)("read_patch", (it) => {
     "refuses a change tool, an unknown tool and arguments the schemas refuse, before anything runs",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("refuse", [["Priya Shah", "admin"]]);
+        const acme = yield* company("refuse", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         yield* publish(acme.id, priya, "new-business", { handlers: deals });
         yield* publish(acme.id, priya, "kickoff");
@@ -212,7 +212,7 @@ it.layer(harness)("read_patch", (it) => {
 
   it.effect("keeps a refusal that names a long tool within the read cap, with what to do", () =>
     Effect.gen(function* () {
-      const acme = yield* company("long-name", [["Priya Shah", "admin"]]);
+      const acme = yield* company("long-name", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       // A name as long as a patch's tools allow; the tools now list it in full.
       const long = "y".repeat(50_000);
@@ -245,7 +245,7 @@ it.layer(harness)("read_patch", (it) => {
     "runs a call on the version served when it arrived, however a publish lands, and refuses what a publish changed",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("publish", [["Priya Shah", "admin"]]);
+        const acme = yield* company("publish", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const first = yield* publish(acme.id, priya, "new-business", { handlers: deals });
         const update = (handlers: HandlerDescriptors) =>
@@ -313,11 +313,11 @@ it.layer(harness)("read_patch", (it) => {
     () =>
       Effect.gen(function* () {
         const acme = yield* company("retired", [
-          ["Priya Shah", "admin"],
+          ["Priya Shah", "super_admin"],
           ["Ben Okafor", "member"]
         ]);
         const [priya, ben] = acme.people as [(typeof acme.people)[0], (typeof acme.people)[0]];
-        const elsewhere = yield* company("retired-elsewhere", [["Cleo Admin", "admin"]]);
+        const elsewhere = yield* company("retired-elsewhere", [["Cleo Admin", "super_admin"]]);
         const published = yield* publish(acme.id, ben, "new-business", { handlers: deals });
         const fake = yield* runtime(() => Effect.succeed({ ok: true as const, value: "ran" }));
         const send = yield* doorTo(fake.service, "203.0.113.43");
@@ -384,7 +384,7 @@ it.layer(harness)("read_patch", (it) => {
     "refuses arguments over the runtime's cap before running, and a result over 100,000 characters",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("caps", [["Priya Shah", "admin"]]);
+        const acme = yield* company("caps", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         yield* publish(acme.id, priya, "new-business", { handlers: deals });
         const around = JSON.stringify({ result: "", version: 1 }).length;
@@ -433,7 +433,7 @@ it.layer(harness)("read_patch", (it) => {
 
   it.effect("passes a patch's own refusal through and keeps Runtime's refusals' shapes", () =>
     Effect.gen(function* () {
-      const acme = yield* company("refusals", [["Priya Shah", "admin"]]);
+      const acme = yield* company("refusals", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       yield* publish(acme.id, priya, "new-business", { handlers: deals });
       let reply: Effect.Effect<ServerCallReply, Runtime.RuntimeError> = Effect.succeed({
@@ -502,7 +502,7 @@ it.layer(harness)("read_patch", (it) => {
 
   it.effect("refuses a call whose company's server didn't start in time, for 15 seconds", () =>
     Effect.gen(function* () {
-      const acme = yield* company("starting", [["Priya Shah", "admin"]], { name: "Acme" });
+      const acme = yield* company("starting", [["Priya Shah", "super_admin"]], { name: "Acme" });
       const priya = acme.people[0]!;
       yield* publish(acme.id, priya, "new-business", { handlers: deals });
       const fake = yield* runtime(() =>
@@ -550,7 +550,7 @@ it.layer(harness)("read_patch", (it) => {
     () =>
       Effect.gen(function* () {
         const acme = yield* company("recheck", [
-          ["Priya Shah", "admin"],
+          ["Priya Shah", "super_admin"],
           ["Ben Okafor", "member"],
           ["Cleo Diaz", "member"]
         ]);

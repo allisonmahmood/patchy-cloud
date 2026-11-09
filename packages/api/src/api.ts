@@ -163,7 +163,11 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
       error: protectedErrors
     })
       .middleware(Authorization)
-      .annotateMerge(describe("Who the bearer acts as: the user, company, role and machine.")),
+      .annotateMerge(
+        describe(
+          "Who the bearer acts as: the user, company, role (`member`, `admin` or `super_admin`) and machine."
+        )
+      ),
     HttpApiEndpoint.post("logout", "/logout", {
       success: LoggedOut,
       error: protectedErrors
@@ -256,7 +260,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "doesn't define is `invalid_manifest` naming the handler " +
           "(an agent tool by its tool name), as is any manifest-wide check, in its own words. Undescribed " +
           "top-level agent tool arguments warn, and so does a version with agent tools while the company's agent " +
-          "access is off, naming where an admin turns it on. `handlers` lists agent tools as `agent.<export>` with " +
+          "access is off, naming where a super admin turns it on. `handlers` lists agent tools as `agent.<export>` with " +
           "their handler `kind`. " +
           "Zero handlers warns. `artifacts.html` is always returned; tier 2 also returns `artifacts.server` and " +
           "`handlers: [{name, kind}]` sorted by name. Both artifact records carry `sha256` and UTF-8 `bytes`. " +
@@ -906,7 +910,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "the exact shell `Origin` (scheme, host and port); a cross-site or missing Origin is " +
           "refused before execution. `me` with `args: {}` returns " +
           "`{ ok: true, value: { user: { id, name, email }, company: { id, handle, name }, admin } }` " +
-          "on company versions, or `{ ok: true, value: null }` on public versions; `admin` is a UI " +
+          "on company versions, or `{ ok: true, value: null }` on public versions; `admin` is true for admins and super admins, and is a UI " +
           "hint, not additional authority. The seven `tables.*` operations resolve tables and validate " +
           "rows against the loaded version's manifest, not the newest version. `get` returns a row " +
           "or null; `getMany` preserves input order and nulls; `insert`, `insertMany` and `update` " +
@@ -1024,7 +1028,7 @@ export class RuntimeGroup extends HttpApiGroup.make("runtime", { topLevel: true 
           "under another UIDVALIDITY fails `mailbox_reset` with `details.folder`; a ref of another connection " +
           "`invalid_request`; a folder that can't be opened `not_found` with `details.folder`. A login the mail server " +
           "refuses pauses the connection, and it and every later call fail `auth_failed` without contacting the server until " +
-          "an admin's Test or Replace password succeeds. Calls wait for `imap.calls.concurrent` per mailbox, " +
+          "a super admin's Test or Replace password succeeds. Calls wait for `imap.calls.concurrent` per mailbox, " +
           "`imap.server.concurrent` per mail server and `imap.host.concurrent` per process (`busy`); raw answers are bounded " +
           "by `imap.call.bytes`, arguments by `runtime.imap.bytes`. Recent calls name the operation and a count, never a " +
           "subject, a body, an address or a search value. " +

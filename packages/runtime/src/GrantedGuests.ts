@@ -37,7 +37,7 @@ export const viewerOf = Effect.fnUntraced(function* (
     return Option.some({
       user: person.user,
       company: person.company,
-      admin: person.role === "admin"
+      admin: person.role !== "member"
     });
   const host = yield* (yield* GrantedGuests).host(loaded, person.user.id);
   return Option.map(host, (company) => ({

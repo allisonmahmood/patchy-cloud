@@ -72,7 +72,7 @@ type Publication = PatchSubject & {
 };
 
 /** A user's role in their company, as Companies defines it. */
-type Role = "admin" | "member";
+type Role = "admin" | "member" | "super_admin";
 
 /** An invitation's email delivery. */
 type Delivery = {
@@ -196,7 +196,7 @@ export type AnalyticsCatalogue = Catalogue<{
   /** An admin revoked a pending invitation. Principal: that admin. */
   readonly "invite.revoked": { readonly inviteId: string };
 
-  /** An admin changed a user's role. Principal: that admin. */
+  /** A super admin changed a user's role. Principal: that super admin. */
   readonly "user.role_changed": { readonly userId: string; readonly role: Role };
 
   /** An admin deactivated a user. Principal: that admin. */

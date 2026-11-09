@@ -286,6 +286,38 @@ const storeVersion = Effect.fn(function* (
 });
 
 it.layer(services)("company connection pages", (it) => {
+  it.effect("refuses regular-admin connection setup and every direct management request", () =>
+    Effect.gen(function* () {
+      const owner = yield* createCompany("regular-admin-connections");
+      const admin = yield* addUser(owner, "regular", "admin");
+      const { connection, path } = yield* connect(owner.user, "warehouse");
+      assert.strictEqual(
+        (yield* send(connectPath, post(admin, { handle: "other", credentials }))).status,
+        403
+      );
+      for (const operation of [
+        "disconnect",
+        "delete",
+        "block-guests",
+        "description",
+        "test",
+        "refresh",
+        "rotate"
+      ]) {
+        assert.strictEqual(
+          (yield* send(`${path}/${operation}`, post(admin))).status,
+          403,
+          operation
+        );
+      }
+      assert.strictEqual(
+        (yield* (yield* ConnectionStore.ConnectionStore).get(owner.company.id, connection.id))
+          .status,
+        "connected"
+      );
+    })
+  );
+
   it.effect("lets only an admin block guests from a connection, and shows everyone which", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("connections-blocking");
@@ -557,7 +589,7 @@ it.layer(services)("company connection pages", (it) => {
             );
           const rotate = yield* send(`${path}/rotate`, { headers: { cookie: cookie(viewer) } });
           const rotateHtml = yield* Effect.promise(() => rotate.text());
-          if (viewer.role === "admin") {
+          if (viewer.role === "super_admin") {
             assert.include(list, 'href="/company/connections/connect"');
             assert.include(html, `href="${path}/rotate"`);
             assert.strictEqual(rotate.status, 200);
@@ -850,7 +882,7 @@ it.layer(services)("company connection pages", (it) => {
   it.effect("requires current admin status and the company forms' Origin admission", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("connections-admission");
-      const secondAdmin = yield* addUser(owner, "other-admin", "admin");
+      const secondAdmin = yield* addUser(owner, "other-admin", "super_admin");
       const { connection, path } = yield* connect(owner.user, "warehouse");
       // RequireSession.sameOrigin owns the full Origin matrix; one forgery proves the wiring.
       const forged = yield* send(`${path}/disconnect`, {
@@ -863,6 +895,7 @@ it.layer(services)("company connection pages", (it) => {
       yield* users.setRole({
         companyId: owner.company.id,
         userId: secondAdmin.id,
+        actorId: owner.user.id,
         role: "member"
       });
       assert.strictEqual((yield* send(`${path}/disconnect`, post(secondAdmin))).status, 403);
@@ -998,7 +1031,7 @@ it.layer(services)("company connection pages", (it) => {
       Effect.gen(function* () {
         const owner = yield* createCompany("connections-empty", "Empty Co");
         const member = yield* addUser(owner, "member");
-        yield* addUser(owner, "second-admin", "admin");
+        yield* addUser(owner, "second-admin", "super_admin");
         const read = Effect.fn(function* (user: Users.User, path: string) {
           const response = yield* send(path, { headers: { cookie: cookie(user) } });
           return { status: response.status, html: yield* Effect.promise(() => response.text()) };

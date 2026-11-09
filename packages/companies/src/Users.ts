@@ -8,7 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-export const Role = Schema.Literals(["member", "admin"]);
+export const Role = Schema.Literals(["member", "admin", "super_admin"]);
 export type Role = typeof Role.Type;
 
 export class User extends Schema.Class<User>("User")({
@@ -41,18 +41,50 @@ export class UserNotFound extends Schema.TaggedError<UserNotFound>()("UserNotFou
   }
 }
 
-export class LastAdmin extends Schema.TaggedError<LastAdmin>()("LastAdmin", {
+export class LastSuperAdmin extends Schema.TaggedError<LastSuperAdmin>()("LastSuperAdmin", {
   companyId: Schema.String,
   userId: Schema.String
 }) {
   override get message() {
-    return "The last active admin cannot be demoted or deactivated.";
+    return "The last active super admin cannot be demoted or deactivated.";
   }
 }
+
+export class RoleForbidden extends Schema.TaggedError<RoleForbidden>()("RoleForbidden", {
+  companyId: Schema.String,
+  actorId: Schema.String
+}) {
+  override get message() {
+    return "You cannot perform this company administration action.";
+  }
+}
+
+const administrator = SqlSchema.findOneOption({
+  Request: Schema.Struct({ companyId: Schema.String, actorId: Schema.String }),
+  Result: Schema.Struct({ role: Role }),
+  execute: Effect.fnUntraced(function* ({ companyId, actorId }) {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql`SELECT role FROM users WHERE company_id = ${companyId}
+      AND id = ${actorId} AND deactivated_at IS NULL`;
+  })
+});
+
+/** Call within a transaction. All company role/lifecycle writes take this lock first. */
+export const lockAdministrator = Effect.fn("Users.lockAdministrator")(function* (input: {
+  readonly companyId: string;
+  readonly actorId: string;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR UPDATE`;
+  const actor = yield* administrator(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
+  if (Option.isNone(actor) || actor.value.role === "member") return yield* new RoleForbidden(input);
+  return actor.value.role;
+});
 
 export interface UserRef {
   readonly companyId: string;
   readonly userId: string;
+  readonly actorId: string;
 }
 
 export interface Claims {
@@ -78,7 +110,7 @@ class NameRow extends Schema.Class<NameRow>("NameRow")({
   name: Schema.String
 }) {}
 
-/** Admin actions are company-scoped; the caller authorizes the acting admin. */
+/** Company administration rechecks the acting person under the company lock. */
 export class Users extends Context.Service<
   Users,
   {
@@ -113,16 +145,18 @@ export class Users extends Context.Service<
       input: UserRef & { readonly role: Role }
     ) => Effect.Effect<
       { readonly user: User; readonly changed: boolean },
-      UserNotFound | LastAdmin | SqlError
+      UserNotFound | LastSuperAdmin | RoleForbidden | SqlError
     >;
     /** Preview only; deactivate rechecks under the company and user locks. */
     readonly checkDeactivation: (
       input: UserRef
-    ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
+    ) => Effect.Effect<User, UserNotFound | LastSuperAdmin | RoleForbidden | SqlError>;
     readonly deactivate: (
       input: UserRef
-    ) => Effect.Effect<User, UserNotFound | LastAdmin | SqlError>;
-    readonly reactivate: (input: UserRef) => Effect.Effect<User, UserNotFound | SqlError>;
+    ) => Effect.Effect<User, UserNotFound | LastSuperAdmin | RoleForbidden | SqlError>;
+    readonly reactivate: (
+      input: UserRef
+    ) => Effect.Effect<User, UserNotFound | RoleForbidden | SqlError>;
     /** Raises the person's What's new marker to `through`; it never moves back. */
     readonly markWhatsNewSeen: (input: {
       readonly userId: string;
@@ -172,12 +206,12 @@ export const make = Effect.gen(function* () {
     execute: ({ companyId, userId }) => sql`
       SELECT ${columns} FROM users WHERE company_id = ${companyId} AND id = ${userId} FOR UPDATE`
   });
-  const activeAdmins = SqlSchema.findOne({
+  const activeSuperAdmins = SqlSchema.findOne({
     Request: Schema.String,
     Result: Schema.Struct({ count: Schema.Int }),
     execute: (companyId) => sql`
       SELECT count(*)::int AS count FROM users
-      WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
+      WHERE company_id = ${companyId} AND role = 'super_admin' AND deactivated_at IS NULL`
   });
   // A fresh read that takes no row locks. The LEFT JOIN answers a missing company as nulls,
   // not as no user.
@@ -265,35 +299,47 @@ export const make = Effect.gen(function* () {
     return { user: updated.value, company };
   });
 
-  // Lock the company before reading any user's role. Locking only the target
-  // users lets two admins each see the other and both remove the final admin.
+  // lockAdministrator has already locked the company before any target user row.
   const lockUser = Effect.fn("Users.lockUser")(function* (input: UserRef) {
-    yield* sql`SELECT id FROM companies WHERE id = ${input.companyId} FOR UPDATE`;
     const found = yield* lockedUser(input).pipe(Effect.catchTags(dieOnSchemaError));
     if (Option.isNone(found)) return yield* new UserNotFound(input);
     return found.value;
   });
-  const preserveAdmin = Effect.fn("Users.preserveAdmin")(function* (user: User) {
-    if (user.role !== "admin" || user.deactivatedAt !== null) return;
-    const { count } = yield* activeAdmins(user.companyId).pipe(
+  const preserveSuperAdmin = Effect.fn("Users.preserveSuperAdmin")(function* (user: User) {
+    if (user.role !== "super_admin" || user.deactivatedAt !== null) return;
+    const { count } = yield* activeSuperAdmins(user.companyId).pipe(
       Effect.catchTags({ ...dieOnSchemaError, NoSuchElementError: Effect.die })
     );
-    if (count <= 1) return yield* new LastAdmin({ companyId: user.companyId, userId: user.id });
+    if (count <= 1)
+      return yield* new LastSuperAdmin({ companyId: user.companyId, userId: user.id });
   });
 
   const checkDeactivation = Effect.fn("Users.checkDeactivation")(function* (input: UserRef) {
+    // A preview takes no mutation locks; the submitted change rechecks under the company lock.
+    const actor = yield* administrator(input).pipe(
+      Effect.catchTags(dieOnSchemaError),
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+    if (Option.isNone(actor) || actor.value.role === "member")
+      return yield* new RoleForbidden(input);
     const found = yield* userByRef(input).pipe(Effect.catchTags(dieOnSchemaError));
     if (Option.isNone(found)) return yield* new UserNotFound(input);
-    yield* preserveAdmin(found.value);
+    if (actor.value.role !== "super_admin" && found.value.role !== "member")
+      return yield* new RoleForbidden(input);
+    yield* preserveSuperAdmin(found.value);
     return found.value;
   });
 
   const setRole = Effect.fn("Users.setRole")((input: UserRef & { readonly role: Role }) =>
     sql.withTransaction(
       Effect.gen(function* () {
+        const actor = yield* lockAdministrator(input).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
+        if (actor !== "super_admin") return yield* new RoleForbidden(input);
         const user = yield* lockUser(input);
         if (user.role === input.role) return { user, changed: false };
-        if (input.role === "member") yield* preserveAdmin(user);
+        if (input.role !== "super_admin") yield* preserveSuperAdmin(user);
         yield* sql`UPDATE users SET role = ${input.role} WHERE id = ${input.userId}`;
         return { user: new User({ ...user, role: input.role }), changed: true };
       })
@@ -302,8 +348,13 @@ export const make = Effect.gen(function* () {
   const deactivate = Effect.fn("Users.deactivate")((input: UserRef) =>
     sql.withTransaction(
       Effect.gen(function* () {
+        const actor = yield* lockAdministrator(input).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
         const user = yield* lockUser(input);
-        yield* preserveAdmin(user);
+        if (actor !== "super_admin" && user.role !== "member")
+          return yield* new RoleForbidden(input);
+        yield* preserveSuperAdmin(user);
         const now = yield* Clock.currentTimeMillis;
         // Deactivation ends every credential: Auth refuses an approval or agent connection
         // made at or before credentials_ended_at, and reactivation leaves the stamp. The stamp
@@ -325,7 +376,12 @@ export const make = Effect.gen(function* () {
   const reactivate = Effect.fn("Users.reactivate")((input: UserRef) =>
     sql.withTransaction(
       Effect.gen(function* () {
+        const actor = yield* lockAdministrator(input).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        );
         const user = yield* lockUser(input);
+        if (actor !== "super_admin" && user.role !== "member")
+          return yield* new RoleForbidden(input);
         if (user.deactivatedAt === null) return user;
         yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${input.userId}`;
         return new User({ ...user, deactivatedAt: null });

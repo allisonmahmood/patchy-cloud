@@ -8,7 +8,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Cryptography, WhatsNew } from "@patchy/core";
-import { AlreadyInCompany, displayName, Role, User, type Claims } from "./Users.js";
+import {
+  AlreadyInCompany,
+  displayName,
+  lockAdministrator,
+  Role,
+  RoleForbidden,
+  User,
+  type Claims
+} from "./Users.js";
 
 /** Fixed once created: handles are not normalized into a different address. */
 export const Handle = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/));
@@ -145,7 +153,7 @@ export interface InviteInput {
   readonly invitedBy: string;
 }
 
-/** Admin actions are authorized by the caller; this service never sends mail. */
+/** Company administration rechecks current role authority; this service never sends mail. */
 export class Companies extends Context.Service<
   Companies,
   {
@@ -160,7 +168,10 @@ export class Companies extends Context.Service<
     readonly isHandleTaken: (handle: string) => Effect.Effect<boolean, SqlError>;
     readonly createInvite: (
       input: InviteInput
-    ) => Effect.Effect<Invite, CompanyNotFound | AlreadyInCompany | AlreadyInvited | SqlError>;
+    ) => Effect.Effect<
+      Invite,
+      CompanyNotFound | AlreadyInCompany | AlreadyInvited | RoleForbidden | SqlError
+    >;
     readonly listInvites: (companyId: string) => Effect.Effect<ReadonlyArray<Invite>, SqlError>;
     readonly findInvitesByEmail: (email: string) => Effect.Effect<ReadonlyArray<Invite>, SqlError>;
     readonly revokeInvite: (input: {
@@ -189,7 +200,7 @@ export class Companies extends Context.Service<
       input: AgentAccessInput
     ) => Effect.Effect<
       { readonly access: AgentAccess; readonly changed: boolean },
-      CompanyNotFound | SqlError
+      CompanyNotFound | RoleForbidden | SqlError
     >;
   }
 >()("@patchy/companies/Companies") {}
@@ -369,7 +380,7 @@ export const make = Effect.gen(function* () {
           clerkUserId: input.clerkUserId,
           email: input.email.toLowerCase(),
           name: input.userName,
-          role: "admin",
+          role: "super_admin",
           now
         });
         if (Option.isNone(user))
@@ -383,6 +394,12 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const company = yield* findById(input.companyId);
         if (company === null) return yield* new CompanyNotFound({ companyId: input.companyId });
+        const actor = yield* lockAdministrator({
+          companyId: input.companyId,
+          actorId: input.invitedBy
+        }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+        if (actor !== "super_admin" && (input.role ?? "member") !== "member")
+          return yield* new RoleForbidden({ companyId: input.companyId, actorId: input.invitedBy });
         const email = input.email.toLowerCase();
         const user = yield* existingUser({ email, clerkUserId: null });
         if (Option.isSome(user))
@@ -470,6 +487,14 @@ export const make = Effect.gen(function* () {
   const setAgentAccess = Effect.fn("Companies.setAgentAccess")((input: AgentAccessInput) =>
     sql.withTransaction(
       Effect.gen(function* () {
+        if ((yield* findById(input.companyId)) === null)
+          return yield* new CompanyNotFound({ companyId: input.companyId });
+        const actor = yield* lockAdministrator({
+          companyId: input.companyId,
+          actorId: input.by
+        }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+        if (actor !== "super_admin")
+          return yield* new RoleForbidden({ companyId: input.companyId, actorId: input.by });
         const now = yield* Clock.currentTimeMillis;
         const changed = yield* changeAgentAccess({ ...input, now }).pipe(
           Effect.catchTags(dieOnSchemaError)

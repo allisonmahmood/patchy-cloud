@@ -235,7 +235,7 @@ export interface Person {
   readonly id: string;
   readonly name: string;
   readonly email: string;
-  readonly role: "admin" | "member";
+  readonly role: "super_admin" | "admin" | "member";
   readonly machineTokenId: string;
   readonly token: string;
   readonly connectionId: string;
@@ -247,7 +247,7 @@ export interface Person {
  */
 export const company = Effect.fn("DoorTest.company")(function* (
   key: string,
-  people: ReadonlyArray<readonly [name: string, role: "admin" | "member"]>,
+  people: ReadonlyArray<readonly [name: string, role: "super_admin" | "admin" | "member"]>,
   options: { readonly access?: boolean; readonly name?: string } = {}
 ) {
   const sql = yield* SqlClient.SqlClient;
@@ -282,7 +282,7 @@ export const company = Effect.fn("DoorTest.company")(function* (
       connectionId: connection.id
     });
   }
-  const admin = members.find((member) => member.role === "admin");
+  const admin = members.find((member) => member.role === "super_admin");
   if (options.access !== false && admin !== undefined)
     yield* Companies.Companies.use((companies) =>
       companies.setAgentAccess({ companyId: id, on: true, by: admin.id })

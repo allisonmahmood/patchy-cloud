@@ -2,7 +2,7 @@
   "company": { "name": "Harbor Works", "handle": "harbor" },
   "companies": [{ "name": "Pine Studio", "handle": "pine" }],
   "people": [
-    { "key": "ada", "name": "Ada Park", "email": "ada@harbor.example", "role": "admin" },
+    { "key": "ada", "name": "Ada Park", "email": "ada@harbor.example", "role": "super_admin" },
     { "key": "ben", "name": "Ben Ortiz", "email": "ben@harbor.example", "role": "member" },
     {
       "key": "jo",

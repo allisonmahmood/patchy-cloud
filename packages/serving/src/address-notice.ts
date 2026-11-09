@@ -13,7 +13,7 @@ export const renderAddressNotice = (input: {
   const { patch, actorName, sourcesOff, viewer, now } = input;
   if (patch.state === "live") return "";
   const card = `/patches/${encodeURIComponent(patch.name)}`;
-  const canManage = viewer.user.id === patch.ownerUserId || viewer.role === "admin";
+  const canManage = viewer.user.id === patch.ownerUserId || viewer.role !== "member";
   const off = renderOffPatch({
     name: patch.name,
     state: patch.state,

@@ -124,7 +124,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     );
   const refuse = (message: string, status: number) =>
     respond(`${refusal(message)}<p><a href="/company">Back to Company</a></p>`, status);
-  if (viewer.role !== "admin")
+  if (viewer.role === "member")
     return refuse("Only an admin can manage this company. Nothing was done.", 403);
   const submission =
     request.method === "POST"
@@ -143,12 +143,14 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
           Effect.catchTags({ SchemaError: () => Effect.void })
         );
   const run = Effect.gen(function* () {
-    const ref = { companyId: viewer.company.id, userId: id };
+    const ref = { companyId: viewer.company.id, userId: id, actorId: viewer.user.id };
     const user =
       action === "deactivate"
         ? yield* users.checkDeactivation(ref)
         : (yield* users.list(viewer.company.id)).find((user) => user.id === id);
     if (!user) return yield* new Users.UserNotFound(ref);
+    if (viewer.role !== "super_admin" && user.role !== "member")
+      return yield* new Users.RoleForbidden(ref);
     const alreadyInTargetState =
       action === "deactivate" ? user.deactivatedAt !== null : user.deactivatedAt === null;
     if (alreadyInTargetState)
@@ -243,7 +245,8 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
   ).pipe(
     Effect.catchTags({
       UserNotFound: (error) => Effect.succeed(refuse(error.message, 404)),
-      LastAdmin: (error) => Effect.succeed(refuse(error.message, 409)),
+      RoleForbidden: (error) => Effect.succeed(refuse(error.message, 403)),
+      LastSuperAdmin: (error) => Effect.succeed(refuse(error.message, 409)),
       PatchRetired: (error) => Effect.succeed(refuse(`${error.message} Nothing was done.`, 409)),
       InvalidOwner: (error) => Effect.succeed(refuse(`${error.message} Nothing was done.`, 409)),
       InvalidDescription: (error) =>

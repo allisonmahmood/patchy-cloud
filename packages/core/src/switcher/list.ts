@@ -9,7 +9,7 @@ export interface SwitcherList {
   readonly viewer: {
     readonly id: string;
     readonly companyId: string;
-    readonly role: "member" | "admin";
+    readonly role: "member" | "admin" | "super_admin";
   };
   readonly company: { readonly handle: string; readonly name: string };
   /** How many What's new changes shipped since the viewer last looked. */
@@ -77,7 +77,7 @@ export const switcherList = (value: unknown): SwitcherList | undefined => {
   if (
     !text(viewer.id) ||
     !text(viewer.companyId) ||
-    (viewer.role !== "member" && viewer.role !== "admin") ||
+    (viewer.role !== "member" && viewer.role !== "admin" && viewer.role !== "super_admin") ||
     !count(value.whatsNewUnseen) ||
     !Array.isArray(value.patches) ||
     !value.patches.every(patch) ||

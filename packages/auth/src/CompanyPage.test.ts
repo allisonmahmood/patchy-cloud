@@ -156,6 +156,50 @@ const services = Layer.mergeAll(
 
 it.layer(services)("company page and actions", (it) => {
   it.effect(
+    "lets regular admins invite ordinary members, but refuses elevated invitations and role changes",
+    () =>
+      Effect.gen(function* () {
+        const owner = yield* createCompany("regular-admin-powers");
+        const admin = yield* addUser(owner, "regular", "admin");
+        const member = yield* addUser(owner, "member");
+        const response = yield* send("/company", { headers: { cookie: cookie(admin) } });
+        const html = yield* Effect.promise(() => response.text());
+        assert.include(html, 'action="/company/invites"');
+        assert.notInclude(html, 'value="super_admin"');
+        assert.notInclude(html, `/company/users/${admin.id}/role`);
+        assert.notInclude(html, `/company/users/${owner.user.id}/deactivate`);
+        for (const role of ["admin", "super_admin"]) {
+          assert.strictEqual(
+            (yield* send(
+              "/company/invites",
+              post(admin, { email: `${role}@forbidden.example`, role })
+            )).status,
+            403
+          );
+        }
+        for (const target of [owner.user, admin, member]) {
+          assert.strictEqual(
+            (yield* send(`/company/users/${target.id}/role`, post(admin, { role: "member" })))
+              .status,
+            403
+          );
+        }
+        assert.strictEqual(
+          (yield* send("/company/agent-access", post(admin, { state: "on" }))).status,
+          403
+        );
+        assert.strictEqual(
+          (yield* send(
+            "/company/invites",
+            post(admin, { email: "ordinary@allowed.example", role: "member" })
+          )).status,
+          303
+        );
+        assert.isFalse((yield* (yield* Companies.Companies).agentAccess(owner.company.id)).on);
+      })
+  );
+
+  it.effect(
     "lists only this company's users and pending invites, with escaped data and admin-only controls",
     () =>
       Effect.gen(function* () {
@@ -172,7 +216,11 @@ it.layer(services)("company page and actions", (it) => {
           '<img src=x onerror=alert("name")>'
         );
         const inactive = yield* addUser(owner, "inactive");
-        yield* users.deactivate({ companyId: owner.company.id, userId: inactive.id });
+        yield* users.deactivate({
+          companyId: owner.company.id,
+          actorId: owner.user.id,
+          userId: inactive.id
+        });
         const pending = yield* companies.createInvite({
           companyId: owner.company.id,
           invitedBy: owner.user.id,
@@ -207,7 +255,7 @@ it.layer(services)("company page and actions", (it) => {
           assert.notInclude(html, revoked.email);
           assert.notInclude(html, foreign.user.email);
           assert.notInclude(html, foreign.company.name);
-          if (viewer.role === "admin") {
+          if (viewer.role !== "member") {
             for (const action of [
               "/company/invites",
               `/company/invites/${pending.id}/revoke`,
@@ -594,7 +642,11 @@ it.layer(services)("company page and actions", (it) => {
       const owner = yield* createCompany("company-filter");
       const member = yield* addUser(owner, "zed", "member", "Zed Quill");
       const gone = yield* addUser(owner, "gone");
-      yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: gone.id });
+      yield* (yield* Users.Users).deactivate({
+        companyId: owner.company.id,
+        actorId: owner.user.id,
+        userId: gone.id
+      });
       const invited = "invited-filter@example.com";
       yield* (yield* Companies.Companies).createInvite({
         companyId: owner.company.id,
@@ -643,7 +695,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(asked, [{ companyId: owner.company.id, userId: owner.user.id }]);
       assert.include(html, '<th scope="col">Patches</th>');
       assert.match(html, new RegExp(`${member.email}[\\s\\S]*?<td>Member</td><td>3</td>`));
-      assert.match(html, new RegExp(`${owner.user.email}[\\s\\S]*?<td>Admin</td><td>0</td>`));
+      assert.match(html, new RegExp(`${owner.user.email}[\\s\\S]*?<td>Super admin</td><td>0</td>`));
     })
   );
 
@@ -727,7 +779,7 @@ it.layer(services)("company page and actions", (it) => {
     () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("company-agent-access", "Brightline Studio");
-        const second = yield* addUser(owner, "second", "admin", "Priya Shah");
+        const second = yield* addUser(owner, "second", "super_admin", "Priya Shah");
         const member = yield* addUser(owner, "member");
         const page = Effect.fn(function* (viewer: Users.User) {
           const response = yield* send("/company/agent-access", {
@@ -854,7 +906,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.strictEqual(forged.status, 403);
         assert.strictEqual(forged.headers.get("location"), null);
         const forgedHtml = yield* Effect.promise(() => forged.text());
-        assert.include(forgedHtml, "Only an admin can turn agent access on or off.");
+        assert.include(forgedHtml, "Only a super admin can turn agent access on or off.");
         assert.notMatch(forgedHtml, companyAction);
 
         // Another company's admin sees and turns only their own company's switch.
@@ -877,7 +929,11 @@ it.layer(services)("company page and actions", (it) => {
           body: new URLSearchParams({ state: "off" })
         });
         assert.strictEqual(signedOutPost.status, 401);
-        yield* (yield* Users.Users).deactivate({ companyId: owner.company.id, userId: gone.id });
+        yield* (yield* Users.Users).deactivate({
+          companyId: owner.company.id,
+          actorId: owner.user.id,
+          userId: gone.id
+        });
         const deactivated = yield* read(gone);
         assert.strictEqual(deactivated.status, 403);
         assert.match(deactivated.html, /deactivated/i);
@@ -1100,9 +1156,9 @@ it.layer(services)("company page and actions", (it) => {
       assert.strictEqual(response.headers.get("location"), null);
       const html = yield* Effect.promise(() => response.text());
       assert.include(html, 'role="alert"');
-      assert.match(html, /last (?:active )?admin/i);
+      assert.match(html, /last (?:active )?super admin/i);
       const user = yield* (yield* Users.Users).findByClerkId(owner.user.clerkUserId);
-      assert.strictEqual(user?.role, "admin");
+      assert.strictEqual(user?.role, "super_admin");
       assert.isNull(user?.deactivatedAt);
       assert.deepStrictEqual(reported(owner.company.id), []);
     })
@@ -1111,7 +1167,7 @@ it.layer(services)("company page and actions", (it) => {
   it.effect("leaves an active admin when two admins concurrently demote each other over HTTP", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("company-admin-race");
-      const other = yield* addUser(owner, "other-admin", "admin");
+      const other = yield* addUser(owner, "other-admin", "super_admin");
       const responses = yield* Effect.all(
         [
           send(`/company/users/${other.id}/role`, post(owner.user, { role: "member" })),
@@ -1125,7 +1181,7 @@ it.layer(services)("company page and actions", (it) => {
       assert.oneOf(refused.status, [403, 409]);
       const users = yield* (yield* Users.Users).list(owner.company.id);
       assert.strictEqual(
-        users.filter((user) => user.role === "admin" && user.deactivatedAt === null).length,
+        users.filter((user) => user.role === "super_admin" && user.deactivatedAt === null).length,
         1
       );
       assert.strictEqual(users.filter((user) => user.role === "member").length, 1);
@@ -1143,7 +1199,7 @@ it.layer(services)("company page and actions", (it) => {
         const owner = yield* createCompany("company-lifecycle");
         const member = yield* addUser(owner, "member");
         const users = yield* Users.Users;
-        const input = { companyId: owner.company.id, userId: member.id };
+        const input = { companyId: owner.company.id, actorId: owner.user.id, userId: member.id };
         const tokens = yield* MachineTokens.MachineTokens;
         const laptop = yield* tokens.mint({ userId: member.id, name: "Laptop" });
         const initial = yield* me(laptop.token);

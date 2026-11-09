@@ -75,7 +75,7 @@ it.layer(harness)("the catalogue", (it) => {
     () =>
       Effect.gen(function* () {
         const acme = yield* company("list", [
-          ["Priya Shah", "admin"],
+          ["Priya Shah", "super_admin"],
           ["Ben Okafor", "member"]
         ]);
         const [priya, ben] = acme.people as [Person, Person];
@@ -92,7 +92,7 @@ it.layer(harness)("the catalogue", (it) => {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test'
         WHERE id = ${takenDown.patchId}`;
-        const elsewhere = yield* company("list-elsewhere", [["Cleo Admin", "admin"]]);
+        const elsewhere = yield* company("list-elsewhere", [["Cleo Admin", "super_admin"]]);
         yield* publish(elsewhere.id, elsewhere.people[0]!, "alpha-elsewhere", { handlers: deals });
 
         const send = yield* door("https://cloud.example", "203.0.113.30");
@@ -133,7 +133,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("pages 50 at a time through a cursor that walks the rest in a stable order", () =>
     Effect.gen(function* () {
-      const acme = yield* company("pages", [["Priya Shah", "admin"]]);
+      const acme = yield* company("pages", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       const expected: string[] = ["tools-a", "tools-b"];
       for (const name of ["tools-b", "tools-a"])
@@ -198,14 +198,14 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("refuses a cursor it never gave, and a forged one finds nothing more", () =>
     Effect.gen(function* () {
-      const acme = yield* company("forged", [["Priya Shah", "admin"]]);
+      const acme = yield* company("forged", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       for (let index = 1; index <= 51; index++)
         yield* publish(acme.id, priya, `item-${String(index).padStart(3, "0")}`);
       const hidden = yield* publish(acme.id, priya, "item-010x");
       const patches = yield* Patches.Patches;
       yield* patches.retire(hidden.patchId, { userId: priya.id, admin: true });
-      const elsewhere = yield* company("forged-elsewhere", [["Cleo Admin", "admin"]]);
+      const elsewhere = yield* company("forged-elsewhere", [["Cleo Admin", "super_admin"]]);
       const theirs = yield* publish(elsewhere.id, elsewhere.people[0]!, "item-010y");
       const send = yield* door("https://cloud.example", "203.0.113.32");
       const first = found(yield* send(call(priya.token, "find_patches")));
@@ -252,7 +252,7 @@ it.layer(harness)("the catalogue", (it) => {
     "ends a page early under the read cap, and detail adds each tool's kind and words",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("cap", [["Priya Shah", "admin"]]);
+        const acme = yield* company("cap", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         for (const name of ["wordy-a", "wordy-b", "wordy-c", "wordy-d", "wordy-e", "wordy-f"])
           yield* publish(acme.id, priya, name, { handlers: wordy(10, 1_900) });
@@ -290,7 +290,7 @@ it.layer(harness)("the catalogue", (it) => {
   it.effect("searches every word in the name, title, description or owner, ignoring case", () =>
     Effect.gen(function* () {
       const acme = yield* company("search", [
-        ["Priya Shah", "admin"],
+        ["Priya Shah", "super_admin"],
         ["Ben Okafor", "member"]
       ]);
       const [priya, ben] = acme.people as [Person, Person];
@@ -331,7 +331,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("answers bad arguments as tool results the agent can correct", () =>
     Effect.gen(function* () {
-      const acme = yield* company("args", [["Priya Shah", "admin"]]);
+      const acme = yield* company("args", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       const send = yield* door("https://cloud.example", "203.0.113.35");
       for (const [name, args] of [
@@ -369,7 +369,7 @@ it.layer(harness)("the catalogue", (it) => {
     () =>
       Effect.gen(function* () {
         const acme = yield* company("open", [
-          ["Priya Shah", "admin"],
+          ["Priya Shah", "super_admin"],
           ["Ben Okafor", "member"]
         ]);
         const [priya, ben] = acme.people as [Person, Person];
@@ -438,7 +438,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("never finds a patch the person can't open, nor a namesake for another's address", () =>
     Effect.gen(function* () {
-      const here = yield* company("here", [["Priya Shah", "admin"]]);
+      const here = yield* company("here", [["Priya Shah", "super_admin"]]);
       const priya = here.people[0]!;
       const own = yield* publish(here.id, priya, "deals");
       const patches = yield* Patches.Patches;
@@ -450,7 +450,7 @@ it.layer(harness)("the catalogue", (it) => {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE patches SET disabled_at = now(), disabled_reason = 'test'
         WHERE id = ${takenDown.patchId}`;
-      const there = yield* company("there", [["Cleo Admin", "admin"]]);
+      const there = yield* company("there", [["Cleo Admin", "super_admin"]]);
       const theirs = yield* publish(there.id, there.people[0]!, "deals");
       const only = yield* publish(there.id, there.people[0]!, "only-there");
       const send = yield* door("https://cloud.example", "203.0.113.37");
@@ -516,7 +516,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("refuses to answer a patch over 64 KiB rather than send it", () =>
     Effect.gen(function* () {
-      const acme = yield* company("large", [["Priya Shah", "admin"]]);
+      const acme = yield* company("large", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       // Recorded straight to the database: the publish check would refuse these tools.
       yield* publish(acme.id, priya, "too-wordy", { handlers: wordy(40, 2_000) });
@@ -538,7 +538,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("keeps every find under the read cap, whatever the names and tools it lists", () =>
     Effect.gen(function* () {
-      const acme = yield* company("bounded", [["P".repeat(100_000), "admin"]], {
+      const acme = yield* company("bounded", [["P".repeat(100_000), "super_admin"]], {
         name: "C".repeat(100_000)
       });
       const person = acme.people[0]!;
@@ -561,7 +561,7 @@ it.layer(harness)("the catalogue", (it) => {
 
   it.effect("finds and opens only what the person's openability rule lets them open", () =>
     Effect.gen(function* () {
-      const acme = yield* company("narrower", [["Priya Shah", "admin"]]);
+      const acme = yield* company("narrower", [["Priya Shah", "super_admin"]]);
       const priya = acme.people[0]!;
       yield* publish(acme.id, priya, "open-board", { handlers: deals });
       const closed = yield* publish(acme.id, priya, "closed-board", { handlers: deals });

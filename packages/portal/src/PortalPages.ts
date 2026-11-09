@@ -188,7 +188,7 @@ const recentActivity = Effect.fn("PortalPages.recentActivity")(function* (
   now: number
 ) {
   const { viewer } = yield* context;
-  if (viewer.role !== "admin" && card.owner.id !== viewer.user.id) return "";
+  if (viewer.role === "member" && card.owner.id !== viewer.user.id) return "";
   const { entries } = yield* (yield* InvocationLog.InvocationLog).page({
     companyId: viewer.company.id,
     patchId: card.patch.id,
@@ -222,7 +222,7 @@ const agentPanel = Effect.fn("PortalPages.agentPanel")(function* (card: Patches.
   const admins = access.on
     ? null
     : (yield* (yield* Users.Users).list(viewer.company.id))
-        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
         .sort((a, b) => a.name.localeCompare(b.name));
   return renderAgentPanel({ tools, viewer, admins });
 });
@@ -383,7 +383,7 @@ const render = Effect.fn("PortalPages.render")(function* (
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = yield* patches.portalCard(selected.patch.id, access);
   const now = yield* Clock.currentTimeMillis;
-  const manages = viewer.role === "admin" || card.owner.id === viewer.user.id;
+  const manages = viewer.role !== "member" || card.owner.id === viewer.user.id;
   const refused = options.tab === "settings" && !manages;
   const tab = refused ? "overview" : (options.tab ?? "overview");
   const body =
@@ -712,7 +712,7 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   const card = yield* patches.portalCard(selected.patch.id, access);
-  if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id))
+  if (viewer.role === "member" && (action === "reassign" || card.owner.id !== viewer.user.id))
     return yield* render(name, {
       status: 403,
       notice: action === "reassign" ? adminRequired : forbidden
@@ -772,7 +772,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   // Ownership is read now, so reassignment moves who may read the log.
-  if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
+  if (viewer.role === "member" && selected.owner.id !== viewer.user.id)
     return yield* render(name, { status: 403, notice: logForbidden });
   const card = yield* patches.portalCard(selected.patch.id, access);
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -877,12 +877,12 @@ const post = Effect.fn("PortalPages.post")(function* (name: string, action: Patc
         ? "This name now belongs to a different patch. Nothing was done."
         : "This form is out of date. Nothing was done."
     });
-  if (viewer.role !== "admin" && (action === "reassign" || selected.owner.id !== viewer.user.id))
+  if (viewer.role === "member" && (action === "reassign" || selected.owner.id !== viewer.user.id))
     return yield* render(name, {
       status: 403,
       notice: action === "reassign" ? adminRequired : forbidden
     });
-  const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
+  const actor = { userId: viewer.user.id, admin: viewer.role !== "member" };
   const confirmation =
     action === "retire" || action === "delete" || action === "restore" || action === "reassign"
       ? action
@@ -1063,7 +1063,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
         : "This form is out of date. Nothing was done."
     });
   if (!manages(selected, viewer)) return yield* render(name, { status: 403, notice: forbidden });
-  const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
+  const actor = { userId: viewer.user.id, admin: viewer.role !== "member" };
   const at = behind(form.back, name, session.publicBaseUrl);
   const title = patchTitle(selected.patch);
   const grants = yield* GuestGrants.GuestGrants;
@@ -1258,7 +1258,7 @@ const recentFailures = Effect.fn("PortalPages.recentFailures")(function* (
     (row) =>
       row.patch.state === "live" &&
       row.tier >= 2 &&
-      (viewer.role === "admin" || row.owner.id === viewer.user.id)
+      (viewer.role !== "member" || row.owner.id === viewer.user.id)
   );
   if (managed.length === 0) return undefined;
   const counts = yield* (yield* InvocationLog.InvocationLog).failures({
@@ -1279,7 +1279,7 @@ const turnedAway = Effect.fn("PortalPages.turnedAway")(function* (
   if (
     !rows.some(
       (row) =>
-        row.patch.state === "live" && (viewer.role === "admin" || row.owner.id === viewer.user.id)
+        row.patch.state === "live" && (viewer.role !== "member" || row.owner.id === viewer.user.id)
     )
   )
     return undefined;

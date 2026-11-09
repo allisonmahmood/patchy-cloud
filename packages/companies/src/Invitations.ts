@@ -8,11 +8,12 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Companies from "./Companies.js";
 import * as InviteMail from "./InviteMail.js";
-import type { AlreadyInCompany } from "./Users.js";
+import { lockAdministrator, RoleForbidden, type AlreadyInCompany } from "./Users.js";
 
 export interface InviteReference {
   readonly companyId: string;
   readonly inviteId: string;
+  readonly actorId: string;
 }
 
 export interface DeliveryResult {
@@ -35,9 +36,12 @@ const lockPendingRow = SqlSchema.findOneOption({
 });
 
 const lockPending = Effect.fn("Invitations.lockPending")(function* (input: InviteReference) {
+  const actor = yield* lockAdministrator(input);
   const row = yield* lockPendingRow(input).pipe(Effect.catchTags({ SchemaError: Effect.die }));
   if (Option.isNone(row))
     return yield* new Companies.InviteUnavailable({ inviteId: input.inviteId });
+  if (actor !== "super_admin" && row.value.role !== "member")
+    return yield* new RoleForbidden(input);
   return row.value;
 });
 
@@ -67,7 +71,11 @@ export const create = Effect.fn("Invitations.create")(function* (
   input: Companies.InviteInput
 ): Effect.fn.Return<
   DeliveryResult,
-  Companies.CompanyNotFound | AlreadyInCompany | Companies.AlreadyInvited | SqlError,
+  | Companies.CompanyNotFound
+  | AlreadyInCompany
+  | Companies.AlreadyInvited
+  | RoleForbidden
+  | SqlError,
   Companies.Companies | SqlClient.SqlClient | InviteMail.InviteMail
 > {
   const sql = yield* SqlClient.SqlClient;
@@ -84,7 +92,7 @@ export const revoke = Effect.fn("Invitations.revoke")(function* (
   input: InviteReference
 ): Effect.fn.Return<
   DeliveryResult,
-  Companies.InviteUnavailable | SqlError,
+  Companies.InviteUnavailable | RoleForbidden | SqlError,
   Companies.Companies | SqlClient.SqlClient | InviteMail.InviteMail
 > {
   const sql = yield* SqlClient.SqlClient;
@@ -113,7 +121,7 @@ export const resend = Effect.fn("Invitations.resend")(function* (
   input: InviteReference
 ): Effect.fn.Return<
   DeliveryResult,
-  Companies.InviteUnavailable | SqlError,
+  Companies.InviteUnavailable | RoleForbidden | SqlError,
   SqlClient.SqlClient | InviteMail.InviteMail
 > {
   const sql = yield* SqlClient.SqlClient;

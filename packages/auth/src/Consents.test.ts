@@ -470,8 +470,8 @@ it.layer(layer)("Consent", (it) => {
         return { companyId: person.companyId, userId: id };
       });
       const deactivated = yield* approved(member);
-      yield* users.deactivate(member);
-      yield* users.reactivate(member);
+      yield* users.deactivate({ ...member, actorId: person.userId });
+      yield* users.reactivate({ ...member, actorId: person.userId });
       assert.strictEqual(yield* refusal(exchange(deactivated)), "ended");
     })
   );
@@ -552,7 +552,7 @@ it.layer(layer)("Consent", (it) => {
         [
           "deactivation",
           (who: { readonly companyId: string; readonly userId: string }) =>
-            Effect.asVoid(users.deactivate(who))
+            Effect.asVoid(users.deactivate({ ...who, actorId: person.userId }))
         ]
       ] as const;
       for (const [name, end] of endings) {

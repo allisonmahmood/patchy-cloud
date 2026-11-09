@@ -82,7 +82,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "gives a first try a fresh mutation key, and answers its retry from the record on any replica without running it",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-run", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-run", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const fake = yield* runtime(() => ok({ id: "lead-1", note: "Ada, warm" }));
@@ -152,7 +152,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "refuses a try while its key's first try runs, on either replica, and the same key for another change or after a publish",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-refusals", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-refusals", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const started = yield* Deferred.make<void>();
@@ -241,7 +241,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "a try that didn't commit leaves its key to the same change, which runs again under the same mutation key and says when Runtime's record answered",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-unknown", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-unknown", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const replies: Array<
@@ -303,7 +303,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "keeps a key held when its agent goes away mid-try, until its lease runs out and a retry resolves it",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-gone", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-gone", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const started = yield* Deferred.make<void>();
@@ -342,7 +342,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "runs an action once per key: a later try is refused unrun, a timeout may have partly happened, and a large result is left out",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-action", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-action", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const replies: Array<Effect.Effect<ServerCallReply, Runtime.RuntimeError>> = [
@@ -387,7 +387,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
   it.effect("keeps each key to its agent connection and patch", () =>
     Effect.gen(function* () {
       const acme = yield* company("change-scope", [
-        ["Priya Shah", "admin"],
+        ["Priya Shah", "super_admin"],
         ["Ben Okafor", "member"]
       ]);
       const [priya, ben] = acme.people as [Person, Person];
@@ -418,7 +418,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "keeps only hashes, a key lives 24 hours and is a new change past them, a retry stops before Runtime's record goes, and the sweep",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-expiry", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-expiry", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
         let unknown = false;
@@ -494,7 +494,7 @@ it.layer(harness, { excludeTestServices: true })("change_patch", (it) => {
     "refuses arguments without a string key, a read tool and a host without patch code, keeping the key free, and takes any string as a key",
     () =>
       Effect.gen(function* () {
-        const acme = yield* company("change-args", [["Priya Shah", "admin"]]);
+        const acme = yield* company("change-args", [["Priya Shah", "super_admin"]]);
         const priya = acme.people[0]!;
         const published = yield* publish(acme.id, priya, "new-business", { handlers: leads });
         const fake = yield* runtime(() => ok({ id: "lead-6" }));

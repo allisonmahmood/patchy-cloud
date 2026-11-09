@@ -18,7 +18,7 @@ export const DEV_SEED = {
   clerkUserId: "user_dev",
   email: "dev@patchy.local",
   userName: "Patchy Dev",
-  role: "admin",
+  role: "super_admin",
   tokenId: "tok_dev",
   tokenName: "Dev Machine",
   token: "patchy-dev-token"

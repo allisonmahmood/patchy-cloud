@@ -56,3 +56,29 @@ it.layer(Testing.emptyLayer(before("0015_user_name_never_blank")))(
     );
   }
 );
+
+it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles upgrade", (it) => {
+  it.effect(
+    "preserves every existing admin as a super admin, including inactive accounts and pending invitations",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_roles', 'roles', 'Roles')`;
+        yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, deactivated_at) VALUES
+        ('a', 'clerk_a', 'cmp_roles', 'a@example.com', 'A', 'admin', NULL),
+        ('b', 'clerk_b', 'cmp_roles', 'b@example.com', 'B', 'admin', now()),
+        ('m', 'clerk_m', 'cmp_roles', 'm@example.com', 'M', 'member', NULL)`;
+        yield* sql`INSERT INTO invites (id, company_id, email, role, invited_by, expires_at) VALUES
+        ('i', 'cmp_roles', 'invited@example.com', 'admin', 'a', now() + interval '1 day')`;
+        yield* migrate(migrations);
+        assert.deepStrictEqual(yield* sql`SELECT id, role FROM users ORDER BY id`, [
+          { id: "a", role: "super_admin" },
+          { id: "b", role: "super_admin" },
+          { id: "m", role: "member" }
+        ]);
+        assert.deepStrictEqual(yield* sql`SELECT role FROM invites WHERE id = 'i'`, [
+          { role: "super_admin" }
+        ]);
+      })
+  );
+});

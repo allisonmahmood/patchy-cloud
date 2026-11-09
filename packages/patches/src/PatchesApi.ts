@@ -1111,7 +1111,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           if (HttpServerResponse.isHttpServerResponse(card)) return card;
           yield* WideEvents.enrich(Patches.eventFields(card.patch));
           // Ownership is read now, so reassignment moves who may read the log, as in the portal.
-          if (identity.role !== "admin" && card.owner.id !== identity.user.id)
+          if (identity.role === "member" && card.owner.id !== identity.user.id)
             return refuse(NotOwner, {
               ok: false,
               code: "not_owner",

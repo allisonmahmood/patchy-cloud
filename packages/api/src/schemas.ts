@@ -185,7 +185,7 @@ export const PatchQuotaExceeded = failure(403, {
 export class Identity extends Schema.Class<Identity>("Identity")({
   user: Schema.Struct({ id: Schema.String, email: Schema.String, name: Schema.String }),
   company: Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String }),
-  role: Schema.Literals(["member", "admin"]),
+  role: Schema.Literals(["member", "admin", "super_admin"]),
   machine: Schema.Struct({ id: Schema.String, name: Schema.String })
 }) {}
 

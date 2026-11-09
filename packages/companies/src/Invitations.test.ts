@@ -61,6 +61,7 @@ it.layer(
       yield* TestClock.adjust("30 days");
       const resent = yield* Invitations.resend({
         companyId: company.id,
+        actorId: user.id,
         inviteId: created.invite.id
       });
       assert.isFalse(resent.mailFailed);
@@ -92,7 +93,7 @@ it.layer(
           email: "Lifecycle@EXAMPLE.com",
           role: "member"
         });
-        const reference = { companyId: company.id, inviteId: created.invite.id };
+        const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
         const resent = yield* Invitations.resend(reference);
         assert.isFalse(created.mailFailed);
         assert.isFalse(resent.mailFailed);
@@ -155,7 +156,7 @@ it.layer(
           invitedBy: user.id,
           email: "retry@example.com"
         }).pipe(Effect.provide(InviteMail.layerFailing));
-        const reference = { companyId: company.id, inviteId: created.invite.id };
+        const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
         const resent = yield* Invitations.resend(reference);
         assert.isFalse(resent.mailFailed);
         assert.strictEqual(resent.invite.id, created.invite.id);
@@ -192,7 +193,7 @@ it.layer(
           email: "replace-failure@example.com"
         });
         assert.isNotNull(created.invite.clerkInvitationId);
-        const reference = { companyId: company.id, inviteId: created.invite.id };
+        const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
         yield* TestClock.adjust("30 days");
         const failed = yield* Invitations.resend(reference).pipe(Effect.provide(createFails));
         assert.isTrue(failed.mailFailed);
@@ -239,7 +240,7 @@ it.layer(
         invitedBy: user.id,
         email: "lost-response@example.com"
       });
-      const reference = { companyId: company.id, inviteId: created.invite.id };
+      const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
       const lostResponse = Layer.succeed(
         InviteMail.InviteMail,
         InviteMail.InviteMail.of({
@@ -289,7 +290,7 @@ it.layer(
         invitedBy: user.id,
         email: "revoke-failure@example.com"
       });
-      const reference = { companyId: company.id, inviteId: created.invite.id };
+      const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
       const revoked = yield* Invitations.revoke(reference).pipe(
         Effect.provide(InviteMail.layerFailing)
       );
@@ -343,7 +344,11 @@ it.layer(
             ._tag,
           "AlreadyInCompany"
         );
-        const otherReference = { companyId: second.company.id, inviteId: created.invite.id };
+        const otherReference = {
+          actorId: second.user.id,
+          companyId: second.company.id,
+          inviteId: created.invite.id
+        };
         assert.strictEqual(
           (yield* Invitations.resend(otherReference).pipe(Effect.flip))._tag,
           "InviteUnavailable"
@@ -379,7 +384,7 @@ it.layer(
         invitedBy: user.id,
         email: "mail-race-invitee@example.com"
       });
-      const reference = { companyId: company.id, inviteId: created.invite.id };
+      const reference = { actorId: user.id, companyId: company.id, inviteId: created.invite.id };
       const [resent, revoked] = yield* Effect.all(
         [
           Invitations.resend(reference).pipe(

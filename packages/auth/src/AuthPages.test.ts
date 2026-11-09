@@ -408,7 +408,11 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.deepInclude(identity, {
         user: { id: user.id, email: "changed@example.com", name: "After" }
       });
-      yield* (yield* Users.Users).deactivate({ companyId: created.company.id, userId: user.id });
+      yield* (yield* Users.Users).deactivate({
+        companyId: created.company.id,
+        actorId: created.user.id,
+        userId: user.id
+      });
       for (const path of ["/private", "/join"]) {
         const denied = yield* send(path, { headers: { cookie: sessionCookie } });
         assert.strictEqual(denied.status, 403);
@@ -582,7 +586,11 @@ it.layer(
         email: "deactivated-logout@example.com",
         name: "Departed"
       });
-      yield* (yield* Users.Users).deactivate({ companyId: DEV_SEED.companyId, userId: user.id });
+      yield* (yield* Users.Users).deactivate({
+        companyId: DEV_SEED.companyId,
+        actorId: DEV_SEED.userId,
+        userId: user.id
+      });
       const sessionCookie = cookie("user_deactivated_logout", "deactivated-logout@example.com");
       assert.strictEqual(
         (yield* send("/join", { headers: { cookie: sessionCookie } })).status,

@@ -625,13 +625,19 @@ files, shared resources, connections and members remain behind handlers.
 
 A company is the tenant for its patches, users and connections. It is flat, with no sub-tenants, and has a globally unique handle alongside its display name. Nothing crosses the company boundary except a patch deliberately shared publicly. Runtime records company bound seconds, database time and calls; billing, groups and a company usage view are not built.
 
-A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
+A company comes to exist on **create-or-join**, after sign-in: a person without an invitation names a company, chooses its handle and becomes its first super admin. The company and user are created together; a solo builder is a company of one. The handle is fixed once created, 3–32 lowercase letters, digits or hyphens, with no leading or trailing hyphen and reserved platform names refused. Self-serve billing — put in a card, set when it tops up — is the intended later path, not a step in today's signup.
 
 ### Users, admins, groups
 
 A **user** is one individual with one account, in exactly one company. They sign in, and they hold expiring, rotatable tokens on the machines they build patches from — see [Identity and access](#identity-and-access).
 
-An **admin** runs the company's invitations, roles, deactivation, reactivation and connections, and its **agent access** switch ([Patchy MCP](#patchy-mcp)). Admins manage descriptions, sharing, served versions, retire, delete, restore and reassignment from the portal. Publish stays owner-only. Groups and group permissions remain future work.
+Company roles are **member**, **admin** and **super admin** (`member`, `admin`, `super_admin` on the wire). Everyone inside a company may build. Outside guests remain named patch guests, not a company role.
+
+An **admin** invites ordinary members, deactivates/reactivates ordinary members, removes outside guests from all patches and changes the company look. A **super admin** also changes roles (including appointing other super admins), manages admin account lifecycle, administers connections and operates **agent access** ([Patchy MCP](#patchy-mcp)). A regular admin cannot appoint, demote, deactivate or reactivate any admin account, including their own. Pending administrator invitations are managed only by super admins.
+
+Existing admins and their pending administrator invitations migrate to super admins; existing members retain their roles. New company creators start as super admins. Multiple super admins are allowed, and company-before-user locking ensures concurrent demotions/deactivations retain at least one active super admin. Reactivation keeps revoked credentials ended.
+
+Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Team audiences, separate super-admin oversight and audience-aware patch management remain the following stages of #1192 (#1286/#1288). Groups and group permissions remain future work.
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
@@ -639,7 +645,7 @@ can open. Tabs narrow it to admins, invites or deactivated users, and a search
 matches names and emails. Invites that need an admin, because their email did
 not go out or they expired, come first with Resend beside them. Admins invite
 from Invite people in the page's toolbar, pasting up to `invites.batch` addresses at once, and
-manage roles, deactivation and reactivation from each row's menu; members read
+manage permitted account actions from each row's menu; members read
 the same page without actions. A **Guests** tab, there once the company has
 any, lists everyone at another company holding a grant to one of its patches
 now, with their company; each row opens to those patches, who shared each and
@@ -648,7 +654,7 @@ in **Remove from all patches…**, a confirmation listing every one of those
 patches, which ends every grant the person holds in the company and leaves their
 grants elsewhere alone; a public patch stays open to anyone with the link.
 Ended grants keep their records, so member columns still name the person,
-inactive, but someone whose grants have all ended is no longer listed. The last active admin cannot be demoted or
+inactive, but someone whose grants have all ended is no longer listed. The last active super admin cannot be demoted or
 deactivated. Reactivation restores sign-in to the same company and data, but
 machine tokens revoked by deactivation remain revoked.
 
@@ -662,7 +668,7 @@ Deactivation also ends every agent connection in the same transaction, and react
 
 Every patch is company-wide or public today, so a deactivated user's patches keep serving unless the admin retires them, marked **owner deactivated** in the portal and agent discovery. Nobody can publish to them until the owner is reactivated or an admin reassigns them.
 
-The Deactivate and Reactivate links on `/company` lead to the portal's pick pages. Deactivation lists the user's live patches with static badges naming their live dependants, including their own. Retired and deleted patches are visible but cannot be selected. **Keep their patches live** deactivates at once; **Retire selected** and **Retire all** show a confirmation recomputed for the selection. A user with no live patches goes straight to confirmation. The confirmation lists every live dependant outside the selection, regardless of owner, and requires acknowledgement when anything breaks. Deactivation, token revocation and the selected ordinary retirements commit in one transaction or all roll back. The last-active-admin rule applies before both the pick and the submitted act.
+The Deactivate and Reactivate links on `/company` lead to the portal's pick pages. Deactivation lists the user's live patches with static badges naming their live dependants, including their own. Retired and deleted patches are visible but cannot be selected. **Keep their patches live** deactivates at once; **Retire selected** and **Retire all** show a confirmation recomputed for the selection. A user with no live patches goes straight to confirmation. The confirmation lists every live dependant outside the selection, regardless of owner, and requires acknowledgement when anything breaks. Deactivation, token revocation and the selected ordinary retirements commit in one transaction or all roll back. The last-active-super-admin rule applies before both the pick and the submitted act.
 
 Reactivation offers **Keep them retired**, **Restore selected** and **Restore all** for the user's retired patches, however they were retired. Its confirmation warns per patch when its current version reads sources that stay off; a source restored in the same selection counts as intact. Reactivation and the selected restores commit together. Fresh tokens are required, reassigned patches stay with their new owners, and deleted patches stay deleted. Bulk retire and restore exist only in these user flows; later cleanup is per patch from its card.
 
@@ -771,7 +777,7 @@ Later, an admin may verify the company's **domain** — proven by email, never a
 
 ### Roles
 
-Two roles, **member** and **admin**. Every company member may build and publish. Admins also manage invitations, roles, deactivation, reactivation and company connections, and see owner controls on company patch cards. Groups, domains and SSO remain future work. A company always has at least one active admin, who can neither be demoted nor deactivated. There is no separate builder or viewer role.
+Three roles, **member**, **admin** and **super admin**, with the [company powers above](#users-admins-groups). Every company member may build and publish. Only super admins change roles, manage admin account lifecycle, administer connections and operate agent access. The last active super admin can neither be demoted nor deactivated. Groups, domains and SSO remain future work; there is no separate builder or viewer role.
 
 ### Access to a patch
 

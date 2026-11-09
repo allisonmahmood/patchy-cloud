@@ -5,13 +5,13 @@ description: Add a company's Attio workspace to a patch and read its CRM records
 
 # Company CRM on Attio
 
-Read `../patchy-loop/SKILL.md` first. An Attio connection is one Attio workspace that an admin connected with a read-only access token. Patchy holds the token and writes every request, so nothing a patch does can change Attio, and the token stays out of config, source and transcripts. The token acts for the workspace, not a person: anyone who can open a patch that declares the connection reads what the token reads, and Attio's own member permissions don't carry over.
+Read `../patchy-loop/SKILL.md` first. An Attio connection is one Attio workspace that a super admin connected with a read-only access token. Patchy holds the token and writes every request, so nothing a patch does can change Attio, and the token stays out of config, source and transcripts. The token acts for the workspace, not a person: anyone who can open a patch that declares the connection reads what the token reads, and Attio's own member permissions don't carry over.
 
 Connections are tier 2's: actions read the workspace through `ctx.connections` and return only what the page should show, and the page calls those actions. A tier 1 page reaches only its own patch, so declaring Attio on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says.
 
 ## Declare a workspace
 
-1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. An admin connects workspaces at `/company/connections`; ask them there rather than for a token. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
+1. Run `pnpm patchy list connections` and choose a connected `attio/<handle>` by description. `pnpm patchy list connections attio/<handle>` shows the workspace and its objects and lists. A super admin connects workspaces at `/company/connections`; ask them there rather than for a token. A super admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add attio/<handle> --as crm`. It inserts `crm: { kind: "attio", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `crm`: the workspace's objects and lists, each attribute's slug, title and type, record references' target objects, the options of each select and status, and what discovery left out.
 
@@ -74,9 +74,9 @@ const pipeline = await crm.lists.sales_pipeline.list({ parent: rows[0]!.id });
 
 Objects, lists and attributes are named by slug; options by title. The connection's snapshot is what the client was generated from, and every call checks the workspace's current attributes against it before decoding:
 
-- An attribute renamed, archived, deleted, retyped or changed between one value and many fails the call `shape_mismatch`, with `details.attribute` and `details.reason`; `"renamed"` carries `details.renamedTo`. An object or list gone fails `not_found`. Either lasts until an admin refreshes the connection at `/company/connections` and the patch runs `pnpm patchy refresh` and republishes.
+- An attribute renamed, archived, deleted, retyped or changed between one value and many fails the call `shape_mismatch`, with `details.attribute` and `details.reason`; `"renamed"` carries `details.renamedTo`. An object or list gone fails `not_found`. Either lasts until a super admin refreshes the connection at `/company/connections` and the patch runs `pnpm patchy refresh` and republishes.
 - A different attribute later given an old slug is read under that name if its type and cardinality match.
-- A new object, list or attribute arrives after an admin's Refresh and `pnpm patchy refresh`.
+- A new object, list or attribute arrives after a super admin's Refresh and `pnpm patchy refresh`.
 
 ## Nothing can be written
 
@@ -88,17 +88,17 @@ Queries and mutations can't use connections, and Attio reads are not live-query 
 
 ## In `patchy dev`
 
-- **Reads are real.** `patchy dev` reads the workspace through Patchy, as the person your publishing key belongs to, from either local viewer. Each read carries the revision the repo was generated from, so a client generated before an admin's Refresh still decodes as generated. Each read appears in the connection's recent calls marked Dev. Records are real company data; keep them out of commits, fixtures and transcripts beyond what the task needs.
-- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; an admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working. Dev reads share the workspace's slots with published patches.
+- **Reads are real.** `patchy dev` reads the workspace through Patchy, as the person your publishing key belongs to, from either local viewer. Each read carries the revision the repo was generated from, so a client generated before a super admin's Refresh still decodes as generated. Each read appears in the connection's recent calls marked Dev. Records are real company data; keep them out of commits, fixtures and transcripts beyond what the task needs.
+- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; a super admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working. Dev reads share the workspace's slots with published patches.
 
 ## Bounds and refusals
 
 - A 15-second service deadline, bounded by an action's remaining time. Patchy never retries a call.
 - `source_rate_limited` with `retryAfter` is Attio's own limit, shared by every key on the workspace. `busy` means Patchy's calls for the workspace stayed full and nothing was sent.
-- `source_unavailable` covers an unreachable Attio, a key that stopped working (an admin replaces it at `/company/connections`), a record Attio is merging, and an attribute asked for `null` that changed while Patchy read it: the same call again reads it right.
-- `access_denied` with `details.scope` names the read scope the key lacks; an admin fixes the key.
+- `source_unavailable` covers an unreachable Attio, a key that stopped working (a super admin replaces it at `/company/connections`), a record Attio is merging, and an attribute asked for `null` that changed while Patchy read it: the same call again reads it right.
+- `access_denied` with `details.scope` names the read scope the key lacks; a super admin fixes the key.
 - `invalid_request` names `details.attribute`, `details.operator` and `details.reason`: `unknown`, `unsupported`, `value`, `timestamp`, `bounds`, `option`, `target`, `parent` or `attio`. `invalid_cursor` is a cursor from another call. `invalid_query` is Patchy's own defect; report it.
 - Narrow a caught error with `isPatchyError(error, code, "attio")`, imported from the relative generated `client.js`, to type Attio's `details`. No refusal carries a value the patch supplied or anything Attio said.
-- Company admins see every call in the connection's recent calls: the operation, the object or list and the row count. Filters, ids and values are never kept.
+- Company super admins see every call in the connection's recent calls: the operation, the object or list and the row count. Filters, ids and values are never kept.
 
-`connection_not_connected` needs the admin's connection page. `stale_generated` needs `pnpm patchy refresh`. `pnpm patchy remove crm` drops the declaration and its generated surface.
+`connection_not_connected` needs the super admin's connection page. `stale_generated` needs `pnpm patchy refresh`. `pnpm patchy remove crm` drops the declaration and its generated surface.

@@ -399,7 +399,7 @@ it.layer(harness)("the door", (it) => {
 
   it.effect("answers an unknown tool name -32602", () =>
     Effect.gen(function* () {
-      const { people } = yield* company("call", [["Ada Admin", "admin"]]);
+      const { people } = yield* company("call", [["Ada Admin", "super_admin"]]);
       const { token } = people[0]!;
       const send = yield* door(PRODUCTION, "203.0.113.13");
       const unknown = yield* send(legacy(token, "tools/call", { name: "delete_everything" }));
@@ -416,9 +416,9 @@ it.layer(harness)("the door", (it) => {
       const acme = yield* company(
         "long-admins",
         [
-          [long("a"), "admin"],
-          [long("b"), "admin"],
-          [long("c"), "admin"]
+          [long("a"), "super_admin"],
+          [long("b"), "super_admin"],
+          [long("c"), "super_admin"]
         ],
         { access: false }
       );
@@ -446,10 +446,10 @@ it.layer(harness)("the door", (it) => {
         const acme = yield* company(
           "off",
           [
-            ["Priya Shah", "admin"],
+            ["Priya Shah", "super_admin"],
             ["Ben Member", "member"],
-            ["Ada Lovelace", "admin"],
-            ["Gone Admin", "admin"]
+            ["Ada Lovelace", "super_admin"],
+            ["Gone Admin", "super_admin"]
           ],
           { access: false, name: "Acme" }
         );
@@ -474,7 +474,7 @@ it.layer(harness)("the door", (it) => {
               code: "agent_access_off",
               from: "patchy",
               message:
-                "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at https://cloud.example/company/agent-access. Acme's admins are Ada Lovelace and Priya Shah; tell the person to ask one of them."
+                "Agent access is off at Acme, so Patchy refuses every agent until a super admin turns it on at https://cloud.example/company/agent-access. Acme's super admins are Ada Lovelace and Priya Shah; tell the person to ask one of them."
             });
             assert.strictEqual(at(response.json, "result.content.0.text"), error["message"]);
             for (const leak of [
@@ -510,7 +510,7 @@ it.layer(harness)("the door", (it) => {
             }),
             "structuredContent.error.message"
           ),
-          "Agent access is off at Acme, so Patchy refuses every agent until an admin turns it on at /company. Acme's admin is Ada Lovelace; tell the person to ask them."
+          "Agent access is off at Acme, so Patchy refuses every agent until a super admin turns it on at /company. Acme's super admin is Ada Lovelace; tell the person to ask them."
         );
       })
   );

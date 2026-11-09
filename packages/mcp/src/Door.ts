@@ -270,7 +270,7 @@ export const layer: Layer.Layer<
       const admins = (yield* (yield* Users.Users)
         .list(identity.company.id)
         .pipe(Effect.catchTags({ SqlError: Effect.die })))
-        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
         .map((user) => user.name)
         .sort((a, b) => a.localeCompare(b));
       return Tools.agentAccessOff({

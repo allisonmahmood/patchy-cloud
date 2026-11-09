@@ -44,7 +44,7 @@ const memberValue = (user: Users.User): Directory.Member =>
     id: user.id,
     name: user.name,
     email: user.email,
-    admin: user.role === "admin",
+    admin: user.role !== "member",
     active: user.deactivatedAt === null
   });
 /** A company's own members, with no guests in scope. */
@@ -72,7 +72,11 @@ it.layer(services)("company directory", (it) => {
       assert.deepStrictEqual(yield* directory.candidates(members(company.id), [member.id]), [
         member.id
       ]);
-      const left = yield* users.deactivate({ companyId: company.id, userId: member.id });
+      const left = yield* users.deactivate({
+        companyId: company.id,
+        userId: member.id,
+        actorId: admin.id
+      });
       assert.deepStrictEqual(yield* directory.list(members(company.id), 50), {
         rows: [memberValue(admin)],
         cursor: null
@@ -102,7 +106,7 @@ it.layer(services)("company directory", (it) => {
         [memberValue(left), null, memberValue(admin), null, memberValue(left)]
       );
       assert.deepStrictEqual(yield* directory.getMany(members(company.id), []), []);
-      yield* users.reactivate({ companyId: company.id, userId: member.id });
+      yield* users.reactivate({ companyId: company.id, userId: member.id, actorId: admin.id });
       assert.deepStrictEqual(
         yield* directory.get(members(company.id), member.id),
         memberValue(member)
@@ -163,7 +167,7 @@ it.layer(services)("company directory", (it) => {
       const { company, user: admin } = yield* createCompany("directory-batch");
       const { user: outsider } = yield* createCompany("directory-batch-outsider");
       const inactive = yield* join(company.id, admin.id, "inactive@batch.test", "Inactive");
-      yield* users.deactivate({ companyId: company.id, userId: inactive.id });
+      yield* users.deactivate({ companyId: company.id, userId: inactive.id, actorId: admin.id });
       const queries: number[] = [];
       const unsafe: SqlClient.SqlClient["unsafe"] = <A extends object>(
         query: string,
@@ -345,7 +349,7 @@ it.layer(services)("company directory", (it) => {
           email: invite.email,
           name: "Joined"
         });
-        const ref = { companyId: company.id, userId: joined.id };
+        const ref = { companyId: company.id, userId: joined.id, actorId: user.id };
         assert.strictEqual(yield* directory.revision(company.id), "2");
         yield* users.refreshClaims({
           clerkUserId: joined.clerkUserId,
@@ -414,7 +418,7 @@ it.layer(services)("company directory", (it) => {
         assert.deepStrictEqual(decodeWake((yield* Queue.take(notifications)).payload), expected);
         const member = yield* join(company.id, user.id, "notify@directory.test", "Notify");
         assert.deepStrictEqual(decodeWake((yield* Queue.take(notifications)).payload), expected);
-        const ref = { companyId: company.id, userId: member.id };
+        const ref = { companyId: company.id, userId: member.id, actorId: user.id };
         // pg.notify uses a separate pooled connection. Its marker proves the
         // listener has received prior committed notifications without a sleep.
         const marker = Effect.gen(function* () {
@@ -467,7 +471,12 @@ it.layer(services)("company directory", (it) => {
               yield* sql`SELECT id FROM companies WHERE id = ${company.id} FOR UPDATE`;
               yield* Deferred.succeed(locked, undefined);
               yield* Deferred.await(refreshed);
-              yield* users.setRole({ companyId: company.id, userId: member.id, role: "admin" });
+              yield* users.setRole({
+                companyId: company.id,
+                userId: member.id,
+                actorId: user.id,
+                role: "admin"
+              });
             })
           )
           .pipe(Effect.forkScoped);

@@ -208,7 +208,7 @@ const result = (
 };
 
 const forbidden: View.Notice = {
-  message: "Only an admin can manage company connections.",
+  message: "Only a super admin can manage company connections.",
   code: "access_denied",
   status: 403
 };
@@ -247,7 +247,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
   notice?: View.Notice
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
-  const admin = viewer.role === "admin";
+  const admin = viewer.role === "super_admin";
   const connections = yield* store.list(viewer.company.id);
   const usage = yield* store.usage(viewer.company.id);
   // Members can see connection status, but must never read the call log.
@@ -270,7 +270,7 @@ const index = Effect.fn("ConnectionPage.index")(function* (
       ? yield* (yield* Users.Users).list(viewer.company.id).pipe(
           Effect.map((users) =>
             users
-              .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+              .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
               .map((user) => user.name)
               .sort((a, b) => a.localeCompare(b))
           ),
@@ -301,7 +301,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   return {
     title: "Connect an integration",
     body: View.renderCatalogue({
-      admin: viewer.role === "admin",
+      admin: viewer.role === "super_admin",
       rows: connections.map((connection) => row(connection, new Map())),
       offers
     })
@@ -416,7 +416,7 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
   given?: View.Notice | Result
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
-  const admin = viewer.role === "admin";
+  const admin = viewer.role === "super_admin";
   const { connection, page, people, view } = yield* connectionView(viewer, id);
   const notice =
     typeof given === "string"
@@ -546,7 +546,7 @@ export const read = Effect.fn("ConnectionPage.read")(function* (
 ) {
   const key = query.get("result");
   const done = key && isResult(key) ? key : undefined;
-  const admin = viewer.role === "admin";
+  const admin = viewer.role === "super_admin";
   switch (target.kind) {
     case "index": {
       // A deleted connection's integration may have its own words for what deleting did.
@@ -796,7 +796,7 @@ export const submit = Effect.fn("ConnectionPage.submit")(function* (
   change: Change
 ) {
   // Refused before the body is read: a member's form never reaches the store.
-  if (viewer.role !== "admin") {
+  if (viewer.role !== "super_admin") {
     if (change.kind === "connect") return yield* index(viewer, new URLSearchParams(), forbidden);
     return yield* connectionPage(viewer, change.id, forbidden);
   }
@@ -827,7 +827,7 @@ export const pidgeonAddresses = Effect.fn("ConnectionPage.pidgeonAddresses")(fun
     body: PidgeonPage.keyRefusalFragment(atField(pages.pidgeon, notice, []))
   });
   // Refused before the body is read: a member's key never reaches Pidgeon.
-  if (viewer.role !== "admin") return refused(forbidden);
+  if (viewer.role !== "super_admin") return refused(forbidden);
   const form = yield* formBody;
   const key = typeof form?.key === "string" ? form.key.trim() : "";
   if (key === "")

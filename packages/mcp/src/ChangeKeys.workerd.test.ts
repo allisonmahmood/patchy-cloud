@@ -83,7 +83,7 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
       "a change writes once however often it is retried on either replica, and an action runs once",
       () =>
         Effect.gen(function* () {
-          const acme = yield* company("change-workerd", [["Priya Shah", "admin"]]);
+          const acme = yield* company("change-workerd", [["Priya Shah", "super_admin"]]);
           const priya = acme.people[0]!;
           const text = yield* bundled;
           const published = yield* publish(acme.id, priya, "call-log", {

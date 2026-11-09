@@ -5,13 +5,13 @@ description: Add a company's IMAP mailbox to a patch, read its folders, messages
 
 # Company mailbox over IMAP
 
-Read `../patchy-loop/SKILL.md` first. An IMAP connection is one mailbox login, such as `imap/invoices`, that an admin connected with its host, port, security, username and password. Patchy holds the password and opens every session itself, so the password stays out of config, source and transcripts. The login acts for the mailbox, not a person: anyone who can open a patch that declares the connection reads the whole mailbox.
+Read `../patchy-loop/SKILL.md` first. An IMAP connection is one mailbox login, such as `imap/invoices`, that a super admin connected with its host, port, security, username and password. Patchy holds the password and opens every session itself, so the password stays out of config, source and transcripts. The login acts for the mailbox, not a person: anyone who can open a patch that declares the connection reads the whole mailbox.
 
 Connections are tier 2's: actions read the mailbox through `ctx.connections` and return only what the page should show, and the page calls those actions. A tier 1 page reaches only its own patch, so declaring IMAP on a tier 1 repo is refused with `tier_mismatch`; move the repo to tier 2 first, as `../patchy-loop/SKILL.md` says.
 
 ## Declare a mailbox
 
-1. Run `pnpm patchy list connections` and choose a connected `imap/<handle>` by description. `pnpm patchy list connections imap/<handle>` shows the mailbox and its folders. An admin connects mailboxes at `/company/connections`; ask them there rather than for a password. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
+1. Run `pnpm patchy list connections` and choose a connected `imap/<handle>` by description. `pnpm patchy list connections imap/<handle>` shows the mailbox and its folders. A super admin connects mailboxes at `/company/connections`; ask them there rather than for a password. A super admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add imap/<handle> --as mail`. It inserts `mail: { kind: "imap", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `mail`: the mailbox, its folders with their special-use flags, and the server's capabilities. The folders are hints from when the snapshot was taken, not limits: a folder made since can still be read.
 
@@ -282,17 +282,17 @@ Queries and mutations can't use connections, and IMAP reads are not live-query d
 ## In `patchy dev`
 
 - **Reads are real.** `patchy dev` reads the mailbox through Patchy, as the person your publishing key belongs to, from either local viewer. Each read appears in the connection's recent calls marked Dev, and shares the mailbox's sessions and gates with published patches. Mail is real company data; keep it out of commits, fixtures and transcripts beyond what the task needs.
-- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; an admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working.
+- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; a super admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working.
 
 ## Bounds and refusals
 
-- `auth_failed`: the mail server refused the password, so Patchy paused the connection and logs in no more until an admin's Test or Replace password succeeds at `/company/connections`. `pnpm patchy list connections` marks it `paused`. Every call fails `auth_failed` meanwhile without reaching the server.
+- `auth_failed`: the mail server refused the password, so Patchy paused the connection and logs in no more until a super admin's Test or Replace password succeeds at `/company/connections`. `pnpm patchy list connections` marks it `paused`. Every call fails `auth_failed` meanwhile without reaching the server.
 - `not_found` with `details.folder`: the folder can't be opened, because it's gone or holds only other folders.
-- `source_unavailable`: the server couldn't be reached or closed the session, or answered a command with a refusal. `details.reason`, when present, names a requirement the mailbox stopped meeting, such as its certificate; an admin's Test names it fully. `source_rate_limited` is the server limiting Patchy's logins.
+- `source_unavailable`: the server couldn't be reached or closed the session, or answered a command with a refusal. `details.reason`, when present, names a requirement the mailbox stopped meeting, such as its certificate; a super admin's Test names it fully. `source_rate_limited` is the server limiting Patchy's logins.
 - `too_large` is a bound passed: the whole answer (ask for fewer refs), one message's answer in `getMessages` (in its place), an attachment past 20 MiB, or the mail server sending more than a call reads.
 - `limit_exceeded` from `stageAttachment` is the viewer's staged uploads full: adopt or discard staged ones first.
 - `invalid_request` is arguments outside the wire, or a ref of another connection. `invalid_cursor` is a cursor or checkpoint of another call or folder.
 - In an action, a caught refusal's `code` says which, as the importer reads it. On the page, narrow a refusal an action relayed with `isPatchyError(error, code, "imap")`, imported from the relative generated `client.js`, to type IMAP's `details`: server code can't import the client.
-- Company admins see every call in the connection's recent calls: the operation, its outcome and how many folders or messages it answered. Subjects, bodies, addresses, search values and the password are never kept.
+- Company super admins see every call in the connection's recent calls: the operation, its outcome and how many folders or messages it answered. Subjects, bodies, addresses, search values and the password are never kept.
 
-`connection_not_connected` needs the admin's connection page. `pnpm patchy remove mail` drops the declaration and its generated surface.
+`connection_not_connected` needs the super admin's connection page. `pnpm patchy remove mail` drops the declaration and its generated surface.

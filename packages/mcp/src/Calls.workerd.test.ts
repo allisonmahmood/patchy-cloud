@@ -152,7 +152,7 @@ it.layer(services, { excludeTestServices: true, timeout: 90_000 })(
       () =>
         Effect.gen(function* () {
           const acme = yield* company("workerd", [
-            ["Priya Shah", "admin"],
+            ["Priya Shah", "super_admin"],
             ["Ben Okafor", "member"]
           ]);
           const [priya, ben] = acme.people as [Person, Person];

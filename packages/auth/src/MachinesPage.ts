@@ -189,7 +189,7 @@ const buildSection = ({ machines, setupLine, now }: View) => {
 const connectApp = ({ viewer, agent, address, admins, connections }: View) => {
   const company = escapeHtml(viewer.company.name);
   if (admins !== null)
-    return `<p class="note note-warn" id="connect-an-agent">Agent access is off at ${company}. ${sentenceList(admins)} can turn it on.${viewer.role === "admin" ? ' <a href="/company/agent-access">Turn it on</a>' : ""}</p>`;
+    return `<p class="note note-warn" id="connect-an-agent">Agent access is off at ${company}. ${sentenceList(admins)} can turn it on.${viewer.role === "super_admin" ? ' <a href="/company/agent-access">Turn it on</a>' : ""}</p>`;
   const shown = agent ?? "claude";
   const tabs = Object.entries(agents)
     .map(
@@ -229,7 +229,7 @@ const machines = Effect.gen(function* () {
   const admins = access.on
     ? null
     : (yield* (yield* Users.Users).list(viewer.company.id))
-        .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+        .filter((user) => user.role === "super_admin" && user.deactivatedAt === null)
         .map((user) => user.name.trim() || user.email)
         .sort((a, b) => a.localeCompare(b));
   return pageResponse(
