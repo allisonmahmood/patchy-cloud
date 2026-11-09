@@ -332,7 +332,7 @@ const page = (person: Person, path: string) =>
     return response.text;
   });
 
-it.layer(layer())("People's guests", (it) => {
+it.layer(layer())("People All guests", (it) => {
   it.effect(
     "includes guests once in All with search, aligned columns and live removal counts",
     () =>
@@ -370,7 +370,9 @@ it.layer(layer())("People's guests", (it) => {
         );
       })
   );
+});
 
+it.layer(layer())("People's guests", (it) => {
   it.effect("lists each guest's patches here to every member, with Remove for admins only", () =>
     Effect.gen(function* () {
       const { grants, guest, notes, board, theirs, member } = yield* peopleWithGuests("fjord");
