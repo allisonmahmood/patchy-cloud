@@ -60,8 +60,21 @@ const refusalLines = (refused: ShareRefusal, viewer: Viewer): readonly [string, 
  * `back` with the dialog open. While the patch is public its guests stay, but adding waits. The
  * page behind loads the copy script.
  */
-export const renderShareDialog = (input: {
-  readonly row: Patches.ReadPatch;
+export const renderShareDialog = <
+  P extends Pick<
+    Patches.Patch,
+    | "companyHandle"
+    | "id"
+    | "name"
+    | "title"
+    | "ownerUserId"
+    | "scope"
+    | "audience"
+    | "audienceRevision"
+  >
+>(input: {
+  readonly managementOwnerId?: string;
+  readonly row: { readonly tier: number; readonly patch: P };
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
   /** The page behind, as a path and query: where the forms return and Done goes. */
@@ -83,7 +96,7 @@ export const renderShareDialog = (input: {
   const title = patchTitle(patch);
   const path = (act: string) => `/patches/${encodeURIComponent(patch.name)}/${act}`;
   const form = (act: string, className: string, body: string) =>
-    `<form class="${className}" method="post" action="${escapeAttribute(path(act))}" novalidate>${hidden("expectedPatchId", patch.id)}${hidden("back", input.back)}${body}</form>`;
+    `<form class="${className}" method="post" action="${escapeAttribute(path(act))}" novalidate>${hidden("expectedPatchId", patch.id)}${input.managementOwnerId === undefined ? "" : hidden("expectedOwnerUserId", input.managementOwnerId)}${hidden("back", input.back)}${body}</form>`;
   const isPublic = patch.scope === "public";
 
   const refused = input.refused;

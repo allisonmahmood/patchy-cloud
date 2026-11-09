@@ -37,12 +37,12 @@ import {
   signedInCookies,
   signSession
 } from "@patchy/auth/testing";
-import { Companies, Users } from "@patchy/companies";
+import { Companies, Teams, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { GuestGrants, Patches } from "@patchy/patches";
+import { Audiences, GuestGrants, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import * as SwitcherList from "./SwitcherList.js";
@@ -4844,3 +4844,67 @@ it.layer(layer)("the switcher's list", (it) => {
     })
   );
 });
+
+it.layer(layer.pipe(Layer.provideMerge(Layer.succeed(Audiences.Activation, true))))(
+  "owner recovery on a socket",
+  (it) => {
+    it.effect(
+      "shows existing recovery screens without content and reassigns only to an entitled person",
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* company();
+          const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
+          const team = yield* Teams.create({ ...viewer, name: "Design" });
+          yield* Teams.setMemberships({
+            ...viewer,
+            teamId: team.id,
+            userIds: [workspace.owner.id, workspace.member.id],
+            added: true
+          });
+          const patch = yield* publish(workspace.owner, "recover-owner", {
+            description: "PROTECTED_DESCRIPTION",
+            audience: {
+              members: { kind: "teams", teamIds: [team.id] },
+              guests: { kind: "specific", userIds: [] }
+            }
+          });
+          yield* Teams.setMemberships({
+            ...viewer,
+            teamId: team.id,
+            userIds: [workspace.owner.id],
+            added: false
+          });
+          const owner = yield* request(cardPath(patch.name), workspace.owner);
+          assert.equal(owner.status, 200);
+          const ownerHtml = yield* owner.text;
+          assert.include(ownerHtml, "You own this patch, but cannot open it");
+          assert.notInclude(ownerHtml, "PROTECTED_DESCRIPTION");
+          assert.notInclude(ownerHtml, 'name="user"');
+          const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
+          assert.include(yours, "recover-owner");
+          const attention = yield* (yield* request("/patches?show=attention", workspace.admin))
+            .text;
+          assert.include(attention, "owns this patch and cannot open it");
+          const oversight = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
+          assert.include(oversight, "Management access does not grant access");
+          assert.include(oversight, `value="${workspace.member.id}"`);
+          assert.notInclude(oversight, "PROTECTED_DESCRIPTION");
+          assert.notInclude(oversight, `value="${workspace.admin.id}"`);
+          const sharing = yield* (yield* request(
+            `${cardPath(patch.name)}?share=${patch.name}`,
+            workspace.admin
+          )).text;
+          assert.include(sharing, "Save sharing");
+          assert.notInclude(sharing, "PROTECTED_DESCRIPTION");
+          const reassigned = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
+            expectedPatchId: patch.patchId,
+            expectedOwnerUserId: workspace.owner.id,
+            user: workspace.member.id
+          });
+          assert.equal(reassigned.status, 303);
+          const recovered = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
+          assert.include(recovered, "PROTECTED_DESCRIPTION");
+        }).pipe(Effect.provideService(Audiences.Activation, true))
+    );
+  }
+);

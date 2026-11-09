@@ -150,7 +150,7 @@ const actor = (id: string | null, names: ReadonlyMap<string, string>) => {
 };
 
 /** A live patch's address, relative to the instance. */
-export const patchAddress = (patch: Patches.Patch) =>
+export const patchAddress = (patch: Pick<Patches.Patch, "companyHandle" | "name">) =>
   `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
 
 /** `here`, the page a menu is on, with the Share dialog for patch `name` open over it. */

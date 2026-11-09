@@ -79,7 +79,9 @@ describe("renderShareDialog audiences", () => {
   };
   const input = (
     audience: import("@patchy/api").PatchAudience
-  ): Parameters<typeof renderShareDialog>[0] => ({
+  ): Omit<Parameters<typeof renderShareDialog>[0], "row"> & {
+    row: import("@patchy/patches").Patches.ReadPatch;
+  } => ({
     row: {
       patch: {
         id: "abcdefghijkl",

@@ -148,3 +148,15 @@ An existing Patchy account at another company invited into this company's guest 
 Membership survives removal from an individual patch; removal from the company ends
 it. Existing named grants migrate into the pool. All guests includes future pool members.
 The pool itself grants no patch access and never bypasses guest resource restrictions.
+
+**Management oversight**:
+A separate authorized view of patch identity, owner, audience, served versions and lifecycle.
+Super admins oversee every company patch; regular admins manage patches they can open.
+It carries no description, source, manifest, page body or resource data and never widens
+ordinary discovery or content admission.
+
+**Owner recovery**:
+Restoring a removed owner's team membership, or an entitled administrator explicitly
+reassigning the patch to an active company person admitted by its current audience.
+An inaccessible owner still sees their ownership and recovery route. Reassignment leaves
+prior versions' publisher attribution intact; publishing remains the entitled owner's action.

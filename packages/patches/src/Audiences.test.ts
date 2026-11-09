@@ -172,10 +172,11 @@ it.layer(services)("Patch audiences", (it) => {
           "PatchUnavailable"
         );
         assert.equal(
-          (yield* Effect.flip(
-            patches.manage(input.patchId, { userId: admin.user.id, admin: true })
-          ))._tag,
-          "PatchUnavailable"
+          (yield* patches.manage(input.patchId, { userId: admin.user.id, admin: true })).id,
+          input.patchId
+        );
+        assert.isFalse(
+          (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
       }).pipe(Effect.provideService(Audiences.Activation, true))
   );
