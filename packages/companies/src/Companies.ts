@@ -12,6 +12,8 @@ import {
   AlreadyInCompany,
   displayName,
   lockAdministrator,
+  roleFromStorage,
+  roleToStorage,
   Role,
   RoleForbidden,
   User,
@@ -211,9 +213,9 @@ export const make = Effect.gen(function* () {
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
   const companyColumns = sql`id, handle, name, created_at AS "createdAt"`;
   const userColumns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
-    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
+    email, name, ${sql.unsafe(roleFromStorage)} AS role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
     whats_new_seen AS "whatsNewSeen"`;
-  const inviteColumns = sql`id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
+  const inviteColumns = sql`id, company_id AS "companyId", email, ${sql.unsafe(roleFromStorage)} AS role, invited_by AS "invitedBy",
     clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
     revoked_at AS "revokedAt", consumed_at AS "consumedAt"`;
   const companyById = SqlSchema.findOneOption({
@@ -253,8 +255,8 @@ export const make = Effect.gen(function* () {
     // Creation and invitation acceptance both land here, so the name rule applies once.
     // A new member starts caught up on What's new; the history is still one click away.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
-      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
-      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
+      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, is_regular_admin, created_at, whats_new_seen)
+      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${roleToStorage(role)}, ${role === "admin"},
         to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
       ON CONFLICT DO NOTHING RETURNING ${userColumns}`
   });
@@ -276,8 +278,8 @@ export const make = Effect.gen(function* () {
     }),
     Result: Invite,
     execute: ({ id, companyId, email, role, invitedBy, now }) => sql`
-      INSERT INTO invites (id, company_id, email, role, invited_by, created_at, expires_at)
-      VALUES (${id}, ${companyId}, ${email}, ${role}, ${invitedBy}, to_timestamp(${now / 1_000}),
+      INSERT INTO invites (id, company_id, email, role, is_regular_admin, invited_by, created_at, expires_at)
+      VALUES (${id}, ${companyId}, ${email}, ${roleToStorage(role)}, ${role === "admin"}, ${invitedBy}, to_timestamp(${now / 1_000}),
         to_timestamp(${(now + INVITATION_LIFETIME_MS) / 1_000}))
       ON CONFLICT (company_id, email) WHERE revoked_at IS NULL AND consumed_at IS NULL
       DO NOTHING RETURNING ${inviteColumns}`

@@ -217,7 +217,7 @@ export const make = Effect.gen(function* () {
       RETURNING json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
-        'role', u.role,
+        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
         'agentConnection', json_build_object(
           'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity`
@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
       SELECT json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
-        'role', u.role,
+        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
         'agentConnection', json_build_object(
           'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity

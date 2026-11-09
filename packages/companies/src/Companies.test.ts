@@ -159,7 +159,7 @@ it.layer(Layer.mergeAll(Companies.layer, Users.layer).pipe(Layer.provideMerge(da
         const rows = yield* sql`
           SELECT count(DISTINCT c.id)::int AS companies, count(u.id)::int AS admins
           FROM companies c JOIN users u ON u.company_id = c.id
-          WHERE c.handle = 'handle-race' AND u.role = 'super_admin'`;
+          WHERE c.handle = 'handle-race' AND u.role = 'admin' AND NOT u.is_regular_admin`;
         assert.deepStrictEqual(rows, [{ companies: 1, admins: 1 }]);
       })
     );

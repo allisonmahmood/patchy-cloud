@@ -193,7 +193,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
   const as = url.searchParams.get("as")?.trim().toLowerCase();
   const sql = yield* SqlClient.SqlClient;
   const people = Effect.flatMap(
-    sql`SELECT u.email, u.name, u.role, c.name AS company FROM users u
+    sql`SELECT u.email, u.name, CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END AS role, c.name AS company FROM users u
       JOIN companies c ON c.id = u.company_id
       WHERE u.deactivated_at IS NULL ORDER BY c.name, u.role, u.name`,
     Schema.decodeUnknownEffect(Schema.Array(Person))

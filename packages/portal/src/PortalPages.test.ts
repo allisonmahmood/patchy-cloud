@@ -200,8 +200,8 @@ const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: stri
       role,
       machineTokenId: `tok_${userId}`
     };
-    yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-      VALUES (${person.id}, ${person.clerkUserId}, ${id}, ${person.email}, ${name}, ${role})`;
+    yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, is_regular_admin)
+      VALUES (${person.id}, ${person.clerkUserId}, ${id}, ${person.email}, ${name}, ${role === "super_admin" ? "admin" : "member"}, false)`;
     yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
       VALUES (${person.machineTokenId}, ${person.id}, 'Portal test machine',
         ${`hash:${person.machineTokenId}`}, now(), now() + interval '90 days', now())`;

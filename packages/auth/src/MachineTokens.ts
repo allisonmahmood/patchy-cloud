@@ -112,7 +112,7 @@ export const make = Effect.gen(function* () {
       SELECT json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', c.id, 'handle', c.handle, 'name', c.name),
-        'role', u.role,
+        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
         'machine', json_build_object('id', t.id, 'name', t.name)
       ) AS identity, t.last_used_at AS "lastUsedAt"
       FROM machine_tokens t

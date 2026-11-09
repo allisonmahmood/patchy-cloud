@@ -262,8 +262,8 @@ export const company = Effect.fn("DoorTest.company")(function* (
     const userId = `usr_door_${key}_${index}`;
     const email = `${key}-${index}@door.test`;
     yield* sql`
-      INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
-      VALUES (${userId}, ${`clerk_${userId}`}, ${id}, ${email}, ${personName}, ${role})`;
+      INSERT INTO users (id, clerk_user_id, company_id, email, name, role, is_regular_admin)
+      VALUES (${userId}, ${`clerk_${userId}`}, ${id}, ${email}, ${personName}, ${role === "super_admin" ? "admin" : "member"}, ${role === "admin"})`;
     const machineTokenId = `tok_${userId}`;
     yield* sql`
       INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)

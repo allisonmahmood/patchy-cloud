@@ -11,6 +11,11 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 export const Role = Schema.Literals(["member", "admin", "super_admin"]);
 export type Role = typeof Role.Type;
 
+/** Legacy servers keep reading member/admin; the additive flag distinguishes regular admins. */
+export const roleFromStorage =
+  "CASE WHEN role = 'admin' THEN 'super_admin' WHEN is_regular_admin THEN 'admin' ELSE 'member' END";
+export const roleToStorage = (role: Role) => (role === "super_admin" ? "admin" : "member");
+
 export class User extends Schema.Class<User>("User")({
   id: Schema.String,
   clerkUserId: Schema.String,
@@ -64,7 +69,7 @@ const administrator = SqlSchema.findOneOption({
   Result: Schema.Struct({ role: Role }),
   execute: Effect.fnUntraced(function* ({ companyId, actorId }) {
     const sql = yield* SqlClient.SqlClient;
-    return yield* sql`SELECT role FROM users WHERE company_id = ${companyId}
+    return yield* sql`SELECT ${sql.unsafe(roleFromStorage)} AS role FROM users WHERE company_id = ${companyId}
       AND id = ${actorId} AND deactivated_at IS NULL`;
   })
 });
@@ -171,7 +176,7 @@ export class Users extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = sql`id, clerk_user_id AS "clerkUserId", company_id AS "companyId",
-    email, name, role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
+    email, name, ${sql.unsafe(roleFromStorage)} AS role, created_at AS "createdAt", deactivated_at AS "deactivatedAt",
     whats_new_seen AS "whatsNewSeen"`;
   const ref = Schema.Struct({ companyId: Schema.String, userId: Schema.String });
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
@@ -214,7 +219,7 @@ export const make = Effect.gen(function* () {
     Result: Schema.Struct({ count: Schema.Int }),
     execute: (companyId) => sql`
       SELECT count(*)::int AS count FROM users
-      WHERE company_id = ${companyId} AND role = 'super_admin' AND deactivated_at IS NULL`
+      WHERE company_id = ${companyId} AND role = 'admin' AND deactivated_at IS NULL`
   });
   // A fresh read that takes no row locks. The LEFT JOIN answers a missing company as nulls,
   // not as no user.
@@ -343,7 +348,7 @@ export const make = Effect.gen(function* () {
         const user = yield* lockUser(input);
         if (user.role === input.role) return { user, changed: false };
         if (input.role !== "super_admin") yield* preserveSuperAdmin(user);
-        yield* sql`UPDATE users SET role = ${input.role} WHERE id = ${input.userId}`;
+        yield* sql`UPDATE users SET role = ${roleToStorage(input.role)}, is_regular_admin = ${input.role === "admin"} WHERE id = ${input.userId}`;
         return { user: new User({ ...user, role: input.role }), changed: true };
       })
     )

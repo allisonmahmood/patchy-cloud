@@ -8,7 +8,12 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Companies from "./Companies.js";
 import * as InviteMail from "./InviteMail.js";
-import { lockAdministrator, RoleForbidden, type AlreadyInCompany } from "./Users.js";
+import {
+  lockAdministrator,
+  roleFromStorage,
+  RoleForbidden,
+  type AlreadyInCompany
+} from "./Users.js";
 
 export interface InviteReference {
   readonly companyId: string;
@@ -27,7 +32,7 @@ const lockPendingRow = SqlSchema.findOneOption({
   execute: Effect.fn("Invitations.lockPendingRow")(function* ({ companyId, inviteId }) {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql`
-      SELECT id, company_id AS "companyId", email, role, invited_by AS "invitedBy",
+      SELECT id, company_id AS "companyId", email, ${sql.unsafe(roleFromStorage)} AS role, invited_by AS "invitedBy",
         clerk_invitation_id AS "clerkInvitationId", created_at AS "createdAt", expires_at AS "expiresAt",
         revoked_at AS "revokedAt", consumed_at AS "consumedAt"
       FROM invites WHERE id = ${inviteId} AND company_id = ${companyId}

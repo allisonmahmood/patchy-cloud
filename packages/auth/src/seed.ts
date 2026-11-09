@@ -43,10 +43,10 @@ export async function applyDevSeed(
           yield* sql`
         INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
         VALUES (${DEV_SEED.userId}, ${clerkUserId}, ${DEV_SEED.companyId},
-          ${DEV_SEED.email}, ${DEV_SEED.userName}, ${DEV_SEED.role}, now())
+          ${DEV_SEED.email}, ${DEV_SEED.userName}, 'admin', now())
         ON CONFLICT (id) DO UPDATE SET clerk_user_id = EXCLUDED.clerk_user_id,
           company_id = EXCLUDED.company_id, email = EXCLUDED.email, name = EXCLUDED.name,
-          role = EXCLUDED.role, created_at = EXCLUDED.created_at, deactivated_at = NULL`;
+          role = EXCLUDED.role, is_regular_admin = false, created_at = EXCLUDED.created_at, deactivated_at = NULL`;
           yield* sql`
         INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
         VALUES (${DEV_SEED.tokenId}, ${DEV_SEED.userId}, ${DEV_SEED.tokenName},
