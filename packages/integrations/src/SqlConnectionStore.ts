@@ -1546,27 +1546,65 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       },
       Effect.catchTags(safe("describe"))
     );
-    const decodeAudienceRows = Schema.decodeUnknownEffect(
-      Schema.Array(
-        Schema.Struct({
-          kind: Schema.Literals(["company", "teams"]),
-          teamIds: Schema.Array(Schema.String)
-        })
-      )
-    );
+    const AccessRow = Schema.Struct({
+      id: Schema.String,
+      kind: Schema.Literals(["company", "teams"]),
+      blockGuests: Schema.Boolean,
+      teamIds: Schema.Array(Schema.String)
+    });
+    const accessRows = SqlSchema.findAll({
+      Request: Schema.Struct({
+        companyId: Schema.String,
+        ids: Schema.optionalKey(Schema.Array(Schema.String)),
+        integration: Schema.optionalKey(Schema.Literals(integrations)),
+        handle: Schema.optionalKey(Schema.String)
+      }),
+      Result: AccessRow,
+      execute: ({ companyId, ids, integration, handle }) => sql`
+        SELECT c.id, c.audience_kind AS kind, c.block_guests AS "blockGuests",
+          ARRAY(SELECT team_id FROM connection_team_grants WHERE connection_id = c.id ORDER BY team_id) AS "teamIds"
+        FROM connections c WHERE c.company_id = ${companyId} AND ${isKnown}
+          ${ids === undefined ? sql`` : sql`AND ${sql.in("c.id", ids)}`}
+          ${integration === undefined ? sql`` : sql`AND c.integration = ${integration}`}
+          ${handle === undefined ? sql`` : sql`AND c.handle = ${handle}`}`
+    });
+    // One shared admission decision for individual calls and batch discovery. Membership
+    // is current and read at most once for all candidates; caller authentication stays at the door.
+    const accessible = Effect.fn("ConnectionStore.accessible")(function* (
+      companyId: string,
+      rows: readonly (typeof AccessRow.Type)[],
+      viewer: { readonly userId: string; readonly guest: boolean }
+    ) {
+      const enabled = yield* AudienceActivation;
+      const needsTeams = enabled && !viewer.guest && rows.some((row) => row.kind === "teams");
+      const teams = new Set(
+        needsTeams
+          ? yield* Teams.memberships(companyId, viewer.userId).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql)
+            )
+          : []
+      );
+      return new Set(
+        rows
+          .filter(
+            (row) =>
+              (row.kind !== "teams" || enabled) &&
+              (viewer.guest
+                ? !row.blockGuests
+                : row.kind === "company" || row.teamIds.some((id) => teams.has(id)))
+          )
+          .map((row) => row.id)
+      );
+    });
     const audience = Effect.fn("ConnectionStore.audience")(
       function* (
         companyId: string,
         id: string
       ): Effect.fn.Return<
         ConnectionStore.Audience,
-        ConnectionStore.ConnectionError | SqlError | Schema.SchemaError
+        ConnectionNotFound | SqlError | Schema.SchemaError
       > {
-        const rows =
-          yield* sql`SELECT c.audience_kind AS kind, ARRAY(SELECT team_id FROM connection_team_grants WHERE connection_id = c.id ORDER BY team_id) AS "teamIds" FROM connections c WHERE c.company_id = ${companyId} AND c.id = ${id}`.pipe(
-            Effect.flatMap(decodeAudienceRows)
-          );
-        const row = rows[0];
+        const row = (yield* accessRows({ companyId, ids: [id] }))[0];
         if (!row) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
         return row.kind === "company"
           ? { kind: "company" }
@@ -1580,17 +1618,46 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         id: string,
         viewer: { readonly userId: string; readonly guest: boolean }
       ) {
-        const connection = yield* get(companyId, id);
-        const selected = yield* audience(companyId, id);
-        if (selected.kind === "teams" && !(yield* AudienceActivation)) return false;
-        if (viewer.guest) return !connection.blockGuests;
-        if (selected.kind === "company") return true;
-        const teams = yield* Teams.memberships(companyId, viewer.userId).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql)
-        );
-        return selected.teamIds.some((id) => teams.includes(id));
+        const rows = yield* accessRows({ companyId, ids: [id] });
+        if (!rows.length) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
+        return (yield* accessible(companyId, rows, viewer)).has(id);
       },
-      Effect.catchTags({ SqlError: safe("audience").SqlError })
+      Effect.catchTags(safe("audience"))
+    );
+    const listFor = Effect.fn("ConnectionStore.listFor")(
+      function* (companyId: string, userId: string) {
+        const rows = yield* connectionRows(companyId);
+        if (!rows.length) return rows;
+        const admitted = yield* accessible(
+          companyId,
+          yield* accessRows({ companyId, ids: rows.map((row) => row.id) }),
+          { userId, guest: false }
+        );
+        return rows.filter((row) => admitted.has(row.id));
+      },
+      Effect.catchTags(safe("list"))
+    );
+    const detailFor = Effect.fn("ConnectionStore.detailFor")(
+      function* (companyId: string, integration: Integration, handle: string, userId: string) {
+        const rows = yield* accessRows({ companyId, integration, handle });
+        if (!(yield* accessible(companyId, rows, { userId, guest: false })).size)
+          return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
+        return yield* detail(companyId, integration, handle);
+      },
+      Effect.catchTags(safe("detail"))
+    );
+    const revisionRows = SqlSchema.findAll({
+      Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+      Result: Schema.Struct({ id: Schema.String, revision: Schema.String }),
+      execute: ({ companyId, ids }) =>
+        sql`SELECT id, authority_revision::text AS revision FROM connections WHERE company_id = ${companyId} AND ${sql.in("id", ids)} AND ${isKnown}`
+    });
+    const authorityRevisions = Effect.fn("ConnectionStore.authorityRevisions")(
+      function* (companyId: string, ids: readonly string[]) {
+        const rows = ids.length ? yield* revisionRows({ companyId, ids }) : [];
+        return new Map(rows.map((row) => [row.id, row.revision]));
+      },
+      Effect.catchTags(safe("audience"))
     );
     const setAudience = Effect.fn("ConnectionStore.setAudience")(
       function* (input: Identity & { readonly audience: ConnectionStore.Audience }) {
@@ -1821,6 +1888,9 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     );
 
     return ConnectionStore.ConnectionStore.of({
+      listFor,
+      detailFor,
+      authorityRevisions,
       audience,
       setAudience,
       canUse,

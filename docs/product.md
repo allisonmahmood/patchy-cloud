@@ -2130,7 +2130,10 @@ administration lock and connection lock. Credential replacement, retargeting and
 reconnection preserve the audience. Integrations exposes team references for #1291's
 lifecycle assembly; it does not choose the still-unsettled team deletion policy.
 Connection authority revisions feed the existing live dependency traces, wakes and
-delivery fences. Already admitted work may finish; subsequent admission and protected
+delivery fences. Integrations owns their lookup; Hosting composes its adapter at
+Runtime's subscription-reader seam, keeping connection SQL out of Primitives.
+Ordinary discovery batches current-viewer admission, and SDK generation always
+requires the viewer. Already admitted work may finish; subsequent admission and protected
 delivery use current authority. The common internal audience activation barrier
 remains off until the full stack is assembled. Rolling back to a server that ignores
 connection grants after activating team audiences would widen access.

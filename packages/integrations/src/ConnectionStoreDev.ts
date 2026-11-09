@@ -18,14 +18,83 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
   // Sends counted in this process only, by connection and UTC day.
   const sends = new Map<string, number>();
   const sendKey = (companyId: string, id: string, day: string) => `${companyId}\n${id}\n${day}`;
+  const list = (companyId: string) =>
+    Effect.succeed(
+      metadata
+        .filter((item) => item.connection.companyId === companyId)
+        .map((item) => item.connection)
+    );
+  const detail: ConnectionStore.ConnectionStore["Service"]["detail"] = (
+    companyId,
+    integration,
+    handle
+  ) => {
+    const item = metadata.find(
+      (item) =>
+        item.connection.companyId === companyId &&
+        item.connection.integration === integration &&
+        item.connection.handle === handle
+    );
+    if (item === undefined)
+      return Effect.fail(
+        new ConnectionStore.ConnectionNotFound({ companyId, lookup: { integration, handle } })
+      );
+    const { description, status, metadataRevision: revision } = item.connection;
+    const found = item.snapshots.find((snapshot) => snapshot.revision === revision);
+    const base = { handle, description, status };
+    if (found?.takenAt === undefined)
+      return Effect.succeed({ ...base, integration, snapshot: null });
+    const stamp = { revision, takenAt: found.takenAt };
+    const kept = found.metadata;
+    switch (kept.integration) {
+      case "postgres":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
+      case "posthog":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
+      case "pidgeon":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
+      case "attio":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
+      case "imap":
+        return Effect.succeed({
+          ...base,
+          integration: kept.integration,
+          snapshot: { ...kept.snapshot, ...stamp }
+        });
+    }
+  };
   return Layer.succeed(
     ConnectionStore.ConnectionStore,
     ConnectionStore.ConnectionStore.of({
-      list: (companyId) =>
+      list,
+      listFor: list,
+      detailFor: detail,
+      authorityRevisions: (companyId, ids) =>
         Effect.succeed(
-          metadata
-            .filter((item) => item.connection.companyId === companyId)
-            .map((item) => item.connection)
+          new Map(
+            metadata
+              .filter(
+                (item) =>
+                  item.connection.companyId === companyId && ids.includes(item.connection.id)
+              )
+              .map((item) => [item.connection.id, "0"])
+          )
         ),
       get: (companyId, id) => {
         const item = metadata.find(
@@ -38,57 +107,7 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       // Dev holds no stored patch versions, so it cannot say who declares a connection.
       usage: unavailable,
       versions: unavailable,
-      detail: (companyId, integration, handle) => {
-        const item = metadata.find(
-          (item) =>
-            item.connection.companyId === companyId &&
-            item.connection.integration === integration &&
-            item.connection.handle === handle
-        );
-        if (item === undefined)
-          return Effect.fail(
-            new ConnectionStore.ConnectionNotFound({ companyId, lookup: { integration, handle } })
-          );
-        const { description, status, metadataRevision: revision } = item.connection;
-        const found = item.snapshots.find((snapshot) => snapshot.revision === revision);
-        const base = { handle, description, status };
-        if (found?.takenAt === undefined)
-          return Effect.succeed({ ...base, integration, snapshot: null });
-        const stamp = { revision, takenAt: found.takenAt };
-        const kept = found.metadata;
-        switch (kept.integration) {
-          case "postgres":
-            return Effect.succeed({
-              ...base,
-              integration: kept.integration,
-              snapshot: { ...kept.snapshot, ...stamp }
-            });
-          case "posthog":
-            return Effect.succeed({
-              ...base,
-              integration: kept.integration,
-              snapshot: { ...kept.snapshot, ...stamp }
-            });
-          case "pidgeon":
-            return Effect.succeed({
-              ...base,
-              integration: kept.integration,
-              snapshot: { ...kept.snapshot, ...stamp }
-            });
-          case "attio":
-            return Effect.succeed({
-              ...base,
-              integration: kept.integration,
-              snapshot: { ...kept.snapshot, ...stamp }
-            });
-          case "imap":
-            return Effect.succeed({
-              ...base,
-              integration: kept.integration,
-              snapshot: { ...kept.snapshot, ...stamp }
-            });
-        }
-      },
+      detail,
       snapshot: (companyId, id, revision) => {
         const item = metadata.find(
           (item) => item.connection.companyId === companyId && item.connection.id === id

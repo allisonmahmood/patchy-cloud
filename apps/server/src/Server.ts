@@ -53,6 +53,7 @@ import {
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
+  ConnectionRevisions,
   ConnectionsApi,
   DevReads,
   SqlConnectionStore,
@@ -277,7 +278,10 @@ const services = Layer.mergeAll(
         Layer.provideMerge(
           RuntimeStream.layer.pipe(
             Layer.provide(Subscriptions.layer),
-            Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
+            Layer.provide([
+              ConnectionRevisions.layer.pipe(Layer.provide(SubscriptionReads.layer)),
+              StreamLimits.layer
+            ])
           )
         ),
         Layer.provide(StreamAdmission.layer)

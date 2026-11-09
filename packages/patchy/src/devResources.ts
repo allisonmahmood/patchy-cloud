@@ -11,6 +11,7 @@ import { FilesystemContentStore } from "@patchy/content-store";
 import { Cryptography } from "@patchy/core";
 import {
   ConnectionStore,
+  ConnectionRevisions,
   ConnectionStoreDev,
   DevDoor,
   AttioDev,
@@ -561,10 +562,10 @@ export const prepare = Effect.fn("DevResources.prepare")(function* (
     )
   );
   const context = yield* Layer.build(
-    Layer.mergeAll(Tables.layer, SubscriptionReads.layerDev).pipe(
-      Layer.provideMerge(resources),
-      Layer.provideMerge(resourceChanges)
-    )
+    Layer.mergeAll(
+      Tables.layer,
+      ConnectionRevisions.layer.pipe(Layer.provide(SubscriptionReads.layerDev))
+    ).pipe(Layer.provideMerge(resources), Layer.provideMerge(resourceChanges))
   );
   const preparedResources = yield* make(
     prepared,

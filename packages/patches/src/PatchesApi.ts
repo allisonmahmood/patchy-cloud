@@ -1151,17 +1151,9 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
           const connections = page.entries.some((entry) =>
             entry.tree.some((step) => step.connectionId !== null)
           )
-            ? yield* connectionStore.list(identity.company.id).pipe(
-                Effect.flatMap((rows) =>
-                  Effect.filter(rows, (row) =>
-                    connectionStore.canUse(identity.company.id, row.id, {
-                      userId: identity.user.id,
-                      guest: false
-                    })
-                  )
-                ),
-                Effect.orElseSucceed(() => [])
-              )
+            ? yield* connectionStore
+                .listFor(identity.company.id, identity.user.id)
+                .pipe(Effect.orElseSucceed(() => []))
             : [];
           const names: LogNames = {
             versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),

@@ -249,11 +249,9 @@ const index = Effect.fn("ConnectionPage.index")(function* (
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
   const admin = viewer.role === "super_admin";
-  const connections = yield* Effect.filter(yield* store.list(viewer.company.id), (connection) =>
-    admin
-      ? Effect.succeed(true)
-      : store.canUse(viewer.company.id, connection.id, { userId: viewer.user.id, guest: false })
-  );
+  const connections = yield* admin
+    ? store.list(viewer.company.id)
+    : store.listFor(viewer.company.id, viewer.user.id);
   const usage = yield* store.usage(viewer.company.id);
   // Members can see connection status, but must never read the call log.
   const lastCalls: View.LastCalls | undefined = admin
@@ -303,11 +301,9 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   viewer: RequireSession.Viewer["Service"]
 ) {
   const store = yield* ConnectionStore.ConnectionStore;
-  const connections = yield* Effect.filter(yield* store.list(viewer.company.id), (connection) =>
-    viewer.role === "super_admin"
-      ? Effect.succeed(true)
-      : store.canUse(viewer.company.id, connection.id, { userId: viewer.user.id, guest: false })
-  );
+  const connections = yield* viewer.role === "super_admin"
+    ? store.list(viewer.company.id)
+    : store.listFor(viewer.company.id, viewer.user.id);
   return {
     title: "Connect an integration",
     body: View.renderCatalogue({

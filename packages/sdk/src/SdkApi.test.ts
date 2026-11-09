@@ -1,3 +1,4 @@
+import { AudienceActivation } from "@patchy/core";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
@@ -36,7 +37,7 @@ import {
 } from "@patchy/api";
 import type { Snapshot } from "@patchy/api/postgres-snapshot";
 import { Analytics } from "@patchy/analytics";
-import { Looks } from "@patchy/companies";
+import { Teams, Looks } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { ContentStore, FilesystemContentStore } from "@patchy/content-store";
@@ -449,6 +450,54 @@ const failureSource = Effect.fn("sdk.failureSource")(function* (patchId: string)
 });
 
 it.layer(layer)("SDK company generation", (it) => {
+  it.effect(
+    "direct generation uses its required viewer and follows connection membership changes",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient;
+        const admin = Fixtures.identities.admin;
+        const team = yield* Teams.create({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          name: "Generation access"
+        });
+        const id = "sdk-viewer-required";
+        yield* sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
+      VALUES (${id}, ${identity.company.id}, 'postgres', 'generation-teams', 'Generation fixture', 'company', 'connected', ${sql.json({ host: "db.example.test", port: 5432, database: "fixture", role: "reader" })}, 'unused', 'unused', 1, 1, ${admin.user.id})`;
+        yield* sql`INSERT INTO connection_snapshots(connection_id, company_id, integration, revision, snapshot)
+      VALUES (${id}, ${identity.company.id}, 'postgres', 1, ${sql.json({ version: 1, relations: [], enums: [], exclusions: [] })})`;
+        const store = yield* ConnectionStore.ConnectionStore;
+        yield* store.setAudience({
+          companyId: identity.company.id,
+          userId: admin.user.id,
+          id,
+          audience: { kind: "teams", teamIds: [team.id] }
+        });
+        const payload = generateRequest({
+          ...Fixtures.manifest,
+          tier: 2,
+          uses: { limited: { kind: "postgres", handle: "generation-teams" } }
+        });
+        const generate = Generation.generate(identity.company.id, payload, identity.user.id);
+        assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
+        yield* Teams.setMemberships({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          teamId: team.id,
+          userIds: [identity.user.id],
+          added: true
+        });
+        assert.deepEqual((yield* generate).uses, [{ alias: "limited", id, revision: 1 }]);
+        yield* Teams.setMemberships({
+          companyId: identity.company.id,
+          actorId: admin.user.id,
+          teamId: team.id,
+          userIds: [identity.user.id],
+          added: false
+        });
+        assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
+      }).pipe(Effect.provideService(AudienceActivation, true))
+  );
   it.effect("refuses module paths and invalid stems before generating imports", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -1207,14 +1256,18 @@ it.layer(layer)("SDK company generation", (it) => {
         );
         assert.strictEqual(refused.status, 422);
         assert.include(yield* refused.json, { code: "patch_not_openable" });
-        const error = yield* Generation.generate(identity.company.id, {
-          ...generateRequest(),
-          manifest: {
-            ...Fixtures.manifest,
-            tier: 2,
-            uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
-          }
-        }).pipe(Effect.flip);
+        const error = yield* Generation.generate(
+          identity.company.id,
+          {
+            ...generateRequest(),
+            manifest: {
+              ...Fixtures.manifest,
+              tier: 2,
+              uses: { assets: { kind: "sharedStore", patchId, store: "logos" } }
+            }
+          },
+          identity.user.id
+        ).pipe(Effect.flip);
         assert.instanceOf(error, Generation.PatchNotOpenable);
         if (error._tag === "SdkPatchNotOpenable") {
           assert.instanceOf(error.cause, Patches.PatchNotOpenable);
@@ -1275,7 +1328,8 @@ it.layer(layer)("SDK company generation", (it) => {
         }),
         { ...generateRequest(), patchId }
       ];
-      for (const payload of requests) yield* Generation.generate(foreign.company.id, payload);
+      for (const payload of requests)
+        yield* Generation.generate(foreign.company.id, payload, foreign.user.id);
       // Generation must ask with the caller's company, never the source's.
       const api = yield* sdkOver(Layer.empty);
       for (const payload of requests) {
@@ -1363,7 +1417,7 @@ it.layer(layer)("SDK company generation", (it) => {
         },
         {
           payload: postgresSource,
-          connections: { ...connections, list: () => Effect.fail(listFailure) },
+          connections: { ...connections, listFor: () => Effect.fail(listFailure) },
           cause: listFailure,
           unavailable: { stage: "connection-list", resource: identity.company.id }
         },
@@ -1440,10 +1494,11 @@ it.layer(layer)("SDK company generation", (it) => {
           Layer.succeed(Patches.Patches, replaced.patches ?? patches),
           Layer.succeed(ConnectionStore.ConnectionStore, replaced.connections ?? connections)
         );
-        const error = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(dependencies),
-          Effect.flip
-        );
+        const error = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(dependencies), Effect.flip);
         const response = yield* (yield* sdkOver(dependencies)).generate({
           payload,
           responseMode: "response-only"
@@ -1484,10 +1539,14 @@ it.layer(layer)("SDK company generation", (it) => {
           sharedTable: () => Effect.fail(sqlError)
         });
         for (const operation of [
-          Generation.generate(identity.company.id, {
-            ...generateRequest(),
-            patchId: "sdksqlfail01"
-          }),
+          Generation.generate(
+            identity.company.id,
+            {
+              ...generateRequest(),
+              patchId: "sdksqlfail01"
+            },
+            identity.user.id
+          ),
           Generation.generate(
             identity.company.id,
             generateRequest({
@@ -1496,7 +1555,8 @@ it.layer(layer)("SDK company generation", (it) => {
               uses: {
                 contacts: { kind: "sharedTable", patchId: "sdksqlfail01", table: "contacts" }
               }
-            })
+            }),
+            identity.user.id
           )
         ]) {
           const exit = yield* operation.pipe(Effect.provide(dependencies), Effect.exit);
@@ -1521,10 +1581,11 @@ it.layer(layer)("SDK company generation", (it) => {
           ),
           Layer.fresh
         );
-        const exit = yield* Generation.generate(identity.company.id, payload).pipe(
-          Effect.provide(isolated),
-          Effect.exit
-        );
+        const exit = yield* Generation.generate(
+          identity.company.id,
+          payload,
+          identity.user.id
+        ).pipe(Effect.provide(isolated), Effect.exit);
         assert.isTrue(Exit.isFailure(exit));
         if (Exit.isFailure(exit)) {
           assert.isTrue(Cause.hasDies(exit.cause));

@@ -231,7 +231,7 @@ const definitionContext = (title: string, definition: unknown) =>
 export const generate = Effect.fn("Generation.generate")(function* (
   companyId: string,
   request: typeof GenerateRequest.Type,
-  viewerId?: string
+  viewerId: string
 ): Effect.fn.Return<
   typeof Generated.Type,
   GenerationRefused | CompanyDatabases.Busy | GenerationUnavailable,
@@ -313,14 +313,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "attio" ||
       entry.kind === "imap"
   )
-    ? yield* connections.list(companyId).pipe(
-        Effect.flatMap((rows) =>
-          viewerId === undefined
-            ? Effect.succeed(rows)
-            : Effect.filter(rows, (row) =>
-                connections.canUse(companyId, row.id, { userId: viewerId, guest: false })
-              )
-        ),
+    ? yield* connections.listFor(companyId, viewerId).pipe(
         Effect.mapError(
           (cause) =>
             new GenerationUnavailable({

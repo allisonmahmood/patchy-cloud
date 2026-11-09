@@ -344,6 +344,23 @@ export interface Deleted {
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   {
+    /** Ordinary discovery: batched current-viewer admission, separate from administrator inventory. */
+    readonly listFor: (
+      companyId: string,
+      userId: string
+    ) => Effect.Effect<readonly Connection[], ConnectionStorageFailed>;
+    /** Targeted ordinary metadata lookup; inaccessible handles answer like missing ones. */
+    readonly detailFor: (
+      companyId: string,
+      integration: Integration,
+      handle: string,
+      userId: string
+    ) => Effect.Effect<ConnectionDetail, ConnectionNotFound | ConnectionStorageFailed>;
+    /** Integrations-owned authority facts for the existing Runtime revision adapter. */
+    readonly authorityRevisions: (
+      companyId: string,
+      ids: readonly string[]
+    ) => Effect.Effect<ReadonlyMap<string, string>, ConnectionStorageFailed>;
     readonly audience: (companyId: string, id: string) => Effect.Effect<Audience, ConnectionError>;
     readonly setAudience: (
       input: Identity & { readonly audience: Audience }
@@ -352,7 +369,7 @@ export class ConnectionStore extends Context.Service<
       companyId: string,
       id: string,
       viewer: { readonly userId: string; readonly guest: boolean }
-    ) => Effect.Effect<boolean, ConnectionError>;
+    ) => Effect.Effect<boolean, ConnectionNotFound | ConnectionStorageFailed>;
     readonly teamReferences: (
       companyId: string,
       teamId: string

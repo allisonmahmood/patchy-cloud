@@ -225,3 +225,9 @@ changes. Existing runtime wakes and reconciliation fence traced connection depen
 alongside membership revisions before protected live delivery. Failed/no-op audience
 changes do not advance it. Integrations supplies team-reference knowledge for Hosting's
 later guarded team lifecycle assembly.
+
+Ordinary discovery uses Integrations' batched current-viewer admission; privileged
+inventory remains separate. Hosting composes Integrations' connection-revision adapter
+over the existing Runtime subscription reader. Primitives owns no connection SQL.
+The local runtime composes the same adapter over fixed fixture revisions; cloud-backed
+reads still authorize at the cloud door on every call.
