@@ -2083,7 +2083,7 @@ membership removal can make an owner inaccessible; #1288 supplies recovery.
 Patches owns one current member audience decision with batched team-membership reads,
 audience revisions, transactional patch wakes and team references. Browser discovery,
 cards, direct/alias/version/raw-content routes and inventory use it. CLI/MCP/runtime
-and shared-source integration/live fencing remain with #1287/#1290 and consume this
+and shared-source reads/live fencing consume this
 same decision through Hosting adapters, not imports from Runtime into Patches/Companies.
 A temporary internal assembly barrier defaults off and refuses both writes and admission
 for team/all-guests audiences. Tests can assemble those paths explicitly; Hosting does not
@@ -2110,3 +2110,13 @@ mutation. Removal does not cancel or undo such a transaction, retract copied dat
 already delivered. Subsequent admission refuses the removed viewer, and subscription results
 are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
 The internal audience assembly barrier stays disabled pending the complete access stack.
+
+Shared-table and shared-store reads evaluate the initiating viewer against the source patch’s
+current audience through Runtime’s loaded-version port. They also require the same company,
+a live source and a shared resource; outside guests retain their existing refusal. A declaration
+grants no content access. Source audience and company membership revisions fence protected live
+results, including a refused first source read, so restoration recovers without redeclaration.
+The sharing dialog warns about declared dependants within the acting manager’s authority before
+an audience change. This is a warning about declared reads, not a complete map of copied data:
+data deliberately copied into a destination follows that destination’s permissions. Revoking
+source access does not retract old copies. The team-audience activation barrier remains off.

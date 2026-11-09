@@ -426,6 +426,7 @@ it.layer(
             { ok: false, code: "access_denied" }
           );
           assert.deepStrictEqual([...dependencies].sort(), [
+            `members:${Fixtures.identity.company.id}`,
             "patch:sourceshared",
             "store:sourceshared:docs"
           ]);

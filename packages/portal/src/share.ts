@@ -74,6 +74,7 @@ export const renderShareDialog = <
   >
 >(input: {
   readonly managementOwnerId?: string;
+  readonly dependants?: readonly { readonly patchId: string; readonly name: string }[];
   readonly row: { readonly tier: number; readonly patch: P };
   readonly viewer: Viewer;
   readonly publicBaseUrl: string;
@@ -170,10 +171,13 @@ export const renderShareDialog = <
       .filter((id) => !people.some((person) => person.userId === id))
       .map((id) => hidden(excluded ? "excludedGuestIds" : "guestIds", id))
       .join("");
+  const dependencyWarning = input.dependants?.length
+    ? `<aside class="note note-warn"><strong>Some people may lose shared reads</strong><ul>${input.dependants.map((dependant) => `<li>${escapeHtml(dependant.name)}</li>`).join("")}</ul><p>People outside the selected audience lose shared reads. Previously copied data stays with its destination.</p></aside>`
+    : "";
   const audience = form(
     "scope",
     "share-audience",
-    `${hidden("expectedScope", patch.scope)}${hidden("expectedAudienceRevision", patch.audienceRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset><fieldset><legend class="field-label">Guests</legend><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="specific"${patch.audience.guests.kind === "specific" ? " checked" : ""}>Specific guests</label><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="all"${patch.audience.guests.kind === "all" ? " checked" : ""}>All current and future company guests</label></fieldset><fieldset class="share-specific"><legend class="field-label">Include</legend>${guestChoices(false)}</fieldset><fieldset class="share-exclusions"><legend class="field-label">Except</legend>${guestChoices(true)}</fieldset>${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
+    `${hidden("expectedScope", patch.scope)}${hidden("expectedAudienceRevision", patch.audienceRevision)}<fieldset><legend class="field-label">Company people</legend>${choice("company", `People at ${viewer.company.name}`)}${choice("teams", "Selected teams", !input.teams?.length)}${choice("public", "Anyone on the internet", row.tier >= 2)}</fieldset><fieldset class="share-team-choices"><legend class="field-label">Teams</legend>${teamChoices || '<p class="supporting-text">No teams yet.</p>'}</fieldset><fieldset><legend class="field-label">Guests</legend><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="specific"${patch.audience.guests.kind === "specific" ? " checked" : ""}>Specific guests</label><label class="field-choice"><input class="field-radio" type="radio" name="guestMode" value="all"${patch.audience.guests.kind === "all" ? " checked" : ""}>All current and future company guests</label></fieldset><fieldset class="share-specific"><legend class="field-label">Include</legend>${guestChoices(false)}</fieldset><fieldset class="share-exclusions"><legend class="field-label">Except</legend>${guestChoices(true)}</fieldset>${dependencyWarning}${next}<div class="actions share-save"><button class="btn btn-primary" type="submit">Save sharing</button></div>`
   );
 
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;

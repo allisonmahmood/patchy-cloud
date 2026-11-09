@@ -22,10 +22,14 @@ export interface LoadedVersion {
 export class LoadedVersions extends Context.Service<
   LoadedVersions,
   {
-    /** Loads the served tier in the same snapshot; omit versionId for the current source. */
+    /**
+     * Loads the served tier; omit versionId for the current source. Shared reads supply the
+     * initiating viewer so Patches applies its current content decision before returning it.
+     */
     readonly find: (
       patchId: string,
-      versionId?: string
+      versionId?: string,
+      viewer?: { readonly companyId: string; readonly userId: string }
     ) => Effect.Effect<Option.Option<LoadedVersion & { readonly patchTier: number }>, SqlError>;
   }
 >()("@patchy/runtime/LoadedVersions") {}

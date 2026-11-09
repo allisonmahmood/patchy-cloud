@@ -311,6 +311,12 @@ const shareOverlay = Effect.fn("PortalPages.shareOverlay")(function* (
   const grants = yield* GuestGrants.GuestGrants;
   return renderShareDialog({
     row,
+    dependants: yield* (yield* Patches.Patches)
+      .sharingDependants(row.patch.id, {
+        userId: viewer.user.id,
+        admin: viewer.role !== "member"
+      })
+      .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, NotOwner: Effect.die })),
     viewer,
     publicBaseUrl: session.publicBaseUrl,
     back: pagePath(sharing.at),
@@ -406,6 +412,12 @@ const recoveryPage = Effect.fn("PortalPages.recoveryPage")(function* (
     view.canManage && !r.deletedAt && !r.retiredAt && showSharing
       ? renderShareDialog({
           managementOwnerId: r.ownerId,
+          dependants: yield* patches
+            .sharingDependants(r.id, {
+              userId: viewer.user.id,
+              admin: viewer.role !== "member"
+            })
+            .pipe(Effect.catchTags({ PatchUnavailable: Effect.die, NotOwner: Effect.die })),
           row: {
             tier: r.tier,
             patch: {

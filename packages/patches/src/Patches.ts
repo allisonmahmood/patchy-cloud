@@ -967,6 +967,11 @@ export class Patches extends Context.Service<
       patchId: string,
       actor: Actor
     ) => Effect.Effect<ManagementCard, PatchUnavailable | NotOwner | SqlError>;
+    /** Declared dependants visible within the acting manager's authority. */
+    readonly sharingDependants: (
+      patchId: string,
+      actor: Actor
+    ) => Effect.Effect<readonly (typeof Dependant.Type)[], PatchUnavailable | NotOwner | SqlError>;
     readonly managementVersions: (
       patchId: string,
       actor: Actor
@@ -1019,7 +1024,8 @@ export class Patches extends Context.Service<
     readonly find: (
       patchId: string,
       versionNumber?: number,
-      versionId?: string
+      versionId?: string,
+      viewer?: { readonly companyId: string; readonly userId: string }
     ) => Effect.Effect<
       Option.Option<{ patch: Patch; version: PatchVersion; patchTier: number }>,
       SqlError
@@ -1700,11 +1706,19 @@ export const make = Effect.gen(function* () {
   const find = Effect.fn("Patches.find")(function* (
     patchId: string,
     versionNumber?: number,
-    versionId?: string
+    versionId?: string,
+    viewer?: { readonly companyId: string; readonly userId: string }
   ) {
-    return (yield* findRetained(patchId, versionNumber, versionId)).pipe(
+    const found = (yield* findRetained(patchId, versionNumber, versionId)).pipe(
       Option.filter(({ patch }) => patch.state === "live" && patch.disabledAt === null)
     );
+    if (
+      Option.isSome(found) &&
+      viewer !== undefined &&
+      !(yield* audienceOpen(found.value.patch, viewer.companyId, viewer.userId))
+    )
+      return Option.none();
+    return found;
   });
 
   const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
@@ -2681,6 +2695,19 @@ export const make = Effect.gen(function* () {
     withLifecycleTransaction,
     Effect.catchTags(dieOnSchemaError)
   );
+  const sharingDependants = Effect.fn("Patches.sharingDependants")(function* (
+    patchId: string,
+    actor: Actor
+  ) {
+    const card = yield* managementCard(patchId, actor);
+    const row = yield* manageable(patchId, actor);
+    const allowed = new Set(
+      (yield* management(row.companyId, actor.userId))
+        .filter((view) => view.canManage)
+        .map((view) => view.record.id)
+    );
+    return card.dependants.filter((dependant) => allowed.has(dependant.patchId));
+  }, withLifecycleTransaction);
   const eligibleOwners = Effect.fn("Patches.eligibleOwners")(function* (
     patchId: string,
     actor: Actor
@@ -3131,6 +3158,7 @@ export const make = Effect.gen(function* () {
     managementHistory,
     managementVersions,
     managementCard,
+    sharingDependants,
     eligibleOwners,
     countQuotaPatches,
     authorizePublish,
