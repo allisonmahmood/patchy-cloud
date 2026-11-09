@@ -929,8 +929,8 @@ owns the CI commands and their required checks.
 
 ### Audience selection
 
-First publish requires an explicit scope or audience; an omitted choice is a rejected
-request, exit 2. Updates retain the current audience. `audiences --json` lists existing
+An omitted first-publish scope/audience defaults to Company-only for compatibility.
+Agents offer the audience choice unless already supplied. Updates retain the current audience. `audiences --json` lists existing
 selectable teams and company guests, and `publish`/`share --audience <json>` select them.
 Malformed JSON is local, exit 1. Successful publication and sharing report `audience`;
 private `scope: company` alone no longer describes readership. Persisted older publish

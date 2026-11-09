@@ -196,7 +196,6 @@ const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: s
 const audienceFailure = (error: Audiences.InvalidAudience) =>
   Effect.succeed(refuse(BadRequest, { ok: false, error: error.message }));
 const audienceFailures = {
-  AudienceRequired: audienceFailure,
   AudienceInactive: audienceFailure,
   InvalidAudienceTeams: audienceFailure,
   InvalidAudienceGuests: audienceFailure,

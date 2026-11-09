@@ -320,6 +320,8 @@ Company plus guests, one team or multiple teams. Pass `--share company|public` f
 choices, or `--audience` JSON for teams and guest choices. Discover existing IDs with
 `patchy audiences --json`. Never invent teams or guest IDs. Later publishes retain the
 committed audience; do not ask again. Every publish reports its committed audience.
+The API/CLI keeps Company-only as the default when omitted; asking is the agent workflow,
+not a mandatory publish flag.
 
 Audience JSON has `members: { kind: "company" | "public" }` or
 `members: { kind: "teams", teamIds: ["<id>"] }`, plus

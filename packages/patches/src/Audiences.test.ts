@@ -83,22 +83,25 @@ it.layer(services)("Patch audiences", (it) => {
       })
   );
   it.effect(
-    "requires an explicit first audience and refuses activation before downstream enforcement",
+    "defaults omitted first-publish audiences to Company and still refuses inactive team audiences",
     () =>
       Effect.gen(function* () {
         const patches = yield* Patches.Patches;
         const input = Fixtures.recordInput(uploader, { scope: undefined });
-        assert.equal((yield* Effect.flip(patches.preflight(input)))._tag, "AudienceRequired");
+        yield* patches.preflight(input);
+        const created = yield* Fixtures.record(input);
+        assert.deepStrictEqual(created.audience, Audiences.company());
+        const blocked = Fixtures.recordInput(uploader, { scope: undefined });
         const t = yield* team("Barrier", [uploader.user.id]);
         const error = yield* Effect.flip(
           patches
-            .preflight({ ...input, audience: teamAudience([t.id]) })
+            .preflight({ ...blocked, audience: teamAudience([t.id]) })
             .pipe(Effect.provideService(Audiences.Activation, false))
         );
         assert.equal(error._tag, "AudienceInactive");
         assert.equal(
           (yield* patches.list(access(uploader.user.id))).some(
-            (row) => row.patch.id === input.patchId
+            (row) => row.patch.id === blocked.patchId
           ),
           false
         );

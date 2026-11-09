@@ -12,14 +12,6 @@ import type { Patch } from "./Patches.js";
 export const Activation = Context.Reference<boolean>("@patchy/patches/AudienceActivation", {
   defaultValue: () => false
 });
-export class AudienceRequired extends Schema.TaggedError<AudienceRequired>()(
-  "AudienceRequired",
-  {}
-) {
-  override get message() {
-    return "Choose who can open this patch before its first publish.";
-  }
-}
 export class AudienceInactive extends Schema.TaggedError<AudienceInactive>()(
   "AudienceInactive",
   {}
@@ -61,7 +53,6 @@ export class AudienceScopeMismatch extends Schema.TaggedError<AudienceScopeMisma
   }
 }
 export type InvalidAudience =
-  | AudienceRequired
   | AudienceInactive
   | InvalidAudienceTeams
   | InvalidAudienceGuests
