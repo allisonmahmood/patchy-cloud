@@ -24,7 +24,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { withoutAppFonts } from "@patchy/core";
+import { withoutAppAssets } from "@patchy/core";
 
 import {
   NO_STORE_CACHE_CONTROL,
@@ -44,7 +44,7 @@ const fontFree = (response: HttpServerResponse.HttpServerResponse) => {
   const { body } = response;
   if (body._tag !== "Uint8Array" || !body.contentType.startsWith("text/html")) return response;
   const html = body.text ?? decoder.decode(body.body);
-  const drawn = withoutAppFonts(html);
+  const drawn = withoutAppAssets(html);
   return drawn === html
     ? response
     : HttpServerResponse.setBody(response, HttpBody.text(drawn, body.contentType));

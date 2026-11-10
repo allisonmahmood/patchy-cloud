@@ -45,7 +45,7 @@ import {
   PUBLIC_BASE_URL
 } from "@patchy/auth/testing";
 import { Companies, InviteMail, Users } from "@patchy/companies";
-import { withoutAppFonts } from "@patchy/core";
+import { withoutAppAssets } from "@patchy/core";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
@@ -1138,7 +1138,7 @@ it.layer(services)("pages in memory", (it) => {
         // In the frame's sandbox the door asks for none of the app's fonts, which it would be refused.
         assert.strictEqual(
           body,
-          path.startsWith("/~content/") ? withoutAppFonts(loginBody) : loginBody
+          path.startsWith("/~content/") ? withoutAppAssets(loginBody) : loginBody
         );
         assert.notInclude(body, "Hidden title");
         assert.strictEqual(
@@ -1504,7 +1504,7 @@ it.layer(services)("pages in memory", (it) => {
       assert.strictEqual(framed.headers.get("content-security-policy"), CONTENT_SECURITY_POLICY);
       assert.strictEqual(
         yield* Effect.promise(() => framed.text()),
-        withoutAppFonts(renderShellNotice("needs_rebuild", ""))
+        withoutAppAssets(renderShellNotice("needs_rebuild", ""))
       );
 
       // Anyone else meets the address's door as before: sign in, the deactivated page.

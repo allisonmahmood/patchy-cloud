@@ -44,6 +44,8 @@ export const containers = `
     .row-desc { color: var(--muted); font: var(--text-meta); }
     .row-end { display: flex; align-items: center; gap: var(--space-2); justify-self: end; }
     /* A stretched link covers its row; the row's own controls sit above it. */
+    .row-link { color: var(--ink); font-weight: var(--weight-strong); text-decoration: none; }
+    @media (hover: hover) { .row-link:hover { text-decoration: underline; } }
     .row-link::after { content: ""; position: absolute; inset: 0; }
     .row :is(.btn, form) { position: relative; z-index: 1; }
     @media (hover: hover) { .row:has(.row-link):hover { background: var(--hover); } }

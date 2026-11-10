@@ -9,7 +9,7 @@ export const copyScriptPath = "/assets/copy.js";
  * lines never offers two buttons both called Copy.
  */
 export const copyLine = (line: string, label: string, target?: string) =>
-  `<div class="copy-line"><code aria-label="${escapeAttribute(label)}">${escapeHtml(line)}</code><button type="button" class="btn btn-primary" data-copy="${escapeAttribute(line)}"${target === undefined ? "" : ` aria-label="${escapeAttribute(`Copy ${target}`)}"`} aria-live="polite" hidden>Copy</button></div>`;
+  `<div class="copy-line"><code aria-label="${escapeAttribute(label)}">${escapeHtml(line)}</code><button type="button" class="btn btn-sm" data-copy="${escapeAttribute(line)}"${target === undefined ? "" : ` aria-label="${escapeAttribute(`Copy ${target}`)}"`} aria-live="polite" hidden>Copy</button></div>`;
 
 /** Reveals each copy button and copies its line; a refused clipboard asks the person to select the line instead. */
 export const copyScript = `(() => {

@@ -54,6 +54,7 @@ export const base = `
       background: var(--surface); color: var(--muted);
       font: var(--text-badge);
     }
+    summary { cursor: pointer; }
     mark { padding: 0 2px; border-radius: 3px; background: var(--highlight); color: var(--ink); }
     time, .tabular { font-variant-numeric: tabular-nums; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -208,6 +208,7 @@
         "scripts/flake-report.ts",
         "scripts/rollback-rehearsal.ts",
         "scripts/test-clerk.ts",
+        "scripts/ui-report.ts",
         "scripts/verify.ts"
       ],
       "rules": { "no-console": "off" }
