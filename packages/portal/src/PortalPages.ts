@@ -850,7 +850,12 @@ const confirmationPage = Effect.fn("PortalPages.confirmationPage")(function* (
       status: 403,
       notice: action === "reassign" ? adminRequired : forbidden
     });
-  if (action === "restore" && form.status === undefined && card.offSources.length === 0)
+  if (
+    action === "restore" &&
+    selected.access === "content" &&
+    form.status === undefined &&
+    card.offSources.length === 0
+  )
     return HttpServerResponse.redirect(`/patches/${encodeURIComponent(card.patch.name)}`, {
       status: 303,
       headers: { "cache-control": "private, no-store" }

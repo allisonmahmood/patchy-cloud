@@ -4902,6 +4902,13 @@ it.layer(layer)("owner recovery on a socket", (it) => {
         )).text;
         assert.include(sharing, "Save sharing");
         assert.notInclude(sharing, "PROTECTED_DESCRIPTION");
+        yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
+        const restorePath = `${cardPath(patch.name)}/restore`;
+        const restorePage = yield* request(restorePath, workspace.admin);
+        assert.equal(restorePage.status, 200);
+        const restoreFields = formFields(yield* restorePage.text, restorePath);
+        assert.equal(restoreFields.expectedOwnerUserId, workspace.owner.id);
+        assert.equal((yield* post(restorePath, workspace.admin, restoreFields)).status, 303);
         const reassigned = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
           expectedPatchId: patch.patchId,
           expectedOwnerUserId: workspace.owner.id,
