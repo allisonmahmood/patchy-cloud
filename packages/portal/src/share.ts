@@ -53,7 +53,7 @@ export const shareStyles = `
   .share-change { margin: 14px 0 0; }
   .share-change p { margin: 0; }
   /* The step after picking the other audience shows once it is picked; without :has() it always shows. */
-  .share-audience:has(input[data-current]:checked) .share-change { display: none; }
+  .share-audience:has(input[name="scope"][data-current]:checked) .share-change { display: none; }
   .share-audience:not(:has(input[name="scope"][value="public"]:checked)) .share-public-confirmation { display: none; }
   .share-audience:has(input[name="guestMode"][value="all"]:checked) .share-specific { display: none; }
   .share-audience:has(input[name="guestMode"][value="specific"]:checked) .share-exclusions { display: none; }
