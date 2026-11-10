@@ -300,6 +300,17 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(known)}`;
     // A patch is in one state: deleted, then disabled, then retired, else live.
     const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
+    const visiblePatch = (userId?: string) =>
+      userId === undefined
+        ? sql`TRUE`
+        : sql`EXISTS (
+        SELECT 1 FROM users u WHERE u.company_id = p.company_id AND u.id = ${userId}
+        AND u.deactivated_at IS NULL AND p.disabled_at IS NULL AND
+        (p.scope IN ('company', 'public') OR EXISTS (
+          SELECT 1 FROM patch_audience_teams a JOIN company_team_members m
+          ON m.company_id = a.company_id AND m.team_id = a.team_id
+          WHERE a.patch_id = p.id AND m.user_id = u.id
+        )))`;
     const usageRows = SqlSchema.findAll({
       Request: Schema.Struct({
         companyId: Schema.String,
@@ -324,26 +335,23 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
         AND p.disabled_at IS NOT NULL))::int AS disabled
       FROM ${declarations(companyId)}
-      AND ${
-        userId === undefined
-          ? sql`TRUE`
-          : sql`EXISTS (
-        SELECT 1 FROM users u WHERE u.company_id = p.company_id AND u.id = ${userId}
-        AND u.deactivated_at IS NULL AND p.disabled_at IS NULL AND
-        (p.scope IN ('company', 'public') OR EXISTS (
-          SELECT 1 FROM patch_audience_teams a JOIN company_team_members m
-          ON m.company_id = a.company_id AND m.team_id = a.team_id
-          WHERE a.patch_id = p.id AND m.user_id = u.id
-        )))`
-      }
+      AND ${visiblePatch(userId)}
       GROUP BY 1`
     });
     const versionRows = SqlSchema.findAll({
-      Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
+      Request: Schema.Struct({
+        companyId: Schema.String,
+        ids: Schema.Array(Schema.String),
+        userId: Schema.optionalKey(Schema.String)
+      }),
       Result: Schema.Struct({ id: Schema.String, patch: Schema.String, number: Schema.Int }),
-      execute: ({ companyId, ids }) => sql`SELECT v.id, p.name AS patch, v.version_number AS number
+      execute: ({
+        companyId,
+        ids,
+        userId
+      }) => sql`SELECT v.id, p.name AS patch, v.version_number AS number
       FROM patch_versions v JOIN patches p ON p.id = v.patch_id
-      WHERE p.company_id = ${companyId} AND ${sql.in("v.id", ids)}`
+      WHERE p.company_id = ${companyId} AND ${sql.in("v.id", ids)} AND ${visiblePatch(userId)}`
     });
     const usage = Effect.fn("ConnectionStore.usage")(
       function* (companyId: string, userId?: string) {
@@ -357,8 +365,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("usage"))
     );
     const versions = Effect.fn("ConnectionStore.versions")(
-      function* (companyId: string, ids: ReadonlyArray<string>) {
-        const rows = ids.length === 0 ? [] : yield* versionRows({ companyId, ids });
+      function* (companyId: string, ids: ReadonlyArray<string>, userId?: string) {
+        const rows =
+          ids.length === 0
+            ? []
+            : yield* versionRows({ companyId, ids, ...(userId === undefined ? {} : { userId }) });
         return new Map(rows.map((row) => [row.id, { patch: row.patch, number: row.number }]));
       },
       Effect.catchTags(safe("versions"))

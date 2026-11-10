@@ -1070,6 +1070,15 @@ it.layer(services)("company connection pages", (it) => {
         const restricted = yield* read(warehouse.path);
         assert.notInclude(restricted, 'href="/patches/revenue"');
         assert.include(restricted, 'href="/patches/reports"');
+        const names = yield* (yield* ConnectionStore.ConnectionStore).versions(
+          owner.company.id,
+          [`${owner.company.handle}-revenue-v1`, `${owner.company.handle}-reports-v2`],
+          owner.user.id
+        );
+        assert.deepEqual(
+          [...names.values()].map((version) => version.patch),
+          ["reports"]
+        );
         // Management still sees the complete dependency guard, without exposing restricted names.
         assert.notInclude(restricted, `href="${warehouse.path}/delete"`);
       })

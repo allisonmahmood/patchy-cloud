@@ -394,7 +394,8 @@ export class ConnectionStore extends Context.Service<
     /** The patch and number of stored versions, so recent calls name where they came from. */
     readonly versions: (
       companyId: string,
-      ids: ReadonlyArray<string>
+      ids: ReadonlyArray<string>,
+      userId?: string
     ) => Effect.Effect<
       ReadonlyMap<string, { readonly patch: string; readonly number: number }>,
       ConnectionError

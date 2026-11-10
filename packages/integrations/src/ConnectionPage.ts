@@ -477,7 +477,8 @@ const connectionPage = Effect.fn("ConnectionPage.connectionPage")(function* (
         });
         const versions = yield* store.versions(
           viewer.company.id,
-          list.flatMap((call) => (call.versionId === null ? [] : [call.versionId]))
+          list.flatMap((call) => (call.versionId === null ? [] : [call.versionId])),
+          viewer.user.id
         );
         // A patch's guests call as themselves, from outside the company's directory.
         const guests = yield* (yield* Users.Users).names(

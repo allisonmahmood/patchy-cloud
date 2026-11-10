@@ -269,8 +269,7 @@ const execute = Effect.fn("PostgresOperations.execute")(function* (
         Effect.provideService(
           ConnectionStore.ConnectionStore,
           yield* ConnectionStore.ConnectionStore
-        ),
-        Effect.mapError(() => new Execution.AccessDenied({}))
+        )
       )
     })
     .pipe(
