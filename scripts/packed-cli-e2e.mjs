@@ -539,7 +539,8 @@ try {
       handle: DEV_SEED.companyHandle,
       name: DEV_SEED.companyName
     },
-    role: DEV_SEED.role,
+    role: "admin",
+    superAdmin: true,
     machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   });
 
@@ -1505,7 +1506,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       handle: DEV_SEED.companyHandle,
       name: DEV_SEED.companyName
     },
-    role: DEV_SEED.role,
+    role: "admin",
+    superAdmin: true,
     machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   });
   assert.ok(Number.isSafeInteger(dev.pid) && dev.pid > 0);
