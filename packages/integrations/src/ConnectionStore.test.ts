@@ -163,9 +163,9 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const engineering = yield* Teams.create({ ...actor, name: "Connection Engineering" });
         const member = "connection-audience-member";
         const admin = "connection-audience-admin";
-        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role, is_regular_admin) VALUES
-        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member', false),
-        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'member', true)`;
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES
+        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member'),
+        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'admin')`;
         assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
         const target = {
           ...identity(connection),
