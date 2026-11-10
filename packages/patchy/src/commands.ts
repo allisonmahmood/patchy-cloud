@@ -373,7 +373,7 @@ const whoami = Command.make("whoami", {}, () =>
       yield* Output.report(encodeIdentity(identity), [
         `User: ${identity.user.name} (${identity.user.email})`,
         `Company: ${identity.company.name} (${identity.company.handle})`,
-        `Role: ${identity.role}`,
+        `Role: ${identity.superAdmin ? "super_admin" : identity.role}`,
         `Machine: ${identity.machine.name} (${identity.machine.id})`
       ]);
     })
