@@ -1,3 +1,4 @@
+import * as ConnectionVisibility from "../../../patches/src/ConnectionVisibility.js";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { registry } from "@patchy/limits/registry";
@@ -46,7 +47,11 @@ const fixture = Layer.mergeAll(
   PostHogSource.layer,
   AttioSource.layer,
   ImapTest.offline
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
+).pipe(
+  Layer.provideMerge(ConnectionVisibility.layer),
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
+);
 
 /** A store over the canned transport, and a seeded connection. */
 const setup = (handle: string, options: { readonly test?: boolean } = {}) =>
