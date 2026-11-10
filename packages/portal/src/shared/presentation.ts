@@ -7,32 +7,8 @@ import type { Patches } from "@patchy/patches";
 /** The portal's page layout, which every portal page carries until it is rebuilt on core's templates. */
 export const styles = `
   .portal-card { min-width: 0; max-width: 920px; }
-  .portal-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
-  .portal-card-head > div:nth-child(2) { flex: 1; min-width: min(100%, 240px); }
-  .portal-card-head .page-heading { margin: 0; }
-  .portal-card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
-  .portal-card-tags .tag { margin: 0; }
-  .portal-card-act { display: flex; align-items: center; gap: 6px; }
-  .portal-card-act form { margin: 0; }
-  .portal-card-tabs { margin: 18px 0 20px; }
-  .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .portal-stop-actions > div { display: grid; align-content: start; }
-  .portal-address { align-items: center; }
   .portal-subpage { max-width: 760px; margin-inline: auto; }
   .portal-table { overflow-x: auto; }
-  .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
-  .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  /* Log cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting "Version". */
-  .log-table { min-width: 880px; overflow-wrap: break-word; }
-  .log-table time { white-space: nowrap; }
-  @media (max-width: 760px) {
-    .log-filters { grid-template-columns: minmax(0, 1fr); }
-    .log-filters > :last-child { margin-top: 16px; }
-  }
-  @media (max-width: 480px) {
-    .portal-stop-actions { grid-template-columns: minmax(0, 1fr); }
-  }
 `;
 
 // The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced

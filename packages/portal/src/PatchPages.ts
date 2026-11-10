@@ -1,5 +1,6 @@
-// Owns a patch's card at `/patches/<name>`: Overview, Versions, Settings, Log, its confirmations
-// and its forms. Renders with `render.ts` and `log.ts`; what other surfaces need is in `shared/`.
+// Owns a patch's page at `/patches/<name>`: Overview, Log, Versions and Settings, the dialogs its
+// acts ask in, and their forms. Renders with `render.ts` and `log.ts`; what other surfaces need is
+// in `shared/`.
 import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -10,26 +11,30 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchState } from "@patchy/api";
-import { pageResponse, Receipt, RequireSession } from "@patchy/auth";
-import { patchTitle, rowMenu } from "@patchy/core";
+import { AgentConnections, pageResponse, Receipt, RequireSession } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
 import { type LogNames, outcomeFilters, renderLog, renderRecentActivity } from "./log.js";
 import {
+  canManage,
   type CardTab,
   type ConfirmationAction,
+  type ConfirmationState,
   type PatchAction,
-  renderAgentPanel,
-  renderCardFrame,
+  renderAgentAside,
   renderConfirmation,
   renderOverview,
+  renderPatchPage,
   renderSettings,
-  renderVersions
+  renderVersions,
+  shownTitle,
+  tabTitle
 } from "./render.js";
 import {
   asked,
+  callSummary,
   context,
   errorPage,
   errors,
@@ -47,7 +52,7 @@ import {
   type Routes,
   withOverlay
 } from "./shared/handlers.js";
-import { openItems, styles } from "./shared/presentation.js";
+import { cardPath } from "./shared/presentation.js";
 
 const decodeDescription = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -106,18 +111,17 @@ const logNames = Effect.fn("PatchPages.logNames")(function* (
   return {
     people,
     versions: new Map(card.versions.map((version) => [version.id, version.versionNumber])),
-    patch: patchTitle(card.patch),
     connections: new Map<string, string>()
   } satisfies LogNames;
 });
 
-/** W-2 on the card: the owner's and admins' last three entries, once the patch has any or serves tier 2. */
+/** Overview's recent log for the owner and admins: the last three entries, once it has any or serves tier 2. */
 const recentActivity = Effect.fn("PatchPages.recentActivity")(function* (
   card: Patches.PortalCard,
   now: number
 ) {
   const { viewer } = yield* context;
-  if (viewer.role !== "admin" && card.owner.id !== viewer.user.id) return "";
+  if (!canManage(card, viewer)) return "";
   const { entries } = yield* (yield* InvocationLog.InvocationLog).page({
     companyId: viewer.company.id,
     patchId: card.patch.id,
@@ -130,10 +134,10 @@ const recentActivity = Effect.fn("PatchPages.recentActivity")(function* (
 });
 
 /**
- * What agents can do beside a card's Overview: the agent tools of the version the card shows,
- * and while agent access is off, who can turn it on. Empty without tools.
+ * Beside a live tool's Overview: the agent tools of the version it serves, and while agent access
+ * is off, who can turn it on. Empty without tools.
  */
-const agentPanel = Effect.fn("PatchPages.agentPanel")(function* (card: Patches.PortalCard) {
+const agentAside = Effect.fn("PatchPages.agentAside")(function* (card: Patches.PortalCard) {
   const versionId = card.patch.currentVersionId;
   if (card.patch.state !== "live" || card.tier !== 2 || versionId === null) return "";
   // The card's version, not whatever is current now, so a publish between the reads can't mix them.
@@ -153,11 +157,43 @@ const agentPanel = Effect.fn("PatchPages.agentPanel")(function* (card: Patches.P
     : (yield* (yield* Users.Users).list(viewer.company.id))
         .filter((user) => user.role === "admin" && user.deactivatedAt === null)
         .sort((a, b) => a.name.localeCompare(b.name));
-  return renderAgentPanel({ tools, viewer, admins });
+  // The viewer's own apps, never the company's: only they say whether this person can use these.
+  const apps = access.on
+    ? (yield* (yield* AgentConnections.AgentConnections).list(viewer.user.id)).map(
+        (app) => app.clientName
+      )
+    : [];
+  return renderAgentAside({ tools, viewer, admins, apps });
 });
 
-/** A card tab that is not the log: Overview at `/patches/<name>`, then `/versions` and `/settings`. */
+/**
+ * Overview's main column: the patch's facts, why its guests can't open it, and the recent log.
+ * A page holds one notice, so a refusal over it leaves out the guests' warning until the next look.
+ */
+const overview = Effect.fn("PatchPages.overview")(function* (
+  card: Patches.PortalCard,
+  selected: Patches.ReadPatch,
+  now: number,
+  here: string,
+  options: { readonly readOnly: boolean; readonly refused: boolean }
+) {
+  const { viewer } = yield* context;
+  const { readOnly } = options;
+  const reason = options.refused ? undefined : (yield* turnedAway([selected]))?.get(card.patch.id);
+  return renderOverview({
+    card,
+    viewer,
+    now,
+    here,
+    activity: yield* recentActivity(card, now),
+    ...(readOnly ? { readOnly } : {}),
+    ...(reason === undefined ? {} : { turnedAway: reason })
+  });
+});
+
+/** A tab that is not the log: Overview at `/patches/<name>`, then `/versions` and `/settings`. */
 type PageTab = Exclude<CardTab, "log">;
+/** Where each act lands once done, and where a stale or refused form of it says so. */
 const tabOf: Record<PatchAction, PageTab> = {
   description: "settings",
   rollback: "versions",
@@ -167,22 +203,36 @@ const tabOf: Record<PatchAction, PageTab> = {
   reassign: "overview"
 };
 const settingsForbidden = "Only the owner or an admin can change this patch's settings.";
+const tabPath = (patch: Patches.Patch, tab: CardTab) =>
+  cardPath(patch, tab === "overview" ? "" : tab);
 
-/**
- * The card header's menu, Share… opening over `here`. The card already holds its other acts:
- * Settings, and Restore while it's off.
- */
-const cardMenu = (
-  row: Patches.ReadPatch,
-  viewer: RequireSession.Viewer["Service"],
-  publicBaseUrl: string,
-  here: string
-) => {
-  const items = openItems(row, viewer, publicBaseUrl, here, false);
-  return items.length ? rowMenu(`card-${row.patch.id}`, patchTitle(row.patch), items) : undefined;
+/** A dialog an act asks in over its tab, with what a refused form of it left to say. */
+type Confirm = ConfirmationState &
+  (
+    | { readonly action: Exclude<ConfirmationAction, "reassign"> }
+    | { readonly action: "reassign" }
+    | { readonly action: "rollback"; readonly versionNumber: number }
+  );
+/** An act's dialog, with what a refused form of it left to say. */
+const confirmOf = (action: ConfirmationAction, state: ConfirmationState = {}): Confirm =>
+  action === "reassign" ? { ...state, action } : { ...state, action };
+/** The tab each act's dialog opens over, where its Cancel and Close go. */
+const behindOf: Record<Confirm["action"], PageTab> = {
+  retire: "settings",
+  delete: "settings",
+  reassign: "settings",
+  restore: "overview",
+  rollback: "versions"
+};
+const confirmTitles: Record<Confirm["action"], string> = {
+  retire: "Retire",
+  delete: "Delete",
+  restore: "Restore",
+  reassign: "Reassign",
+  rollback: "Serve a version"
 };
 
-/** How a card is drawn: its tab, and what a refused form of it left to say. */
+/** How a patch's page is drawn: its tab, a dialog over it, and what a refused form of it left to say. */
 interface CardOptions {
   readonly tab?: PageTab;
   readonly status?: number;
@@ -193,11 +243,17 @@ interface CardOptions {
   readonly readOnly?: boolean;
   /** The Share dialog a refused form of it shows again; a GET asks with `?share=`. */
   readonly sharing?: Sharing;
+  /** An act's dialog over the page, as its GET route asks or a refusal of its form draws again. */
+  readonly confirm?: Confirm;
 }
 
+const notAvailable = (state: Patches.Patch["state"]) =>
+  `This patch is ${state}. This action is not available. Nothing was done.`;
+
 /**
- * One patch's card at `/patches/<name>` on one of its tabs. A member asking for Settings gets
- * Overview. The Share dialog draws it again with the dialog open, and it shows the dialog's refusals.
+ * One patch's page at `/patches/<name>` on one of its tabs, with any dialog over it. A member
+ * asking for Settings gets Overview. An act's dialog checks first that the viewer may do it and
+ * that the patch is in a state it applies to; the Share dialog shows its own refusals.
  */
 export const render: (name: string, options?: CardOptions) => Page = Effect.fn("PatchPages.render")(
   function* (name: string, options: CardOptions = {}) {
@@ -213,125 +269,152 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
       return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
     yield* WideEvents.enrich(Patches.eventFields(selected.patch));
     const card = yield* patches.portalCard(selected.patch.id, access);
+    const { patch } = card;
     const now = yield* Clock.currentTimeMillis;
-    const manages = viewer.role === "admin" || card.owner.id === viewer.user.id;
+    const manages = canManage(card, viewer);
+    const { confirm } = options;
+    if (confirm !== undefined) {
+      // Identity and permission before state: someone who can't act learns nothing more.
+      if (viewer.role !== "admin" && (confirm.action === "reassign" || !manages))
+        return yield* render(name, {
+          status: 403,
+          notice: confirm.action === "reassign" ? adminRequired : forbidden
+        });
+      if (
+        confirm.action === "restore" &&
+        options.status === undefined &&
+        card.offSources.length === 0
+      )
+        return HttpServerResponse.redirect(cardPath(patch), {
+          status: 303,
+          headers: { "cache-control": "private, no-store" }
+        });
+      if (
+        ((confirm.action === "retire" || confirm.action === "rollback") &&
+          patch.state !== "live") ||
+        (confirm.action === "delete" && patch.state === "deleted") ||
+        (confirm.action === "restore" && patch.state === "live")
+      )
+        return yield* render(name, { status: 409, notice: notAvailable(patch.state) });
+      // A version that isn't kept, or already serves, has nothing to ask about: Versions says
+      // why when a refusal brought it here, and is simply where it goes otherwise.
+      if (
+        confirm.action === "rollback" &&
+        !card.versions.some(
+          (version) =>
+            version.versionNumber === confirm.versionNumber && version.id !== patch.currentVersionId
+        )
+      )
+        return options.status === undefined
+          ? HttpServerResponse.redirect(cardPath(patch, "versions"), {
+              status: 303,
+              headers: { "cache-control": "private, no-store" }
+            })
+          : yield* render(name, {
+              tab: "versions",
+              status: options.status,
+              ...(confirm.notice === undefined ? {} : { notice: confirm.notice })
+            });
+    }
     const refused = options.tab === "settings" && !manages;
     const tab = refused ? "overview" : (options.tab ?? "overview");
-    const body =
+    const here = tabPath(patch, tab);
+    const main =
       tab === "settings"
         ? renderSettings({
             card,
             viewer,
-            submittedDescription: options.submittedDescription,
-            descriptionError: options.descriptionError
+            here,
+            ...(options.submittedDescription === undefined
+              ? {}
+              : { submittedDescription: options.submittedDescription }),
+            ...(options.descriptionError === undefined
+              ? {}
+              : { descriptionError: options.descriptionError })
           })
         : tab === "versions"
           ? renderVersions({ card, viewer, now })
-          : renderOverview({
+          : yield* overview(card, selected, now, here, {
+              readOnly: options.readOnly === true,
+              refused: options.notice !== undefined
+            });
+    const aside = tab === "overview" ? yield* agentAside(card) : "";
+    const failures =
+      tab === "overview" ? (yield* callSummary([selected]))?.get(patch.id)?.failures : undefined;
+    const title = shownTitle(patch, viewer.company.name);
+    const confirmation =
+      confirm === undefined
+        ? undefined
+        : confirm.action === "reassign"
+          ? renderConfirmation({
+              ...confirm,
+              action: "reassign",
               card,
               viewer,
               now,
-              activity: yield* recentActivity(card, now),
-              turnedAway: (yield* turnedAway([selected]))?.get(card.patch.id)
-            });
-    const panel = tab === "overview" ? yield* agentPanel(card) : "";
-    const here = `/patches/${encodeURIComponent(name)}${tab === "overview" ? "" : `/${tab}`}`;
-    const sharing = options.sharing ?? (options.readOnly ? undefined : asked(url));
-    const overlay = yield* shareOverlay([selected], sharing);
+              close: here,
+              members: yield* (yield* Users.Users).list(viewer.company.id)
+            })
+          : renderConfirmation({ ...confirm, card, viewer, now, close: here });
+    const sharing =
+      confirmation === undefined
+        ? (options.sharing ?? (options.readOnly ? undefined : asked(url)))
+        : undefined;
+    const share = yield* shareOverlay([selected], sharing);
     return pageResponse(
       {
-        title: `${patchTitle(card.patch)}${tab === "overview" ? "" : ` ${tab}`}`,
-        heading: "",
-        body: renderCardFrame({
+        title:
+          confirm === undefined
+            ? tabTitle(title, tab)
+            : `${confirmTitles[confirm.action]} – ${title}`,
+        ...renderPatchPage({
           card,
           viewer,
           now,
           publicBaseUrl: session.publicBaseUrl,
           tab,
-          notice: refused ? settingsForbidden : options.notice,
-          readOnly: options.readOnly,
-          body,
-          panel,
-          menu: options.readOnly
-            ? undefined
-            : cardMenu(selected, viewer, session.publicBaseUrl, here)
+          here,
+          ...(refused
+            ? { notice: settingsForbidden }
+            : options.notice === undefined
+              ? {}
+              : { notice: options.notice }),
+          ...(options.readOnly === true ? { readOnly: true } : {}),
+          ...(failures === undefined ? {} : { failures }),
+          main,
+          aside
         }),
-        styles: styles + shareStyles,
+        // The Share dialog still carries its own layout.
+        ...(share === undefined ? {} : { styles: shareStyles }),
         status: refused ? 403 : (options.status ?? sharing?.status ?? 200),
-        app: { ...withOverlay(viewer, overlay), section: "patches" }
+        app: {
+          ...(confirmation === undefined
+            ? withOverlay(viewer, share)
+            : { viewer, overlay: confirmation }),
+          section: "patches"
+        }
       },
       session
     );
   }
 );
 
-const confirmationPage = Effect.fn("PatchPages.confirmationPage")(function* (
-  name: string,
-  action: ConfirmationAction,
-  form: {
-    status?: number;
-    notice?: string;
-    submittedName?: string;
-    nameError?: string;
-    selectedOwnerId?: string;
-    acknowledged?: boolean;
-  } = {}
-) {
-  const { viewer, session, access, query } = yield* context;
-  if (name.length > maxNameLength) return yield* overlongName;
-  if (!isName(name))
-    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  const patches = yield* Patches.Patches;
-  const rows = yield* patches.read({ ...access, state: "all" });
-  const selected = rows.find((row) => row.patch.name === name);
-  if (selected === undefined)
-    return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
-  yield* WideEvents.enrich(Patches.eventFields(selected.patch));
-  const card = yield* patches.portalCard(selected.patch.id, access);
-  if (viewer.role !== "admin" && (action === "reassign" || card.owner.id !== viewer.user.id))
-    return yield* render(name, {
-      status: 403,
-      notice: action === "reassign" ? adminRequired : forbidden
-    });
-  if (action === "restore" && form.status === undefined && card.offSources.length === 0)
-    return HttpServerResponse.redirect(`/patches/${encodeURIComponent(card.patch.name)}`, {
-      status: 303,
-      headers: { "cache-control": "private, no-store" }
-    });
-  if (
-    (action === "retire" && card.patch.state !== "live") ||
-    (action === "delete" && card.patch.state === "deleted") ||
-    (action === "restore" && card.patch.state === "live")
-  )
-    return yield* render(name, {
-      status: 409,
-      notice: `This patch is ${card.patch.state}. This action is not available. Nothing was done.`
-    });
-  const members = action === "reassign" ? yield* (yield* Users.Users).list(viewer.company.id) : [];
-  const now = yield* Clock.currentTimeMillis;
-  return pageResponse(
-    {
-      title: `${card.patch.name} ${action}`,
-      heading: "",
-      body: renderConfirmation({
-        card,
-        viewer,
-        now,
-        action,
-        members,
-        query,
-        notice: form.notice,
-        submittedName: form.submittedName,
-        nameError: form.nameError,
-        selectedOwnerId: form.selectedOwnerId,
-        acknowledged: form.acknowledged
-      }),
-      styles,
-      status: form.status ?? 200,
-      app: { viewer, section: "patches" }
-    },
-    session
-  );
+/** An act's dialog over the tab its form sits on: Retire, Delete, Restore, Reassign. */
+const confirmationPage = (name: string, action: ConfirmationAction) =>
+  render(name, { tab: behindOf[action], confirm: confirmOf(action) });
+
+/** Serve this version…: the dialog over Versions for the `?version=` it names. */
+const servePage = Effect.fn("PatchPages.servePage")(function* (name: string) {
+  const { url } = yield* context;
+  const versionNumber = Number(url.searchParams.get("version") ?? "");
+  return yield* render(name, {
+    tab: behindOf.rollback,
+    // Anything that isn't a kept version's number finds no version and goes back to Versions.
+    confirm: {
+      action: "rollback",
+      versionNumber: Number.isSafeInteger(versionNumber) ? versionNumber : 0
+    }
+  });
 });
 
 /** The patch's log for its current owner and admins: newest first, filtered and paged by cursor. */
@@ -348,7 +431,7 @@ const logPage = Effect.fn("PatchPages.logPage")(function* (name: string) {
     return yield* errorPage(404, "Patch not found", "The requested patch is unavailable.");
   yield* WideEvents.enrich(Patches.eventFields(selected.patch));
   // Ownership is read now, so reassignment moves who may read the log.
-  if (viewer.role !== "admin" && selected.owner.id !== viewer.user.id)
+  if (!canManage(selected, viewer))
     return yield* render(name, { status: 403, notice: logForbidden });
   const card = yield* patches.portalCard(selected.patch.id, access);
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -379,18 +462,21 @@ const logPage = Effect.fn("PatchPages.logPage")(function* (name: string) {
         .list(viewer.company.id)
         .pipe(Effect.orElseSucceed(() => []))
     : [];
+  const title = shownTitle(card.patch, viewer.company.name);
   return pageResponse(
     {
-      title: `${card.patch.name} log`,
-      heading: "",
-      body: renderCardFrame({
+      title: tabTitle(title, "log"),
+      ...renderPatchPage({
         card,
         viewer,
         now,
         publicBaseUrl: session.publicBaseUrl,
         tab: "log",
-        body: renderLog({
+        // Share opens over Overview: the dialog's forms return only to the pages `behind` keeps.
+        here: cardPath(card.patch),
+        main: renderLog({
           patch: card.patch,
+          title,
           now,
           names: {
             ...names,
@@ -407,16 +493,8 @@ const logPage = Effect.fn("PatchPages.logPage")(function* (name: string) {
           before,
           filter,
           choices
-        }),
-        // Share opens over Overview: the dialog's forms return only to the pages `behind` keeps.
-        menu: cardMenu(
-          selected,
-          viewer,
-          session.publicBaseUrl,
-          `/patches/${encodeURIComponent(name)}`
-        )
+        })
       }),
-      styles,
       app: { viewer, section: "patches" }
     },
     session
@@ -453,7 +531,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
         ? "This name now belongs to a different patch. Nothing was done."
         : "This form is out of date. Nothing was done."
     });
-  if (viewer.role !== "admin" && (action === "reassign" || selected.owner.id !== viewer.user.id))
+  if (viewer.role !== "admin" && (action === "reassign" || !canManage(selected, viewer)))
     return yield* render(name, {
       status: 403,
       notice: action === "reassign" ? adminRequired : forbidden
@@ -465,18 +543,20 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
       : undefined;
   // A refusal of a permitted act shows the tab its form is on; identity and permission refusals stay on Overview.
   const tab = tabOf[action];
+  // A refused act draws its dialog again over its tab, with the person's answers.
   const redisplay = (status: number, notice: string, nameError?: string) =>
     confirmation === undefined
       ? render(name, { tab, status, notice })
-      : confirmationPage(name, confirmation, {
+      : render(name, {
+          tab: behindOf[confirmation],
           status,
-          notice: nameError === undefined ? notice : undefined,
-          nameError,
-          submittedName: form.confirm ?? "",
-          selectedOwnerId: form.user ?? "",
-          acknowledged: form.ack === "1"
+          confirm: confirmOf(confirmation, {
+            ...(nameError === undefined ? { notice } : { nameError }),
+            submittedName: form.confirm ?? "",
+            selectedOwnerId: form.user ?? ""
+          })
         });
-  const title = patchTitle(selected.patch);
+  const title = shownTitle(selected.patch, viewer.company.name);
   // A done act lands on its tab with a receipt naming what it did, from the patch as read.
   const landed = (receipt: string) =>
     Receipt.set(
@@ -507,7 +587,9 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
           fields.expectedCurrentVersionId || null
         );
         yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
-        return landed(`${patchTitle(rolledBack.patch)} now serves v${rolledBack.currentVersion}`);
+        return landed(
+          `${shownTitle(rolledBack.patch, viewer.company.name)} now serves v${rolledBack.currentVersion}`
+        );
       }
       case "restore": {
         const fields = yield* decodeRestore(form);
@@ -547,16 +629,29 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
       notice: yield* staleNotice(selected.patch.id, state)
     });
   });
+  // A refused version draws its Serve dialog again over Versions, while that version is still one
+  // to ask about.
+  const versionNumber = Number(form.versionNumber ?? "");
   const invalid = (notice: string) =>
-    confirmation === undefined
-      ? render(name, {
-          tab,
-          status: 422,
-          ...(action === "description"
-            ? { submittedDescription: form.description ?? "", descriptionError: notice }
-            : { notice })
-        })
-      : redisplay(422, notice);
+    confirmation !== undefined
+      ? redisplay(422, notice)
+      : action === "rollback"
+        ? render(name, {
+            tab: behindOf.rollback,
+            status: 422,
+            confirm: {
+              action: "rollback",
+              versionNumber: Number.isSafeInteger(versionNumber) ? versionNumber : 0,
+              notice
+            }
+          })
+        : render(name, {
+            tab,
+            status: 422,
+            ...(action === "description"
+              ? { submittedDescription: form.description ?? "", descriptionError: notice }
+              : { notice })
+          });
   return yield* run.pipe(
     Effect.catchTags({
       StaleAction: () => stale(),
@@ -579,7 +674,15 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
         ),
       ReservedName: (error) => invalid(error.message),
       InvalidOwner: () =>
-        redisplay(409, "Choose an active member of this company. Nothing was done.")
+        render(name, {
+          tab: behindOf.reassign,
+          status: 409,
+          confirm: {
+            action: "reassign",
+            ownerError: "Choose an active member of this company. Nothing was done.",
+            selectedOwnerId: form.user ?? ""
+          }
+        })
     })
   );
 });
@@ -610,6 +713,11 @@ const patchRoutes = [
     path: `/patches/:name/${action}` as const,
     handle: (name: string) => confirmationPage(name, action)
   })),
+  {
+    method: "GET" as const,
+    path: "/patches/:name/rollback" as const,
+    handle: servePage
+  },
   ...(["description", "rollback", "retire", "delete", "restore", "reassign"] as const).map(
     (action) => ({
       method: "POST" as const,

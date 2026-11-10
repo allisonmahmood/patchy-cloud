@@ -14,6 +14,17 @@ export {
   textarea
 } from "./controls.js";
 export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
+export {
+  chipMenu,
+  codeRow,
+  groupedTable,
+  menuNewTab,
+  menuRule,
+  person,
+  refusalNotice,
+  settingsPanel
+} from "./detail.js";
+export type { ChipChoice, GroupedRow } from "./detail.js";
 export { uiScript, uiScriptPath, uiScriptTag } from "./enhancer.js";
 export { attentionRow } from "./attention.js";
 export { copyButton } from "./copy-button.js";

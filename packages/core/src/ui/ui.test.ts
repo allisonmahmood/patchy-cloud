@@ -3,6 +3,7 @@ import { appStyles } from "../styles/index.js";
 import {
   button,
   choiceGroup,
+  copyButton,
   dialog,
   doorPage,
   field,
@@ -100,6 +101,21 @@ describe("buttons", () => {
     );
     expect(linkButton("Cancel", "/x", { kind: "quiet" })).toBe(
       '<a class="btn btn-quiet" href="/x">Cancel</a>'
+    );
+  });
+
+  it("copy waits hidden for the copy script and names what it copies", () => {
+    expect(
+      copyButton('https://x.example/a?b="c"', {
+        kind: "quiet",
+        size: "sm",
+        ariaLabel: "Copy the link to Kudos"
+      })
+    ).toBe(
+      '<button class="btn btn-quiet btn-sm copy-button" type="button" data-copy="https://x.example/a?b=&quot;c&quot;" aria-label="Copy the link to Kudos" aria-live="polite" hidden>Copy</button>'
+    );
+    expect(copyButton("x", { label: "Copy link" })).toBe(
+      '<button class="btn copy-button" type="button" data-copy="x" aria-live="polite" hidden>Copy link</button>'
     );
   });
 

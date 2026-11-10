@@ -35,7 +35,6 @@ import {
   hidden,
   formFields,
   inputs,
-  radioValues,
   cardPath,
   menuItems,
   assertStale,
@@ -44,8 +43,29 @@ import {
   seedOf,
   logPath,
   agentHandlers,
-  publishAgentArea
+  publishAgentArea,
+  publishTier2
 } from "./test/fixtures.js";
+
+/** Overview's Recent activity section. */
+const activity = (html: string) =>
+  html.match(/<section class="section" id="recent-activity">[\s\S]*?<\/section>/)?.[0] ?? "";
+/** A log filter chip's choices, as `[label, href]`. */
+const chipChoices = (html: string, key: string) =>
+  links(
+    html.match(new RegExp(`<div class="menu" id="menu-log-${key}"[\\s\\S]*?</div>`))?.[0] ?? ""
+  ).map((link) => [link.text, link.href.replaceAll("&amp;", "&")] as const);
+/** The Reassign dialog's choices of a new owner, by user id, in order. */
+const ownerChoices = (html: string) =>
+  [
+    ...(html.match(/<select[^>]*name="user"[\s\S]*?<\/select>/)?.[0] ?? "").matchAll(
+      /<option value="([^"]*)"/g
+    )
+  ].map((match) => match[1]);
+
+/** The page's tabs, as their links read. */
+const tabLinks = (html: string) =>
+  links(html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)?.[0] ?? "").map((link) => link.text);
 
 it.layer(socket)("a patch's card on a socket", (it) => {
   it.effect("shows member, owner and admin views of one card and its retained versions", () =>
@@ -67,11 +87,13 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
         const html = yield* response.text;
-        // The title leads; the name the address uses sits under it.
+        // The title leads; the address its name makes sits under it, with the kind.
         assert.strictEqual(heading(html), "A useful office tool");
-        assert.include(html, `</h1><p class="supporting-text"><code>${patch.name}</code></p>`);
+        assert.include(
+          text(html.match(/<p class="ph-meta">[\s\S]*?<\/p>/)?.[0] ?? ""),
+          `Page · ${PUBLIC_BASE_URL.replace(/^https?:\/\//, "")}/${workspace.handle}/${patch.name}`
+        );
         assert.include(text(html), "Find the right person. Includes the whole company.");
-        assert.include(text(html), "Description edited by Priya");
         assert.include(text(html), "v5");
         assert.include(text(html), "by Priya");
         assert.isTrue(
@@ -79,35 +101,45 @@ it.layer(socket)("a patch's card on a socket", (it) => {
             (link) => link.href === `/${workspace.handle}/${patch.name}` && link.text === "Open"
           )
         );
-        assert.include(html, `${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}`);
+        assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/${patch.name}"`);
         // Overview holds no forms; the tabs say where they are.
         assert.deepStrictEqual(
           forms(html).filter((path) => path.startsWith(cardPath(patch.name))),
           []
         );
-        const tabs = links(html)
-          .filter((link) => link.href.startsWith(cardPath(patch.name)) && link.text !== "Share…")
-          .map((link) => link.text);
-        // Share… sits in the card's menu, for those who manage the patch.
+        // Share sits beside Open for those who manage the patch; ⋯ holds the rest.
         assert.strictEqual(
-          menuItems(html, `card-${patch.patchId}`),
-          `A useful office tool Open in a new tab Copy link${person === workspace.member ? "" : " Share…"}`
+          links(html).some((link) => link.href === `${cardPath(patch.name)}?share=${patch.name}`),
+          person !== workspace.member
+        );
+        assert.strictEqual(
+          menuItems(html, `patch-${patch.patchId}`),
+          `A useful office tool Open in a new tab Copy link${person === workspace.member ? "" : " Retire… Delete…"}`
         );
         const settings = yield* request(`${cardPath(patch.name)}/settings`, person);
         if (person === workspace.member) {
-          assert.deepStrictEqual(tabs, ["Overview", "Versions 5"]);
+          assert.deepStrictEqual(tabLinks(html), ["Overview", "Versions 5"]);
           assert.strictEqual(settings.status, 403);
           assert.include(
             text(yield* settings.text),
             "Only the owner or an admin can change this patch's settings."
           );
         } else {
-          assert.deepStrictEqual(tabs, ["Overview", "Log", "Versions 5", "Settings"]);
+          assert.deepStrictEqual(tabLinks(html), ["Overview", "Log", "Versions 5", "Settings"]);
           assert.strictEqual(settings.status, 200);
           const manage = yield* settings.text;
+          assert.deepStrictEqual(tabLinks(manage), ["Overview", "Log", "Versions 5", "Settings"]);
+          assert.include(text(manage), "Edited by Priya");
           const controls = forms(manage).filter((path) => path.startsWith(cardPath(patch.name)));
-          // Who can open it is the Share dialog's alone.
+          // Who can open it changes in the Share dialog.
           assert.deepStrictEqual(controls, [`${cardPath(patch.name)}/description`]);
+          assert.isTrue(
+            links(manage).some(
+              (link) =>
+                link.href === `${cardPath(patch.name)}/settings?share=${patch.name}` &&
+                link.text === "Change…"
+            )
+          );
           for (const action of ["retire", "delete"])
             assert.isTrue(
               links(manage).some((link) => link.href === `${cardPath(patch.name)}/${action}`)
@@ -124,16 +156,41 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         for (const version of [5, 4, 3, 2, 1])
           assert.match(history, new RegExp(`>\\s*v${version}\\s*<`));
         assert.include(text(history), "Priya");
-        if (person === workspace.member)
-          assert.isFalse(forms(history).some((path) => path.includes("/rollback")));
+        assert.include(text(history), "Serving");
+        // Versions holds no forms; Serve this version… asks in a dialog first.
+        assert.isFalse(forms(history).some((path) => path.includes("/rollback")));
+        const serve = links(history)
+          .filter((link) => link.text === "Serve this version…")
+          .map((link) => link.href);
+        if (person === workspace.member) assert.deepStrictEqual(serve, []);
         else {
-          assert.include(forms(history), `${cardPath(patch.name)}/rollback`);
           assert.deepStrictEqual(
-            [...history.matchAll(/name="versionNumber"\s+value="(\d+)"/g)].map((match) => match[1]),
-            ["4", "3", "2", "1"]
+            serve,
+            [4, 3, 2, 1].map((version) => `${cardPath(patch.name)}/rollback?version=${version}`)
           );
-          assert.isDefined(hidden(history, "expectedCurrentVersionId"));
+          const asked = yield* request(serve[0]!.replaceAll("&amp;", "&"), person);
+          assert.strictEqual(asked.status, 200);
+          const dialog = yield* asked.text;
+          assert.include(text(dialog), "Serve v4 instead of v5?");
+          assert.include(forms(dialog), `${cardPath(patch.name)}/rollback`);
+          assert.strictEqual(hidden(dialog, "versionNumber"), "4");
+          assert.isDefined(hidden(dialog, "expectedCurrentVersionId"));
+          assert.include(dialog, `data-close="${cardPath(patch.name)}/versions"`);
         }
+      }
+      // A member can't ask, and a version that isn't kept or already serves has nothing to ask.
+      const memberAsks = yield* request(
+        `${cardPath(patch.name)}/rollback?version=4`,
+        workspace.member
+      );
+      assert.strictEqual(memberAsks.status, 403);
+      for (const version of ["5", "9", "x", ""]) {
+        const nothing = yield* request(
+          `${cardPath(patch.name)}/rollback?version=${version}`,
+          workspace.owner
+        );
+        assert.strictEqual(nothing.status, 303);
+        assert.strictEqual(nothing.headers.location, `${cardPath(patch.name)}/versions`);
       }
     })
   );
@@ -152,11 +209,18 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           assert.strictEqual(response.status, 200);
           const html = yield* response.text;
           assert.strictEqual(heading(html), patch.name);
-          assert.include(text(html), state === "retired" ? "Retired by Sam" : "Deleted by Sam");
-          assert.include(
-            text(html),
-            state === "retired" ? "Off the shelf" : "Gone for good in 28 days"
-          );
+          // The status line says who took it down and when, and what that means now.
+          const status = text(html.match(/<div class="ph-status">[\s\S]*?<\/div>/)?.[0] ?? "");
+          if (state === "retired")
+            assert.match(
+              status,
+              /^Retired Retired by Sam on 1 Jan 2026 \. Nobody can open it until it’s restored\.$/
+            );
+          else
+            assert.match(
+              status,
+              /^Deleted Deleted by Sam on 3 Jan 2026 \. Gone for good on 2 Feb 2026 unless restored\.$/
+            );
           assert.isFalse(links(html).some((link) => link.text === "Open"));
           assert.notInclude(html, `${cardPath(patch.name)}/scope`);
           assert.notInclude(html, `${cardPath(patch.name)}/rollback`);
@@ -164,12 +228,10 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           const controls = forms(html).filter((path) => path.startsWith(cardPath(patch.name)));
           if (person === workspace.member) {
             assert.deepStrictEqual(controls, []);
-            assert.deepStrictEqual(
-              [...html.matchAll(/<dt>(.*?)<\/dt>/g)].map((match) => text(match[1]!)),
-              ["State"]
-            );
+            assert.notInclude(html, "<dt>");
+            assert.notInclude(html, `${cardPath(patch.name)}/restore`);
           } else {
-            // Restore leads the card; the rest of managing is under Settings.
+            // Restore is the header's primary; the rest of managing is under Settings.
             assert.deepStrictEqual(controls, [`${cardPath(patch.name)}/restore`]);
             assert.strictEqual(hidden(html, "expectedState"), state);
             const manage = yield* (yield* request(`${cardPath(patch.name)}/settings`, person)).text;
@@ -190,6 +252,79 @@ it.layer(socket)("a patch's card on a socket", (it) => {
     })
   );
 
+  it.effect(
+    "says on Overview's status line how many calls failed in the last day, for those who manage it",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const patch = yield* publishTier2(workspace.owner, "failing-tool");
+        const seed = seedOf(workspace.id, patch);
+        const statusOf = (html: string) =>
+          text(html.match(/<div class="ph-status">[\s\S]*?<\/div>/)?.[0] ?? "");
+        yield* invoke(seed, workspace.member, { handler: "deals.list", kind: "query" });
+        const quiet = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+        assert.notInclude(quiet, 'class="ph-status"');
+        const fail = invoke(seed, workspace.member, {
+          handler: "deals.move",
+          kind: "mutation",
+          outcome: "failure",
+          outcomeCode: "handler_failed"
+        });
+        yield* fail;
+        yield* fail;
+        for (const person of [workspace.owner, workspace.admin]) {
+          const html = yield* (yield* request(cardPath(patch.name), person)).text;
+          assert.strictEqual(statusOf(html), "2 failed calls in the last 24 hours View log");
+          assert.include(
+            links(html).map((link) => link.href),
+            logPath(patch.name, "?outcome=failed")
+          );
+          // Only on Overview; the other tabs keep the header quiet.
+          const versions = yield* (yield* request(`${cardPath(patch.name)}/versions`, person)).text;
+          assert.notInclude(versions, 'class="ph-status"');
+        }
+        const member = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
+        assert.notInclude(member, 'class="ph-status"');
+        // A day later they have dropped out of the window.
+        yield* TestClock.adjust(DAY + 1);
+        const later = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
+        assert.notInclude(later, 'class="ph-status"');
+      })
+  );
+
+  it.effect("holds one notice: a refusal over Overview leaves out why guests can't open it", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const guest = (yield* company()).member;
+      const source = yield* publishSource(workspace.owner, "guest-source");
+      // A patch reading another patch's table turns its guests away.
+      const patch = yield* publishDependant(workspace.owner, "guest-reader", source.patchId);
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId: patch.patchId,
+        userId: guest.id,
+        grantedBy: workspace.owner.id
+      });
+      const notices = (html: string) =>
+        [...html.matchAll(/<p class="notice-title">([^<]*)<\/p>/g)].map((match) => match[1]);
+      const clean = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
+      assert.deepStrictEqual(notices(clean), ["Guests can't open this"]);
+      yield* (yield* Patches.Patches).reassign(
+        patch.patchId,
+        actor(workspace.admin),
+        workspace.member.id
+      );
+      const stale = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
+        expectedPatchId: patch.patchId,
+        expectedOwnerUserId: workspace.owner.id,
+        user: workspace.admin.id
+      });
+      assert.strictEqual(stale.status, 409);
+      const refused = notices(yield* stale.text);
+      assert.strictEqual(refused.length, 1);
+      assert.match(refused[0]!, /^This patch changed while you had this page open/);
+    })
+  );
+
   it.effect("marks a deactivated owner on the card and warns admins", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
@@ -207,12 +342,12 @@ it.layer(socket)("a patch's card on a socket", (it) => {
 
   // render.test.ts owns the clause table; this pins the card and Home wiring.
 
-  it.effect("calls a patch by its title on the card, its name under it", () =>
+  it.effect("calls a patch by its title, less its company, its name in the address under it", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const description = "Find a desk. Keep the second sentence on the card.";
       const titled = yield* publish(workspace.owner, "office-map", {
-        title: "Office <map>",
+        title: "Office <map> · Northwind",
         description
       });
       const untitled = yield* publish(workspace.owner, "blank-title", {
@@ -222,12 +357,22 @@ it.layer(socket)("a patch's card on a socket", (it) => {
 
       const card = yield* (yield* request(cardPath(titled.name), workspace.member)).text;
       assert.strictEqual(heading(card), "Office &lt;map&gt;");
-      assert.include(card, '</h1><p class="supporting-text"><code>office-map</code></p>');
+      assert.include(card, "<title>Office &lt;map&gt; – All patches – Northwind</title>");
+      assert.include(
+        text(card.match(/<p class="ph-meta">[\s\S]*?<\/p>/)?.[0] ?? ""),
+        `/${workspace.handle}/office-map`
+      );
       assert.include(text(card.split(/<\/h1>/)[1] ?? ""), description);
       const bare = yield* (yield* request(cardPath(untitled.name), workspace.member)).text;
       assert.strictEqual(heading(bare), "blank-title");
-      assert.notInclude(bare, "</h1><p");
-      assert.include(text(bare), "No description");
+      // A member sees no description where there is none; its owner gets the way to add one.
+      assert.notInclude(text(bare), "No description");
+      const owned = yield* (yield* request(cardPath(untitled.name), workspace.owner)).text;
+      assert.include(text(owned), "No description yet. Add one");
+      assert.include(
+        links(owned).map((link) => link.href),
+        `${cardPath(untitled.name)}/settings`
+      );
     })
   );
 
@@ -374,10 +519,21 @@ it.layer(socket)("a patch's card on a socket", (it) => {
               hidden(html, "expectedState"),
               action === "retire" ? "live" : "not-deleted"
             );
+            // "Are you sure" for Retire, the typed name for Delete, each naming the act and the patch.
+            assert.include(
+              text(html.match(/<section class="dialog"[\s\S]*<\/section>/)?.[0] ?? ""),
+              action === "retire"
+                ? `Retire ${patch.name}? Nobody can open it until you or an admin restores it.`
+                : `Delete ${patch.name} It goes off its address now and is gone for good on`
+            );
+            assert.strictEqual(inputs(html, "confirm", "text").length, action === "delete" ? 1 : 0);
+            // Nothing reads it, so the dialog acknowledges nothing; Cancel goes back to Settings.
+            assert.isUndefined(hidden(html, "ack"));
             assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+            assert.include(html, `data-close="${cardPath(patch.name)}/settings"`);
             assert.include(
               links(html).map((link) => link.href),
-              `${cardPath(patch.name)}`
+              `${cardPath(patch.name)}/settings`
             );
             assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
             const response = yield* post(path, person, {
@@ -433,13 +589,17 @@ it.layer(socket)("a patch's card on a socket", (it) => {
             const page = yield* request(path, workspace.owner);
             assert.strictEqual(page.status, 200);
             const html = yield* page.text;
+            // The dialog names who reads it and what; pressing it is the acknowledgement.
             assert.include(text(html), first.name);
             assert.include(text(html), kind === "table" ? "notes" : "photos");
-            const card = yield* (yield* request(cardPath(source.name), workspace.owner)).text;
-            assert.include(text(card), first.name);
-            assert.include(text(card), kind === "table" ? "notes" : "photos");
             assert.include(text(html), workspace.member.name);
-            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            assert.strictEqual(hidden(html, "ack"), "1");
+            assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
+            const card = yield* (yield* request(cardPath(source.name), workspace.owner)).text;
+            assert.include(
+              text(card.match(/<dt>Used by<\/dt><dd>[\s\S]*?<\/dd>/)?.[0] ?? ""),
+              first.name
+            );
             const later = yield* publishDependant(
               workspace.owner,
               `${action}-later`,
@@ -459,7 +619,11 @@ it.layer(socket)("a patch's card on a socket", (it) => {
               assert.include(text(fresh), first.name);
               assert.include(text(fresh), later.name);
               assert.include(forms(fresh), path);
-              assert.strictEqual(inputs(fresh, "ack", "checkbox").length, 1);
+              assert.strictEqual(hidden(fresh, "ack"), "1");
+              assert.include(
+                text(fresh),
+                "These patches read this patch's tables. Acknowledge that they will break before continuing. Nothing was done."
+              );
               assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
               assert.deepStrictEqual(reported(source.patchId), []);
             }
@@ -535,11 +699,11 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           });
         if (action === "restore") yield* service.retire(original.patchId, actor(workspace.owner));
         const path = `${cardPath(original.name)}/${action}`;
-        // Each form's page: its card tab, or its confirmation page.
+        // Each form's page: its tab, or the dialog it asks in.
         const formPage = {
           description: `${cardPath(original.name)}/settings`,
           scope: `${cardPath(original.name)}?share=${original.name}`,
-          rollback: `${cardPath(original.name)}/versions`,
+          rollback: `${cardPath(original.name)}/rollback?version=1`,
           restore: cardPath(original.name),
           retire: path,
           delete: path,
@@ -641,11 +805,14 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           const path = `${cardPath(source.name)}/delete`;
           const page = yield* request(path, workspace.owner);
           assert.strictEqual(page.status, 200);
-          const fields = {
-            expectedPatchId: source.patchId,
-            expectedState: hidden(yield* page.text, "expectedState")!,
+          // The dialog's own form, not the Restore behind it while retired.
+          const fields: FormFields = {
+            ...formFields(yield* page.text, path),
             confirm: source.name
           };
+          assert.strictEqual(fields.expectedState, "not-deleted");
+          // Live, the dialog names its reader and acknowledges it; retired, it has none to name.
+          assert.strictEqual(fields.ack, initialState === "live" ? "1" : undefined);
           if (initialState === "live")
             yield* service.retire(source.patchId, actor(workspace.admin), true);
           else yield* service.restore(source.patchId, actor(workspace.admin));
@@ -657,7 +824,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
             assert.strictEqual(response.status, 409);
             const html = yield* response.text;
             assert.include(text(html), dependant.name);
-            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            assert.strictEqual(hidden(html, "ack"), "1");
             assert.deepStrictEqual(yield* readPatch(workspace.owner, source.patchId), before);
             assert.strictEqual(
               (yield* post(path, workspace.owner, { ...fields, ack: "1" })).status,
@@ -887,8 +1054,14 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           rollback: before.patch.currentVersionId ?? "",
           restore: before.patch.state
         }[action];
-        assert.strictEqual(hidden(html, expectedName), expectedValue);
-        assert.include(forms(html), `${cardPath(patch.name)}/${action}`);
+        // The fresh form: on the tab, or, for a version, in the dialog Versions links to.
+        const fresh =
+          action === "rollback"
+            ? yield* (yield* request(`${cardPath(patch.name)}/rollback?version=2`, workspace.owner))
+                .text
+            : html;
+        assert.strictEqual(hidden(fresh, expectedName), expectedValue);
+        assert.include(forms(fresh), `${cardPath(patch.name)}/${action}`);
         assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
       })
     );
@@ -982,7 +1155,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
       assert.match(html, /<label\b[^>]*for="description"[^>]*>Description<\/label>/);
       assert.match(
         html,
-        /<textarea\b[^>]*aria-describedby="description-hint description-error"[^>]*aria-invalid="true"/
+        /<textarea\b[^>]*aria-describedby="description-error"[^>]*aria-invalid="true"/
       );
       assert.match(html, /<p\b[^>]*id="description-error"[^>]*>[^<]*500[^<]*<\/p>/);
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
@@ -1006,6 +1179,39 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         "/settings/people"
       );
       assert.strictEqual(heading(html), patch.name);
+      // No such version to ask about again, so Versions says what was refused.
+      assert.include(html, 'aria-current="page">Versions');
+      assert.include(text(html), "Nothing was done.");
+      assert.notInclude(html, "data-dialog");
+      assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
+    })
+  );
+
+  it.effect("draws the Serve dialog again with its refusal, its version kept", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const service = yield* Patches.Patches;
+      // A tool's version can't serve while the patch is public.
+      const patch = yield* publishTier2(workspace.owner, "serve-refused");
+      yield* publish(workspace.owner, patch.name, { intent: "update", patchId: patch.patchId });
+      yield* service.setScope(patch.patchId, actor(workspace.owner), "public");
+      const before = yield* readPatch(workspace.owner, patch.patchId);
+      const path = `${cardPath(patch.name)}/rollback`;
+      const asked = yield* (yield* request(`${path}?version=1`, workspace.owner)).text;
+      const response = yield* post(path, workspace.owner, formFields(asked, path));
+      assert.strictEqual(response.status, 422);
+      const html = yield* response.text;
+      const dialog = html.match(/<section class="dialog"[\s\S]*<\/section>/)?.[0] ?? "";
+      assert.include(text(dialog), "Serve v1 instead of v2?");
+      assert.strictEqual(hidden(dialog, "versionNumber"), "1");
+      // The refusal sits above the buttons and takes focus in place of Keep v2.
+      assert.match(
+        dialog,
+        /<div class="refusal" tabindex="-1" autofocus><div class="notice notice-danger" role="alert">/
+      );
+      assert.include(text(dialog), "Nothing was done.");
+      assert.strictEqual(dialog.match(/autofocus/g)?.length, 1);
+      assert.include(html, `data-close="${cardPath(patch.name)}/versions"`);
       assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
     })
   );
@@ -1071,11 +1277,12 @@ it.layer(socket)("a patch's card on a socket", (it) => {
           const page = yield* request(path, viewer);
           assert.strictEqual(page.status, 200);
           for (const html of [yield* page.text, refusedHtml]) {
-            assert.include(text(html), `${gone.patchId} / notes : gone`);
+            assert.include(text(html), `${gone.patchId} notes · gone`);
             assert.include(forms(html), path);
             assert.strictEqual(hidden(html, "expectedPatchId"), consumer.patchId);
             assert.strictEqual(hidden(html, "expectedState"), state);
-            assert.strictEqual(inputs(html, "ack", "checkbox").length, 1);
+            // The dialog names the sources still off; pressing Restore acknowledges them.
+            assert.strictEqual(hidden(html, "ack"), "1");
             assert.include(
               links(html).map((link) => link.href),
               `${cardPath(consumer.name)}`
@@ -1105,7 +1312,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
   );
 
   it.effect(
-    "filters reassignment to active company members and redisplays invalid targets without changing ownership",
+    "offers reassignment to active company members and redisplays invalid targets without changing ownership",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
@@ -1113,64 +1320,54 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         const users = yield* Users.Users;
         const patch = yield* publish(workspace.owner, "reassign-picker");
         const path = `${cardPath(patch.name)}/reassign`;
-        const page = yield* request(`${path}`, workspace.admin);
+        const page = yield* request(path, workspace.admin);
         assert.strictEqual(page.status, 200);
         const html = yield* page.text;
-        assert.sameMembers(radioValues(html), [
-          workspace.owner.id,
+        // A dialog over Settings, one form choosing among the company's active people.
+        assert.include(html, `data-close="${cardPath(patch.name)}/settings"`);
+        assert.deepStrictEqual(ownerChoices(html), [
+          "",
           workspace.member.id,
+          workspace.owner.id,
           workspace.admin.id
         ]);
+        assert.include(
+          text(html),
+          `${workspace.owner.name} (${workspace.owner.email}), owns it now`
+        );
+        // A choice, not a destructive act: the dialog starts on the field, not on Cancel.
+        assert.notInclude(html.slice(html.indexOf('id="patch-reassign"')), "autofocus");
         assert.notInclude(html, foreign.owner.email);
-        assert.match(html, /<form\b[^>]*method="get"/i);
-        assert.match(html, /<form\b[^>]*method="post"/i);
-        // One search on the page itself; the sidebar carries its own.
-        assert.strictEqual(inputs(html.slice(html.indexOf("<main")), "q", "search").length, 1);
         assert.strictEqual(hidden(html, "expectedOwnerUserId"), workspace.owner.id);
-        const matching = yield* request(`${path}?q=aLeX`, workspace.admin);
-        assert.strictEqual(matching.status, 200);
-        assert.deepStrictEqual(radioValues(yield* matching.text), [workspace.member.id]);
-        const emailMatch = yield* request(
-          `${path}?q=${encodeURIComponent(workspace.owner.email)}`,
-          workspace.admin
-        );
-        assert.deepStrictEqual(radioValues(yield* emailMatch.text), [workspace.owner.id]);
-        const noMatch = yield* request(`${path}?q=nobody-has-this-name`, workspace.admin);
-        assert.strictEqual(noMatch.status, 200);
-        const empty = yield* noMatch.text;
-        assert.deepStrictEqual(radioValues(empty), []);
-        assert.strictEqual(
-          hidden(empty.slice(empty.indexOf("<main")), "q"),
-          "nobody-has-this-name"
-        );
-        assert.match(empty, /<button\b(?=[^>]*type="submit")(?=[^>]*\bdisabled)[^>]*>/);
         yield* users.deactivate({ companyId: workspace.id, userId: workspace.member.id });
         const before = yield* readPatch(workspace.owner, patch.patchId);
-        for (const target of [workspace.member.id, foreign.owner.id, "usr_missing"]) {
-          const refused = yield* post(`${path}?q=Alex`, workspace.admin, {
+        for (const target of [workspace.member.id, foreign.owner.id, "usr_missing", ""]) {
+          const refused = yield* post(path, workspace.admin, {
             expectedPatchId: patch.patchId,
             expectedOwnerUserId: workspace.owner.id,
             user: target
           });
           assert.strictEqual(refused.status, 409);
           const fresh = yield* refused.text;
-          assert.notStrictEqual(heading(fresh), patch.name);
-          assert.strictEqual(hidden(fresh, "q"), "");
-          assert.sameMembers(radioValues(fresh), [workspace.owner.id, workspace.admin.id]);
-          assert.notMatch(fresh, /<button\b[^>]*\bdisabled/);
-          assert.include(forms(fresh), `${path}`);
+          // The refusal sits under the owner field it is about, which the dialog starts on.
+          assert.match(
+            fresh,
+            /<select\b[^>]*aria-describedby="reassign-owner-error"[^>]*aria-invalid="true"[^>]*name="user"/
+          );
+          assert.include(
+            fresh,
+            '<p class="field-error" id="reassign-owner-error">Choose an active member of this company. Nothing was done.</p>'
+          );
+          assert.notInclude(fresh.slice(fresh.indexOf('id="patch-reassign"')), "autofocus");
+          assert.deepStrictEqual(ownerChoices(fresh), ["", workspace.owner.id, workspace.admin.id]);
+          assert.include(forms(fresh), path);
           assert.include(
             links(fresh).map((link) => link.href),
-            `${cardPath(patch.name)}`
+            `${cardPath(patch.name)}/settings`
           );
           assert.deepStrictEqual(yield* readPatch(workspace.owner, patch.patchId), before);
         }
-        const active = yield* request(path, workspace.admin);
-        assert.sameMembers(radioValues(yield* active.text), [
-          workspace.owner.id,
-          workspace.admin.id
-        ]);
-        const recovered = yield* post(`${path}`, workspace.admin, {
+        const recovered = yield* post(path, workspace.admin, {
           expectedPatchId: patch.patchId,
           expectedOwnerUserId: workspace.owner.id,
           user: workspace.admin.id
@@ -1206,7 +1403,7 @@ it.layer(socket)("a patch's card on a socket", (it) => {
         assert.strictEqual(page.status, 200);
         const html = yield* page.text;
         assert.strictEqual(hidden(html, "expectedOwnerUserId"), currentOwner);
-        assert.include(radioValues(html), next.id);
+        assert.include(ownerChoices(html), next.id);
         yield* TestClock.adjust(1_000);
         const response = yield* post(path, workspace.admin, {
           expectedPatchId: patch.patchId,
@@ -1527,11 +1724,13 @@ it.layer(socket)("a patch's card on a socket", (it) => {
   );
 });
 
-const agentPanel = (html: string) => html.match(/<aside class="side-panel"[\s\S]*?<\/aside>/)?.[0];
-/** The panel's tools as `name kind`, in order. */
+const agentPanel = (html: string) => html.match(/<aside class="aside">[\s\S]*?<\/aside>/)?.[0];
+/** The aside's tools as `name kind`, in order. */
 const agentTools = (html: string) =>
   [
-    ...(agentPanel(html) ?? "").matchAll(/<summary><code>([^<]*)<\/code><span class="tag">(\w+)/g)
+    ...(agentPanel(html) ?? "").matchAll(
+      /<span class="row-name code">([^<]*)<\/span>[\s\S]*?<span class="meta">(\w+)<\/span>/g
+    )
   ].map((match) => `${match[1]} ${match[2]}`);
 
 it.layer(socket)("what agents can do on a socket", (it) => {
@@ -1548,7 +1747,7 @@ it.layer(socket)("what agents can do on a socket", (it) => {
 
       for (const person of [workspace.member, workspace.owner, workspace.admin]) {
         const html = yield* (yield* request(cardPath(patch.name), person)).text;
-        assert.include(html, '<div class="card-split"><article class="portal-card">');
+        assert.include(html, '<div class="split"><div class="split-main">');
         const panel = agentPanel(html) ?? "";
         // In open_patch's order, page handlers left out; a read-only action reads.
         assert.deepStrictEqual(agentTools(html), [
@@ -1559,19 +1758,19 @@ it.layer(socket)("what agents can do on a socket", (it) => {
         ]);
         assert.include(
           text(panel),
-          "What agents can do As the person who connected them. addNote Changes Add a note to a deal's timeline."
+          "Your agent can, as you addNote Add a note to a deal's timeline Changes"
         );
-        assert.include(panel, "Search the pipeline for &lt;b&gt;open&lt;/b&gt; deals.");
+        assert.include(panel, "Search the pipeline for &lt;b&gt;open&lt;/b&gt; deals");
         assert.deepStrictEqual(links(panel), [
-          { href: "/agents/connect?app=claude", text: "Connect your agent" }
+          { href: "/agents/connect", text: "Use with your agent" }
         ]);
-        assert.notInclude(panel, "note-warn");
+        assert.notInclude(text(panel), "Agent access is off");
       }
       // Only beside the Overview.
       const versions = yield* (yield* request(`${cardPath(patch.name)}/versions`, workspace.member))
         .text;
       assert.isUndefined(agentPanel(versions));
-      assert.notInclude(versions, `<div class="card-split">`);
+      assert.notInclude(versions, `<div class="split">`);
 
       // Off, the panel names the admins in place of the connect link; an admin can turn it on.
       yield* companies.setAgentAccess({
@@ -1584,14 +1783,14 @@ it.layer(socket)("what agents can do on a socket", (it) => {
       );
       assert.include(
         text(member ?? ""),
-        "Agent access is off at Northwind No agent can use these yet. Only admins can turn it on. At Northwind that’s Sam."
+        "Agent access is off at Northwind, so no agent can use these yet. Only admins can turn it on: Sam."
       );
       assert.deepStrictEqual(links(member ?? ""), []);
       assert.strictEqual(agentTools(member ?? "").length, 4);
       const admin = agentPanel(yield* (yield* request(cardPath(patch.name), workspace.admin)).text);
-      assert.include(text(admin ?? ""), "At Northwind that’s you.");
+      assert.include(text(admin ?? ""), "Only admins can turn it on: you.");
       assert.deepStrictEqual(links(admin ?? ""), [
-        { href: "/settings/agent-access", text: "Turn it on in Settings" }
+        { href: "/settings/agent-access", text: "Turn it on" }
       ]);
     })
   );
@@ -1621,8 +1820,8 @@ it.layer(socket)("what agents can do on a socket", (it) => {
       for (const name of [pageOnly.name, page.name, rolled.name, retired.name]) {
         const html = yield* (yield* request(cardPath(name), workspace.admin)).text;
         assert.isUndefined(agentPanel(html), name);
-        assert.notInclude(html, `<div class="card-split">`, name);
-        assert.notInclude(text(html), "What agents can do", name);
+        assert.notInclude(html, `<div class="split">`, name);
+        assert.notInclude(text(html), "Your agent can, as you", name);
       }
     })
   );
@@ -1682,11 +1881,13 @@ it.layer(socket)("patch log on a socket", (it) => {
       const html = yield* response.text;
       const page = text(html);
       assert.strictEqual(heading(html), "Sales CRM");
-      assert.include(page, "This is an attribution record, not an access audit.");
-      assert.include(page, "Log lines are written by the patch itself.");
       assert.notInclude(page, "secret.export");
-      assert.include(page, "Alex v1 leads.import action Failed handler_failed 2.4 s");
-      const tree = text(html.match(/<details open>([\s\S]*?)<\/details>/)?.[1] ?? "");
+      assert.include(page, "Today · Thursday 1 Jan");
+      assert.include(page, "Alex leads.import action v1 Failed handler_failed 2.4 s");
+      // A failed entry opens to its calls; the permalink names the disclosure, which it opens.
+      const tree = text(
+        html.match(/<details id="entry-[^"]+" open>([\s\S]*?)<\/details>/)?.[1] ?? ""
+      );
       assert.strictEqual(
         tree,
         [
@@ -1761,18 +1962,21 @@ it.layer(socket)("patch log on a socket", (it) => {
       yield* invoke(seed, workspace.admin, { handler: "pipeline.summary", kind: "query" });
       for (const person of [workspace.owner, workspace.admin]) {
         const html = yield* (yield* request(cardPath(patch.name), person)).text;
-        const section = text(
-          html.match(/<section[^>]*activity-heading[\s\S]*?<\/section>/)?.[0] ?? ""
-        );
+        const section = text(activity(html));
         assert.strictEqual(
           section,
           [
-            "Recent activity",
-            "Sam · Busy Tool v1 · pipeline.summary (query) Succeeded 1 Jan 00:00 UTC · 30 ms",
-            "Priya · Busy Tool v1 · deals.moveStage (mutation) Refused write_conflict 1 Jan 00:00 UTC · 30 ms · 3 attempts",
-            "Alex · Busy Tool v1 · leads.export (action) Succeeded 1 Jan 00:00 UTC · 1.8 s · reply not delivered",
-            "See the full log"
+            "Recent activity View log",
+            "Sam · pipeline.summary 1 Jan 00:00 UTC · v1 query · 30 ms Succeeded",
+            "Priya · deals.moveStage 1 Jan 00:00 UTC · v1 mutation · 30 ms · 3 attempts Refused write_conflict",
+            "Alex · leads.export 1 Jan 00:00 UTC · v1 action · 1.8 s · reply not delivered Succeeded"
           ].join(" ")
+        );
+        // Each entry opens its place in the log.
+        assert.isTrue(
+          links(activity(html)).every((link) =>
+            new RegExp(`^${logPath(patch.name)}(#entry-[^"]+)?$`).test(link.href)
+          )
         );
         assert.include(
           links(html).map((link) => link.href),
@@ -1810,29 +2014,23 @@ it.layer(socket)("patch log on a socket", (it) => {
 
       const log = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
       assert.notInclude(log, "<Code>");
-      assert.include(text(log), `${shown} v1 agent.logCalls action Succeeded`);
-      assert.include(text(log), "Alex v1 calls.add mutation Succeeded");
+      assert.include(text(log), `${shown} agent.logCalls action v1 Succeeded`);
+      assert.include(text(log), "Alex calls.add mutation v1 Succeeded");
       assert.include(
         text(log),
         `customers.list (connection call) · as ${shown} Succeeded 12 ms · 2 rows`
       );
       // The person filter is unchanged: the agent's work is its person's.
       assert.deepStrictEqual(
-        [
-          ...(log.match(/<select[^>]*name="person"[\s\S]*?<\/select>/)?.[0] ?? "").matchAll(
-            /<option value="[^"]+">([^<]*)<\/option>/g
-          )
-        ].map((match) => match[1]),
-        ["Alex"]
+        chipChoices(log, "person").map(([label]) => label),
+        ["Anyone", "Alex"]
       );
 
       const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
       assert.notInclude(card, "<Code>");
-      const activity = text(
-        card.match(/<section[^>]*activity-heading[\s\S]*?<\/section>/)?.[0] ?? ""
-      );
-      assert.include(activity, `${shown} · Call Log v1 · agent.logCalls (action) Succeeded`);
-      assert.include(activity, "Alex · Call Log v1 · calls.add (mutation) Succeeded");
+      const recent = text(activity(card));
+      assert.include(recent, `${shown} · agent.logCalls 1 Jan 00:00 UTC · v1 action`);
+      assert.include(recent, "Alex · calls.add 1 Jan 00:00 UTC · v1 mutation");
     })
   );
 
@@ -1845,31 +2043,29 @@ it.layer(socket)("patch log on a socket", (it) => {
 
       const log = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
       assert.notInclude(text(log), guest.id);
-      assert.include(text(log), `${guest.name} v1 notes.add mutation Succeeded`);
-      assert.deepStrictEqual(
-        [
-          ...(log.match(/<select[^>]*name="person"[\s\S]*?<\/select>/)?.[0] ?? "").matchAll(
-            /<option value="([^"]+)">([^<]*)<\/option>/g
-          )
-        ].map((match) => [match[1], match[2]]),
-        [[guest.id, guest.name]]
-      );
+      assert.include(text(log), `${guest.name} notes.add mutation v1 Succeeded`);
+      assert.deepStrictEqual(chipChoices(log, "person"), [
+        ["Anyone", logPath(patch.name)],
+        [guest.name, logPath(patch.name, `?person=${guest.id}`)]
+      ]);
       const card = yield* (yield* request(cardPath(patch.name), workspace.owner)).text;
-      assert.include(text(card), `${guest.name} · Guest Log v1 · notes.add (mutation) Succeeded`);
+      assert.include(text(activity(card)), `${guest.name} · notes.add`);
     })
   );
 
-  it.effect("offers Share in the Log tab's menu, opening over Overview", () =>
+  it.effect("keeps the header on the Log tab, its Share opening over Overview", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "logged-tool");
       const html = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
+      assert.include(html, "<title>Log – logged-tool – All patches – Northwind</title>");
+      assert.deepStrictEqual(tabLinks(html), ["Overview", "Log", "Versions 1", "Settings"]);
       assert.strictEqual(
-        menuItems(html, `card-${patch.patchId}`),
-        "logged-tool Open in a new tab Copy link Share…"
+        menuItems(html, `patch-${patch.patchId}`),
+        "logged-tool Open in a new tab Copy link Retire… Delete…"
       );
       assert.strictEqual(
-        links(html).find((link) => link.text === "Share…")?.href,
+        links(html).find((link) => link.text === "Share")?.href,
         `${cardPath(patch.name)}?share=${patch.name}`
       );
     })
@@ -1880,7 +2076,7 @@ it.layer(socket)("patch log on a socket", (it) => {
       const workspace = yield* company();
       const patch = yield* publish(workspace.owner, "paged-tool");
       const empty = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
-      assert.include(text(empty), "Nothing logged yet.");
+      assert.include(text(empty), "Nothing logged yet");
       assert.notInclude(empty, "<table");
       const seed = seedOf(workspace.id, patch);
       for (let index = 0; index < 26; index++)
@@ -1891,7 +2087,7 @@ it.layer(socket)("patch log on a socket", (it) => {
         });
       const first = yield* (yield* request(logPath(patch.name), workspace.owner)).text;
       const handlers = (html: string) =>
-        [...html.matchAll(/<td><code>(step\.\d+)<\/code><\/td>/g)].map((match) => match[1]);
+        [...html.matchAll(/<td><code>(step\.\d+)<\/code>/g)].map((match) => match[1]);
       assert.strictEqual(handlers(first).length, 25);
       assert.strictEqual(handlers(first)[0], "step.25");
       const older = links(first).find((link) => link.text === "Older entries");
@@ -1907,11 +2103,14 @@ it.layer(socket)("patch log on a socket", (it) => {
         workspace.owner
       )).text;
       assert.deepStrictEqual(handlers(failed), ["step.00"]);
+      // The chip says what narrows the list, and Any drops it again.
+      assert.include(failed, '<span class="chip-key">Outcome</span>Failed');
+      assert.deepStrictEqual(chipChoices(failed, "outcome")[0], ["Any", logPath(patch.name)]);
       const nothing = yield* (yield* request(
         logPath(patch.name, `?outcome=failed&person=${workspace.owner.id}`),
         workspace.owner
       )).text;
-      assert.include(text(nothing), "No entries match these filters.");
+      assert.include(text(nothing), "No entries match these filters");
       assert.strictEqual(
         links(nothing).find((link) => link.text === "Clear filters")?.href,
         logPath(patch.name)

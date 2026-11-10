@@ -39,6 +39,61 @@ const recoveryEnded =
   '<p class="supporting-text">The recovery window has ended. This patch can no longer be restored.</p>';
 
 /**
+ * Where a retired or deleted patch stands: who took it down and when, and, once deleted, when it
+ * is reclaimed for good. A retired patch can always be restored; a deleted one until `reclaimAt`.
+ * The patch's page and the notice at its old address both read it.
+ */
+export interface Recovery {
+  readonly state: "retired" | "deleted";
+  readonly actorName: string | null;
+  /** When it was retired or deleted. */
+  readonly at: string | null;
+  /** When a deleted patch is reclaimed for good; null while retired. */
+  readonly reclaimAt: string | null;
+  /** Whole days until `reclaimAt`, 0 once it has passed; null while retired. */
+  readonly daysLeft: number | null;
+  readonly restorable: boolean;
+}
+
+export const recovery = (input: {
+  readonly state: "retired" | "deleted";
+  readonly actorName: string | null;
+  readonly stateAt: string | null;
+  readonly purgeAt: string | null;
+  readonly now: number;
+}): Recovery => {
+  const retired = input.state === "retired";
+  const deadline =
+    input.purgeAt === null ? null : DateTime.toEpochMillis(DateTime.makeUnsafe(input.purgeAt));
+  return {
+    state: input.state,
+    actorName: input.actorName,
+    at: input.stateAt,
+    reclaimAt: retired ? null : input.purgeAt,
+    daysLeft: retired ? null : deadline === null ? 0 : daysLeft(deadline, input.now),
+    restorable: retired || (deadline !== null && input.now < deadline)
+  };
+};
+
+const timeLabel = (iso: string) =>
+  `<time datetime="${escapeAttribute(iso)}">${escapeHtml(dateLabel(iso))}</time>`;
+
+/**
+ * The status line's words for a retired or deleted patch, as HTML: who and when, then what that
+ * means now. "Deleted by Sam on 5 Nov 2026. Gone for good on 5 Dec 2026 unless restored."
+ */
+export const recoveryLine = (state: Recovery): string => {
+  const who = `${state.state === "retired" ? "Retired" : "Deleted"}${state.actorName === null ? "" : ` by ${escapeHtml(state.actorName)}`}${state.at === null ? "" : ` on ${timeLabel(state.at)}`}.`;
+  const then =
+    state.state === "retired"
+      ? "Nobody can open it until it’s restored."
+      : state.restorable && state.reclaimAt !== null
+        ? `Gone for good on ${timeLabel(state.reclaimAt)} unless restored.`
+        : "The recovery window has ended, so it can no longer be restored.";
+  return `${who} ${then}`;
+};
+
+/**
  * Callers decide who may restore and supply their own action URL and page composition. The
  * restore form carries the patch id, which the portal checks before acting on the name.
  */
@@ -56,11 +111,10 @@ export const renderOffPatch = (input: {
     readonly currentVersion?: number;
   } | null;
 }) => {
-  const { name, state, actorName, stateAt, now } = input;
+  const { name, state, actorName, stateAt } = input;
   const retired = state === "retired";
-  const deadline =
-    input.purgeAt === null ? null : DateTime.toEpochMillis(DateTime.makeUnsafe(input.purgeAt));
-  const expired = !retired && (deadline === null || now >= deadline);
+  const standing = recovery(input);
+  const expired = !standing.restorable;
   const when =
     stateAt === null
       ? ""
@@ -68,7 +122,7 @@ export const renderOffPatch = (input: {
   const stateFact = `<dt>State</dt><dd>${retired ? "Retired" : "Deleted"}${actorName === null ? "" : ` by ${escapeHtml(actorName)}`}${when}</dd>`;
   const note = retired
     ? `<div class="note"><span class="note-title">Off the shelf, kept as it was</span>Its tables, files and all its versions are kept for as long as you like; nobody can open <code>${escapeHtml(name)}</code> until it is restored.</div>`
-    : `<div class="note note-warn"><span class="note-title">Gone for good in ${deadline === null ? 0 : daysLeft(deadline, now)} days</span>Until then the owner or an admin can restore it; after that the page, its versions, tables, files and the name are all reclaimed.</div>`;
+    : `<div class="note note-warn"><span class="note-title">Gone for good in ${standing.daysLeft ?? 0} days</span>Until then the owner or an admin can restore it; after that the page, its versions, tables, files and the name are all reclaimed.</div>`;
   let restoreControl = "";
   let restoreHint = "";
   if (input.restore !== null && !expired) {

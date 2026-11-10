@@ -29,7 +29,7 @@ import {
 } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
 import { Limits } from "@patchy/limits";
-import { MachineTokens, RequireSession, Session } from "@patchy/auth";
+import { AgentConnections, MachineTokens, RequireSession, Session } from "@patchy/auth";
 import { clerkEnv, PUBLIC_BASE_URL, signedInCookies, signSession } from "@patchy/auth/testing";
 import { Companies, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../../test/crypto.js";
@@ -102,6 +102,7 @@ export const services = Layer.mergeAll(
   Companies.layer,
   InvocationLog.layer,
   MachineTokens.layer,
+  AgentConnections.layer,
   Limits.layer
 ).pipe(
   Layer.provideMerge(recordingAnalytics),

@@ -1,15 +1,36 @@
 import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
-import { renderAgentPanel } from "./render.js";
+import { renderAgentAside, shownTitle } from "./render.js";
 
-describe("renderAgentPanel", () => {
-  const viewer = (role: "admin" | "member") =>
-    ({
-      user: { id: "usr_jordan", email: "jordan@brightline.example", name: "Jordan Lee" },
-      company: { id: "cmp_brightline", handle: "brightline", name: "Bright & <Co>" },
-      role,
-      whatsNewSeen: 0
-    }) satisfies RequireSession.Viewer["Service"];
+const viewer = (role: "admin" | "member") =>
+  ({
+    user: { id: "usr_jordan", email: "jordan@brightline.example", name: "Jordan Lee" },
+    company: { id: "cmp_brightline", handle: "brightline", name: "Bright & <Co>" },
+    role,
+    whatsNewSeen: 0
+  }) satisfies RequireSession.Viewer["Service"];
+
+describe("shownTitle", () => {
+  const patch = (title: string) => ({ name: "new-business", title });
+
+  it("leaves out the company its own HTML names after the title", () => {
+    for (const title of [
+      "New Business · Brightline Studio",
+      "New Business | brightline studio",
+      "New Business – Brightline Studio",
+      "New Business - Brightline Studio"
+    ])
+      expect(shownTitle(patch(title), "Brightline Studio")).toBe("New Business");
+  });
+
+  it("keeps a title whose last part is anything else, and falls back to the name", () => {
+    expect(shownTitle(patch("Pitch · Library"), "Brightline Studio")).toBe("Pitch · Library");
+    expect(shownTitle(patch("Brightline Studio"), "Brightline Studio")).toBe("Brightline Studio");
+    expect(shownTitle(patch("  "), "Brightline Studio")).toBe("new-business");
+  });
+});
+
+describe("renderAgentAside", () => {
   const tools = [
     { name: "findDeals", kind: "read" as const, description: "Search <b>open</b> deals." },
     { name: "moveDeal", kind: "change" as const, description: "Move one deal." }
@@ -20,36 +41,48 @@ describe("renderAgentPanel", () => {
     { id: "usr_priya", name: "Priya Shah" }
   ];
 
-  it("lists each tool with its kind and escaped description, then the connect link", () => {
-    const html = renderAgentPanel({ tools, viewer: viewer("member"), admins: null });
+  it("lists each tool with the first clause of what it does, escaped, then the way to use them", () => {
+    const html = renderAgentAside({ tools, viewer: viewer("member"), admins: null, apps: [] });
+    expect(html).toContain('<h2 class="section-title">Your agent can, as you</h2>');
     expect(html).toContain(
-      '<summary><code>findDeals</code><span class="tag">Reads</span></summary><p class="supporting-text">Search &lt;b&gt;open&lt;/b&gt; deals.</p>'
+      '<span class="row-name code">findDeals</span><span class="row-desc">Search &lt;b&gt;open&lt;/b&gt; deals</span></div><div class="row-end"><span class="meta">Reads</span>'
     );
-    expect(html).toContain('<code>moveDeal</code><span class="tag">Changes</span>');
-    expect(html).toContain('<a href="/agents/connect?app=claude">Connect your agent</a>');
-    expect(html).not.toContain("note-warn");
+    expect(html).toContain('<span class="row-name code">moveDeal</span>');
+    expect(html).toContain('<span class="meta">Changes</span>');
+    expect(html).toContain('href="/agents/connect">Use with your agent</a>');
   });
 
-  it("names every admin while access is off, the viewer first as you", () => {
-    const html = renderAgentPanel({ tools, viewer: viewer("admin"), admins });
-    expect(html).toContain("Agent access is off at Bright &amp; &lt;Co&gt;");
+  it("says which of the viewer's own apps are connected in place of the way to connect one", () => {
+    const html = renderAgentAside({
+      tools,
+      viewer: viewer("member"),
+      admins: null,
+      apps: ["Claude <Code>", "Codex", "Claude <Code>"]
+    });
     expect(html).toContain(
-      "At Bright &amp; &lt;Co&gt; that’s you, Allison &lt;A&gt; and Priya Shah."
+      '<span class="dot dot-success">Claude &lt;Code&gt; and Codex are connected</span> · <a href="/agents">Your agents</a>'
     );
+    expect(html).not.toContain("Use with your agent");
+  });
+
+  it("names every admin while access is off, the viewer first as you, and lets an admin turn it on", () => {
+    const html = renderAgentAside({ tools, viewer: viewer("admin"), admins, apps: [] });
     expect(html).toContain(
-      '<a class="btn" href="/settings/agent-access">Turn it on in Settings</a>'
+      "Agent access is off at Bright &amp; &lt;Co&gt;, so no agent can use these yet. Only admins can turn it on: you, Allison &lt;A&gt; and Priya Shah."
     );
-    expect(html).not.toContain("Connect your agent");
+    expect(html).toContain('href="/settings/agent-access">Turn it on</a>');
+    expect(html).not.toContain("Use with your agent");
   });
 
   it("gives a member the admins' names without the way to turn it on", () => {
-    const html = renderAgentPanel({
+    const html = renderAgentAside({
       tools,
       viewer: viewer("member"),
-      admins: admins.filter((admin) => admin.id !== "usr_jordan")
+      admins: admins.filter((admin) => admin.id !== "usr_jordan"),
+      apps: []
     });
-    expect(html).toContain("that’s Allison &lt;A&gt; and Priya Shah.");
-    expect(html).not.toContain("Turn it on in Settings");
-    expect(html).not.toContain("Connect your agent");
+    expect(html).toContain("Only admins can turn it on: Allison &lt;A&gt; and Priya Shah.");
+    expect(html).not.toContain("Turn it on</a>");
+    expect(html).not.toContain("Use with your agent");
   });
 });
