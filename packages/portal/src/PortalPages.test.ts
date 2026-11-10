@@ -37,12 +37,12 @@ import {
   signedInCookies,
   signSession
 } from "@patchy/auth/testing";
-import { Companies, Teams, Users } from "@patchy/companies";
+import { Companies, Teams, TeamsPage, Users } from "@patchy/companies";
 import { contentHash, sha256 } from "../../../test/crypto.js";
 import * as Testing from "@patchy/company-database/testing";
 import { ConnectionStore } from "@patchy/integrations";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
-import { Audiences, GuestGrants, Patches } from "@patchy/patches";
+import { GuestGrants, Patches } from "@patchy/patches";
 import { Tables } from "@patchy/primitives";
 import * as PortalPages from "./PortalPages.js";
 import * as SwitcherList from "./SwitcherList.js";
@@ -1325,7 +1325,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           expectedPatchId: patch.patchId,
           back: "/patches",
           expectedScope: "company",
-          expectedAudienceRevision: before.patch.audienceRevision,
+          expectedLifecycleRevision: before.patch.lifecycleRevision,
           scope: "public"
         });
         // Make public is the confirmation, in the dialog, and only its answer applies.
@@ -1384,7 +1384,7 @@ it.layer(layer)("portal pages on a socket", (it) => {
           ...fields,
           scope: "company",
           expectedScope: "public",
-          expectedAudienceRevision: saved.patch.audienceRevision
+          expectedLifecycleRevision: saved.patch.lifecycleRevision
         });
         assert.strictEqual(back.status, 303);
         assert.strictEqual(
@@ -3755,7 +3755,7 @@ it.layer(layer)("user lifecycle pages on a socket", (it) => {
             Effect.timeout("10 seconds"),
             TestClock.withLive
           );
-        // The retirement runs first, then deactivation waits on the company row.
+        // Confirmation acquires company authority before taking any selected patch locks.
         const confirmation = yield* post(userPath(workspace.owner, "deactivate"), workspace.admin, {
           choice: "confirm",
           patch: [retiring.patchId]
@@ -4825,149 +4825,172 @@ it.layer(layer)("the switcher's list", (it) => {
   );
 });
 
-it.layer(layer.pipe(Layer.provideMerge(Layer.succeed(Audiences.Activation, true))))(
-  "owner recovery on a socket",
-  (it) => {
-    it.effect(
-      "shows existing recovery screens without content and reassigns only to an entitled person",
-      () =>
-        Effect.gen(function* () {
-          const workspace = yield* company();
-          const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
-          const team = yield* Teams.create({ ...viewer, name: "Design" });
-          yield* Teams.setMemberships({
-            ...viewer,
-            teamId: team.id,
-            userIds: [workspace.owner.id, workspace.member.id],
-            added: true
-          });
-          const patch = yield* publish(workspace.owner, "recover-owner", {
-            description: "PROTECTED_DESCRIPTION",
-            audience: {
-              members: { kind: "teams", teamIds: [team.id] },
-              guests: { kind: "specific", userIds: [] }
-            }
-          });
-          yield* Teams.setMemberships({
-            ...viewer,
-            teamId: team.id,
-            userIds: [workspace.owner.id],
-            added: false
-          });
-          const owner = yield* request(cardPath(patch.name), workspace.owner);
-          assert.equal(owner.status, 200);
-          const ownerHtml = yield* owner.text;
-          assert.include(ownerHtml, "You own this patch, but cannot open it");
-          assert.notInclude(ownerHtml, "PROTECTED_DESCRIPTION");
-          assert.notInclude(ownerHtml, 'name="user"');
-          const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
-          assert.include(yours, "recover-owner");
-          const attention = yield* (yield* request("/patches?show=attention", workspace.admin))
-            .text;
-          assert.include(attention, "owns this patch and cannot open it");
-          const overview = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
-          assert.include(overview, "PROTECTED_DESCRIPTION");
-          const oversight = yield* (yield* request(
-            `${cardPath(patch.name)}/settings`,
-            workspace.admin
-          )).text;
-          assert.include(oversight, `/patches/${patch.name}/reassign`);
-          const confirmation = yield* (yield* request(
-            `${cardPath(patch.name)}/reassign`,
-            workspace.admin
-          )).text;
-          assert.include(confirmation, `value="${workspace.member.id}"`);
-          assert.include(confirmation, `value="${workspace.admin.id}"`);
-          const sharing = yield* (yield* request(
-            `${cardPath(patch.name)}?share=${patch.name}`,
-            workspace.admin
-          )).text;
-          assert.include(sharing, "Save sharing");
-          assert.include(sharing, "PROTECTED_DESCRIPTION");
-          const reassigned = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
+it.layer(layer)("owner recovery on a socket", (it) => {
+  it.effect(
+    "shows existing recovery screens without content and reassigns only to an entitled person",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
+        const team = yield* Teams.create({ ...viewer, name: "Design" });
+        yield* Teams.setMemberships({
+          ...viewer,
+          teamId: team.id,
+          userIds: [workspace.owner.id, workspace.member.id],
+          added: true
+        });
+        const patch = yield* publish(workspace.owner, "recover-owner", {
+          description: "PROTECTED_DESCRIPTION",
+          title: "PROTECTED_TITLE",
+          audience: {
+            members: { kind: "teams", teamIds: [team.id] }
+          }
+        });
+        yield* Teams.setMemberships({
+          ...viewer,
+          teamId: team.id,
+          userIds: [workspace.owner.id],
+          added: false
+        });
+        const owner = yield* request(cardPath(patch.name), workspace.owner);
+        assert.equal(owner.status, 200);
+        const ownerHtml = yield* owner.text;
+        assert.include(ownerHtml, "You own this patch, but cannot open it");
+        assert.notInclude(ownerHtml, "PROTECTED_DESCRIPTION");
+        assert.notInclude(ownerHtml, 'name="user"');
+        const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
+        assert.include(yours, "recover-owner");
+        const attention = yield* (yield* request("/patches?show=attention", workspace.admin)).text;
+        assert.include(attention, "owns this patch and cannot open it");
+        const oversight = yield* (yield* request(cardPath(patch.name), workspace.admin)).text;
+        assert.include(oversight, "Management access does not grant access");
+        assert.include(oversight, `/patches/${patch.name}/reassign`);
+        assert.include(oversight, TeamsPage.path);
+        const confirmation = yield* (yield* request(
+          `${cardPath(patch.name)}/reassign`,
+          workspace.admin
+        )).text;
+        assert.include(confirmation, `value="${workspace.member.id}"`);
+        assert.notInclude(oversight, "PROTECTED_DESCRIPTION");
+        assert.notInclude(oversight, "PROTECTED_TITLE");
+        const forgedDescription = yield* post(
+          `${cardPath(patch.name)}/description`,
+          workspace.admin,
+          {
             expectedPatchId: patch.patchId,
             expectedOwnerUserId: workspace.owner.id,
-            user: workspace.member.id
+            description: "forbidden",
+            expectedDescriptionUpdatedAt: ""
+          }
+        );
+        assert.equal(forgedDescription.status, 404);
+        const staleForm = yield* post(`${cardPath(patch.name)}/rollback`, workspace.admin, {
+          expectedPatchId: "old-patch",
+          expectedOwnerUserId: workspace.owner.id,
+          versionNumber: "1",
+          expectedCurrentVersionId: ""
+        });
+        assert.equal(staleForm.status, 409);
+        const staleHtml = yield* staleForm.text;
+        assert.notInclude(staleHtml, 'name="expectedPatchId"');
+        assert.notInclude(staleHtml, "PROTECTED_TITLE");
+
+        assert.notInclude(oversight, `value="${workspace.admin.id}"`);
+        const sharing = yield* (yield* request(
+          `${cardPath(patch.name)}?share=${patch.name}`,
+          workspace.admin
+        )).text;
+        assert.include(sharing, "Save sharing");
+        assert.notInclude(sharing, "PROTECTED_DESCRIPTION");
+        yield* (yield* Patches.Patches).retire(patch.patchId, actor(workspace.admin));
+        const restorePath = `${cardPath(patch.name)}/restore`;
+        const restorePage = yield* request(restorePath, workspace.admin);
+        assert.equal(restorePage.status, 200);
+        const restoreFields = formFields(yield* restorePage.text, restorePath);
+        assert.equal(restoreFields.expectedOwnerUserId, workspace.owner.id);
+        assert.equal((yield* post(restorePath, workspace.admin, restoreFields)).status, 303);
+        const reassigned = yield* post(`${cardPath(patch.name)}/reassign`, workspace.admin, {
+          expectedPatchId: patch.patchId,
+          expectedOwnerUserId: workspace.owner.id,
+          user: workspace.member.id
+        });
+        assert.equal(reassigned.status, 303);
+        const recovered = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
+        assert.include(recovered, "PROTECTED_DESCRIPTION");
+      })
+  );
+  it.effect(
+    "uses existing dependency acknowledgements for management-only retirement and restoration",
+    () =>
+      Effect.gen(function* () {
+        const workspace = yield* company();
+        const patches = yield* Patches.Patches;
+        const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
+        const team = yield* Teams.create({ ...viewer, name: "Restricted recovery" });
+        yield* Teams.setMemberships({
+          ...viewer,
+          teamId: team.id,
+          userIds: [workspace.owner.id],
+          added: true
+        });
+        const source = yield* publishSource(workspace.owner, "recovery-source");
+        const consumer = yield* publishDependant(
+          workspace.owner,
+          "recovery-consumer",
+          source.patchId
+        );
+        const audience = {
+          members: { kind: "teams" as const, teamIds: [team.id] }
+        };
+        for (const patch of [source, consumer])
+          yield* patches.setSharing({
+            patchId: patch.patchId,
+            actor: actor(workspace.owner),
+            audience
           });
-          assert.equal(reassigned.status, 303);
-          const recovered = yield* (yield* request(cardPath(patch.name), workspace.member)).text;
-          assert.include(recovered, "PROTECTED_DESCRIPTION");
-        }).pipe(Effect.provideService(Audiences.Activation, true))
-    );
-    it.effect(
-      "uses existing dependency acknowledgements for management-only retirement and restoration",
-      () =>
-        Effect.gen(function* () {
-          const workspace = yield* company();
-          const patches = yield* Patches.Patches;
-          const viewer = { companyId: workspace.id, actorId: workspace.admin.id };
-          const team = yield* Teams.create({ ...viewer, name: "Restricted recovery" });
-          yield* Teams.setMemberships({
-            ...viewer,
-            teamId: team.id,
-            userIds: [workspace.owner.id],
-            added: true
-          });
-          const source = yield* publishSource(workspace.owner, "recovery-source");
-          const consumer = yield* publishDependant(
-            workspace.owner,
-            "recovery-consumer",
-            source.patchId
-          );
-          const audience = {
-            members: { kind: "teams" as const, teamIds: [team.id] },
-            guests: { kind: "specific" as const, userIds: [] }
-          };
-          for (const patch of [source, consumer])
-            yield* patches.setSharing({
-              patchId: patch.patchId,
-              actor: actor(workspace.owner),
-              audience
-            });
-          yield* Teams.setMemberships({
-            ...viewer,
-            teamId: team.id,
-            userIds: [workspace.owner.id],
-            added: false
-          });
-          const fields = {
-            expectedPatchId: source.patchId,
-            expectedOwnerUserId: workspace.owner.id,
-            expectedState: "live"
-          };
-          const refused = yield* post(`${cardPath(source.name)}/retire`, workspace.admin, fields);
-          assert.equal(refused.status, 409);
-          const refusedHtml = yield* refused.text;
-          assert.include(refusedHtml, 'name="ack"');
-          assert.include(refusedHtml, consumer.name);
-          assert.equal(
-            (yield* post(`${cardPath(source.name)}/retire`, workspace.admin, {
-              ...fields,
-              ack: "1"
-            })).status,
-            303
-          );
-          yield* patches.retire(consumer.patchId, actor(workspace.admin));
-          const restoreFields = {
-            expectedPatchId: consumer.patchId,
-            expectedOwnerUserId: workspace.owner.id,
-            expectedState: "retired"
-          };
-          const restore = yield* post(
-            `${cardPath(consumer.name)}/restore`,
-            workspace.admin,
-            restoreFields
-          );
-          assert.equal(restore.status, 409);
-          assert.include(yield* restore.text, 'name="ack"');
-          assert.equal(
-            (yield* post(`${cardPath(consumer.name)}/restore`, workspace.admin, {
-              ...restoreFields,
-              ack: "1"
-            })).status,
-            303
-          );
-        }).pipe(Effect.provideService(Audiences.Activation, true))
-    );
-  }
-);
+        yield* Teams.setMemberships({
+          ...viewer,
+          teamId: team.id,
+          userIds: [workspace.owner.id],
+          added: false
+        });
+        const fields = {
+          expectedPatchId: source.patchId,
+          expectedOwnerUserId: workspace.owner.id,
+          expectedState: "live"
+        };
+        const refused = yield* post(`${cardPath(source.name)}/retire`, workspace.admin, fields);
+        assert.equal(refused.status, 409);
+        const refusedHtml = yield* refused.text;
+        assert.include(refusedHtml, 'name="ack"');
+        assert.include(refusedHtml, consumer.name);
+        assert.equal(
+          (yield* post(`${cardPath(source.name)}/retire`, workspace.admin, {
+            ...fields,
+            ack: "1"
+          })).status,
+          303
+        );
+        yield* patches.retire(consumer.patchId, actor(workspace.admin));
+        const restoreFields = {
+          expectedPatchId: consumer.patchId,
+          expectedOwnerUserId: workspace.owner.id,
+          expectedState: "retired"
+        };
+        const restore = yield* post(
+          `${cardPath(consumer.name)}/restore`,
+          workspace.admin,
+          restoreFields
+        );
+        assert.equal(restore.status, 409);
+        assert.include(yield* restore.text, 'name="ack"');
+        assert.equal(
+          (yield* post(`${cardPath(consumer.name)}/restore`, workspace.admin, {
+            ...restoreFields,
+            ack: "1"
+          })).status,
+          303
+        );
+      })
+  );
+});

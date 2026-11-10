@@ -1854,34 +1854,22 @@ and the tier- and declaration-driven removal rules.
 
 Report vulnerabilities privately by following the [security policy](https://github.com/allisonmahmood/patchy-cloud/blob/main/SECURITY.md).
 
+## Patch audiences
+
+First publication defaults to Company unless the person specifies otherwise. Updates retain the audience. The owner must still be able to open the patch; teammates and administrators cannot publish it.
+
+`patchy audiences --json` lists existing team IDs. Team renaming preserves access.
+
+```sh
+patchy publish ./plan.html --audience '{"members":{"kind":"teams","teamIds":["team_design","team_engineering"]}}' --json
+patchy share --patch <patch-id> company --audience '{"members":{"kind":"company"}}' --json
+patchy share --patch <patch-id> --add guest@example.com --json
+```
+
+`members.kind` is `company`, `teams` (union of `teamIds`), or eligible `public`. Named guest grants are separate: changing teams retains them. Guests must have active outside-company accounts. `--remove` revokes one patch grant; company-wide removal revokes all that company's grants.
+
+Legacy `share company` and `publish --share company` preserve existing team restrictions. Use an explicit Company audience to widen. Publish and share report the committed audience; old replay receipts retain their original bytes. Malformed JSON exits 1; refused selections exit 2 with `invalid_audience_teams` or `audience_excludes_owner`. A removed owner receives `owner_access_lost` and must seek access recovery rather than create a replacement patch.
+
 ## License
 
 All rights reserved for now. See [LICENSE](https://github.com/allisonmahmood/patchy-cloud/blob/main/LICENSE).
-
-### Patch audiences
-
-First publication without `--share` or `--audience` defaults to Company-only.
-Agents offer the audience choice unless the user already supplied it.
-Later publication retains the audience unless a sharing change is supplied. The owner
-must still be able to open the patch; an administrator or teammate cannot publish it.
-Ordinary members see only their current teams in audience choices; administrators retain the company team directory. Active super admins belong to every team; regular-admin status alone grants no patch access.
-`patchy audiences --json` returns `{ ok, teams: [{ id, name }], guests: [{ userId, name, email, companyName }] }`.
-Use those IDs rather than names. Team renaming preserves access.
-
-```sh
-patchy publish ./plan.html --audience '{"members":{"kind":"teams","teamIds":["team_design","team_engineering"]},"guests":{"kind":"specific","userIds":[]}}' --json
-patchy share --patch <patch-id> company --audience '{"members":{"kind":"company"},"guests":{"kind":"all","excludedUserIds":["guest-id"]}}' --json
-```
-
-`members.kind` is Company, selected teams (union), or eligible Public. `guests.kind`
-is `specific` with `userIds`, or `all` with `excludedUserIds`: current and future
-people invited into this company's guest space, each with an existing active account.
-`share --add` adds an existing account to that space and shares the patch; `--remove`
-removes its named grant or excludes it from All guests. Company removal ends its space
-membership and all grants; independent grants elsewhere survive. Existing guest handler,
-resource, current-version and connection restrictions still apply.
-
-Publish and sharing JSON include the committed `audience`. Text output reports it too.
-Malformed audience JSON is local (exit 1); a refused selection is rejected (exit 2). Team and All guests audiences remain unavailable until
-#1287–#1291 complete enforcement; an internal assembly barrier refuses their writes
-and admission rather than widening them to Company. This stack must land together.

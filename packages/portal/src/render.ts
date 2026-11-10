@@ -61,8 +61,10 @@ export { patchTitle };
 
 const cardPath = (patch: Pick<Patches.Patch, "name">, action = "") =>
   `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
-const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
-  card.owner.id === viewer.user.id || viewer.role !== "member";
+const canManage = (
+  card: Pick<Patches.ReadPatch, "owner">,
+  viewer: RequireSession.Viewer["Service"]
+) => card.owner.id === viewer.user.id || viewer.role !== "member";
 export const hidden = (name: string, value: string | number | null) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value ?? "")}">`;
 export const refusal = (notice: string | undefined) =>
@@ -133,7 +135,7 @@ const descriptionForm = (card: Patches.PortalCard, submitted?: string, error?: s
   `<section class="section">${actionForm(card.patch, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
 
 const versionsTable = (
-  card: Patches.PortalCard,
+  card: Patches.ManagementCard,
   versions: Patches.PortalCard["versions"],
   viewer: RequireSession.Viewer["Service"],
   now: number
@@ -183,28 +185,38 @@ const offState = (card: Patches.PortalCard, viewer: Viewer, now: number) => {
  * the act that matters most (Open, or Restore for a manager while recovery is open), then its tabs
  * over `body`, with any `panel` beside it. Log and Settings are the owner's and admins'.
  */
-export const renderCardFrame = (input: {
-  readonly card: Patches.PortalCard;
-  readonly viewer: Viewer;
-  readonly now: number;
-  readonly publicBaseUrl: string;
-  readonly tab: CardTab;
-  readonly notice?: string;
-  /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
-  readonly readOnly?: boolean;
-  readonly body: string;
-  /** A `side-panel` to the card's right, such as `renderAgentPanel`'s. */
-  readonly panel?: string;
-  /** The patch's menu beside its act, as All patches' rows have it. */
-  readonly menu?: string;
-}): string => {
+export const renderCardFrame = (
+  input: (
+    | { readonly access: "management"; readonly card: Patches.ManagementCard }
+    | { readonly access?: "content"; readonly card: Patches.PortalCard }
+  ) & {
+    readonly viewer: Viewer;
+    readonly now: number;
+    readonly publicBaseUrl: string;
+    readonly tab: CardTab;
+    readonly notice?: string;
+    /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
+    readonly readOnly?: boolean;
+    readonly body: string;
+    /** A `side-panel` to the card's right, such as `renderAgentPanel`'s. */
+    readonly panel?: string;
+    /** The patch's menu beside its act, as All patches' rows have it. */
+    readonly menu?: string;
+  }
+): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
   const live = patch.state === "live";
   const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
   const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${address}`;
-  const restore = input.readOnly ? "" : (offState(card, viewer, now)?.restoreControl ?? "");
-  const act = `${live ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>` : restore}${input.menu ?? ""}`;
+  const restore =
+    input.readOnly || input.access === "management"
+      ? ""
+      : (offState(input.card, viewer, now)?.restoreControl ?? "");
+  const act =
+    input.access === "management"
+      ? ""
+      : `${live ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>` : restore}${input.menu ?? ""}`;
   const title = patchTitle(patch);
   // Kind, audience and version are facts on Overview; only an off patch's state rides the heading.
   const tags = live
@@ -213,9 +225,13 @@ export const renderCardFrame = (input: {
   const tabs = (
     [
       ["overview", "Overview", true],
-      ["log", "Log", canManage(card, viewer)],
-      ["versions", `Versions <span class="count">${escapeHtml(card.versions.length)}</span>`, true],
-      ["settings", "Settings", canManage(card, viewer)]
+      ["log", "Log", input.access !== "management" && canManage(card, viewer)],
+      [
+        "versions",
+        `Versions <span class="count">${input.access === "management" ? 0 : escapeHtml(input.card.versions.length)}</span>`,
+        input.access !== "management"
+      ],
+      ["settings", "Settings", input.access !== "management" && canManage(card, viewer)]
     ] as const
   )
     .filter(([, , shown]) => shown)
@@ -295,9 +311,11 @@ export const renderOverview = (input: {
   const current = card.versions.find((version) => version.id === patch.currentVersionId);
   const versionFact = `v${card.currentVersion}, published ${ago(card.publishedAt, now)}${current === undefined ? "" : ` by ${current.publisherName}`}`;
   const audience =
-    patch.scope === "company"
-      ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
-      : "Anyone on the internet. No sign-in.";
+    patch.scope === "teams"
+      ? "Members of selected teams and named guests."
+      : patch.scope === "company"
+        ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
+        : "Anyone on the internet. No sign-in.";
   const stateFact = off?.stateFact ?? "";
   const facts =
     !live && !manage
@@ -320,12 +338,16 @@ export const renderOverview = (input: {
 };
 
 /** The card's Settings, for the owner and admins: owner, description, stopping or deleting. Who can open it is Share's. */
-export const renderSettings = (input: {
-  readonly card: Patches.PortalCard;
-  readonly viewer: Viewer;
-  readonly submittedDescription?: string;
-  readonly descriptionError?: string;
-}): string => {
+export const renderSettings = (
+  input: (
+    | { readonly access: "management"; readonly card: Patches.ManagementCard }
+    | { readonly access?: "content"; readonly card: Patches.PortalCard }
+  ) & {
+    readonly viewer: Viewer;
+    readonly submittedDescription?: string;
+    readonly descriptionError?: string;
+  }
+): string => {
   const { card, viewer } = input;
   const { patch } = card;
   const live = patch.state === "live";
@@ -346,17 +368,19 @@ export const renderSettings = (input: {
       : "";
   // A deleted patch's description can't be edited; a draft refused for that is still shown to copy.
   const description =
-    patch.state !== "deleted"
-      ? descriptionForm(card, input.submittedDescription, input.descriptionError)
-      : input.submittedDescription
-        ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
-        : "";
+    input.access === "management"
+      ? ""
+      : patch.state !== "deleted"
+        ? descriptionForm(input.card, input.submittedDescription, input.descriptionError)
+        : input.submittedDescription
+          ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
+          : "";
   return `${adminLine}${deactivated}${owner}${description}${stop}`;
 };
 
 /** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
 export const renderVersions = (input: {
-  readonly card: Patches.PortalCard;
+  readonly card: Patches.ManagementCard & { readonly versions: Patches.PortalCard["versions"] };
   readonly viewer: Viewer;
   readonly now: number;
 }): string =>
@@ -460,12 +484,12 @@ export const renderConfirmation = (input: {
             `<li><label class="field-choice"><input class="field-radio" type="radio" name="user" value="${escapeAttribute(member.id)}" required aria-describedby="member-consequence-${index}"${member.id === selectedOwnerId ? " checked" : ""}><span>${escapeHtml(member.name)} (${escapeHtml(member.email)})${member.id === card.owner.id ? ", current owner" : ""}</span></label><p class="field-hint" id="member-consequence-${index}">${escapeHtml(member.name)} can publish, retire or delete it at once; you can reassign it again.</p></li>`
         )
         .join("");
-      fields = `${hidden("expectedOwnerUserId", card.owner.id)}${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<div role="radiogroup" aria-label="New owner"><ul class="confirmation-list">${choices}</ul></div>`}`;
+      fields = `${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<div role="radiogroup" aria-label="New owner"><ul class="confirmation-list">${choices}</ul></div>`}`;
       disabled = members.length === 0;
       break;
     }
   }
 
   const title = escapeHtml(patchTitle(patch));
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}${"companyId" in patch ? "" : hidden("expectedOwnerUserId", patch.ownerUserId)}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
+  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}${hidden("expectedOwnerUserId", patch.ownerUserId)}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
