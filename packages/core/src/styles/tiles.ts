@@ -13,11 +13,12 @@ export const tiles = `
       border: 1px solid var(--border); border-radius: var(--r-container);
       background: var(--surface); color: var(--text); font-weight: var(--weight-regular); text-decoration: none;
     }
-    @media (hover: hover) { a.tile-row:hover, label.tile-row:hover { background: var(--hover); } }
+    /* The tint goes over the tile's own surface, so the canvas never shows through a hovered tile. */
+    @media (hover: hover) { a.tile-row:hover, label.tile-row:hover { background: linear-gradient(var(--hover), var(--hover)) var(--surface); } }
     .tile-body { display: grid; flex: 1; gap: 1px; min-width: 0; }
     .tile-row .tile-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .tile-row > .whats-new-dot { align-self: start; margin-top: 6px; }
-    .tile-row-placeholder { border-style: dashed; border-color: var(--border-strong); background: transparent; }
+    .tile-row-placeholder { border-style: dashed; border-color: var(--border-strong); }
 
     .tile-options { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; }
     .tile-option { position: relative; cursor: pointer; }
@@ -27,7 +28,6 @@ export const tiles = `
     .tile-option:has(> input:focus-visible), .choice-card:has(> input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
     .tile-option:has(> input:disabled), .choice-card:has(> input:disabled) { opacity: .5; cursor: not-allowed; }
     .tile-option:has(> input:disabled):hover, .choice-card:has(> input:disabled):hover { background: var(--surface); }
-    .tile-row-placeholder.tile-option:has(> input:disabled):hover { background: transparent; }
 
     .choice-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 0; }
     .choice-card {

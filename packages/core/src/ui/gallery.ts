@@ -159,7 +159,10 @@ const type = demo(
   })
 );
 
-/** The token block's colours, drawn from its own values so the gallery never disagrees with it. */
+/**
+ * The token block's colours, drawn from its own values so the gallery never disagrees with it, and
+ * the canvas, which this page itself sits on.
+ */
 const colours = demo(
   "Colour",
   table({
@@ -170,7 +173,23 @@ const colours = demo(
       `<code>${escapeHtml(name!)}</code>`,
       `<span class="meta">${escapeHtml(value!)}</span>`
     ])
-  })
+  }),
+  stateTable("Canvas", [
+    [
+      "Page",
+      "squared paper, 32px squares over a blue → cream → green wash, behind every door and app page, as behind this one; it scrolls with the page"
+    ],
+    [
+      "Own surface",
+      "what is bordered, pressed or floats: the sidebar and top bar, the door card, boxes, cards, tiles, notices, controls, menus, dialogs and the switcher"
+    ],
+    [
+      "On the paper",
+      "everything else, such as tables, lists, prose, a flow's sections and every title, with the squares behind it"
+    ],
+    ["Hover", "a row on the paper takes a translucent tint; a tile tints over its own surface"],
+    ["Forced colours", "the squares and the wash drop away"]
+  ])
 );
 
 const buttons = demo(

@@ -45,7 +45,7 @@ export const tokens = `
       --tint-pink: #f6d3e4;
       --scrim: rgba(18, 17, 15, .32);
       --highlight: rgba(255, 191, 53, .6);
-      --door-grid: rgba(18, 17, 15, .035);
+      --canvas-grid: rgba(18, 17, 15, .035);
 
       --font-ui: "Geist", "Geist Fallback", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
       --font-display: var(--font-ui);

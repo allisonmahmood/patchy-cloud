@@ -1,6 +1,6 @@
 /**
- * Doors: one centred card on the grid-and-gradient canvas, for sign-in, joining, device login,
- * consent and Patchy's notices. Modal elevation, a dialog title, one primary.
+ * Doors: one centred card on the canvas, for sign-in, joining, device login, consent and Patchy's
+ * notices. Modal elevation, a dialog title, one primary.
  */
 export const doors = `
     .auth-card {

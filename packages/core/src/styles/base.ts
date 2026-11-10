@@ -1,6 +1,6 @@
 /**
- * The document: flat paper, Geist body text, one focus ring, links, code and the headings pages
- * write by hand. Doors draw on the grid-and-gradient canvas; the app stays flat.
+ * The document: paper, Geist body text, one focus ring, links, code and the headings pages write
+ * by hand. Doors and app pages draw on the canvas, the `canvas` chunk.
  */
 export const base = `
     *, *::before, *::after { box-sizing: border-box; }
@@ -14,13 +14,6 @@ export const base = `
       -webkit-font-smoothing: antialiased;
     }
     body:has(.auth-card, .app) { min-height: 100vh; display: flow-root; }
-    body:has(> .auth-card) {
-      background:
-        linear-gradient(var(--door-grid) 1px, transparent 1px),
-        linear-gradient(90deg, var(--door-grid) 1px, transparent 1px),
-        linear-gradient(180deg, var(--info-bg) 0%, var(--paper) 40%, var(--success-bg) 100%);
-      background-size: 32px 32px, 32px 32px, auto;
-    }
     ::selection { background: var(--highlight); color: var(--ink); }
     /* Ink, never blue: a blue ring vanishes on a blue button. */
     :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
