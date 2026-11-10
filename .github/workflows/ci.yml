@@ -251,7 +251,8 @@ jobs:
   # A deploy of the PR and a rollback to the live release, rehearsed on one set of
   # data when the PR changes a migration, the handler descriptor schemas, the CLI code
   # that writes descriptors, or the rehearsal; otherwise it passes at once, so the
-  # check can be required. `pnpm test:rollback-rehearsal`.
+  # check can be required. Explicitly one-way PRs rehearse the upgrade only.
+  # `pnpm test:rollback-rehearsal`.
   rollback-rehearsal:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -260,6 +261,8 @@ jobs:
       contents: read
       # The Deploy runs, which say whether production's commit is settled.
       actions: read
+      # Read the current one-way label, including changes made after the run queued.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -294,11 +297,17 @@ jobs:
       - name: Install Chromium
         if: steps.changed.outputs.rehearse
         uses: ./.github/actions/playwright
-      - name: Rehearse a deploy and a rollback on one set of data
+      - name: Rehearse the release transition on one set of data
         if: steps.changed.outputs.rehearse
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm test:rollback-rehearsal
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          args=()
+          if [[ "$(gh pr view "$PR_NUMBER" --json labels --jq 'any(.labels[]; .name == "one-way")')" == "true" ]]; then
+            args+=(--upgrade-only)
+          fi
+          pnpm test:rollback-rehearsal "${args[@]}"
 
   # Tier 1 and 2 pages in Chromium against an isolated server; `pnpm test:browser`.
   browser:
