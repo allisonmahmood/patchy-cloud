@@ -1,24 +1,17 @@
-// How more than one portal surface presents a patch: its paths, menus and search, confirmation
-// parts and the layout every portal page still carries. Surfaces share only through `shared/`.
+// How more than one portal surface presents a patch: its paths, menus and search, its failures
+// cell and the hidden fields its forms carry. Surfaces share only through `shared/`.
 import type { RequireSession } from "@patchy/auth";
 import {
   badge,
   type Column,
   escapeAttribute,
-  escapeHtml,
   menuCopy,
   menuLink,
+  menuNewTab,
   patchTitle
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
-
-/** The portal's page layout, which every portal page carries until it is rebuilt on core's templates. */
-export const styles = `
-  .portal-card { min-width: 0; max-width: 920px; }
-  .portal-subpage { max-width: 760px; margin-inline: auto; }
-  .portal-table { overflow-x: auto; }
-`;
 
 // The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
 // en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
@@ -32,13 +25,6 @@ export const firstClause = (description: string): string => {
 
 export const hidden = (name: string, value: string | number | null) =>
   `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value ?? "")}">`;
-export const refusal = (notice: string | undefined) =>
-  notice === undefined
-    ? ""
-    : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
-
-export const confirmationAcknowledgement = (text: string, checked: boolean): string =>
-  `<label class="confirmation-acknowledgement"><input class="field-checkbox" type="checkbox" name="ack" value="1" required${checked ? " checked" : ""}><span>${escapeHtml(text)}</span></label>`;
 
 /** What the card and Needs attention call a patch its guests can't open. */
 export const turnedAwayTitle = "Guests can't open this";
@@ -152,7 +138,7 @@ export const openItems = (
   return [
     ...(live
       ? [
-          `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`,
+          menuNewTab(patchAddress(patch), title),
           menuCopy(
             `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,
             "Copy link",

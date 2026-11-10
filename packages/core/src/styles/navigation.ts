@@ -18,7 +18,7 @@ export const navigation = `
 
     .seg {
       display: inline-flex; flex: none; gap: 2px; max-width: 100%; padding: 2px; overflow-x: auto;
-      border: 1px solid var(--border-strong); border-radius: 8px; background: var(--sunken);
+      border: 1px solid var(--border-strong); border-radius: calc(var(--r-control) + 2px); background: var(--sunken);
     }
     .seg a {
       display: inline-flex; align-items: center; gap: 6px;

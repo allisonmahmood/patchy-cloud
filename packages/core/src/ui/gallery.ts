@@ -6,6 +6,7 @@ import {
   menuLink,
   patchMark,
   rowMenu,
+  searchField,
   tileOptions
 } from "../components.js";
 import { copyLine, copyScriptPath } from "../copy-line.js";
@@ -46,6 +47,8 @@ import {
 import { answerPair, canList, meet, verificationCode } from "./door.js";
 import { region } from "./region.js";
 import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
+import { expandingTable } from "./expanding-table.js";
+import { fieldRow } from "./field-row.js";
 import { flowOutcome } from "./flow-outcome.js";
 import { productMark } from "./product-mark.js";
 import { refusal } from "./refusal.js";
@@ -172,13 +175,16 @@ const colours = demo(
 
 const buttons = demo(
   "Buttons",
-  `<div class="stack"><div class="btn-group">${linkButton("Open", "#buttons", { kind: "primary", icon: "external" })}${button("Share", { type: "button", icon: "share" })}${button("Cancel", { type: "button", kind: "quiet" })}${button("Delete…", { type: "button", kind: "danger", icon: "trash" })}${button("Delete New Business", { type: "button", kind: "danger-solid" })}</div><div class="btn-group">${button("Save", { type: "button", kind: "primary", size: "sm" })}${button("Reassign…", { type: "button", size: "sm" })}${iconButton("More", "more")}${iconButton("Copy", "copy")}${button("Testing…", { type: "button", kind: "primary", pending: true })}</div></div>`,
+  `<div class="stack"><div class="btn-group">${linkButton("Open", "#buttons", { kind: "primary", icon: "external" })}${button("Share", { type: "button", icon: "share" })}${button("Cancel", { type: "button", kind: "quiet" })}${button("Delete…", { type: "button", kind: "danger", icon: "trash" })}${button("Delete New Business", { type: "button", kind: "danger-solid" })}</div><div class="btn-group">${button("Save", { type: "button", kind: "primary", size: "sm" })}${button("Reassign…", { type: "button", size: "sm" })}${iconButton("More", "more")}${iconButton("Copy", "copy")}${button("Testing…", { type: "button", kind: "primary", pending: true })}<form method="post" action="${link("flow")}">${button("Test", { size: "sm", pendingLabel: "Testing…" })}</form></div></div>`,
   stateTable("Button", [
     ["Rest", "2px ink edge; primary is blue with a 2px hard shadow"],
     ["Hover (fine pointer)", "lifts 1px into a deeper shadow; quiet and icon buttons tint instead"],
     ["Pressed", "sinks into its shadow"],
     ["Focus", "2px ink ring, 2px out"],
-    ["Pending", "the pressed label, such as Testing…, static, aria-disabled"],
+    [
+      "Pending",
+      "with a pending label, the pressed submit says it, such as Testing…, static, aria-disabled; it holds room for the longer label from the start, so nothing moves, and its form takes no second submit until the page answers (Test here, Test and connect on the Flow page)"
+    ],
     ["Touch", "44px tall"]
   ])
 );
@@ -220,6 +226,10 @@ const fields = demo(
       "what is typed exactly, such as a handle: a phone neither capitalises nor corrects it"
     ],
     ["Secret", "masked; Show appears with script and toggles the mask"],
+    [
+      "Live hint",
+      "a part of the hint follows what is typed, or its example while empty, such as the name on the Flow page; without script it shows what was submitted"
+    ],
     ["Touch", "44px tall with 16px text, so phones don't zoom"]
   ])}${stateTable("Copy line", [
     ["Without script", "the line alone, selectable whole; Copy stays hidden"],
@@ -410,6 +420,59 @@ const lists = demo(
   ])}${stateTable("Facts", [
     ["Rest", "muted labels beside values, one pair a line"],
     ["Phone", "each label above its value"]
+  ])}`
+);
+
+const wideParts = demo(
+  "Search, paired fields and tables that open",
+  `<div class="stack">${searchField({ action: "#wide-parts", id: "g-search", query: "", placeholder: "Search patches", label: "Search patches" })}${searchField({ action: "#wide-parts", id: "g-search-kept", query: "kudos", placeholder: "Search patches", label: "Search patches, keeping the filter", keep: { show: "yours" } })}${fieldRow([field({ id: "g-host", label: "Server", control: (aria) => input(aria, { name: "host", value: "imap.example.com", mono: true, exact: true }) }), field({ id: "g-port", label: "Port", error: "Use 993.", control: (aria) => input(aria, { name: "port", value: "143", inputmode: "numeric", width: "xs" }) })])}${expandingTable(
+    {
+      label: "Calls",
+      compact: true,
+      columns: [
+        { label: "When" },
+        { label: "Call" },
+        { label: "Outcome" },
+        { label: "Took", align: "end", hideOnPhone: true }
+      ],
+      rows: [
+        {
+          cells: ["10:42", "<code>records.list</code>", badge("Failed", "danger"), "1.2 s"],
+          detail: {
+            summary: "Details",
+            body: facts([
+              ["Call", "call_7f2a"],
+              ["Said", "The key can't read lists."]
+            ])
+          }
+        },
+        {
+          cells: [
+            "10:40",
+            "<code>records.get</code>",
+            '<span class="muted">Succeeded</span>',
+            "84 ms"
+          ]
+        }
+      ]
+    }
+  )}</div>`,
+  `${stateTable("Search field", [
+    ["Empty", "the search icon fused before the field, the placeholder saying what it searches"],
+    [
+      "Searched",
+      "the query kept in the field; the filters it sits beside ride along as hidden fields"
+    ],
+    ["Touch", "44px tall with 16px text"]
+  ])}${stateTable("Field row", [
+    ["Rest", "fields that belong together side by side, one with an answer width keeping it"],
+    ["Refused", "each field keeps its own error under it"],
+    ["Narrow", "each field on its own line"]
+  ])}${stateTable("Expanding table", [
+    ["Closed", "a row, then its summary across every column, read as one row"],
+    ["Open", "the summary opens its details under the row, in place"],
+    ["Compact", "40px rows, as a log's"],
+    ["Phone", "columns marked for it are left out; a wide one scrolls in its own wrapper"]
   ])}`
 );
 
@@ -901,7 +964,7 @@ const flowParts = demo(
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${homeParts}${detailParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${wideParts}${homeParts}${detailParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [
@@ -1059,8 +1122,8 @@ const flowDemo = flowPage({
       body: field({
         id: "g-f-name",
         label: "Name",
-        hint: "Patches use this name.",
-        control: (aria) => prefixInput(aria, { name: "handle", prefix: "attio/", value: "crm" })
+        hint: ["Patches use it as attio/", { value: "", fallback: "crm" }, "."],
+        control: (aria) => prefixInput(aria, { name: "handle", prefix: "attio/", exact: true })
       })
     }
   ],
@@ -1069,7 +1132,7 @@ const flowDemo = flowPage({
     title: "Once connected",
     body: "<p>Patches that declare it can read records and lists. Nothing changes in Attio.</p>"
   }),
-  submit: `${button("Test and connect", { kind: "primary" })}${linkButton("Cancel", link(""), { kind: "quiet" })}`,
+  submit: `${button("Test and connect", { kind: "primary", pendingLabel: "Testing…" })}${linkButton("Cancel", link(""), { kind: "quiet" })}`,
   form: { action: link("flow") }
 });
 

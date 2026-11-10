@@ -50,8 +50,12 @@ const lookAttributes = (look: ButtonLook) =>
   `${attribute("aria-label", look.ariaLabel)}${flag("autofocus", look.autofocus)}${dataAttributes(look.data)}`;
 
 /**
- * A button in a form. `pending` is the static "Testing…" state of a pressed button: the caller
- * gives the pending label, and the button says it can't be pressed again without changing size.
+ * A button in a form. `pendingLabel` is what a submit says once pressed, such as "Testing…": the
+ * enhancer swaps it in, static, marks the button `aria-disabled` and turns away another submit of
+ * its form until the page answers. The button holds room for the longer of its two labels from
+ * the start, so pressing it moves nothing. Without script the form submits as ever; the server's
+ * own guards are what stop a repeat. `pending` draws that pressed state, as the gallery shows it,
+ * with the pending label as `label`.
  */
 export const button = (
   label: string,
@@ -62,9 +66,10 @@ export const button = (
     /** The id of the form it submits, when it sits outside it. */
     readonly form?: string;
     readonly pending?: boolean;
+    readonly pendingLabel?: string;
   } = {}
 ) =>
-  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${options.pending === true ? ' aria-disabled="true"' : ""}${lookAttributes(options)}>${buttonInner(label, options)}</button>`;
+  `<button class="${buttonClass(options)}" type="${options.type ?? "submit"}"${attribute("name", options.name)}${attribute("value", options.value)}${attribute("form", options.form)}${options.pending === true ? ' aria-disabled="true"' : ""}${attribute("data-pending", options.pendingLabel)}${lookAttributes(options)}>${options.pendingLabel === undefined ? buttonInner(label, options) : `<span>${buttonInner(label, options)}</span>`}</button>`;
 
 /**
  * A link drawn as a button, for an action that is a place: Open, Connect, Cancel. `id` makes it
@@ -101,14 +106,36 @@ export interface FieldControl {
 }
 
 /**
+ * A live part of a field's hint: what the field's control holds, trimmed, or `fallback` while it
+ * is empty, such as the name in "Patches use it as attio/crm". The enhancer keeps it current as
+ * the person types; without script it shows `value` as drawn, which is what was submitted.
+ */
+export interface HintEcho {
+  readonly value: string;
+  readonly fallback: string;
+}
+
+const hintText = (id: string, hint: string | ReadonlyArray<string | HintEcho>) =>
+  typeof hint === "string"
+    ? escapeHtml(hint)
+    : hint
+        .map((part) =>
+          typeof part === "string"
+            ? escapeHtml(part)
+            : `<span data-echo="${escapeAttribute(id)}" data-fallback="${escapeAttribute(part.fallback)}">${escapeHtml(part.value.trim() || part.fallback)}</span>`
+        )
+        .join("");
+
+/**
  * A labelled field: label, hint, control, error, in that order. The control is drawn from the
  * ids the field gives it, so the hint and error describe it (`aria-describedby`) and a refusal
- * marks it `aria-invalid`. `id` must be unique on the page.
+ * marks it `aria-invalid`. `id` must be unique on the page. A hint given in parts may hold a
+ * `HintEcho` of what is typed.
  */
 export const field = (spec: {
   readonly id: string;
   readonly label: string;
-  readonly hint?: string;
+  readonly hint?: string | ReadonlyArray<string | HintEcho>;
   /** The refusal for this field after a submit, in Patchy's words. */
   readonly error?: string;
   readonly optional?: boolean;
@@ -122,7 +149,7 @@ export const field = (spec: {
   ]
     .filter((id) => id !== undefined)
     .join(" ");
-  return `<div class="fieldset"><label class="field-label" for="${escapeAttribute(spec.id)}">${escapeHtml(spec.label)}${spec.optional === true ? ' <span class="field-optional">(optional)</span>' : ""}</label>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${escapeHtml(spec.hint)}</p>`}${spec.control({ id: spec.id, describedBy: describedBy === "" ? undefined : describedBy, invalid: spec.error !== undefined })}${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</div>`;
+  return `<div class="fieldset"><label class="field-label" for="${escapeAttribute(spec.id)}">${escapeHtml(spec.label)}${spec.optional === true ? ' <span class="field-optional">(optional)</span>' : ""}</label>${spec.hint === undefined ? "" : `<p class="field-hint" id="${escapeAttribute(hintId)}">${hintText(spec.id, spec.hint)}</p>`}${spec.control({ id: spec.id, describedBy: describedBy === "" ? undefined : describedBy, invalid: spec.error !== undefined })}${spec.error === undefined ? "" : `<p class="field-error" id="${escapeAttribute(errorId)}">${escapeHtml(spec.error)}</p>`}</div>`;
 };
 
 const controlAttributes = (aria: FieldControl) =>

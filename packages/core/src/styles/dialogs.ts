@@ -7,14 +7,13 @@
 export const dialogs = `
     .app[inert] { user-select: none; }
     .modal-scrim { position: fixed; inset: 0; z-index: 40; background: var(--scrim); }
-    .dialog, .modal-panel {
+    .dialog {
       position: fixed; top: 72px; left: 50%; z-index: 41;
       width: min(var(--w-dialog), calc(100% - 32px)); max-height: calc(100dvh - 120px); overflow-y: auto;
       border: 2px solid var(--ink); border-radius: var(--r-modal);
       background: var(--surface); box-shadow: var(--modal);
       transform: translateX(-50%);
     }
-    .modal-panel { top: 40px; width: min(640px, calc(100% - 32px)); max-height: calc(100dvh - 64px); padding: var(--space-5); }
     .dialog-md { width: min(var(--w-dialog-md), calc(100% - 32px)); }
     .dialog-head { display: flex; align-items: flex-start; gap: var(--space-3); padding: 20px 20px 0 var(--space-5); }
     .dialog-head > h2 { flex: 1; min-width: 0; margin: 0; padding-top: 2px; color: var(--ink); font: var(--text-title-sm); overflow-wrap: anywhere; }
@@ -27,14 +26,14 @@ export const dialogs = `
     }
     .dialog-foot > .dialog-foot-start { margin-right: auto; }
     @media (max-width: 639px) {
-      .dialog, .modal-panel {
+      .dialog {
         top: auto; right: 0; bottom: 0; left: 0; width: auto; max-height: 88dvh;
         border-radius: var(--r-modal) var(--r-modal) 0 0; box-shadow: none; transform: none;
       }
     }
     @media (scripting: none) {
-      body:has(> :is(.dialog, .modal-panel)) > :is(.app[inert], .modal-scrim) { display: none; }
-      .dialog, .modal-panel {
+      body:has(> .dialog) > :is(.app[inert], .modal-scrim) { display: none; }
+      .dialog {
         position: static; width: min(var(--w-dialog-md), calc(100% - 32px)); max-height: none;
         margin: var(--space-6) auto; box-shadow: var(--float); transform: none;
       }

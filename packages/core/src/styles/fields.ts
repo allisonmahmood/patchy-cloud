@@ -10,9 +10,9 @@ export const fields = `
     .field-label { display: block; margin: var(--space-5) 0 6px; color: var(--ink); font: var(--text-label); }
     .fieldset > .field-label { margin: 0; }
     .field-optional { color: var(--muted); font-weight: var(--weight-regular); }
-    .field-hint, .hint { margin: 6px 0 0; color: var(--muted); font: var(--text-meta); }
+    .field-hint { margin: 6px 0 0; color: var(--muted); font: var(--text-meta); }
     .fieldset > .field-hint { margin: 0; }
-    .field-error, .error-text { margin: 6px 0 0; color: var(--danger); font: var(--text-meta); font-weight: var(--weight-medium); }
+    .field-error { margin: 6px 0 0; color: var(--danger); font: var(--text-meta); font-weight: var(--weight-medium); }
     .fieldset > .field-error { margin: 0; }
 
     .field {
@@ -32,7 +32,7 @@ export const fields = `
     .field::placeholder, .field-group > input::placeholder { color: var(--placeholder); opacity: 1; }
     .field:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; box-shadow: inset 0 0 0 1px var(--ink); }
     .field[aria-invalid="true"] { border-color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
-    textarea.field { min-height: 92px; padding-block: var(--space-2); resize: vertical; }
+    textarea.field { min-height: var(--h-textarea); padding-block: var(--space-2); resize: vertical; }
     /* field-grow: a textarea that starts one line tall and grows with what is typed or pasted. */
     textarea.field-grow { min-height: var(--h-control); max-height: 12rem; }
     @supports (field-sizing: content) { textarea.field-grow { field-sizing: content; resize: none; } }
@@ -60,16 +60,7 @@ export const fields = `
     .field-search > input { padding-left: var(--space-2); }
     .field-group:has(> input:disabled) { opacity: .55; cursor: not-allowed; }
 
-    /* field-rule: a hint stating its field's rule, which turns into the warning while the value
-       breaks the field's own constraints. CSS only; Patchy names the exact problem on submit. */
-    .field:is(:invalid, :has(:invalid)):has(+ .field-rule) { border-color: var(--danger); }
-    .field:is(:invalid, :has(:invalid)) + .field-rule { color: var(--danger); font-weight: var(--weight-medium); }
-    /* field-callout: a refusal under its field after a submit, in place of the hint. Compose with
-       note note-refused and role="alert"; the field's aria-describedby points at it. */
-    .field-callout { margin: var(--space-2) 0 0; padding: 10px var(--space-3); font: var(--text-meta); }
-    .field-callout .note-title { font-weight: var(--weight-strong); }
-
-    .field-choice, .confirmation-acknowledgement, .choice { display: flex; align-items: center; gap: 10px; min-height: var(--h-sm); padding: var(--space-1) 0; color: var(--ink); cursor: pointer; }
+    .field-choice, .choice { display: flex; align-items: center; gap: 10px; min-height: var(--h-sm); padding: var(--space-1) 0; color: var(--ink); cursor: pointer; }
     .choice-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
     .field-checkbox, .field-radio { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--ink); cursor: pointer; }
     .field:disabled, .field-checkbox:disabled, .field-radio:disabled { opacity: .55; cursor: not-allowed; }

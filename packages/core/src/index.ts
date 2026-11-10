@@ -9,7 +9,6 @@ export {
   SWITCHER_RELAY_SOURCE,
   switcherRelay,
   switcherTag,
-  whatsNewKind,
   withoutAppAssets
 } from "./html.js";
 export type { AppShell } from "./html.js";
@@ -30,7 +29,6 @@ export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
 export { fontFile, fontUrl, fonts } from "./fonts.js";
 export type { Font } from "./fonts.js";
 export {
-  agentIcon,
   agentMark,
   avatar,
   choiceCards,
@@ -38,7 +36,6 @@ export {
   menuLink,
   menuPost,
   monogram,
-  monogramTint,
   patchMark,
   rowMenu,
   searchField,

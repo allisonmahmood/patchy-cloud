@@ -15,7 +15,7 @@ export const templates = `
     .ph-row-nomark { grid-template-columns: minmax(0, 1fr) auto; }
     .ph-text { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 0; }
     .ph-text > .title { margin: 0; }
-    .ph-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); max-width: none; margin: 0; color: var(--muted); font: var(--text-meta); line-height: 20px; }
+    .ph-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); max-width: none; margin: 0; color: var(--muted); font: var(--text-meta); line-height: var(--line-body); }
     .ph-sep { color: var(--border-strong); }
     .ph-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--text); font: var(--text-meta); }
     /* A status sentence wraps inside the header, its dot beside the first line. */

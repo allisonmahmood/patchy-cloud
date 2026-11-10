@@ -17,6 +17,13 @@ export const uiScriptTag = `<script defer src="${uiScriptPath}"></script>`;
  * - **Focus return**: closing a dialog puts focus back on the link that opened it, or on the
  *   button of the menu that link sits in.
  * - **Show** for a secret field reveals its button and toggles the mask.
+ * - **A hint's live part** (`HintEcho`) follows what its field holds as it is typed, or its
+ *   fallback while the field is empty.
+ * - **Pending**: a pressed submit with a pending label (`button`'s `pendingLabel`) says it in its
+ *   face, static and at the same width, with `aria-disabled`, and its form turns away another submit
+ *   until the page answers. A submit a page's own script handles, by preventing it, is left
+ *   alone, and a page restored from the back-forward cache is as it was before the press. The
+ *   server's own guards are still what stop a repeat.
  * - **Disclosures**: a fragment naming something inside a `<details>` opens it.
  */
 export const uiScript = `(() => {
@@ -42,6 +49,45 @@ export const uiScript = `(() => {
       button.textContent = shown ? "Show" : "Hide";
     });
   }
+
+  for (const echo of document.querySelectorAll("[data-echo]")) {
+    const control = document.getElementById(echo.dataset.echo ?? "");
+    if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement)) continue;
+    const show = () => { echo.textContent = control.value.trim() || (echo.dataset.fallback ?? ""); };
+    control.addEventListener("input", show);
+    show();
+  }
+
+  // Pending forms and how their pressed button looked, so a page restored from the back-forward
+  // cache gets it back. Captured first, a form already pending turns away the submit; after every
+  // other listener, a submit nobody prevented marks its pressed button pending.
+  const pending = new Map();
+  document.addEventListener("submit", (event) => {
+    if (pending.has(event.target)) event.preventDefault();
+  }, true);
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    const pressed = event.submitter;
+    if (event.defaultPrevented || !(form instanceof HTMLFormElement) || !(pressed instanceof HTMLButtonElement)) return;
+    const label = pressed.dataset.pending;
+    if (label === undefined) return;
+    // The face holds the label; the button already holds room for the pending one, and keeps its
+    // width when the pending label is the shorter.
+    const face = pressed.querySelector(":scope > span") ?? pressed;
+    pending.set(form, { pressed, face, html: face.innerHTML, width: pressed.style.minWidth });
+    pressed.style.minWidth = pressed.getBoundingClientRect().width + "px";
+    face.textContent = label;
+    pressed.setAttribute("aria-disabled", "true");
+  });
+  addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    for (const { pressed, face, html, width } of pending.values()) {
+      face.innerHTML = html;
+      pressed.style.minWidth = width;
+      pressed.removeAttribute("aria-disabled");
+    }
+    pending.clear();
+  });
 
   const openFragment = () => {
     let id = "";

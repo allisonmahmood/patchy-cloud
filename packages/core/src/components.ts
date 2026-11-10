@@ -1,7 +1,7 @@
 import { escapeAttribute, escapeHtml } from "./escape.js";
 import { pick } from "./patch-marks.js";
 
-export { monogram, monogramTint, patchMark } from "./patch-marks.js";
+export { monogram, patchMark } from "./patch-marks.js";
 
 /** A person's initials, tinted from `key`; `waiting` dashes an invitation and `off` mutes a deactivated user. */
 export const avatar = (key: string, label: string, variant?: "waiting" | "off") => {
@@ -15,8 +15,8 @@ export const avatar = (key: string, label: string, variant?: "waiting" | "off") 
   return `<span class="avatar${tint}" aria-hidden="true">${escapeHtml(letters)}</span>`;
 };
 
-/** The guide's agent icon: a terminal window. */
-export const agentIcon =
+/** An agent's icon: a terminal window. */
+const agentIcon =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 10 3 2.5L7 15M12.5 15H17" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /** An agent's mark beside its name, as `avatar` is a person's. */

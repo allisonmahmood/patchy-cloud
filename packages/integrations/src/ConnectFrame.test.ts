@@ -39,7 +39,7 @@ describe("the connect frame", () => {
         "Once connected",
         '<ul class="can">',
         "Guests of those patches too, unless you block guests",
-        '<button class="btn btn-primary" type="submit">Test and connect</button>',
+        '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>',
         ">Cancel</a>"
       ]);
       expect(html).not.toContain("step-done");
@@ -101,11 +101,11 @@ describe("the connect frame", () => {
     expect(html).toMatch(/href="\/settings\/integrations">Cancel<\/a>/);
   });
 
-  it("names the handle that was typed, and lays paired fields on one row", () => {
-    expect(draw(PostHogPage, { submitted: { handle: "revenue" } })).toContain(
-      "Patches use it as posthog/revenue."
-    );
-    expect(draw(PostHogPage)).toContain("Patches use it as posthog/product.");
+  it("names the handle that was typed, live as it is typed, and lays paired fields on one row", () => {
+    const named = (handle: string) =>
+      `Patches use it as posthog/<span data-echo="connection-handle" data-fallback="product">${handle}</span>.`;
+    expect(draw(PostHogPage, { submitted: { handle: "revenue" } })).toContain(named("revenue"));
+    expect(draw(PostHogPage)).toContain(named("product"));
     expect(draw(ImapPage)).toMatch(
       /<div class="field-row">.*id="connection-host".*id="connection-port".*<\/div>/s
     );

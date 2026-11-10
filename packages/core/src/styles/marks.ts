@@ -21,7 +21,7 @@ export const marks = `
 
     .brand { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--ink); font-weight: var(--weight-strong); text-decoration: none; }
 
-    .mono, .pm {
+    .mono {
       display: inline-grid; place-items: center; flex: none;
       width: 28px; height: 28px;
       border: 1px solid var(--ink); border-radius: 7px;
@@ -29,12 +29,11 @@ export const marks = `
       color: var(--ink);
       font: 600 11px/1 var(--font-ui); letter-spacing: .02em;
     }
-    .mono-blue, .pm-blue { background: var(--tint-blue); }
-    .mono-green, .pm-green { background: var(--tint-green); }
-    .mono-amber, .pm-amber { background: var(--tint-amber); }
-    .mono-pink, .pm-pink { background: var(--tint-pink); }
-    .mono-md, .pm-md { width: 36px; height: 36px; border-radius: 9px; font-size: 13px; }
-    .mono-lg, .pm-lg {
+    .mono-blue { background: var(--tint-blue); }
+    .mono-green { background: var(--tint-green); }
+    .mono-amber { background: var(--tint-amber); }
+    .mono-pink { background: var(--tint-pink); }
+    .mono-lg {
       width: 52px; height: 52px; border: 2px solid var(--ink); border-radius: 12px;
       box-shadow: var(--lift-tile); font-size: 17px; transform: rotate(-3deg);
     }
@@ -50,18 +49,17 @@ export const marks = `
     .page-mark-lg { width: 52px; height: 52px; border: 2px solid var(--ink); border-radius: 12px; box-shadow: var(--lift-tile); transform: rotate(-3deg); }
     .page-mark-lg::after { inset: 14px 12px; background: repeating-linear-gradient(transparent 0 5px, var(--border-strong) 5px 7px); }
 
-    .avatar, .av {
+    .avatar {
       display: inline-grid; place-items: center; flex: none;
       width: 32px; height: 32px; border-radius: 50%;
-      background: var(--tint-blue); box-shadow: inset 0 0 0 1px rgba(18, 17, 15, .18);
+      background: var(--tint-blue); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
       color: var(--ink); font: 600 12px/1 var(--font-ui); letter-spacing: .02em;
     }
-    .avatar-green, .av-green { background: var(--tint-green); }
-    .avatar-amber, .av-amber { background: var(--tint-amber); }
-    .av-pink { background: var(--tint-pink); }
+    .avatar-green { background: var(--tint-green); }
+    .avatar-amber { background: var(--tint-amber); }
     .av-sm { width: 24px; height: 24px; font-size: 10px; }
-    .avatar-waiting, .av-waiting { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--muted); }
-    .avatar-off, .av-off { background: var(--sunken); color: var(--muted); }
+    .avatar-waiting { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--muted); }
+    .avatar-off { background: var(--sunken); color: var(--muted); }
 
     .agent-mark, .im {
       display: inline-grid; place-items: center; flex: none;

@@ -6,14 +6,14 @@ What the company holds and how it is published: patches and versions, user owner
 
 **Patch**:
 A built unit in a company's cloud, owned by one user and published as immutable versions. Shared with the company by default, with public sharing available below tier 2.
-_Avoid_: draft, page (how a patch is served, not what it is), app (one possible patch), document (the HTML a version holds)
+_Avoid_: draft, page or tool for every patch (its two kinds, by tier), app (one possible patch), project, document (the HTML a version holds)
 
 **Name**:
 The human-readable label unique within a company's patch namespace, forming the patch's address rather than its identity. Retire and delete reserve its names until reclamation; renaming keeps the former name as a redirect until another patch takes it.
 _Avoid_: id (the stable identity), title (the document's display text), slug
 
 **Tier**:
-Where a patch's code runs, counted from 1. Tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan.
+Where a patch's code runs, counted from 1. Tier 1 runs in the reader's browser and reaches only its own patch; tier 2 adds request-scoped server handlers while a viewer has the patch open or their worker agent is calling it, and only tier 2 declares connections, shared sources or the member directory. It is not a pricing plan. In what a person reads, a tier 1 patch is a **page** and a tier 2 patch is a **tool**, the kinds All patches filters by.
 _Avoid_: runtime (the thing a tier names), level, plan (tiers are capability, not pricing)
 
 **Owner**:

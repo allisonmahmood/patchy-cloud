@@ -3,7 +3,7 @@
  * inside its own wrapper on a phone instead of squeezing its columns.
  */
 export const tables = `
-    .table-wrap, .portal-table { overflow-x: auto; }
+    .table-wrap { overflow-x: auto; }
     .table { width: 100%; margin: var(--space-4) 0; border-collapse: collapse; overflow-wrap: anywhere; }
     .table th {
       height: 36px; padding: 0 var(--space-3);
@@ -15,7 +15,6 @@ export const tables = `
     .table th:first-child, .table td:first-child { padding-left: 0; }
     .table th:last-child, .table td:last-child { padding-right: 0; }
     .table .r { text-align: right; }
-    .table .w-menu { width: 40px; }
     .table-compact td { height: 40px; padding-block: 6px; }
     .table tbody tr { position: relative; }
     @media (hover: hover) { .table tbody tr:has(.row-link):hover > td { background: var(--hover); } }

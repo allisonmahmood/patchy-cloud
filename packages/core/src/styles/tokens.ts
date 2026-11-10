@@ -2,9 +2,6 @@
  * The design tokens every chunk draws from: colour, type, size, shape and elevation. A visual
  * value outside this block is a finding; layout geometry (a grid's columns, a gap between two
  * particular things) is not.
- *
- * The legacy names at the end map today's page CSS onto the new values until each page moves to
- * the templates and stops naming them.
  */
 export const tokens = `
     :root {
@@ -66,6 +63,10 @@ export const tokens = `
       --text-meta: 400 13px/18px var(--font-ui);
       --text-badge: 500 12px/16px var(--font-ui);
       --text-code: 400 13px/20px var(--font-mono);
+      /* Inline code in running text: 13px in a 14px line, scaling with the line it sits in. */
+      --size-code: .929em;
+      /* The body's line, for smaller text set level with body text beside it. */
+      --line-body: 20px;
       --weight-regular: 400;
       --weight-medium: 500;
       --weight-strong: 600;
@@ -89,16 +90,23 @@ export const tokens = `
       --h-tab: 40px;
       --h-seg: 28px;
       --h-chip: 30px;
+      --h-textarea: 92px;
+      --h-command: 52px;
 
       --r-control: 6px;
       --r-container: 10px;
       --r-modal: 12px;
       --r-round: 999px;
+      --r-inline: 4px;
+      --r-highlight: 3px;
 
       --lift: 2px 2px 0 var(--ink);
       --lift-tile: 3px 3px 0 var(--ink);
       --float: 4px 4px 0 var(--ink);
       --modal: 6px 6px 0 var(--ink);
+      --lift-sm: 1.5px 1.5px 0 var(--ink);
+      --key: 0 2px 0 var(--ink);
+      --key-sm: 0 1px 0 var(--ink);
 
       --w-index: 1120px;
       --w-settings: 760px;
@@ -107,23 +115,6 @@ export const tokens = `
       --w-dialog-md: 560px;
       --w-door: 440px;
       --w-prose: 34em;
-
-      /* Legacy names, for page CSS not yet on the templates. */
-      --white: var(--surface);
-      --ink-soft: var(--text);
-      --paper-blue: var(--info-bg);
-      --paper-green: var(--success-bg);
-      --paper-amber: var(--warning-bg);
-      --line: var(--border-subtle);
-      --line-strong: var(--border);
-      --blue-dark: var(--link);
-      --green-ink: var(--success);
-      --amber-ink: var(--warning);
-      --field-radius: var(--r-control);
-      --radius: var(--r-container);
-      --radius-pill: var(--r-round);
-      --shadow-hard: var(--float);
-      --font-sans: var(--font-ui);
     }
     /* Touch: every control a finger's width, and field text that phones won't zoom into. */
     @media (pointer: coarse) {

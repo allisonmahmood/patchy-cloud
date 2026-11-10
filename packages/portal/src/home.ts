@@ -17,6 +17,7 @@ import {
   isWelcomePage,
   linkButton,
   menuLink,
+  menuNewTab,
   notice,
   patchMark,
   patchTitle,
@@ -126,11 +127,7 @@ const sharedSection = (shared: readonly GuestGrants.Shared[]) => {
       ...(open ? { href: address } : {}),
       description: `${item.company.name} · shared by ${item.sharedBy}${Option.match(item.unavailable, { onNone: () => "", onSome: (reason) => ` · Can’t open it now. ${guestReasonText(reason)}` })}`,
       end: rowMenu(`shared-${item.patchId}`, title, [
-        ...(open
-          ? [
-              `<a class="menu-item" href="${escapeAttribute(address)}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`
-            ]
-          : []),
+        ...(open ? [menuNewTab(address, title)] : []),
         menuLink(`/shared/${encodeURIComponent(item.patchId)}/remove`, "Remove…", true, title)
       ])
     });

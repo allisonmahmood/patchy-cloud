@@ -35,7 +35,7 @@ export const base = `
     @media (hover: hover) { a:hover { text-decoration-thickness: 2px; } }
 
     code, kbd, pre { font-family: var(--font-mono); font-variant-ligatures: none; }
-    code { padding: 1px 5px; border-radius: 4px; background: var(--sunken); color: var(--ink); font-size: .929em; }
+    code { padding: 1px 5px; border-radius: var(--r-inline); background: var(--sunken); color: var(--ink); font-size: var(--size-code); }
     pre {
       margin: 0;
       padding: var(--space-3) var(--space-4);
@@ -55,8 +55,8 @@ export const base = `
       font: var(--text-badge);
     }
     summary { cursor: pointer; }
-    mark { padding: 0 2px; border-radius: 3px; background: var(--highlight); color: var(--ink); }
-    time, .tabular { font-variant-numeric: tabular-nums; }
+    mark { padding: 0 2px; border-radius: var(--r-highlight); background: var(--highlight); color: var(--ink); }
+    time { font-variant-numeric: tabular-nums; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; }

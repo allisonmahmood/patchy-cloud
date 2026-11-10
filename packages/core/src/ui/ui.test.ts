@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import * as Components from "../components.js";
+import * as CopyLine from "../copy-line.js";
 import { appStyles } from "../styles/index.js";
+import * as Ui from "./index.js";
 import {
   button,
   choiceGroup,
@@ -9,6 +12,7 @@ import {
   doorPage,
   field,
   galleryPage,
+  type GalleryPage,
   galleryPages,
   idFor,
   indexPage,
@@ -25,6 +29,114 @@ import {
   table,
   tabs
 } from "./index.js";
+
+/** Exports that draw nothing a page shows: the enhancer and copy scripts, the gallery and ids. */
+const notDrawn = [
+  "uiScript",
+  "uiScriptPath",
+  "uiScriptTag",
+  "copyScript",
+  "copyScriptPath",
+  "galleryPage",
+  "galleryPages",
+  "galleryPath",
+  "idFor"
+] as const;
+
+/** Where the gallery shows a part: the state table holding its states, or a page of its own. */
+type Shown = string | { readonly page: GalleryPage };
+
+/**
+ * Where the gallery shows each part core gives pages. The compiler fails a new export missing
+ * from it, and the gallery test fails a table or page the gallery doesn't draw, so a helper
+ * arrives with its states.
+ */
+const shownAt = {
+  button: "Button",
+  linkButton: "Button",
+  iconButton: "Button",
+  icon: "Button",
+  field: "Field",
+  input: "Field",
+  prefixInput: "Field",
+  secretInput: "Field",
+  select: "Field",
+  textarea: "Field",
+  checkbox: "Choice",
+  radio: "Choice",
+  choiceGroup: "Choice",
+  choiceCards: "Choice",
+  tileOptions: "Choice",
+  switchForm: "Switch",
+  copyLine: "Copy line",
+  checklist: "Checklist",
+  searchField: "Search field",
+  fieldRow: "Field row",
+  copyButton: "Copy button",
+  badge: "Status",
+  dot: "Status",
+  notice: "Notice",
+  receipt: "Receipt",
+  emptyState: "Empty state",
+  refusal: "Refusal",
+  refusalNotice: "Refusal",
+  tabs: "Tabs, segmented, chips",
+  segmented: "Tabs, segmented, chips",
+  chip: "Tabs, segmented, chips",
+  row: "Row",
+  rows: "Row",
+  table: "Table",
+  expandingTable: "Expanding table",
+  groupedTable: "Grouped table",
+  chipMenu: "Chip menu",
+  menu: "Menu",
+  rowMenu: "Menu",
+  menuLink: "Menu",
+  menuPost: "Menu",
+  menuCopy: "Menu",
+  menuNewTab: "Menu",
+  menuRule: "Menu",
+  facts: "Facts",
+  person: "Person and code row",
+  codeRow: "Person and code row",
+  settingsPanel: "Settings panel",
+  pageHeader: "Page header",
+  section: "Section",
+  settingRow: "Setting row",
+  card: "Card",
+  dialog: "Dialog",
+  disclosure: "Disclosure",
+  changeEntry: "Change",
+  behindTheScenes: "Change",
+  steps: "Steps",
+  region: "Region",
+  attentionRow: "Attention row",
+  usualTiles: "Usual tile",
+  choiceLinks: "Choice link",
+  canList: "Can list",
+  flowOutcome: "Flow outcome",
+  patchMark: "Marks",
+  monogram: "Marks",
+  avatar: "Marks",
+  agentMark: "Marks",
+  productMark: "Product mark",
+  computerMark: "Computer mark",
+  doorCard: "Door",
+  verificationCode: "Verification code",
+  meet: "Meet",
+  answerPair: "Answer pair",
+  indexPage: { page: "index" },
+  detailPage: { page: "detail" },
+  settingsPage: { page: "settings" },
+  flowPage: { page: "flow" },
+  doorPage: { page: "door" }
+} satisfies Record<
+  Exclude<
+    keyof typeof Ui | keyof typeof Components | keyof typeof CopyLine,
+    (typeof notDrawn)[number]
+  >,
+  Shown
+>;
 
 describe("the field family", () => {
   it("orders label, hint, control and error, and ties the hint and error to the control", () => {
@@ -82,6 +194,27 @@ describe("the field family", () => {
     ).toHaveLength(2);
   });
 
+  it("draws a hint's live part as what was submitted, or its example, escaped", () => {
+    const hint = (value: string) =>
+      field({
+        id: "handle",
+        label: "Name",
+        hint: [
+          "Patches use it as attio/",
+          { value, fallback: "crm" },
+          ". It can't change <later>."
+        ],
+        control: (aria) => prefixInput(aria, { name: "handle", prefix: "attio/", value })
+      });
+    expect(hint("")).toContain(
+      `<p class="field-hint" id="handle-hint">Patches use it as attio/<span data-echo="handle" data-fallback="crm">crm</span>. It can't change &lt;later&gt;.</p>`
+    );
+    expect(hint("  sales ")).toContain('data-fallback="crm">sales</span>');
+    expect(hint('<b>"x"</b>')).toContain(
+      'data-fallback="crm">&lt;b&gt;&quot;x&quot;&lt;/b&gt;</span>'
+    );
+  });
+
   it("keeps a secret's Show hidden for the enhancer, so without script it stays masked", () => {
     const html = secretInput(
       { id: "key", describedBy: undefined, invalid: false },
@@ -99,6 +232,10 @@ describe("buttons", () => {
     );
     expect(button("Testing…", { kind: "primary", pending: true })).toContain(
       'aria-disabled="true"'
+    );
+    // What a submit says once pressed rides along for the enhancer; at rest it is the label.
+    expect(button("Test and connect", { kind: "primary", pendingLabel: "Testing…" })).toBe(
+      '<button class="btn btn-primary" type="submit" data-pending="Testing…"><span>Test and connect</span></button>'
     );
     expect(linkButton("Cancel", "/x", { kind: "quiet" })).toBe(
       '<a class="btn btn-quiet" href="/x">Cancel</a>'
@@ -269,48 +406,8 @@ describe("the gallery", () => {
     expect(galleryPage("dialog").overlay).toContain("data-dialog");
   });
 
-  it("keeps a state table for every component a page composes, and the type and colour reference", () => {
+  it("keeps the type and colour reference, and draws doors and the Final step as they are", () => {
     const system = galleryPage("").body;
-    for (const component of [
-      "Button",
-      "Field",
-      "Choice",
-      "Switch",
-      "Status",
-      "Receipt",
-      "Empty state",
-      "Notice",
-      "Tabs, segmented, chips",
-      "Row",
-      "Table",
-      "Menu",
-      "Card",
-      "Dialog",
-      "Disclosure",
-      "Marks",
-      "Steps",
-      "Copy line",
-      "Facts",
-      "Page header",
-      "Section",
-      "Setting row",
-      "Checklist",
-      "Chip menu",
-      "Grouped table",
-      "Person and code row",
-      "Settings panel",
-      "Refusal",
-      "Door",
-      "Verification code",
-      "Meet",
-      "Answer pair",
-      "Can list",
-      "Choice link",
-      "Flow outcome",
-      "Product mark",
-      "Computer mark"
-    ])
-      expect(system, component).toContain(`aria-label="${component} states"`);
     expect(system).toContain('aria-label="Type roles"');
     expect(system).toContain("<code>--danger-solid</code>");
     // A dialog only its own actions close has no close, as the Final step.
@@ -321,6 +418,32 @@ describe("the gallery", () => {
     expect(galleryPage("consent").body).toMatch(/<div class="meet">[\s\S]*<ul class="can">/);
     expect(galleryPage("refused").body).toContain('<div class="refusal" tabindex="-1" autofocus>');
     expect(system).not.toMatch(/<[^>]*\sautofocus[\s>]/);
+  });
+
+  it("shows every part core gives pages in a state table or a page of its own", () => {
+    const rendered = galleryPages
+      .map((page) => {
+        const content = galleryPage(page);
+        return `${content.body}${content.overlay ?? ""}`;
+      })
+      .join("");
+    const unshown = (shown: Readonly<Record<string, Shown>>) =>
+      Object.entries(shown)
+        .filter(([, at]) =>
+          typeof at === "string"
+            ? !rendered.includes(`aria-label="${at} states"`)
+            : !galleryPages.includes(at.page)
+        )
+        .map(([name]) => name);
+    expect(unshown(shownAt)).toEqual([]);
+    // A part whose table the gallery doesn't draw is caught, wherever else its name appears.
+    expect(unshown({ button: "Button", fresh: "Fresh" })).toEqual(["fresh"]);
+    // The compiler holds the exports to the inventory; this holds them at run time too.
+    expect(
+      [...Object.keys(Ui), ...Object.keys(Components), ...Object.keys(CopyLine)].filter(
+        (name) => !(name in shownAt) && !notDrawn.some((other) => other === name)
+      )
+    ).toEqual([]);
   });
 
   it("draws each state that takes the focus or ends a door, focus where the page puts it", () => {
