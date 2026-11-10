@@ -1,6 +1,7 @@
 import { menuCopy, menuLink, menuPost, rowMenu } from "../components.js";
 import { escapeAttribute, escapeHtml } from "../escape.js";
 import { iconButton } from "./controls.js";
+import { unopenedName } from "./feedback.js";
 import { icon } from "./icons.js";
 
 /**
@@ -92,6 +93,7 @@ export const facts = (pairs: ReadonlyArray<readonly [label: string, value: strin
 /**
  * One thing in a list: a mark, its name and one line, and what you can do at its end. With
  * `href` the whole row opens it, while its own buttons and menu stay pressable above the link.
+ * `unopened` draws the name with `unopenedName`'s dot, for a patch the viewer has never opened.
  */
 export const row = (spec: {
   readonly lead?: string;
@@ -99,8 +101,11 @@ export const row = (spec: {
   readonly href?: string;
   readonly description?: string;
   readonly end?: string;
-}) =>
-  `<div class="row${spec.lead === undefined ? " row-plain" : ""}">${spec.lead ?? ""}<div class="row-main"><span class="row-name">${spec.href === undefined ? escapeHtml(spec.name) : `<a class="row-link" href="${escapeAttribute(spec.href)}">${escapeHtml(spec.name)}</a>`}</span>${spec.description === undefined ? "" : `<span class="row-desc">${escapeHtml(spec.description)}</span>`}</div><div class="row-end">${spec.end ?? ""}</div></div>`;
+  readonly unopened?: boolean;
+}) => {
+  const name = spec.unopened === true ? unopenedName(spec.name) : escapeHtml(spec.name);
+  return `<div class="row${spec.lead === undefined ? " row-plain" : ""}">${spec.lead ?? ""}<div class="row-main"><span class="row-name">${spec.href === undefined ? name : `<a class="row-link" href="${escapeAttribute(spec.href)}">${name}</a>`}</span>${spec.description === undefined ? "" : `<span class="row-desc">${escapeHtml(spec.description)}</span>`}</div><div class="row-end">${spec.end ?? ""}</div></div>`;
+};
 
 /** Rows on hairlines, in a box when `boxed`. Items are `row` or `settingRow` output. */
 export const rows = (items: ReadonlyArray<string>, boxed = false) =>

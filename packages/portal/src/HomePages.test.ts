@@ -5,7 +5,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { DeviceLogins, getAnAgent, SetupLinks } from "@patchy/auth";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { sha256 } from "../../../test/crypto.js";
-import { disclosure } from "@patchy/core";
+import { disclosure, unopenedName } from "@patchy/core";
 import { GuestGrants, Patches } from "@patchy/patches";
 import {
   DAY,
@@ -49,11 +49,11 @@ const names = (html: string, id: string) =>
       /<a class="(?:usual-tile|row-link)" href="\/[^/"]+\/([a-z0-9-]+)"/g
     )
   ].map((match) => match[1]!);
-/** The names a section's rows mark new to the viewer. */
-const unseen = (html: string, id: string) =>
+/** The patches whose rows carry the dot, by name: in one of Home's sections, or a whole page. */
+const dotted = (html: string, id?: string) =>
   [
-    ...sectionOf(html, id).matchAll(
-      /<a class="row-link" href="\/[^/"]+\/([a-z0-9-]+)">[^<]*<\/a> <span class="unseen"/g
+    ...(id === undefined ? html : sectionOf(html, id)).matchAll(
+      /<a class="row-link" href="\/[^/"]+\/([a-z0-9-]+)">[^<]*<span class="unopened">[^<]*<span class="unseen" role="img" aria-label="Not opened yet"><\/span><\/span><\/a>/g
     )
   ].map((match) => match[1]!);
 /** Whether the Final step is over the page. */
@@ -406,7 +406,7 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       yield* publish(workspace.owner, "pipeline", { title: "Pipeline · Northwind" });
       yield* publish(workspace.admin, "harbor", { title: "Docks · Harbor Works" });
       const shown = (html: string) =>
-        [...html.matchAll(/<a class="row-link" href="\/[^/"]+\/[a-z-]+">([^<]*)<\/a>/g)].map(
+        [...html.matchAll(/<a class="row-link" href="\/[^/"]+\/[a-z-]+">([\s\S]*?)<\/a>/g)].map(
           (match) => text(match[1]!)
         );
       const home = yield* (yield* request("/", workspace.owner)).text;
@@ -603,32 +603,85 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     })
   );
 
+  it.effect("lists colleagues' newest patches the viewer hasn't opened under New, dotted", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const patches = yield* Patches.Patches;
+      const old = ["old-1", "old-2", "old-3", "old-4", "old-5", "old-6"];
+      for (const name of old) yield* publish(workspace.admin, name);
+      yield* TestClock.adjust(8 * DAY);
+      const recap = yield* publish(workspace.admin, "weekly-recap");
+      yield* TestClock.adjust(60_000);
+      yield* publish(workspace.admin, "forms");
+      yield* TestClock.adjust(60_000);
+      // New leaves out a public page, whose signed-out reads record no open, and the viewer's own.
+      yield* publish(workspace.admin, "press-kit", { scope: "public" });
+      yield* publish(workspace.member, "my-notes");
+      const html = yield* (yield* request("/", workspace.member)).text;
+      assert.deepStrictEqual(names(html, "new"), ["forms", "weekly-recap"]);
+      assert.include(text(sectionOf(html, "new")), "forms Page · Sam · 1 minute ago");
+      assert.deepStrictEqual(dotted(html, "new"), ["forms", "weekly-recap"]);
+      // Core's dot, inside the link so the link says so too.
+      assert.include(sectionOf(html, "new"), `/forms">${unopenedName("forms")}</a>`);
+      // The dot is older than New: every colleague's patch not opened yet, a public one too.
+      assert.deepStrictEqual(dotted(html, "colleagues"), [
+        "forms",
+        ...old,
+        "press-kit",
+        "weekly-recap"
+      ]);
+
+      // Opening it takes it out of New and clears its dot.
+      yield* patches.recordOpen(workspace.member.id, recap.patchId, recap.versionId);
+      const opened = yield* (yield* request("/", workspace.member)).text;
+      assert.deepStrictEqual(names(opened, "new"), ["forms"]);
+      assert.deepStrictEqual(dotted(opened, "colleagues"), ["forms", ...old, "press-kit"]);
+    })
+  );
+
   it.effect(
-    "marks a colleague's patch new until the viewer opens it, and lists the newest under New",
+    "dots a colleague's live patch until the viewer opens it, alike on Home and All patches",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
         const patches = yield* Patches.Patches;
-        for (const name of ["old-1", "old-2", "old-3", "old-4", "old-5", "old-6"])
-          yield* publish(workspace.admin, name);
-        yield* TestClock.adjust(8 * DAY);
-        const recap = yield* publish(workspace.admin, "weekly-recap");
-        yield* TestClock.adjust(60_000);
-        yield* publish(workspace.admin, "forms");
-        yield* TestClock.adjust(60_000);
-        // A public page's opens aren't recorded, so it is never new; nor is the viewer's own.
-        yield* publish(workspace.admin, "press-kit", { scope: "public" });
+        const notes = yield* publish(workspace.owner, "team-notes");
+        yield* publish(workspace.owner, "press-kit", { scope: "public" });
+        yield* publishTier2(workspace.admin, "desk-booker");
+        const shelved = yield* publish(workspace.owner, "old-crm");
+        yield* patches.retire(shelved.patchId, actor(workspace.owner));
         yield* publish(workspace.member, "my-notes");
-        const html = yield* (yield* request("/", workspace.member)).text;
-        assert.deepStrictEqual(names(html, "new"), ["forms", "weekly-recap"]);
-        assert.include(text(sectionOf(html, "new")), "forms Page · Sam · 1 minute ago");
-        assert.deepStrictEqual(unseen(html, "colleagues"), ["forms", "weekly-recap"]);
+        const lunch = yield* publish(workspace.admin, "lunch-poll");
+        yield* patches.recordOpen(workspace.member.id, lunch.patchId, lunch.versionId);
+        const page = (path: string) =>
+          Effect.flatMap(request(path, workspace.member), (response) => response.text);
 
-        // Opening it clears it.
-        yield* patches.recordOpen(workspace.member.id, recap.patchId, recap.versionId);
-        const opened = yield* (yield* request("/", workspace.member)).text;
-        assert.deepStrictEqual(names(opened, "new"), ["forms"]);
-        assert.deepStrictEqual(unseen(opened, "colleagues"), ["forms"]);
+        // Never the viewer's own, an opened one or a retired one, under any filter or search.
+        const all = yield* page("/patches");
+        assert.deepStrictEqual(dotted(all), ["desk-booker", "press-kit", "team-notes"]);
+        assert.deepStrictEqual(dotted(yield* page("/patches?show=tools")), ["desk-booker"]);
+        assert.deepStrictEqual(dotted(yield* page("/patches?show=pages")), [
+          "press-kit",
+          "team-notes"
+        ]);
+        assert.deepStrictEqual(dotted(yield* page("/patches?show=yours")), []);
+        const off = yield* page("/patches?show=off");
+        assert.include(off, "/patches/old-crm");
+        assert.deepStrictEqual(dotted(off), []);
+        assert.deepStrictEqual(dotted(yield* page("/patches?q=notes")), ["team-notes"]);
+        // Home marks the same ones, and never Yours.
+        const home = yield* page("/");
+        assert.deepStrictEqual(dotted(home, "colleagues"), dotted(all));
+        assert.deepStrictEqual(dotted(home, "yours"), []);
+
+        // Opening it clears it on both.
+        yield* patches.recordOpen(workspace.member.id, notes.patchId, notes.versionId);
+        const after = dotted(yield* page("/patches"));
+        assert.deepStrictEqual(after, ["desk-booker", "press-kit"]);
+        assert.deepStrictEqual(dotted(yield* page("/"), "colleagues"), after);
+        // Its owner never sees it on their own.
+        const owner = yield* (yield* request("/patches", workspace.owner)).text;
+        assert.deepStrictEqual(dotted(owner), ["desk-booker", "lunch-poll", "my-notes"]);
       })
   );
 
@@ -652,6 +705,12 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         "Shared with you Site notes Harbor Works · shared by Priya"
       );
       assert.deepStrictEqual(names(html, "shared"), ["site-notes"]);
+      // It carries the dot until its guest opens it.
+      assert.deepStrictEqual(dotted(html, "shared"), ["site-notes"]);
+      yield* (yield* Patches.Patches).recordOpen(guests.member.id, patch.patchId, patch.versionId);
+      const opened = yield* (yield* request("/", guests.member)).text;
+      assert.deepStrictEqual(names(opened, "shared"), ["site-notes"]);
+      assert.deepStrictEqual(dotted(opened, "shared"), []);
     })
   );
 
@@ -698,6 +757,14 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         title: "Office <map>",
         description: "Find a desk. Keep the second sentence on the card."
       });
+      const unopened = yield* (yield* request("/", workspace.member)).text;
+      assert.include(unopened, `/office-map">${unopenedName("Office <map>")}</a>`);
+      // Opened, it reads as plain text.
+      yield* (yield* Patches.Patches).recordOpen(
+        workspace.member.id,
+        titled.patchId,
+        titled.versionId
+      );
       const home = yield* (yield* request("/", workspace.member)).text;
       assert.include(home, `/office-map">Office &lt;map&gt;</a>`);
       assert.include(menuItems(home, `colleagues-${titled.patchId}`), "Office &lt;map&gt;");

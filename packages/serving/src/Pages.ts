@@ -378,22 +378,22 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
         )
     })
   );
-  // An admitted member opening the current version's address, not an older version or the
-  // frame's content request, is an open for their own Home: it is what clears "new to you". A
-  // public patch's member counts too; a public page rendered for no one records none.
+  // The page's viewer opening the current version's address, not an older version or the
+  // frame's content request, is an open for their own Home: it is what clears the dot after a
+  // patch they never opened. A public patch's member counts too, and so does a guest of a patch
+  // shared with them, for Shared with you; a public page rendered for no one records none.
   const viewerId = viewer?.user.id;
-  // A guest has no Home in the patch's company to record an open for.
   const member =
     !HttpServerResponse.isHttpServerResponse(admission) &&
     admission.company.id === served.value.patch.companyId;
   // A colleague's first open is the one business event serving reports: activation is counted
-  // in it. It reports with the open's commit, so a reader who leaves mid-COMMIT can't leave a first
-  // open recorded and never reported, while the open itself, lock waits included, stays
-  // cancellable. Tracking never fails the page.
-  if (kind === "address" && viewerId !== undefined && member) {
+  // in it, so a guest's never reports. It reports with the open's commit, so a reader who leaves
+  // mid-COMMIT can't leave a first open recorded and never reported, while the open itself, lock
+  // waits included, stays cancellable. Tracking never fails the page.
+  if (kind === "address" && viewerId !== undefined) {
     const { patch } = served.value;
     yield* withReportedCommit(patches.recordOpen(viewerId, patch.id, version.id), (firstOpen) =>
-      firstOpen && viewerId !== patch.ownerUserId
+      firstOpen && member && viewerId !== patch.ownerUserId
         ? analytics.track({
             name: "patch.first_opened",
             principalId: viewerId,

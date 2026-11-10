@@ -27,6 +27,7 @@ import {
   rows,
   table,
   type Template,
+  unopenedName,
   usualTiles
 } from "@patchy/core";
 import type { ConnectionAttention } from "@patchy/integrations";
@@ -40,11 +41,11 @@ import {
   failuresCell,
   failuresColumn,
   firstClause,
-  isNew,
   manages,
   openItems,
   patchAddress,
-  shareHref
+  shareHref,
+  unopened
 } from "./shared/presentation.js";
 
 const DAY = 86_400_000;
@@ -52,6 +53,8 @@ const DAY = 86_400_000;
 const USUAL_WINDOW = 30 * DAY;
 const USUAL = 4;
 const NEW = 3;
+/** How long a colleague's patch the viewer hasn't opened stays in New. */
+const NEW_WINDOW = 7 * DAY;
 const COLLEAGUES = 12;
 /** Below this many live patches Home reads whole, so it leaves out Your usual and New. */
 const SHELVES_AT = 8;
@@ -113,9 +116,14 @@ export interface HomeInput {
 
 /**
  * Other companies' patches shared with the viewer, each opening the patch, or saying why it can't
- * while its guests can't open it, with Remove… in its menu. Nothing when there are none.
+ * while its guests can't open it, with Remove… in its menu. Nothing when there are none. One they
+ * can open and never have carries the dot; a public one never does, since a guest reads its
+ * public page as anyone does and that records no open.
  */
-const sharedSection = (shared: readonly GuestGrants.Shared[]) => {
+const sharedSection = (
+  shared: readonly GuestGrants.Shared[],
+  opens: ReadonlyMap<string, Patches.Open>
+) => {
   if (shared.length === 0) return "";
   const entry = (item: GuestGrants.Shared) => {
     const title = patchTitle(item, item.company.name);
@@ -125,6 +133,7 @@ const sharedSection = (shared: readonly GuestGrants.Shared[]) => {
       lead: patchMark(item.name, item.tier),
       name: title,
       ...(open ? { href: address } : {}),
+      unopened: open && item.scope !== "public" && !opens.has(item.patchId),
       description: `${item.company.name} · shared by ${item.sharedBy}${Option.match(item.unavailable, { onNone: () => "", onSome: (reason) => ` · Can’t open it now. ${guestReasonText(reason)}` })}`,
       end: rowMenu(`shared-${item.patchId}`, title, [
         ...(open ? [menuNewTab(address, title)] : []),
@@ -149,8 +158,13 @@ export const renderHome = (input: HomeInput): Template => {
   const live = input.rows.filter((entry) => entry.patch.state === "live");
   const mine = (entry: Row) => entry.owner.id === viewer.user.id;
   const owner = (entry: Row) => (mine(entry) ? "You" : firstName(entry.owner.name));
-  // Session-free opens of a public page are never recorded, so it can't be new to anyone.
-  const fresh = (entry: Row) => entry.patch.scope !== "public" && isNew(entry, viewer, opens, now);
+  const dotted = (entry: Row) => unopened(entry, viewer, opens);
+  // New: made in the last week and not opened yet. A public page read signed out records no open,
+  // so New leaves public pages out.
+  const fresh = (entry: Row) =>
+    dotted(entry) &&
+    entry.patch.scope !== "public" &&
+    now - epoch(entry.patch.createdAt) < NEW_WINDOW;
   const menu = (entry: Row, list: string) =>
     rowMenu(`${list}-${entry.patch.id}`, title(entry), [
       ...openItems(entry, viewer, input.publicBaseUrl, "/"),
@@ -159,11 +173,12 @@ export const renderHome = (input: HomeInput): Template => {
         : [])
     ]);
   const failed = (entry: Row) => calls?.get(entry.patch.id)?.failures ?? 0;
-  // A table row's patch: its mark, its title opening it, a dot while it's new to the viewer, the
-  // description's first clause, and, on a phone, what the hidden columns would warn about.
+  // A table row's patch: its mark, its title opening it, the dot until the viewer opens a
+  // colleague's, the description's first clause, and, on a phone, what the hidden columns would
+  // warn about.
   const patchCell = (entry: Row) => {
     const failures = mine(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
-    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${escapeHtml(title(entry))}</a>${fresh(entry) ? ' <span class="unseen" role="img" aria-label="New to you"></span>' : ""}</span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures === "" ? "" : `<span class="show-sm">${failures}</span>`}</div></div>`;
+    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${dotted(entry) ? unopenedName(title(entry)) : escapeHtml(title(entry))}</a></span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures === "" ? "" : `<span class="show-sm">${failures}</span>`}</div></div>`;
   };
 
   // Needs attention: the viewer's own tools that failed in the last 24 hours, for admins the
@@ -224,7 +239,7 @@ export const renderHome = (input: HomeInput): Template => {
   const page = (content: string) =>
     indexPage({
       title: "Home",
-      content: `${notes}${needs}${content}${sharedSection(input.shared)}<script defer src="${copyScriptPath}"></script>`
+      content: `${notes}${needs}${content}${sharedSection(input.shared, opens)}<script defer src="${copyScriptPath}"></script>`
     });
 
   if (live.length === 0)
@@ -297,6 +312,7 @@ export const renderHome = (input: HomeInput): Template => {
                 lead: patchMark(entry.patch.name, entry.tier),
                 name: title(entry),
                 href: patchAddress(entry.patch),
+                unopened: true,
                 description: `${kind(entry)} · ${entry.owner.name} · ${ago(entry.patch.createdAt, now)}`,
                 end: linkButton("Open", patchAddress(entry.patch), {
                   size: "sm",

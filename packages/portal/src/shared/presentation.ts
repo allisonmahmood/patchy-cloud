@@ -29,12 +29,7 @@ export const hidden = (name: string, value: string | number | null) =>
 /** What the card and Needs attention call a patch its guests can't open. */
 export const turnedAwayTitle = "Guests can't open this";
 
-const DAY = 86_400_000;
-/** How long a patch counts as new to someone who hasn't opened it. */
-const RECENT = 7 * DAY;
-
 type Viewer = RequireSession.Viewer["Service"];
-const epoch = (iso: string) => Date.parse(iso);
 
 /** A `?q=` as searched: trimmed and cut to 200 code points, never mid-character. */
 export const searchQuery = (raw: string | null) =>
@@ -59,16 +54,15 @@ export const byTitle = (company: string) => (a: Patches.ReadPatch, b: Patches.Re
 export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
   viewer.role === "admin" || row.owner.id === viewer.user.id;
 
-/** Created in the last week by someone else, and not yet opened by the viewer. */
-export const isNew = (
+/**
+ * A colleague's live patch the viewer has never opened, which Home and All patches mark with
+ * core's `unopenedName` until they open it; `opens` is the viewer's own, read once for the page.
+ */
+export const unopened = (
   row: Patches.ReadPatch,
   viewer: Viewer,
-  opens: ReadonlyMap<string, Patches.Open>,
-  now: number
-) =>
-  row.owner.id !== viewer.user.id &&
-  now - epoch(row.patch.createdAt) < RECENT &&
-  !opens.has(row.patch.id);
+  opens: ReadonlyMap<string, Patches.Open>
+) => row.patch.state === "live" && row.owner.id !== viewer.user.id && !opens.has(row.patch.id);
 
 /** A patch's card at `/patches/<name>`, or one of its pages under it. */
 export const cardPath = (patch: Patches.Patch, action = "") =>
