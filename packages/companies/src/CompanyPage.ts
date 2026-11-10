@@ -26,6 +26,11 @@ import * as Companies from "./Companies.js";
 import * as Invitations from "./Invitations.js";
 import * as Users from "./Users.js";
 
+const roleLabel = { member: "Member", admin: "Admin", super_admin: "Super admin" } satisfies Record<
+  Users.Role,
+  string
+>;
+
 interface Viewer {
   readonly user: { readonly id: string; readonly email: string; readonly name: string };
   readonly company: { readonly id: string; readonly handle: string; readonly name: string };
@@ -397,7 +402,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     const actions = admin
       ? `<td class="company-row-actions">${items.length ? rowMenu(user.id, label, items) : ""}</td>`
       : "";
-    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "super_admin" ? "Super admin" : user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
+    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${roleLabel[user.role]}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
   };
   const inviteRow = (invite: Companies.Invite) => {
     const path = `/company/invites/${encodeURIComponent(invite.id)}`;
@@ -425,7 +430,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
         : admin
           ? "<td></td>"
           : "";
-    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "super_admin" ? "Super admin" : invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
+    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${roleLabel[invite.role]}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
   };
 
   // `#guest-<id>` opens a guest's row: browsers expand a closed details to show a fragment's target.

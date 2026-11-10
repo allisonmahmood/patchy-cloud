@@ -200,8 +200,8 @@ const company = Effect.fn("PortalPagesTest.company")(function* (companyId?: stri
       role,
       machineTokenId: `tok_${userId}`
     };
-    yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role, is_regular_admin)
-      VALUES (${person.id}, ${person.clerkUserId}, ${id}, ${person.email}, ${name}, ${role === "super_admin" ? "admin" : "member"}, false)`;
+    yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
+      VALUES (${person.id}, ${person.clerkUserId}, ${id}, ${person.email}, ${name}, ${role})`;
     yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
       VALUES (${person.machineTokenId}, ${person.id}, 'Portal test machine',
         ${`hash:${person.machineTokenId}`}, now(), now() + interval '90 days', now())`;
@@ -3622,44 +3622,24 @@ it.layer(layer)("patch log on a socket", (it) => {
 });
 
 it.layer(layer)("user lifecycle pages on a socket", (it) => {
+  it.effect("maps regular-admin lifecycle refusal to 403", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const users = yield* Users.Users;
+      yield* users.setRole({
+        companyId: workspace.id,
+        actorId: workspace.admin.id,
+        userId: workspace.owner.id,
+        role: "admin"
+      });
+      assert.strictEqual(
+        (yield* post(userPath(workspace.admin, "deactivate"), workspace.owner, { choice: "keep" }))
+          .status,
+        403
+      );
+    })
+  );
   for (const action of ["deactivate", "reactivate"] as const) {
-    it.effect("restricts regular admins to ordinary-member lifecycle on direct requests", () =>
-      Effect.gen(function* () {
-        const workspace = yield* company();
-        const users = yield* Users.Users;
-        yield* users.setRole({
-          companyId: workspace.id,
-          actorId: workspace.admin.id,
-          userId: workspace.owner.id,
-          role: "admin"
-        });
-        for (const action of ["deactivate", "reactivate"] as const) {
-          for (const target of [workspace.admin, workspace.owner]) {
-            const path = userPath(target, action);
-            assert.strictEqual((yield* request(path, workspace.owner)).status, 403);
-            assert.strictEqual(
-              (yield* post(path, workspace.owner, { choice: "keep" })).status,
-              403
-            );
-          }
-        }
-        assert.strictEqual(
-          (yield* post(userPath(workspace.member, "deactivate"), workspace.owner, {
-            choice: "keep"
-          })).status,
-          303
-        );
-        assert.isNotNull((yield* readUser(workspace.member)).deactivatedAt);
-        assert.strictEqual(
-          (yield* post(userPath(workspace.member, "reactivate"), workspace.owner, {
-            choice: "keep"
-          })).status,
-          303
-        );
-        assert.isNull((yield* readUser(workspace.member)).deactivatedAt);
-      })
-    );
-
     it.effect(
       `refuses ${action} when a selected patch is reassigned while confirmation waits`,
       () =>

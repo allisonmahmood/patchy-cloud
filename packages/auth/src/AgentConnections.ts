@@ -56,7 +56,7 @@ export class AgentConnectionNotFound extends Schema.TaggedError<AgentConnectionN
 export const AgentIdentity = Schema.Struct({
   user: Identity.fields.user,
   company: Identity.fields.company,
-  role: Identity.fields.role,
+  role: Schema.Literals(["member", "admin", "super_admin"]),
   agentConnection: Schema.Struct({
     id: Schema.String,
     clientName: Schema.String,
@@ -217,7 +217,7 @@ export const make = Effect.gen(function* () {
       RETURNING json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
-        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
+        'role', u.role,
         'agentConnection', json_build_object(
           'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity`
@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
       SELECT json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', co.id, 'handle', co.handle, 'name', co.name),
-        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
+        'role', u.role,
         'agentConnection', json_build_object(
           'id', c.id, 'clientName', c.client_name, 'clientSite', c.client_site)
       ) AS identity
