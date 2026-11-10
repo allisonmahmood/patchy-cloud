@@ -640,9 +640,9 @@ Existing admins and their pending administrator invitations migrate to super adm
 Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Patches owns the current audience decision; roles alone do not grant content access.
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state, pending invites
-and outside guests in All, counting each guest once regardless of patch grants. Guest rows
-retain their shared-patch details and authorized removal actions in the combined table, with how many live patches each person owns among those the reader
-can open. Tabs narrow it to admins, invites or deactivated users, and a search
+and outside guests in All, counting each guest once regardless of patch grants. Company people
+show how many live patches they own among those the reader can open. Guest rows retain
+their authorized shared-patch details and removal actions in the combined table. Tabs narrow it to admins, invites or deactivated users, and a search
 matches names and emails. Invites that need an admin, because their email did
 not go out or they expired, come first with Resend beside them. Admins invite
 from Invite people in the page's toolbar, pasting up to `invites.batch` addresses at once, and
@@ -2083,7 +2083,6 @@ A protected request/callback admitted before a removal commits may finish, inclu
 mutation. Removal does not cancel or undo such a transaction, retract copied data or erase bytes
 already delivered. Subsequent admission refuses the removed viewer, and subscription results
 are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
-
 
 ### Connection audiences
 

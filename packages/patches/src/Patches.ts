@@ -2070,8 +2070,8 @@ export const make = Effect.gen(function* () {
       if (declaration.id !== id)
         return yield* new PatchNotOpenable({ patchId: declaration.patchId, ...resource });
       const source = yield* declaration.kind === "sharedTable"
-        ? sharedTable(declaration.patchId, declaration.table, companyId, viewerId)
-        : sharedStore(declaration.patchId, declaration.store, companyId, viewerId);
+        ? sharedTable(declaration.patchId, declaration.table, companyId, ownerUserId)
+        : sharedStore(declaration.patchId, declaration.store, companyId, ownerUserId);
       if (declaration.revision < source.schemaRevision)
         warnings.push(
           `Shared ${declaration.kind === "sharedTable" ? "table" : "store"} \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`

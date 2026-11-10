@@ -458,7 +458,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     const guestColumns =
       show === "guests"
         ? `<td>${escapeHtml(guest.companyName)}</td>`
-        : `<td>Guest</td>${owned ? "<td></td>" : ""}<td>${escapeHtml(guest.companyName)}</td>${admin ? "<td></td>" : ""}`;
+        : `<td>Guest · ${escapeHtml(guest.companyName)}</td>${owned ? "<td></td>" : ""}<td></td>${admin ? "<td></td>" : ""}`;
     const columnCount = show === "guests" ? 2 : 3 + Number(Boolean(owned)) + Number(admin);
     return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td>${guestColumns}</tr><tr class="table-expand"><td colspan="${columnCount}"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
   };
