@@ -18,6 +18,8 @@ export const templates = `
     .ph-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); max-width: none; margin: 0; color: var(--muted); font: var(--text-meta); line-height: 20px; }
     .ph-sep { color: var(--border-strong); }
     .ph-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--text); font: var(--text-meta); }
+    /* A status sentence wraps inside the header, its dot beside the first line. */
+    .ph-status > .dot { align-items: baseline; white-space: normal; }
     .ph-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
     .ph-mark { padding-top: 2px; }
     .ph + .tabs { margin-top: calc(-1 * var(--space-2)); }

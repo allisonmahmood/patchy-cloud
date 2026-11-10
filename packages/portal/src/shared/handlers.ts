@@ -12,7 +12,13 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import type { Analytics } from "@patchy/analytics";
 import { PatchName } from "@patchy/api";
-import { type MachineTokens, pageResponse, RequireSession, Session } from "@patchy/auth";
+import {
+  type AgentConnections,
+  type MachineTokens,
+  pageResponse,
+  RequireSession,
+  Session
+} from "@patchy/auth";
 import { ago, type Cryptography, escapeHtml } from "@patchy/core";
 import type { Companies, Users } from "@patchy/companies";
 import type { ConnectionStore } from "@patchy/integrations";
@@ -34,6 +40,7 @@ export type PortalServices =
   | Patches.Patches
   | GuestGrants.GuestGrants
   | MachineTokens.MachineTokens
+  | AgentConnections.AgentConnections
   | InvocationLog.InvocationLog
   | ConnectionStore.ConnectionStore
   | Analytics.Analytics

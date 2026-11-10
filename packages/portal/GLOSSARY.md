@@ -53,11 +53,11 @@ For each live tier 2 patch the viewer manages, its calls in the last 24 hours an
 _Avoid_: health check, uptime, status
 
 **Card**:
-One patch's page at `/patches/<name>`, in tabs: **Overview** (its description, owner, current version, who can open it, what reads it, its visits and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**. Its heading is the patch's title, with the name its address uses under it, and leads with Open, or Restore for a manager while an off patch can be restored, beside a menu of Open in a new tab, Copy link and, for a manager, Share…. Beside the Overview of a live patch whose current version has agent tools, a panel shows everyone **what agents can do**: each tool, whether it reads or changes, and what it says it does. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
+One patch's page at `/patches/<name>`, one header over its tabs: **Overview** (its description, owner, who can open it, current version, opens, what reads it and recent activity), **Log** and **Settings** for its owner and admins, and **Versions**, where the served version says Serving. The header holds the patch's mark, its title (less a trailing company name), its kind and address with Copy, a **status line** only when there is something to say (retired or deleted, by whom, when and until when; the last 24 hours' failed calls on Overview; an owner who is deactivated, to admins), and Share for a manager and Open, or Restore while an off patch can come back, beside a menu of Open in a new tab, Copy link and, for a manager, Retire… and Delete…. Beside the Overview of a live patch whose current version has agent tools, **Your agent can, as you** shows everyone each tool, whether it reads or changes, and the first clause of what it says it does. The portal owns the card's browser admission and 32-character name bound; the patch itself lives at its address.
 _Avoid_: patch page (the patch is the page at the address), detail view, dossier
 
 **Log**:
-The card's tab at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first, each expanding into the calls it made and its `ctx.log` lines, filtered and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal and `patchy logs` only read it.
+The card's tab at `/patches/<name>/log` for its current owner and admins: its logged invocations newest first under their UTC day, each expanding into the calls it made and its `ctx.log` lines, filtered by Outcome, Person and Handler chips whose choices are links, and paged. It is an attribution record of who ran what as whom, not an access audit; the log lines are the patch's own words. The card's **Recent activity** shows the last three entries. Runtime owns the record; the portal and `patchy logs` only read it.
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:
@@ -69,15 +69,15 @@ The dialog over Home at `/?new`, which the sidebar's New patch opens: the line s
 _Avoid_: create, new project, wizard
 
 **Settings**:
-The card's tab at `/patches/<name>/settings` for its owner and admins: the owner with admin-only Reassign…, the description, and Retire… and Delete…. Who can open it is the Share dialog's; the served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources and reassign lead to confirmation pages. A done act lands with a receipt naming it. A refused form shows the tab it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
+The card's tab at `/patches/<name>/settings` for its owner and admins: the description, its own form; the owner with admin-only Reassign…; who can open it, whose Change… opens the Share dialog; and last **Take it down**, with Retire… and Delete…. The served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources, reassign and serving another version ask in a [confirmation](#confirmation) over their tab. A done act lands with a receipt naming it. A refused form shows the tab or dialog it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
 _Avoid_: manage, admin panel, edit mode
 
-**Confirmation page**:
-The page for an act that breaks another tool or that the actor cannot undo alone, such as a guest's Remove…: the consequence, what breaks, the acknowledgement and the way back. Patch management confirmations live under the card's URL; deactivation and reactivation confirmations follow the user's pick page and describe the exact selection.
-_Avoid_: modal, dialog, are-you-sure
+**Confirmation**:
+The step before an act that breaks another tool or that the actor cannot undo alone: the consequence, what breaks, the acknowledgement and the way back. On a card it is a dialog over the tab the act sits on, at the act's own URL under the card's (`/patches/<name>/retire`, `/delete`, `/restore`, `/reassign`, `/rollback?version=<n>`), drawn again with the refusal when one is refused; a guest's Remove… and deactivation and reactivation are pages, the latter following the user's pick page and describing the exact selection.
+_Avoid_: modal, are-you-sure
 
 **Acknowledgement**:
-The actor's explicit acceptance, on a confirmation page, of the breakage to listed dependants or the errors a restored patch encounters when reading off sources; absent when nothing breaks. In the CLI its counterpart is `--force`.
+The actor's explicit acceptance, in a confirmation, of the breakage to listed dependants or the errors a restored patch encounters when reading off sources: pressing the act of a card's dialog that names them, or ticking the box on a deactivation's page; absent when nothing breaks. In the CLI its counterpart is `--force`.
 _Avoid_: consent, override, warning (what precedes it)
 
 **Pick page**:

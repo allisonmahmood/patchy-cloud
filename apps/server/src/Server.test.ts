@@ -124,7 +124,7 @@ it.layer(
         const card = yield* send(signedRequest(restored.headers.location!, cookie));
         assert.strictEqual(card.status, 200);
         const open = [...(yield* card.text).matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find(
-          (match) => match[2]?.trim() === "Open"
+          (match) => match[2]?.replace(/<[^>]*>/g, "").trim() === "Open"
         );
         assert.isDefined(open, "the restored patch card offers Open");
         const href = attributes(open![1]!).href;

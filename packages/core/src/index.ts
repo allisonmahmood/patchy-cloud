@@ -20,8 +20,11 @@ export {
   isPage,
   isWelcomePage,
   patchTitle,
+  recovery,
+  recoveryLine,
   renderOffPatch
 } from "./patch-presentation.js";
+export type { Recovery } from "./patch-presentation.js";
 export type { ChoiceCard, TileOption } from "./components.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
 export { fontFile, fontUrl, fonts } from "./fonts.js";

@@ -1,7 +1,20 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { integrations } from "@patchy/api";
-import { escapeAttribute, escapeHtml, patchTitle } from "@patchy/core";
+import {
+  badge,
+  chipMenu,
+  emptyState,
+  escapeAttribute,
+  escapeHtml,
+  groupedTable,
+  type GroupedRow,
+  linkButton,
+  person,
+  row,
+  rows,
+  section
+} from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 import { InvocationLog } from "@patchy/runtime";
 
@@ -16,8 +29,6 @@ export const outcomeFilters: ReadonlyArray<readonly [OutcomeFilter, string]> = [
 export interface LogNames {
   readonly people: ReadonlyMap<string, string>;
   readonly versions: ReadonlyMap<string, number>;
-  /** The patch as people know it: its distinct title, else its name. */
-  readonly patch: string;
   /** Company connection names (`postgres/warehouse`) by id, for the calls that went to them. */
   readonly connections: ReadonlyMap<string, string>;
 }
@@ -38,48 +49,58 @@ const refusalCodes = new Set([
   "access_denied"
 ]);
 
+/** Success is plain; a refusal, a failure, a call still running or one whose end is unknown says so. */
 const outcome = (value: InvocationLog.Outcome, code: string | null) => {
-  const [label, tone] =
+  const word =
     value === "success"
-      ? ["Succeeded", " pill-done"]
+      ? '<span class="muted">Succeeded</span>'
       : value === "pending"
-        ? ["Running", " pill-progress"]
+        ? badge("Running", "info")
         : value === "unknown_outcome"
-          ? ["Unknown", ""]
+          ? badge("Unknown")
           : value === "handler_error" || (code !== null && refusalCodes.has(code))
-            ? ["Refused", " pill-failed"]
-            : ["Failed", " pill-failed"];
+            ? badge("Refused", "warning")
+            : badge("Failed", "danger");
   const shown =
-    code !== null && code !== "unknown_outcome" ? `<code>${escapeHtml(code)}</code>` : "";
-  return `<span class="log-outcome"><span class="pill${tone}">${label}</span>${shown}</span>`;
+    code !== null && code !== "unknown_outcome" ? ` <code>${escapeHtml(code)}</code>` : "";
+  return `${word}${shown}`;
 };
 
 const duration = (ms: number | null) =>
   ms === null ? null : ms < 1_000 ? `${ms} ms` : `${(ms / 1_000).toFixed(1)} s`;
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const pad = (value: number) => String(value).padStart(2, "0");
+const parts = (date: Date | number) => DateTime.toPartsUtc(DateTime.makeUnsafe(date));
+/** "14:02", UTC: a row's time under its day. */
+const clock = (date: Date) => {
+  const at = parts(date);
+  return `${pad(at.hour)}:${pad(at.minute)}`;
+};
 /** "28 Sep 14:02", with the year only when it is not the current one. Always UTC. */
 const when = (date: Date, now: number) => {
-  const at = DateTime.toPartsUtc(DateTime.makeUnsafe(date));
-  const year = at.year === DateTime.toPartsUtc(DateTime.makeUnsafe(now)).year ? "" : ` ${at.year}`;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${at.day} ${months[at.month - 1]}${year} ${pad(at.hour)}:${pad(at.minute)}`;
+  const at = parts(date);
+  const year = at.year === parts(now).year ? "" : ` ${at.year}`;
+  return `${at.day} ${months[at.month - 1]}${year} ${clock(date)}`;
 };
-const time = (date: Date, now: number, suffix = "") =>
-  `<time datetime="${escapeAttribute(date.toISOString())}">${escapeHtml(when(date, now))}${suffix}</time>`;
+const DAY = 86_400_000;
+/** A UTC day's heading: "Today · Saturday 7 Nov", "Yesterday · …", then "Thursday 5 Nov", with the year when it isn't this one. */
+const dayLabel = (date: Date, now: number) => {
+  const at = parts(date);
+  const days = Math.floor(now / DAY) - Math.floor(date.getTime() / DAY);
+  const name = `${weekdays[at.weekDay]} ${at.day} ${months[at.month - 1]}${at.year === parts(now).year ? "" : ` ${at.year}`}`;
+  return days === 0 ? `Today · ${name}` : days === 1 ? `Yesterday · ${name}` : name;
+};
 
-const person = (names: LogNames, id: string) => names.people.get(id) ?? id;
+const personName = (names: LogNames, id: string) => names.people.get(id) ?? id;
 /** Who made the call: "Jordan Lee", or "Jordan Lee via Claude" with the client name approved at consent. */
 const who = (names: LogNames, entry: InvocationLog.Invocation) =>
-  `${person(names, entry.initiatingViewerId)}${entry.agent === null ? "" : ` via ${entry.agent.name}`}`;
+  `${personName(names, entry.initiatingViewerId)}${entry.agent === null ? "" : ` via ${entry.agent.name}`}`;
 const version = (names: LogNames, id: string) => {
   const number = names.versions.get(id);
   return number === undefined ? "an unknown version" : `v${number}`;
 };
-
-/** "Alice · Sales CRM v12 · leads.import (action)": who ran what, in the reader's words. */
-const sentence = (entry: InvocationLog.Invocation, names: LogNames) =>
-  `${who(names, entry)} · ${names.patch} ${version(names, entry.versionId)} · ${entry.handler} (${entry.kind})`;
 
 /** Timing facts for a top-level entry: duration, retries and a reply its page never got. */
 const timing = (entry: InvocationLog.Invocation) =>
@@ -164,21 +185,22 @@ const tree = (
         ? "the patch"
         : item.effectivePrincipal === entry.initiatingViewerId
           ? who(names, entry)
-          : person(names, item.effectivePrincipal);
+          : personName(names, item.effectivePrincipal);
     const facts = [
       duration(item.durationMs),
       item.rowCount === null ? null : `${item.rowCount} ${item.rowCount === 1 ? "row" : "rows"}`,
       item.attempts > 1 ? `${item.attempts} attempts` : null
     ].filter((part) => part !== null);
-    return `<li class="list-row"><p class="log-status"><span>${escapeHtml(`${what} · as ${as}`)}</span>${outcome(item.outcome, item.outcomeCode)}${facts.length === 0 ? "" : `<span class="supporting-text">${escapeHtml(facts.join(" · "))}</span>`}</p>${item.type === "invocation" ? tree(item.id, children, names, entry) + logLines(item.logLines) : ""}</li>`;
+    return `<li class="list-row"><p>${escapeHtml(`${what} · as ${as}`)} ${outcome(item.outcome, item.outcomeCode)}${facts.length === 0 ? "" : ` <span class="meta">${escapeHtml(facts.join(" · "))}</span>`}</p>${item.type === "invocation" ? tree(item.id, children, names, entry) + logLines(item.logLines) : ""}</li>`;
   });
   return `<ol class="list list-compact list-tree">${rows.join("")}</ol>`;
 };
 
-const expansion = (entry: InvocationLog.Entry, names: LogNames) => {
+/** What an entry opens to: the calls it made as a tree, and its own log lines. None without either. */
+const expansion = (entry: InvocationLog.Entry, names: LogNames): GroupedRow["expand"] => {
   const lines = entry.invocation.logLines.length;
   const steps = entry.tree.length;
-  if (steps === 0 && lines === 0) return "";
+  if (steps === 0 && lines === 0) return undefined;
   const children = new Map<string, InvocationLog.TreeItem[]>();
   for (const item of entry.tree)
     children.set(item.parentId, [...(children.get(item.parentId) ?? []), item]);
@@ -191,16 +213,77 @@ const expansion = (entry: InvocationLog.Entry, names: LogNames) => {
     .filter((part) => part !== null)
     .join(" · ");
   const cut = entry.truncated
-    ? `<p class="supporting-text">Showing ${steps} calls, outermost first. This entry made more.</p>`
+    ? `<p class="meta">Showing ${steps} calls, outermost first. This entry made more.</p>`
     : "";
-  const open = entry.invocation.outcome === "success" ? "" : " open";
-  return `<tr class="table-expand"><td colspan="7"><details${open}><summary>${escapeHtml(summary)}</summary>${tree(entry.invocation.id, children, names, entry.invocation)}${cut}${logLines(entry.invocation.logLines)}</details></td></tr>`;
+  return {
+    summary,
+    body: `${tree(entry.invocation.id, children, names, entry.invocation)}${cut}${logLines(entry.invocation.logLines)}`,
+    open: entry.invocation.outcome !== "success"
+  };
 };
 
+/** An entry's id in the log, which Recent activity links to and which opens its calls. */
 const entryId = (entry: InvocationLog.Invocation) => `entry-${entry.id}`;
 
+/**
+ * The log's filters as chips over menus of links, so each filter is a URL and works without
+ * script. Choosing one starts again from the newest entries.
+ */
+const filterChips = (input: {
+  readonly patch: Patches.Patch;
+  readonly filters: Record<"outcome" | "person" | "handler", string | undefined>;
+  readonly people: ReadonlyArray<readonly [string, string]>;
+  readonly handlers: ReadonlyArray<string>;
+}) => {
+  const { patch, filters } = input;
+  const chip = (
+    key: "outcome" | "person" | "handler",
+    label: string,
+    any: string,
+    options: ReadonlyArray<readonly [string, string]>
+  ) => {
+    const selected = filters[key];
+    // A filter from an older link still shows, even if it left the recent window.
+    const shown =
+      selected === undefined || options.some(([value]) => value === selected)
+        ? options
+        : [...options, [selected, selected] as const];
+    return chipMenu({
+      id: `log-${key}`,
+      key: label,
+      value: shown.find(([value]) => value === selected)?.[1] ?? any,
+      on: selected !== undefined,
+      choices: [
+        {
+          label: any,
+          href: logPath(patch, { ...filters, [key]: undefined }),
+          current: selected === undefined
+        },
+        ...shown.map(([value, text]) => ({
+          label: text,
+          href: logPath(patch, { ...filters, [key]: value }),
+          current: value === selected
+        }))
+      ]
+    });
+  };
+  const filtered = Object.values(filters).some((value) => value !== undefined);
+  return `<div class="toolbar">${chip("outcome", "Outcome", "Any", outcomeFilters)}${chip("person", "Person", "Anyone", input.people)}${chip(
+    "handler",
+    "Handler",
+    "Any",
+    input.handlers.map((handler) => [handler, handler] as const)
+  )}${filtered ? linkButton("Clear filters", logPath(patch), { kind: "quiet", size: "sm" }) : ""}</div>`;
+};
+
+/**
+ * The log for its owner and admins: filter chips, then the page's entries grouped by UTC day,
+ * newest first, each opening in place to its calls and log lines, then the way to older ones.
+ */
 export const renderLog = (input: {
   readonly patch: Patches.Patch;
+  /** What its page calls the patch. */
+  readonly title: string;
   readonly now: number;
   readonly names: LogNames;
   readonly entries: ReadonlyArray<InvocationLog.Entry>;
@@ -224,67 +307,75 @@ export const renderLog = (input: {
   const filtered =
     filter.outcome !== undefined || filter.viewerId !== undefined || filter.handler !== undefined;
   if (input.entries.length === 0 && !filtered && input.before === undefined)
-    return `<p>Nothing logged yet. Saves and actions appear here as people use ${escapeHtml(patchTitle(patch))}; reads appear only when they log or fail.</p>`;
-  const select = (
-    id: string,
-    name: string,
-    label: string,
-    any: string,
-    selected: string | undefined,
-    options: ReadonlyArray<readonly [string, string]>
-  ) => {
-    // A filter from an older link still shows, even if it left the recent window.
-    const shown =
-      selected === undefined || options.some(([value]) => value === selected)
-        ? options
-        : [...options, [selected, selected] as const];
-    return `<div><label class="field-label" for="${id}">${label}</label><select class="field" id="${id}" name="${name}"><option value="">${any}</option>${shown
-      .map(
-        ([value, text]) =>
-          `<option value="${escapeAttribute(value)}"${value === selected ? " selected" : ""}>${escapeHtml(text)}</option>`
-      )
-      .join("")}</select></div>`;
-  };
+    return emptyState({
+      title: "Nothing logged yet",
+      body: `Saves and actions appear here as people use ${input.title}; reads appear only when they log or fail.`
+    });
   const people = input.choices.viewerIds
-    .map((id) => [id, person(names, id)] as const)
+    .map((id) => [id, personName(names, id)] as const)
     .sort((a, b) => a[1].localeCompare(b[1]));
-  const form = `<form class="log-filters" method="get" action="${escapeAttribute(logPath(patch))}">${select("log-outcome", "outcome", "Outcome", "All", filter.outcome, outcomeFilters)}${select("log-person", "person", "Person", "Anyone", filter.viewerId, people)}${select(
-    "log-handler",
-    "handler",
-    "Handler",
-    "Any handler",
-    filter.handler,
-    input.choices.handlers.map((handler) => [handler, handler] as const)
-  )}<div><button class="btn" type="submit">Filter</button></div></form>`;
-  const intro = `<p class="supporting-text">Who ran what, as whom. This is an attribution record, not an access audit. Log lines are written by the patch itself.</p>`;
+  const toolbar = filterChips({ patch, filters, people, handlers: input.choices.handlers });
   const newest =
     input.before === undefined
       ? ""
-      : `<a class="btn btn-quiet" href="${escapeAttribute(logPath(patch, filters))}">Newest entries</a>`;
+      : linkButton("Newest entries", logPath(patch, filters), { kind: "quiet" });
   const older =
     input.next === null
       ? ""
-      : `<a class="btn" href="${escapeAttribute(logPath(patch, { ...filters, before: input.next }))}">Older entries</a>`;
-  const paging = older || newest ? `<div class="actions">${older}${newest}</div>` : "";
+      : linkButton("Older entries", logPath(patch, { ...filters, before: input.next }));
+  const paging = older || newest ? `<div class="btn-group">${older}${newest}</div>` : "";
   const searched = `${InvocationLog.FILTER_WINDOW.toLocaleString("en-US")} entries`;
   // Filters search a bounded run of entries; say so when older ones were left unsearched.
   const window = input.windowEnded
-    ? `<p class="supporting-text">Filters search ${searched} at a time. Choose &quot;Older entries&quot; to search further back.</p>`
+    ? `<p class="meta">Filters search ${searched} at a time. Choose Older entries to search further back.</p>`
     : "";
-  if (input.entries.length === 0) {
-    const empty = filtered
-      ? `<p>No entries match these filters${input.windowEnded ? ` in the ${searched} searched` : ""}.</p><p><a href="${escapeAttribute(logPath(patch))}">Clear filters</a></p>`
-      : "<p>No older entries.</p>";
-    return `${intro}${form}${empty}${window}${paging}`;
-  }
-  const rows = input.entries.map((entry) => {
+  if (input.entries.length === 0)
+    return `${toolbar}${
+      filtered
+        ? emptyState({
+            title: "No entries match these filters",
+            ...(input.windowEnded ? { body: `In the ${searched} searched.` } : {}),
+            action: linkButton("Clear filters", logPath(patch), { size: "sm" })
+          })
+        : emptyState({ title: "No older entries" })
+    }${window}${paging}`;
+  const groups: Array<{ label: string; rows: GroupedRow[] }> = [];
+  for (const entry of input.entries) {
     const { invocation } = entry;
-    return `<tr id="${escapeAttribute(entryId(invocation))}"><td>${time(invocation.startedAt, now)}</td><td>${escapeHtml(who(names, invocation))}</td><td>${escapeHtml(version(names, invocation.versionId))}</td><td><code>${escapeHtml(invocation.handler)}</code></td><td>${escapeHtml(invocation.kind)}</td><td>${outcome(invocation.outcome, invocation.outcomeCode)}</td><td>${escapeHtml(timing(invocation))}</td></tr>${expansion(entry, names)}`;
-  });
-  return `${intro}${form}<p class="supporting-text">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p><div class="portal-table"><table class="table log-table" aria-label="Log entries"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Person</th><th scope="col">Version</th><th scope="col">Handler</th><th scope="col">Kind</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>${window}${paging}`;
+    const label = dayLabel(invocation.startedAt, now);
+    const expand = expansion(entry, names);
+    const row: GroupedRow = {
+      id: entryId(invocation),
+      cells: [
+        `<time datetime="${escapeAttribute(invocation.startedAt.toISOString())}">${clock(invocation.startedAt)}</time>`,
+        `${person(invocation.initiatingViewerId, personName(names, invocation.initiatingViewerId))}${invocation.agent === null ? "" : ` <span class="muted">via ${escapeHtml(invocation.agent.name)}</span>`}`,
+        `<code>${escapeHtml(invocation.handler)}</code> <span class="muted">${escapeHtml(invocation.kind)}</span>`,
+        escapeHtml(version(names, invocation.versionId)),
+        outcome(invocation.outcome, invocation.outcomeCode),
+        escapeHtml(timing(invocation))
+      ],
+      ...(expand === undefined ? {} : { expand })
+    };
+    const last = groups.at(-1);
+    if (last?.label === label) last.rows.push(row);
+    else groups.push({ label, rows: [row] });
+  }
+  return `${toolbar}${groupedTable({
+    label: "Log entries",
+    compact: true,
+    columns: [
+      { label: "Time (UTC)" },
+      { label: "Person" },
+      { label: "Handler" },
+      { label: "Version", hideOnPhone: true },
+      { label: "Outcome" },
+      { label: "Duration", align: "end", hideOnPhone: true }
+    ],
+    groups
+  })}<p class="meta">Newest first. Mutations and actions always appear; queries appear only when they log or fail.</p>${window}${paging}`;
 };
 
-/** W-2: the card's last three entries for its owner and admins, each linking into the log. */
+/** Overview's last three entries for the owner and admins, each opening its place in the log. */
 export const renderRecentActivity = (input: {
   readonly patch: Patches.Patch;
   readonly now: number;
@@ -292,8 +383,23 @@ export const renderRecentActivity = (input: {
   readonly entries: ReadonlyArray<InvocationLog.Entry>;
 }): string => {
   const path = logPath(input.patch);
-  const rows = input.entries.map(({ invocation }) => {
-    return `<li class="list-row"><p class="log-status"><a href="${escapeAttribute(`${path}#${entryId(invocation)}`)}"><strong>${escapeHtml(sentence(invocation, input.names))}</strong></a>${outcome(invocation.outcome, invocation.outcomeCode)}</p><p class="supporting-text">${time(invocation.startedAt, input.now, " UTC")} · ${escapeHtml(timing(invocation))}</p></li>`;
+  return section({
+    id: "recent-activity",
+    title: "Recent activity",
+    action: linkButton("View log", path, { kind: "quiet", size: "sm" }),
+    body:
+      input.entries.length === 0
+        ? rows([emptyState({ title: "Nothing logged yet" })], true)
+        : rows(
+            input.entries.map(({ invocation }) =>
+              row({
+                name: `${who(input.names, invocation)} · ${invocation.handler}`,
+                href: `${path}#${entryId(invocation)}`,
+                description: `${when(invocation.startedAt, input.now)} UTC · ${version(input.names, invocation.versionId)} ${invocation.kind} · ${timing(invocation)}`,
+                end: outcome(invocation.outcome, invocation.outcomeCode)
+              })
+            ),
+            true
+          )
   });
-  return `<section class="section" aria-labelledby="activity-heading"><h2 class="section-heading" id="activity-heading">Recent activity</h2>${rows.length === 0 ? '<p class="supporting-text">Nothing logged yet.</p>' : `<ol class="list list-compact">${rows.join("")}</ol>`}<p><a href="${escapeAttribute(path)}">See the full log</a></p></section>`;
 };

@@ -31,7 +31,8 @@ export interface ButtonLook {
   readonly data?: Readonly<Record<string, string>>;
 }
 
-const buttonClass = ({ kind, size, block }: ButtonLook, extra = "") =>
+/** A button's classes from its look, with `extra` last; for core helpers that draw a button. */
+export const buttonClass = ({ kind, size, block }: ButtonLook, extra = "") =>
   [
     "btn",
     kind === undefined || kind === "secondary" ? "" : `btn-${kind}`,

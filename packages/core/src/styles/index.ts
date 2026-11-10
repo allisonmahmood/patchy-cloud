@@ -3,6 +3,7 @@ import { appShell } from "./app-shell.js";
 import { base } from "./base.js";
 import { buttons } from "./buttons.js";
 import { containers } from "./containers.js";
+import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
 import { doors } from "./doors.js";
 import { fields } from "./fields.js";
@@ -50,7 +51,8 @@ export const chunks = {
   whatsNew,
   switcher,
   usual,
-  visibility
+  visibility,
+  detail
 } as const;
 
 export type ChunkName = keyof typeof chunks;

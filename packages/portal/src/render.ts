@@ -1,3 +1,5 @@
+// How a patch's page is drawn: one header over its tabs (Overview, Log, Versions, Settings), what
+// each tab holds, and the dialogs its acts ask in. `PatchPages.ts` reads the patch and hands it here.
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import { type AgentTool, type GuestReason, guestReasonText } from "@patchy/api";
@@ -5,183 +7,298 @@ import type { RequireSession } from "@patchy/auth";
 import type { Users } from "@patchy/companies";
 import {
   ago,
+  badge,
+  button,
+  codeRow,
+  card as uiCard,
+  copyButton,
   copyScriptPath,
   dateLabel,
+  detailPage,
+  dialog,
+  dot,
   escapeAttribute,
   escapeHtml,
+  facts,
+  field,
+  idFor,
+  input as textInput,
+  linkButton,
+  menu,
+  menuCopy,
+  menuLink,
+  menuNewTab,
+  menuRule,
+  notice,
   patchMark,
   patchTitle,
-  renderOffPatch,
-  sentenceList
+  person,
+  recovery,
+  recoveryLine,
+  refusalNotice,
+  row,
+  rowMenu,
+  rows,
+  select,
+  sentenceList,
+  settingRow,
+  settingsPanel,
+  table,
+  tabs,
+  type Template,
+  textarea
 } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 import {
   cardPath,
-  confirmationAcknowledgement,
+  failedLog,
+  firstClause,
   hidden,
-  refusal,
+  patchAddress,
+  shareHref,
   turnedAwayTitle
 } from "./shared/presentation.js";
 
-const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
-  card.owner.id === viewer.user.id || viewer.role === "admin";
+type Viewer = RequireSession.Viewer["Service"];
 
+export type CardTab = "overview" | "log" | "versions" | "settings";
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "rollback" | ConfirmationAction;
 
-/** Opens the POST form for one of the patch's actions, carrying the patch id the handler requires. */
-const actionForm = (patch: Patches.Patch, action: PatchAction, className?: string): string =>
-  `<form${className === undefined ? "" : ` class="${className}"`} method="post" action="${escapeAttribute(cardPath(patch, action))}">${hidden("expectedPatchId", patch.id)}`;
-
-const descriptionBlock = (card: Patches.PortalCard): string => {
-  const { patch } = card;
-  const description =
-    patch.description === ""
-      ? '<p class="supporting-text">No description</p>'
-      : `<p>${escapeHtml(patch.description)}</p>`;
-  const actor =
-    card.actorNames.description !== null && patch.descriptionUpdatedAt !== null
-      ? `<p class="supporting-text">Description edited by ${escapeHtml(card.actorNames.description)} on ${escapeHtml(dateLabel(patch.descriptionUpdatedAt))}</p>`
-      : "";
-  return description + actor;
-};
-
-interface DependantGroup {
-  readonly name: string;
-  readonly ownerName: string;
-  readonly resources: string[];
-}
-
-const dependantGroups = (card: Patches.PortalCard) => {
-  const groups = new Map<string, DependantGroup>();
-  for (const dependant of card.dependants) {
-    const resource = dependant.table ?? dependant.store;
-    const existing = groups.get(dependant.patchId);
-    if (existing === undefined) {
-      groups.set(dependant.patchId, {
-        name: dependant.name,
-        ownerName: dependant.owner.name,
-        resources: [resource]
-      });
-    } else if (!existing.resources.includes(resource)) existing.resources.push(resource);
-  }
-  return Array.from(groups.values());
-};
-
-const dependantsFact = (groups: readonly DependantGroup[]): string => {
-  if (groups.length === 0) return "Nothing else reads this patch";
-  const shown = groups
-    .slice(0, 3)
-    .map(
-      (group) =>
-        `<li class="list-row"><a href="${escapeAttribute(`/patches/${encodeURIComponent(group.name)}`)}">${escapeHtml(group.name)}</a> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
-    )
-    .join("");
-  return `<p>${escapeHtml(groups.length)} ${groups.length === 1 ? "patch" : "patches"}</p><ul class="list list-compact">${shown}</ul>${groups.length > 3 ? `<p class="supporting-text">and ${escapeHtml(groups.length - 3)} more</p>` : ""}`;
-};
-
-const descriptionForm = (card: Patches.PortalCard, submitted?: string, error?: string): string =>
-  // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
-  `<section class="section">${actionForm(card.patch, "description")}${hidden("expectedDescriptionUpdatedAt", card.patch.descriptionUpdatedAt)}<label class="field-label" for="description">Description</label><textarea class="field" id="description" name="description" rows="4" aria-describedby="description-hint${error === undefined ? "" : " description-error"}"${error === undefined ? "" : ' aria-invalid="true"'}>${escapeHtml(submitted ?? card.patch.description)}</textarea><p class="field-hint" id="description-hint">The repo pulls this change in the next time it runs <code>patchy dev</code> or publishes. Start with what the tool does. Up to 500 characters.</p>${error === undefined ? "" : `<p class="field-error" id="description-error" role="alert">${escapeHtml(error)}</p>`}<div class="actions"><button class="btn" type="submit">Save description</button></div></form></section>`;
-
-const versionsTable = (
-  card: Patches.PortalCard,
-  versions: Patches.PortalCard["versions"],
-  viewer: RequireSession.Viewer["Service"],
-  now: number
-): string => {
-  const manage = canManage(card, viewer) && card.patch.state === "live";
-  const rows = versions.map((version) => {
-    const current = version.id === card.patch.currentVersionId;
-    const action = current
-      ? '<span class="pill pill-done">current</span>'
-      : manage
-        ? `${actionForm(card.patch, "rollback")}${hidden("expectedCurrentVersionId", card.patch.currentVersionId)}${hidden("versionNumber", version.versionNumber)}<button class="btn" type="submit">Show this version at the address</button></form>`
-        : "";
-    return `<tr><th scope="row">v${escapeHtml(version.versionNumber)}</th><td><time datetime="${escapeAttribute(version.createdAt)}">${escapeHtml(dateLabel(version.createdAt))}</time><br><span class="supporting-text">${escapeHtml(ago(version.createdAt, now))}</span></td><td>${escapeHtml(version.publisherName)}</td><td>${action}</td></tr>`;
-  });
-  return `<div class="portal-table"><table class="table" aria-label="Patch versions"><thead><tr><th scope="col">Version</th><th scope="col">Published</th><th scope="col">Published by</th><th scope="col">At the address</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
-};
-
-export type CardTab = "overview" | "log" | "versions" | "settings";
-
-type Viewer = RequireSession.Viewer["Service"];
-
-/** The off-patch note and restore control for a retired or deleted card, or null while live. */
-const offState = (card: Patches.PortalCard, viewer: Viewer, now: number) => {
-  const { patch } = card;
-  return patch.state === "live"
-    ? null
-    : renderOffPatch({
-        name: patch.name,
-        state: patch.state,
-        actorName: patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted,
-        stateAt: patch.state === "retired" ? patch.retiredAt : patch.deletedAt,
-        purgeAt: patch.purgeAt,
-        now,
-        restore: canManage(card, viewer)
-          ? {
-              href: cardPath(patch, "restore"),
-              patchId: patch.id,
-              sourcesOff: card.offSources.length > 0,
-              currentVersion: card.currentVersion
-            }
-          : null
-      });
-};
+/** The owner and admins manage a patch: its log, its settings, and taking it down. */
+export const canManage = (card: Patches.ReadPatch, viewer: Viewer) =>
+  card.owner.id === viewer.user.id || viewer.role === "admin";
 
 /**
- * One patch's card at `/patches/<name>`: its mark, title over its name, an off patch's state and
- * the act that matters most (Open, or Restore for a manager while recovery is open), then its tabs
- * over `body`, with any `panel` beside it. Log and Settings are the owner's and admins'.
+ * What a patch's page calls it: its title, less the " · Brightline Studio" its own HTML often
+ * ends with, since the page already sits in that company. Else its name.
  */
-export const renderCardFrame = (input: {
+export const shownTitle = (
+  patch: Pick<Patches.Patch, "name" | "title">,
+  company: string
+): string => {
+  const title = patchTitle(patch);
+  const match = title.match(/^(.*\S)\s+[·•|–—-]\s+(.+)$/u);
+  return match !== null && match[2]!.trim().toLowerCase() === company.trim().toLowerCase()
+    ? match[1]!
+    : title;
+};
+
+const tabLabels: Record<CardTab, string> = {
+  overview: "Overview",
+  log: "Log",
+  versions: "Versions",
+  settings: "Settings"
+};
+
+/** The `<title>` heading of a patch's tab: the patch on Overview, "Log – New Business" on the rest. */
+export const tabTitle = (title: string, tab: CardTab) =>
+  tab === "overview" ? title : `${tabLabels[tab]} – ${title}`;
+
+/** A retired or deleted patch's standing, or null while it is live. */
+const standing = (card: Patches.PortalCard, now: number) =>
+  card.patch.state === "live"
+    ? null
+    : recovery({
+        state: card.patch.state,
+        actorName:
+          card.patch.state === "retired" ? card.actorNames.retired : card.actorNames.deleted,
+        stateAt: card.patch.state === "retired" ? card.patch.retiredAt : card.patch.deletedAt,
+        purgeAt: card.patch.purgeAt,
+        now
+      });
+
+/** Restore, the header's one primary while it can come back: a dialog first when it reads sources that are off. */
+const restoreAction = (card: Patches.PortalCard) =>
+  card.offSources.length > 0
+    ? linkButton("Restore…", cardPath(card.patch, "restore"), { kind: "primary" })
+    : `<form method="post" action="${escapeAttribute(cardPath(card.patch, "restore"))}">${hidden("expectedPatchId", card.patch.id)}${hidden("expectedState", card.patch.state)}${button("Restore", { kind: "primary" })}</form>`;
+
+/** The header's ⋯: opening it elsewhere and copying its link while live, then taking it down. */
+const headerMenu = (card: Patches.PortalCard, viewer: Viewer, url: string, title: string) => {
+  const { patch } = card;
+  const live = patch.state === "live";
+  const manage = canManage(card, viewer);
+  const everyday = live
+    ? [menuNewTab(patchAddress(patch), title), menuCopy(url, "Copy link", title)]
+    : [];
+  const takeDown = !manage
+    ? []
+    : live
+      ? [
+          menuLink(cardPath(patch, "retire"), "Retire…", false, title),
+          menuLink(cardPath(patch, "delete"), "Delete…", true, title)
+        ]
+      : patch.state === "retired"
+        ? [menuLink(cardPath(patch, "delete"), "Delete…", true, title)]
+        : [];
+  const items = [
+    ...everyday,
+    ...(everyday.length && takeDown.length ? [menuRule] : []),
+    ...takeDown
+  ];
+  return items.length === 0 ? "" : rowMenu(idFor("patch", patch.id), title, items);
+};
+
+/** What a patch's page is drawn from, whichever tab is open. */
+export interface PatchFrame {
   readonly card: Patches.PortalCard;
   readonly viewer: Viewer;
   readonly now: number;
   readonly publicBaseUrl: string;
   readonly tab: CardTab;
+  /** The page's own path, which Share opens over. */
+  readonly here: string;
+  /** A refusal, said under the tabs. */
   readonly notice?: string;
-  /** Leave out the header's Restore form, as when refusing a form rendered for another patch. */
+  /** No forms or menus at all, as when refusing a form that was rendered for another patch. */
   readonly readOnly?: boolean;
-  readonly body: string;
-  /** A `side-panel` to the card's right, such as `renderAgentPanel`'s. */
-  readonly panel?: string;
-  /** The patch's menu beside its act, as All patches' rows have it. */
-  readonly menu?: string;
+  /** Failed calls in the last 24 hours, said on Overview's status line when there are any. */
+  readonly failures?: number;
+  readonly main: string;
+  /** Beside the main column on Overview, such as `renderAgentAside`'s. */
+  readonly aside?: string;
+}
+
+/**
+ * A patch's page on one of its tabs: the header every tab shares (its mark, title, kind and
+ * address, a status line only when there is something to say, and Share, Open and ⋯), the tabs
+ * the viewer may use, a refusal, then the tab. Members see Overview and Versions; the owner and
+ * admins see Log and Settings too.
+ */
+export const renderPatchPage = (frame: PatchFrame): Template => {
+  const { card, viewer, now } = frame;
+  const { patch } = card;
+  const live = patch.state === "live";
+  const manage = canManage(card, viewer);
+  const title = shownTitle(patch, viewer.company.name);
+  const url = `${frame.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
+  const shown = url.replace(/^https?:\/\//u, "");
+  const off = standing(card, now);
+
+  const status = [
+    off === null
+      ? ""
+      : `${badge(off.state === "retired" ? "Retired" : "Deleted", off.state === "deleted" ? "danger" : undefined)}<span>${recoveryLine(off)}</span>`,
+    live && frame.tab === "overview" && (frame.failures ?? 0) > 0
+      ? `${dot(`${frame.failures} failed ${frame.failures === 1 ? "call" : "calls"} in the last 24 hours`, "danger")}<a href="${escapeAttribute(failedLog(patch))}">View log</a>`
+      : "",
+    viewer.role === "admin" && card.owner.deactivated
+      ? `${dot("Nobody can publish to this patch. Its owner is deactivated.", "warning")}${live && !frame.readOnly ? `<a href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>` : ""}`
+      : ""
+  ].filter((part) => part !== "");
+
+  const actions = frame.readOnly
+    ? ""
+    : `${live && manage ? linkButton("Share", shareHref(frame.here, patch.name), { icon: "share", ariaLabel: `Share ${title}` }) : ""}${live ? linkButton("Open", patchAddress(patch), { kind: "primary", icon: "external" }) : manage && off?.restorable ? restoreAction(card) : ""}${headerMenu(card, viewer, url, title)}`;
+
+  const tabStrip = tabs({
+    label: title,
+    current: tabLabels[frame.tab],
+    items: [
+      { label: "Overview", href: cardPath(patch) },
+      ...(manage ? [{ label: "Log", href: cardPath(patch, "log") }] : []),
+      { label: "Versions", href: cardPath(patch, "versions"), count: card.versions.length },
+      ...(manage ? [{ label: "Settings", href: cardPath(patch, "settings") }] : [])
+    ]
+  });
+
+  const page = detailPage({
+    parent: { label: "All patches", href: "/patches" },
+    mark: patchMark(patch.name, card.tier, true),
+    title,
+    meta: [
+      card.tier === 1 ? "Page" : "Tool",
+      `<span class="code copy-address">${escapeHtml(shown)}</span>${live ? copyButton(url, { kind: "quiet", size: "sm", ariaLabel: `Copy the link to ${title}` }) : ""}`
+    ],
+    ...(status.length === 0 ? {} : { status: status.join("") }),
+    ...(actions === "" ? {} : { actions }),
+    tabs: `${tabStrip}${frame.notice === undefined ? "" : refusalNotice(frame.notice)}`,
+    main: frame.main,
+    ...(frame.aside === undefined || frame.aside === "" ? {} : { aside: frame.aside })
+  });
+  return live
+    ? { ...page, body: `${page.body}<script defer src="${copyScriptPath}"></script>` }
+    : page;
+};
+
+/** Who can open it: the company or anyone, or nobody while it's off. */
+const audience = (card: Patches.PortalCard, viewer: Viewer) =>
+  card.patch.state !== "live"
+    ? "Nobody until it’s restored"
+    : card.patch.scope === "company"
+      ? `Everyone at ${viewer.company.name}`
+      : "Anyone on the internet. No sign-in.";
+
+/** The other patches reading this one's tables or stores, once each, as links. */
+const usedBy = (card: Patches.PortalCard) => {
+  const names = [...new Set(card.dependants.map((dependant) => dependant.name))];
+  const linked = names
+    .slice(0, 3)
+    .map(
+      (name) =>
+        `<a href="${escapeAttribute(`/patches/${encodeURIComponent(name)}`)}">${escapeHtml(name)}</a>`
+    );
+  const more = names.length > 3 ? [`${names.length - 3} more`] : [];
+  const parts = [...linked, ...more];
+  return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+};
+
+const ownerName = (card: Patches.ReadPatch, viewer: Viewer) =>
+  `${person(card.owner.id, card.owner.name)}${card.owner.id === viewer.user.id ? ' <span class="you">(you)</span>' : ""}${card.owner.deactivated ? " (deactivated)" : ""}`;
+
+/**
+ * Overview: why its guests can't open it, the description, its facts and, for the owner and
+ * admins, the recent log. A member sees an off patch's description and status alone.
+ */
+export const renderOverview = (input: {
+  readonly card: Patches.PortalCard;
+  readonly viewer: Viewer;
+  readonly now: number;
+  readonly here: string;
+  /** Recent activity, rendered only for the owner and admins. */
+  readonly activity: string;
+  /** Why the patch's guests can't open it, for the owner and admins; absent while they can. */
+  readonly turnedAway?: GuestReason;
+  readonly readOnly?: boolean;
 }): string => {
   const { card, viewer, now } = input;
   const { patch } = card;
   const live = patch.state === "live";
-  const address = `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
-  const url = `${input.publicBaseUrl.replace(/\/+$/u, "")}${address}`;
-  const restore = input.readOnly ? "" : (offState(card, viewer, now)?.restoreControl ?? "");
-  const act = `${live ? `<a class="btn btn-primary" href="${escapeAttribute(address)}">Open</a>` : restore}${input.menu ?? ""}`;
-  const title = patchTitle(patch);
-  // Kind, audience and version are facts on Overview; only an off patch's state rides the heading.
-  const tags = live
-    ? ""
-    : `<p class="portal-card-tags"><span class="tag">${patch.state === "retired" ? "Retired" : "Deleted"}</span></p>`;
-  const tabs = (
-    [
-      ["overview", "Overview", true],
-      ["log", "Log", canManage(card, viewer)],
-      ["versions", `Versions <span class="count">${escapeHtml(card.versions.length)}</span>`, true],
-      ["settings", "Settings", canManage(card, viewer)]
-    ] as const
-  )
-    .filter(([, , shown]) => shown)
-    .map(
-      ([tab, label]) =>
-        `<a href="${escapeAttribute(cardPath(patch, tab === "overview" ? "" : tab))}"${tab === input.tab ? ' aria-current="page"' : ""}>${label}</a>`
-    )
-    .join("");
-  const name =
-    title === patch.name
+  const manage = canManage(card, viewer);
+  const turnedAway =
+    input.turnedAway === undefined
       ? ""
-      : `<p class="supporting-text"><code>${escapeHtml(patch.name)}</code></p>`;
-  const article = `<article class="portal-card"><p class="supporting-text"><a href="/">Home</a> / <a href="/patches">All patches</a> / ${escapeHtml(title)}</p><div class="portal-card-head">${patchMark(patch.name, card.tier, true)}<div><h1 class="page-heading">${escapeHtml(title)}</h1>${name}${tags}</div>${act ? `<div class="portal-card-act">${act}</div>` : ""}</div>${live ? `<p><code class="copy-address" aria-label="Patch address, select to copy">${escapeHtml(url)}</code></p>` : ""}<nav class="tabs portal-card-tabs" aria-label="${escapeAttribute(title)}">${tabs}</nav>${refusal(input.notice)}${input.body}</article>${input.menu ? `<script defer src="${copyScriptPath}"></script>` : ""}`;
-  return input.panel ? `<div class="card-split">${article}${input.panel}</div>` : article;
+      : notice({
+          tone: "warning",
+          title: turnedAwayTitle,
+          body: `<p>${escapeHtml(guestReasonText(input.turnedAway))}</p>`
+        });
+  const description =
+    patch.description !== ""
+      ? `<div class="prose"><p>${escapeHtml(patch.description)}</p></div>`
+      : manage && patch.state !== "deleted"
+        ? `<p class="meta">No description yet. <a href="${escapeAttribute(cardPath(patch, "settings"))}">Add one</a></p>`
+        : "";
+  if (!live && !manage) return description;
+  const publisher = card.versions.find((version) => version.id === patch.currentVersionId);
+  const change =
+    live && manage && !input.readOnly
+      ? ` · <a href="${escapeAttribute(shareHref(input.here, patch.name))}">Change</a>`
+      : "";
+  const pairs: Array<readonly [string, string]> = [
+    ["Owner", ownerName(card, viewer)],
+    ...(live ? [["Access", `${escapeHtml(audience(card, viewer))}${change}`] as const] : []),
+    [
+      "Version",
+      escapeHtml(
+        `v${card.currentVersion} · published ${ago(card.publishedAt, now)}${publisher === undefined ? "" : ` by ${publisher.publisherName}`}`
+      )
+    ],
+    ["Opens", escapeHtml(card.visits)],
+    ...(card.dependants.length === 0 ? [] : [["Used by", usedBy(card)] as const])
+  ];
+  return `${turnedAway}${description}${facts(pairs)}${input.activity}`;
 };
 
 type Admin = Pick<Users.User, "id" | "name">;
@@ -192,226 +309,400 @@ const adminNames = (admins: readonly Admin[], viewerId: string): string => {
   return sentenceList(others.length < admins.length ? ["you", ...others] : others);
 };
 
+/** Names in a sentence, as plain text: "Claude", "Claude and Codex". */
+const plainList = (names: readonly string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
 /**
- * What agents can do, beside the Overview of a live patch with agent tools: each tool in
- * `open_patch`'s order with Reads or Changes, its description opening in place, then the link
- * to connect an agent on Your agents. With agent access off, a note names the admins in place
- * of that link, and gives an admin the way to turn it on.
+ * Beside a live tool's Overview: the agent tools of the version it serves, each with Reads or
+ * Changes, in `open_patch`'s order, then the viewer's own connected apps, or the way to connect
+ * one. With agent access off, it names the admins in place of that, and gives an admin the way to
+ * turn it on.
  */
-export const renderAgentPanel = (input: {
+export const renderAgentAside = (input: {
   readonly tools: readonly Pick<AgentTool, "name" | "kind" | "description">[];
   readonly viewer: Viewer;
   /** The company's active admins while agent access is off, or null while it is on. */
   readonly admins: readonly Admin[] | null;
+  /** The apps the viewer has connected, by name; none until they connect one. */
+  readonly apps: readonly string[];
 }): string => {
   const { viewer, admins } = input;
   const company = escapeHtml(viewer.company.name);
-  const tools = input.tools
-    .map(
-      (tool) =>
-        `<li class="list-row"><details><summary><code>${escapeHtml(tool.name)}</code><span class="tag">${tool.kind === "read" ? "Reads" : "Changes"}</span></summary><p class="supporting-text">${escapeHtml(tool.description)}</p></details></li>`
-    )
-    .join("");
-  const off =
-    admins === null
-      ? ""
-      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/settings/agent-access">Turn it on in Settings</a></div>' : ""}</div>`;
-  const connect =
-    admins === null
-      ? '<p class="supporting-text"><a href="/agents/connect?app=claude">Connect your agent</a></p>'
-      : "";
-  return `<aside class="side-panel" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><p class="supporting-text">As the person who connected them.</p>${off}<ul class="list list-compact">${tools}</ul>${connect}</aside>`;
+  const apps = [...new Set(input.apps)];
+  const foot =
+    admins !== null
+      ? `<span class="meta">Agent access is off at ${company}, so no agent can use these yet. Only admins can turn it on: ${adminNames(admins, viewer.user.id)}.</span>${viewer.role === "admin" ? linkButton("Turn it on", "/settings/agent-access", { size: "sm" }) : ""}`
+      : apps.length === 0
+        ? linkButton("Use with your agent", "/agents/connect", { size: "sm" })
+        : `<span class="meta">${dot(`${plainList(apps)} ${apps.length === 1 ? "is" : "are"} connected`, "success")} · <a href="/agents">Your agents</a></span>`;
+  return uiCard({
+    title: "Your agent can, as you",
+    rows: input.tools.map((tool) =>
+      codeRow({
+        name: tool.name,
+        // The first clause says what it does; the agent reads the rest through Patchy MCP.
+        description: firstClause(tool.description),
+        end: `<span class="meta">${tool.kind === "read" ? "Reads" : "Changes"}</span>`
+      })
+    ),
+    foot
+  });
 };
 
-/**
- * The card's Overview: the description, why its guests can't open it, its facts, an off patch's
- * note and the recent log.
- */
-export const renderOverview = (input: {
-  readonly card: Patches.PortalCard;
-  readonly viewer: Viewer;
-  readonly now: number;
-  /** Recent activity, rendered only for the owner and admins. */
-  readonly activity: string;
-  /** Why the patch's guests can't open it, for the owner and admins; absent while they can. */
-  readonly turnedAway?: GuestReason;
-}): string => {
-  const { card, viewer, now } = input;
-  const { patch } = card;
-  const live = patch.state === "live";
-  const manage = canManage(card, viewer);
-  const off = offState(card, viewer, now);
-  const current = card.versions.find((version) => version.id === patch.currentVersionId);
-  const versionFact = `v${card.currentVersion}, published ${ago(card.publishedAt, now)}${current === undefined ? "" : ` by ${current.publisherName}`}`;
-  const audience =
-    patch.scope === "company"
-      ? `Anyone at ${viewer.company.name} who signs in. Not the public.`
-      : "Anyone on the internet. No sign-in.";
-  const stateFact = off?.stateFact ?? "";
-  const facts =
-    !live && !manage
-      ? `<dl class="facts">${stateFact}</dl>`
-      : `<dl class="facts">${stateFact}<dt>Owner</dt><dd>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</dd><dt>Current version</dt><dd>${escapeHtml(versionFact)}</dd>${live ? `<dt>Who can open it</dt><dd>${escapeHtml(audience)}</dd>` : ""}<dt>Used by other patches</dt><dd>${dependantsFact(dependantGroups(card))}</dd><dt>Visits</dt><dd>${escapeHtml(card.visits)}</dd></dl>`;
-  const restoreHint =
-    off === null || !manage
-      ? ""
-      : off.recoveryEnded ||
-        (off.restoreHint ? `<p class="supporting-text">${off.restoreHint}</p>` : "");
-  const deactivated =
-    viewer.role === "admin" && card.owner.deactivated
-      ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
-      : "";
-  const turnedAway =
-    input.turnedAway === undefined
-      ? ""
-      : `<div class="note note-warn"><strong class="note-title">${turnedAwayTitle}</strong><p>${escapeHtml(guestReasonText(input.turnedAway))}</p></div>`;
-  return `${descriptionBlock(card)}${turnedAway}${facts}${off?.note ?? ""}${restoreHint}${deactivated}${input.activity}`;
-};
-
-/** The card's Settings, for the owner and admins: owner, description, stopping or deleting. Who can open it is Share's. */
+/** Settings, for the owner and admins: the description, who owns it and who can open it, then taking it down. */
 export const renderSettings = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: Viewer;
+  readonly here: string;
   readonly submittedDescription?: string;
   readonly descriptionError?: string;
 }): string => {
-  const { card, viewer } = input;
-  const { patch } = card;
+  const { card: patchCard, viewer } = input;
+  const { patch } = patchCard;
   const live = patch.state === "live";
-  const groups = dependantGroups(card);
-  const adminLine =
-    viewer.role === "admin" && viewer.user.id !== card.owner.id
-      ? '<p class="supporting-text">You can do everything an owner can from here, except publish.</p>'
-      : "";
-  const deactivated =
-    viewer.role === "admin" && card.owner.deactivated
-      ? `<div class="note note-warn">Nobody can publish to this patch. Its owner is deactivated.${live ? " Reassign it or retire it." : ""}</div>`
-      : "";
-  const owner = `<section class="section"><h2 class="section-heading">Owner</h2><p>${escapeHtml(card.owner.name)}${card.owner.deactivated ? " (deactivated)" : ""}</p>${viewer.role === "admin" ? `<div class="actions"><a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a></div>` : ""}</section>`;
-  const stop = live
-    ? `<section class="note note-warn"><span class="note-title">Stop serving</span><p>${groups.length === 0 ? "Nothing else reads this patch." : `${escapeHtml(groups.length)} ${groups.length === 1 ? "patch reads" : "patches read"} this patch's tables or stores and will break until it is restored. You will be asked to confirm.`}</p><div class="actions portal-stop-actions"><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "retire"))}">Retire…</a><p class="supporting-text">Keeps everything indefinitely. Nobody can open it until it is restored.</p></div><div><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a><p class="supporting-text">Keeps it 30 days, then it is gone for good.</p></div></div></section>`
-    : patch.state === "retired"
-      ? `<section class="note note-warn"><span class="note-title">Delete</span><p>It is retired. Delete starts the 30-day clock, then it is gone for good.</p><div class="actions"><a class="btn btn-danger" href="${escapeAttribute(cardPath(patch, "delete"))}">Delete…</a></div></section>`
+  const edited =
+    patchCard.actorNames.description !== null && patch.descriptionUpdatedAt !== null
+      ? `Edited by ${patchCard.actorNames.description} on ${dateLabel(patch.descriptionUpdatedAt)} · `
       : "";
   // A deleted patch's description can't be edited; a draft refused for that is still shown to copy.
   const description =
     patch.state !== "deleted"
-      ? descriptionForm(card, input.submittedDescription, input.descriptionError)
+      ? uiCard({
+          form: {
+            action: cardPath(patch, "description"),
+            fields: `${hidden("expectedPatchId", patch.id)}${hidden("expectedDescriptionUpdatedAt", patch.descriptionUpdatedAt)}`
+          },
+          body: field({
+            id: "description",
+            label: "Description",
+            ...(input.descriptionError === undefined ? {} : { error: input.descriptionError }),
+            // Native maxlength counts UTF-16 units, not the server's Unicode code-point bound.
+            control: (aria) =>
+              textarea(aria, {
+                name: "description",
+                rows: 4,
+                value: input.submittedDescription ?? patch.description
+              })
+          }),
+          foot: `<span class="meta">${escapeHtml(`${edited}Up to 500 characters`)}</span>${button("Save", { kind: "primary", size: "sm" })}`
+        })
       : input.submittedDescription
-        ? `<section class="section"><h2 class="section-heading">Your description, not saved</h2><pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre></section>`
+        ? uiCard({
+            title: "Your description, not saved",
+            body: `<pre class="code-panel">${escapeHtml(input.submittedDescription)}</pre>`
+          })
         : "";
-  return `${adminLine}${deactivated}${owner}${description}${stop}`;
+  const people = uiCard({
+    rows: [
+      settingRow({
+        title: "Owner",
+        description: "Only they can publish it. Admins can change it and take it down too.",
+        control: `<span>${ownerName(patchCard, viewer)}</span>${viewer.role === "admin" ? linkButton("Reassign…", cardPath(patch, "reassign"), { size: "sm" }) : ""}`
+      }),
+      settingRow({
+        title: "Who can open it",
+        description: audience(patchCard, viewer),
+        control: live
+          ? linkButton("Change…", shareHref(input.here, patch.name), { size: "sm" })
+          : ""
+      })
+    ]
+  });
+  const danger = live
+    ? uiCard({
+        title: "Take it down",
+        danger: true,
+        rows: [
+          settingRow({
+            title: "Retire",
+            description: "Off its address until you restore it. Everything is kept.",
+            control: linkButton("Retire…", cardPath(patch, "retire"), { size: "sm" })
+          }),
+          settingRow({
+            title: "Delete",
+            description: "Off now and gone for good 30 days later, unless restored.",
+            control: linkButton("Delete…", cardPath(patch, "delete"), {
+              size: "sm",
+              kind: "danger"
+            })
+          })
+        ]
+      })
+    : patch.state === "retired"
+      ? uiCard({
+          title: "Take it down",
+          danger: true,
+          rows: [
+            settingRow({
+              title: "Delete",
+              description: "Gone for good 30 days later, unless restored.",
+              control: linkButton("Delete…", cardPath(patch, "delete"), {
+                size: "sm",
+                kind: "danger"
+              })
+            })
+          ]
+        })
+      : undefined;
+  return settingsPanel({
+    cards: [description, people].filter((part) => part !== ""),
+    ...(danger === undefined ? {} : { danger })
+  });
 };
 
-/** The card's Versions: every retained version, with rollback for a live patch's owner and admins. */
+/** Where Serve this version… asks about one version. */
+export const servePath = (patch: Patches.Patch, versionNumber: number) =>
+  `${cardPath(patch, "rollback")}?version=${versionNumber}`;
+
+/** Versions: every retained version, the one at the address marked Serving, with Serve this version… for the owner and admins. */
 export const renderVersions = (input: {
   readonly card: Patches.PortalCard;
   readonly viewer: Viewer;
   readonly now: number;
-}): string =>
-  `${versionsTable(input.card, input.card.versions, input.viewer, input.now)}${canManage(input.card, input.viewer) && input.card.patch.state === "live" ? '<p class="supporting-text">Showing a version changes the address for everyone now. Tables, files, sharing and the description do not move.</p>' : ""}`;
+}): string => {
+  const { card: patchCard, now } = input;
+  const { patch } = patchCard;
+  const serve = canManage(patchCard, input.viewer) && patch.state === "live";
+  return table({
+    label: "Versions",
+    columns: [
+      { label: "Version" },
+      { label: "Published" },
+      { label: "By", hideOnPhone: true },
+      { label: "Status" },
+      ...(serve ? [{ label: "Actions", hidden: true, align: "end" as const }] : [])
+    ],
+    rows: patchCard.versions.map((version) => {
+      const current = version.id === patch.currentVersionId;
+      const name = `v${version.versionNumber}`;
+      return [
+        `<span class="strong">${escapeHtml(name)}</span>`,
+        `<time datetime="${escapeAttribute(version.createdAt)}">${escapeHtml(ago(version.createdAt, now))}</time> <span class="meta hide-sm">· ${escapeHtml(dateLabel(version.createdAt))}</span>`,
+        person(version.publisherName, version.publisherName),
+        current ? badge("Serving", "yellow") : "",
+        ...(serve
+          ? [
+              current
+                ? ""
+                : menu({
+                    id: idFor("version", version.id),
+                    label: name,
+                    items: [
+                      {
+                        kind: "link",
+                        label: "Serve this version…",
+                        href: servePath(patch, version.versionNumber)
+                      }
+                    ]
+                  })
+            ]
+          : [])
+      ];
+    })
+  });
+};
 
-const confirmationDependants = (groups: readonly DependantGroup[]): string =>
+interface DependantGroup {
+  readonly name: string;
+  readonly ownerName: string;
+  readonly resources: string[];
+}
+
+const dependantGroups = (patchCard: Patches.PortalCard) => {
+  const groups = new Map<string, DependantGroup>();
+  for (const dependant of patchCard.dependants) {
+    const resource = dependant.table ?? dependant.store;
+    const existing = groups.get(dependant.patchId);
+    if (existing === undefined)
+      groups.set(dependant.patchId, {
+        name: dependant.name,
+        ownerName: dependant.owner.name,
+        resources: [resource]
+      });
+    else if (!existing.resources.includes(resource)) existing.resources.push(resource);
+  }
+  return Array.from(groups.values());
+};
+
+/** The patches that read its tables or stores, and what each reads, as rows in a box. */
+const dependantRows = (groups: readonly DependantGroup[]) =>
+  rows(
+    groups.map((group) =>
+      row({
+        name: group.name,
+        description: `${group.ownerName}’s · reads ${group.resources.join(", ")}`
+      })
+    ),
+    true
+  );
+
+const dependantsLine = (groups: readonly DependantGroup[]) =>
   groups.length === 0
-    ? '<p class="supporting-text">Nothing else reads this patch.</p>'
-    : `<p>These patches will lose access to its shared tables and stores on their next read, until it is restored.</p><ul class="confirmation-list">${groups
-        .map(
-          (group) =>
-            `<li><code>${escapeHtml(group.name)}</code> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
-        )
-        .join("")}</ul>`;
+    ? ""
+    : `<p class="prose">${groups.length === 1 ? "This patch reads its tables and stops" : "These patches read its tables and stop"} working until it’s restored.</p>${dependantRows(groups)}`;
 
-export const renderConfirmation = (input: {
-  readonly card: Patches.PortalCard;
-  readonly viewer: RequireSession.Viewer["Service"];
-  readonly now: number;
-  readonly action: ConfirmationAction;
-  readonly members: readonly Users.User[];
-  readonly query: string;
+/** A dialog's refusal that isn't about one field, just above its buttons, taking focus. */
+const refusal = (text: string | undefined) => (text === undefined ? "" : refusalNotice(text));
+
+/** What a confirmation's form left to say when it was refused. */
+export interface ConfirmationState {
   readonly notice?: string;
   readonly submittedName?: string;
   readonly nameError?: string;
   readonly selectedOwnerId?: string;
-  readonly acknowledged?: boolean;
-}): string => {
-  const { card, viewer, action } = input;
-  const { patch } = card;
-  const cancelPath = cardPath(patch);
-  const acknowledged = input.acknowledged === true;
-  let verb: string;
-  let fields: string;
-  let consequence: string;
-  let filter = "";
-  let disabled = false;
+  /** Why the chosen owner was refused, under the owner field. */
+  readonly ownerError?: string;
+}
 
-  switch (action) {
+/**
+ * The dialog an act asks in, over the tab it was opened from: Retire (are you sure, naming any
+ * patch that reads its tables), Delete (the typed name), Restore (the sources still off),
+ * Reassign (the new owner) and Serve this version. Each is one form carrying the ids its act
+ * checks; pressing its button is the acknowledgement for the readers and sources it names.
+ */
+export const renderConfirmation = (
+  input: {
+    readonly card: Patches.PortalCard;
+    readonly viewer: Viewer;
+    readonly now: number;
+    /** The tab behind it, where Cancel and Close go. */
+    readonly close: string;
+  } & ConfirmationState &
+    (
+      | { readonly action: "retire" | "delete" | "restore" }
+      | { readonly action: "reassign"; readonly members: readonly Users.User[] }
+      | { readonly action: "rollback"; readonly versionNumber: number }
+    )
+): string => {
+  const { card: patchCard, viewer, close } = input;
+  const { patch } = patchCard;
+  const title = shownTitle(patch, viewer.company.name);
+  // Focus starts on a refusal when there is one; else on Cancel where pressing on would break
+  // something or change what people get, on the typed name for Delete, on the owner for Reassign.
+  const refused = input.notice !== undefined;
+  const cancel = (label = "Cancel") =>
+    linkButton(label, close, {
+      kind: "quiet",
+      autofocus: !refused && input.action !== "delete" && input.action !== "reassign"
+    });
+  const form = (fields: string) => ({
+    action: cardPath(patch, input.action),
+    fields: `${hidden("expectedPatchId", patch.id)}${fields}`
+  });
+  switch (input.action) {
     case "retire": {
-      verb = "Retire";
-      consequence = `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Its page, versions, tables, files and name are kept indefinitely. The owner or an admin can restore it.`;
-      const groups = dependantGroups(card);
-      fields = `${hidden("expectedState", "live")}${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`;
-      break;
+      const groups = dependantGroups(patchCard);
+      return dialog({
+        id: "patch-retire",
+        title: `Retire ${title}?`,
+        closeHref: close,
+        form: form(
+          `${hidden("expectedState", "live")}${groups.length === 0 ? "" : hidden("ack", "1")}`
+        ),
+        body: `<p class="prose">Nobody can open it until you or an admin restores it. Its versions, tables and files are kept.</p>${dependantsLine(groups)}${refusal(input.notice)}`,
+        foot: `${cancel()}${button(`Retire ${title}`, { kind: "danger-solid" })}`
+      });
     }
     case "delete": {
-      verb = "Delete";
-      const reclaimAt = DateTime.formatIso(
-        DateTime.makeUnsafe(input.now + Duration.toMillis(Patches.RECOVERY_WINDOW))
-      );
-      consequence = `${patch.state === "retired" ? "Its readers already lost access when it was retired. This starts the 30-day clock." : `Nobody can open <code>${escapeHtml(patch.name)}</code> until it is restored. Delete keeps it for 30 days.`} The owner or an admin can restore it during that window. On ${escapeHtml(dateLabel(reclaimAt))}, the page, its versions, tables, files and the name will be reclaimed for good.`;
-      const groups = patch.state === "live" ? dependantGroups(card) : [];
-      const dependants =
-        patch.state === "live"
-          ? `${confirmationDependants(groups)}${groups.length === 0 ? "" : confirmationAcknowledgement("I understand these patches will lose access to its shared tables and stores.", acknowledged)}`
-          : "";
-      const nameError =
-        input.nameError === undefined
-          ? ""
-          : `<p class="field-error" id="confirm-error" role="alert">${escapeHtml(input.nameError)}</p>`;
-      fields = `${hidden("expectedState", "not-deleted")}${dependants}<label class="field-label" for="confirm">Type ${escapeHtml(patch.name)} to confirm</label><input class="field" id="confirm" name="confirm" value="${escapeAttribute(input.submittedName ?? "")}" required autocomplete="off" spellcheck="false" aria-describedby="confirm-hint${input.nameError === undefined ? "" : " confirm-error"}"${input.nameError === undefined ? "" : ' aria-invalid="true"'}><p class="field-hint" id="confirm-hint">Enter the patch name exactly.</p>${nameError}`;
-      break;
-    }
-    case "restore": {
-      verb = "Restore";
-      consequence =
-        "This patch will serve, but it will error when it reads these tables or stores until their sources are restored too. A source that is gone cannot be restored.";
-      const sources = card.offSources
-        .map(
-          (source) =>
-            `<li><code>${escapeHtml(source.name ?? source.patchId)}</code> / <code>${escapeHtml(source.table ?? source.store)}</code>: ${escapeHtml(source.state)}</li>`
+      const groups = patch.state === "live" ? dependantGroups(patchCard) : [];
+      const reclaimAt = dateLabel(
+        DateTime.formatIso(
+          DateTime.makeUnsafe(input.now + Duration.toMillis(Patches.RECOVERY_WINDOW))
         )
-        .join("");
-      fields = `${hidden("expectedState", patch.state)}<ul class="confirmation-list">${sources}</ul>${confirmationAcknowledgement("I understand this patch will error when it reads these tables or stores.", acknowledged)}`;
-      break;
-    }
-    case "reassign": {
-      verb = "Reassign";
-      consequence = `Choose an active member of ${escapeHtml(viewer.company.name)} to own this patch. Its versions keep their original publisher attribution. Choosing ${escapeHtml(card.owner.name)}, the current owner, changes nothing.`;
-      const activeMembers = input.members.filter(
-        (member) => member.deactivatedAt === null && member.companyId === viewer.company.id
       );
-      const selectedOwnerId = activeMembers.some((member) => member.id === input.selectedOwnerId)
+      const lead =
+        patch.state === "retired"
+          ? `Its readers lost access when it was retired. It is gone for good on ${reclaimAt}, with its versions, tables and files. Until then you or an admin can restore it.`
+          : `It goes off its address now and is gone for good on ${reclaimAt}, with its versions, tables and files. Until then you or an admin can restore it.`;
+      return dialog({
+        id: "patch-delete",
+        title: `Delete ${title}`,
+        closeHref: close,
+        form: form(
+          `${hidden("expectedState", "not-deleted")}${groups.length === 0 ? "" : hidden("ack", "1")}`
+        ),
+        body: `<p class="prose">${escapeHtml(lead)}</p>${dependantsLine(groups)}${field({
+          id: "confirm",
+          label: `Type ${patch.name} to confirm`,
+          ...(input.nameError === undefined ? {} : { error: input.nameError }),
+          control: (aria) =>
+            textInput(aria, {
+              name: "confirm",
+              value: input.submittedName ?? "",
+              required: true,
+              autocomplete: "off",
+              mono: true,
+              autofocus: !refused
+            })
+        })}${refusal(input.notice)}`,
+        foot: `${cancel()}${button(`Delete ${title}`, { kind: "danger-solid" })}`
+      });
+    }
+    case "restore":
+      return dialog({
+        id: "patch-restore",
+        title: `Restore ${title}?`,
+        closeHref: close,
+        form: form(`${hidden("expectedState", patch.state)}${hidden("ack", "1")}`),
+        body: `<p class="prose">It comes back at its address, but it errors when it reads these until their sources are restored too. A source that is gone can’t come back.</p>${rows(
+          patchCard.offSources.map((source) =>
+            row({
+              name: source.name ?? source.patchId,
+              description: `${source.table ?? source.store} · ${source.state}`
+            })
+          ),
+          true
+        )}${refusal(input.notice)}`,
+        foot: `${cancel()}${button(`Restore ${title}`, { kind: "primary" })}`
+      });
+    case "reassign": {
+      const active = input.members
+        .filter((member) => member.deactivatedAt === null && member.companyId === viewer.company.id)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const selected = active.some((member) => member.id === input.selectedOwnerId)
         ? input.selectedOwnerId
         : undefined;
-      const needle = input.query.trim().toLowerCase();
-      const members = activeMembers.filter(
-        (member) =>
-          member.id === selectedOwnerId ||
-          member.name.toLowerCase().includes(needle) ||
-          member.email.toLowerCase().includes(needle)
-      );
-      filter = `<form method="get" action="${escapeAttribute(cardPath(patch, action))}"><label class="field-label" for="member-query">Find a member</label><input class="field" type="search" id="member-query" name="q" value="${escapeAttribute(input.query)}"><div class="actions"><button class="btn" type="submit">Filter members</button></div></form>`;
-      const choices = members
-        .map(
-          (member, index) =>
-            `<li><label class="field-choice"><input class="field-radio" type="radio" name="user" value="${escapeAttribute(member.id)}" required aria-describedby="member-consequence-${index}"${member.id === selectedOwnerId ? " checked" : ""}><span>${escapeHtml(member.name)} (${escapeHtml(member.email)})${member.id === card.owner.id ? ", current owner" : ""}</span></label><p class="field-hint" id="member-consequence-${index}">${escapeHtml(member.name)} can publish, retire or delete it at once; you can reassign it again.</p></li>`
-        )
-        .join("");
-      fields = `${hidden("expectedOwnerUserId", card.owner.id)}${members.length === 0 ? '<p class="supporting-text">No active members match this filter.</p>' : `<div role="radiogroup" aria-label="New owner"><ul class="confirmation-list">${choices}</ul></div>`}`;
-      disabled = members.length === 0;
-      break;
+      return dialog({
+        id: "patch-reassign",
+        title: `Reassign ${title}`,
+        closeHref: close,
+        form: form(hidden("expectedOwnerUserId", patchCard.owner.id)),
+        body: `<p class="prose">The new owner can publish to it, change it and take it down. Its versions keep who published them.</p>${field(
+          {
+            id: "reassign-owner",
+            label: "New owner",
+            ...(input.ownerError === undefined ? {} : { error: input.ownerError }),
+            control: (aria) =>
+              select(aria, {
+                name: "user",
+                ...(selected === undefined ? {} : { value: selected }),
+                choices: [
+                  { value: "", label: "Choose someone" },
+                  ...active.map((member) => ({
+                    value: member.id,
+                    label: `${member.name} (${member.email})${member.id === patchCard.owner.id ? ", owns it now" : ""}`
+                  }))
+                ]
+              })
+          }
+        )}${refusal(input.notice)}`,
+        foot: `${cancel()}${button(`Reassign ${title}`, { kind: "primary" })}`
+      });
+    }
+    case "rollback": {
+      const current = `v${patchCard.currentVersion}`;
+      const chosen = `v${input.versionNumber}`;
+      return dialog({
+        id: "patch-serve",
+        title: `Serve ${chosen} instead of ${current}?`,
+        closeHref: close,
+        form: form(
+          `${hidden("expectedCurrentVersionId", patch.currentVersionId)}${hidden("versionNumber", input.versionNumber)}`
+        ),
+        body: `<p class="prose">${escapeHtml(`Everyone who opens ${title} gets ${chosen} now. Its tables, files, sharing and description stay as they are. Your next publish replaces it.`)}</p>${refusal(input.notice)}`,
+        foot: `${cancel(`Keep ${current}`)}${button(`Serve ${chosen}`, { kind: "primary" })}`
+      });
     }
   }
-
-  const title = escapeHtml(patchTitle(patch));
-  return `<article class="portal-subpage"><p><a href="${escapeAttribute(cancelPath)}">Back to ${title}</a></p><h1 class="page-heading">${verb} ${title}?</h1>${refusal(input.notice)}${filter}${actionForm(patch, action, "confirmation-form")}<p class="confirmation-consequence">${consequence}</p>${fields}<div class="confirmation-actions"><button class="btn ${action === "retire" || action === "delete" ? "btn-danger" : "btn-primary"}" type="submit"${disabled ? " disabled" : ""}>${verb} ${title}</button><a class="btn btn-quiet" href="${escapeAttribute(cancelPath)}">Cancel</a></div></form></article>`;
 };
