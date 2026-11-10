@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -53,10 +54,16 @@ const layer = Layer.mergeAll(AuthApi.layer, HttpServer.layerServices).pipe(
   Layer.provideMerge(NodeCryptography.layer)
 );
 
+const decodeLegacyIdentity = Schema.decodeUnknownSync(
+  Schema.Struct({ role: Schema.Literals(["member", "admin"]) })
+);
+
 it.layer(layer)("auth group: machine identity and logout", (it) => {
   it.effect("answers the one identity wire shape for the seeded bearer", () =>
     Effect.gen(function* () {
       const identity = yield* (yield* client).me();
+      // Released CLIs decode only these two roles before checking their version.
+      assert.strictEqual(decodeLegacyIdentity(identity).role, "admin");
       assert.deepStrictEqual(
         { ...identity },
         {
@@ -66,7 +73,8 @@ it.layer(layer)("auth group: machine identity and logout", (it) => {
             handle: DEV_SEED.companyHandle,
             name: DEV_SEED.companyName
           },
-          role: DEV_SEED.role,
+          role: "admin",
+          superAdmin: true,
           machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
         }
       );

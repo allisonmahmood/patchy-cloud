@@ -143,7 +143,7 @@ export const validate = Effect.fn("Audiences.validate")(
       return yield* new AudienceScopeMismatch();
     if (restricted(audience) && !(yield* Activation)) return yield* new AudienceInactive();
     const sql = yield* SqlClient.SqlClient;
-    const people = yield* sql`SELECT id, (role = 'admin' OR is_regular_admin) AS admin FROM users
+    const people = yield* sql`SELECT id, (role IN ('admin', 'super_admin')) AS admin FROM users
       WHERE id = ANY(${[actorId, ownerId]}::text[]) AND company_id = ${companyId} AND deactivated_at IS NULL`.pipe(
       Effect.flatMap(decodePeople),
       Effect.catchTags({ SchemaError: Effect.die })
