@@ -9,15 +9,27 @@ import {
   escapeAttribute,
   escapeHtml,
   isPage,
-  menuCopy,
   menuLink,
   menuPost,
   patchMark,
+  patchTitle,
   rowMenu,
   searchField
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
-import { firstClause, hidden, patchTitle, turnedAwayTitle } from "./render.js";
+import type { InvocationLog } from "@patchy/runtime";
+import {
+  cardPath,
+  failedLog,
+  firstClause,
+  hidden,
+  isNew,
+  manages,
+  matches,
+  openItems,
+  patchAddress,
+  turnedAwayTitle
+} from "./shared/presentation.js";
 
 /** All patches' layout; components come from the shell. */
 export const listStyles = `
@@ -45,44 +57,15 @@ const showLabels: Record<Show, string> = {
 };
 
 const DAY = 86_400_000;
-/** How long a patch counts as new to someone who hasn't opened it, and how near reclamation needs attention. */
+/** How near its reclamation a deletion needs attention. */
 const RECENT = 7 * DAY;
 
 type Viewer = RequireSession.Viewer["Service"];
 const epoch = (iso: string) => Date.parse(iso);
 
-/** A `?q=` as searched: trimmed and cut to 200 code points, never mid-character. */
-export const searchQuery = (raw: string | null) =>
-  Array.from((raw ?? "").trim())
-    .slice(0, 200)
-    .join("");
-
-/** A search over live or off patches: case-insensitive, across name, title, description and owner name. */
-export const matches = (row: Patches.ReadPatch, query: string): boolean => {
-  const needle = query.toLowerCase();
-  return [row.patch.name, row.patch.title, row.patch.description, row.owner.name].some((field) =>
-    field.toLowerCase().includes(needle)
-  );
-};
-
-/** Whether the viewer may manage this patch: its owner, or any admin. */
-export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
-  viewer.role === "admin" || row.owner.id === viewer.user.id;
-
 /** A deletion the owner or an admin can still undo: before its reclamation deadline. */
 export const recoverable = (patch: Patches.Patch, now: number) =>
   patch.state !== "deleted" || (patch.purgeAt !== null && now < epoch(patch.purgeAt));
-
-/** Created in the last week by someone else, and not yet opened by the viewer. */
-export const isNew = (
-  row: Patches.ReadPatch,
-  viewer: Viewer,
-  opens: ReadonlyMap<string, Patches.Open>,
-  now: number
-) =>
-  row.owner.id !== viewer.user.id &&
-  now - epoch(row.patch.createdAt) < RECENT &&
-  !opens.has(row.patch.id);
 
 interface Attention {
   readonly title: string;
@@ -91,14 +74,8 @@ interface Attention {
   readonly act: string;
 }
 
-const cardPath = (patch: Patches.Patch, action = "") =>
-  `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const restoreForm = (patch: Patches.Patch) =>
   `${hidden("expectedPatchId", patch.id)}${hidden("expectedState", patch.state)}`;
-
-/** The log filtered to its failed entries. */
-export const failedLog = (patch: Patches.Patch) =>
-  `/patches/${encodeURIComponent(patch.name)}/log?outcome=failed`;
 
 /** Why a patch needs its owner's or an admin's attention, if it does and the viewer may act. */
 const attentionOf = (
@@ -106,7 +83,7 @@ const attentionOf = (
   viewer: Viewer,
   names: ReadonlyMap<string, string>,
   now: number,
-  failures: ReadonlyMap<string, number> | undefined,
+  calls: ReadonlyMap<string, InvocationLog.CallSummary> | undefined,
   turnedAway: ReadonlyMap<string, GuestReason> | undefined
 ): Attention | undefined => {
   const { patch } = row;
@@ -127,7 +104,7 @@ const attentionOf = (
       detail: "Nobody can publish to it until someone else owns it.",
       act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
     };
-  const failed = failures?.get(patch.id) ?? 0;
+  const failed = calls?.get(patch.id)?.failures ?? 0;
   if (patch.state === "live" && failed > 0)
     return {
       title: `${plural(failed, "call", "calls")} failed in the last day`,
@@ -147,51 +124,6 @@ const attentionOf = (
 const actor = (id: string | null, names: ReadonlyMap<string, string>) => {
   const name = id === null ? undefined : names.get(id);
   return name === undefined ? "" : ` by ${name}`;
-};
-
-/** A live patch's address, relative to the instance. */
-export const patchAddress = (patch: Patches.Patch) =>
-  `/${encodeURIComponent(patch.companyHandle)}/${encodeURIComponent(patch.name)}`;
-
-/** `here`, the page a menu is on, with the Share dialog for patch `name` open over it. */
-export const shareHref = (here: string, name: string) => {
-  const url = new URL(here, "http://patchy.invalid");
-  url.searchParams.set("share", name);
-  return `${url.pathname}${url.search}`;
-};
-
-/**
- * The ways to open a patch, Share… for one the viewer manages, then its card, as a row's menu
- * starts on Home and All patches. Its name already opens a live patch, so the menu offers a new
- * tab, the link and About this patch; the card's own menu is these without About. `here` is the
- * page the menu is on, which the Share dialog opens over.
- */
-export const openItems = (
-  row: Patches.ReadPatch,
-  viewer: Viewer,
-  publicBaseUrl: string,
-  here: string,
-  about = true
-) => {
-  const { patch } = row;
-  const title = patchTitle(patch);
-  const live = patch.state === "live";
-  return [
-    ...(live
-      ? [
-          `<a class="menu-item" href="${escapeAttribute(patchAddress(patch))}" target="_blank" rel="noopener" aria-label="${escapeAttribute(`Open in a new tab, ${title}`)}">Open in a new tab</a>`,
-          menuCopy(
-            `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`,
-            "Copy link",
-            title
-          )
-        ]
-      : []),
-    ...(live && manages(row, viewer)
-      ? [menuLink(shareHref(here, patch.name), "Share…", false, title)]
-      : []),
-    ...(about ? [menuLink(cardPath(patch), "About this patch", false, title)] : [])
-  ];
 };
 
 /** Every act on a patch the viewer may perform, each going to the route that already does it. */
@@ -244,8 +176,8 @@ export const renderAllPatches = (input: {
   readonly opens: ReadonlyMap<string, Patches.Open>;
   /** Company members' names by id, for who retired or deleted a patch. */
   readonly names: ReadonlyMap<string, string>;
-  /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
-  readonly failures?: ReadonlyMap<string, number>;
+  /** The call summary of each live tier 2 patch the viewer manages; absent when they manage none. */
+  readonly calls?: ReadonlyMap<string, InvocationLog.CallSummary>;
   /** Why guests can't open each patch with guests that turns them away; absent for a member. */
   readonly turnedAway?: ReadonlyMap<string, GuestReason>;
 }): string => {
@@ -259,7 +191,7 @@ export const renderAllPatches = (input: {
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
-      const found = attentionOf(row, viewer, names, now, input.failures, input.turnedAway);
+      const found = attentionOf(row, viewer, names, now, input.calls, input.turnedAway);
       return found === undefined ? [] : [[row.patch.id, found] as const];
     })
   );
@@ -316,9 +248,9 @@ export const renderAllPatches = (input: {
 
   // Health names failures only. A tier 2 patch with none recorded is blank; a row with no calls
   // to count (not tier 2, or not the viewer's to manage) shows a dash.
-  const healthy = input.failures !== undefined && show !== "pages";
+  const healthy = input.calls !== undefined && show !== "pages";
   const health = (row: Patches.ReadPatch) => {
-    const failed = input.failures?.get(row.patch.id);
+    const failed = input.calls?.get(row.patch.id)?.failures;
     if (failed === undefined) return '<td><span class="supporting-text">—</span></td>';
     return failed === 0
       ? "<td></td>"
