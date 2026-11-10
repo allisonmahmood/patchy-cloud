@@ -186,6 +186,18 @@ describe("structure", () => {
     expect(html).toContain('<span class="sr-only">Actions</span>');
   });
 
+  it("marks a growing column and a column of sentences, which keep their floors", () => {
+    const html = table({
+      label: "Patches that need attention",
+      columns: [
+        { label: "Patch", grow: true },
+        { label: "Why it’s here", readable: true }
+      ],
+      rows: [["Kudos", "Its owner is deactivated"]]
+    });
+    expect(html).toContain('<td class="cell-grow">Kudos</td><td class="cell-readable">');
+  });
+
   it("draws a dialog over its page, closable back to it unless only its actions may close it", () => {
     const html = dialog({
       id: "invite",

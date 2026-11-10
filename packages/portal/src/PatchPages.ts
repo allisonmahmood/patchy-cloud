@@ -45,7 +45,6 @@ import {
   type Page,
   pageErrors,
   shareOverlay,
-  shareStyles,
   type Sharing,
   staleNotice,
   turnedAway,
@@ -384,8 +383,6 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
           main,
           aside
         }),
-        // The Share dialog still carries its own layout.
-        ...(share === undefined ? {} : { styles: shareStyles }),
         status: refused ? 403 : (options.status ?? sharing?.status ?? 200),
         app: {
           ...(confirmation === undefined

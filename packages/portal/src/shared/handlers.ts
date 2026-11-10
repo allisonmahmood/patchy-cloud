@@ -28,9 +28,6 @@ import { InvocationLog, Prewarm } from "@patchy/runtime";
 import { renderShareDialog, type ShareRefusal } from "../share.js";
 import { manages } from "./presentation.js";
 
-/** The Share dialog's styles, which every page it opens over carries. */
-export { shareStyles } from "../share.js";
-
 /** The services the portal's routes run on, which the server provides. */
 export type PortalServices =
   | Cryptography.Cryptography
@@ -175,7 +172,7 @@ export const staleNotice = Effect.fn("Portal.staleNotice")(function* (
 /**
  * A Share dialog a page shows over itself: the patch it shares, the page's own URL, and what a
  * refused form of the dialog's left to say. `?share=<name>` asks for one on Home, All patches and
- * a card's tabs.
+ * a card's tabs, and `&confirm=public` has it ask about going public.
  */
 export interface Sharing {
   readonly name: string;
@@ -186,23 +183,28 @@ export interface Sharing {
   readonly confirmPublic?: boolean;
 }
 
-/** The Share dialog `url` asks for, if it asks. */
+/** The Share dialog `url` asks for, if it asks, and whether it asks about going public. */
 export const asked = (url: URL): Sharing | undefined => {
   const name = url.searchParams.get("share");
-  return name === null || name === "" ? undefined : { name, at: url };
+  if (name === null || name === "") return undefined;
+  return url.searchParams.get("confirm") === "public"
+    ? { name, at: url, confirmPublic: true }
+    : { name, at: url };
 };
 
 /** A page's own path and query without the dialog: where Share's forms return and Done goes. */
 export const pagePath = (url: URL) => {
   const params = new URLSearchParams(url.search);
   params.delete("share");
+  params.delete("confirm");
   const search = params.toString();
   return `${url.pathname}${search ? `?${search}` : ""}`;
 };
 
 /**
  * Where a Share dialog's form returns: the page it opened over, when that is Home, All patches or
- * the patch's own card, with only the query those pages read. Anything else is the card.
+ * the patch's own card, with only the query those pages read: the search, All patches' filter and
+ * its page. Anything else is the card.
  */
 export const behind = (back: string | undefined, name: string, base: string): URL => {
   const card = `/patches/${encodeURIComponent(name)}`;
@@ -215,7 +217,7 @@ export const behind = (back: string | undefined, name: string, base: string): UR
   )
     return fallback;
   const kept = new URL(url.pathname, base);
-  for (const key of ["q", "show"]) {
+  for (const key of ["q", "show", "page"]) {
     const value = url.searchParams.get(key);
     if (value) kept.searchParams.set(key, value);
   }
@@ -246,7 +248,7 @@ export interface PagesBehind {
 /**
  * The Share dialog over a page, for a live patch among `rows` the viewer manages; none otherwise,
  * so a stale or foreign `?share=` shows just the page. It shows the receipt its last form left,
- * which the page behind then leaves out.
+ * which the page behind then leaves out, and why the patch's guests can't open it, if they can't.
  */
 export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
   rows: readonly Patches.ReadPatch[],
@@ -257,13 +259,22 @@ export const shareOverlay = Effect.fn("Portal.shareOverlay")(function* (
   const row = rows.find((candidate) => candidate.patch.name === sharing.name);
   if (row === undefined || row.patch.state !== "live" || !manages(row, viewer)) return undefined;
   const grants = yield* GuestGrants.GuestGrants;
+  const guests = yield* grants.guests(row.patch.id);
+  // Why its guests can't open it now, read only while it has any.
+  const blocked =
+    guests.length === 0
+      ? undefined
+      : (yield* grants
+          .unavailableToGuests(viewer.company.id)
+          .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }))).get(row.patch.id);
   return renderShareDialog({
     row,
     viewer,
     publicBaseUrl: session.publicBaseUrl,
     back: pagePath(sharing.at),
-    guests: yield* grants.guests(row.patch.id),
+    guests,
     suggestions: yield* grants.sharedBefore(viewer.company.id),
+    ...(blocked === undefined ? {} : { turnedAway: blocked }),
     ...(viewer.receipt === undefined ? {} : { receipt: viewer.receipt }),
     ...(sharing.notice === undefined ? {} : { notice: sharing.notice }),
     ...(sharing.refused === undefined ? {} : { refused: sharing.refused }),

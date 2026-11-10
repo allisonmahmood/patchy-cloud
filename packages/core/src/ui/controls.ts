@@ -141,10 +141,12 @@ export interface InputOptions {
   /** Answer width, for an answer of known length. */
   readonly width?: "xs" | "sm" | "md";
   readonly autofocus?: boolean;
+  /** The id of a `<datalist>` of suggestions, such as the people a patch was shared with before. */
+  readonly list?: string;
 }
 
 const inputAttributes = (options: InputOptions) =>
-  `name="${escapeAttribute(options.name)}"${attribute("value", options.value)}${attribute("placeholder", options.placeholder)}${flag("required", options.required)}${attribute("autocomplete", options.autocomplete)}${attribute("maxlength", options.maxlength)}${attribute("pattern", options.pattern)}${attribute("inputmode", options.inputmode)}${flag("autofocus", options.autofocus)}`;
+  `name="${escapeAttribute(options.name)}"${attribute("value", options.value)}${attribute("placeholder", options.placeholder)}${flag("required", options.required)}${attribute("autocomplete", options.autocomplete)}${attribute("maxlength", options.maxlength)}${attribute("pattern", options.pattern)}${attribute("inputmode", options.inputmode)}${attribute("list", options.list)}${flag("autofocus", options.autofocus)}`;
 
 const fieldClass = (options: Pick<InputOptions, "mono" | "width">) =>
   `field${options.mono === true ? " field-mono" : ""}${options.width === undefined ? "" : ` field-w-${options.width}`}`;
@@ -171,9 +173,10 @@ export const select = (
     readonly choices: ReadonlyArray<{ readonly value: string; readonly label: string }>;
     readonly value?: string;
     readonly width?: "xs" | "sm" | "md";
+    readonly autofocus?: boolean;
   }
 ) =>
-  `<select class="${fieldClass(options)}" ${controlAttributes(aria)} name="${escapeAttribute(options.name)}">${options.choices
+  `<select class="${fieldClass(options)}" ${controlAttributes(aria)} name="${escapeAttribute(options.name)}"${flag("autofocus", options.autofocus)}>${options.choices
     .map(
       (choice) =>
         `<option value="${escapeAttribute(choice.value)}"${choice.value === options.value ? " selected" : ""}>${escapeHtml(choice.label)}</option>`

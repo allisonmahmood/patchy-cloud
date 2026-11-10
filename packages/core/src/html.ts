@@ -144,8 +144,9 @@ function nav(section: AppShell["section"]): string {
  * which goes inert behind it.
  */
 function appBody(app: AppShell, body: string): string {
+  // The search is All patches', whose results show its query as a chip.
   const search = searchField({
-    action: "/",
+    action: "/patches",
     id: "app-search",
     query: app.query ?? "",
     placeholder: "Search patches",

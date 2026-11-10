@@ -115,6 +115,18 @@ export interface Column {
   readonly hideOnPhone?: boolean;
   /** For a column of one control, such as a row's menu, with no visible header. */
   readonly hidden?: boolean;
+  /** Keeps its cells on one line, such as a time, a count or a button, so another column wraps. */
+  readonly nowrap?: boolean;
+  /**
+   * Takes the room the other columns leave, such as a patch's name: its `row-desc` line stays one
+   * line, cut with an ellipsis.
+   */
+  readonly grow?: boolean;
+  /**
+   * Holds a short sentence, such as why a patch needs attention or a state and its detail, which
+   * the growing column never squeezes below a readable line; on a phone the table scrolls.
+   */
+  readonly readable?: boolean;
 }
 
 /**
@@ -128,7 +140,13 @@ export const table = (spec: {
   readonly rows: ReadonlyArray<ReadonlyArray<string>>;
 }) => {
   const cellClass = (column: Column | undefined) =>
-    [column?.align === "end" ? "r" : "", column?.hideOnPhone === true ? "hide-sm" : ""]
+    [
+      column?.align === "end" ? "r" : "",
+      column?.hideOnPhone === true ? "hide-sm" : "",
+      column?.nowrap === true ? "nowrap" : "",
+      column?.grow === true ? "cell-grow" : "",
+      column?.readable === true ? "cell-readable" : ""
+    ]
       .filter((name) => name !== "")
       .join(" ");
   const classAttribute = (column: Column | undefined) => {

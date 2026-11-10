@@ -26,5 +26,7 @@ export const tables = `
     .table tr:has(+ .table-expand) > * { border-bottom: 0; }
     .table-expand > td { height: auto; padding-top: 0; }
     .table-expand summary { margin: 0 0 var(--space-2); cursor: pointer; }
+    /* Scrolling, the wrapper holds all the table draws, a hidden header's label too, so only it scrolls. */
+    .table-wrap { position: relative; }
     @media (max-width: 639px) { .table .hide-sm { display: none; } }
 `;

@@ -73,7 +73,7 @@ describe("htmlPage app body", () => {
     const body = html.slice(html.indexOf("<body>"));
     expect(body).toContain('<a class="brand" href="/">');
     expect(body).toMatch(/<a class="app-place" href="\/" aria-current="page"><svg[^>]*>/);
-    expect(body).toMatch(/<form class="app-search" method="get" action="\/" role="search">/);
+    expect(body).toMatch(/<form class="app-search" method="get" action="\/patches" role="search">/);
     expect(body).toContain('aria-label="Search patches"');
     expect(body).toMatch(
       /<a class="btn btn-sm btn-block" href="\/\?new"><svg[^>]*>[\s\S]*?<\/svg>New patch<\/a>/

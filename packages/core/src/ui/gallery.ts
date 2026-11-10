@@ -170,7 +170,7 @@ const fields = demo(
         { value: "send", title: "Read and send", points: ["Also reply and send"], checked: true }
       ])
     }
-  )}<div class="fieldset"><span class="field-label">Copy line</span>${copyLine("patchy add attio/crm", "Command", "the command")}</div></div>`,
+  )}${field({ id: "g-invite", label: "Invite a guest", control: (aria) => `<div class="pair"><span class="grow">${input(aria, { name: "email", type: "email", placeholder: "Email of someone at another company" })}</span>${button("Invite", { type: "button", kind: "primary" })}</div>` })}<div class="fieldset"><span class="field-label">Copy line</span>${copyLine("patchy add attio/crm", "Command", "the command")}</div></div>`,
   `${stateTable("Field", [
     ["Rest", "1px ink edge at button height, surface fill"],
     ["Focus", "2px ink ring outside and a 1px ink edge inside"],
@@ -349,6 +349,10 @@ const lists = demo(
   ])}${stateTable("Table", [
     ["Rest", "muted 13px headers over 56px rows on hairlines"],
     ["Phone", "columns marked for it are left out; a wide table scrolls in its own wrapper"],
+    [
+      "Narrow",
+      "the growing column and a column of sentences keep a floor, so no word breaks; the table scrolls"
+    ],
     ["Linked row", "the first cell's link covers the row"]
   ])}${stateTable("Menu", [
     ["Closed", "a quiet ⋯ button named for its row"],

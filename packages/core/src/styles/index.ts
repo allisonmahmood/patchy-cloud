@@ -12,10 +12,13 @@ import { marks } from "./marks.js";
 import { menus } from "./menus.js";
 import { navigation } from "./navigation.js";
 import { notices } from "./notices.js";
+import { pairs } from "./pairs.js";
+import { rowsFlush } from "./rows-flush.js";
 import { status } from "./status.js";
 import { steps } from "./steps.js";
 import { switcher } from "./switcher.js";
 import { templates } from "./templates.js";
+import { tableCells } from "./table-cells.js";
 import { tables } from "./tables.js";
 import { tiles } from "./tiles.js";
 import { tokens } from "./tokens.js";
@@ -40,7 +43,10 @@ export const chunks = {
   status,
   notices,
   containers,
+  pairs,
+  rowsFlush,
   tables,
+  tableCells,
   navigation,
   menus,
   dialogs,

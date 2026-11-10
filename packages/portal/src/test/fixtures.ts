@@ -419,13 +419,15 @@ export const dialogAfter = Effect.fn("PortalFixtures.dialogAfter")(function* (
     cookie: `${sessionCookie(person)}; ${Cookies.toCookieHeader(response.cookies)}`
   });
   const html = yield* page.text;
-  const dialog =
-    html.match(/<section class="modal-panel share-dialog"[\s\S]*<\/section>/)?.[0] ?? "";
+  const dialog = shareDialog(html);
   return {
     html: dialog,
-    receipt: text(dialog.match(/<p class="note note-ok" role="status">([\s\S]*?)<\/p>/)?.[1] ?? "")
+    receipt: text(dialog.match(/<p class="receipt" role="status">([\s\S]*?)<\/p>/)?.[1] ?? "")
   };
 });
+/** The Share dialog over a page, or nothing. */
+export const shareDialog = (html: string) =>
+  html.match(/<section class="dialog[^"]*" id="share"[\s\S]*<\/section>/)?.[0] ?? "";
 export const text = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
@@ -482,7 +484,7 @@ export const cardPath = (name: string) => `/patches/${name}`;
 export const listed = (html: string) =>
   [
     ...(html.match(/<tbody>([\s\S]*)<\/tbody>/)?.[1] ?? "").matchAll(
-      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+      /<a class="row-link" href="[^"]*">([a-z0-9-]+)<\/a>/g
     )
   ].map((match) => match[1]!);
 /** The labels in one row's action menu, by its id: a patch's id, on Home after its shelf's. */
