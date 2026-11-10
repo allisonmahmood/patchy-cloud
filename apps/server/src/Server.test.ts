@@ -18,7 +18,15 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as SqlClient from "effect/sql/SqlClient";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { fontFile, fontUrl, fonts } from "@patchy/core";
+import {
+  fontFile,
+  fontUrl,
+  fonts,
+  galleryPages,
+  galleryPath,
+  uiScript,
+  uiScriptPath
+} from "@patchy/core";
 import {
   FRONTEND_API_HOST,
   signedInCookies,
@@ -170,6 +178,21 @@ it.layer(
         status: 401,
         body: { ok: false, error: "Missing or invalid API token." }
       });
+    })
+  );
+
+  it.effect("serves the enhancer to anyone, and no /~ui gallery without dev personas", () =>
+    Effect.gen(function* () {
+      const script = yield* send(HttpClientRequest.get(uiScriptPath));
+      assert.strictEqual(script.status, 200);
+      assert.strictEqual(script.headers["content-type"], "text/javascript");
+      assert.isUndefined(script.headers["set-cookie"]);
+      assert.strictEqual(yield* script.text, uiScript);
+      // A production server has no personas, so it has no gallery either: its paths are the 404.
+      for (const page of galleryPages) {
+        const path = page === "" ? galleryPath : `${galleryPath}/${page}`;
+        assert.strictEqual((yield* send(HttpClientRequest.get(path))).status, 404, path);
+      }
     })
   );
 
@@ -847,5 +870,28 @@ it.layer(server())("runtime over the real server and Patches resolver", (it) => 
       const streams = yield* RuntimeStream.RuntimeStream;
       assert.strictEqual(yield* streams.connected(DEV_SEED.companyId, created.patchId), 0);
     }).pipe(Effect.scoped)
+  );
+});
+
+it.layer(
+  // Personas sign anyone in, so they run only on a loopback origin.
+  server({
+    PATCHY_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+    PATCHY_DEV_PERSONAS_SECRET: "gallery",
+    NODE_ENV: "test"
+  })
+)("the server with dev personas", (it) => {
+  it.effect(
+    "serves the /~ui gallery and its template pages, signed out, under the page policy",
+    () =>
+      Effect.gen(function* () {
+        for (const page of galleryPages) {
+          const path = page === "" ? galleryPath : `${galleryPath}/${page}`;
+          const response = yield* send(HttpClientRequest.get(path));
+          assert.strictEqual(response.status, 200, path);
+          assert.include(response.headers["content-security-policy"]!, "script-src 'self'");
+          assert.include(yield* response.text, `<script defer src="${uiScriptPath}"></script>`);
+        }
+      })
   );
 });

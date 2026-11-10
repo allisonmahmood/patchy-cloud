@@ -25,6 +25,8 @@ import {
   ago,
   copyScript,
   copyScriptPath,
+  uiScript,
+  uiScriptPath,
   escapeAttribute,
   escapeHtml,
   rowMenu
@@ -1426,6 +1428,14 @@ export const layer: Layer.Layer<
       "GET",
       copyScriptPath,
       HttpServerResponse.text(copyScript, {
+        contentType: "text/javascript",
+        headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
+      })
+    );
+    yield* router.add(
+      "GET",
+      uiScriptPath,
+      HttpServerResponse.text(uiScript, {
         contentType: "text/javascript",
         headers: { "cache-control": "no-cache", "x-content-type-options": "nosniff" }
       })

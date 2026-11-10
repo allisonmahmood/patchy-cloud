@@ -13,6 +13,7 @@ import { notices } from "./notices.js";
 import { status } from "./status.js";
 import { steps } from "./steps.js";
 import { switcher } from "./switcher.js";
+import { templates } from "./templates.js";
 import { tables } from "./tables.js";
 import { tiles } from "./tiles.js";
 import { tokens } from "./tokens.js";
@@ -43,6 +44,7 @@ export const chunks = {
   tiles,
   appShell,
   doors,
+  templates,
   whatsNew,
   switcher
 } as const;

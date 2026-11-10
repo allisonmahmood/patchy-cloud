@@ -80,7 +80,7 @@ import {
   Patches,
   PatchesApi
 } from "@patchy/patches";
-import { Fonts, PortalPages, SwitcherList, WhatsNewPages } from "@patchy/portal";
+import { Fonts, Gallery, PortalPages, SwitcherList, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
 import { Pages, servingHeaders, TrustedProxies } from "@patchy/serving";
 import {
@@ -427,7 +427,10 @@ const app = Layer.mergeAll(
     OAuthEndpoints.layer,
     Door.layer,
     Layer.unwrap(
-      Effect.map(DevPersonas.enabled, (personas) => (personas ? DevPersonas.routes : Layer.empty))
+      // The persona picker and the `/~ui` gallery exist only where personas sign people in.
+      Effect.map(DevPersonas.enabled, (personas) =>
+        personas ? Layer.mergeAll(DevPersonas.routes, Gallery.layer) : Layer.empty
+      )
     ),
     ConnectionPages.layer
   ).pipe(Layer.provide(RequestEvents.layer)),

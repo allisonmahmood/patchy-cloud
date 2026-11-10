@@ -282,6 +282,14 @@ and prints the final URL, status and every console error and uncaught
 exception from the page and its frames. `<person>` is any email, or an
 environment person's key or first name.
 
+First-party pages compose core's UI system: tokens, helpers and five page
+templates (`.agents/skills/ui-consistency/SKILL.md`). The local instance serves
+its gallery at `/~ui`, every helper in its states and one page per template at
+`/~ui/<template>`, only while personas sign people in; production has none.
+`pnpm dev shot <person> /~ui` captures it, and `pnpm ui:report` lists what is
+still off the system: raw visual values in the app's CSS, page styles and
+hand-drawn components. It reports and never fails.
+
 ### Environments: `pnpm dev up`
 
 An environment is this instance plus what a multi-person check or demo needs:

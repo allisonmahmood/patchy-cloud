@@ -5,7 +5,8 @@ import {
   escapeAttribute,
   escapeHtml,
   htmlPage,
-  SWITCHER_RELAY_SOURCE
+  SWITCHER_RELAY_SOURCE,
+  uiScriptTag
 } from "@patchy/core";
 
 export interface Page {
@@ -77,7 +78,8 @@ export function pageResponse(
   shell?: SessionShell
 ): HttpServerResponse.HttpServerResponse {
   const clerk = shell?.clerk;
-  const head = shell && clerk ? sessionScripts(shell) : undefined;
+  // The enhancer leads, so a page is usable before Clerk's script arrives.
+  const head = `${uiScriptTag}${shell && clerk ? sessionScripts(shell) : ""}`;
   const heading = page.heading ?? `<h1 class="page-heading">${escapeHtml(page.title)}</h1>`;
   return HttpServerResponse.text(
     htmlPage({
@@ -106,8 +108,9 @@ export function pageResponse(
           "base-uri 'none'",
           ["form-action 'self'", ...(page.formActions ?? [])].join(" "),
           "frame-ancestors 'none'",
-          // Every page runs the switcher relay, inline, admitted by its hash. App pages also run
-          // the shell's own What's new script, which posts back here.
+          // Every page runs the switcher relay, inline, admitted by its hash, and the enhancer
+          // from this origin. App pages also run the shell's own What's new script, which posts
+          // back here.
           ...(clerk
             ? [
                 `script-src 'self' https://${clerk.frontendApiHost} ${SWITCHER_RELAY_SOURCE}`,
@@ -118,7 +121,7 @@ export function pageResponse(
               ]
             : page.app
               ? [`script-src 'self' ${SWITCHER_RELAY_SOURCE}`, "connect-src 'self'"]
-              : [`script-src ${SWITCHER_RELAY_SOURCE}`])
+              : [`script-src 'self' ${SWITCHER_RELAY_SOURCE}`])
         ].join("; ")
       }
     }

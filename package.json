@@ -36,6 +36,7 @@
     "lint": "oxlint",
     "typecheck": "node scripts/build-core-scripts.mjs && node scripts/build-serving-broker.mjs && turbo run typecheck typecheck:tests",
     "typecheck:tests": "effect-tsgo tsc -p tsconfig.test.json",
+    "ui:report": "bun --conditions=development scripts/ui-report.ts",
     "format": "bun fmt",
     "format:check": "bun fmt --check"
   },

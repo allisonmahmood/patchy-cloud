@@ -1,6 +1,7 @@
 import { avatar, searchField } from "./components.js";
-import { fontPreload } from "./fonts.js";
+import { fontFaces, fontPreload } from "./fonts.js";
 import { appStyles } from "./styles/index.js";
+import { uiScriptTag } from "./ui/enhancer.js";
 import { escapeAttribute, escapeHtml } from "./escape.js";
 import { places, whatsNewPath } from "./places.js";
 import { changesSince, type ChangeKind, latestRelease, tally } from "./whatsNew.js";
@@ -184,6 +185,14 @@ export function htmlPage(options: {
 <body>${options.app ? appBody(options.app, options.body) : options.body}</body>
 </html>`;
 }
+/**
+ * A first-party document without the app's fonts and enhancer, for one drawn under a policy that
+ * refuses them, such as a refusal at a content URL inside the frame's sandbox. Its text falls
+ * back to the system fonts the stack names after Geist, and it works without script as every
+ * page does.
+ */
+export const withoutAppAssets = (html: string) =>
+  html.replace(fontPreload, "").replace(fontFaces, "").replace(uiScriptTag, "");
 export { escapeAttribute, escapeHtml } from "./escape.js";
 /** "a, b and c", escaped, as when a page names a company's admins. */
 export const sentenceList = (items: readonly string[]): string => {
