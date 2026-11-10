@@ -9,6 +9,7 @@ import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
+import { linkButton } from "@patchy/core";
 import type * as AgentConnections from "./AgentConnections.js";
 import * as BetaLinks from "./BetaLinks.js";
 import * as DevicePages from "./DevicePages.js";
@@ -18,7 +19,14 @@ import type * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, returnPath, signOutForm, withCookies } from "./page.js";
+import {
+  accountFoot,
+  doorResponse,
+  pageResponse,
+  returnPath,
+  unavailableDoor,
+  withCookies
+} from "./page.js";
 
 const join = Effect.gen(function* () {
   const claims = yield* RequireSession.SignedIn;
@@ -44,15 +52,12 @@ const join = Effect.gen(function* () {
       name: claims.name
     },
     membership,
-    { returnTo: target, publicBaseUrl: session.publicBaseUrl },
+    { returnTo: target, publicBaseUrl: session.publicBaseUrl, foot: accountFoot(claims.email) },
     Option.getOrUndefined(suggested)
   );
   return page.redirect
     ? HttpServerResponse.redirect(page.redirect, { status: 303 })
-    : pageResponse(
-        { ...page, styles: Join.styles, body: `${page.body}${signOutForm(true)}` },
-        session
-      );
+    : pageResponse(page, session);
 });
 
 /** People at `/settings/people` and Agent access at `/settings/agent-access`, with their forms. */
@@ -117,34 +122,16 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
     const session = yield* Session.Session;
     return yield* app.pipe(
       Effect.catchTags({
-        SessionError: () =>
-          Effect.succeed(
-            pageResponse(
-              {
-                title: "Sign-in service unavailable",
-                body: `<p>Please try again.</p>${signOutForm()}`,
-                status: 502
-              },
-              session
-            )
-          ),
-        SqlError: () =>
-          Effect.succeed(
-            pageResponse(
-              {
-                title: "Company service unavailable",
-                body: `<p>Please try again.</p>${signOutForm()}`,
-                status: 503
-              },
-              session
-            )
-          ),
+        SessionError: () => Effect.succeed(unavailableDoor("sign-in", { signOut: true }, session)),
+        SqlError: () => Effect.succeed(unavailableDoor("patchy", { signOut: true }, session)),
         HttpServerError: () =>
           Effect.succeed(
-            pageResponse(
+            doorResponse(
               {
                 title: "Invalid form",
-                body: `<p>Return to <a href="/settings/people">your company</a> and submit the form again.</p>${signOutForm()}`,
+                body: "<p>Go back and submit the form again.</p>",
+                actions: linkButton("Back to People", "/settings/people", { block: true }),
+                foot: accountFoot(undefined),
                 status: 400
               },
               session

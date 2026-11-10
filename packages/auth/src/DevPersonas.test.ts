@@ -188,6 +188,27 @@ it.layer(services)("dev personas", (it) => {
     })
   );
 
+  it.effect("keeps a refused email under its field, with the return and the door key", () =>
+    Effect.gen(function* () {
+      const refused = yield* sendKeyed(
+        "/dev/sign-in?as=not-an-email&return=%2Fprivate&key=door-key"
+      );
+      assert.strictEqual(refused.status, 400);
+      assert.isEmpty(refused.headers.getSetCookie());
+      const body = yield* Effect.promise(() => refused.text());
+      assert.include(
+        body,
+        '<p class="field-error" id="as-error">not-an-email is not an email address.</p>'
+      );
+      assert.match(
+        body,
+        /id="as" aria-describedby="as-error" aria-invalid="true" name="as" value="not-an-email"[^>]*autofocus/
+      );
+      assert.include(body, '<input type="hidden" name="return" value="/private">');
+      assert.include(body, '<input type="hidden" name="key" value="door-key">');
+    })
+  );
+
   it.effect("lists active people and keeps the return local", () =>
     Effect.gen(function* () {
       const picker = yield* send("/dev/sign-in?return=https%3A%2F%2Fforeign.invalid%2F");

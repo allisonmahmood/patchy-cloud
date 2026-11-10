@@ -153,6 +153,8 @@ it.layer(services)("first-party pages in memory", (it) => {
       // Patchy, not the browser, refuses a handle, under the address it opens.
       assert.include(html, " novalidate>");
       assert.include(html, `for="company-handle">${new URL(base).host}/</label>`);
+      // A phone neither capitalises nor corrects the address.
+      assert.include(html, '<input autocapitalize="none" autocorrect="off" spellcheck="false"');
       assert.include(html, 'action="/logout"');
       assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
       // A no-referrer policy nulls a browser form's Origin and breaks the CSRF check.
@@ -253,6 +255,10 @@ it.layer(services)("first-party pages in memory", (it) => {
         )
       );
       assert.strictEqual(create.status, 409);
+      const createHtml = yield* Effect.promise(() => create.text());
+      // A refusal no field owns sits above the button and takes the page's focus.
+      assert.include(createHtml, '<div class="refusal" tabindex="-1" autofocus>');
+      assert.include(createHtml, "You have an invitation. Choose a company to join below.");
       assert.strictEqual(yield* (yield* Users.Users).findByClerkId("user_invitee"), null);
       const joined = yield* send(
         "/join",
@@ -301,7 +307,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         ['Keep "this"', "admin", 422, "handle", "admin is reserved"],
         ['Keep "this"', "agents", 422, "handle", "agents is reserved"],
         ['Keep "this"', "-invalid", 422, "handle", "Start and end with a letter or digit"],
-        ['Keep "this"', "Acme", 422, "handle", "Handles are lowercase"],
+        ['Keep "this"', "Acme", 422, "handle", "Addresses are lowercase"],
         ["   ", "fine-handle", 422, "name", "Enter a company name"]
       ] as const) {
         const response = yield* send(
@@ -312,14 +318,13 @@ it.layer(services)("first-party pages in memory", (it) => {
         const html = yield* Effect.promise(() => response.text());
         if (field === "handle") assert.include(html, "Keep &quot;this&quot;");
         assert.include(html, `name="handle" value="${handle}"`);
-        assert.include(
+        assert.match(
           html,
-          `aria-describedby="company-${field}-error" aria-invalid="true" autofocus`
+          new RegExp(
+            `id="company-${field}" aria-describedby="[^"]*company-${field}-error" aria-invalid="true"[^>]*autofocus`
+          )
         );
-        assert.include(
-          html,
-          `id="company-${field}-error" role="alert"><strong class="note-title">${title}</strong>`
-        );
+        assert.include(html, `<p class="field-error" id="company-${field}-error">${title}.`);
       }
       assert.strictEqual(events.length, reported);
     })
@@ -332,10 +337,10 @@ it.layer(services)("first-party pages in memory", (it) => {
           "/join",
           post({ action: "create", name: "Acme", handle }, cookie("user_bad_case"))
         ).pipe(Effect.flatMap((response) => Effect.promise(() => response.text())));
-      assert.include(yield* refused("Acme"), "Try <strong>acme</strong>.");
+      assert.include(yield* refused("Acme"), "Addresses are lowercase. Try acme.");
       const taken = yield* refused(DEV_SEED.companyHandle.toUpperCase());
-      assert.include(taken, "Handles are lowercase");
-      assert.notInclude(taken, "Try <strong>");
+      assert.include(taken, "Addresses are lowercase.");
+      assert.notInclude(taken, "Try ");
     })
   );
 

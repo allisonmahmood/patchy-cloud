@@ -17,11 +17,15 @@ export * as SetupLinks from "./SetupLinks.js";
 export * as SetupPrompts from "./SetupPrompts.js";
 export * as AuthPages from "./AuthPages.js";
 export {
+  accountFoot,
+  doorResponse,
   pageResponse,
   returnPath,
   sessionScripts,
   signOutForm,
+  unavailableDoor,
   withCookies,
+  type DoorSpec,
   type SessionShell
 } from "./page.js";
 export * as ClientDocuments from "./ClientDocuments.js";

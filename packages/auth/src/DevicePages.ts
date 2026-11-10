@@ -10,24 +10,40 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Companies, Users } from "@patchy/companies";
 import { BodyTooLarge } from "@patchy/api";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import {
+  button,
+  escapeAttribute,
+  escapeHtml,
+  field,
+  input,
+  linkButton,
+  notice,
+  refusal,
+  verificationCode
+} from "@patchy/core";
 import * as DeviceLogins from "./DeviceLogins.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse, type Page } from "./page.js";
-
-const styles = `
-    .device-lede { margin-bottom: 12px; }
-    .device-foot { margin-top: 24px; }
-`;
+import { accountFoot, doorResponse, unavailableDoor, type DoorSpec } from "./page.js";
 
 const MAX_FORM_BYTES = 4_096;
 
-const refreshNotice =
-  "Your sign-in was refreshed before that went through. Check the code and press Confirm again.";
-const accountChangedNotice =
-  "The signed-in account changed since this page loaded. Check the account and the code, then press again.";
+// Each refuses what was just pressed, so the page's focus starts on it.
+const refreshNotice = refusal(
+  notice({
+    tone: "info",
+    title: "Your sign-in was refreshed before that went through.",
+    body: "<p>Check the code and press Confirm again.</p>"
+  })
+);
+const accountChangedNotice = refusal(
+  notice({
+    tone: "warning",
+    title: "The signed-in account changed since this page loaded.",
+    body: "<p>Check the account and the code, then press again.</p>"
+  })
+);
 // userId is the account the page was rendered for; an answer only counts as that account.
 const decodeForm = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -40,36 +56,83 @@ const decodeForm = Schema.decodeUnknownEffect(
   })
 );
 
+/** The confirmation's hidden fields: the code, the account the page was rendered for and, from the panel, its setup link. */
+const answerFields = (input: {
+  readonly userCode: string;
+  readonly userId: string;
+  readonly setupLink?: string;
+}) =>
+  `<input type="hidden" name="code" value="${escapeAttribute(input.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(input.userId)}">${input.setupLink === undefined ? "" : `<input type="hidden" name="setup" value="${escapeAttribute(input.setupLink)}">`}`;
+
 /**
- * The confirmation form, on the device page and inside the Final step panel. Both post here and
- * carry the account the page was rendered for; the panel's also carries its setup link, so the
- * server rechecks the line before answering and sends the person back Home.
+ * The computer's name, as Your agents will list it. Replacing a computer of the same name says
+ * so: its key stops working once the terminal finishes logging in. A refused name says why under
+ * the field, which takes the focus.
  */
-export const confirmForm = (input: {
+const nameField = (input_: {
+  readonly id: string;
+  readonly machineName: string;
+  readonly oldMachineName: string | null;
+  readonly invalid?: boolean;
+}) =>
+  field({
+    id: input_.id,
+    label: "Name this computer",
+    hint:
+      input_.oldMachineName === null
+        ? "You’ll see it on Your agents."
+        : `Replaces ${input_.oldMachineName}, which stops working once your terminal finishes logging in.`,
+    ...(input_.invalid === true ? { error: "Give the computer a name, up to 64 characters." } : {}),
+    control: (aria) =>
+      input(aria, {
+        name: "machineName",
+        value: input_.machineName,
+        required: true,
+        maxlength: 64,
+        autocomplete: "off",
+        autofocus: input_.invalid === true
+      })
+  });
+
+/**
+ * The confirmation form inside the Final step panel. It posts to the device page's own address
+ * and carries the account the panel was rendered for and the panel's setup link, so the server
+ * rechecks the line before answering and sends the person back Home. Deny is Not me there.
+ */
+export const confirmForm = (input_: {
   readonly userCode: string;
   readonly userId: string;
   readonly machineName: string;
   readonly oldMachineName: string | null;
   readonly invalid?: boolean;
-  readonly setupLink?: string;
-}): string => {
-  const inline = input.setupLink !== undefined;
-  const id = inline ? "inline-machine-name" : "machine-name";
-  return `<form method="post" action="/login/device"${inline ? " data-inline-confirm" : ""}><input type="hidden" name="code" value="${escapeAttribute(input.userCode)}"><input type="hidden" name="userId" value="${escapeAttribute(input.userId)}">${inline ? `<input type="hidden" name="setup" value="${escapeAttribute(input.setupLink!)}">` : ""}<label class="field-label" for="${id}">${inline ? "Name this computer" : "Machine name"}</label><input class="field" id="${id}" name="machineName" value="${escapeAttribute(input.machineName)}" aria-required="true" required maxlength="64" autocomplete="off"${input.invalid ? ` aria-invalid="true" aria-describedby="${id}-error"` : ""}>${input.invalid ? `<p class="field-error" role="alert" id="${id}-error">Give the machine a name, up to 64 characters.</p>` : ""}${input.oldMachineName === null ? "" : `<p class="field-hint">Replaces the key named <code>${escapeHtml(input.oldMachineName)}</code>, which stops working once your terminal finishes logging in</p>`}<div class="actions"><button class="btn btn-primary" type="submit" name="action" value="confirm">Confirm</button><button class="btn" type="submit" name="action" value="deny" formnovalidate>${inline ? "Not me" : "Deny"}</button></div></form>`;
-};
+  readonly setupLink: string;
+}): string =>
+  `<form method="post" action="/login/device" novalidate data-inline-confirm>${answerFields(input_)}${nameField({ ...input_, id: "inline-machine-name" })}<div class="actions">${button("Confirm", { kind: "primary", name: "action", value: "confirm" })}${button("Not me", { name: "action", value: "deny" })}</div></form>`;
 
 /** Why a POST came back to the confirmation page instead of answering. */
 type Refusal =
   | { readonly reason: "invalid-name"; readonly machineName: string }
   | { readonly reason: "account-changed" };
 
-const message = (title: string, body: string, status = 200): Page => ({
+const kicker = "Device login";
+const patchyLogin = "<code>patchy login</code>";
+
+/** The device door's outcome: its title, one paragraph or two, and where to go next. */
+const outcome = (title: string, body: string, status = 200, actions?: string): DoorSpec => ({
+  kicker,
   title,
   body,
-  status
+  status,
+  ...(actions === undefined ? {} : { actions })
 });
 
-/** Renders the confirmation for the current viewer, who is the only account it can answer as. */
+const yourAgents = linkButton("Open Your agents", "/agents", { block: true });
+
+/**
+ * The confirmation for the current viewer, the only account it can answer as: the code to compare
+ * in the title's place, who is asking to publish as whom, the computer's name, Confirm and Deny,
+ * and when the code expires beside who is signed in, with the way to switch.
+ */
 const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   login: DeviceLogins.PendingLogin,
   refusal?: Refusal
@@ -86,19 +149,25 @@ const renderConfirm = Effect.fn("DevicePages.renderConfirm")(function* (
   const machineName = invalid
     ? refusal.machineName
     : (login.oldMachineName ?? login.machineNameHint);
-  const notice =
+  const shownNotice =
     refusal?.reason === "account-changed"
-      ? `<div class="note note-warn" role="alert">${accountChangedNotice}</div>`
+      ? accountChangedNotice
       : new URL(request.url, session.publicBaseUrl).searchParams.get("refreshed") === "1"
-        ? `<div class="note" role="status">${refreshNotice}</div>`
+        ? refreshNotice
         : "";
-  return pageResponse(
+  const here = `/login/device?${new URLSearchParams({ code: login.userCode })}`;
+  return doorResponse(
     {
-      title: "Device login",
-      heading: `<p class="auth-kicker">Device login</p><p class="device-lede">Is this the code on your terminal?</p><h1 class="verification-code">${escapeHtml(login.userCode)}</h1>`,
-      styles,
-      status: refusal === undefined ? 200 : invalid ? 422 : 409,
-      body: `${notice}<p>A terminal just ran <code>patchy login</code> and wants to publish at <strong>${escapeHtml(viewer.company.name)}</strong> as ${escapeHtml(viewer.user.name)} (<code>${escapeHtml(viewer.user.email)}</code>). If the code matches, name the machine and confirm. If you didn't run it, deny: nothing happens.</p>${confirmForm({ userCode: login.userCode, userId: viewer.user.id, machineName, oldMachineName: login.oldMachineName, invalid })}<p class="supporting-text device-foot">The code expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"}. The key it makes works for 90 days, or 30 days unused, and can be revoked any time on <a href="/agents">Your agents</a>.</p>`
+      kicker,
+      title: "Is this the code in your terminal?",
+      body: `${shownNotice}${verificationCode(login.userCode)}<p>A terminal ran ${patchyLogin} and wants to publish at <span class="strong">${escapeHtml(viewer.company.name)}</span> as <span class="strong">${escapeHtml(viewer.user.name)}</span>. If you didn’t run it, deny: nothing happens.</p><form id="device-confirm" method="post" action="/login/device" novalidate>${answerFields({ userCode: login.userCode, userId: viewer.user.id })}${nameField({ id: "machine-name", machineName, oldMachineName: login.oldMachineName, invalid })}</form>`,
+      actions: `${button("Confirm", { kind: "primary", block: true, name: "action", value: "confirm", form: "device-confirm" })}${button("Deny", { kind: "quiet", block: true, name: "action", value: "deny", form: "device-confirm" })}`,
+      foot: accountFoot(viewer.user.email, {
+        label: "Not you?",
+        returnTo: here,
+        before: `Expires in ${minutes} ${minutes === 1 ? "minute" : "minutes"} · `
+      }),
+      status: refusal === undefined ? 200 : invalid ? 422 : 409
     },
     session
   );
@@ -111,10 +180,10 @@ const getDevice = Effect.gen(function* () {
   const query = new URL(request.url, session.publicBaseUrl).searchParams;
   const code = query.get("code");
   if (code === null) {
-    return pageResponse(
-      message(
-        "Device login",
-        "<p>Open the link your terminal printed. <code>patchy login</code> prints a link that carries its own code, so there is nothing to type here. If someone sent you here to type a code, don't: that is the trick the link is designed to avoid.</p>"
+    return doorResponse(
+      outcome(
+        "Open the link your terminal printed",
+        `<p>${patchyLogin} prints a link that carries its own code, so there is nothing to type here. If someone sent you here to type a code, don’t: that is the trick the link is designed to avoid.</p>`
       ),
       session
     );
@@ -161,11 +230,12 @@ const postInline = Effect.fn("DevicePages.postInline")(function* (form: {
         setupLink: form.setup
       });
       return ended === "connected"
-        ? pageResponse(
-            message(
-              "That computer is already connected.",
-              '<p>It finished logging in before you pressed Not me. Remove it on <a href="/agents">Your agents</a> to disconnect it.</p>',
-              409
+        ? doorResponse(
+            outcome(
+              "That computer is already connected",
+              "<p>It finished logging in before you pressed Not me. Disconnect it on Your agents.</p>",
+              409,
+              yourAgents
             ),
             session
           )
@@ -219,15 +289,21 @@ const postDevice = Effect.gen(function* () {
       }
       if (form.action === "deny") yield* logins.deny(form.code, viewer.user.id);
       else yield* logins.confirm({ userCode: form.code, userId: viewer.user.id, machineName });
-      return pageResponse(
+      // Confirmed is not connected: the computer is connected once its terminal collects the key.
+      return doorResponse(
         form.action === "confirm"
-          ? message(
-              "Confirmed.",
-              `<p>Your agent finishes setting up on its own.</p><p><a href="/">Back to ${escapeHtml(viewer.company.name)}</a></p>`
-            )
-          : message(
-              "Nothing was logged in.",
-              `<p>The code ${escapeHtml(form.code)} is dead and no key was made. If you didn't run <code>patchy login</code>, there is nothing else to do.</p>`
+          ? {
+              ...outcome(
+                "Go back to your terminal",
+                `<p>Your agent finishes connecting <span class="strong">${escapeHtml(machineName.trim())}</span>. It shows up on Your agents as soon as it does.</p>`,
+                200,
+                yourAgents
+              ),
+              foot: "You can close this tab."
+            }
+          : outcome(
+              "Nothing was logged in",
+              `<p>The code ${escapeHtml(form.code)} no longer works and no key was made. If you didn’t run ${patchyLogin}, there’s nothing else to do.</p>`
             ),
         session
       );
@@ -241,58 +317,53 @@ type PageError = Effect.Error<typeof getDevice | typeof postDevice>;
 const errors = <R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, PageError, R>) =>
   Effect.gen(function* () {
     const session = yield* Session.Session;
-    const reply = (page: Page) => Effect.succeed(pageResponse(page, session));
+    const reply = (door: DoorSpec) => Effect.succeed(doorResponse(door, session));
+    const invalidForm = (body: string, status: number) =>
+      reply({ title: "Invalid form", body: `<p>${body}</p>`, status });
     return yield* app.pipe(
       Effect.catchTags({
         DeviceLoginExpired: () =>
           reply(
-            message(
-              "This code has expired.",
-              "<p>A login code lasts ten minutes. Run <code>patchy login</code> again on the machine and open the new link it prints.</p>",
+            outcome(
+              "This code has expired",
+              `<p>A login code lasts ten minutes. Run ${patchyLogin} again on the computer and open the new link it prints.</p>`,
               410
             )
           ),
-        DeviceLoginAnswered: () => reply(message("This code was already used.", "", 410)),
+        DeviceLoginAnswered: () =>
+          reply(
+            outcome(
+              "This code was already used",
+              `<p>Each code is answered once. If your terminal is still waiting, run ${patchyLogin} again.</p>`,
+              410
+            )
+          ),
         DeviceLoginUnknown: () =>
           reply(
-            message(
-              "Nothing is waiting for this code.",
-              "<p>Check the link you opened, or run <code>patchy login</code> again…</p>",
+            outcome(
+              "Nothing is waiting for this code",
+              `<p>Check the link you opened, or run ${patchyLogin} again.</p>`,
               404
             )
           ),
         DeviceLoginLookupLimited: (error: DeviceLogins.DeviceLoginLookupLimited) =>
           reply(
-            message(
-              "Too many code lookups.",
+            outcome(
+              "Too many code lookups",
               "<p>Wait a minute, then open the link your terminal printed again.</p>",
               429
             )
           ).pipe(
             Effect.map(HttpServerResponse.setHeader("retry-after", String(error.retryAfterSeconds)))
           ),
-        BodyTooLarge: () =>
-          reply(message("Invalid form", "<p>The submitted form is too large.</p>", 413)),
+        BodyTooLarge: () => invalidForm("The submitted form is too large.", 413),
         InvalidMachineName: () =>
-          reply(
-            message("Invalid form", "<p>Give the machine a name, up to 64 characters.</p>", 422)
-          ),
+          invalidForm("Give the computer a name, up to 64 characters.", 422),
         SchemaError: () =>
-          reply(
-            message(
-              "Invalid form",
-              "<p>Open the link your terminal printed and submit the form again.</p>",
-              400
-            )
-          ),
-        HttpServerError: () =>
-          reply(
-            message("Invalid form", "<p>Open the page again and submit the form again.</p>", 400)
-          ),
-        SqlError: () =>
-          reply(message("Machine service unavailable", "<p>Please try again.</p>", 503)),
-        SessionError: () =>
-          reply(message("Sign-in service unavailable", "<p>Please try again.</p>", 502))
+          invalidForm("Open the link your terminal printed and submit the form again.", 400),
+        HttpServerError: () => invalidForm("Open the page again and submit the form again.", 400),
+        SqlError: () => Effect.succeed(unavailableDoor("patchy", {}, session)),
+        SessionError: () => Effect.succeed(unavailableDoor("sign-in", {}, session))
       })
     );
   });

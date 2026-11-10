@@ -2,6 +2,7 @@ import { avatar } from "../components.js";
 import { escapeAttribute, escapeHtml } from "../escape.js";
 import { notice } from "./feedback.js";
 import { icon } from "./icons.js";
+import { refusal } from "./refusal.js";
 import type { Column } from "./structure.js";
 
 /**
@@ -115,11 +116,10 @@ export const menuNewTab = (href: string, target: string) =>
 export const menuRule = '<hr class="menu-rule">';
 
 /**
- * A refusal not tied to one field: a danger notice that takes focus when its page or dialog
- * opens, so it is read before anything else on it.
+ * A refusal not tied to one field, given as plain words: a danger notice in `refusal`'s frame,
+ * which takes focus when its page or dialog opens, so it is read before anything else on it.
  */
-export const refusalNotice = (text: string) =>
-  `<div class="refusal" tabindex="-1" autofocus>${notice({ tone: "danger", title: text })}</div>`;
+export const refusalNotice = (text: string) => refusal(notice({ tone: "danger", title: text }));
 
 /** A person by name with their small mark, as owners, publishers and callers appear in a list. */
 export const person = (key: string, name: string) =>

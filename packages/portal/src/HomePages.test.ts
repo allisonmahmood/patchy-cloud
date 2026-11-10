@@ -318,10 +318,11 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       const form = yield* fragment.text;
       assert.include(form, `data-viewer="${workspace.owner.id}"`);
       assert.include(form, `<input type="hidden" name="setup" value="${value}">`);
-      // Not me answers even when the name was cleared.
+      // Not me answers even when the name was cleared: the form leaves validation to Patchy.
+      assert.include(form, 'action="/login/device" novalidate data-inline-confirm>');
       assert.include(
         form,
-        '<button class="btn" type="submit" name="action" value="deny" formnovalidate>Not me</button>'
+        '<button class="btn" type="submit" name="action" value="deny">Not me</button>'
       );
       yield* logins.confirm({
         userCode: login.userCode,

@@ -47,9 +47,12 @@ test("login-door: portal handshake, session renewal and company isolation", asyn
     live.settings.outsiderEmail,
     (url) => url.origin === live.origin && url.pathname === "/join"
   );
-  await expect(outsider.getByText(live.settings.outsiderEmail, { exact: true })).toBeVisible();
+  // The door names the account twice: whom no invitation waits for, and who is signed in.
+  await expect(
+    outsider.getByText(live.settings.outsiderEmail, { exact: true }).first()
+  ).toBeVisible();
   await outsider.getByLabel("Company name", { exact: true }).fill("Browser outsider company");
-  await outsider.getByLabel("Company handle", { exact: true }).fill("browser-outsider");
+  await outsider.getByLabel("Address", { exact: true }).fill("browser-outsider");
   await outsider.getByRole("button", { name: "Create company", exact: true }).click();
   await outsider.waitForURL(live.patchUrl);
   const refused = await outsider.reload();

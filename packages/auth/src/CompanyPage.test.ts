@@ -279,7 +279,7 @@ it.layer(services)("company page and actions", (it) => {
       );
       assert.strictEqual(response.status, 400);
       const html = yield* Effect.promise(() => response.text());
-      const recovery = html.match(/<a href="([^"]+)"/)?.[1];
+      const recovery = html.match(/<a [^>]*href="([^"]+)"/)?.[1];
       assert.strictEqual(recovery, "/settings/people");
       const page = yield* send(recovery!, { headers: { cookie: cookie(owner.user) } });
       assert.strictEqual(page.status, 200);
