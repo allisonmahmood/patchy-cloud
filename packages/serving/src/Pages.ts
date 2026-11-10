@@ -54,7 +54,7 @@ import {
 import {
   NO_REFERRER_POLICY,
   CONTENT_SECURITY_POLICY,
-  PATCH_CONTENT_SECURITY_POLICY,
+  NOTICE_SECURITY_POLICY,
   PATCH_ROBOTS_TAG,
   PUBLIC_PATCH_CACHE_CONTROL,
   PRIVATE_PATCH_CACHE_CONTROL,
@@ -73,9 +73,10 @@ class StoredDocumentMismatch extends Schema.TaggedError<StoredDocumentMismatch>(
   }
 }
 
-/** The HTML 404, uncached like every non-patch response. */
+/** The HTML 404, uncached like every non-patch response, under the notices' policy. */
 export const notFound = HttpServerResponse.html(renderNotFound()).pipe(
-  HttpServerResponse.setStatus(404)
+  HttpServerResponse.setStatus(404),
+  HttpServerResponse.setHeader("content-security-policy", NOTICE_SECURITY_POLICY)
 );
 
 /**
@@ -125,7 +126,7 @@ const shellNotice = (
         ...patchUrlHeaders,
         "content-security-policy":
           viewer === undefined
-            ? PATCH_CONTENT_SECURITY_POLICY
+            ? NOTICE_SECURITY_POLICY
             : noticeContentSecurityPolicy(session.clerk?.frontendApiHost)
       }
     }

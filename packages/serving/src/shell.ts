@@ -3,7 +3,7 @@ import {
   escapeHtml,
   faviconLink,
   htmlPage,
-  shellStyles,
+  servedStyles,
   switcherRelay,
   switcherTag
 } from "@patchy/core/html";
@@ -95,7 +95,7 @@ export function renderPatchWrapper(options: PatchPage): string {
   ${options.head ?? ""}
   <script defer src="${brokerSrc}"></script>
   <style>
-    ${shellStyles}
+    ${servedStyles}
     html, body { height: 100%; margin: 0; background: #ffffff; }
     body { overflow: hidden; }
     .patch-frame { display: block; width: 100%; height: 100%; border: 0; background: #ffffff; }

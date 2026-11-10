@@ -15,7 +15,8 @@ const noticePolicy = (scripts: string, more: ReadonlyArray<string> = []) =>
     `script-src ${scripts}`,
     "style-src 'unsafe-inline'",
     "img-src https: data:",
-    "font-src data:",
+    // The app's fonts, which a notice draws in like every first-party page.
+    "font-src 'self'",
     ...more,
     "base-uri 'none'",
     "form-action 'none'",
@@ -23,10 +24,10 @@ const noticePolicy = (scripts: string, more: ReadonlyArray<string> = []) =>
   ].join("; ");
 
 /**
- * Patchy's own notices in place of a patch, as anyone but their active signed-in viewer gets
- * them: no script but the switcher relay, no frames, no forms, fonts only from their own bytes.
+ * Patchy's own notices in place of a patch or at an address nothing answers, as anyone but their
+ * active signed-in viewer gets them: no script but the switcher relay, no frames, no forms.
  */
-export const PATCH_CONTENT_SECURITY_POLICY = noticePolicy(SWITCHER_RELAY_SOURCE);
+export const NOTICE_SECURITY_POLICY = noticePolicy(SWITCHER_RELAY_SOURCE);
 
 /**
  * A top-level notice for an active signed-in viewer, which loads their switcher and the session's

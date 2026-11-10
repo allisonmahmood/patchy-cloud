@@ -3,7 +3,7 @@ import { CURRENT_RELEASE, MANIFEST_VERSION, WIRE_VERSION } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
 import type { Patches } from "@patchy/patches";
 import { sessionScripts } from "@patchy/auth";
-import { switcherRelay, switcherTag } from "@patchy/core/html";
+import { appStyles, servedStyles, switcherRelay, switcherTag } from "@patchy/core/html";
 import { renderPatchWrapper, renderShellNotice, withSwitcherRelay } from "./shell.js";
 import { renderAddressNotice } from "./address-notice.js";
 import { renderNotFound } from "./render.js";
@@ -141,6 +141,22 @@ describe("patch pages", () => {
     originalFilename: null,
     createdAt: "2026-01-01T00:00:00.000Z"
   };
+
+  it("frames a running patch on the served styles alone, with none of the app's fonts", () => {
+    const html = renderPatchWrapper({
+      patch,
+      version,
+      scope: "company",
+      viewerId: DEV_SEED.userId,
+      companyId: DEV_SEED.companyId,
+      nonce: "nonce",
+      base: `/${DEV_SEED.companyHandle}/${patch.name}`
+    });
+    const style = html.match(/<style>([\s\S]*)<\/style>/)?.[1] ?? "";
+    expect(style).toContain(servedStyles);
+    expect(style).not.toContain(appStyles);
+    expect(html).not.toMatch(/@font-face|rel="preload"|\/assets\/fonts\//);
+  });
 
   it("keeps address notice names and actor markup inert", () => {
     const markup = '<img src=x onerror="alert(1)">';

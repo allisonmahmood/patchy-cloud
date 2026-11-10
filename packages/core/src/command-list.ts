@@ -2,7 +2,7 @@ import { escapeAttribute, escapeHtml } from "./escape.js";
 
 /**
  * The command list's markup: a search field over a listbox of rows to go to, the `command`
- * classes in `shellStyles`. The switcher renders it in the browser, so it depends only on
+ * classes in `servedStyles`. The switcher renders it in the browser, so it depends only on
  * escaping. Text is escaped here; marks and keycap glyphs are trusted markup.
  *
  * It is an APG combobox: the field's input keeps focus, `aria-activedescendant` names the lit

@@ -101,6 +101,8 @@ export function pageResponse(
           "default-src 'none'",
           "style-src 'unsafe-inline'",
           "img-src https: data:",
+          // The app's fonts, from core's committed files at their digest URLs.
+          "font-src 'self'",
           "base-uri 'none'",
           ["form-action 'self'", ...(page.formActions ?? [])].join(" "),
           "frame-ancestors 'none'",
