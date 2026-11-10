@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandGroup, commandIcon, commandList, commandRow, kbd } from "./command-list.js";
-import { htmlPage, servedStyles } from "./html.js";
+import { appStyles, htmlPage, servedStyles } from "./html.js";
 import { patchMark } from "./patch-marks.js";
 
 describe("the command list", () => {
@@ -69,8 +69,8 @@ describe("the command list", () => {
     expect(kbd("<svg></svg>")).toBe('<kbd class="kbd" aria-hidden="true"><svg></svg></kbd>');
   });
 
-  it("is drawn by the shell's shared styles, on app pages and over a patch alike", () => {
-    for (const selector of [
+  it("is drawn by the served styles over a patch, and by the app's own on an app page", () => {
+    const selectors = [
       ".kbd {",
       ".kbd-sm {",
       ".command, .command * { box-sizing: border-box; }",
@@ -87,8 +87,21 @@ describe("the command list", () => {
       ".whats-new-dot {",
       ".field {",
       ".field-group {"
-    ])
-      expect(servedStyles).toContain(selector);
-    expect(htmlPage({ title: "Home", body: "" })).toContain(servedStyles);
+    ];
+    for (const selector of selectors) expect(servedStyles).toContain(selector);
+    // The app's chunks restyle the same anatomy onto its tokens, sometimes beside other selectors.
+    const rules = new Set(
+      [...appStyles.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{/g)].flatMap(([, list]) =>
+        list!.split(",").map((selector) => selector.trim())
+      )
+    );
+    for (const selector of selectors) {
+      const first = selector
+        .replace(/ \{.*$/, "")
+        .split(",")[0]!
+        .trim();
+      expect(rules, first).toContain(first);
+    }
+    expect(htmlPage({ title: "Home", body: "" })).toContain(appStyles);
   });
 });
