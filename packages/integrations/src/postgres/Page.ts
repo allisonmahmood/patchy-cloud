@@ -9,7 +9,11 @@ import * as Fields from "../Fields.js";
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "postgres" }>;
 
-export const integration = { key: "postgres", label: "Postgres", mark: "Pg" } as const;
+export const integration = {
+  key: "postgres",
+  label: "Postgres",
+  mark: { logo: "postgres" }
+} as const;
 export const offer = { integration, line: "Your own database, read-only" };
 /** What recent calls keep of a Postgres call. */
 export const logged =

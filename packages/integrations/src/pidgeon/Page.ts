@@ -29,7 +29,11 @@ import * as Keys from "./Keys.js";
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
 type Submitted = Readonly<Record<string, string | undefined>>;
 
-export const integration = { key: "pidgeon", label: "Pidgeon email", mark: "Pi" } as const;
+export const integration = {
+  key: "pidgeon",
+  label: "Pidgeon email",
+  mark: { logo: "pidgeon" }
+} as const;
 export const offer = { integration, line: "Read and send from one address" };
 /** What recent calls keep of a Pidgeon call. */
 export const logged =

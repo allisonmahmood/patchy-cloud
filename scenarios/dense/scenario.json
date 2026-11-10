@@ -48,6 +48,12 @@
           "used": "28 hours"
         },
         {
+          "name": "Claude Code (patchy)",
+          "site": "claude.ai",
+          "connected": "9 days",
+          "used": "3 hours"
+        },
+        {
           "name": "ChatGPT",
           "site": "chatgpt.com",
           "connected": "60 days",
@@ -239,6 +245,13 @@
       "handle": "old-inbox",
       "description": "The shared inbox before Pidgeon.",
       "state": "paused"
+    },
+    {
+      "integration": "imap",
+      "handle": "studio",
+      "description": "The studio's Google Workspace mailbox.",
+      "state": "connected",
+      "host": "imap.gmail.com"
     }
   ],
   "patches": [

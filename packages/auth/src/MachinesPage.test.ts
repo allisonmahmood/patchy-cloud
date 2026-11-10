@@ -16,6 +16,7 @@ import * as AgentConnections from "./AgentConnections.js";
 import * as AuthPages from "./AuthPages.js";
 import * as DeviceLogins from "./DeviceLogins.js";
 import { getAnAgent } from "./getAnAgent.js";
+import { appNamed } from "./MachinesPage.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
@@ -125,6 +126,24 @@ const connect = (userId: string, clientName: string) =>
 const disconnectAll =
   '<a class="btn btn-danger btn-sm" href="/agents/disconnect-all">Disconnect everything…</a>';
 
+it("knows an app by any client name that holds its own, the longest name first", () => {
+  const names: ReadonlyArray<readonly [string, string]> = [
+    ["Claude", "claude"],
+    ["Claude Desktop", "claude"],
+    ["claude-code", "claude-code"],
+    ["Claude Code (patchy)", "claude-code"],
+    ["ChatGPT", "chatgpt"],
+    ["OpenAI Codex", "codex"],
+    ["codex-mcp-client", "codex"],
+    ["cursor-vscode", "cursor"],
+    ["Zed", "another"],
+    ["OpenAI", "another"],
+    ["CLAUDE.AI", "claude"],
+    ["", "another"]
+  ];
+  for (const [name, app] of names) assert.strictEqual(appNamed(name), app, name);
+});
+
 it.layer(services)("Your agents", (it) => {
   it.effect("leads with what's connected, apps then computers, each way to add one a flow", () =>
     Effect.gen(function* () {
@@ -159,6 +178,10 @@ it.layer(services)("Your agents", (it) => {
       assert.include(listed, '<span class="row-name">Studio Mac mini</span>');
       assert.match(listed, /Used just now · expires \d+ \w+ \d{4} unless used/);
       assert.include(listed, '<span class="row-name">Claude Code</span>');
+      assert.match(
+        listed,
+        /<span class="im im-logo" aria-hidden="true"><svg viewBox="0 0 94 94"[^]*?<span class="row-name">Claude Code</
+      );
       assert.match(listed, /claude\.ai · connected \d+ \w+ \d{4} · no calls yet/);
       // Disconnect is in each row's menu, and asks first at the row's own address.
       assert.include(listed, `href="/agents/computers/${machine.id}/disconnect"`);
@@ -184,6 +207,11 @@ it.layer(services)("Your agents", (it) => {
       );
       for (const app of ["chatgpt", "claude-code", "codex", "cursor"])
         assert.include(main, `<a class="choice-link" href="/agents/connect?app=${app}">`);
+      // Each app wears its maker's logo.
+      assert.match(
+        main,
+        /href="\/agents\/connect\?app=codex"><span class="im im-logo" aria-hidden="true"><svg /
+      );
       assert.include(
         main,
         '<a class="choice-link choice-link-dashed" href="/agents/connect?app=another">'

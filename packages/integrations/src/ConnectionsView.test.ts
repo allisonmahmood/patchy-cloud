@@ -100,6 +100,10 @@ const offers: ReadonlyArray<View.Offer> = [
   {
     integration: { key: "posthog", label: "PostHog", mark: "PH" },
     line: "Events and people from a project"
+  },
+  {
+    integration: { key: "attio", label: "Attio", mark: { logo: "attio" } },
+    line: "CRM records, lists and members"
   }
 ];
 const NOW = Date.UTC(2026, 9, 13, 12);
@@ -269,6 +273,12 @@ describe("the connections index", () => {
     expect(html).toContain('aria-label="Connect Postgres"');
     expect(html).toContain("Something else");
     expect(html).toContain('aria-label="Ask for an integration"');
+    // Each row leads with its integration's mark: its logo where Patchy knows it, else its letters.
+    expect(html).toMatch(
+      /<span class="im im-logo" aria-hidden="true"><svg viewBox="0 0 37 30"[^>]*>[^]*?<\/svg><\/span><div class="row-main"><span class="row-name"><a class="row-link" href="\/settings\/integrations\/connect\/attio">Attio/
+    );
+    expect(html).toContain('<span class="im" aria-hidden="true">Pg</span>');
+    expect(html).toContain('<span class="im im-dashed" aria-hidden="true">+</span>');
     const member = View.renderCatalogue({ admin: false, admins: ["Dana"], rows: [], offers }).body;
     expect(member).not.toContain("connect/postgres");
     expect(member).toContain("Only admins connect integrations. Admins: Dana.");

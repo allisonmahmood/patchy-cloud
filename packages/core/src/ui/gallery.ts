@@ -50,6 +50,7 @@ import { badge, dot, emptyState, notice, receipt, unopenedName } from "./feedbac
 import { expandingTable } from "./expanding-table.js";
 import { fieldRow } from "./field-row.js";
 import { flowOutcome } from "./flow-outcome.js";
+import { productLogos, type ProductLogo } from "./logos.js";
 import { productMark } from "./product-mark.js";
 import { refusal } from "./refusal.js";
 import {
@@ -940,14 +941,24 @@ const templatesSection = section({
   )
 });
 
+const isLogo = (name: string): name is ProductLogo => Object.hasOwn(productLogos, name);
+/** Every logo Patchy knows, at each size a product mark takes. */
+const logoMarks = [{ large: true }, {}].map(
+  (size) =>
+    `<div class="cluster">${Object.keys(productLogos)
+      .filter(isLogo)
+      .map((logo) => productMark({ logo }, size))
+      .join("")}</div>`
+);
+
 const flowParts = demo(
   "Choice links, a flow's outcome, product and computer marks",
   `<div class="stack">${choiceLinks({
     label: "App",
     current: "Claude",
     items: [
-      { label: "Claude", href: "#choices", mark: productMark("C") },
-      { label: "Codex", href: "#choices", mark: productMark("Cx") },
+      { label: "Claude", href: "#choices", mark: productMark({ logo: "claude" }) },
+      { label: "Codex", href: "#choices", mark: productMark({ logo: "openai" }) },
       {
         label: "Another agent",
         href: "#choices",
@@ -962,7 +973,7 @@ const flowParts = demo(
       { can: true, text: "Every change it makes is logged under your name, via Claude" },
       { can: false, text: "It can’t publish or change a patch’s code" }
     ])
-  })}<div class="cluster">${productMark("At", { large: true })}${productMark("At")}${productMark("+", { dashed: true })}${computerMark}</div></div>`,
+  })}${logoMarks.join("")}<div class="cluster">${productMark({ icon: "mail" }, { large: true })}${productMark({ icon: "mail" })}${productMark("Z", { large: true })}${productMark("Z")}${productMark("+", { dashed: true })}${computerMark}</div></div>`,
   `${stateTable("Choice link", [
     ["Rest", "a tile on a strong edge: the choice's mark and name, a link to its own URL"],
     ["Current", "a 2px ink edge on the chosen fill, marked as the current page"],
@@ -974,9 +985,16 @@ const flowParts = demo(
   ])}${stateTable("Flow outcome", [
     ["Rest", "a section title and what it holds, on the flow's own gap after the numbered sections"]
   ])}${stateTable("Product mark", [
-    ["Rest", "another product's letters on a white square, flat in a list"],
+    ["Logo", "a product Patchy knows, in its own logo and colours on a white square"],
+    ["Icon", "a kind of product rather than one, such as email's envelope"],
+    ["Letters", "any other product's letters on the same square"],
+    ["Rest", "flat in a list"],
     ["Hero", "inked and lifted beside a page title"],
-    ["Dashed", "one that isn't listed"]
+    ["Dashed", "one that isn't listed"],
+    [
+      "Forced colours",
+      "a logo keeps its white square and its colours, as an image does; icons and letters take the theme's"
+    ]
   ])}${stateTable("Computer mark", [["Rest", "a laptop on the same white square, flat in a list"]])}`
 );
 

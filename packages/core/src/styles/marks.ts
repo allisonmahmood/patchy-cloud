@@ -1,7 +1,8 @@
 /**
  * Marks: the Patchy glyph, patches (rounded squares: initials for a tool, a ruled sheet for a
- * page), people (circles) and other products (white squares). Flat in lists; the tilt and hard
- * shadow belong to the glyph and to a mark at hero size only.
+ * page), people (circles) and other products (white squares holding their logo, an icon or their
+ * letters). Flat in lists; the tilt and hard shadow belong to the glyph and to a mark at hero size
+ * only.
  */
 export const marks = `
     .glyph {
@@ -67,7 +68,15 @@ export const marks = `
       background: var(--surface); color: var(--ink);
       font: 700 12px/1 var(--font-ui); letter-spacing: -.01em;
     }
-    .agent-mark svg { width: 18px; height: 18px; }
+    .agent-mark svg, .im svg { width: 18px; height: 18px; }
+    /* A logo is cut to its edges, where an icon keeps a margin, so it gets a box of its own: a
+       wide logo takes the width, and every other the height. */
+    .im-logo svg { width: 24px; height: 20px; }
     .im-lg { width: 48px; height: 48px; border: 2px solid var(--ink); border-radius: 11px; box-shadow: var(--lift-tile); font-size: 17px; }
+    .im-lg svg { width: 27px; height: 27px; }
+    .im-lg.im-logo svg { width: 36px; height: 30px; }
+    /* A logo is artwork, as an image is: forced colours leave it its white square and its own
+       colours, where a dark theme would otherwise draw a black logo on black. */
+    .im-logo { forced-color-adjust: none; }
     .im-dashed { border-style: dashed; border-color: var(--border-strong); color: var(--muted); }
 `;

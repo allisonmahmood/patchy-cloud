@@ -162,7 +162,9 @@ export const OfflineConnection = Schema.Struct({
   /** Connected with a Pidgeon test key, so its mail stays in Pidgeon. */
   test: Schema.optionalKey(Schema.Literal(true)),
   /** An admin kept guests off it, so patches that declare it turn their guests away. */
-  blockGuests: Schema.optionalKey(Schema.Literal(true))
+  blockGuests: Schema.optionalKey(Schema.Literal(true)),
+  /** An IMAP mailbox's server, such as Gmail's; `mail.<company handle>.example` when absent. */
+  host: Schema.optionalKey(Schema.NonEmptyString)
 });
 export type OfflineConnection = typeof OfflineConnection.Type;
 

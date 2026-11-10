@@ -10,7 +10,7 @@ import * as Source from "./Source.js";
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "posthog" }>;
 
-export const integration = { key: "posthog", label: "PostHog", mark: "PH" } as const;
+export const integration = { key: "posthog", label: "PostHog", mark: { logo: "posthog" } } as const;
 export const offer = { integration, line: "Events and people from a project" };
 /** What recent calls keep of a PostHog call. */
 export const logged =

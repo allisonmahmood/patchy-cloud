@@ -100,6 +100,14 @@ const pages: { readonly [K in Integration]: IntegrationPage } = {
   imap: ImapPage
 };
 const offers = integrations.map((integration) => pages[integration].offer);
+/**
+ * A connection's integration as the pages name and mark it: wearing the logo of the provider the
+ * connection reaches where Patchy knows it, such as Gmail's for a mailbox on Gmail's server.
+ */
+export const integrationOf = (connection: ConnectionStore.Connection): View.Integration =>
+  connection.integration === "imap"
+    ? { ...ImapPage.integration, mark: ImapPage.mark(connection) }
+    : pages[connection.integration].integration;
 const isIntegration = Schema.is(Integration);
 
 /** What a connection's page and row say about it, in its integration's words. */
@@ -262,7 +270,7 @@ const row = (
   const known = about(connection, people, now);
   return {
     id: connection.id,
-    integration: pages[connection.integration].integration,
+    integration: integrationOf(connection),
     handle: connection.handle,
     description: connection.description,
     source: known.source,
@@ -427,7 +435,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
     admins: known?.admins ?? [],
     view: {
       id: connection.id,
-      integration: page.integration,
+      integration: integrationOf(connection),
       handle: connection.handle,
       description: connection.description,
       status: connection.status,

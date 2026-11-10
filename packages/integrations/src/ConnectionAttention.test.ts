@@ -24,14 +24,18 @@ const postgres = (
   integration: "postgres",
   display: { host: "db.example.com", port: 5432, database: "sales", role: "reader" }
 });
-const imap = (id: string, paused: boolean): ConnectionStore.Connection => ({
+const imap = (
+  id: string,
+  paused: boolean,
+  host = "imap.example.com"
+): ConnectionStore.Connection => ({
   ...shared,
   id,
   handle: id,
   status: "connected",
   integration: "imap",
   display: {
-    host: "imap.example.com",
+    host,
     port: 993,
     security: "tls",
     username: "invoices@example.com",
@@ -108,12 +112,14 @@ describe("what needs an admin among a company's connections", () => {
       {
         id: "partners",
         name: "attio/partners",
+        mark: { logo: "attio" },
         problem: "Disconnected: this key can now write",
         fix: { label: "Reconnect…", href: "/settings/integrations/partners" }
       },
       {
         id: "invoices",
         name: "imap/invoices",
+        mark: { icon: "mail" },
         problem: "Paused: the mail server refused the password",
         detail: "1 patch can't read it",
         fix: { label: "Replace password…", href: "/settings/integrations/invoices/rotate" }
@@ -121,10 +127,22 @@ describe("what needs an admin among a company's connections", () => {
       {
         id: "orders",
         name: "postgres/orders",
+        mark: { logo: "postgres" },
         problem: "Disconnected",
         detail: "2 patches can't read it",
         fix: { label: "Reconnect…", href: "/settings/integrations/orders" }
       }
+    ]);
+  });
+
+  it("marks a mailbox on Gmail's server with Gmail's logo, and any other with the envelope", () => {
+    expect(
+      attention([imap("studio", true, "imap.gmail.com"), imap("support", true)], new Map()).map(
+        ({ name, mark }) => [name, mark]
+      )
+    ).toEqual([
+      ["imap/studio", { logo: "gmail" }],
+      ["imap/support", { icon: "mail" }]
     ]);
   });
 
@@ -142,12 +160,14 @@ describe("what needs an admin among a company's connections", () => {
       {
         id: "billing",
         name: "pidgeon/billing",
+        mark: { logo: "pidgeon" },
         problem: "The old key is still active in Pidgeon",
         fix: { label: "Test again…", href: "/settings/integrations/billing" }
       },
       {
         id: "hello",
         name: "pidgeon/hello",
+        mark: { logo: "pidgeon" },
         problem: "Test key: mail stays in Pidgeon",
         detail: "2 patches use it",
         fix: { label: "Replace key…", href: "/settings/integrations/hello/rotate" }

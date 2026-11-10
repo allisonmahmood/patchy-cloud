@@ -312,7 +312,7 @@ const saved = (
     }
     case "imap": {
       const login = {
-        host: `mail.${domain}`,
+        host: connection.host ?? `mail.${domain}`,
         port: 993 as const,
         security: "tls" as const,
         username: `${handle}@${domain}`

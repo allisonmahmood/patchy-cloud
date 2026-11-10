@@ -4,19 +4,19 @@ import { linkButton, productMark, row, rows } from "@patchy/core";
 const common = [
   {
     name: "Claude Code",
-    letters: "CC",
+    mark: { logo: "claude" },
     description: "Anthropic’s agent, in your terminal or desktop app",
     href: "https://claude.com/product/claude-code"
   },
   {
     name: "Codex",
-    letters: "Cx",
+    mark: { logo: "openai" },
     description: "OpenAI’s agent, in your terminal or its app",
     href: "https://openai.com/codex/"
   },
   {
     name: "Cursor",
-    letters: "Cu",
+    mark: { logo: "cursor" },
     description: "A code editor with an agent built in",
     href: "https://cursor.com/"
   }
@@ -31,7 +31,7 @@ const common = [
 export const getAnAgent = `<p class="prose">Patchy works with any agent that can run commands on your computer. If you don’t have one, these are the common ones.</p>${rows(
   common.map((agent) =>
     row({
-      lead: productMark(agent.letters),
+      lead: productMark(agent.mark),
       name: agent.name,
       description: agent.description,
       end: linkButton("Get it", agent.href, {
