@@ -592,7 +592,9 @@ Patch code handles that error; it does not replace the page or disable local rou
 
 Runtime notices belong to Patchy, not the uploaded document. `session_expired`
 and `principal_changed` require the notice's Sign in link and a whole-page reload;
-never replay an unanswered write. `access_denied` has no reload offer: report the
+never replay an unanswered write. A page opened while its patch was public gets
+them with no notice once the patch is company-only again, and a whole-page
+reload opens the company page. `access_denied` has no reload offer: report the
 access restriction. A needs-rebuild door requires the owner to refresh, rebuild
 and publish. A shell mismatch refreshes once automatically; a terminal mismatch
 is a visible failure to report, not an invitation to keep refreshing.
