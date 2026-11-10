@@ -1,5 +1,4 @@
 import { Teams } from "@patchy/companies";
-import { AudienceActivation } from "@patchy/core";
 import { assert, it } from "@effect/vitest";
 import { Authorization, PatchyApi, authorizationClient } from "@patchy/api";
 import { Authorization as BearerAuthorization, MachineTokens } from "@patchy/auth";
@@ -119,26 +118,6 @@ const memberClient = Effect.gen(function* () {
 });
 
 it.layer(layer)("connections group", (it) => {
-  it.effect("a targeted detail read is independent of unrelated connection inventory", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const api = yield* memberClient;
-      yield* Effect.acquireUseRelease(
-        sql`INSERT INTO connections(id, company_id, integration, handle, description, mode, status, display, credentials, key_id, credential_revision, metadata_revision, created_by)
-        SELECT 'conn_unrelated_invalid', company_id, integration, 'unrelated-invalid', description, mode, status, '{}'::jsonb, credentials, key_id, credential_revision, metadata_revision, created_by FROM connections WHERE id = 'conn_warehouse'`,
-        () =>
-          Effect.gen(function* () {
-            const response = yield* api.getConnection({
-              params: { handle: "warehouse" },
-              responseMode: "response-only"
-            });
-            assert.equal(response.status, 200);
-            assert.include(yield* response.json, { handle: "warehouse" });
-          }),
-        () => sql`DELETE FROM connections WHERE id = 'conn_unrelated_invalid'`.pipe(Effect.orDie)
-      );
-    })
-  );
   it.effect(
     "hides connection metadata on direct requests and restores discovery through a team grant",
     () =>
@@ -198,7 +177,7 @@ it.layer(layer)("connections group", (it) => {
           false
         );
         yield* sql`DELETE FROM connections WHERE id = 'conn_audience_api'`;
-      }).pipe(Effect.provideService(AudienceActivation, true))
+      })
   );
   it.effect(
     "lists both states for a member, with safe declaration hints and offered integrations only under all",

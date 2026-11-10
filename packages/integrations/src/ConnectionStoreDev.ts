@@ -83,19 +83,6 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
     ConnectionStore.ConnectionStore,
     ConnectionStore.ConnectionStore.of({
       list,
-      listFor: list,
-      detailFor: detail,
-      authorityRevisions: (companyId, ids) =>
-        Effect.succeed(
-          new Map(
-            metadata
-              .filter(
-                (item) =>
-                  item.connection.companyId === companyId && ids.includes(item.connection.id)
-              )
-              .map((item) => [item.connection.id, "0"])
-          )
-        ),
       get: (companyId, id) => {
         const item = metadata.find(
           (item) => item.connection.companyId === companyId && item.connection.id === id
@@ -148,16 +135,13 @@ export const layer = (metadata: ReadonlyArray<DevConnection> = []) => {
       describe: unavailable,
       audience: () => Effect.succeed({ kind: "company" as const }),
       setAudience: unavailable,
-      canUse: (companyId, id, viewer) =>
+      canUse: (companyId, id) =>
         Effect.succeed(
           metadata.some(
-            (item) =>
-              item.connection.id === id &&
-              item.connection.companyId === companyId &&
-              (!viewer.guest || !item.connection.blockGuests)
+            (item) => item.connection.id === id && item.connection.companyId === companyId
           )
         ),
-      teamReferences: () => Effect.succeed([]),
+      ownerCanUse: () => Effect.succeed(true),
       blockGuests: unavailable,
       blockingGuests: (ids) =>
         Effect.succeed(

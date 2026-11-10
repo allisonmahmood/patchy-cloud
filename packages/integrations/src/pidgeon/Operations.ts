@@ -728,7 +728,7 @@ const perform = Effect.fn("PidgeonOperations.perform")(function* (
     return yield* new ConnectionNotDeclared({});
   const { identity, principal, companyId } = binding;
   if (
-    binding.scope !== "company" ||
+    binding.scope === "public" ||
     identity === null ||
     principal === null ||
     identity.company.id !== companyId ||

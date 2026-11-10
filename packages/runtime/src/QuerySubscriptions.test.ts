@@ -61,7 +61,16 @@ const binding: Binding.Binding["Service"] = {
         id: "filesource/assets",
         revision: 1
       },
-      warehouse: { kind: "postgres", handle: "warehouse", id: "connection", revision: 1 }
+      warehouse: { kind: "postgres", handle: "warehouse", id: "connection", revision: 1 },
+      analytics: {
+        kind: "posthog",
+        handle: "analytics",
+        id: "no-dev-revision-posthog",
+        revision: 1
+      },
+      mail: { kind: "imap", handle: "mail", id: "no-dev-revision-imap", revision: 1 },
+      crm: { kind: "attio", handle: "crm", id: "no-dev-revision-attio", revision: 1 },
+      support: { kind: "pidgeon", handle: "support", id: "no-dev-revision-pidgeon", revision: 1 }
     },
     handlers: { "demo.read": { kind: "query", args: {}, result: { kind: "text" } } }
   }
@@ -180,8 +189,7 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
       sourcePatch,
       sharedStore,
       storeSource,
-      memberDirectory,
-      "connection:connection"
+      memberDirectory
     ]);
     for (const keys of f.revisionReads) {
       assert.isAtMost(keys.length, allowed.size);
@@ -307,36 +315,4 @@ it.effect(
         vector: { "patch:consumer": "0", [memberDirectory]: "2" }
       });
     }).pipe(Effect.provide(NodeCryptography.layer))
-);
-
-it.effect(
-  "rechecks traced connection authority and recovers after a connection grant is restored",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const key = "connection:connection";
-      f.state.dependencies = [key];
-      f.state.revisions[key] = "0";
-      yield* f.subscribe();
-      assert.equal((yield* f.next).type, "admitted");
-      const snapshot = yield* f.next;
-      assert.equal(snapshot.type, "snapshot");
-      if (snapshot.type === "snapshot") assert.equal(snapshot.vector[key], "0");
-      f.state.failure = new Runtime.AccessDenied({});
-      f.state.revisions[key] = "1";
-      yield* f.document.reconcile("invalidation", [key]);
-      const denied = yield* f.next;
-      assert.equal(denied.type, "error");
-      if (denied.type === "error") {
-        assert.equal(denied.error.code, "access_denied");
-        assert.equal(denied.permanent, false);
-      }
-      f.state.failure = undefined;
-      f.state.revisions[key] = "2";
-      yield* f.document.reconcile("invalidation", [key]);
-      const restored = yield* f.next;
-      assert.equal(restored.type, "up-to-date");
-      if (restored.type === "up-to-date") assert.equal(restored.vector[key], "2");
-      assert.equal(f.state.calls, 3);
-    }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
 );

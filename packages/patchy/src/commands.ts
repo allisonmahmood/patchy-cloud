@@ -130,7 +130,7 @@ const guestLine = (guest: PatchGuest) => `${guest.name} (${guest.email}), ${gues
 const decodeAudience = Schema.decodeUnknownEffect(Schema.fromJsonString(PatchAudience));
 const audienceFlag = Flag.String("audience").pipe(
   Flag.withDescription(
-    "Audience JSON: members (company, teams or public) and guests (specific or all, with exclusions)"
+    "Audience JSON: members (company, teams or public) with named guests managed separately by share --add"
   ),
   Flag.optional
 );
@@ -141,7 +141,7 @@ const chosenAudience = Effect.fn("chosenAudience")(function* (value: Option.Opti
       (cause) =>
         new LocalError({
           message:
-            "Invalid --audience JSON. Supply members and guests as documented in patchy publish --help.",
+            "Invalid --audience JSON. Supply members as documented in patchy publish --help.",
           cause
         })
     )
@@ -155,7 +155,8 @@ const audienceLine = (audience: PatchAudience | undefined, scope: typeof Sharing
 
 const scopeLines = {
   company: "Scope: company (signed-in colleagues in your company)",
-  public: "Scope: public (anyone with the link)"
+  public: "Scope: public (anyone with the link)",
+  teams: "Scope: teams (members of selected teams and named guests)"
 } satisfies Record<typeof SharingScope.Type, string>;
 
 /** Wire literal of the 401 (`Unauthorized` in `@patchy/api`); the hint below keys on it. */
@@ -373,7 +374,7 @@ const whoami = Command.make("whoami", {}, () =>
       yield* Output.report(encodeIdentity(identity), [
         `User: ${identity.user.name} (${identity.user.email})`,
         `Company: ${identity.company.name} (${identity.company.handle})`,
-        `Role: ${identity.role}`,
+        `Role: ${identity.superAdmin ? "super_admin" : identity.role}`,
         `Machine: ${identity.machine.name} (${identity.machine.id})`
       ]);
     })
@@ -693,7 +694,7 @@ const audiences = Command.make("audiences", {}, () =>
       ]);
     })
   )
-).pipe(Command.withDescription("List existing teams and company guests for --audience"));
+).pipe(Command.withDescription("List existing teams for --audience"));
 
 const publish = Command.make(
   "publish",
@@ -1041,8 +1042,7 @@ const share = Command.make(
                     "Changed patch sharing",
                     `URL: ${shared.publicUrl}`,
                     audienceLine(shared.audience, shared.scope),
-                    `Patch ID: ${shared.patchId}`,
-                    ...(shared.warnings ?? []).map((warning) => `Warning: ${warning}`)
+                    `Patch ID: ${shared.patchId}`
                   ])
                 )
               ),

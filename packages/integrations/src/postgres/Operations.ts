@@ -201,7 +201,7 @@ const resolve = Effect.fn("PostgresOperations.resolve")(function* (alias: string
   if (!Object.hasOwn(binding.manifest.uses, alias) || declaration?.kind !== "postgres")
     return yield* new ConnectionNotDeclared({});
   if (
-    binding.scope !== "company" ||
+    binding.scope === "public" ||
     binding.identity === null ||
     binding.principal === null ||
     binding.identity.company.id !== binding.companyId ||

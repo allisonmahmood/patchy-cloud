@@ -277,7 +277,7 @@ const query = operation({
     if (!Object.hasOwn(binding.manifest.uses, args.connection) || declaration?.kind !== "posthog")
       return yield* new ConnectionNotDeclared({});
     if (
-      binding.scope !== "company" ||
+      binding.scope === "public" ||
       binding.identity === null ||
       binding.principal === null ||
       binding.identity.company.id !== binding.companyId ||

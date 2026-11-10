@@ -229,9 +229,9 @@ export class InvalidConnectionAudience extends Schema.TaggedError<InvalidConnect
   {}
 ) {
   readonly code = "invalid_connection_audience";
-  readonly status = 403;
+  readonly status = 422;
   override get message() {
-    return "Only a super admin can select Company or existing company teams. Team audiences require completed access enforcement.";
+    return "Select Company or one or more existing company teams.";
   }
 }
 export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorageFailed>()(
@@ -272,8 +272,30 @@ export class ConnectionStorageFailed extends Schema.TaggedError<ConnectionStorag
   }
 }
 
-export type ResolveError = ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
+export class ConnectionAccessDenied extends Schema.TaggedError<ConnectionAccessDenied>()(
+  "ConnectionAccessDenied",
+  {}
+) {
+  readonly code = "connection_access_denied";
+  readonly status = 403;
+  override get message() {
+    return "The patch owner cannot build with a declared connection. Restore their connection team access or reassign the patch.";
+  }
+}
+export class ConnectionAdministrationDenied extends Schema.TaggedError<ConnectionAdministrationDenied>()(
+  "ConnectionAdministrationDenied",
+  {}
+) {
+  readonly code = "access_denied";
+  readonly status = 403;
+  override get message() {
+    return "Only a super admin can change connection audiences.";
+  }
+}
+export type ResolveError =
+  ConnectionAccessDenied | ConnectionNotConnected | StaleGenerated | ConnectionStorageFailed;
 export type ConnectionError =
+  | ConnectionAdministrationDenied
   | InvalidConnectionAudience
   | ResolveError
   | ConnectionNotFound
@@ -344,23 +366,6 @@ export interface Deleted {
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   {
-    /** Ordinary discovery: batched current-viewer admission, separate from administrator inventory. */
-    readonly listFor: (
-      companyId: string,
-      userId: string
-    ) => Effect.Effect<readonly Connection[], ConnectionStorageFailed>;
-    /** Targeted ordinary metadata lookup; inaccessible handles answer like missing ones. */
-    readonly detailFor: (
-      companyId: string,
-      integration: Integration,
-      handle: string,
-      userId: string
-    ) => Effect.Effect<ConnectionDetail, ConnectionNotFound | ConnectionStorageFailed>;
-    /** Integrations-owned authority facts for the existing Runtime revision adapter. */
-    readonly authorityRevisions: (
-      companyId: string,
-      ids: readonly string[]
-    ) => Effect.Effect<ReadonlyMap<string, string>, ConnectionStorageFailed>;
     readonly audience: (companyId: string, id: string) => Effect.Effect<Audience, ConnectionError>;
     readonly setAudience: (
       input: Identity & { readonly audience: Audience }
@@ -368,17 +373,23 @@ export class ConnectionStore extends Context.Service<
     readonly canUse: (
       companyId: string,
       id: string,
-      viewer: { readonly userId: string; readonly guest: boolean }
+      userId: string
     ) => Effect.Effect<boolean, ConnectionNotFound | ConnectionStorageFailed>;
-    readonly teamReferences: (
+    /** Current patch owner, never the handler caller. */
+    readonly ownerCanUse: (
       companyId: string,
-      teamId: string
-    ) => Effect.Effect<readonly string[], ConnectionError>;
-    readonly list: (companyId: string) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
+      patchId: string,
+      id: string
+    ) => Effect.Effect<boolean, ConnectionNotFound | ConnectionStorageFailed>;
+    readonly list: (
+      companyId: string,
+      userId?: string
+    ) => Effect.Effect<ReadonlyArray<Connection>, ConnectionError>;
     readonly get: (companyId: string, id: string) => Effect.Effect<Connection, ConnectionError>;
     /** Each declared connection's usage by id; a connection with no entry is `unused`. */
     readonly usage: (
-      companyId: string
+      companyId: string,
+      userId?: string
     ) => Effect.Effect<ReadonlyMap<string, Usage>, ConnectionError>;
     /** The patch and number of stored versions, so recent calls name where they came from. */
     readonly versions: (
@@ -392,7 +403,8 @@ export class ConnectionStore extends Context.Service<
     readonly detail: (
       companyId: string,
       integration: Integration,
-      handle: string
+      handle: string,
+      userId?: string
     ) => Effect.Effect<ConnectionDetail, ConnectionNotFound | ConnectionStorageFailed>;
     /** A stored snapshot, by the integration its own row names, even after its connection is gone. */
     readonly snapshot: (

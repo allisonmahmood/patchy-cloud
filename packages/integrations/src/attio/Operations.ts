@@ -628,7 +628,7 @@ const perform = Effect.fn("AttioOperations.perform")(function* <K extends AttioR
     return yield* new ConnectionNotDeclared({});
   const { identity, principal, companyId } = binding;
   if (
-    binding.scope !== "company" ||
+    binding.scope === "public" ||
     identity === null ||
     principal === null ||
     identity.company.id !== companyId ||

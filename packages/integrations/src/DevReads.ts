@@ -231,17 +231,12 @@ export const layer = HttpApiBuilder.group(PatchyApi, "devReads", (handlers) =>
             current.value.user.id === identity.user.id &&
             current.value.company.id === identity.company.id &&
             current.value.machine.id === identity.machine.id
-              ? connections
-                  .canUse(identity.company.id, call.connection.id, {
-                    userId: identity.user.id,
-                    guest: false
-                  })
-                  .pipe(
-                    Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
-                    Effect.flatMap((allowed) =>
-                      allowed ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
-                    )
+              ? connections.canUse(identity.company.id, call.connection.id, identity.user.id).pipe(
+                  Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
+                  Effect.flatMap((allowed) =>
+                    allowed ? Effect.void : Effect.fail(new Runtime.AccessDenied({}))
                   )
+                )
               : Effect.fail(new KeyRefused({}))
         )
       );

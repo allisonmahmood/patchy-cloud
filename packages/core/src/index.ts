@@ -42,5 +42,3 @@ export * as Cryptography from "./Cryptography.js";
 export * as NodeCryptography from "./NodeCryptography.js";
 export * as WhatsNew from "./whatsNew.js";
 export { isPublicAddress } from "./addresses.js";
-
-export { AudienceActivation } from "./AudienceActivation.js";

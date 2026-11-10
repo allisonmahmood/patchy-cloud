@@ -1,3 +1,4 @@
+import * as SqlClient from "effect/sql/SqlClient";
 import { assert, it } from "@effect/vitest";
 import { CURRENT_RELEASE, WIRE_VERSION, type AttioSnapshot } from "@patchy/api";
 import { DEV_SEED } from "@patchy/auth/seed";
@@ -105,6 +106,8 @@ const setup = (
   } = {}
 ) =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('dealpatch0001', ${who.companyId}, ${who.userId}, 'Integration operations', 'dealpatch0001') ON CONFLICT (id) DO NOTHING`;
     made++;
     const crm = { id: `conn_attio_${made}`, handle: `crm${made}` };
     const attio = Reads.scripted(

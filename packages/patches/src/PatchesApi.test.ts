@@ -29,7 +29,7 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
-  type Identity,
+  type AuthenticatedIdentity,
   PatchyApi,
   PatchesGroup,
   GuestRequest,
@@ -37,6 +37,7 @@ import {
   ForceRequest,
   DescriptionRequest,
   RollbackRequest,
+  AudienceRefused,
   PublishCreated,
   PublishRequest,
   PublishUpdated,
@@ -47,7 +48,7 @@ import {
   sharedStoreId,
   repoLimits
 } from "@patchy/api";
-import { Companies, Looks, Users } from "@patchy/companies";
+import { Companies, Looks, Teams, Users } from "@patchy/companies";
 import { ContentStore } from "@patchy/content-store";
 import { Limits } from "@patchy/limits";
 import { InvocationLog, RuntimeLog } from "@patchy/runtime";
@@ -71,6 +72,7 @@ const looks = Looks.layer.pipe(Layer.provide([NodeFileSystem.layer, NodePath.lay
 
 const client = Fixtures.ownRouter(HttpApiTest.groups(PatchyApi, ["patches"]));
 const decodeNotAdditive = Schema.decodeUnknownEffect(NotAdditive);
+const decodeAudienceRefused = Schema.decodeUnknownSync(AudienceRefused);
 const decodeCreated = Schema.decodeUnknownSync(PublishCreated);
 
 const html = (title: string) =>
@@ -197,8 +199,7 @@ it.layer(layer)("patches group", (it) => {
       assert.strictEqual(created.title, "First");
       assert.strictEqual(created.scope, "company");
       assert.deepStrictEqual(created.audience, {
-        members: { kind: "company" },
-        guests: { kind: "specific", userIds: [] }
+        members: { kind: "company" }
       });
       assert.strictEqual(created.name, "launch-plan");
       assert.strictEqual(
@@ -291,6 +292,59 @@ it.layer(layer)("patches group", (it) => {
         { patchId: created.patchId, name: restricted.name, current: false }
       );
       assert.include(yield* (yield* Content.Content).read(served.version), "Fourth");
+      const owner = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const outsider = yield* client.pipe(Effect.provide(Fixtures.as(reader)));
+      const viewer = { companyId: uploader.company.id, actorId: admin.user.id };
+      const t = yield* Teams.create({ ...viewer, name: "API audience recovery" });
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const restrictedAudience = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({
+          scope: "company",
+          audience: { members: { kind: "teams", teamIds: [t.id] } }
+        })
+      });
+      assert.equal(restrictedAudience.scope, "teams");
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: false
+      });
+      const lost = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(lost.status, 400);
+      assert.equal(decodeAudienceRefused(yield* lost.json).code, "owner_access_lost");
+      const hidden = yield* outsider.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({ scope: "company" }),
+        responseMode: "response-only"
+      });
+      assert.equal(hidden.status, 404);
+      yield* Teams.setMemberships({
+        ...viewer,
+        teamId: t.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const invalid = yield* owner.share({
+        params: { patchId: created.patchId },
+        payload: new ShareRequest({
+          scope: "company",
+          audience: { members: { kind: "teams", teamIds: ["unknown-team"] } }
+        }),
+        responseMode: "response-only"
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal(decodeAudienceRefused(yield* invalid.json).code, "invalid_audience_teams");
     })
   );
 
@@ -310,20 +364,6 @@ it.layer(layer)("patches group", (it) => {
           "public"
         );
 
-        const mismatched = yield* owner.share({
-          params: { patchId: created.patchId },
-          payload: new ShareRequest({
-            scope: "company",
-            audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } }
-          }),
-          responseMode: "response-only"
-        });
-        assert.equal(mismatched.status, 400);
-        expect(yield* mismatched.json).toEqual({
-          ok: false,
-          error: "The sharing scope must match the audience."
-        });
-        assert.equal(Option.getOrThrow(yield* patches.find(created.patchId)).patch.scope, "public");
         const params = { patchId: created.patchId };
         // Sharing to the scope it already has changes nothing and reports nothing.
         for (const scope of ["company", "public", "public"] as const) {
@@ -334,7 +374,7 @@ it.layer(layer)("patches group", (it) => {
               ok: true,
               patchId: created.patchId,
               scope,
-              audience: { members: { kind: scope }, guests: { kind: "specific", userIds: [] } },
+              audience: { members: { kind: scope } },
               publicUrl: created.publicUrl
             }
           );
@@ -1359,7 +1399,7 @@ const pairedRoutes = Effect.fn("pairedRoutes")(function* (quota = 100) {
 
 /** One paired client per identity: two users of one company by default, or one owner twice. */
 const racingClients = Effect.fn("racingClients")(function* (
-  identities: ReadonlyArray<Identity> = [uploader, reader],
+  identities: ReadonlyArray<AuthenticatedIdentity> = [uploader, reader],
   quota = 100
 ) {
   const routes = yield* pairedRoutes(quota);
@@ -2697,6 +2737,41 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
 });
 
 it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
+  it.effect("publish requires the owner's current connection build access", () =>
+    Effect.gen(function* () {
+      const { connections, identity, declaration } = yield* sourceConnection("owner-build-access");
+      const team = yield* Teams.create({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        name: "Connection builders"
+      });
+      yield* connections.setAudience({
+        ...identity,
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const request = yield* consumingRequest({
+        html: html("Owner connection access"),
+        manifest: { ...Fixtures.manifest, name: "owner-build-access", uses: { sales: declaration } }
+      });
+      const denied = yield* api.publish({ payload: request, responseMode: "response-only" });
+      assert.equal(denied.status, 422);
+      assert.include(yield* denied.json, { code: "connection_access_denied" });
+      yield* Teams.setMemberships({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const published = yield* api.publish({
+        payload: new PublishRequest({ ...request, publishKey: crypto.randomUUID() }),
+        responseMode: "response-only"
+      });
+      assert.equal(published.status, 201);
+    })
+  );
+
   it.effect("publishes a version its guests can't open, and says why only when it has guests", () =>
     Effect.gen(function* () {
       const { connections, identity, declaration } = yield* sourceConnection("guest-warehouse");

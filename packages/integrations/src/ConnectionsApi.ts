@@ -41,7 +41,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
             companyId: identity.company.id,
             lookup: { integration, handle }
           });
-        const found = yield* connections.detailFor(
+        const found = yield* connections.detail(
           identity.company.id,
           integration,
           handle,
@@ -69,7 +69,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "connections", (handlers) =
           const shown: ReadonlyArray<Integration> = integrations.filter((integration) =>
             asked.includes(integration)
           );
-          const rows = (yield* connections.listFor(identity.company.id, identity.user.id)).filter(
+          const rows = (yield* connections.list(identity.company.id, identity.user.id)).filter(
             (row) => shown.includes(row.integration)
           );
           return HttpServerResponse.jsonUnsafe(

@@ -53,7 +53,6 @@ import {
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
-  ConnectionRevisions,
   ConnectionsApi,
   DevReads,
   SqlConnectionStore,
@@ -184,7 +183,6 @@ const grantedGuests = Layer.effect(
     const grants = yield* GuestGrants.GuestGrants;
     const patches = yield* Patches.Patches;
     const sql = yield* SqlClient.SqlClient;
-    const enabled = yield* Audiences.Activation;
     return GrantedGuests.GrantedGuests.of({
       member: (loaded, userId) =>
         Effect.gen(function* () {
@@ -195,7 +193,6 @@ const grantedGuests = Layer.effect(
           );
         }).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.provideService(Audiences.Activation, enabled),
           Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
         ),
       host: (loaded, userId) =>
@@ -278,10 +275,7 @@ const services = Layer.mergeAll(
         Layer.provideMerge(
           RuntimeStream.layer.pipe(
             Layer.provide(Subscriptions.layer),
-            Layer.provide([
-              ConnectionRevisions.layer.pipe(Layer.provide(SubscriptionReads.layer)),
-              StreamLimits.layer
-            ])
+            Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
           )
         ),
         Layer.provide(StreamAdmission.layer)

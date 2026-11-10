@@ -1,7 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
-import { SubscriptionReads } from "@patchy/runtime/core";
-import * as ConnectionRevisions from "./ConnectionRevisions.js";
 import { RuntimeLog } from "@patchy/runtime";
 import * as Testing from "@patchy/sql/testing";
 import * as Deferred from "effect/Deferred";
@@ -22,7 +20,7 @@ import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
 import { Teams } from "@patchy/companies";
-import { AudienceActivation, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
 
 const empty: typeof Snapshot.Type = { version: 1, relations: [], enums: [], exclusions: [] };
 const evolved: typeof Snapshot.Type = {
@@ -98,60 +96,6 @@ const fixture = SqlConnectionStore.layer.pipe(
 
 it.layer(fixture)("ConnectionStore", (it) => {
   it.effect(
-    "composes connection revisions at the Runtime seam and fails closed on missing authority",
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const store = yield* ConnectionStore.ConnectionStore;
-        const connection = yield* store.connect(input("revision-adapter"));
-        const key = `connection:${connection.id}`;
-        const patchKey = "patch:revision-adapter";
-        const upstream = SubscriptionReads.SubscriptionReads.of({
-          admit: () => Effect.succeed([]),
-          read: () => Effect.succeed({ result: null, vector: {} }),
-          revisions: (_companyId, keys) =>
-            Effect.sync(() => {
-              assert.deepEqual(keys, [patchKey]);
-              return { [patchKey]: "17" };
-            })
-        });
-        const reads = yield* ConnectionRevisions.make.pipe(
-          Effect.provideService(SubscriptionReads.SubscriptionReads, upstream)
-        );
-        assert.deepEqual(yield* reads.revisions(who.companyId, [patchKey, key]), {
-          [patchKey]: "17",
-          [key]: "0"
-        });
-        yield* store.blockGuests({ ...identity(connection), block: true });
-        assert.deepEqual(yield* reads.revisions(who.companyId, [key]), { [key]: "1" });
-        assert.equal(
-          (yield* reads.revisions(who.companyId, ["connection:unknown"]).pipe(Effect.flip)).code,
-          "source_unavailable"
-        );
-        assert.equal(
-          (yield* reads.revisions("other-company", [key]).pipe(Effect.flip)).code,
-          "source_unavailable"
-        );
-        yield* Effect.acquireUseRelease(
-          sql`ALTER TABLE connections RENAME TO unavailable_connection_authority`,
-          () =>
-            Effect.gen(function* () {
-              assert.deepEqual(yield* reads.revisions(who.companyId, [patchKey]), {
-                [patchKey]: "17"
-              });
-              assert.equal(
-                (yield* reads.revisions(who.companyId, [key]).pipe(Effect.flip)).code,
-                "source_unavailable"
-              );
-            }),
-          () =>
-            sql`ALTER TABLE unavailable_connection_authority RENAME TO connections`.pipe(
-              Effect.orDie
-            )
-        );
-      })
-  );
-  it.effect(
     "connection audiences revoke and restore current effective membership without widening guests",
     () =>
       Effect.gen(function* () {
@@ -163,36 +107,39 @@ it.layer(fixture)("ConnectionStore", (it) => {
         const engineering = yield* Teams.create({ ...actor, name: "Connection Engineering" });
         const member = "connection-audience-member";
         const admin = "connection-audience-admin";
-        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role, is_regular_admin) VALUES
-        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member', false),
-        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'member', true)`;
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES
+        (${member}, 'connection-member-clerk', ${who.companyId}, 'connection-member@example.test', 'Connection member', 'member'),
+        (${admin}, 'connection-admin-clerk', ${who.companyId}, 'connection-admin@example.test', 'Connection admin', 'admin')`;
         assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
         const target = {
           ...identity(connection),
           audience: { kind: "teams" as const, teamIds: [design.id, engineering.id] }
         };
-        const disabled = yield* store.setAudience(target).pipe(Effect.flip);
-        assert.equal(disabled._tag, "InvalidConnectionAudience");
-        const configure = store
-          .setAudience(target)
-          .pipe(Effect.provideService(AudienceActivation, true));
+        const configure = store.setAudience(target);
         yield* configure;
+        const invalid = yield* store
+          .setAudience({ ...target, audience: { kind: "teams", teamIds: ["unknown-team"] } })
+          .pipe(Effect.flip);
+        assert.equal(invalid.status, 422);
         assert.equal(
           (yield* store.setAudience({ ...target, userId: admin }).pipe(Effect.flip))._tag,
-          "InvalidConnectionAudience"
+          "ConnectionAdministrationDenied"
         );
-        const canUse = (userId: string) =>
-          store
-            .canUse(who.companyId, connection.id, { userId, guest: false })
-            .pipe(Effect.provideService(AudienceActivation, true));
-        assert.equal(yield* canUse(member), false);
-        assert.notInclude(
-          (yield* store
-            .listFor(who.companyId, member)
-            .pipe(Effect.provideService(AudienceActivation, true))).map((row) => row.id),
+        const canUse = (userId: string) => store.canUse(who.companyId, connection.id, userId);
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('connection-owner-access', ${who.companyId}, ${member}, 'Owner access', 'connection-owner-access')`;
+        const ownerAccess = store.ownerCanUse(
+          who.companyId,
+          "connection-owner-access",
           connection.id
         );
-        assert.equal(yield* canUse(who.userId), true);
+        assert.equal(yield* ownerAccess, false);
+        assert.equal(yield* ownerAccess, false);
+        assert.equal(yield* canUse(member), false);
+        assert.notInclude(
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
+          connection.id
+        );
+        assert.equal(yield* canUse(who.userId), false);
         assert.equal(yield* canUse(admin), false);
         yield* Teams.setMemberships({
           ...actor,
@@ -200,11 +147,10 @@ it.layer(fixture)("ConnectionStore", (it) => {
           userIds: [member],
           added: true
         });
+        assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);
         assert.include(
-          (yield* store
-            .listFor(who.companyId, member)
-            .pipe(Effect.provideService(AudienceActivation, true))).map((row) => row.id),
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
         yield* Teams.setMemberships({
@@ -219,11 +165,10 @@ it.layer(fixture)("ConnectionStore", (it) => {
           userIds: [member],
           added: false
         });
+        assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);
         assert.include(
-          (yield* store
-            .listFor(who.companyId, member)
-            .pipe(Effect.provideService(AudienceActivation, true))).map((row) => row.id),
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
         yield* Teams.setMemberships({
@@ -232,11 +177,10 @@ it.layer(fixture)("ConnectionStore", (it) => {
           userIds: [member],
           added: false
         });
+        assert.equal(yield* ownerAccess, false);
         assert.equal(yield* canUse(member), false);
         assert.notInclude(
-          (yield* store
-            .listFor(who.companyId, member)
-            .pipe(Effect.provideService(AudienceActivation, true))).map((row) => row.id),
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
         yield* Teams.setMemberships({
@@ -245,38 +189,16 @@ it.layer(fixture)("ConnectionStore", (it) => {
           userIds: [member],
           added: true
         });
+        assert.equal(yield* ownerAccess, true);
         assert.equal(yield* canUse(member), true);
         assert.include(
-          (yield* store
-            .listFor(who.companyId, member)
-            .pipe(Effect.provideService(AudienceActivation, true))).map((row) => row.id),
+          (yield* store.list(who.companyId, member)).map((row) => row.id),
           connection.id
         );
-        assert.equal(
-          yield* store.canUse(who.companyId, connection.id, { userId: member, guest: false }),
-          false
-        );
-        assert.equal(
-          yield* store
-            .canUse(who.companyId, connection.id, { userId: "outside", guest: true })
-            .pipe(Effect.provideService(AudienceActivation, true)),
-          true
-        );
-        yield* store.blockGuests({ ...identity(connection), block: true });
-        assert.equal(
-          yield* store
-            .canUse(who.companyId, connection.id, { userId: "outside", guest: true })
-            .pipe(Effect.provideService(AudienceActivation, true)),
-          false
-        );
-        assert.deepEqual(yield* store.teamReferences(who.companyId, design.id), [connection.id]);
-        const revision =
-          yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`;
-        yield* configure;
-        assert.deepEqual(
-          yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`,
-          revision
-        );
+        yield* sql`UPDATE patches SET owner_user_id = ${who.userId} WHERE id = 'connection-owner-access'`;
+        assert.equal(yield* ownerAccess, false);
+        yield* sql`UPDATE patches SET owner_user_id = ${member} WHERE id = 'connection-owner-access'`;
+        assert.equal(yield* ownerAccess, true);
         yield* store.disconnect(identity(connection));
         yield* store.reconnect(identity(connection));
         assert.deepEqual(
@@ -286,39 +208,6 @@ it.layer(fixture)("ConnectionStore", (it) => {
             : target.audience
         );
       })
-  );
-  it.effect("audience revisions and references roll back together", () =>
-    Effect.gen(function* () {
-      const store = yield* ConnectionStore.ConnectionStore;
-      const sql = yield* SqlClient.SqlClient;
-      const connection = yield* store.connect(input("audience-rollback"));
-      const team = yield* Teams.create({
-        companyId: who.companyId,
-        actorId: who.userId,
-        name: "Rollback audience"
-      });
-      const before =
-        yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`;
-      yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* store
-              .setAudience({
-                ...identity(connection),
-                audience: { kind: "teams", teamIds: [team.id] }
-              })
-              .pipe(Effect.provideService(AudienceActivation, true));
-            return yield* Effect.fail("rollback");
-          })
-        )
-        .pipe(Effect.flip);
-      assert.deepEqual(yield* store.audience(who.companyId, connection.id), { kind: "company" });
-      assert.deepEqual(yield* store.teamReferences(who.companyId, team.id), []);
-      assert.deepEqual(
-        yield* sql`SELECT authority_revision::text AS revision FROM connections WHERE id = ${connection.id}`,
-        before
-      );
-    })
   );
   it.effect(
     "pool creation checks live identity and credentials without rebinding published metadata",

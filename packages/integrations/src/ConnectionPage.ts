@@ -251,8 +251,8 @@ const index = Effect.fn("ConnectionPage.index")(function* (
   const admin = viewer.role === "super_admin";
   const connections = yield* admin
     ? store.list(viewer.company.id)
-    : store.listFor(viewer.company.id, viewer.user.id);
-  const usage = yield* store.usage(viewer.company.id);
+    : store.list(viewer.company.id, viewer.user.id);
+  const usage = yield* store.usage(viewer.company.id, viewer.user.id);
   // Members can see connection status, but must never read the call log.
   const lastCalls: View.LastCalls | undefined = admin
     ? yield* (yield* RuntimeLog.RuntimeLog)
@@ -303,7 +303,7 @@ const catalogue = Effect.fn("ConnectionPage.catalogue")(function* (
   const store = yield* ConnectionStore.ConnectionStore;
   const connections = yield* viewer.role === "super_admin"
     ? store.list(viewer.company.id)
-    : store.listFor(viewer.company.id, viewer.user.id);
+    : store.list(viewer.company.id, viewer.user.id);
   return {
     title: "Connect an integration",
     body: View.renderCatalogue({
@@ -362,7 +362,7 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
   const connection = yield* store.get(viewer.company.id, id);
   if (
     viewer.role !== "super_admin" &&
-    !(yield* store.canUse(viewer.company.id, id, { userId: viewer.user.id, guest: false }))
+    !(yield* store.canUse(viewer.company.id, id, viewer.user.id))
   )
     return yield* new ConnectionStore.ConnectionNotFound({
       companyId: viewer.company.id,
@@ -376,7 +376,8 @@ const connectionView = Effect.fn("ConnectionPage.connectionView")(function* (
         )
       : [];
   const page = pages[connection.integration];
-  const usage = (yield* store.usage(viewer.company.id)).get(id) ?? ConnectionStore.unused;
+  const usage =
+    (yield* store.usage(viewer.company.id, viewer.user.id)).get(id) ?? ConnectionStore.unused;
   // Deactivated people keep their names: they still added connections and made calls. A
   // directory that cannot be read leaves the page and its actions working, without names.
   const people = yield* (yield* Users.Users).list(viewer.company.id).pipe(

@@ -88,7 +88,9 @@ export const renderLiveNote = (
   return `<section class="note note-ok" role="status"><span class="note-title">${isWelcomePage({ name: patch.name, tier: row.tier }) ? "Your welcome page is live" : "Your first patch is live"}</span><p>${
     patch.scope === "public"
       ? "Anyone with the link can open it."
-      : `Signed-in people at ${escapeHtml(viewer.company.name)} can open it.`
+      : patch.scope === "teams"
+        ? "Members of selected teams and named guests can open it."
+        : `Signed-in people at ${escapeHtml(viewer.company.name)} can open it.`
   } To change it, tell your agent what to change.</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(address)}">Open it</a><button type="button" class="btn" data-copy="${escapeAttribute(url)}" aria-live="polite" hidden>Copy link</button></div></section>`;
 };
 

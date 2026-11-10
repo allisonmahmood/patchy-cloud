@@ -315,21 +315,18 @@ user's explicitly chosen audience; Public only by explicit choice.
 
 The `patchy` CLI publishes one self-contained HTML document as a page and returns its
 view URL.
-Before the first publish, ask who may open it unless the user already specified: Company,
-Company plus guests, one team or multiple teams. Pass `--share company|public` for the simple
-choices, or `--audience` JSON for teams and guest choices. Discover existing IDs with
-`patchy audiences --json`. Members see only their current teams; administrators see the company team directory. Active super admins belong to every team through required membership. Never invent teams or guest IDs. Later publishes retain the
-committed audience; do not ask again. Every publish reports its committed audience.
-The API/CLI keeps Company-only as the default when omitted; asking is the agent workflow,
-not a mandatory publish flag.
+A first publish is Company-wide unless the person specifies another audience.
+Pass `--share company|public` for those choices, or `--audience` JSON for teams.
+Discover existing IDs with `patchy audiences --json`; never invent them.
+Named guests receive access to individual patches with `patchy share --add`.
+Later publishes retain the committed audience. Report the committed audience after every publish.
 
 Audience JSON has `members: { kind: "company" | "public" }` or
-`members: { kind: "teams", teamIds: ["<id>"] }`, plus
-`guests: { kind: "specific", userIds: [] }` (no guests or named company guests), or
-`guests: { kind: "all", excludedUserIds: [] }` (current and future guests invited into
-this company space, except named exclusions). Guests need existing active Patchy accounts.
-Team and all-guests activation is refused while the access-enforcement stack is incomplete;
-report the refusal and never substitute Company.
+`members: { kind: "teams", teamIds: ["<id>"] }`. Named guest grants are managed
+separately per patch; changing teams retains them. Guests need active outside-company
+Patchy accounts. Legacy Company flags preserve team restrictions; use an explicit
+Company audience to widen. If `owner_access_lost` is returned, seek administrator
+recovery or reassignment of this patch instead of creating a replacement.
 
 Requires Node.js 22.22.0 or newer, with npm, and the `patchy` CLI on `PATH`.
 If the CLI is missing or its release differs from the intended instance,
@@ -571,7 +568,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `publish --json` prints the instance's response as it is on the wire
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
-  `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
+  `share --json` prints `{ "ok": true, "patchId", "scope", "audience", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
   Prefer JSON when an address, id or recovery deadline is going into a script.
@@ -719,7 +716,7 @@ patch](#reading-a-patch) lists the rest.
 3. Run `validate` until it passes.
 4. Publish with `--json` so the response gives the actual scope; set `--share` only for
    an explicit sharing choice. With no key, finish the login handoff above before retrying.
-5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
+5. Return `publicUrl` and announce who can open it from the returned `audience`.
 
 ## Pitfalls
 

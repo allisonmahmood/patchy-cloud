@@ -215,11 +215,7 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         capability.onDependency(`store:${binding.patchId}:${request.args.store}`);
       else if (Object.hasOwn(members, request.op))
         capability.onDependency(`members:${binding.companyId}`);
-      else if (typeof request.args.connection === "string") {
-        const declaration = binding.manifest.uses[request.args.connection];
-        if (declaration && "handle" in declaration)
-          capability.onDependency(`connection:${declaration.id}`);
-      } else if (request.op.startsWith("shared.") && typeof request.args.alias === "string") {
+      else if (request.op.startsWith("shared.") && typeof request.args.alias === "string") {
         const declaration = Object.hasOwn(binding.manifest.uses, request.args.alias)
           ? binding.manifest.uses[request.args.alias]
           : undefined;
