@@ -1581,8 +1581,7 @@ export const registry = {
     default: 50,
     unit: "addresses",
     scope: "company",
-    measure:
-      "Addresses in one invite from the Company page; more are refused before any email goes out",
+    measure: "Addresses in one invite from People; more are refused before any email goes out",
     refusal: null,
     overridable: false
   },

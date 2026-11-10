@@ -698,7 +698,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         memberHtml,
         "Agent can’t connect until an admin turns it on. At Patchy Dev that’s Patchy Dev."
       );
-      assert.notInclude(memberHtml, "Turn it on at Company");
+      assert.notInclude(memberHtml, "Turn it on in Settings");
       assert.notInclude(memberHtml, 'value="allow"');
 
       const adminHtml = yield* text(yield* consentPage(query));

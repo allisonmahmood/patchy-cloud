@@ -63,7 +63,9 @@ export const uiScript = `(() => {
   }, true);
 
   // A link in a closed menu can't take focus; the button that opens its menu takes it instead.
+  // A link in view takes it itself, as the sidebar's do while it shows its popover in place.
   const focusable = (link) => {
+    if (link.getClientRects().length > 0) return link;
     const menu = link.closest("[popover]");
     const owner = menu === null || menu.id === "" ? link : document.querySelector('[popovertarget="' + CSS.escape(menu.id) + '"]') ?? link;
     return owner.getClientRects().length > 0 ? owner : null;

@@ -32,11 +32,11 @@ test("the keyboard opens and closes menus and dialogs, and focus comes back", as
 
   // From another page, Back returns there rather than to the dialog's own page.
   await page.goto(`${instance.origin}/~ui/index`);
-  await page.getByRole("link", { name: "New patch" }).click();
+  await page.getByRole("main").getByRole("link", { name: "New patch" }).click();
   await expect(page).toHaveURL(/\/~ui\/dialog$/);
   await dialog.getByRole("link", { name: "Close" }).click();
   await expect(page).toHaveURL(/\/~ui\/index$/);
-  await expect(page.getByRole("link", { name: "New patch" })).toBeFocused();
+  await expect(page.getByRole("main").getByRole("link", { name: "New patch" })).toBeFocused();
 
   // Loaded directly, even with a malformed fragment, it closes to its own page.
   await page.goto(`${instance.origin}/~ui/dialog#%`);
@@ -55,7 +55,7 @@ test("a refused submission draws the dialog again, and closing it skips the subm
 }) => {
   await page.goto(`${instance.origin}/~ui`);
   await page.goto(`${instance.origin}/~ui/index?page=2`);
-  await page.getByRole("link", { name: "New patch" }).click();
+  await page.getByRole("main").getByRole("link", { name: "New patch" }).click();
   await expect(page).toHaveURL(/\/~ui\/dialog$/);
   await page.getByRole("button", { name: "Send invites" }).click();
   const emails = page
@@ -65,7 +65,7 @@ test("a refused submission draws the dialog again, and closing it skips the subm
   await expect(emails).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/\/~ui\/index\?page=2$/);
-  await expect(page.getByRole("link", { name: "New patch" })).toBeFocused();
+  await expect(page.getByRole("main").getByRole("link", { name: "New patch" })).toBeFocused();
   // Back from the page goes to where it was reached from, never to the refused submission.
   await page.goBack();
   await expect(page).toHaveURL(/\/~ui$/);

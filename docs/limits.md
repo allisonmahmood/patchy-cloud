@@ -184,7 +184,7 @@ Host-wide limits cannot have company overrides. Per-company admission counters r
 | `look.brief.bytes` | contract | 32768 | bytes | company | A look revision's LOOK.md; look publish refuses invalid_look | None | No | release |
 | `publish.repo.bytes` | contract | 10485760 | bytes | patch | File bytes in one version's repo snapshot, before base64; the CLI and publish both refuse more | `too_large` | No | release |
 | `publish.repo.files` | contract | 2000 | files | patch | Files in one version's repo snapshot; the CLI and publish both refuse more | `too_large` | No | release |
-| `invites.batch` | contract | 50 | addresses | company | Addresses in one invite from the Company page; more are refused before any email goes out | None | No | release |
+| `invites.batch` | contract | 50 | addresses | company | Addresses in one invite from People; more are refused before any email goes out | None | No | release |
 | `oauth.clientDocuments.perMinute` | operating | 30 | starts/minute | host | Client metadata document fetches started per host replica, every start counted. One fetch per URL is in flight at a time, and loads of that URL while it runs share its answer | `rate_limited` | No | deployment |
 | `oauth.clientDocuments.entries` | operating | 256 | documents | host | Accepted client metadata documents kept in memory per host replica, least recently used evicted first; a refusal or failed fetch is never kept | None | No | deployment |
 | `oauth.clientDocuments.lifetime` | operating | 3600000 | milliseconds | host | Longest a client metadata document is kept, counted from its request; a shorter max-age or Expires is honoured, its Age counts against the time kept, and no-store or no-cache keeps nothing | None | No | deployment |

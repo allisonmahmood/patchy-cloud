@@ -29,8 +29,8 @@ import {
 /** Home's layout; components come from the shell. */
 export const homeStyles = `
   .home-search { margin-top: 20px; }
-  /* From 900px the sidebar holds the search; below it the sidebar folds into Menu, so Home keeps its own. */
-  @media (min-width: 900px) {
+  /* From 1024px the sidebar holds the search; below it the top bar keeps it as an icon, so Home shows its own. */
+  @media (min-width: 1024px) {
     .home-search { display: none; }
   }
   .home { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 36px; align-items: start; margin-top: 28px; }
@@ -141,7 +141,7 @@ const sharedShelf = (shared: readonly GuestGrants.Shared[]) => {
 /**
  * Home at `/`: the viewer's usual patches, the company's tools and its pages, each opening the
  * patch, with About this patch in its menu, and what other companies shared with them. Below
- * 900px it keeps its own search, which the sidebar holds wider. Until the viewer connects an
+ * 1024px it keeps its own search, which the sidebar holds wider. Until the viewer connects an
  * agent it offers Connect your agent, and the caller may lay the Final step panel over it.
  */
 export const renderHome = (input: HomeInput): string => {

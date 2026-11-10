@@ -9,7 +9,7 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, for opening patches rather than managing them: **Your usual**, **Tools** and **Pages**, each patch called by its title and opened by it, with About this patch in its menu, and a way to what is off. The sidebar's search lands here with `?q=` over every live patch; below 900px, where the sidebar folds into Menu, Home shows the same search itself. For a day after someone's first publication a one-line note names it, with Open and Copy link. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries. **Shared with you** follows Home's own shelves.
+The signed-in landing at `/`, for opening patches rather than managing them: **Your usual**, **Tools** and **Pages**, each patch called by its title and opened by it, with About this patch in its menu, and a way to what is off. The sidebar's search lands here with `?q=` over every live patch; below 1024px, where the sidebar folds into a top bar, Home shows the same search itself. For a day after someone's first publication a one-line note names it, with Open and Copy link. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries. **Shared with you** follows Home's own shelves.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
 **Your usual**:
@@ -77,7 +77,7 @@ An act posted from a page whose patch has since changed in the way the act depen
 _Avoid_: conflict, optimistic lock, revision mismatch
 
 **App shell**:
-The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, the places, What's new and the account menu, beside the page. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
+The shared frame for the portal, People, Integrations, Agent access and Your agents: a sidebar with the patch search, New patch, the places (Home, All patches, Your agents and Settings, which holds People, Integrations and Agent access), What's new and the account menu, beside the page; below 1024px, a top bar whose Menu opens the same. Sign-in, create-or-join, device confirmation and error doors keep the card shell; portal not-found pages keep the app shell.
 _Avoid_: layout, template, theme
 
 **Component set**:
