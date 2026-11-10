@@ -38,7 +38,10 @@ test("an owner shares a page from its menu, and the guest opens it from Home and
   await shelf.getByRole("link", { name: `Remove…, ${title}` }).click();
   await expect(page.getByRole("heading", { name: `Remove ${title}?` })).toBeVisible();
   await page.getByRole("button", { name: `Remove ${title}` }).click();
-  await expect(page.getByRole("status")).toHaveText(`Removed ${title}`);
+  // The receipt, beside Home's Connect line for someone with no agent yet.
+  await expect(page.getByRole("status").filter({ hasText: "Removed" })).toHaveText(
+    `Removed ${title}`
+  );
   await expect(shelf).toHaveCount(0);
   expect((await page.goto(patch.address))?.status()).toBe(404);
 });

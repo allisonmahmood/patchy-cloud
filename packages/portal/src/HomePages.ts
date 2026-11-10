@@ -1,5 +1,6 @@
-// Owns Home at `/` and the guide: `/guide`, its steps, Later, a new setup line and its script.
-// Renders with `home.ts` and `guide.ts`; anything another surface needs comes from `shared/`.
+// Owns Home at `/` with its New patch dialog, and the guide: `/guide`, its steps, Later, a new
+// setup line and its script. Renders with `home.ts` and `guide.ts`; anything another surface needs
+// comes from `shared/`.
 import * as ByteSize from "effect/ByteSize";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -16,20 +17,22 @@ import {
   SetupPrompts
 } from "@patchy/auth";
 import { escapeAttribute } from "@patchy/core";
+import { ConnectionAttention } from "@patchy/integrations";
 import { GuestGrants, Patches } from "@patchy/patches";
 import { Limits } from "@patchy/limits";
 import { registry } from "@patchy/limits/registry";
 import {
-  finalStepStyles,
   firstPatch,
   guideScript,
   guideScriptPath,
   renderFinalStep,
+  renderGuide,
+  renderNewPatch,
   renderSetupSteps,
   renderWatch,
   type SetupState
 } from "./guide.js";
-import { homeStyles, renderHome, renderPublishedNote } from "./home.js";
+import { renderHome, renderPublishedNote } from "./home.js";
 import {
   asked,
   callSummary,
@@ -40,12 +43,12 @@ import {
   pageErrors,
   prewarm,
   shareOverlay,
+  turnedAway,
   shareStyles,
   type Routes,
   type Sharing,
   withOverlay
 } from "./shared/handlers.js";
-import { searchQuery, styles } from "./shared/presentation.js";
 
 /** The machine most recently logged in as this user, while any is live. */
 const newestMachine = Effect.fn("HomePages.newestMachine")(function* (userId: string) {
@@ -138,18 +141,60 @@ const setupLine = Effect.fn("HomePages.setupLine")(function* () {
 });
 
 /**
- * Home at `/`: the viewer's usual patches, the company's tools and pages, or what `?q=` finds,
- * which the sidebar's search keeps. Until the viewer connects an agent, the Final step panel sits
- * over it at each sign-in for their first week or first three sign-ins, whichever lasts longer,
- * unless they pressed Later. A refused Share form draws it again with the dialog open.
+ * How many guests each of the viewer's own live company patches has, by name, from the company's
+ * guests in one read; nothing to read when they own none.
+ */
+const guestCounts = Effect.fn("HomePages.guestCounts")(function* (
+  rows: readonly Patches.ReadPatch[]
+) {
+  const { viewer } = yield* context;
+  const counts = new Map<string, number>();
+  if (
+    !rows.some(
+      (row) =>
+        row.patch.state === "live" &&
+        row.patch.scope === "company" &&
+        row.owner.id === viewer.user.id
+    )
+  )
+    return counts;
+  for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(viewer.company.id))
+    for (const patch of guest.patches)
+      if (patch.state === "live") counts.set(patch.name, (counts.get(patch.name) ?? 0) + 1);
+  return counts;
+});
+
+/**
+ * The company's connections that need an admin, for an admin's Home. A connection store that
+ * can't answer leaves them out rather than taking Home down; the Integrations page says why.
+ */
+const connectionsNeedingAttention = Effect.fn("HomePages.connectionsNeedingAttention")(
+  function* () {
+    const { viewer } = yield* context;
+    if (viewer.role !== "admin") return [];
+    return yield* ConnectionAttention.needingAttention(viewer.company.id).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Home left out the company's connections.", error).pipe(Effect.as([]))
+      )
+    );
+  }
+);
+
+/**
+ * Home at `/`: what needs the viewer, their usual patches, what's new, theirs and their
+ * colleagues', and what other companies shared with them. Search lives on All patches, so `?q=`
+ * goes there. `?new` opens New patch over it. Until the viewer connects an agent, the Final step
+ * sits over it at each sign-in for their first week or first three sign-ins, whichever lasts
+ * longer, unless they pressed Later. A refused Share form draws it again with the dialog open.
  */
 export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(function* (
   refused?: Sharing
 ) {
   const { viewer, session, access, url } = yield* context;
+  if (refused === undefined && url.searchParams.has("q"))
+    return HttpServerResponse.redirect(`/patches${url.search}`, { status: 308 });
   const signedIn = yield* RequireSession.SignedIn;
   const at = refused?.at ?? url;
-  const query = searchQuery(at.searchParams.get("q"));
   const patches = yield* Patches.Patches;
   const rows = yield* patches.read({ ...access, state: "all" });
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
@@ -159,7 +204,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
   // Everyone's sign-ins count, so someone who connects and later revokes every key stays out.
   const prompt = yield* SetupPrompts.seen(viewer.user.id, signedIn.sid);
   const first = firstPatch(rows, viewer.user.id, now);
-  // Without the panel, Home still watches for the first publication: after Later, or for a
+  // Without the steps up, Home still watches for the first publication: after Later, or for a
   // while after a computer connects.
   const watch =
     machine === null
@@ -167,43 +212,60 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
       : now - Date.parse(machine.createdAt) < watchWindow &&
         (yield* setupState()).state.kind === "connected";
   const sharing = refused ?? asked(at);
-  const overlay = yield* shareOverlay(rows, sharing);
+  const share = yield* shareOverlay(rows, sharing);
+  const newPatch =
+    share === undefined && at.searchParams.has("new")
+      ? machine === null
+        ? renderNewPatch({
+            connected: false,
+            state: (yield* setupState()).state,
+            setupLink: yield* setupLine(),
+            viewer,
+            publicBaseUrl: session.publicBaseUrl
+          })
+        : renderNewPatch({ connected: true, viewer, computer: machine.name })
+      : undefined;
+  const finalStep =
+    share === undefined && newPatch === undefined && machine === null && prompt.show
+      ? renderFinalStep({
+          state: (yield* setupState()).state,
+          setupLink: yield* setupLine(),
+          viewer,
+          publicBaseUrl: session.publicBaseUrl
+        })
+      : undefined;
   const shared = yield* (yield* GuestGrants.GuestGrants)
     .sharedWith(viewer.user.id)
     .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
+  const calls = yield* callSummary(rows);
+  const guests = yield* guestCounts(rows);
+  const home = renderHome({
+    rows,
+    viewer,
+    opens,
+    now,
+    publicBaseUrl: session.publicBaseUrl,
+    connect: machine === null && finalStep === undefined,
+    ...(first === undefined ? {} : { note: renderPublishedNote(first, session.publicBaseUrl) }),
+    ...(calls === undefined ? {} : { calls }),
+    connections: yield* connectionsNeedingAttention(),
+    guests,
+    turnedAway: new Set(guests.size === 0 ? [] : ((yield* turnedAway(rows))?.keys() ?? [])),
+    shared
+  });
+  const overlay = newPatch ?? finalStep;
   return pageResponse(
     {
-      title: "Home",
-      heading: "",
-      body: `${renderHome({
-        rows,
-        viewer,
-        opens,
-        now,
-        publicBaseUrl: session.publicBaseUrl,
-        query,
-        connected: machine !== null,
-        note: first === undefined ? undefined : renderPublishedNote(first, session.publicBaseUrl),
-        calls: yield* callSummary(rows),
-        shared
-      })}${watch ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
-      styles: styles + homeStyles + finalStepStyles + shareStyles,
+      title: newPatch === undefined ? "Home" : "New patch",
+      heading: home.heading,
+      // Steps over Home follow the agent themselves, so Home watches only without them.
+      body: `${home.body}${watch && overlay === undefined ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
+      // The Share dialog still carries its own styles.
+      ...(share === undefined ? {} : { styles: shareStyles }),
       status: sharing?.status ?? 200,
       app: {
         section: "home",
-        query,
-        ...(overlay === undefined && machine === null && prompt.show
-          ? {
-              viewer,
-              overlay: renderFinalStep({
-                state: (yield* setupState()).state,
-                setupLink: yield* setupLine(),
-                viewer,
-                publicBaseUrl: session.publicBaseUrl,
-                mode: "modal"
-              })
-            }
-          : withOverlay(viewer, overlay))
+        ...(overlay === undefined ? withOverlay(viewer, share) : { viewer, overlay })
       }
     },
     session
@@ -213,7 +275,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
 /** The server owns GET / and its signed-out door alongside the catch-all. */
 export const index = page().pipe(pageErrors);
 
-/** `/guide`, the Final step panel as a page, for anyone not yet connected; others go Home. */
+/** `/guide`, the Final step as a page, for anyone not yet connected; others go Home. */
 const guidePage = Effect.fn("HomePages.guidePage")(function* () {
   const { viewer, session } = yield* context;
   const { connected, state } = yield* setupState();
@@ -225,15 +287,12 @@ const guidePage = Effect.fn("HomePages.guidePage")(function* () {
   return pageResponse(
     {
       title: "Final step",
-      heading: "",
-      body: renderFinalStep({
+      ...renderGuide({
         state,
         setupLink: yield* setupLine(),
         viewer,
-        publicBaseUrl: session.publicBaseUrl,
-        mode: "page"
+        publicBaseUrl: session.publicBaseUrl
       }),
-      styles: styles + finalStepStyles,
       app: { viewer, section: "home" }
     },
     session

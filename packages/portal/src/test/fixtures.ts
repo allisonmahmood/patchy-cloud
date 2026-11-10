@@ -144,6 +144,36 @@ export const services = Layer.mergeAll(
           createdBy: "usr_portal_guests"
         } satisfies ConnectionStore.Connection,
         snapshots: []
+      },
+      {
+        // A mailbox its server stopped letting Patchy into, for Home's Needs attention.
+        connection: {
+          id: "con_home_mailbox",
+          companyId: "cmp_portal_home",
+          integration: "imap",
+          handle: "support",
+          description: "The support inbox",
+          mode: "company",
+          status: "connected",
+          blockGuests: false,
+          display: {
+            host: "imap.example.com",
+            port: 993,
+            security: "tls",
+            username: "support@example.com",
+            paused: {
+              at: "2026-01-01T00:00:00.000Z",
+              reply: "AUTHENTICATIONFAILED",
+              during: "call"
+            }
+          },
+          credentialRevision: 1,
+          metadataRevision: 1,
+          lastTestedAt: null,
+          lastDiscoveredAt: null,
+          createdBy: "usr_portal_home"
+        } satisfies ConnectionStore.Connection,
+        snapshots: []
       }
     ])
   ),
@@ -447,32 +477,6 @@ export const readUser = Effect.fn("PortalFixtures.readUser")(function* (person: 
   return user!;
 });
 export const cardPath = (name: string) => `/patches/${name}`;
-/** The setup line a page shows, as its copy line's text. */
-export const lineOf = (html: string) =>
-  text(html.match(/<code aria-label="Setup line, select to copy">([^<]*)<\/code>/)?.[1] ?? "");
-/** The guide's steps as `[state, title]`, in order. */
-export const steps = (html: string) =>
-  [
-    ...html.matchAll(
-      /<li class="step(?: step-(done|current))?"[^>]*>[\s\S]*?<h2 class="step-title">([\s\S]*?)<\/h2>/g
-    )
-  ].map((match) => [match[1] ?? "upcoming", text(match[2]!)]);
-/** The patch names one kind of Home link points at, in order: `tile-link` (Your usual), `home-tool` (Tools) or `home-page` (Pages). */
-export const shelf = (html: string, kind: "tile-link" | "home-tool" | "home-page") =>
-  [
-    ...html.matchAll(
-      new RegExp(`<a class="(?:tile-row tile-row-plain )?${kind}" href="/[^/"]+/([a-z0-9-]+)"`, "g")
-    )
-  ].map((match) => match[1]!);
-/** The Pages shelf's names marked new to the viewer. */
-export const unread = (html: string) =>
-  [
-    ...html.matchAll(
-      /<a class="tile-row tile-row-plain home-page" href="\/[^/"]+\/([a-z0-9-]+)">([\s\S]*?)<\/a>/g
-    )
-  ]
-    .filter((match) => match[2]!.includes("whats-new-dot"))
-    .map((match) => match[1]!);
 /** The patch titles in All patches' table, in order; fixtures title a patch by its name. */
 export const listed = (html: string) =>
   [
