@@ -16,7 +16,7 @@ import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import {
   Authorization,
   CurrentIdentity,
-  Identity,
+  AuthenticatedIdentity,
   CURRENT_RELEASE,
   MANIFEST_VERSION,
   WIRE_VERSION,
@@ -87,7 +87,7 @@ const noProvenance = {
 
 /** A `Content.publish` input creating a patch as `identity`; override any field. */
 export const publishInput = (
-  identity: Identity,
+  identity: AuthenticatedIdentity,
   overrides: Partial<Content.PublishInput> = {}
 ): Content.PublishInput => ({
   ...publishRecord(),
@@ -106,7 +106,7 @@ export const publishInput = (
  * ids and an object key under the patch; override any field.
  */
 export const recordInput = (
-  identity: Identity,
+  identity: AuthenticatedIdentity,
   overrides: Partial<Patches.RecordInput> = {}
 ): Patches.RecordInput => {
   const patchId = overrides.patchId ?? newPatchId();
@@ -191,37 +191,37 @@ const company = {
 
 /** The identities the tests act as; two machines may act as the same user. */
 export const identities = {
-  admin: new Identity({
+  admin: new AuthenticatedIdentity({
     user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
     company,
     role: DEV_SEED.role,
     machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
   }),
-  uploader: new Identity({
+  uploader: new AuthenticatedIdentity({
     user: { id: "usr_uploader", email: "uploader@patchy.local", name: "Uploader" },
     company,
     role: "member",
     machine: { id: "tok_uploader", name: "Upload machine" }
   }),
-  sibling: new Identity({
+  sibling: new AuthenticatedIdentity({
     user: { id: "usr_uploader", email: "uploader@patchy.local", name: "Uploader" },
     company,
     role: "member",
     machine: { id: "tok_sibling", name: "Sibling machine" }
   }),
-  reader: new Identity({
+  reader: new AuthenticatedIdentity({
     user: { id: "usr_reader", email: "reader@patchy.local", name: "Reader" },
     company,
     role: "member",
     machine: { id: "tok_reader", name: "Reader machine" }
   }),
-  quota: new Identity({
+  quota: new AuthenticatedIdentity({
     user: { id: "usr_quota", email: "quota@patchy.local", name: "Quota" },
     company,
     role: "member",
     machine: { id: "tok_quota", name: "Quota machine" }
   }),
-  quotaSibling: new Identity({
+  quotaSibling: new AuthenticatedIdentity({
     user: { id: "usr_quota", email: "quota@patchy.local", name: "Quota" },
     company,
     role: "member",
@@ -289,7 +289,7 @@ export const authorization = Layer.succeed(
 );
 
 /** The client side: present this identity's credential on every request. */
-export const as = (identity: Identity) =>
+export const as = (identity: AuthenticatedIdentity) =>
   HttpApiMiddleware.layerClient(Authorization, ({ next, request }) =>
     next(HttpClientRequest.bearerToken(request, identity.machine.id))
   );

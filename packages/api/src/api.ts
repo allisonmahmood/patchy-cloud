@@ -23,6 +23,7 @@ import {
   DeviceLoginPoll,
   DeviceLoginStarted,
   Identity,
+  AuthenticatedIdentity,
   LoggedOut,
   NotFound,
   NameTaken,
@@ -112,7 +113,7 @@ import {
 } from "./devRead.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
-export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
+export class CurrentIdentity extends Context.Service<CurrentIdentity, AuthenticatedIdentity>()(
   "@patchy/api/api/CurrentIdentity"
 ) {}
 
@@ -165,7 +166,7 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
       .middleware(Authorization)
       .annotateMerge(
         describe(
-          "Who the bearer acts as: the user, company, role (`member`, `admin` or `super_admin`) and machine."
+          "Who the bearer acts as: the user, company, role (`member` or `admin`), superAdmin flag and machine."
         )
       ),
     HttpApiEndpoint.post("logout", "/logout", {

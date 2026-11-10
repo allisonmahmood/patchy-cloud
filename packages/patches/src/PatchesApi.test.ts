@@ -29,7 +29,7 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import {
   Authorization,
-  type Identity,
+  type AuthenticatedIdentity,
   PatchyApi,
   PatchesGroup,
   GuestRequest,
@@ -1335,7 +1335,7 @@ const pairedRoutes = Effect.fn("pairedRoutes")(function* (quota = 100) {
 
 /** One paired client per identity: two users of one company by default, or one owner twice. */
 const racingClients = Effect.fn("racingClients")(function* (
-  identities: ReadonlyArray<Identity> = [uploader, reader],
+  identities: ReadonlyArray<AuthenticatedIdentity> = [uploader, reader],
   quota = 100
 ) {
   const routes = yield* pairedRoutes(quota);
