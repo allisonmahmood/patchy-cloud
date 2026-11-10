@@ -17,6 +17,9 @@ import {
   switchForm,
   textarea
 } from "./controls.js";
+import { attentionRow } from "./attention.js";
+import { copyButton } from "./copy-button.js";
+import { region } from "./region.js";
 import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 import {
   card,
@@ -41,6 +44,7 @@ import {
   settingsPage,
   type Template
 } from "./templates.js";
+import { usualTiles } from "./usual.js";
 
 /**
  * The `/~ui` gallery, development only: every helper in each state it has, a state table per
@@ -454,6 +458,60 @@ const disclosures = demo(
   ])
 );
 
+const homeParts = demo(
+  "Attention rows, usual tiles and copy buttons",
+  `<div class="stack">${rows(
+    [
+      attentionRow({
+        lead: patch("new-business"),
+        name: "New Business",
+        href: "#rows",
+        problem: "2 calls failed in the last 24 hours",
+        fix: linkButton("View log", "#rows", { size: "sm" })
+      }),
+      attentionRow({
+        name: "imap/support",
+        href: "#rows",
+        problem: "The mail server refused the password",
+        detail: "Paused",
+        fix: linkButton("Replace password…", "#rows", { size: "sm" })
+      })
+    ],
+    true
+  )}${region({
+    id: "g-usual",
+    title: "Your usual",
+    body: usualTiles(
+      (
+        [
+          ["new-business", "New Business", "Tool · You", 2],
+          ["spend", "Spend requests", "Tool · Grace", 2],
+          ["brief", "Kickoff brief", "Page · Ada", 1],
+          ["kudos", "Kudos", "Tool · Grace", 2]
+        ] as const
+      ).map(([name, title, meta, tier]) => ({
+        mark: patch(name, tier),
+        name: title,
+        meta,
+        href: "#rows"
+      }))
+    )
+  })}<div class="cluster">${copyButton("https://example.com/acme/kudos", { label: "Copy link", ariaLabel: "Copy link to Kudos", size: "sm" })}</div></div>`,
+  `${stateTable("Region", [
+    ["Rest", "a section whose title names it as a landmark, for a page of several"]
+  ])}${stateTable("Attention row", [
+    ["Rest", "what broke in danger text, a quiet detail, and the one fix at its end"],
+    ["Linked", "the whole row opens what broke; the fix stays pressable above it"]
+  ])}${stateTable("Usual tile", [
+    ["Rest", "flat on a hairline: the mark, then the name over its kind and owner"],
+    ["Hover (fine pointer)", "an ink edge and a lift"],
+    ["Narrow", "two a row; on a phone the name alone"]
+  ])}${stateTable("Copy button", [
+    ["Without script", "not there, so nothing offers a copy that can't happen"],
+    ["With script", "its label, then Copied"]
+  ])}`
+);
+
 const templatesSection = section({
   title: "Five templates",
   body: rows(
@@ -475,7 +533,7 @@ const templatesSection = section({
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${headers}${cards}${disclosures}${marks}${setupSteps}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${marks}${setupSteps}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [

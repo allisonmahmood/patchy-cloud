@@ -68,7 +68,8 @@ test("on a phone the top bar's Menu holds New patch and the places without scrip
     expect((await search.boundingBox())!.width).toBeGreaterThan(200);
     await search.fill("crew");
     await search.press("Enter");
-    await expect(page).toHaveURL(/\/\?q=crew$/);
+    // Search lives on All patches; the sidebar's form reaches it through Home.
+    await expect(page).toHaveURL(/\/patches\?q=crew$/);
   } finally {
     await context.close();
   }

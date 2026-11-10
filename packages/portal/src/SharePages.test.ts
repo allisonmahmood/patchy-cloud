@@ -212,14 +212,12 @@ it.layer(socket)("the Share dialog on a socket", (it) => {
       });
       const shelf = (html: string) =>
         text(
-          html.match(
-            /<section class="home-shelf" aria-labelledby="shared-heading">[\s\S]*?<\/section>/
-          )?.[0] ?? ""
+          html.match(/<section class="section" id="shared"[^>]*>[\s\S]*?<\/section>/)?.[0] ?? ""
         );
 
-      // Home's own empty state stays, with the shelf after it; a search leaves the shelf out.
+      // Home's own empty state stays, with the section after it; a search leaves Home.
       const home = yield* (yield* request("/", guests.member)).text;
-      assert.include(text(home), "Nothing here yet");
+      assert.include(text(home), "No patches yet");
       assert.include(shelf(home), "Shared with you Site notes Harbor Works");
       assert.isTrue(links(home).some((link) => link.href === `/${workspace.handle}/${patch.name}`));
       assert.strictEqual(shelf(yield* (yield* request("/?q=site", guests.member)).text), "");

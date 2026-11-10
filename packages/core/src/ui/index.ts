@@ -15,6 +15,11 @@ export {
 } from "./controls.js";
 export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
 export { uiScript, uiScriptPath, uiScriptTag } from "./enhancer.js";
+export { attentionRow } from "./attention.js";
+export { copyButton } from "./copy-button.js";
+export { region } from "./region.js";
+export { usualTiles } from "./usual.js";
+export type { UsualTile } from "./usual.js";
 export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";

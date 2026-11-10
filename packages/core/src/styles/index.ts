@@ -18,6 +18,8 @@ import { tables } from "./tables.js";
 import { tiles } from "./tiles.js";
 import { tokens } from "./tokens.js";
 import { type } from "./type.js";
+import { usual } from "./usual.js";
+import { visibility } from "./visibility.js";
 import { whatsNew } from "./whats-new.js";
 
 /**
@@ -46,7 +48,9 @@ export const chunks = {
   doors,
   templates,
   whatsNew,
-  switcher
+  switcher,
+  usual,
+  visibility
 } as const;
 
 export type ChunkName = keyof typeof chunks;

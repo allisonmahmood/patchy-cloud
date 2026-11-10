@@ -4,6 +4,7 @@ export * as SqlConnectionStore from "./SqlConnectionStore.js";
 export * as CredentialKeys from "./CredentialKeys.js";
 export * as ConnectionPage from "./ConnectionPage.js";
 export * as ConnectionPages from "./ConnectionPages.js";
+export * as ConnectionAttention from "./ConnectionAttention.js";
 export * as ConnectionsApi from "./ConnectionsApi.js";
 export * as DevReads from "./DevReads.js";
 export * as PostgresSource from "./postgres/Source.js";

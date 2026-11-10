@@ -9,19 +9,27 @@ Where a signed-in person finds and manages their company's patches: Home at `/`,
 _Avoid_: dashboard, directory
 
 **Home**:
-The signed-in landing at `/`, for opening patches rather than managing them: **Your usual**, **Tools** and **Pages**, each patch called by its title and opened by it, with About this patch in its menu, and a way to what is off. The sidebar's search lands here with `?q=` over every live patch; below 1024px, where the sidebar folds into a top bar, Home shows the same search itself. For a day after someone's first publication a one-line note names it, with Open and Copy link. Until the viewer connects an agent, the guide's Final step panel sits over it and it offers Connect your agent. A search that matches nothing offers a line to hand an agent, built from the query. An owner whose tier 2 patches failed in the last day sees them named at its top, each linked to its failed log entries. **Shared with you** follows Home's own shelves.
+The signed-in landing at `/`, in the order people come for: **Needs attention**, **Your usual**, **New**, **Yours**, **From colleagues** and **Shared with you**. Each patch is called by its title and opened by it, and its menu holds About this patch. Below eight live patches Home reads whole, without Your usual and New. Its one or two notices come first: for a day after someone's first publication, "<title> is live" with Open and Copy link, and, until the viewer connects an agent and while the Final step isn't over it, Connect your agent, leading to `/guide`. Search lives on All patches, so `/?q=` goes to `/patches?q=`. `/?new` opens **New patch** over it. A company with nothing live says so in Home's place, with Shared with you after it.
 _Avoid_: dashboard, landing, index (the alphabetical list beside the card it replaced), home page (the root is a sign-in door when signed out)
 
+**Needs attention** (Home):
+Home's first section, shown only when something is wrong, each row saying what broke and holding the one action that fixes it: the viewer's own tools that failed in the last 24 hours, with View log, and, for admins, the company's connections that need one, in Integrations' words, with their fix. A connection is there when its provider stopped it (an Attio key found writable, an IMAP login the mail server refused), when Pidgeon still holds a key Patchy couldn't revoke, when live patches use a Pidgeon test key, or when an admin disconnected it while live patches still declare it. All patches' Needs attention is its own list.
+_Avoid_: alerts, warnings, inbox
+
 **Your usual**:
-Home's first shelf: up to four live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. Reopening a patch within ten minutes counts once, so flipping between two patches doesn't take the shelf over. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. Its tiles carry only the mark and title, since the viewer already knows them. It reads only the viewer's own opens.
+Up to four tiles of the live patches the viewer opened most in the last 30 days, by their opens' halving score, and nothing else. Reopening a patch within ten minutes counts once, so flipping between two patches doesn't take it over. With no opens yet it is titled "Popular at" the company and holds the company's most-visited. A tile carries the mark, the title, and whether it is a tool or a page and whose. It reads only the viewer's own opens.
 _Avoid_: favourites, pinned (pins are not built), recent
 
-**Tools** and **Pages**:
-Home's split of live patches by their current version's tier: **Tools** are tier 2, opened and used; **Pages** are tier 1, read and passed around. Core's `isPage` decides, for the shelves, the mark and the welcome page alike. Each heading leads to its tab on All patches. A republish that changes the tier moves the patch. Pages **new to you** are a colleague's company-scope pages published in the last week that the viewer hasn't opened since, listed first with a dot; a public page never claims to be unread, since it may have been read signed out, where nothing records the open.
-_Avoid_: apps, documents, docs, kinds (nothing is declared; the tier decides)
+**New** (Home):
+Up to three of colleagues' patches made in the last week that the viewer hasn't opened, newest first, each with Open in a new tab. The same patches carry a dot under From colleagues. A public page is never new, since opening it records nothing.
+_Avoid_: unread, recent, latest
+
+**Yours** and **From colleagues**:
+Home's two tables of live patches, A–Z and never re-sorted. **Yours** holds the viewer's own, with who can open each (Company, Company and its guests, or Public), the call summary for tools (None, No calls yet or how many failed in 24 hours) and Share on every row, which opens the Share dialog over Home. **From colleagues** holds everyone else's, with owner and when it last changed, the first twelve, and See all on All patches. A phone keeps the title and menu, and a failing tool's count under its title. Core's `isPage` tells a tool (tier 2) from a page (tier 1), for the mark and the welcome page alike.
+_Avoid_: shelves, apps, documents, kinds (nothing is declared; the tier decides)
 
 **Shared with you**:
-Home's shelf of other companies' patches shared with the viewer as their [guest](../companies/GLOSSARY.md): each opens the patch, or, while its guests can't open it, says why, and its menu holds **Remove…**, which asks on a confirmation page and then ends the viewer's own grant. It sits after Home's own shelves, or after its empty state, and a search leaves it out.
+Home's last section, of other companies' patches shared with the viewer as their [guest](../companies/GLOSSARY.md), each with its company and who shared it: each opens the patch, or, while its guests can't open it, says why, and its menu holds **Remove…**, which asks on a confirmation page and then ends the viewer's own grant. It stays when the company has nothing live.
 _Avoid_: shared patches, guest patches, inbox
 
 **Switcher**:
@@ -53,8 +61,12 @@ The card's tab at `/patches/<name>/log` for its current owner and admins: its lo
 _Avoid_: audit log, activity feed, call log (Integrations' per-connection list)
 
 **Guide**:
-The **Final step** panel: connecting an agent, the last step between a person and Patchy, in two steps, giving the agent the setup line and confirming its code. It sits over Home until the viewer has a live machine token, for their first week or first three sign-ins, whichever lasts longer, with **Later** for the rest of a sign-in; Home's **Connect your agent** leads to it as a page at `/guide`. Its progress comes from the viewer's live machine tokens and their patches' publications, never a stored checklist; connected, `/guide` sends them Home.
+The **Final step**: connecting an agent, the last step between a person and Patchy, in two steps, giving the agent the setup line and confirming its code. It is a dialog over Home until the viewer has a live machine token, for their first week or first three sign-ins, whichever lasts longer, with **Later** as its only way out for the rest of a sign-in; a phone says the step happens on a computer, with Send this to my computer, and words Later "Look around <company> first". Home's **Connect your agent** leads to it as a page at `/guide`, and **New patch** holds the same steps from the same state. Its progress comes from the viewer's live machine tokens and their patches' publications, never a stored checklist; connected, `/guide` sends them Home.
 _Avoid_: onboarding (the global skill's welcome page is that), tutorial, checklist, wizard
+
+**New patch**:
+The dialog over Home at `/?new`, which the sidebar's New patch opens: the line someone gives their agent. Connected, a starter line to copy and the computer their agent builds on; not yet, the Final step's two steps.
+_Avoid_: create, new project, wizard
 
 **Settings**:
 The card's tab at `/patches/<name>/settings` for its owner and admins: the owner with admin-only Reassign…, the description, and Retire… and Delete…. Who can open it is the Share dialog's; the served version changes on Versions and an uncomplicated restore from the card's header. Retire, delete, restore with off sources and reassign lead to confirmation pages. A done act lands with a receipt naming it. A refused form shows the tab it sits on; a refusal of who may act, or of a form whose name now names another patch, shows Overview.
