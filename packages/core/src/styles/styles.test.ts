@@ -29,6 +29,10 @@ describe("the app's stylesheet", () => {
     expect(found, "pnpm ui:report lists these; draw each from a token").toEqual([]);
   });
 
+  it("never fixes a background to the window, so scrolling repaints nothing", () => {
+    expect(appStyles).not.toMatch(/background(-attachment)?:[^;}]*\bfixed\b/);
+  });
+
   it("sets nothing in capitals", () => {
     expect(appStyles).not.toMatch(/text-transform:\s*uppercase/);
   });

@@ -2,6 +2,7 @@ import { fontFaces } from "../fonts.js";
 import { appShell } from "./app-shell.js";
 import { base } from "./base.js";
 import { buttons } from "./buttons.js";
+import { canvas } from "./canvas.js";
 import { changelog } from "./changelog.js";
 import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
@@ -41,6 +42,7 @@ export const chunks = {
   fonts: fontFaces,
   tokens,
   base,
+  canvas,
   type,
   marks,
   buttons,
