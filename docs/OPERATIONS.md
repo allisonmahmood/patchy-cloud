@@ -962,6 +962,12 @@ While a Deploy run is unfinished, or the one updated last did not succeed, the
 live commit is uncertain, by the same rule a deploy pins it with (AGENTS.md ›
 Deploying), and the check fails until it settles.
 
+For a PR explicitly labelled `one-way`, the job runs only the initial live
+release and the upgrade, with the same checks on both. Its summary says
+**Upgrade rehearsal**, and makes no rollback claim. The PR's Release impact
+answers must explain what prevents rollback; the label does not skip upgrade
+verification. Other PRs retain the complete rollback and return-forward journey.
+
 A pass means the exercised paths survived, not that every rollback works. The
 rehearsal runs the dev runner's local storage and execution, not Object Storage
 or the fleet, and reaches only what the brightline scenario and its patches use.

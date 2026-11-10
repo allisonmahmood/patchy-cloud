@@ -4,7 +4,7 @@ The [foundation map](https://github.com/allisonmahmood/patchy-cloud/issues/5), [
 
 Built and live at [cloud.patchyhq.com](https://cloud.patchyhq.com): tier 1 pages that run in a sandboxed browser frame, tier 2 tools with hosted query, mutation and action handlers, and [Patchy MCP](#patchy-mcp), through which people's own agents use tier 2 patches. A single HTML file publishes as a tier 1 page; tiers 1 and 2 publish from a repo. Repos have code-first config, a generated typed client, release-bound project skills and a local PGlite dev loop with fixtures. Publish is replay-safe and provisions patch-owned tables and file stores additively into a database per company. Tier 1 reaches only its own patch: its tables and files through the shell broker as the viewer, the viewer's identity and routing. Tier 2 pages call handlers that enforce the patch's rules, and those handlers also reach read-only shared tables and stores, the member directory and company Postgres, PostHog, Pidgeon and Attio connections. Both tiers support live queries.
 
-Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Super admins can manage every company patch through metadata-only oversight on its portal card; regular admins manage patches they can open. Neither role grants content access. An owner removed from every granting team sees their inaccessible ownership under Yours, and entitled admins see it under Needs attention. Recovery restores team membership or explicitly reassigns to an active company person who can open the patch. Reassignment checks current actor, target, audience and expected owner under company/patch/target locks, preserves historical publishers, and never publishes. Owners can inspect administrative self-joining records for their patch’s current granting teams, including while inaccessible. Publishing still requires current ownership and content access. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
+Signed-in members find company patches at `/` and open their cards at `/patches/<name>`. Owners manage descriptions, sharing, served versions and the lifecycle from the portal or CLI. Patches stay live or retired indefinitely; deletion starts a 30-day recovery window. Off addresses show colleagues an actor-stamped notice and a route to restore. Super admins can manage every company patch through metadata-only oversight on its portal card; regular admins manage patches they can open. Neither role grants content access. An owner removed from every granting team sees their inaccessible ownership under Yours, and entitled admins see it under Needs attention. Recovery restores team membership or explicitly reassigns to an active company person who can open the patch. Reassignment checks current actor, target, audience and expected owner under company/patch/target locks, preserves historical publishers, and never publishes. Owners can inspect attributable administrative self-joining records for their patch’s current granting teams that they may see under team visibility rules. Restricted team names remain hidden after access is lost; the underlying audit records are retained. Publishing still requires current ownership and content access. Deactivation and reactivation offer patch selections with dependant and source warnings, committed together with the user's access change.
 
 Agents discover company tools and data sources through `patchy list` and its patch, primitive and connection drill-downs. Description edits pull back into the repo at refresh, a new dev start and publish; a running dev session takes them with refresh. Clerk sign-in, create-or-join, company administration, company/public sharing and machine login, logout and revocation are built. Postgres connections have browser administration, immutable schema snapshots and generated relation clients; PostHog connections read one PostHog Cloud project through named, shaped HogQL queries. Pidgeon connections hold a key Patchy mints for one email address, which patches read and, with a send key, reply, send and triage from. Attio connections hold a read-only workspace key, through which patches read the workspace's records, list entries and members with a client typed from its snapshot. Signed-in pages share one sidebar shell and component set.
 
@@ -637,7 +637,7 @@ An **admin** invites ordinary members, deactivates/reactivates ordinary members,
 
 Existing admins and their pending administrator invitations migrate to super admins; existing members retain their roles. Storage retains the legacy `member`/`admin` values with an additive regular-admin flag: super admins remain stored admins, and regular admins are stored members with the flag. An older server therefore keeps its last-admin safeguard and sees regular admins as ordinary members. Invitation acceptance preserves the flag across rollback; later legacy role changes clear prior flags. Returning to this release restores the three-role interpretation. New company creators start as super admins. Multiple super admins are allowed, and company-before-user locking ensures concurrent demotions/deactivations retain at least one active super admin. Reactivation keeps revoked credentials ended.
 
-Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Patch audiences are persisted by Patches, with team/all-guests activation blocked until the whole #1192 enforcement stack is assembled. Separate super-admin oversight and removed-owner recovery remain #1288; connection grants remain #1289.
+Both administrative roles manage today's openable company/public patches from the portal; publication stays owner-only. Roles do not add content admission. Patches owns the current audience decision; roles alone do not grant content access.
 
 Today **People**, at `/company`, lists users, roles, active/deactivated state and pending invites
 in one table, with how many live patches each person owns among those the reader
@@ -2059,52 +2059,18 @@ In PostHog, activation is one query. Take the people whose `user.joined` falls i
 
 **The known gap.** A public patch's public page is served without a session, so a colleague who reads it signed out records no open, and that read never counts towards activation. That false negative is accepted rather than attributing session-free public pages. Opens recorded before `patch.first_opened` existed report nothing either, so people who joined before it shipped can read as not activated.
 
-### Patch audience assembly (#1286)
+### Patch audiences
 
-A patch stores its audience independently of its immutable versions: Company, one or
-more existing teams by union, or eligible Public, plus specific company-space guests
-or all current/future guests minus named exclusions. Guests need existing active Patchy
-accounts. Existing named grants seed the company guest pool; adding a patch guest also
-invites them into that space. Removing a guest from one patch leaves that membership;
-removing them company-wide ends it. Guest grants remain subject to existing resource,
-handler, connection and current-version restrictions. Public remains current-version-only,
-with no public tier 2; exclusions do not restrict anonymous Public access.
+A patch is open to its company, selected teams by union, or eligible Public, with independent named guest grants per patch. Sharing with one guest opens only that patch. Guests need existing active outside-company accounts; current-version, resource, handler and connection restrictions still apply. Public has no tier 2 and opens only the current version anonymously.
 
-Agents offer the first-publish audience choice unless already supplied. For compatibility,
-omitted API/CLI audiences default to Company-only. Audience and version commit atomically. File and repo publishes report the committed
-audience; lost-response receipts remain replayable. Updates retain the audience. Publication
-requires ownership and current content access. An owner/member can select only teams they
-can access; an admin with patch access can select other teams, provided the owner remains
-entitled. Ownership and administrative role alone never grant content admission. Later
-membership removal can make an owner inaccessible; #1288 supplies recovery.
+First publication defaults to Company unless another audience is supplied. The first version and audience commit atomically. Later publication retains the audience; publishing requires ownership and current access. Owners and members select teams they can access. An admin who can access the patch can include other teams, provided the owner remains included. Role and ownership alone do not grant content access. Membership removal can leave an owner needing an admin to restore access or reassign the patch.
 
-Patches owns one current member audience decision with batched team-membership reads,
-audience revisions, transactional patch wakes and team references. Browser discovery,
-cards, direct/alias/version/raw-content routes and inventory use it. CLI/MCP/runtime
-and shared-source integration/live fencing remain with #1287/#1290 and consume this
-same decision through Hosting adapters, not imports from Runtime into Patches/Companies.
-A temporary internal assembly barrier defaults off and refuses both writes and admission
-for team/all-guests audiences. Tests can assemble those paths explicitly; Hosting does not
-enable them in this partial stack. Remove the barrier only with the completed enforcement
-stack; unknown/inactive audiences never become Company. #1291 verifies activation and
-rollback. These PRs land together; no deployment is implied.
+Audience edits preserve named guest grants. Member edits preserve existing teams hidden from the member. Legacy Company flags preserve team restrictions; widening requires an explicit audience change. Authorized administrators can repair sharing while an owner is deactivated. Restricted source and guest details follow the viewer's patch access.
+
+Scope and team-grant rows are the member audience authority; named guest grants are separate. Audience changes advance lifecycle authority and wake readers. Every surface consumes the same current audience decision. Unknown team audiences never become Company.
 
 ### Runtime audience revocation
 
-Runtime's Hosting adapter asks Patches' current audience decision for same-company viewers
-on admission and reauthorization, including owned-resource callbacks, nested handler calls and
-MCP tool callbacks. Role and ownership do not confer content access. Existing guest and public
-restrictions remain separate.
+Role and ownership alone do not confer content access. Admission, nested calls and protected callbacks check current eligibility. Live results are rechecked before delivery, and changes during a resource snapshot discard that result. Membership wakes close streams whose viewers lost access. Queries that read the member directory also depend on its revision.
 
-Live reads include the destination patch lifecycle/audience revision and Companies' committed
-member-directory revision even without a declared directory dependency. They use the existing
-wakes, periodic durable reconciliation and snapshot fences; shared-resource and connection
-authority can extend that same dependency vector. A changed authority during a snapshot
-discards the result, and the next admission checks current eligibility. Failed authority reads
-refuse delivery rather than reuse a previous admission. Reconnects reauthorize.
-
-A protected request/callback admitted before a removal commits may finish, including an atomic
-mutation. Removal does not cancel or undo such a transaction, retract copied data or erase bytes
-already delivered. Subsequent admission refuses the removed viewer, and subscription results
-are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
-The internal audience assembly barrier stays disabled pending the complete access stack.
+Work admitted before a removal commits may finish, including an atomic mutation. Removal does not retract delivered bytes or undo committed work. Subsequent admission refuses the removed viewer; restoration permits fresh admission. Failed authority reads refuse protected delivery.

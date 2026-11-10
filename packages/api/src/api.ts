@@ -18,11 +18,13 @@ import * as HttpApiSecurity from "effect/http-api/HttpApiSecurity";
 import * as OpenApi from "effect/http-api/OpenApi";
 import {
   BadRequest,
+  AudienceRefused,
   Conflict,
   DeviceLoginGone,
   DeviceLoginPoll,
   DeviceLoginStarted,
   Identity,
+  AuthenticatedIdentity,
   LoggedOut,
   NotFound,
   NameTaken,
@@ -113,7 +115,7 @@ import {
 } from "./devRead.js";
 
 /** The identity a valid bearer token resolves to, provided to every protected handler. */
-export class CurrentIdentity extends Context.Service<CurrentIdentity, Identity>()(
+export class CurrentIdentity extends Context.Service<CurrentIdentity, AuthenticatedIdentity>()(
   "@patchy/api/api/CurrentIdentity"
 ) {}
 
@@ -143,7 +145,7 @@ const protectedErrors = [BadRequest, NotFound, RateLimited] as const;
  */
 const patchRouteErrors = [...protectedErrors, RequestTargetTooLong] as const;
 const patchParams = { patchId: Schema.String };
-const ownerRouteErrors = [...patchRouteErrors, NotOwner, WrongState] as const;
+const ownerRouteErrors = [...patchRouteErrors, AudienceRefused, NotOwner, WrongState] as const;
 const readParams = { patchRef: Schema.String };
 const readQuery = { state: Schema.optionalKey(PatchStateFilter) };
 /** A bare query flag is true; clients encode booleans as true/false. */
@@ -166,7 +168,7 @@ export class AuthGroup extends HttpApiGroup.make("auth", { topLevel: true })
       .middleware(Authorization)
       .annotateMerge(
         describe(
-          "Who the bearer acts as: the user, company, role (`member`, `admin` or `super_admin`) and machine."
+          "Who the bearer acts as: the user, company, role (`member` or `admin`), superAdmin flag and machine."
         )
       ),
     HttpApiEndpoint.post("logout", "/logout", {
@@ -242,6 +244,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
         InvalidDescription,
         HasDependants,
         Tier2NotPublic,
+        AudienceRefused,
         NotAdditive,
         PublishUnavailable,
         Conflict,
@@ -313,7 +316,7 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
           "Each artifact uses `PATCHY_MAX_BUNDLE_BYTES` " +
           "(10 MiB), with oversized artifacts refused as 413. Creates spend the per-token create limit " +
           "and live-patch quota; updates do not. Omitted create audiences default to Company; updates retain their audience unless explicitly changed. " +
-          "Audience commits atomically with the first version and every publish reports it. Team and all-company-guest audiences remain blocked until downstream enforcement is assembled. `manifest.name` is an exact company-scoped name " +
+          "Audience commits atomically with the first version and every publish reports it. Named guest grants are independent of the member audience. `manifest.name` is an exact company-scoped name " +
           "(3–32 lowercase letters, digits or hyphens, starting and ending with a letter or digit); " +
           "another patch's current name, or any name of a retired or deleted patch, answers 409 `name_taken` on create or rename. " +
           "`patches` and `connections` are reserved names and answer 422 `reserved_name` on create. " +
@@ -485,11 +488,11 @@ export class PatchesGroup extends HttpApiGroup.make("patches", { topLevel: true 
       error: [...ownerRouteErrors, Tier2NotPublic, PayloadTooLarge]
     }).annotateMerge(
       describe(
-        "Change the sharing scope of a patch owned by the bearer token's user, without publishing a version. " +
+        "Change a patch member audience without publishing a version. `audience` selects Company, Public or named teams; named guest grants are retained. Legacy `scope: company` preserves existing teams. " +
           "`company` requires a company member's browser session; `public` lets anyone with the link open the current version. " +
           "Only the current version of a public patch is public; older versions stay behind the company door. " +
           "Public sharing while the served version is tier 2 answers `tier2_not_public`. " +
-          "A same-company non-owner answers 403 `not_owner`, including an admin's machine token; another company " +
+          "A non-owner within the audience answers 403 `not_owner`, including an admin's machine token; people outside the audience or company " +
           "answers 404. Only live patches permit scope changes, otherwise `wrong_state`. The current public version may be cached for 60 seconds " +
           "at both `/<company>/<name>` and `/<company>/<name>/~v/<current n>`; older versions and company patches are " +
           "`private, no-store` and answer 401 without a session. " +
