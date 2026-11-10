@@ -16,8 +16,7 @@ import {
   prefixInput,
   refusal as pageRefusal,
   row,
-  rows,
-  typedExactly
+  rows
 } from "@patchy/core";
 import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
@@ -215,18 +214,17 @@ const render = Effect.fn("Join.render")(function* (
     hint: "Lowercase letters, digits and hyphens, 3–32 characters. It can’t change later.",
     ...(handleAt === undefined ? {} : { error: fieldError(handleAt) }),
     control: (aria) =>
-      typedExactly(
-        prefixInput(aria, {
-          name: "handle",
-          prefix: address,
-          value: handle,
-          required: true,
-          maxlength: 32,
-          pattern: "[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]",
-          autocomplete: "off",
-          autofocus: handleAt !== undefined
-        })
-      )
+      prefixInput(aria, {
+        name: "handle",
+        prefix: address,
+        value: handle,
+        required: true,
+        maxlength: 32,
+        pattern: "[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]",
+        autocomplete: "off",
+        exact: true,
+        autofocus: handleAt !== undefined
+      })
   });
   return {
     title: "Create your company",

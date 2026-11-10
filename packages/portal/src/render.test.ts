@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RequireSession } from "@patchy/auth";
-import { renderAgentAside, shownTitle } from "./render.js";
+import { renderAgentAside } from "./render.js";
 
 const viewer = (role: "admin" | "member") =>
   ({
@@ -9,26 +9,6 @@ const viewer = (role: "admin" | "member") =>
     role,
     whatsNewSeen: 0
   }) satisfies RequireSession.Viewer["Service"];
-
-describe("shownTitle", () => {
-  const patch = (title: string) => ({ name: "new-business", title });
-
-  it("leaves out the company its own HTML names after the title", () => {
-    for (const title of [
-      "New Business · Brightline Studio",
-      "New Business | brightline studio",
-      "New Business – Brightline Studio",
-      "New Business - Brightline Studio"
-    ])
-      expect(shownTitle(patch(title), "Brightline Studio")).toBe("New Business");
-  });
-
-  it("keeps a title whose last part is anything else, and falls back to the name", () => {
-    expect(shownTitle(patch("Pitch · Library"), "Brightline Studio")).toBe("Pitch · Library");
-    expect(shownTitle(patch("Brightline Studio"), "Brightline Studio")).toBe("Brightline Studio");
-    expect(shownTitle(patch("  "), "Brightline Studio")).toBe("new-business");
-  });
-});
 
 describe("renderAgentAside", () => {
   const tools = [

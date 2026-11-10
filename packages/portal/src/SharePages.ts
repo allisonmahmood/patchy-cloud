@@ -58,7 +58,7 @@ const leave = Effect.fn("SharePages.leave")(function* (patchId: string, method: 
   if (method === "GET")
     return pageResponse(
       {
-        title: `Remove ${patchTitle(shared)}?`,
+        title: `Remove ${patchTitle(shared, shared.company.name)}?`,
         ...renderLeaveConfirmation(shared),
         app: { viewer, section: "home" }
       },
@@ -72,7 +72,7 @@ const leave = Effect.fn("SharePages.leave")(function* (patchId: string, method: 
     }),
     {
       userId: viewer.user.id,
-      text: `Removed ${patchTitle(shared)}`,
+      text: `Removed ${patchTitle(shared, shared.company.name)}`,
       publicBaseUrl: session.publicBaseUrl
     }
   );
@@ -122,7 +122,7 @@ export const layer = (pages: PagesBehind): Routes => {
       return yield* pages.card(name, { status: 403, notice: forbidden });
     const actor = { userId: viewer.user.id, admin: viewer.role === "admin" };
     const at = behind(form.back, name, session.publicBaseUrl);
-    const title = patchTitle(selected.patch);
+    const title = patchTitle(selected.patch, viewer.company.name);
     const grants = yield* GuestGrants.GuestGrants;
     /**
      * Back to the page behind with the dialog open, asking about going public when `confirm`, and a

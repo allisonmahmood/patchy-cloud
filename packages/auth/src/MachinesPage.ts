@@ -58,6 +58,7 @@ import {
   settingsPage
 } from "@patchy/core";
 import * as AgentConnections from "./AgentConnections.js";
+import { getAnAgent } from "./getAnAgent.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as RequireSession from "./RequireSession.js";
@@ -95,6 +96,46 @@ const appMark = (name: string) => {
     app === "another" ? (Array.from(name.trim())[0]?.toUpperCase() ?? "?") : apps[app].letters
   );
 };
+
+/** Where Reconnect sets up again an app whose access ended: Connect an app, its app chosen. */
+const reconnectApp = (clientName: string) => `/agents/connect?app=${appNamed(clientName)}`;
+/** Where Reconnect sets up again a computer whose access ended. */
+const reconnectComputer = "/agents/computer";
+
+/** An app or computer whose access ended on its own, and where Reconnect sets it up again. */
+export interface EndedAccess {
+  readonly kind: "app" | "computer";
+  /** Its mark, as Your agents draws it: trusted HTML. */
+  readonly mark: string;
+  readonly name: string;
+  readonly endedAt: string;
+  readonly reconnect: string;
+}
+
+/**
+ * The person's own apps and computers that ended on their own in the last 30 days, the rows Your
+ * agents marks Access ended, apps first: Home's Needs attention offers Reconnect on each.
+ */
+export const endedAccess = Effect.fn("MachinesPage.endedAccess")(function* (userId: string) {
+  const apps = yield* (yield* AgentConnections.AgentConnections).ended(userId);
+  const computers = yield* (yield* MachineTokens.MachineTokens).ended(userId);
+  return [
+    ...apps.map((app): EndedAccess => ({
+      kind: "app",
+      mark: appMark(app.clientName),
+      name: app.clientName,
+      endedAt: app.endedAt,
+      reconnect: reconnectApp(app.clientName)
+    })),
+    ...computers.map((computer): EndedAccess => ({
+      kind: "computer",
+      mark: computerMark,
+      name: computer.name,
+      endedAt: computer.endedAt,
+      reconnect: reconnectComputer
+    }))
+  ];
+});
 
 type Viewer = RequireSession.Viewer["Service"];
 
@@ -255,7 +296,7 @@ const useSection = (view: View) => {
             : `last call ${ago(connection.lastUsedAt, view.now)}`,
           `ended ${dateLabel(connection.endedAt)}`
         ],
-        reconnect: `/agents/connect?app=${appNamed(connection.clientName)}`
+        reconnect: reconnectApp(connection.clientName)
       })
     )
   ];
@@ -302,7 +343,7 @@ const buildSection = (view: View) => {
           `Used ${ago(machine.lastUsedAt, view.now)}`,
           `ended ${dateLabel(machine.endedAt)}`
         ],
-        reconnect: "/agents/computer"
+        reconnect: reconnectComputer
       })
     )
   ];
@@ -648,50 +689,13 @@ const connectApp = Effect.gen(function* () {
   );
 });
 
-/** The common agents that build patches, for someone who has none yet. */
-const common = [
-  {
-    name: "Claude Code",
-    letters: "CC",
-    description: "Anthropic’s agent, in your terminal or desktop app",
-    href: "https://claude.com/product/claude-code"
-  },
-  {
-    name: "Codex",
-    letters: "Cx",
-    description: "OpenAI’s agent, in your terminal or its app",
-    href: "https://openai.com/codex/"
-  },
-  {
-    name: "Cursor",
-    letters: "Cu",
-    description: "A code editor with an agent built in",
-    href: "https://cursor.com/"
-  }
-] as const;
-
 /** Get an agent, over Add a computer: the common agents and where to get them. */
-const getAnAgent = dialog({
+const getAnAgentDialog = dialog({
   id: "get-an-agent",
   title: "Get an agent",
   closeHref: "/agents/computer",
   size: "lg",
-  body: `<p class="prose">Patchy works with any agent that can run commands on your computer. If you don’t have one, these are the common ones.</p>${rows(
-    common.map((agent) =>
-      row({
-        lead: productMark(agent.letters),
-        name: agent.name,
-        description: agent.description,
-        end: linkButton("Get it", agent.href, {
-          size: "sm",
-          icon: "external",
-          newTab: true,
-          ariaLabel: `Get ${agent.name}`
-        })
-      })
-    ),
-    true
-  )}<p class="meta">Install one, then give it the setup line. It does the rest.</p>`,
+  body: getAnAgent,
   foot: linkButton("Back to setup", "/agents/computer")
 });
 
@@ -736,7 +740,7 @@ const addComputer = (noAgent: boolean) =>
     return pageResponse(
       {
         title: noAgent ? "Get an agent" : "Add a computer",
-        app: { viewer, section: "agents", overlay: noAgent ? getAnAgent : undefined },
+        app: { viewer, section: "agents", overlay: noAgent ? getAnAgentDialog : undefined },
         heading: flow.heading,
         body: `${flow.body}<script defer src="${copyScriptPath}"></script>`
       },

@@ -70,7 +70,7 @@ export const renderShareDialog = (input: {
 }): string => {
   const { viewer } = input;
   const { patch, owner, tier } = input.row;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, viewer.company.name);
   const company = viewer.company.name;
   const isPublic = patch.scope === "public";
   // A tool can't be public, so its one choice is its company, with why; going public asks first.
@@ -226,7 +226,7 @@ export const renderShareDialog = (input: {
  * Remove or Cancel. Only its company can share it with them again.
  */
 export const renderLeaveConfirmation = (shared: GuestGrants.Shared) => {
-  const title = patchTitle(shared);
+  const title = patchTitle(shared, shared.company.name);
   return flowPage({
     parent: { label: "Home", href: "/" },
     title: `Remove ${title}?`,

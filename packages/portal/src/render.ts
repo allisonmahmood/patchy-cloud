@@ -69,21 +69,6 @@ export type PatchAction = "description" | "rollback" | ConfirmationAction;
 export const canManage = (card: Patches.ReadPatch, viewer: Viewer) =>
   card.owner.id === viewer.user.id || viewer.role === "admin";
 
-/**
- * What a patch's page calls it: its title, less the " · Brightline Studio" its own HTML often
- * ends with, since the page already sits in that company. Else its name.
- */
-export const shownTitle = (
-  patch: Pick<Patches.Patch, "name" | "title">,
-  company: string
-): string => {
-  const title = patchTitle(patch);
-  const match = title.match(/^(.*\S)\s+[·•|–—-]\s+(.+)$/u);
-  return match !== null && match[2]!.trim().toLowerCase() === company.trim().toLowerCase()
-    ? match[1]!
-    : title;
-};
-
 const tabLabels: Record<CardTab, string> = {
   overview: "Overview",
   log: "Log",
@@ -171,7 +156,7 @@ export const renderPatchPage = (frame: PatchFrame): Template => {
   const { patch } = card;
   const live = patch.state === "live";
   const manage = canManage(card, viewer);
-  const title = shownTitle(patch, viewer.company.name);
+  const title = patchTitle(patch, viewer.company.name);
   const url = `${frame.publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   const shown = url.replace(/^https?:\/\//u, "");
   const off = standing(card, now);
@@ -577,7 +562,7 @@ export const renderConfirmation = (
 ): string => {
   const { card: patchCard, viewer, close } = input;
   const { patch } = patchCard;
-  const title = shownTitle(patch, viewer.company.name);
+  const title = patchTitle(patch, viewer.company.name);
   // Focus starts on a refusal when there is one; else on Cancel where pressing on would break
   // something or change what people get, on the typed name for Delete, on the owner for Reassign.
   const refused = input.notice !== undefined;

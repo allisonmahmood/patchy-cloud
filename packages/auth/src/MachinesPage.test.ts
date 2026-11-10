@@ -15,6 +15,7 @@ import * as Testing from "@patchy/sql/testing";
 import * as AgentConnections from "./AgentConnections.js";
 import * as AuthPages from "./AuthPages.js";
 import * as DeviceLogins from "./DeviceLogins.js";
+import { getAnAgent } from "./getAnAgent.js";
 import * as MachineTokens from "./MachineTokens.js";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
@@ -254,9 +255,20 @@ it.layer(services)("Your agents", (it) => {
       const answer = dialogOf(noAgent);
       assert.include(answer, '<h2 id="get-an-agent-title">Get an agent</h2>');
       assert.include(answer, 'data-close="/agents/computer"');
+      // The Final step opens the same words in place; each agent links to its maker's own page.
+      assert.include(answer, getAnAgent);
       for (const agent of ["Claude Code", "Codex", "Cursor"])
         assert.include(answer, `aria-label="Get ${agent}"`);
-      assert.include(answer, 'target="_blank" rel="noopener"');
+      assert.deepStrictEqual(
+        [...getAnAgent.matchAll(/<a [^>]*href="([^"]+)" target="_blank" rel="noopener"/g)].map(
+          (link) => link[1]
+        ),
+        [
+          "https://claude.com/product/claude-code",
+          "https://openai.com/codex/",
+          "https://cursor.com/"
+        ]
+      );
       assert.include(answer, 'href="/agents/computer">Back to setup</a>');
     })
   );

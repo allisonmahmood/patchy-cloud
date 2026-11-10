@@ -28,6 +28,8 @@ export {
   type DoorSpec,
   type SessionShell
 } from "./page.js";
+export { getAnAgent } from "./getAnAgent.js";
+export { endedAccess, type EndedAccess } from "./MachinesPage.js";
 export * as ClientDocuments from "./ClientDocuments.js";
 export * as ClientDocumentNetwork from "./ClientDocumentNetwork.js";
 export * as Consents from "./Consents.js";

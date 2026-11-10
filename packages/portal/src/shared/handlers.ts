@@ -217,7 +217,7 @@ export const behind = (back: string | undefined, name: string, base: string): UR
   )
     return fallback;
   const kept = new URL(url.pathname, base);
-  for (const key of ["q", "show", "page"]) {
+  for (const key of ["q", "show", "owner", "page"]) {
     const value = url.searchParams.get(key);
     if (value) kept.searchParams.set(key, value);
   }

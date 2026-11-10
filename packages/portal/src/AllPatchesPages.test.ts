@@ -77,6 +77,27 @@ it.layer(socket)("all patches on a socket", (it) => {
       assert.include(pages, 'id="app-search" type="search" name="q" value="REVENUE"');
       const byOwner = yield* (yield* request("/patches?q=alex", workspace.owner)).text;
       assert.deepStrictEqual(listed(byOwner), [busy.name]);
+      // People's See their patches narrows to one person exactly, as a chip that clears it, and
+      // its filters keep it.
+      const alex = workspace.member.id;
+      const theirs = yield* (yield* request(`/patches?owner=${alex}`, workspace.owner)).text;
+      assert.deepStrictEqual(listed(theirs), [busy.name]);
+      assert.include(text(theirs), "All 1 Tools 0 Pages 1 Yours 0 Retired and deleted 1");
+      assert.isTrue(
+        links(theirs).some((link) => link.href === "/patches" && link.text === "Owner Alex")
+      );
+      assert.isTrue(
+        links(theirs).some((link) => link.href === `/patches?show=off&amp;owner=${alex}`)
+      );
+      assert.include(
+        text(yield* (yield* request(`/patches?show=yours&owner=${alex}`, workspace.owner)).text),
+        "Alex has no patches here"
+      );
+      // Someone who isn't a member here narrows nothing.
+      const stranger = yield* (yield* request("/patches?owner=usr_elsewhere", workspace.owner))
+        .text;
+      assert.deepStrictEqual(listed(stranger), listed(all));
+      assert.isFalse(links(stranger).some((link) => link.text.startsWith("Owner ")));
       const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
       assert.deepStrictEqual(listed(yours), [tool.name, page.name]);
 

@@ -16,6 +16,7 @@ export {
 export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
 export { behindTheScenes, changeEntry } from "./changelog.js";
 export { checklist } from "./checklist.js";
+export { disclosure } from "./disclosure.js";
 export type { CheckItem } from "./checklist.js";
 export {
   chipMenu,
@@ -36,7 +37,7 @@ export { copyButton } from "./copy-button.js";
 export { region } from "./region.js";
 export { usualTiles } from "./usual.js";
 export type { UsualTile } from "./usual.js";
-export { refusal, typedExactly } from "./refusal.js";
+export { refusal } from "./refusal.js";
 export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";

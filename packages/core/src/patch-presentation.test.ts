@@ -1,5 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { isWelcomePage, recovery, recoveryLine } from "./patch-presentation.js";
+import { isWelcomePage, patchTitle, recovery, recoveryLine } from "./patch-presentation.js";
+
+describe("patchTitle", () => {
+  const patch = (title: string) => ({ name: "new-business", title });
+
+  it("leaves out the company its own HTML names after the title", () => {
+    for (const title of [
+      "New Business · Brightline Studio",
+      "New Business | brightline studio",
+      "New Business – Brightline Studio",
+      "New Business - Brightline Studio",
+      "  New Business · Brightline Studio  "
+    ])
+      expect(patchTitle(patch(title), "Brightline Studio")).toBe("New Business");
+    expect(patchTitle(patch("Deals · Pipeline · Brightline Studio"), "Brightline Studio")).toBe(
+      "Deals · Pipeline"
+    );
+    // A company whose own name holds a separator.
+    for (const company of ["Harbor - Pine", "Harbor | Pine", "Harbor · Pine"])
+      expect(patchTitle(patch(`Pipeline · ${company}`), company)).toBe("Pipeline");
+  });
+
+  it("keeps a title whose last part is anything else, and falls back to the name", () => {
+    expect(patchTitle(patch("Pitch · Library"), "Brightline Studio")).toBe("Pitch · Library");
+    expect(patchTitle(patch("Brightline Studio"), "Brightline Studio")).toBe("Brightline Studio");
+    expect(patchTitle(patch("Pipeline · Pine"), "Harbor - Pine")).toBe("Pipeline · Pine");
+    expect(patchTitle(patch("NewBrightline Studio"), "Brightline Studio")).toBe(
+      "NewBrightline Studio"
+    );
+    expect(patchTitle(patch("New Business · Harbor Works"), "Brightline Studio")).toBe(
+      "New Business · Harbor Works"
+    );
+    expect(patchTitle(patch("  "), "Brightline Studio")).toBe("new-business");
+  });
+});
 
 describe("isWelcomePage", () => {
   it("is a page named welcome or welcome-<n>, and nothing else", () => {

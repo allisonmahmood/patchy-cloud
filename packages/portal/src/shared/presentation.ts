@@ -1,8 +1,17 @@
 // How more than one portal surface presents a patch: its paths, menus and search, confirmation
 // parts and the layout every portal page still carries. Surfaces share only through `shared/`.
 import type { RequireSession } from "@patchy/auth";
-import { escapeAttribute, escapeHtml, menuCopy, menuLink, patchTitle } from "@patchy/core";
+import {
+  badge,
+  type Column,
+  escapeAttribute,
+  escapeHtml,
+  menuCopy,
+  menuLink,
+  patchTitle
+} from "@patchy/core";
 import type { Patches } from "@patchy/patches";
+import type { InvocationLog } from "@patchy/runtime";
 
 /** The portal's page layout, which every portal page carries until it is rebuilt on core's templates. */
 export const styles = `
@@ -55,6 +64,11 @@ export const matches = (row: Patches.ReadPatch, query: string): boolean => {
   );
 };
 
+/** Patches A–Z by what people see them called at `company`, then by name, which no two share. */
+export const byTitle = (company: string) => (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
+  patchTitle(a.patch, company).localeCompare(patchTitle(b.patch, company)) ||
+  a.patch.name.localeCompare(b.patch.name);
+
 /** Whether the viewer may manage this patch: its owner, or any admin. */
 export const manages = (row: Patches.ReadPatch, viewer: Viewer) =>
   viewer.role === "admin" || row.owner.id === viewer.user.id;
@@ -77,6 +91,36 @@ export const cardPath = (patch: Patches.Patch, action = "") =>
 /** The log filtered to its failed entries. */
 export const failedLog = (patch: Patches.Patch) =>
   `/patches/${encodeURIComponent(patch.name)}/log?outcome=failed`;
+
+/**
+ * The column of a tool's calls in the last 24 hours, which its header says, on Home's Yours and
+ * All patches alike: `failuresCell` fills it, and on a phone, where it is gone, `failedBadge`
+ * says the same under the patch's name.
+ */
+export const failuresColumn: Column = { label: "Failures (24 h)", hideOnPhone: true, nowrap: true };
+
+/** How many calls failed, linked to the log filtered to them; nothing when none did. */
+export const failedBadge = (
+  patch: Patches.Patch,
+  summary: InvocationLog.CallSummary | undefined
+) =>
+  summary === undefined || summary.failures === 0
+    ? ""
+    : `<a href="${escapeAttribute(failedLog(patch))}">${badge(`${summary.failures} failed`, "danger")}</a>`;
+
+/**
+ * A `failuresColumn` cell: None, No calls yet, or how many failed, never that a tool is healthy;
+ * a dash for a patch without a summary, such as a page.
+ */
+export const failuresCell = (
+  patch: Patches.Patch,
+  summary: InvocationLog.CallSummary | undefined
+) =>
+  summary === undefined
+    ? '<span class="muted">—</span>'
+    : summary.failures > 0
+      ? failedBadge(patch, summary)
+      : `<span class="muted">${summary.calls === 0 ? "No calls yet" : "None"}</span>`;
 
 /** A live patch's address, relative to the instance. */
 export const patchAddress = (patch: Patches.Patch) =>
@@ -103,7 +147,7 @@ export const openItems = (
   about = true
 ) => {
   const { patch } = row;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, viewer.company.name);
   const live = patch.state === "live";
   return [
     ...(live

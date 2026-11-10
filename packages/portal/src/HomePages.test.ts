@@ -2,9 +2,10 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
-import { DeviceLogins, SetupLinks } from "@patchy/auth";
+import { DeviceLogins, getAnAgent, SetupLinks } from "@patchy/auth";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { sha256 } from "../../../test/crypto.js";
+import { disclosure } from "@patchy/core";
 import { GuestGrants, Patches } from "@patchy/patches";
 import {
   DAY,
@@ -97,6 +98,8 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         html,
         `<div data-guide-send hidden><div class="btn-group"><button class="btn btn-primary" type="button" data-share="${PUBLIC_BASE_URL}">Send this to my computer</button></div></div>`
       );
+      // No agent yet? opens in place the words Add a computer's Get an agent dialog holds.
+      assert.include(html, disclosure("No agent yet?", getAnAgent));
       // The dialog is the way to connect, so Home doesn't offer it again behind.
       assert.notInclude(text(html), connectLine);
 
@@ -394,6 +397,29 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       );
       yield* TestClock.adjust(DAY);
       assert.notInclude(text(yield* (yield* request("/", workspace.member)).text), "is live");
+    })
+  );
+
+  it.effect("calls a patch by its title, less the company its own HTML ends it with", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      yield* publish(workspace.owner, "pipeline", { title: "Pipeline · Northwind" });
+      yield* publish(workspace.admin, "harbor", { title: "Docks · Harbor Works" });
+      const shown = (html: string) =>
+        [...html.matchAll(/<a class="row-link" href="\/[^/"]+\/[a-z-]+">([^<]*)<\/a>/g)].map(
+          (match) => text(match[1]!)
+        );
+      const home = yield* (yield* request("/", workspace.owner)).text;
+      assert.deepStrictEqual(shown(sectionOf(home, "yours")), ["Pipeline"]);
+      assert.include(text(home), "Pipeline is live");
+      assert.deepStrictEqual(
+        shown(sectionOf(yield* (yield* request("/", workspace.member)).text, "colleagues")),
+        ["Docks · Harbor Works", "Pipeline"]
+      );
+      assert.deepStrictEqual(shown(yield* (yield* request("/patches", workspace.owner)).text), [
+        "Docks · Harbor Works",
+        "Pipeline"
+      ]);
     })
   );
 
@@ -720,9 +746,53 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
         text(sectionOf(home, "yours")),
         "client-health Find the right person 3 failed"
       );
+      // As on All patches, the count opens the failed log, in its column and under the name.
+      assert.lengthOf(
+        links(sectionOf(home, "yours")).filter(
+          (link) => link.href === "/patches/client-health/log?outcome=failed"
+        ),
+        2
+      );
       // An admin manages it but doesn't own it; neither they nor a member are asked to fix it.
       for (const person of [workspace.member, workspace.admin])
         assert.strictEqual(sectionOf(yield* (yield* request("/", person)).text, "attention"), "");
+    })
+  );
+
+  it.effect("offers Reconnect for the viewer's own app or computer whose access ended", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      const owner = workspace.owner.id;
+      // A computer ends by Patchy's clock, 30 days after its last use; an app by the database's.
+      const daysAgo = (days: number) => (1_767_225_600_000 - days * DAY) / 1_000;
+      yield* sql`UPDATE machine_tokens SET revoked_at = now() WHERE user_id = ${owner}`;
+      yield* sql`INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
+        VALUES ('tok_old_thinkpad', ${owner}, 'Old ThinkPad', 'hash:tok_old_thinkpad',
+          to_timestamp(${daysAgo(50)}), to_timestamp(${daysAgo(-40)}), to_timestamp(${daysAgo(40)}))`;
+      yield* sql`INSERT INTO agent_connections (id, user_id, client_id, client_name, client_site, created_at, last_used_at)
+        VALUES ('agc_old_chatgpt', ${owner}, 'https://chatgpt.com/oauth', 'ChatGPT', 'chatgpt.com',
+          now() - interval '60 days', now() - interval '35 days')`;
+      yield* post("/guide/later", workspace.owner, { user: owner });
+
+      const home = yield* (yield* request("/", workspace.owner)).text;
+      const attention = sectionOf(home, "attention");
+      assert.match(text(attention), /ChatGPT Access ended \d+ \w+.* Reconnect/);
+      assert.match(text(attention), /Old ThinkPad Access ended \d+ \w+.* Reconnect/);
+      assert.includeDeepMembers(
+        links(attention).filter((link) => link.text === "Reconnect"),
+        [
+          { href: "/agents/connect?app=chatgpt", text: "Reconnect" },
+          { href: "/agents/computer", text: "Reconnect" }
+        ]
+      );
+      // The computer's Reconnect stands in for Connect your agent.
+      assert.notInclude(text(home), connectLine);
+      // Only the viewer's own: a colleague's Home says nothing of them.
+      assert.strictEqual(
+        sectionOf(yield* (yield* request("/", workspace.member)).text, "attention"),
+        ""
+      );
     })
   );
 

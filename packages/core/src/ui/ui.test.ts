@@ -5,6 +5,7 @@ import {
   choiceGroup,
   copyButton,
   dialog,
+  disclosure,
   doorPage,
   field,
   galleryPage,
@@ -292,13 +293,68 @@ describe("the gallery", () => {
       "Facts",
       "Page header",
       "Section",
-      "Setting row"
+      "Setting row",
+      "Checklist",
+      "Chip menu",
+      "Grouped table",
+      "Person and code row",
+      "Settings panel",
+      "Refusal",
+      "Door",
+      "Verification code",
+      "Meet",
+      "Answer pair",
+      "Can list",
+      "Choice link",
+      "Flow outcome",
+      "Product mark",
+      "Computer mark"
     ])
       expect(system, component).toContain(`aria-label="${component} states"`);
     expect(system).toContain('aria-label="Type roles"');
     expect(system).toContain("<code>--danger-solid</code>");
     // A dialog only its own actions close has no close, as the Final step.
     expect(galleryPage("final").overlay).not.toMatch(/data-close|aria-label="Close"/);
+    // The doors and the refusal are drawn live from their helpers, each on a page of its own, so
+    // the system page's focus never starts on a refusal.
+    expect(galleryPage("door").body).toContain('<p class="code-display">WXYZ-1234</p>');
+    expect(galleryPage("consent").body).toMatch(/<div class="meet">[\s\S]*<ul class="can">/);
+    expect(galleryPage("refused").body).toContain('<div class="refusal" tabindex="-1" autofocus>');
+    expect(system).not.toMatch(/<[^>]*\sautofocus[\s>]/);
+  });
+
+  it("draws each state that takes the focus or ends a door, focus where the page puts it", () => {
+    const autofocused = (page: (typeof galleryPages)[number]) =>
+      [...galleryPage(page).body.matchAll(/<[a-z]+\b[^>]*\sautofocus\b[^>]*>/g)].map(
+        ([tag]) => tag
+      );
+    // A refusal no field owns leads the door and takes the focus; a field's is under the field.
+    expect(galleryPage("door-refused").body).toMatch(
+      /^<div class="door-body"><div class="refusal" tabindex="-1" autofocus>[\s\S]*code-display/
+    );
+    const field = autofocused("door-field");
+    expect(field).toHaveLength(1);
+    expect(field[0]).toMatch(
+      /aria-describedby="g-door-name-hint g-door-name-error" aria-invalid="true"/
+    );
+    expect(galleryPage("door-field").body).toContain(
+      '<p class="field-error" id="g-door-name-error">'
+    );
+    expect(galleryPage("door-outcome").heading).toContain("Go back to your terminal");
+    expect(galleryPage("door-unavailable").heading).toContain("Patchy is unavailable");
+    // A refused checklist starts on its first box that can be chosen, or on its error.
+    const box = autofocused("checklist-refused");
+    expect(box).toHaveLength(1);
+    expect(box[0]).toMatch(/type="checkbox" name="patch" value="kudos"[^>]* aria-invalid="true"/);
+    expect(autofocused("checklist-none")).toEqual([
+      '<p class="field-error" id="g-pick-error" tabindex="-1" autofocus>'
+    ]);
+  });
+
+  it("opens a disclosure in place, its summary escaped", () => {
+    expect(disclosure("No <agent>?", "<p>Install one.</p>", { id: "g-d", open: true })).toBe(
+      '<details id="g-d" open><summary>No &lt;agent&gt;?</summary><div class="disclosure-body"><p>Install one.</p></div></details>'
+    );
   });
 
   it("uses only classes the stylesheet draws", () => {
