@@ -592,8 +592,9 @@ into `patchy add shared-table <patchId>/<table>` or
 `patchy add shared-store <patchId>/<store>`. Unshared entries name the owner;
 retired or deleted sources must be restored.
 Agents branch on `declarable`, `reason` and a connection's `paused`, not the human `hint`.
-A paused IMAP connection's server refused its password: every call fails `auth_failed`
-until an admin's Test or Replace password, so `list connections` says so instead of an add hint.
+A `paused` IMAP connection's server refused its password, which the pages call Needs
+attention: every call fails `auth_failed` until an admin's Test or Replace password, so `list
+connections` says so instead of an add hint.
 
 Names and canonical ids are accepted; a pasted URL resolves by its final path
 segment. Names resolve only non-deleted patches. A deleted patch needs its id
@@ -659,7 +660,7 @@ outside the repo builds tier 2 as the pinned `pnpm patchy` does.
 Use actual connection names from `list connections`; inspect one with
 `list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
-Connection setup and reconnection belong to an admin's browser at
+Connecting, resuming and replacing a connection belong to an admin's browser at
 `/settings/integrations`; no CLI command accepts a
 connection string. A shared source must be openable; restore its access with its
 owner or correct the declaration. With no publishing key, non-interactive init
@@ -1383,9 +1384,9 @@ File publishing onto a patch with cumulative table or store inventory is still
 `has_primitives` (422, exit 2, `rejected`), even if its current version omits
 those definitions. Publish that patch from its repo, now supported by this CLI.
 For `patch_not_openable`, correct the shared-table declaration or restore source
-access. For `connection_not_connected`, an admin reconnects at
+access. For `connection_not_connected`, an admin resumes it at
 `/settings/integrations`; `stale_generated` requires `pnpm patchy refresh`.
-Connection secrets belong only in the admin's browser connect/rotate form,
+Connection secrets belong only in the admin's browser connect or replace form,
 never CLI arguments or an agent transcript.
 
 Without `--share`, a new patch defaults to `company` and an update preserves the patch's current scope. An explicit `--share company` or `--share public` sets it in either direction while publishing the new version:

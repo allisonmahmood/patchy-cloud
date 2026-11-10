@@ -8,7 +8,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pageResponse, RequireSession, Session, signOutForm } from "@patchy/auth";
-import { Cryptography, escapeHtml } from "@patchy/core";
+import { Cryptography, escapeHtml, indexPage, linkButton, notice } from "@patchy/core";
 import type { RuntimeLog } from "@patchy/runtime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as ConnectionPage from "./ConnectionPage.js";
@@ -19,8 +19,36 @@ import type * as PidgeonSource from "./pidgeon/Source.js";
 type Params = Readonly<Record<string, string | undefined>>;
 
 /**
- * Renders a page in the app shell or follows a change's redirect. A connection that cannot be
- * shown (missing, another company's, or a store that cannot answer) gets the card door.
+ * A connection or service that can't be shown, inside the app: a missing connection, another
+ * company's (which answers the same, never saying it exists), or a store that couldn't answer.
+ */
+const unavailable = (
+  viewer: RequireSession.Viewer["Service"],
+  session: Session.Session["Service"],
+  failure: { readonly title: string; readonly code: string; readonly status: number }
+) =>
+  pageResponse(
+    {
+      title: "Integrations",
+      ...indexPage({
+        title: "Integrations",
+        content: notice({
+          tone: "danger",
+          title: failure.title,
+          body: `<p><code>${escapeHtml(failure.code)}</code></p>`,
+          action: linkButton("All integrations", ConnectionsView.indexPath, { size: "sm" })
+        })
+      }),
+      status: failure.status,
+      app: { viewer, section: "integrations" }
+    },
+    session
+  );
+
+/**
+ * Renders a page in the app shell, with a dialog over it when it has one, or follows a change's
+ * redirect. A connection that cannot be shown, and a store that cannot answer, say so inside the
+ * app too.
  */
 const serve = <R>(
   page: (
@@ -43,27 +71,34 @@ const serve = <R>(
             })
           : pageResponse(
               {
-                ...content,
+                title: content.title,
+                body: content.body,
                 heading: "",
+                ...(content.status === undefined ? {} : { status: content.status }),
                 styles: ConnectionPage.styles,
-                app: { viewer, section: "integrations" }
+                app: {
+                  viewer,
+                  section: "integrations",
+                  ...(content.overlay === undefined ? {} : { overlay: content.overlay })
+                }
               },
               session
             )
       ),
       Effect.catch((error) =>
-        error._tag === "SqlError"
-          ? Effect.fail(error)
-          : Effect.succeed(
-              pageResponse(
-                {
-                  title: "Connection unavailable",
-                  body: `<div class="note note-refused" role="alert">${escapeHtml(error.message)}<br><code>${escapeHtml(error.code)}</code></div><p><a href="${ConnectionsView.indexPath}">Back to Integrations</a></p>${signOutForm()}`,
-                  status: error.status
-                },
-                session
-              )
-            )
+        Effect.succeed(
+          error._tag === "SqlError"
+            ? unavailable(viewer, session, {
+                title: "The company service is unavailable. Try again.",
+                code: "service_unavailable",
+                status: 503
+              })
+            : unavailable(viewer, session, {
+                title: error.message,
+                code: error.code,
+                status: error.status
+              })
+        )
       )
     );
   });
@@ -192,7 +227,17 @@ export const layer: Layer.Layer<
     yield* get(cataloguePath, () => ({ kind: "catalogue" }));
     yield* get(`${cataloguePath}/:integration`, integration);
     yield* post(`${cataloguePath}/:integration`, integration);
-    yield* get(`${indexPath}/:id`, (params) => ({ kind: "view", id: params.id ?? "" }));
+    yield* get(`${indexPath}/:id`, (params) => ({
+      kind: "view",
+      id: params.id ?? "",
+      tab: "overview"
+    }));
+    for (const tab of ["calls", "settings"] as const)
+      yield* get(`${indexPath}/:id/${tab}`, (params) => ({
+        kind: "view",
+        id: params.id ?? "",
+        tab
+      }));
     for (const kind of ["test", "refresh", "reconnect", "block-guests", "allow-guests"] as const)
       yield* post(`${indexPath}/:id/${kind}`, (params) => ({ kind, id: params.id ?? "" }));
     for (const action of confirmations) {

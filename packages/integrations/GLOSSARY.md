@@ -9,7 +9,7 @@ A capability Patchy ships for reaching an outside system, the same capability fo
 _Avoid_: connector, app (Zapier's word), resource (Retool and Windmill's word), toolkit
 
 **Connection**:
-A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection carries a handle and an admin description and is shared company-wide; disconnecting preserves its identity and metadata while denying new use.
+A credentialed instance of an integration, used by a patch rather than owned by it. Today's company connection carries a handle and an admin description and is shared company-wide; pausing preserves its identity and metadata while denying new use.
 _Avoid_: datasource, connected account, credential (what it holds, not what it is)
 
 **Connection discovery**:
@@ -17,11 +17,27 @@ The member-readable list of the company's connections and their state, with decl
 _Avoid_: connection administration
 
 **Catalogue**:
-The integrations Patchy offers a company, each with what it reads, how it connects (company-wide or personal) and how many connections the company already has. Admins reach it from the Integrations page, which lists the company's connections, through Connect an integration; it is not that list.
+The integrations Patchy offers a company, each with its mark, a line on what it gives patches and how many connections the company already has, then a row to ask for another. Admins reach it from the Integrations page, which lists the company's connections, through Connect an integration; it is not that list. With nothing connected it is the Integrations page, the same rows at the same width.
 _Avoid_: marketplace, app directory
 
+**Pause / Resume**:
+An admin's reversible stop of a connection, stored as disconnected: patches that declare it are refused until Resume, which tests the stored credentials first, reconnects it and keeps its identity, metadata and every declaration. The pages show it as Paused, a badge; the API and CLI keep `status: disconnected` and `reason: not_connected`.
+_Avoid_: disconnect (what ending a connection is called), suspend, disable
+
+**Disconnect**:
+Ending a connection: Patchy forgets its credentials and frees its handle, keeping the snapshots patches were published against; stored as a delete. Refused while any stored version declares it, naming the live patches to remove it from and every other patch whose stored versions declare it; a Pidgeon one revokes its key in Pidgeon.
+_Avoid_: delete, revoke, remove
+
+**Replace key**:
+Giving a connection new credentials for the same target, keeping its identity and what patches can read: Replace credentials for Postgres, Replace password for IMAP, Replace key for the rest. Stored as a rotate.
+_Avoid_: rotate, reconnect
+
+**Needs attention**:
+A connection Patchy stopped, or whose state waits on an admin, for its integration's own reason, shown with its fix: an Attio key a check found writable (paused by Patchy, fixed by Resume or Replace key), an IMAP **login pause** (fixed by Replace password or Test), a Pidgeon key Patchy replaced but couldn't revoke (fixed by Test) and a Pidgeon test address (fixed by connecting a live one). Distinct from Paused, which an admin chose; Postgres and PostHog have no reason of their own.
+_Avoid_: broken, error, unhealthy
+
 **Unused**:
-A connection no stored version of any company patch declares, which is exactly when it can be deleted. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.
+A connection no stored version of any company patch declares, which is exactly when it can be disconnected. A connection only older versions or retired, deleted or disabled patches declare is used by no live patch, but is not unused; its row reads "None live" with how many.
 _Avoid_: idle (a statement about calls), orphaned
 
 **Personal connection**:
@@ -65,7 +81,7 @@ An immutable description of one Attio workspace's shape: its objects and lists b
 _Avoid_: CRM schema, data model (Attio's word for the objects alone)
 
 **Key check**:
-Attio's `/v2/self`, asked at connect, Test, Refresh, Reconnect and Replace key, failing closed: the key must be an active workspace token holding the read scopes Patchy needs and no write scope. A check that finds the stored key can write disconnects the connection, naming the scopes and the admin whose check it was, unless a newer key replaced it meanwhile.
+Attio's `/v2/self`, asked at connect, Test, Refresh, Resume and Replace key, failing closed: the key must be an active workspace token holding the read scopes Patchy needs and no write scope. A check that finds the stored key can write pauses the connection, which then needs attention, naming the scopes and the admin whose check it was, unless a newer key replaced it meanwhile.
 _Avoid_: key test, token validation
 
 **Workspace gate**:
@@ -81,12 +97,12 @@ What one IMAP connection is: a host, port, security mode, username and password 
 _Avoid_: email account, inbox
 
 **Fresh session**:
-An IMAP session opened for one Test, connect, Replace password, Refresh folders or Reconnect alone, and logged out after it: it resolves and checks the host again, and is never taken from or returned to a pool. Test runs TLS, `CAPABILITY`, the login, `LIST` and `EXAMINE INBOX` on one, naming the requirement a mailbox missed.
+An IMAP session opened for one Test, connect, Replace password, Refresh folders or Resume alone, and logged out after it: it resolves and checks the host again, and is never taken from or returned to a pool. Test runs TLS, `CAPABILITY`, the login, `LIST` and `EXAMINE INBOX` on one, naming the requirement a mailbox missed.
 _Avoid_: probe, connection test
 
 **Login pause**:
-An IMAP connection whose mail server refused its login, recorded on the connection's row with when, the server's code and whose login it was, so no host process logs in with it again: calls fail `auth_failed` without contacting the server, until an admin's Test, Replace password or Reconnect logs in. Only a `NO` to `LOGIN` or `AUTHENTICATE` coded `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded pauses; a `BAD`, a throttle, another code and a network failure don't, nor does a refusal that lands after a login with the same password has worked and been saved since the attempt began. `patchy list connections` marks a paused connection, with the way out.
-_Avoid_: lockout, disabled (the mail host's words for what the pause prevents), disconnect
+An IMAP connection whose mail server refused its login, recorded on the connection's row with when, the server's code and whose login it was, so no host process logs in with it again: calls fail `auth_failed` without contacting the server, until an admin's Test, Replace password or Resume logs in. Only a `NO` to `LOGIN` or `AUTHENTICATE` coded `AUTHENTICATIONFAILED`, `AUTHORIZATIONFAILED`, `EXPIRED` or uncoded pauses; a `BAD`, a throttle, another code and a network failure don't, nor does a refusal that lands after a login with the same password has worked and been saved since the attempt began. The pages show it as Needs attention, never Paused, which is an admin's; `patchy list connections` marks it `paused: true`, with the way out.
+_Avoid_: lockout, disabled (the mail host's words for what the pause prevents), disconnect, Paused (an admin's stop)
 
 **Mail network**:
 Where IMAP sessions resolve hosts, which addresses they may dial, where a checked address is dialled and which certificate authorities are trusted. The launcher provides it: production's admits public addresses and the system's authorities only; the loopback one, which only the dev runner and tests provide, adds named mail servers on this machine with their own CA. No setting turns loopback on.
@@ -105,7 +121,7 @@ Pidgeon's rule for who an address may write to: `reply_only`, answering only peo
 _Avoid_: permission, access (what the key may do)
 
 **Test-mode connection**:
-A Pidgeon connection made with a test admin key, to a test address: its mail stays in Pidgeon, and Pidgeon deletes the address a day after it's made. It shows "Test · mail stays in Pidgeon" wherever it's listed. Distinct from Test connection, the action that checks a connection's credentials still work.
+A Pidgeon connection made with a test admin key, to a test address: its mail stays in Pidgeon, and Pidgeon deletes the address a day after it's made. It shows "Test, mail stays in Pidgeon" wherever it's listed, and needs attention: real mail needs a live address. Distinct from Test connection, the action that checks a connection's credentials still work.
 _Avoid_: sandbox, demo connection
 
 **Revision**:
@@ -117,7 +133,7 @@ A source table or view described in a Postgres schema snapshot. Its source name 
 _Avoid_: primitive table, collection
 
 **Retarget**:
-Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which rotate them for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection. Nor an IMAP one: another mailbox is another connection.
+Replacing a connection's source endpoint while keeping the connection's identity and discovering its new shape. Existing declarations keep their identity and recorded snapshot. The connection page calls it Point elsewhere for Postgres and Change project for PostHog, beside Replace credentials or Replace key, which give it new ones for the same endpoint. A Pidgeon connection has none: another address is another connection. Nor has an Attio one: another workspace is another connection. Nor an IMAP one: another mailbox is another connection.
 _Avoid_: rename, new connection
 
 **Credential revision**:

@@ -126,24 +126,39 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           test: true,
           retired: [{ id: "key-old", name: "Patchy support oldattempt01" }]
         });
-        const tag = '<span class="tag">Test · mail stays in Pidgeon</span>';
+        const tag = "Test, mail stays in Pidgeon";
         const index = yield* read("/settings/integrations", owner.user);
-        assert.include(index.html, `<strong>pidgeon/support</strong></a>${tag}`);
+        assert.match(
+          index.html,
+          /pidgeon\/support<\/a><span class="row-desc">[^<]* · Test, mail stays in Pidgeon<\/span>/
+        );
+        // An old key left active is its own reason, beside a working connection.
+        assert.include(index.html, '<span class="badge badge-warning">Needs attention</span>');
         const page = yield* read("/settings/integrations/conn_page_test", owner.user);
         for (const part of [
-          `<h1 class="page-heading">pidgeon/support${tag}</h1>`,
+          '<h1 class="title">pidgeon/support</h1>',
+          tag,
+          '<span class="badge badge-warning">Needs attention</span>',
           "<dt>Address</dt><dd>support@acme.example</dd>",
           "<dt>Writes to</dt><dd>Replies only</dd>",
           "<dt>Patches may</dt><dd>Read and send</dd>",
           "2 labels.",
-          '<li class="list-row"><code>Billing</code></li>',
+          '<span class="row-name">Billing</span>',
           "The old key is still active in Pidgeon",
           "named Patchy support oldattempt01",
+          `<form method="post" action="/settings/integrations/conn_page_test/test"><button class="btn btn-primary btn-sm" type="submit">Test</button></form>`,
           ">Change access…</a>",
           ">Replace key…</a>"
         ])
           assert.include(page.html, part);
         assert.notInclude(page.html, "Rotate");
+        // A replacement that couldn't revoke the old key says so, and the warning stays beside it.
+        const replaced = yield* read(
+          "/settings/integrations/conn_page_test?result=rotate",
+          owner.user
+        );
+        assert.include(replaced.html, "couldn't revoke the old one yet");
+        assert.include(replaced.html, "The old key is still active in Pidgeon");
         // Today's sends against the connection's budget, counted as Patchy counts them.
         assert.include(page.html, "<dt>Sends today</dt><dd>0 of 200 · resets at 00:00 UTC</dd>");
         const sql = yield* SqlClient.SqlClient;
@@ -176,7 +191,24 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           handle: "orders"
         });
         const live = yield* read("/settings/integrations/conn_page_live", owner.user);
-        assert.include(live.html, '<h1 class="page-heading">pidgeon/orders</h1>');
+        assert.include(live.html, '<h1 class="title">pidgeon/orders</h1>');
+        assert.notInclude(live.html, tag);
+        assert.notInclude(live.html, "Needs attention");
+        // A test address with no old key is its own reason, with the way to a live one.
+        yield* PidgeonTest.seed({
+          id: "conn_page_sandbox",
+          companyId: owner.company.id,
+          userId: owner.user.id,
+          handle: "sandbox",
+          test: true
+        });
+        const sandbox = yield* read("/settings/integrations/conn_page_sandbox", owner.user);
+        assert.include(sandbox.html, '<p class="notice-title">This is a test address</p>');
+        assert.include(
+          sandbox.html,
+          '<a class="btn btn-sm" href="/settings/integrations/connect/pidgeon">Connect a live address</a>'
+        );
+        assert.include(sandbox.html, "patchy add pidgeon/sandbox");
       })
   );
 
@@ -196,7 +228,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       );
       assert.include(
         deleted.html,
-        "Connection deleted, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
+        "Disconnected, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
       );
       assert.deepStrictEqual(
         events.flatMap((event) =>
@@ -279,7 +311,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       ])
         assert.strictEqual(response.status, 403);
       const view = yield* read(path, member);
-      assert.include(view.html, "Only admins can change this connection.");
+      assert.include(view.html, "Only admins can change it.");
       const foreign = yield* createCompany("pidgeon-guard-foreign");
       assert.strictEqual((yield* read(path, foreign.user)).status, 404);
       assert.strictEqual((yield* send(`${path}/delete`, post(foreign.user))).status, 404);

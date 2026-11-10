@@ -182,19 +182,24 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
             "<dt>Username</dt><dd>invoices@example.test</dd>",
             "<dt>Added by</dt>",
             "7 folders. Found",
-            "<code>INBOX</code>",
-            "<code>Receipts</code>",
-            "And 2 more.",
-            "Subjects, bodies, addresses, search values, attachment filenames and upload tokens are never logged."
+            '<span class="row-name">INBOX</span>',
+            '<span class="row-name">Receipts</span>',
+            "And 2 more."
           ])
             assert.include(page.html, part);
-          assert.notInclude(page.html, "Query text keeps its first 8 KiB");
-          assert.notInclude(page.html, '<span class="tag">');
+          // Its calls are introduced in its own words for what they keep.
+          const path = connected.headers.get("location")!.split("?")[0]!;
+          const calls = yield* read(`${path}/calls`, owner.user);
+          assert.include(
+            calls.html,
+            "Subjects, bodies, addresses, search values, attachment filenames and upload tokens are never logged."
+          );
+          assert.notInclude(calls.html, "Query text keeps its first 8 KiB");
         })
     );
 
     it.effect(
-      "pauses with a notice, a tag and Needs attention, until Test again or a new password",
+      "needs attention with its reason and fixes, never Paused, until Test again or a new password",
       () =>
         Effect.gen(function* () {
           const owner = yield* createCompany("imap-paused");
@@ -204,29 +209,30 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           const tested = yield* send(`${path}/test`, post(owner.user));
           mailbox.reply = "OK Logged in";
           const html = yield* Effect.promise(() => tested.text());
+          // The refused Test is the page's one notice, with the way out it names.
+          assert.include(html, '<h1 class="title">imap/invoices</h1>');
+          assert.include(html, '<span class="badge badge-danger">Needs attention</span>');
+          assert.include(html, "The mail server refused the login");
+          assert.include(html, `<a class="btn btn-sm" href="${path}/rotate">Replace password…</a>`);
+          // From then on it says why it needs attention, with both fixes, and never Paused.
+          const page = yield* read(path, owner.user);
           assert.include(
-            html,
-            '<h1 class="page-heading">imap/invoices<span class="tag">Paused</span></h1>'
+            page.html,
+            '<p class="notice-title">The mail server refused the password</p>'
+          );
+          assert.include(page.html, "calls stop until Test or Replace password succeeds");
+          assert.include(
+            page.html,
+            `<a class="btn btn-primary btn-sm" href="${path}/rotate">Replace password…</a>`
           );
           assert.include(
-            html,
-            '<div class="note note-refused" role="alert"><strong class="note-title">Paused: the mail server refused the password</strong>'
+            page.html,
+            `<form method="post" action="${path}/test"><button class="btn btn-sm" type="submit">Test again</button></form>`
           );
-          assert.include(html, "calls stop until Test or Replace password succeeds");
-          assert.include(
-            html,
-            `<a class="btn btn-primary" href="${path}/rotate">Replace password…</a>`
-          );
-          assert.include(
-            html,
-            `<form method="post" action="${path}/test"><button class="btn" type="submit">Test again</button></form>`
-          );
+          assert.notInclude(page.html, '<span class="badge">Paused</span>');
           const index = yield* read("/settings/integrations", owner.user);
-          assert.include(index.html, "1 connection needs attention");
-          assert.include(
-            index.html,
-            "imap/invoices</a> is paused because its mail server refused the password"
-          );
+          assert.include(index.html, '<span class="badge badge-danger">Needs attention</span>');
+          assert.notInclude(index.html, '<span class="badge">Paused</span>');
           const attention = yield* read("/settings/integrations?view=attention", owner.user);
           assert.include(attention.html, `href="${path}"`);
           // Replace password is the shared page, and a new password that works resumes it.
@@ -234,7 +240,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           for (const part of [
             "Replace the password for imap/invoices",
             `Patchy logs in to ${host} as invoices@example.test with the new password before saving it.`,
-            'id="connection-password" type="password" name="password"',
+            'type="password" id="connection-password"',
             "Test and replace password"
           ])
             assert.include(replace.html, part);
@@ -244,7 +250,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           );
           const after = yield* follow(replaced, owner.user);
           assert.include(after.html, "Password replaced and tested.");
-          assert.notInclude(after.html, "Paused: the mail server refused the password");
+          assert.notInclude(after.html, "The mail server refused the password");
         })
     );
   }

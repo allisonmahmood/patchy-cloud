@@ -1082,7 +1082,7 @@ describe("patchy list", () => {
           description: "Supplier invoices",
           status: "connected",
           paused: true,
-          hint: "Paused: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /settings/integrations."
+          hint: "Its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations."
         }
       ]
     };
@@ -1095,7 +1095,7 @@ describe("patchy list", () => {
     expect(listed).toMatchObject({ status: 0, stderr: "" });
     expect(listed.stdout).toBe(
       [
-        "imap/invoices  Supplier invoices  connected · paused, its password was refused",
+        "imap/invoices  Supplier invoices  connected · needs attention, its password was refused",
         `  ${summary.connections[0]!.hint}`,
         ""
       ].join("\n")
@@ -1108,7 +1108,7 @@ describe("patchy list", () => {
     expect(result.stdout).toBe(
       [
         "imap/invoices  Supplier invoices  connected",
-        "Paused since 2026-11-05T09:00:00.000Z: its mail server refused the password, so every call fails auth_failed. Ask an administrator to Test it or replace the password at /settings/integrations.",
+        "Needs attention since 2026-11-05T09:00:00.000Z: its mail server refused the password, so every call fails auth_failed. Ask an administrator to replace the password or test it at /settings/integrations.",
         "Mailbox: invoices@example.test at mail.example.test, port 143 (STARTTLS)",
         "Snapshot revision: 2",
         "Taken at: 2026-11-05T00:00:00.000Z",

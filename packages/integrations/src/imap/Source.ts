@@ -257,7 +257,7 @@ export class ConnectionPaused extends Schema.TaggedError<ConnectionPaused>()(
   readonly code = "auth_failed";
   readonly status = 409;
   override get message() {
-    return "This connection is paused: its mail server refused the password, so Patchy stopped logging in. An admin can Test it or replace the password at /settings/integrations.";
+    return "Its mail server refused this connection's password, so Patchy stopped logging in. An admin can replace the password or test it at /settings/integrations.";
   }
 }
 /** Logged in, but EXAMINE INBOX was refused. */

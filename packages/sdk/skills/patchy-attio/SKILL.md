@@ -89,7 +89,7 @@ Queries and mutations can't use connections, and Attio reads are not live-query 
 ## In `patchy dev`
 
 - **Reads are real.** `patchy dev` reads the workspace through Patchy, as the person your publishing key belongs to, from either local viewer. Each read carries the revision the repo was generated from, so a client generated before an admin's Refresh still decodes as generated. Each read appears in the connection's recent calls marked Dev. Records are real company data; keep them out of commits, fixtures and transcripts beyond what the task needs.
-- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; an admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working. Dev reads share the workspace's slots with published patches.
+- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection, which the pages call paused, also fails `access_denied`; an admin resumes it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working. Dev reads share the workspace's slots with published patches.
 
 ## Bounds and refusals
 

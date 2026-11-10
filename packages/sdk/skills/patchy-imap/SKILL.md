@@ -282,7 +282,7 @@ Queries and mutations can't use connections, and IMAP reads are not live-query d
 ## In `patchy dev`
 
 - **Reads are real.** `patchy dev` reads the mailbox through Patchy, as the person your publishing key belongs to, from either local viewer. Each read appears in the connection's recent calls marked Dev, and shares the mailbox's sessions and gates with published patches. Mail is real company data; keep it out of commits, fixtures and transcripts beyond what the task needs.
-- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection also fails `access_denied`; an admin reconnects it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working.
+- A key that expired or was revoked, or a deactivated account, fails reads `access_denied` naming `patchy login`: log in, then `pnpm patchy dev stop` and `pnpm patchy dev`. A disconnected connection, which the pages call paused, also fails `access_denied`; an admin resumes it. An unreachable instance fails `source_unavailable`. The rest of dev keeps working.
 
 ## Bounds and refusals
 

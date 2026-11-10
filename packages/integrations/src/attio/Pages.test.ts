@@ -46,7 +46,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
       assert.notMatch(page.html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
       assert.notInclude(page.html, "attio-connect");
       const catalogue = yield* read("/settings/integrations/connect", owner.user);
-      assert.include(catalogue.html, "A workspace's objects, lists and members, read-only.");
+      assert.include(catalogue.html, "CRM records, lists and members");
       assert.include(catalogue.html, `href="${connectPath}"`);
     })
   );
@@ -91,23 +91,23 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
           `<dt>Key</dt><dd>…${readKey.token.slice(-4)}</dd>`,
           "<dt>Key reads</dt><dd>Records, Object configuration, List entries, List configuration, User management, ",
           "3 objects and 1 list, 13 attributes.",
-          "<code>companies.legacy_score</code>",
-          "No API slug: the object <strong>Workspace hidden</strong>, the list <strong>Untitled</strong>",
-          "A type Patchy doesn't read: <code>deals.forecast</code>",
-          "Its parent object isn't read: the list <code>orphans</code>",
-          '<code>deals</code> Deals <span class="count">· 6 attributes</span> <span class="tag">1 left out</span> <span class="tag">2 options skipped</span>',
-          '<code>pipeline</code> Pipeline <span class="supporting-text">of deals</span>',
+          "companies.legacy_score",
+          "No API slug: the object Workspace hidden, the list Untitled",
+          "A type Patchy doesn't read: deals.forecast",
+          "Its parent object isn't read: the list orphans",
+          '<code>deals</code> <span class="meta">Deals · 6 attributes · 1 left out · 2 options skipped</span>',
+          '<code>pipeline</code> <span class="meta">Pipeline · of deals · ',
           "<td>record reference → companies</td>",
           "<td>email address · many</td>",
-          '<div class="attio-attributes"><table class="table">'
+          '<table class="table" aria-label="deals fields">'
         ])
           at(part);
         // Skipped options and exclusions come before the objects and lists.
         assert.isBelow(at("Options skipped on 3 attributes"), at("Left out: 5"));
-        assert.isBelow(at("Left out: 5"), at('<h3>Objects <span class="count">3</span></h3>'));
+        assert.isBelow(at("Left out: 5"), at('<h2 class="section-title">Objects · 3</h2>'));
         assert.isBelow(
-          at('<h3>Objects <span class="count">3</span></h3>'),
-          at('<h3>Lists <span class="count">1</span></h3>')
+          at('<h2 class="section-title">Objects · 3</h2>'),
+          at('<h2 class="section-title">Lists · 1</h2>')
         );
         assert.deepInclude(
           events.flatMap((event) =>
@@ -132,22 +132,31 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
         keys.set(token, { ...readKey, token, scopes: [...readKey.scopes, "note:read-write"] });
         const refused = yield* send(`${path}/refresh`, post(owner.user));
         const html = yield* Effect.promise(() => refused.text());
+        // The refusal is the page's one notice, with the way out it names.
         for (const part of [
           "This key can change your workspace: Notes is Read-write.",
-          "Disconnected: this key can now write",
-          `${owner.user.name}'s Refresh, just now, found Notes set to Read-write on this key, so Patchy stopped using it.`,
-          `<form method="post" action="${path}/reconnect"><button class="btn btn-primary" type="submit">Reconnect</button></form>`,
-          `<a class="btn" href="${path}/rotate">Replace key…</a>`,
+          `<a class="btn btn-sm" href="${path}/rotate">Replace key…</a>`,
           "; Notes is Read-write</dd>"
         ])
           assert.include(html, part);
+        // From then on the page says why it needs attention, whose check it was, and both ways back.
+        const page = yield* read(path, owner.user);
+        for (const part of [
+          '<span class="badge badge-danger">Needs attention</span>',
+          '<p class="notice-title">This key can now write</p>',
+          `${owner.user.name}'s Refresh, just now, found Notes set to Read-write on this key, so Patchy paused the connection.`,
+          `<form method="post" action="${path}/reconnect"><button class="btn btn-primary btn-sm" type="submit">Resume</button></form>`,
+          `<a class="btn btn-sm" href="${path}/rotate">Replace key…</a>`
+        ])
+          assert.include(page.html, part);
+        assert.notInclude(page.html, '<span class="badge">Paused</span>');
         keys.set(token, { ...readKey, token });
         const reconnected = yield* follow(
           yield* send(`${path}/reconnect`, post(owner.user)),
           owner.user
         );
-        assert.include(reconnected.html, "Key checked and the connection reconnected.");
-        assert.notInclude(reconnected.html, "this key can now write");
+        assert.include(reconnected.html, "Key checked and resumed.");
+        assert.notInclude(reconnected.html, "This key can now write");
       })
   );
 
@@ -167,7 +176,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
       });
       const refused = yield* send(`${path}/rotate`, post(owner.user, { key: token }));
       const html = yield* Effect.promise(() => refused.text());
-      assert.include(html, 'id="connection-key-error" role="alert"');
+      assert.include(html, '<p class="field-error" id="connection-key-error">');
       assert.include(html, "This key reads the workspace Globex, not Acme.");
       assert.notInclude(html, token);
     })
@@ -190,7 +199,7 @@ it("names an attribute left out of an object only on that object, though a list 
       }
     ]
   };
-  const { detail } = Page.reads({
+  const { groups, caveats } = Page.reads({
     version: 1,
     workspace: { id: "ws", name: "Acme", slug: "acme" },
     scopes: [],
@@ -211,17 +220,16 @@ it("names an attribute left out of an object only on that object, though a list 
       }
     ]
   });
-  assert.strictEqual(detail.match(/1 left out/g)?.length, 2);
-  assert.include(detail, "<code>deals.stage</code>, <code>deals.stage</code> (list)");
-  assert.include(
-    detail,
-    "2 archived attributes: <code>deals.old_stage</code>, <code>deals.old_owner</code> (list)"
-  );
+  const [objects, lists] = groups;
+  assert.include(objects!.entries[0]!.label, "1 left out");
+  assert.include(lists!.entries[0]!.label, "1 left out");
+  assert.include(caveats[0]!.lines.join(" "), "deals.stage, deals.stage (list)");
+  assert.deepStrictEqual(caveats[1]!.lines, [
+    "2 archived attributes: deals.old_stage, deals.old_owner (list)"
+  ]);
   // Each row names only its own.
-  assert.match(
-    detail,
-    /Left out: <code>old_stage<\/code>[^<]*<\/p><\/details><\/li><\/ul><h3>Lists/
-  );
+  assert.deepStrictEqual(objects!.entries[0]!.notes, ["Left out: old_stage (archived in Attio)."]);
+  assert.deepStrictEqual(lists!.entries[0]!.notes, ["Left out: old_owner (archived in Attio)."]);
 });
 
 it("folds long groups and long attribute tables, so a large workspace stays scannable", () => {
@@ -237,7 +245,7 @@ it("folds long groups and long attribute tables, so a large workspace stays scan
       multiselect: false
     }))
   });
-  const { summary, detail } = Page.reads({
+  const { summary, groups, caveats } = Page.reads({
     version: 1,
     workspace: { id: "ws", name: "Acme", slug: "acme" },
     scopes: [],
@@ -249,8 +257,15 @@ it("folds long groups and long attribute tables, so a large workspace stays scan
     excluded: []
   });
   assert.strictEqual(summary, "12 objects and 0 lists, 153 attributes.");
-  assert.include(detail, "<summary>2 more objects</summary>");
-  assert.include(detail, "And 20 more, in the context agents get.");
-  assert.notInclude(detail, "<h3>Lists");
-  assert.notInclude(detail, "Options skipped");
+  assert.strictEqual(groups.length, 1);
+  assert.strictEqual(groups[0]!.entries.length, 10);
+  // The rest fold away behind a disclosure, still there to inspect.
+  assert.strictEqual(groups[0]!.rest?.label, "2 more objects");
+  assert.deepStrictEqual(
+    groups[0]!.rest?.entries.map((entry) => entry.name),
+    ["object_10", "object_11"]
+  );
+  assert.strictEqual(groups[0]!.entries[0]!.rows.length, 100);
+  assert.deepStrictEqual(groups[0]!.entries[0]!.notes, ["And 20 more, in the context agents get."]);
+  assert.deepStrictEqual(caveats, []);
 });

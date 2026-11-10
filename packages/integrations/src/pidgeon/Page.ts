@@ -1,6 +1,7 @@
 import type { PidgeonSnapshot } from "@patchy/api";
 import {
   choiceCards,
+  choiceGroup,
   escapeAttribute,
   escapeHtml,
   monogram,
@@ -10,6 +11,7 @@ import {
 import type * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
 import * as View from "../ConnectionsView.js";
+import * as Fields from "../Fields.js";
 import * as Keys from "./Keys.js";
 
 /**
@@ -21,12 +23,8 @@ import * as Keys from "./Keys.js";
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "pidgeon" }>;
 type Submitted = Readonly<Record<string, string | undefined>>;
 
-export const integration = { key: "pidgeon", label: "Pidgeon email" } as const;
-export const offer = {
-  integration,
-  reads: "An email address on Pidgeon: patches read its mail and, if you allow it, send from it.",
-  mode: "Company-wide · one address"
-};
+export const integration = { key: "pidgeon", label: "Pidgeon email", mark: "Pi" } as const;
+export const offer = { integration, line: "Read and send from one address" };
 /** What recent calls keep of a Pidgeon call. */
 export const logged =
   "Each call keeps its operation and the ids it named, and a send its subject and recipients; message bodies and search text are never logged.";
@@ -44,6 +42,12 @@ const policies: Readonly<Record<string, string>> = {
 const policyLabel = (policy: string) => policies[policy] ?? policy;
 const accessLabel = (access: Keys.Access) => (access === "send" ? "Read and send" : "Read");
 
+/** What became of the key a replacement retired: revoked, or still live until Test revokes it. */
+const revoked = (display: Connection["display"]) =>
+  (display.retired ?? []).length === 0
+    ? "revoked the old one"
+    : "couldn't revoke the old one yet, so it's still active in Pidgeon";
+
 /** A sentence about a Pidgeon connection's key, or `other` for any other connection. */
 const about =
   (other: string, words: (display: Connection["display"]) => string) =>
@@ -59,24 +63,30 @@ export const results = {
   rotate: about(
     "Key replaced.",
     (display) =>
-      `Patchy made a new ${display.access} key for ${display.email}, saved it with a fresh snapshot, and revoked the old one. Your admin key wasn't stored.`
+      `Patchy made a new ${display.access} key for ${display.email}, saved it with a fresh snapshot, and ${revoked(display)}. Your admin key wasn't stored.`
   ),
   access: about(
     "Access changed.",
     (display) =>
-      `Patches may now ${display.access === "send" ? "read and send" : "read"}. Patchy made a new key at that access and revoked the old one. Refresh a patch to get its new client.`
+      `Patches may now ${display.access === "send" ? "read and send" : "read"}. Patchy made a new key at that access and ${revoked(display)}. Refresh a patch to get its new client.`
   ),
   refresh:
     "Labels refreshed. Existing patches keep their pinned labels; regenerate before publishing against the new ones.",
-  reconnect: "Key tested and reconnected. Its snapshot revision is unchanged.",
-  delete:
-    "Connection deleted, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
+  reconnect: "Key tested and resumed. Its snapshot revision is unchanged.",
+  delete: "Disconnected, and its key revoked in Pidgeon. The address and its mail stay in Pidgeon."
 };
 
 export const source = (connection: Connection) => connection.display.email;
 /** The label beside a test connection's name, wherever it's shown. */
 export const tag = (connection: Connection) =>
-  connection.display.test ? "Test · mail stays in Pidgeon" : undefined;
+  connection.display.test ? "Test, mail stays in Pidgeon" : undefined;
+/** What it holds, as Settings names it: Patchy's own key for the address, never the admin key. */
+export const credential = (connection: Connection) => ({
+  label: "Address key",
+  detail: `Stored · Patchy's own, for ${connection.display.email} · made ${connection.display.key.madeAt.slice(0, 10)}`
+});
+/** What its key may do, which Change access changes. */
+export const allowed = (connection: Connection) => accessLabel(connection.display.access);
 export const facts = (connection: Connection): ReadonlyArray<readonly [string, string]> => [
   ["Address", connection.display.email],
   ["Writes to", policyLabel(connection.display.sendPolicy)],
@@ -119,19 +129,47 @@ export const reads = (snapshot: PidgeonSnapshot) => ({
   more: Math.max(0, snapshot.labels.length - 10)
 });
 
-/** Notices a Pidgeon connection keeps on its page while they hold: old keys not yet revoked. */
-export const standing = (connection: Connection): ReadonlyArray<View.Standing> =>
-  (connection.display.retired ?? []).map((key) => ({
-    tone: "warn" as const,
-    title: "The old key is still active in Pidgeon",
-    text: `Patchy switched to the new key but hasn't revoked the old one, named ${key.name}. Test connection tries again, or revoke it in Pidgeon under Developers › API keys.`
-  }));
+/**
+ * Why a Pidgeon connection needs an admin: old keys Patchy replaced but hasn't revoked, which
+ * stay live in Pidgeon though the connection works, and Test tries to revoke again; else a test
+ * address, whose mail stays in Pidgeon and which Pidgeon deletes a day after it's made, so real
+ * mail needs a live address. The old keys come first: they're what an admin must act on.
+ */
+export const attention = (connection: Connection): View.Attention | undefined => {
+  const keys = connection.display.retired ?? [];
+  if (keys.length > 0) {
+    const named = keys.map((key) => key.name);
+    return {
+      tone: "warning",
+      title:
+        keys.length === 1
+          ? "The old key is still active in Pidgeon"
+          : "The old keys are still active in Pidgeon",
+      text: `Patchy switched to the new key but hasn't revoked ${keys.length === 1 ? `the old one, named ${named[0]}` : `the old ones, named ${named.join(" and ")}`}. Test tries again, or revoke ${keys.length === 1 ? "it" : "them"} in Pidgeon under Developers › API keys.`,
+      fixes: [
+        {
+          href: View.connectionPath(connection.id, "test"),
+          label: "Test",
+          primary: true,
+          post: true
+        }
+      ]
+    };
+  }
+  if (!connection.display.test) return undefined;
+  return {
+    tone: "warning",
+    title: "This is a test address",
+    text: `Its mail stays in Pidgeon, and Pidgeon deletes ${connection.display.email} a day after it was made. For real mail, connect a live address with a live admin key.`,
+    fixes: [{ href: connectPath, label: "Connect a live address" }]
+  };
+};
 
 export const consequences = {
   delete:
-    "No stored patch version declares it. Deleting revokes Patchy's key in Pidgeon and frees the name; the address and its mail stay in Pidgeon, and the snapshots patches were published against are kept. This can't be undone.",
+    "No stored patch version declares it. Disconnecting revokes Patchy's key in Pidgeon and frees the name; the address and its mail stay in Pidgeon, and the snapshots patches were published against are kept. This can't be undone.",
   disconnect:
-    "Patches that declare it can't read or send until an admin reconnects it. Patchy keeps its key, so reconnecting needs no admin key; it checks the key still works first."
+    "Patches that declare it can't read or send until an admin resumes it. Patchy keeps its key, so resuming needs no admin key; it checks the key still works first."
 };
 
 /** Refusals about the admin key or the address, shown under their part of the form. */
@@ -303,9 +341,15 @@ export const styles = `
 
 // ---------- Replace key and Change access ----------
 
-const adminKeyField = (refusal: View.Notice | undefined) => {
-  const note = View.fieldNote("pidgeon-key", "key", KEY_HINT, refusal);
-  return `<label class="field-label" for="pidgeon-key">Admin key</label><input class="field" id="pidgeon-key" type="password" name="key" required placeholder="pgn_…" autocomplete="off" spellcheck="false"${note.attributes}>${note.note}`;
+/** The admin key, as Replace key and Change access ask for it: used once and never stored. */
+const adminKey: Fields.Spec = {
+  kind: "secret",
+  id: "pidgeon-key",
+  name: "key",
+  field: "key",
+  label: "Admin key",
+  hint: KEY_HINT,
+  placeholder: "pgn_…"
 };
 const attemptField = (submitted: Submitted) =>
   `<input type="hidden" name="attempt" value="${escapeAttribute(submitted.attempt ?? "")}">`;
@@ -316,16 +360,29 @@ export const rotate = {
     "Patchy uses an admin key once to make a new key for the same address at the same access, checks it and saves it with a fresh snapshot. Then the old key revokes itself. Use this when Patchy's key stopped working, for example because its admin key was revoked.",
   submit: "Replace key",
   fields: (submitted: Submitted, refusal?: View.Notice) =>
-    `${attemptField(submitted)}${adminKeyField(refusal)}`
-};
+    `${attemptField(submitted)}${Fields.render(adminKey, submitted, refusal, true)}`,
+  shows: ["key"]
+} as const;
 export const access = {
   title: (name: string) => `Change what patches may do with ${name}`,
   consequence:
     "Patchy uses an admin key once to make a new key for the same address at the access you choose, and saves it with a fresh snapshot. Then the old key revokes itself. Published patches keep working; refresh one to get its new client.",
   submit: "Change access",
-  fields: (submitted: Submitted, refusal?: View.Notice) =>
-    `${attemptField(submitted)}<fieldset class="form-step"><legend class="form-step-title">Patches may</legend>${accessCards(submitted.access)}</fieldset>${adminKeyField(refusal)}`
-};
+  fields: (submitted: Submitted, refusal?: View.Notice) => {
+    const error = Fields.errorAt("access", refusal);
+    const choices = choiceGroup({
+      id: "pidgeon-access",
+      legend: "Patches may",
+      ...(error === undefined ? {} : { error }),
+      choices: accessCards(submitted.access)
+    });
+    // The current access starts chosen, so the admin key is what's left to type.
+    return `${attemptField(submitted)}${error === undefined ? choices : Fields.focused(choices)}${Fields.render(adminKey, submitted, refusal, true)}`;
+  },
+  shows: ["access", "key"],
+  initial: (connection: ConnectionStore.Connection) =>
+    connection.integration === "pidgeon" ? { access: connection.display.access } : {}
+} as const;
 
 const refused = (field: View.Field, message: string): View.Notice => ({
   message,

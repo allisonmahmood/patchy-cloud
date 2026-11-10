@@ -29,6 +29,7 @@ import { type } from "./type.js";
 import { usual } from "./usual.js";
 import { visibility } from "./visibility.js";
 import { whatsNew } from "./whats-new.js";
+import { wideTables } from "./wide-tables.js";
 
 /**
  * The app's stylesheet as named chunks, in cascade order: fonts and tokens, the document and type,
@@ -50,6 +51,7 @@ export const chunks = {
   rowsFlush,
   tables,
   tableCells,
+  wideTables,
   navigation,
   menus,
   dialogs,

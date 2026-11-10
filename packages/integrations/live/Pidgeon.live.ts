@@ -399,21 +399,21 @@ describe.skipIf(Live.ADMIN_KEY === undefined)("Pidgeon, live in test mode", () =
             ),
             owner.user
           );
-          assert.include(connected.html, `<span class="tag">Test · mail stays in Pidgeon</span>`);
+          assert.include(connected.html, "Test, mail stays in Pidgeon");
           assert.include(
             connected.html,
             `<dt>Address</dt><dd>${localPart}@${Keys.SHARED_DOMAIN}</dd>`
           );
           assert.isFalse(connected.html.includes(key), "The connection page showed the key.");
           const index = yield* read("/settings/integrations", owner.user);
-          assert.include(index.html, `<span class="tag">Test · mail stays in Pidgeon</span>`);
+          assert.include(index.html, "Test, mail stays in Pidgeon");
           const id = /\/settings\/integrations\/(conn_[a-z0-9]+)/.exec(connected.html)?.[1];
           assert.isDefined(id);
           const deleted = yield* follow(
             yield* send(`/settings/integrations/${id}/delete`, post(owner.user)),
             owner.user
           );
-          assert.include(deleted.html, "Connection deleted, and its key revoked in Pidgeon.");
+          assert.include(deleted.html, "Disconnected, and its key revoked in Pidgeon.");
         })
       );
     }

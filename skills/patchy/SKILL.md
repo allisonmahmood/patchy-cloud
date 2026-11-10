@@ -65,8 +65,8 @@ All levels accept `--json`. Top-level success is `{ patches, connections }`
 merged from two routes; the other levels print the wire body with no `ok`
 wrapper. Branch on `declarable`, `reason` and `paused` (an IMAP connection whose password its server refused, which fails every call until an admin fixes it), never parse the human `hint`.
 Unshared tables and stores name their owner; off sources need restoration
-before use. Disconnected connections point to the admin's
-browser at `/settings/integrations`. Listing grants no access and reads no rows
+before use. Disconnected connections, which the pages call paused, point to the
+admin's browser at `/settings/integrations`. Listing grants no access and reads no rows
 or file contents.
 
 ## Where patch files live
@@ -484,9 +484,9 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   `patch_not_openable` is definitive (exit 2): correct the shared-table/store declaration
   or restore source access before publishing a fresh attempt.
   `connection_not_connected` and `stale_generated` are also definitive (exit 2).
-  An admin reconnects at `/settings/integrations`; a stale declaration needs a
+  An admin resumes it at `/settings/integrations`; a stale declaration needs a
   regenerated snapshot stamp. Connection strings belong only in the person's
-  browser connect/rotate form, never in CLI arguments or an agent transcript.
+  browser connect or replace form, never in CLI arguments or an agent transcript.
 - Republishing the same local file updates the patch it already created on that instance
   and preserves its sharing scope unless `--share company` or `--share public` is supplied.
   Pass `--new` to force a fresh patch, or `--patch` to update a known patch only.
