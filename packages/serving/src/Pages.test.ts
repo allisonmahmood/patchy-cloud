@@ -59,6 +59,7 @@ import * as Pages from "./Pages.js";
 import {
   CONTENT_SECURITY_POLICY,
   NOTICE_SECURITY_POLICY,
+  PATCH_ROBOTS_TAG,
   SHELL_SECURITY_POLICY,
   noticeContentSecurityPolicy,
   servingHeaders,
@@ -898,6 +899,52 @@ it.layer(services)("pages in memory", (it) => {
         ? gunzipSync(body)
         : body;
   });
+
+  it.effect(
+    "asks a colleague or guest yet to accept the terms on a patch's page, never its frame or a public page",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const grants = yield* GuestGrants.GuestGrants;
+        const company = yield* publish("Asked first");
+        const open = yield* publish("Open to anyone", "public");
+        // Both were here before acceptances began, so neither has one recorded.
+        yield* sql`INSERT INTO companies (id, handle, name) VALUES ('cmp_terms_guest', 'terms-guest', 'Guest Co')`;
+        yield* sql`
+          INSERT INTO users (id, clerk_user_id, company_id, email, name, role) VALUES
+            ('usr_terms_colleague', 'user_terms_colleague', ${DEV_SEED.companyId},
+              'colleague@terms.example', 'Sam', 'member'),
+            ('usr_terms_guest', 'user_terms_guest', 'cmp_terms_guest',
+              'guest@terms.example', 'Gus', 'member')`;
+        yield* grants.grant({
+          patchId: company.patchId,
+          userId: "usr_terms_guest",
+          grantedBy: DEV_SEED.userId
+        });
+        const text = (response: Response) => Effect.promise(() => response.text());
+        for (const person of ["colleague", "guest"]) {
+          const cookie = signedInCookies(
+            signSession({ sub: `user_terms_${person}`, email: `${person}@terms.example` })
+          );
+          const page = { cookie, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" };
+          const asked = yield* send(company.path, { headers: page });
+          assert.strictEqual(asked.status, 200);
+          assert.strictEqual(asked.headers.get("x-robots-tag"), PATCH_ROBOTS_TAG);
+          const prompt = yield* text(asked);
+          assert.include(prompt, "We’ve updated our terms");
+          assert.notInclude(prompt, "Asked first");
+          const frame = yield* send(`/~content/${company.patchId}/${company.versionId}`, {
+            headers: { ...page, "sec-fetch-dest": "iframe" }
+          });
+          assert.include(yield* text(frame), "<h1>Asked first</h1>");
+          const anyone = yield* send(open.path, { headers: page });
+          assert.notInclude(yield* text(anyone), "We’ve updated our terms");
+          // Without a browser's fetch metadata, as an agent reads it, the page is served.
+          const read = yield* send(company.path, { headers: { cookie } });
+          assert.notInclude(yield* text(read), "We’ve updated our terms");
+        }
+      })
+  );
 
   it.effect("names the broker's bytes in a scripted shell's URL", () =>
     Effect.gen(function* () {

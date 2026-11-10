@@ -27,7 +27,8 @@
  *
  * The exercise is the same at every step: the deep health check, the build's
  * own CLI (whoami, list, a publish), and in Chromium, as the scenario's admin,
- * the portal and every patch. Each page must answer with no server error or
+ * the portal and every patch, accepting the terms prompt first when a build
+ * whose terms are newer than the seed's asks. Each page must answer with no server error or
  * uncaught exception and settle; a patch whose page subscribes must have the
  * server deliver its live queries, every one step 1 saw; a patch with sample
  * data must not show its empty state. Meanwhile the server must log no failed request,
@@ -1045,13 +1046,19 @@ const exercisePages = async (
     const signedIn = await signIn.goto(
       `${apiUrl}/dev/sign-in?as=${encodeURIComponent(publisher.email)}&return=/`
     );
-    await signIn.close();
     // Every page after a failed sign-in would only answer 401.
-    if (signedIn?.status() !== 200)
+    if (signedIn?.status() !== 200) {
+      await signIn.close();
       return {
         problems: [`signing in as ${publisher.email} answered ${signedIn?.status() ?? "nothing"}`],
         delivered
       };
+    }
+    // A build whose terms are newer than the seed's asks once, as it asks everyone on release.
+    // Accept sits in the door's actions, outside its form, which it names.
+    if ((await signIn.locator('form#terms-accept[action="/auth/terms"]').count()) > 0)
+      await press(signIn, 'button[type="submit"][form="terms-accept"]', "Accepting the terms");
+    await signIn.close();
     for (const [url, expect] of targets) {
       const page = await context.newPage();
       try {

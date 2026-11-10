@@ -8,6 +8,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Cryptography, WhatsNew } from "@patchy/core";
+import * as Terms from "./Terms.js";
 import { AlreadyInCompany, displayName, Role, User, type Claims } from "./Users.js";
 
 /** Fixed once created: handles are not normalized into a different address. */
@@ -242,11 +243,19 @@ export const make = Effect.gen(function* () {
     Result: User,
     // Creation and invitation acceptance both land here, so the name rule applies once.
     // A new member starts caught up on What's new; the history is still one click away.
+    // Their sign-up consent, the checkbox their account was made with, accepted the terms in
+    // force now, so a new user is recorded as accepting them and is never asked again.
     execute: ({ id, companyId, clerkUserId, email, name, role, now }) => sql`
-      INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
-      VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
-        to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
-      ON CONFLICT DO NOTHING RETURNING ${userColumns}`
+      WITH created AS (
+        INSERT INTO users (id, company_id, clerk_user_id, email, name, role, created_at, whats_new_seen)
+        VALUES (${id}, ${companyId}, ${clerkUserId}, ${email}, ${displayName({ name, email })}, ${role},
+          to_timestamp(${now / 1_000}), ${WhatsNew.latestRelease})
+        ON CONFLICT DO NOTHING RETURNING ${userColumns}
+      ), accepted AS (
+        INSERT INTO terms_acceptances (user_id, terms_revision, privacy_revision, via, accepted_at)
+        SELECT id, ${Terms.current.terms}, ${Terms.current.privacy}, 'sign-up', "createdAt" FROM created
+      )
+      SELECT * FROM created`
   });
   const existingUser = SqlSchema.findOneOption({
     Request: Schema.Struct({ email: Schema.String, clerkUserId: Schema.NullOr(Schema.String) }),

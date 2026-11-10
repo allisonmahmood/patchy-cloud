@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { acceptCurrentTerms } from "@patchy/auth/seed";
 import { Cryptography } from "@patchy/core";
 
 const Slug = Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/));
@@ -38,7 +39,9 @@ export const Person = Schema.Struct({
   /** Deactivated once `up` has published what they own; reactivating them lasts until `down`. */
   deactivated: Schema.optionalKey(Schema.Literal(true)),
   computers: Schema.optionalKey(Schema.Array(Computer)),
-  apps: Schema.optionalKey(Schema.Array(App))
+  apps: Schema.optionalKey(Schema.Array(App)),
+  /** Hasn't accepted the current terms, so their first page in a browser is the terms prompt. */
+  termsPending: Schema.optionalKey(Schema.Literal(true))
 });
 export type Person = typeof Person.Type;
 
@@ -417,9 +420,10 @@ export const allowPublishing = Effect.fn("allowPublishing")(function* (
 });
 
 /**
- * Seeds the scenario's companies, people and publishing key into a migrated database, and turns
- * agent access on when the scenario asks. Every start seeds again; agent access is turned on
- * only while nobody has ever switched it, so a switch in Settings survives restarts.
+ * Seeds the scenario's companies, people, their acceptance of the current terms and publishing
+ * key into a migrated database, and turns agent access on when the scenario asks. Every start
+ * seeds again; agent access is turned on only while nobody has ever switched it, so a switch in
+ * Settings survives restarts, and a person whose terms are pending stays asked until they accept.
  */
 export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scenario) {
   const sql = yield* SqlClient.SqlClient;
@@ -442,6 +446,7 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
             role = EXCLUDED.role,
             deactivated_at = ${person.deactivated === true ? sql`users.deactivated_at` : sql`NULL`}`;
+        if (person.termsPending !== true) yield* acceptCurrentTerms(userId);
         if (person.key === scenario.publisher) yield* allowPublishing(scenario, person);
       }
       if (scenario.company.agentAccess === true) {
