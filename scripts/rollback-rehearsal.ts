@@ -4,6 +4,7 @@
  *
  *   pnpm test:rollback-rehearsal               against the commit production runs
  *   pnpm test:rollback-rehearsal --live <sha>  against another commit
+ *   pnpm test:rollback-rehearsal --upgrade-only  stop after verifying the upgrade
  *
  * CI's `rollback-rehearsal` job runs it when a pull request changes a
  * capability's `src/migrations.ts`, the handler descriptor schemas
@@ -15,6 +16,9 @@
  *   2. HEAD's server starts on that data, migrates it and is exercised.
  *   3. The live commit's server starts on that data again and is exercised.
  *   4. HEAD's server starts on it once more and is exercised.
+ *
+ * For a PR explicitly labelled `one-way`, CI passes `--upgrade-only`: steps 1
+ * and 2 still run in full, but no rollback compatibility is claimed.
  *
  * Steps 2 to 4 swap only the server build. Step 1 leaves the data in the
  * worktree's `.local/dev`: the Postgres cluster (the platform database and
@@ -79,6 +83,12 @@ import { agentTokensWork } from "./dev/src/agentTokens.js";
 import { hostLabel, PlanJson } from "./dev/src/plan.js";
 import { PG_FLAGS, PG_PASSWORD, PG_USER } from "./dev/src/postgres.js";
 import { ids, type Person, publisherToken, Scenario } from "./dev/src/scenario.js";
+
+const { values } = parseArgs({
+  options: { live: { type: "string" }, "upgrade-only": { type: "boolean", default: false } }
+});
+const upgradeOnly = values["upgrade-only"];
+const rehearsalName = upgradeOnly ? "Upgrade rehearsal" : "Rollback rehearsal";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const SCENARIO = "brightline";
@@ -222,10 +232,11 @@ interface Step {
 class StepFailed extends Error {
   constructor(
     step: Step,
+    total: number,
     phase: string,
     readonly problems: ReadonlyArray<string>
   ) {
-    super(`Step ${step.number} of 4, ${step.title}, failed while ${phase}.`);
+    super(`Step ${step.number} of ${total}, ${step.title}, failed while ${phase}.`);
   }
 }
 
@@ -1359,14 +1370,14 @@ const changeThroughDoor = async (environment: Environment, agentArea: AgentArea,
 
 const summary = async (lines: ReadonlyArray<string>) => {
   const file = process.env.GITHUB_STEP_SUMMARY;
-  if (file) await appendFile(file, `### Rollback rehearsal\n\n${lines.join("\n")}\n`);
+  if (file) await appendFile(file, `### ${rehearsalName}\n\n${lines.join("\n")}\n`);
 };
 
 /** Prints a failure, annotates it in GitHub Actions and adds it to the job summary. */
 const report = async (message: string, details: ReadonlyArray<string> = []) => {
   console.error(`\n${message}`);
   for (const detail of details) console.error(`  ${detail}`);
-  if (process.env.GITHUB_ACTIONS) console.error(`::error title=Rollback rehearsal::${message}`);
+  if (process.env.GITHUB_ACTIONS) console.error(`::error title=${rehearsalName}::${message}`);
   await summary([
     `**${message}**`,
     ...(details.length === 0 ? [] : ["", "```", ...details, "```"])
@@ -1375,15 +1386,17 @@ const report = async (message: string, details: ReadonlyArray<string> = []) => {
 
 const short = (commit: string) => commit.slice(0, 7);
 
-/** The four steps on a scratch worktree, which it removes again, instance and all. */
+/** Rehearse on a scratch worktree, then remove it, its instance and all its data. */
 const rehearse = async (live: string, head: string) => {
-  const steps: ReadonlyArray<Step> = [
+  const allSteps: ReadonlyArray<Step> = [
     { number: 1, title: `the live commit (${short(live)}) seeds the data`, commit: live },
     { number: 2, title: `HEAD (${short(head)}) upgrades it`, commit: head },
     { number: 3, title: `the live commit (${short(live)}) comes back`, commit: live },
     { number: 4, title: `HEAD (${short(head)}) comes back`, commit: head }
   ];
-  const route = `${short(live)} → ${short(head)} → ${short(live)} → ${short(head)}`;
+  const steps = upgradeOnly ? allSteps.slice(0, 2) : allSteps;
+  const route = steps.map((step) => short(step.commit)).join(" → ");
+  if (upgradeOnly) console.log("One-way release: verify the upgrade; rollback is not supported.");
   console.log(`Rehearsing ${route} on one set of data.`);
   const started = Date.now();
   const scratch = await mkdtemp(path.join(os.tmpdir(), "patchy-rollback-rehearsal-"));
@@ -1441,7 +1454,7 @@ const rehearse = async (live: string, head: string) => {
           .filter(Boolean)
           .slice(-40)
           .map((line) => (line.length > 400 ? `${line.slice(0, 400)}…` : line));
-        return new StepFailed(step, phase, [
+        return new StepFailed(step, steps.length, phase, [
           ...problems,
           ...(tail.length === 0 ? [] : [`${path.basename(log)}:`, ...tail])
         ]);
@@ -1580,7 +1593,7 @@ const rehearse = async (live: string, head: string) => {
       console.log(`  passed in ${Math.round((Date.now() - stepStarted) / 1000)}s`);
     }
     const seconds = Math.round((Date.now() - started) / 1000);
-    const passed = `Exercised rollback paths passed: ${route}, in ${seconds}s.`;
+    const passed = `Exercised ${upgradeOnly ? "upgrade" : "rollback"} paths passed: ${route}, in ${seconds}s.`;
     console.log(`\n${passed}`);
     await summary([passed]);
   } catch (error) {
@@ -1592,7 +1605,6 @@ const rehearse = async (live: string, head: string) => {
   }
 };
 
-const { values } = parseArgs({ options: { live: { type: "string" } } });
 try {
   const head = (await git("rev-parse", "HEAD")).trim();
   if ((await git("status", "--porcelain")).trim() !== "")
