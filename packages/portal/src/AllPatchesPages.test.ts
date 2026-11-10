@@ -4,6 +4,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 import { PUBLIC_BASE_URL } from "@patchy/auth/testing";
 import { sha256 } from "../../../test/crypto.js";
+import { unopenedName } from "@patchy/core";
 import { GuestGrants, Patches } from "@patchy/patches";
 import {
   DAY,
@@ -217,7 +218,7 @@ it.layer(socket)("all patches on a socket", (it) => {
       assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
       assert.include(
         html,
-        `<a class="row-link" href="/${workspace.handle}/office-map">office-map</a>`
+        `<a class="row-link" href="/${workspace.handle}/office-map">${unopenedName("office-map")}</a>`
       );
       // The viewer's own patches say so in Owner, without a badge, and carry Share; an admin
       // shares a colleague's from its menu.
@@ -361,9 +362,9 @@ it.layer(socket)("all patches on a socket", (it) => {
       const all = yield* (yield* request("/patches", workspace.member)).text;
       assert.include(
         all,
-        `<a class="row-link" href="/${workspace.handle}/office-map">Office &lt;map&gt;</a>`
+        `<a class="row-link" href="/${workspace.handle}/office-map">${unopenedName("Office <map>")}</a>`
       );
-      assert.include(all, ">blank-title</a>");
+      assert.include(all, `>${unopenedName("blank-title")}</a>`);
     })
   );
 });
@@ -401,7 +402,7 @@ it.layer(socket)("patch health on a socket", (it) => {
         // row with no calls to count has a dash.
         const failures = (html: string, name: string) => {
           const row = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((match) =>
-            match[1]!.includes(`>${name}</a>`)
+            match[1]!.includes(`/${name}">`)
           )?.[1];
           return [...(row ?? "").matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][5]?.[1];
         };

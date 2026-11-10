@@ -430,6 +430,8 @@ export const shareDialog = (html: string) =>
   html.match(/<section class="dialog[^"]*" id="share"[\s\S]*<\/section>/)?.[0] ?? "";
 export const text = (html: string) =>
   html
+    // The not-opened-yet dot holds a name's last character, which still reads as part of the name.
+    .replace(/<span class="unopened">([^<]*)<span class="unseen"[^>]*><\/span><\/span>/g, "$1")
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -484,9 +486,11 @@ export const cardPath = (name: string) => `/patches/${name}`;
 export const listed = (html: string) =>
   [
     ...(html.match(/<tbody>([\s\S]*)<\/tbody>/)?.[1] ?? "").matchAll(
-      /<a class="row-link" href="[^"]*">([a-z0-9-]+)<\/a>/g
+      /<a class="row-link" href="[^"]*">([\s\S]*?)<\/a>/g
     )
-  ].map((match) => match[1]!);
+  ]
+    .map((match) => text(match[1]!))
+    .filter((name) => /^[a-z0-9-]+$/.test(name));
 /** The labels in one row's action menu, by its id: a patch's id, on Home after its shelf's. */
 export const menuItems = (html: string, id: string) =>
   text(html.match(new RegExp(`<div class="menu" id="menu-${id}"[\\s\\S]*?</div>`))?.[0] ?? "");

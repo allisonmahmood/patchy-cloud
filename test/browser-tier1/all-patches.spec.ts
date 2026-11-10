@@ -53,3 +53,57 @@ test("Needs attention and Retired and deleted keep their reasons and states read
     }
   }
 });
+
+test("a colleague's patch not opened yet keeps its dot beside its name on a phone, until it is opened", async ({
+  browser,
+  instance
+}) => {
+  await instance.publish("company", html("Client onboarding"), undefined, tier1);
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 700 },
+    hasTouch: true,
+    isMobile: true
+  });
+  try {
+    await prepare(context, instance);
+    await instance.session(context, "colleague");
+    const page = await context.newPage();
+    await page.goto(`${instance.origin}/patches`);
+    // The dot is inside the patch's link, so following links says so too.
+    const unopened = page.getByRole("link", { name: "Client onboarding Not opened yet" });
+    await expect(unopened).toBeVisible();
+    // Narrowed a pixel at a time around where the dot stops fitting, the name breaks before its
+    // last word, never between its last letter and the dot.
+    const stranded = await unopened.evaluate((link) => {
+      const name = link.closest<HTMLElement>(".row-name")!;
+      const dot = link.querySelector(".unseen")!;
+      const texts = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+      let last: Node | null = null;
+      for (let node = texts.nextNode(); node; node = texts.nextNode())
+        if (node.textContent) last = node;
+      const letter = document.createRange();
+      letter.setStart(last!, last!.textContent!.length - 1);
+      letter.setEnd(last!, last!.textContent!.length);
+      const end = letter.getBoundingClientRect().right - name.getBoundingClientRect().left;
+      const widths: number[] = [];
+      for (let width = Math.ceil(end) + 24; width >= Math.floor(end) - 24; width--) {
+        name.style.width = `${width}px`;
+        const at = letter.getBoundingClientRect();
+        const mark = dot.getBoundingClientRect();
+        const middle = (mark.top + mark.bottom) / 2;
+        if (middle < at.top || middle > at.bottom || mark.left < at.right) widths.push(width);
+      }
+      name.style.width = "";
+      return widths;
+    });
+    expect(stranded).toEqual([]);
+
+    // Opening it at its address clears it.
+    await unopened.click();
+    await expect(page).not.toHaveURL(/\/patches$/);
+    await page.goto(`${instance.origin}/patches`);
+    await expect(page.getByRole("link", { name: "Client onboarding", exact: true })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});

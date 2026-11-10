@@ -38,7 +38,7 @@ export { region } from "./region.js";
 export { usualTiles } from "./usual.js";
 export type { UsualTile } from "./usual.js";
 export { refusal } from "./refusal.js";
-export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
+export { badge, dot, emptyState, notice, receipt, unopenedName } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";
 export { expandingTable } from "./expanding-table.js";

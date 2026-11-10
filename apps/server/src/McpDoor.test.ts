@@ -316,13 +316,15 @@ const toolCall = (token: string, name: string, args: Record<string, unknown>) =>
     )
   );
 
-/** The patch names on a portal page's list. */
+/** The patch names on a portal page's list, a not-opened-yet dot's markup left out. */
 const listed = (html: string) =>
   [
     ...(/<tbody>([\s\S]*)<\/tbody>/.exec(html)?.[1] ?? "").matchAll(
-      /<a class="row-link" href="[^"]*">([a-z0-9-]+)<\/a>/g
+      /<a class="row-link" href="[^"]*">([\s\S]*?)<\/a>/g
     )
-  ].map((match) => match[1]!);
+  ]
+    .map((match) => match[1]!.replace(/<[^>]*>/g, ""))
+    .filter((name) => /^[a-z0-9-]+$/.test(name));
 
 it.layer(
   server(env).pipe(

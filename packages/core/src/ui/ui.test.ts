@@ -26,8 +26,10 @@ import {
   settingsPage,
   steps,
   switchForm,
+  row,
   table,
-  tabs
+  tabs,
+  unopenedName
 } from "./index.js";
 
 /** Exports that draw nothing a page shows: the enhancer and copy scripts, the gallery and ids. */
@@ -75,6 +77,7 @@ const shownAt = {
   copyButton: "Copy button",
   badge: "Status",
   dot: "Status",
+  unopenedName: "Status",
   notice: "Notice",
   receipt: "Receipt",
   emptyState: "Empty state",
@@ -265,6 +268,24 @@ describe("buttons", () => {
 });
 
 describe("structure", () => {
+  it("keeps the not-opened-yet dot with a name's last character, inside its link, escaped", () => {
+    const dot = '<span class="unseen" role="img" aria-label="Not opened yet"></span>';
+    expect(unopenedName("Client onboarding")).toBe(
+      `Client onboardin<span class="unopened">g${dot}</span>`
+    );
+    expect(unopenedName("Office <map> ")).toBe(
+      `Office &lt;map<span class="unopened">&gt;${dot}</span>`
+    );
+    // A last character drawn from several code points stays whole.
+    expect(unopenedName("Desk 👩‍💻")).toBe(`Desk <span class="unopened">👩‍💻${dot}</span>`);
+    expect(row({ name: "Kudos", href: "/kudos", unopened: true })).toContain(
+      `<a class="row-link" href="/kudos">${unopenedName("Kudos")}</a>`
+    );
+    expect(row({ name: "Kudos", href: "/kudos" })).toContain(
+      '<a class="row-link" href="/kudos">Kudos</a>'
+    );
+  });
+
   it("gives repeated rows distinct ids, whatever their keys hold", () => {
     expect(idFor("menu", "kudos")).toBe("menu-kudos");
     const keys: ReadonlyArray<ReadonlyArray<string>> = [

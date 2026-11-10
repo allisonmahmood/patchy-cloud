@@ -46,7 +46,7 @@ import {
 } from "./detail.js";
 import { answerPair, canList, meet, verificationCode } from "./door.js";
 import { region } from "./region.js";
-import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
+import { badge, dot, emptyState, notice, receipt, unopenedName } from "./feedback.js";
 import { expandingTable } from "./expanding-table.js";
 import { fieldRow } from "./field-row.js";
 import { flowOutcome } from "./flow-outcome.js";
@@ -283,7 +283,7 @@ const choices = demo(
 
 const status = demo(
   "Status",
-  `<div class="stack"><div class="cluster"><span class="muted">None</span><span class="muted">No calls yet</span>${badge("2 failed", "danger")}</div><div class="cluster"><span class="muted">Succeeded</span>${badge("Failed", "danger")}${badge("Refused", "warning")}${badge("Running", "info")}${badge("Unknown")}</div><div class="cluster">${dot("Connected", "success")}${badge("Needs attention", "danger")}${badge("Paused")}${badge("Serving", "yellow")}</div><div class="cluster">${badge("Invited")}${badge("Guest")}<span class="you">(you)</span>${badge("Expires soon", "warning")}<span class="unseen" aria-label="New to you"></span></div></div>`,
+  `<div class="stack"><div class="cluster"><span class="muted">None</span><span class="muted">No calls yet</span>${badge("2 failed", "danger")}</div><div class="cluster"><span class="muted">Succeeded</span>${badge("Failed", "danger")}${badge("Refused", "warning")}${badge("Running", "info")}${badge("Unknown")}</div><div class="cluster">${dot("Connected", "success")}${badge("Needs attention", "danger")}${badge("Paused")}${badge("Serving", "yellow")}</div><div class="cluster">${badge("Invited")}${badge("Guest")}<span class="you">(you)</span>${badge("Expires soon", "warning")}<span class="row-name">${unopenedName("Pitch Library")}</span></div></div>`,
   stateTable("Status", [
     [
       "Quiet",
@@ -291,7 +291,7 @@ const status = demo(
     ],
     ["Needs a decision", "a badge on its tone: danger, warning, info"],
     ["Plain badge", "a state to note, such as Paused or Invited"],
-    ["New to you", "a blue dot named for readers"]
+    ["Not opened yet", "a blue dot after a colleague's patch's name, named for readers"]
   ])
 );
 

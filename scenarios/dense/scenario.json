@@ -638,7 +638,10 @@
       "owner": "dana",
       "description": "The looks Harbor & Pine love for the rebrand: colour, type and the feel of the cafés.",
       "guests": ["allison", "priya"],
-      "age": "6 days"
+      "age": "6 days",
+      "opens": {
+        "priya": 2
+      }
     },
     {
       "file": "rebrand-review.html",

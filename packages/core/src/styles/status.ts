@@ -26,4 +26,7 @@ export const status = `
 
     /* unseen: something new to the viewer, a blue dot beside its name. */
     .unseen, .whats-new-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+    /* The not-opened-yet dot keeps to the name's last character, a little apart, on its middle. */
+    .unopened { white-space: nowrap; }
+    .unopened > .unseen { margin-left: var(--space-1); vertical-align: 1px; }
 `;

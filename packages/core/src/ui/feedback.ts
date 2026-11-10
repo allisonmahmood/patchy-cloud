@@ -26,6 +26,20 @@ export const badge = (label: string, tone?: "success" | "warning" | "danger" | "
 export const dot = (label: string, tone?: "success" | "warning" | "danger" | "info") =>
   `<span class="dot${tone === undefined ? "" : ` dot-${tone}`}">${escapeHtml(label)}</span>`;
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * A patch's name, escaped, with the blue dot after it that marks a colleague's patch the viewer
+ * has never opened, as unread mail is marked. It goes inside the patch's link, so the link reads
+ * "Not opened yet" too. The dot keeps to the name's last character, so a phone never wraps it
+ * onto a line alone, and a long name still wraps.
+ */
+export const unopenedName = (name: string) => {
+  const characters = Array.from(graphemes.segment(name.trimEnd()), ({ segment }) => segment);
+  const last = characters.pop() ?? "";
+  return `${escapeHtml(characters.join(""))}<span class="unopened">${escapeHtml(last)}<span class="unseen" role="img" aria-label="Not opened yet"></span></span>`;
+};
+
 /** Where content will be, while there is none: what is missing and, at most, one way to start. */
 export const emptyState = (spec: {
   readonly title: string;

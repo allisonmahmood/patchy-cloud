@@ -1660,6 +1660,36 @@ it.layer(services)("pages in memory", (it) => {
       })
   );
 
+  it.effect("records a guest's open of a patch shared with them, and reports none", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const { patchId, versionId, path } = yield* publish(
+        "Shared rota",
+        undefined,
+        null,
+        "shared-rota"
+      );
+      const guest = yield* outsider("opening-guest");
+      yield* (yield* GuestGrants.GuestGrants).grant({
+        patchId,
+        userId: guest.user.id,
+        grantedBy: DEV_SEED.userId
+      });
+      const opened = Effect.map(patches.opens(guest.user.id), (opens) =>
+        opens.some((entry) => entry.patchId === patchId)
+      );
+      const visit = (at: string) => send(at, { headers: { ...navigation, cookie: guest.cookie } });
+
+      // Its frame's content isn't an open; the address is, for the guest's own Shared with you.
+      assert.strictEqual((yield* visit(`/~content/${patchId}/${versionId}?n=b`)).status, 200);
+      assert.isFalse(yield* opened);
+      assert.strictEqual((yield* visit(path)).status, 200);
+      assert.isTrue(yield* opened);
+      // Activation counts members only.
+      assert.deepStrictEqual(firstOpens(patchId), []);
+    })
+  );
+
   it.effect(
     "follows a public address's handshake only for a session, and sets Clerk's cookies privately",
     () =>

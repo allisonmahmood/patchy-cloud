@@ -24,7 +24,8 @@ import {
   patchTitle,
   rowMenu,
   segmented,
-  table
+  table,
+  unopenedName
 } from "@patchy/core";
 import type { Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
@@ -37,13 +38,13 @@ import {
   failuresColumn,
   firstClause,
   hidden,
-  isNew,
   manages,
   matches,
   openItems,
   patchAddress,
   shareHref,
-  turnedAwayTitle
+  turnedAwayTitle,
+  unopened
 } from "./shared/presentation.js";
 
 export const shows = ["all", "tools", "pages", "yours", "attention", "off"] as const;
@@ -204,6 +205,7 @@ export const renderAllPatches = (input: {
   readonly page: number;
   readonly now: number;
   readonly publicBaseUrl: string;
+  /** What the viewer has opened, for the dot after a colleague's patch they never have. */
   readonly opens: ReadonlyMap<string, Patches.Open>;
   /** Company members' names by id, for who retired or deleted a patch. */
   readonly names: ReadonlyMap<string, string>;
@@ -290,13 +292,12 @@ export const renderAllPatches = (input: {
   const failed = (patch: Patches.Patch) => failedBadge(patch, input.calls?.get(patch.id));
   const patchCell = (row: Patches.ReadPatch, phone = "") => {
     const { patch } = row;
-    // A live patch's title opens it, as on Home; an off one's leads to its card.
+    // A live patch's title opens it, as on Home; an off one's leads to its card. The dot marks a
+    // colleague's the viewer has never opened, under every filter and search, as on Home.
     const href = patch.state === "live" ? patchAddress(patch) : cardPath(patch);
-    const fresh = isNew(row, viewer, input.opens, now)
-      ? ' <span class="unseen" role="img" aria-label="New to you"></span>'
-      : "";
+    const title = patchTitle(patch, viewer.company.name);
     const line = firstClause(patch.description);
-    return `<div class="cell-name">${patchMark(patch.name, row.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(href)}">${escapeHtml(patchTitle(patch, viewer.company.name))}</a>${fresh}</span>${line ? `<span class="row-desc">${escapeHtml(line)}</span>` : ""}${phone ? `<span class="show-sm">${phone}</span>` : ""}</div></div>`;
+    return `<div class="cell-name">${patchMark(patch.name, row.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(href)}">${unopened(row, viewer, input.opens) ? unopenedName(title) : escapeHtml(title)}</a></span>${line ? `<span class="row-desc">${escapeHtml(line)}</span>` : ""}${phone ? `<span class="show-sm">${phone}</span>` : ""}</div></div>`;
   };
   // The owner by first name, as the avatar beside it narrows them down, or You; a deactivated one
   // says so under it.
