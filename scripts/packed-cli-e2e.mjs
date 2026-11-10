@@ -475,7 +475,7 @@ try {
     ok: true,
     patchId: first.patchId,
     scope: "public",
-    audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } },
+    audience: { members: { kind: "public" } },
     publicUrl: first.address
   });
   for (const version of publicVersions) {
@@ -1507,7 +1507,8 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
   assert.equal(new URL(dev.guestUrl).hostname, "127.0.0.1");
   assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.url).origin);
   assert.notEqual(new URL(dev.guestUrl).origin, new URL(dev.colleagueUrl).origin);
-  assert.ok(dev.logPath.startsWith(path.join(dir, ".patchy", "dev") + path.sep));
+  const devLogRoot = await checkedCall(() => realpath(path.join(dir, ".patchy", "dev")));
+  assert.ok(dev.logPath.startsWith(devLogRoot + path.sep));
   assert.equal(dev.stop, `pnpm patchy dev stop --api-url '${publicBaseUrl}'`);
 
   // A BrowserServer exposes the owned process, so the existing signal/process-group
@@ -1731,7 +1732,7 @@ async function runTier1Flow({ cliPath, cliEnv, publicBaseUrl, release }) {
       description: "Exercise disposable notes end to end",
       descriptionUpdatedAt: published.descriptionUpdatedAt,
       scope: "company",
-      audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: [] } },
+      audience: { members: { kind: "company" } },
       name: "tier1-notes",
       address: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
       publicUrl: `${publicBaseUrl}/${DEV_SEED.companyHandle}/tier1-notes`,
