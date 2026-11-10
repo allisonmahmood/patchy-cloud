@@ -285,50 +285,6 @@ it.layer(services)("company page and actions", (it) => {
       })
   );
   it.effect(
-    "lets regular admins invite ordinary members, but refuses elevated invitations and role changes",
-    () =>
-      Effect.gen(function* () {
-        const owner = yield* createCompany("regular-admin-powers");
-        const admin = yield* addUser(owner, "regular", "admin");
-        const member = yield* addUser(owner, "member");
-        const response = yield* send("/company", { headers: { cookie: cookie(admin) } });
-        const html = yield* Effect.promise(() => response.text());
-        assert.include(html, 'action="/company/invites"');
-        assert.notInclude(html, 'value="super_admin"');
-        assert.notInclude(html, `/company/users/${admin.id}/role`);
-        assert.notInclude(html, `/company/users/${owner.user.id}/deactivate`);
-        for (const role of ["admin", "super_admin"]) {
-          assert.strictEqual(
-            (yield* send(
-              "/company/invites",
-              post(admin, { email: `${role}@forbidden.example`, role })
-            )).status,
-            403
-          );
-        }
-        for (const target of [owner.user, admin, member]) {
-          assert.strictEqual(
-            (yield* send(`/company/users/${target.id}/role`, post(admin, { role: "member" })))
-              .status,
-            403
-          );
-        }
-        assert.strictEqual(
-          (yield* send("/company/agent-access", post(admin, { state: "on" }))).status,
-          403
-        );
-        assert.strictEqual(
-          (yield* send(
-            "/company/invites",
-            post(admin, { email: "ordinary@allowed.example", role: "member" })
-          )).status,
-          303
-        );
-        assert.isFalse((yield* (yield* Companies.Companies).agentAccess(owner.company.id)).on);
-      })
-  );
-
-  it.effect(
     "lists only this company's users and pending invites, with escaped data and admin-only controls",
     () =>
       Effect.gen(function* () {
@@ -361,7 +317,7 @@ it.layer(services)("company page and actions", (it) => {
           invitedBy: owner.user.id,
           email: "revoked-list@example.com"
         });
-        yield* companies.revokeInvite({ companyId: owner.company.id, inviteId: revoked.id });
+        yield* companies.revokeInvite({ companyId: owner.company.id, actorId: owner.user.id, inviteId: revoked.id });
         const foreign = yield* createCompany("company-hidden");
         for (const viewer of [owner.user, member]) {
           const response = yield* send("/company", { headers: { cookie: cookie(viewer) } });

@@ -197,7 +197,8 @@ export const publish = (
 export const identity = {
   user: { id: DEV_SEED.userId, email: DEV_SEED.email, name: DEV_SEED.userName },
   company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: DEV_SEED.companyName },
-  role: DEV_SEED.role,
+  role: "admin",
+  superAdmin: true,
   machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
 };
 

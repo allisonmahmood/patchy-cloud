@@ -18,7 +18,13 @@ import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import * as WideEvents from "@patchy/analytics/wide-events";
-import { Authorization, CurrentIdentity, type Identity, refuse, Unauthorized } from "@patchy/api";
+import {
+  Authorization,
+  CurrentIdentity,
+  type AuthenticatedIdentity,
+  refuse,
+  Unauthorized
+} from "@patchy/api";
 import * as AgentConnections from "./AgentConnections.js";
 import * as Bearer from "./Bearer.js";
 import * as MachineTokens from "./MachineTokens.js";
@@ -31,7 +37,10 @@ import * as MachineTokens from "./MachineTokens.js";
 export type Purpose = "build" | "work";
 
 interface Bearers {
-  readonly build: { readonly identity: Identity; readonly store: MachineTokens.MachineTokens };
+  readonly build: {
+    readonly identity: AuthenticatedIdentity;
+    readonly store: MachineTokens.MachineTokens;
+  };
   readonly work: {
     readonly identity: AgentConnections.AgentIdentity;
     readonly store: AgentConnections.AgentConnections;
