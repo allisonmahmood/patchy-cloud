@@ -1,3 +1,4 @@
+import type * as PatchVisibility from "./PatchVisibility.js";
 import {
   AttioSnapshot,
   type ConnectionDeclaration,
@@ -390,7 +391,11 @@ export class ConnectionStore extends Context.Service<
     readonly usage: (
       companyId: string,
       userId?: string
-    ) => Effect.Effect<ReadonlyMap<string, Usage>, ConnectionError>;
+    ) => Effect.Effect<
+      ReadonlyMap<string, Usage>,
+      ConnectionError,
+      PatchVisibility.PatchVisibility
+    >;
     /** The patch and number of stored versions, so recent calls name where they came from. */
     readonly versions: (
       companyId: string,
@@ -398,7 +403,8 @@ export class ConnectionStore extends Context.Service<
       userId?: string
     ) => Effect.Effect<
       ReadonlyMap<string, { readonly patch: string; readonly number: number }>,
-      ConnectionError
+      ConnectionError,
+      PatchVisibility.PatchVisibility
     >;
     /** A handle names a connection only within its integration. */
     readonly detail: (

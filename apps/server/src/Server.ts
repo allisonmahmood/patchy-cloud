@@ -75,6 +75,7 @@ import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
 import {
   Audiences,
+  ConnectionVisibility,
   Content,
   LoadedVersions,
   DeletionSweep,
@@ -339,6 +340,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),
+  Layer.provideMerge(ConnectionVisibility.layer),
   Layer.provide(migrated)
 );
 

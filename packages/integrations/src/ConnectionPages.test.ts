@@ -1,3 +1,4 @@
+import * as ConnectionVisibility from "../../patches/src/ConnectionVisibility.js";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -138,6 +139,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
+  Layer.provideMerge(ConnectionVisibility.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
   Layer.provideMerge(NodeCryptography.layer)

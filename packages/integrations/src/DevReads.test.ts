@@ -51,6 +51,7 @@ import * as PostHogOperations from "./posthog/Operations.js";
 import * as SqlConnectionStore from "./SqlConnectionStore.js";
 import * as AttioReads from "./test/attioReads.js";
 import * as PidgeonTest from "./test/pidgeon.js";
+import * as RuntimeTest from "./test/runtime.js";
 import * as PostHogDouble from "./test/posthog.js";
 import { decodeError, isPatchyError } from "../../patchy/src/clientError.js";
 import { Cryptography, NodeCryptography } from "@patchy/core";
@@ -233,6 +234,8 @@ const workspace = AttioReads.scripted(
 const heard = () => mail.requests;
 
 const seed = Effect.gen(function* () {
+  yield* RuntimeTest.seedPatch("localdev0000");
+  yield* RuntimeTest.seedPatch("publishedone");
   const sql = yield* SqlClient.SqlClient;
   yield* sql`INSERT INTO users (id, clerk_user_id, company_id, email, name, role)
     VALUES (${member}, ${member}, ${DEV_SEED.companyId}, 'member@dev-reads.test', 'Morgan', 'member')`;

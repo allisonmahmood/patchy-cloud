@@ -64,13 +64,21 @@ export const forMember = Effect.fn("Audiences.forMember")(function* (
   return (audience: PatchAudience) =>
     viewer !== undefined && viewer.active && admits(audience, teamIds);
 });
+/** One current member decision, shared by individual and batched patch readers. */
+export const forPatches = Effect.fn("Audiences.forPatches")(function* (
+  companyId: string,
+  userId: string
+) {
+  const admitted = yield* forMember(companyId, userId);
+  return (patch: Pick<Patch, "companyId" | "audience" | "disabledAt">) =>
+    patch.disabledAt === null && patch.companyId === companyId && admitted(patch.audience);
+});
 export const canOpen = Effect.fn("Audiences.canOpen")(function* (
   patch: Pick<Patch, "companyId" | "audience" | "disabledAt">,
   companyId: string,
   userId: string
 ) {
-  if (patch.disabledAt !== null || patch.companyId !== companyId) return false;
-  return (yield* forMember(companyId, userId))(patch.audience);
+  return (yield* forPatches(companyId, userId))(patch);
 });
 /** Recheck the actor and owner under the caller's transaction, including inactive-owner repairs. */
 export const validate = Effect.fn("Audiences.validate")(function* (input: {

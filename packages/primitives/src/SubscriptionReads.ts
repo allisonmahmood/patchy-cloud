@@ -170,12 +170,12 @@ export const make: Effect.Effect<
   Dependencies | SqlClient.SqlClient
 > = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  // Both counters only advance: their sum preserves the numeric, monotonic fence contract.
+  // Audience and lifecycle changes advance the same patch revision.
   const find = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
     Result: ResourceRevisions.RevisionRow,
     execute: ({ companyId, patchIds }) => sql`SELECT 'patch:' || id AS key,
-      (lifecycle_revision + audience_revision)::text AS revision FROM patches
+      lifecycle_revision::text AS revision FROM patches
       WHERE company_id = ${companyId} AND ${sql.in("id", patchIds)}`
   });
   return yield* makeReader(
