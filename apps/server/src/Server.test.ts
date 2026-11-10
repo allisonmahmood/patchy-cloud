@@ -278,7 +278,7 @@ it.layer(
         assert.include(body, 'action="/logout"');
         assert.notInclude(body, "<iframe");
 
-        // The Company page counts the patch just published among its owner's live ones.
+        // People counts the patch just published among its owner's live ones.
         const sql = yield* SqlClient.SqlClient;
         const [live] = yield* sql<{ count: number }>`
           SELECT count(*)::int AS count FROM patches WHERE owner_user_id = ${DEV_SEED.userId}

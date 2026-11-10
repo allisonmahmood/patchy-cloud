@@ -451,7 +451,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         assert.deepStrictEqual(inputs(html, "patch", "checkbox"), []);
         assert.deepStrictEqual(
           links(html).filter((link) => link.text.startsWith("Back to")),
-          [{ href: "/settings/people", text: "Back to Company" }]
+          [{ href: "/settings/people", text: "Back to People" }]
         );
         assert.include(text(html), "Nothing breaks");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);

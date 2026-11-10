@@ -1,10 +1,12 @@
 import { avatar, searchField } from "./components.js";
 import { fontFaces, fontPreload } from "./fonts.js";
 import { appStyles } from "./styles/index.js";
+import { linkButton } from "./ui/controls.js";
 import { uiScriptTag } from "./ui/enhancer.js";
+import { icon, type IconName } from "./ui/icons.js";
 import { escapeAttribute, escapeHtml } from "./escape.js";
-import { places, whatsNewPath } from "./places.js";
-import { changesSince, type ChangeKind, latestRelease, tally } from "./whatsNew.js";
+import { pagePlaces, type Place, places, whatsNewPath } from "./places.js";
+import { changesSince, type ChangeKind, latestRelease } from "./whatsNew.js";
 import { relayScript, relayScriptHash } from "./generated/relay-script.js";
 import { switcherDigest } from "./generated/switcher-script.js";
 
@@ -45,11 +47,15 @@ export interface AppShell {
     readonly company: { readonly id: string; readonly name: string };
     /** The newest What's new release the person has seen. */
     readonly whatsNewSeen: number;
-    /** One line naming what their last form did, shown once at the top of the page. */
+    /** One line naming what their last form did, shown once at the top of the page it lands on. */
     readonly receipt?: string | undefined;
   };
-  /** The place the page belongs to; `whats-new` is reached from its own button, so no place is lit there. */
-  readonly section: (typeof places)[number]["items"][number]["section"] | "whats-new";
+  /**
+   * The place the page belongs to, which the sidebar lights and the page's `<title>` names; a
+   * Settings page opens Settings around it. `whats-new` is reached from its own button at the
+   * sidebar's foot, so no place is lit there.
+   */
+  readonly section: Place["section"] | "whats-new";
   /**
    * A modal panel over the page, such as Home’s Final step: the frame behind it goes inert
    * and blurs, and the panel carries its own role, label and ways out.
@@ -59,61 +65,85 @@ export interface AppShell {
   readonly query?: string;
 }
 
+/**
+ * An app page's `<title>`: "Heading – Place – Company", the place left out where the heading is
+ * its name, as on Home, and on What's new, which is no place.
+ */
+export const appTitle = (heading: string, app: AppShell): string => {
+  const place = pagePlaces.find((candidate) => candidate.section === app.section)?.label;
+  return [...new Set([heading, place, app.viewer.company.name])]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" – ");
+};
+
 /** A change's kind as a pill: New green, Improved blue, Fixed plain. */
 export const whatsNewKind = (kind: ChangeKind): string =>
   `<span class="pill${kind === "New" ? " pill-done" : kind === "Improved" ? " pill-progress" : ""}">${kind}</span>`;
 
 const plural = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
 
+/** How many headlines What's new's panel shows; See all changes has the rest. */
+const HEADLINES = 5;
+
 /**
- * What's new, at the foot of the sidebar, opens a panel of what shipped since the viewer's last
- * visit, or the latest few once they are caught up. Opening it clears the dot through
- * `/whats-new/seen`; the page loads that script only while there is a dot to clear.
+ * What's new, at the foot of the sidebar, opens a panel of headlines: what shipped since the
+ * viewer's last visit, or the latest once they are caught up, then See all changes. Opening it
+ * clears the dot through `/whats-new/seen`, which `/whats-new/bell.js` posts from the panel's
+ * `data-through`; the page loads that script only while there is a dot to clear.
  */
-function whatsNewButton(seen: number, current: boolean): string {
+function whatsNew(seen: number, current: boolean): string {
   const unseen = changesSince(seen);
-  const shown = unseen.length > 0 ? unseen.slice(0, 6) : changesSince(0).slice(0, 3);
+  const shown = (unseen.length > 0 ? unseen : changesSince(0)).slice(0, HEADLINES);
   const label =
     unseen.length > 0 ? `What’s new: ${plural(unseen.length)} since your last visit` : "What’s new";
   const summary =
-    unseen.length > 0
-      ? `${plural(unseen.length)} since your last visit · ${tally(unseen)}`
-      : "You’re all caught up. The latest:";
+    unseen.length > 0 ? `${plural(unseen.length)} since your last visit` : "You’re all caught up";
   const list = shown.length
-    ? `<ul class="list list-compact">${shown.map((change) => `<li class="list-row whats-new-change">${whatsNewKind(change.kind)}<span>${escapeHtml(change.title)}</span></li>`).join("")}</ul>`
+    ? `<ul class="app-headlines">${shown.map((change) => `<li><span class="app-headline-kind">${change.kind}</span><span>${escapeHtml(change.title)}</span></li>`).join("")}</ul>`
     : "";
-  const more =
-    unseen.length > shown.length
-      ? `<p class="supporting-text">and ${unseen.length - shown.length} more</p>`
-      : "";
-  return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="whats-new-panel" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><h2 class="section-heading" id="whats-new-heading">What’s new</h2><p class="supporting-text">${summary}</p>${list}${more}<a class="btn btn-primary" href="${whatsNewPath}">See all changes</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
+  return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>${icon("bell")}What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="menu app-foot-menu app-whats-new" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><p class="menu-head"><strong id="whats-new-heading">What’s new</strong>${summary}</p>${list}<hr class="menu-rule"><a class="menu-item" href="${whatsNewPath}">See all changes${icon("chevronRight")}</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
-const chevron =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const menuIcon =
-  '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>';
-
-/** The signed-in person: their name opens a menu with who they are and Sign out. */
+/** The signed-in person: their name opens a menu with who they are, Your agents and Sign out. */
 function account(user: AppShell["viewer"]["user"]): string {
-  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${chevron}</button><div class="menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong><br>${escapeHtml(user.email)}</p><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">Sign out</button></form></div>`;
+  return `<button type="button" class="app-place app-account" popovertarget="account-menu">${avatar(user.email, user.name)}<span class="app-account-name">${escapeHtml(user.name)}</span>${icon("chevronUpDown")}</button><div class="menu app-foot-menu app-account-menu" id="account-menu" popover aria-label="Account"><p class="menu-head"><strong>${escapeHtml(user.name)}</strong>${escapeHtml(user.email)}</p><hr class="menu-rule"><a class="menu-item" href="/agents">${icon("bot")}Your agents</a><hr class="menu-rule"><form method="post" action="/logout"><button class="menu-item" type="submit">${icon("logout")}Sign out</button></form></div>`;
+}
+
+/** The icon each of the sidebar's places wears. */
+const placeIcons: Readonly<Record<(typeof places)[number]["section"], IconName>> = {
+  home: "home",
+  patches: "grid",
+  agents: "bot",
+  settings: "gear"
+};
+
+/**
+ * The sidebar's places, `section`'s lit. Settings opens on any of its pages, showing them under
+ * it with that page lit; elsewhere it is one place that leads to People.
+ */
+function nav(section: AppShell["section"]): string {
+  const lit = (place: Place) => (place.section === section ? ' aria-current="page"' : "");
+  return places
+    .map((place) => {
+      if (!("children" in place))
+        return `<a class="app-place" href="${place.href}"${lit(place)}>${icon(placeIcons[place.section])}${place.label}</a>`;
+      const open = place.children.some((child) => child.section === section);
+      const children = open
+        ? `<div class="app-subnav" role="group" aria-label="${place.label}">${place.children.map((child) => `<a class="app-place" href="${child.href}"${lit(child)}>${child.label}</a>`).join("")}</div>`
+        : "";
+      return `<a class="app-place${open ? " app-place-open" : ""}" href="${place.href}">${icon(placeIcons[place.section])}${place.label}<span class="app-place-end">${icon(open ? "chevron" : "chevronRight")}</span></a>${children}`;
+    })
+    .join("");
 }
 
 /**
- * Every signed-in page's frame: a sidebar of `places` beside the page. On a phone the sidebar
- * folds into a bar whose Menu button opens the same markup as a popover, so there is one nav and
- * no script. A page's `overlay` sits over the whole frame, which goes inert behind it.
+ * Every signed-in page's frame: a sidebar beside the page, holding the brand, the patch search,
+ * New patch, the places and, at its foot, What's new and the account. Below 1024px it folds into
+ * a top bar of the brand, the search and Menu, which opens the rest of the same markup as a
+ * popover, so there is one nav and no script. A page's `overlay` sits over the whole frame,
+ * which goes inert behind it.
  */
 function appBody(app: AppShell, body: string): string {
-  const place = (item: (typeof places)[number]["items"][number]) =>
-    `<a class="app-place" href="${item.href}"${item.section === app.section ? ' aria-current="page"' : ""}>${item.label}</a>`;
-  const nav = places
-    .map((group) =>
-      group.label === undefined
-        ? group.items.map(place).join("")
-        : `<div class="app-group" role="group" aria-labelledby="app-group-${group.label.toLowerCase()}"><p class="app-group-label" id="app-group-${group.label.toLowerCase()}">${group.label}</p>${group.items.map(place).join("")}</div>`
-    )
-    .join("");
   const search = searchField({
     action: "/",
     id: "app-search",
@@ -122,7 +152,16 @@ function appBody(app: AppShell, body: string): string {
     label: "Search patches",
     className: "app-search"
   });
-  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span>${escapeHtml(app.viewer.company.name)}</span></a><button type="button" class="btn btn-quiet app-menu-button" popovertarget="app-menu">${menuIcon}Menu</button><div class="app-menu" id="app-menu" popover>${search}<nav class="app-nav" aria-label="Primary">${nav}</nav><div class="app-foot">${whatsNewButton(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div></div></div></aside><main class="app-page">${app.viewer.receipt === undefined ? "" : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
+  // New patch's dialog is Home's, at `/?new`.
+  const newPatch = linkButton("New patch", "/?new", { icon: "plus", size: "sm", block: true });
+  const menuButton = `<button type="button" class="btn btn-quiet btn-sm app-menu-button" popovertarget="app-menu"><span class="app-menu-closed">${icon("menu")}Menu</span><span class="app-menu-opened">${icon("close")}Close</span></button>`;
+  // Feedback (#1210) takes its place in the foot between What's new and the account.
+  const foot = `<div class="app-foot">${whatsNew(app.viewer.whatsNewSeen, app.section === "whats-new")}${account(app.viewer.user)}</div>`;
+  const receipt =
+    app.viewer.receipt === undefined
+      ? ""
+      : `<p class="note note-ok app-receipt" role="status">${escapeHtml(app.viewer.receipt)}</p>`;
+  return `<div class="app"${app.overlay === undefined ? "" : " inert"}><aside class="app-side"><div class="app-side-inner"><a class="brand" href="/"><span class="glyph" aria-hidden="true"></span><span class="brand-name">${escapeHtml(app.viewer.company.name)}</span></a>${search}${menuButton}<div class="app-menu" id="app-menu" popover>${newPatch}<nav class="app-nav" aria-label="Primary">${nav(app.section)}</nav>${foot}</div></div></aside><main class="app-page">${receipt}${body}</main></div>${app.overlay === undefined ? "" : `<div class="modal-scrim"></div>${app.overlay}`}`;
 }
 
 /**
@@ -172,7 +211,7 @@ export function htmlPage(options: {
   <meta charset="utf-8">
   ${switcherRelay}
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(options.title)}</title>
+  <title>${escapeHtml(options.app === undefined ? options.title : appTitle(options.title, options.app))}</title>
   ${faviconLink}
   ${fontPreload}
   ${options.app ? switcherTag({ userId: options.app.viewer.user.id, companyId: options.app.viewer.company.id }) : ""}

@@ -37,7 +37,7 @@ describe("renderAgentPanel", () => {
       "At Bright &amp; &lt;Co&gt; that’s you, Allison &lt;A&gt; and Priya Shah."
     );
     expect(html).toContain(
-      '<a class="btn" href="/settings/agent-access">Turn it on at Company</a>'
+      '<a class="btn" href="/settings/agent-access">Turn it on in Settings</a>'
     );
     expect(html).not.toContain("Connect your agent");
   });
@@ -49,7 +49,7 @@ describe("renderAgentPanel", () => {
       admins: admins.filter((admin) => admin.id !== "usr_jordan")
     });
     expect(html).toContain("that’s Allison &lt;A&gt; and Priya Shah.");
-    expect(html).not.toContain("Turn it on at Company");
+    expect(html).not.toContain("Turn it on in Settings");
     expect(html).not.toContain("Connect your agent");
   });
 });

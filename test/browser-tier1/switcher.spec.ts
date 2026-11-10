@@ -23,7 +23,15 @@ const lit = (page: Page) =>
   menu(page).locator('[role="option"][aria-selected="true"] .command-title');
 const group = (page: Page, name: string) =>
   menu(page).getByRole("group", { name }).locator(".command-title");
-const places = ["Home", "All patches", "Your agents", "People", "Integrations", "What’s new"];
+const places = [
+  "Home",
+  "All patches",
+  "Your agents",
+  "People",
+  "Integrations",
+  "Agent access",
+  "What’s new"
+];
 const patchFrame = (page: Page): Frame =>
   page.frames().find((frame) => frame.url().includes("/~content/"))!;
 const field = (page: Page) => page.frameLocator("#patch").getByRole("textbox", { name: "Field" });

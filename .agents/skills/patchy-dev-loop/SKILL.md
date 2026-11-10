@@ -60,7 +60,7 @@ Done when `pnpm dev status` exits 0.
 - **Consent.** `/oauth/authorize` with a real client's document, such as
   Claude Code's (`https://claude.ai/oauth/claude-code-client-metadata`, any
   `http://127.0.0.1:<port>/callback`), an S256 challenge and a state shows the
-  consent page; agent access must be on at Company. DEVELOPMENT's
+  consent page; agent access must be on in Settings. DEVELOPMENT's
   **Connecting through consent** has the details. The page allows 10 loads
   and answers a minute per address.
 - **The environment's agent.** `pnpm dev up` prints an `agent` launcher:

@@ -247,7 +247,7 @@ environment's `worker-codex` launcher mints one for you and hands it to Codex;
 PKCE challenge and its state. The instance fetches the client's metadata
 document from the internet: Claude Code's is
 `https://claude.ai/oauth/claude-code-client-metadata`, whose redirect is
-`http://127.0.0.1:<any port>/callback`. Turn agent access on at Company first,
+`http://127.0.0.1:<any port>/callback`. Turn agent access on in Settings first,
 or the page says it's off; a scenario can start with it on. An environment's
 `worker-claude` launcher is Claude Code connecting this way. Allow sends `code`, `state` and `iss` to the
 redirect, and the code exchanges at `/oauth/token` on `127.0.0.1`; Deny sends
@@ -334,7 +334,7 @@ An environment is this instance plus what a multi-person check or demo needs:
 - **Worker agents**: people's own agents using the environment's patches
   through Patchy MCP at `<url>/mcp`, as a person's Claude Code or Codex would.
   A patch's agent area is what they reach, so they need a tier 2 patch with an
-  `agent/` folder and agent access on at Company; `brightline` has both. The two
+  `agent/` folder and agent access on in Settings; `brightline` has both. The two
   launchers sit beside `agent` and start in the environment's `workers/`, an
   empty folder of their own, behind the same guard and with a temp folder per
   session. Their CLI state never logs in, so they reach Patchy only through the

@@ -215,7 +215,7 @@ export const renderAgentPanel = (input: {
   const off =
     admins === null
       ? ""
-      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/settings/agent-access">Turn it on at Company</a></div>' : ""}</div>`;
+      : `<div class="note note-warn"><strong class="note-title">Agent access is off at ${company}</strong><p>No agent can use these yet. Only admins can turn it on. At ${company} that’s ${adminNames(admins, viewer.user.id)}.</p>${viewer.role === "admin" ? '<div class="actions"><a class="btn" href="/settings/agent-access">Turn it on in Settings</a></div>' : ""}</div>`;
   const connect =
     admins === null
       ? '<p class="supporting-text"><a href="/agents/connect?app=claude">Connect your agent</a></p>'

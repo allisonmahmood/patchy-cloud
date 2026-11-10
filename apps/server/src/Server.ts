@@ -194,7 +194,7 @@ const grantedGuests = Layer.effect(
   )
 );
 
-/** The Company page's Patches column comes from Patches, which Companies cannot depend on. */
+/** People's Patches column comes from Patches, which Companies cannot depend on. */
 const ownedPatches = Layer.effect(
   CompanyPage.OwnedPatches,
   Effect.map(
