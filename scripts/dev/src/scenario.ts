@@ -231,11 +231,11 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
       for (const person of scenario.people) {
         const { companyId: home, userId, clerkUserId, tokenId } = ids(scenario, person);
         yield* sql`
-          INSERT INTO users (id, clerk_user_id, company_id, email, name, role, is_regular_admin, created_at)
+          INSERT INTO users (id, clerk_user_id, company_id, email, name, role, created_at)
           VALUES (${userId}, ${clerkUserId}, ${home}, ${person.email.toLowerCase()},
-            ${person.name}, ${person.role === "super_admin" ? "admin" : "member"}, ${person.role === "admin"}, now())
+            ${person.name}, ${person.role}, now())
           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name,
-            role = EXCLUDED.role, is_regular_admin = EXCLUDED.is_regular_admin, deactivated_at = NULL`;
+            role = EXCLUDED.role, deactivated_at = NULL`;
         if (person.key === scenario.publisher)
           yield* sql`
             INSERT INTO machine_tokens (id, user_id, name, token_hash, created_at, expires_at, last_used_at)
