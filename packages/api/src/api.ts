@@ -626,7 +626,7 @@ export class ConnectionsGroup extends HttpApiGroup.make("connections", { topLeve
       describe(
         "List the caller's company connections, including disconnected ones, for any active member. " +
           "Connected entries carry a copy-ready add hint; disconnected entries carry reason " +
-          "`not_connected` and a /company/connections hint. A bare all or all=true also includes " +
+          "`not_connected` and a /settings/integrations hint. A bare all or all=true also includes " +
           "every offered integration's connected state. integrations names, comma-separated, the " +
           "integrations the caller decodes, such as postgres,posthog; only those connections and " +
           "offers are listed, and unknown names are ignored. Omitted, or the integrations=all that " +

@@ -38,7 +38,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         const { html } = page;
         for (const part of [
           "Connect Pidgeon email",
-          'data-pidgeon-connect data-addresses="/company/connections/connect/pidgeon/addresses"',
+          'data-pidgeon-connect data-addresses="/settings/integrations/connect/pidgeon/addresses"',
           '<input type="hidden" name="attempt"',
           'id="pidgeon-key" type="password" name="key"',
           '<span class="form-step-number" aria-hidden="true">1</span>Admin key',
@@ -127,9 +127,9 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           retired: [{ id: "key-old", name: "Patchy support oldattempt01" }]
         });
         const tag = '<span class="tag">Test · mail stays in Pidgeon</span>';
-        const index = yield* read("/company/connections", owner.user);
+        const index = yield* read("/settings/integrations", owner.user);
         assert.include(index.html, `<strong>pidgeon/support</strong></a>${tag}`);
-        const page = yield* read("/company/connections/conn_page_test", owner.user);
+        const page = yield* read("/settings/integrations/conn_page_test", owner.user);
         for (const part of [
           `<h1 class="page-heading">pidgeon/support${tag}</h1>`,
           "<dt>Address</dt><dd>support@acme.example</dd>",
@@ -153,7 +153,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         yield* sql`INSERT INTO pidgeon_sends (connection_id, day, sends)
           VALUES ('conn_page_test', ${today}::date, 2)`;
         assert.include(
-          (yield* read("/company/connections/conn_page_test", owner.user)).html,
+          (yield* read("/settings/integrations/conn_page_test", owner.user)).html,
           "<dt>Sends today</dt><dd>2 of 200 · resets at 00:00 UTC</dd>"
         );
         // A connection that only reads, and sent nothing today, has no such line.
@@ -165,7 +165,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           access: "read"
         });
         assert.notInclude(
-          (yield* read("/company/connections/conn_page_read", owner.user)).html,
+          (yield* read("/settings/integrations/conn_page_read", owner.user)).html,
           "Sends today"
         );
         // A live connection carries no label.
@@ -175,7 +175,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           userId: owner.user.id,
           handle: "orders"
         });
-        const live = yield* read("/company/connections/conn_page_live", owner.user);
+        const live = yield* read("/settings/integrations/conn_page_live", owner.user);
         assert.include(live.html, '<h1 class="page-heading">pidgeon/orders</h1>');
       })
   );
@@ -191,7 +191,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         handle: "unused"
       });
       const deleted = yield* follow(
-        yield* send("/company/connections/conn_page_unused/delete", post(owner.user)),
+        yield* send("/settings/integrations/conn_page_unused/delete", post(owner.user)),
         owner.user
       );
       assert.include(
@@ -228,7 +228,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
           ${JSON.stringify({ uses: { desk: { kind: "pidgeon", handle: "declared", id: "conn_page_declared", revision: 1 } } })}::jsonb,
           'page-declared', 'test', '{}'::jsonb, 201)`;
       const refused = yield* send(
-        "/company/connections/conn_page_declared/delete",
+        "/settings/integrations/conn_page_declared/delete",
         post(owner.user)
       );
       assert.strictEqual(refused.status, 409);
@@ -249,7 +249,7 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         userId: owner.user.id,
         handle: "guarded"
       });
-      const path = "/company/connections/conn_page_guarded";
+      const path = "/settings/integrations/conn_page_guarded";
       const admin = "pgn_test_neverSentAnywhere001";
       const requests = pidgeon.requests.length;
       const found = yield* send(Page.addressesPath, post(member, { key: admin }));

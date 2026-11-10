@@ -11,15 +11,15 @@ export const places = [
     items: [
       { href: "/", label: "Home", section: "home" },
       { href: "/patches", label: "All patches", section: "patches" },
-      { href: "/machines", label: "Your agents", section: "agents" }
+      { href: "/agents", label: "Your agents", section: "agents" }
     ]
   },
   {
     label: "Company",
     items: [
-      { href: "/company", label: "People", section: "people" },
-      { href: "/company/connections", label: "Integrations", section: "integrations" },
-      { href: "/company/agent-access", label: "Agent access", section: "agent-access" }
+      { href: "/settings/people", label: "People", section: "people" },
+      { href: "/settings/integrations", label: "Integrations", section: "integrations" },
+      { href: "/settings/agent-access", label: "Agent access", section: "agent-access" }
     ]
   }
 ] as const;

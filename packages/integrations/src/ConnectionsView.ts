@@ -91,7 +91,7 @@ export const noFilters: Filters = { q: "", source: undefined, view: "all" };
 /** Below this many connections the whole list fits on a screen, so the index offers no controls. */
 export const CONTROLS_AT = 9;
 
-export const indexPath = "/company/connections";
+export const indexPath = "/settings/integrations";
 export const cataloguePath = `${indexPath}/connect`;
 export const connectPath = (integration: string) =>
   `${cataloguePath}/${encodeURIComponent(integration)}`;
@@ -272,7 +272,7 @@ const attention = (rows: ReadonlyArray<Row>) => {
 };
 
 /**
- * `/company/connections`: one table across integrations. Its controls appear once it outgrows a
+ * `/settings/integrations`: one table across integrations. Its controls appear once it outgrows a
  * screen; filters in a link still apply below that, so a saved view keeps its meaning.
  */
 export const renderIndex = (input: {
@@ -315,7 +315,7 @@ export const renderIndex = (input: {
   return `${head}${notice(input.notice)}${admin ? attention(all) : ""}${many ? controls(all, filters, admin) : ""}${list}`;
 };
 
-/** `/company/connections/connect`: every integration Patchy offers, behind one "Connect an integration". */
+/** `/settings/integrations/connect`: every integration Patchy offers, behind one "Connect an integration". */
 export const renderCatalogue = (input: {
   readonly admin: boolean;
   readonly rows: ReadonlyArray<Row>;
@@ -580,7 +580,7 @@ const standing = (item: Standing, admin: boolean) =>
   `<div class="note note-${item.tone}" role="${item.tone === "ok" ? "status" : "alert"}"><strong class="note-title">${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p>${!admin || item.actions === undefined || item.actions.length === 0 ? "" : `<div class="actions">${item.actions.map((action) => (action.post === true ? postButton : linkButton)(action.href, action.label, action.primary === true ? " btn-primary" : "")).join("")}</div>`}</div>`;
 
 /**
- * `/company/connections/:id`: the same layout for every integration. Recent calls span the page
+ * `/settings/integrations/:id`: the same layout for every integration. Recent calls span the page
  * under what patches read and the facts, so their six columns fit beside nothing.
  */
 export const renderConnection = (input: {

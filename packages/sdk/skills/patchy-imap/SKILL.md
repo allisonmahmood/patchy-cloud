@@ -11,7 +11,7 @@ Connections are tier 2's: actions read the mailbox through `ctx.connections` and
 
 ## Declare a mailbox
 
-1. Run `pnpm patchy list connections` and choose a connected `imap/<handle>` by description. `pnpm patchy list connections imap/<handle>` shows the mailbox and its folders. An admin connects mailboxes at `/company/connections`; ask them there rather than for a password. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
+1. Run `pnpm patchy list connections` and choose a connected `imap/<handle>` by description. `pnpm patchy list connections imap/<handle>` shows the mailbox and its folders. An admin connects mailboxes at `/settings/integrations`; ask them there rather than for a password. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add imap/<handle> --as mail`. It inserts `mail: { kind: "imap", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `mail`: the mailbox, its folders with their special-use flags, and the server's capabilities. The folders are hints from when the snapshot was taken, not limits: a folder made since can still be read.
 
@@ -286,7 +286,7 @@ Queries and mutations can't use connections, and IMAP reads are not live-query d
 
 ## Bounds and refusals
 
-- `auth_failed`: the mail server refused the password, so Patchy paused the connection and logs in no more until an admin's Test or Replace password succeeds at `/company/connections`. `pnpm patchy list connections` marks it `paused`. Every call fails `auth_failed` meanwhile without reaching the server.
+- `auth_failed`: the mail server refused the password, so Patchy paused the connection and logs in no more until an admin's Test or Replace password succeeds at `/settings/integrations`. `pnpm patchy list connections` marks it `paused`. Every call fails `auth_failed` meanwhile without reaching the server.
 - `not_found` with `details.folder`: the folder can't be opened, because it's gone or holds only other folders.
 - `source_unavailable`: the server couldn't be reached or closed the session, or answered a command with a refusal. `details.reason`, when present, names a requirement the mailbox stopped meeting, such as its certificate; an admin's Test names it fully. `source_rate_limited` is the server limiting Patchy's logins.
 - `too_large` is a bound passed: the whole answer (ask for fewer refs), one message's answer in `getMessages` (in its place), an attachment past 20 MiB, or the mail server sending more than a call reads.

@@ -186,11 +186,11 @@ it.layer(layer)("auth pages on a socket", (it) => {
           })
         });
         assert.strictEqual(created.status, 303);
-        assert.strictEqual(created.headers.get("location"), "/company");
+        assert.strictEqual(created.headers.get("location"), "/settings/people");
         const membership = yield* request(created.headers.get("location")!);
         assert.strictEqual(membership.status, 200);
         const membershipHtml = yield* Effect.promise(() => membership.text());
-        assert.include(membershipHtml, 'action="/company/invites"');
+        assert.include(membershipHtml, 'action="/settings/people/invites"');
         const logoutAction = membershipHtml.match(
           /<form\b[^>]*method="post"[^>]*action="(\/logout)"/
         )?.[1];

@@ -386,11 +386,11 @@ has no agent area. Agent tools are for agents only; the page can't call
 them. Re-exporting a `server/` handler from `agent/`, as
 `export { listDeals } from "../server/deals.js"`, makes it a tool too, with the
 same arguments and rules; a tool of its own can take different ones. Agent
-access is a company switch an admin turns on at `<instance>/company/agent-access`; a publish
-with agent tools warns while it is off, and says nothing when it is on. Each
-person connects their own agent with the steps at
-`<instance>/machines#connect-an-agent` on Your agents, which also lists the
-agents they've connected, each with Disconnect.
+access is a company switch an admin turns on at
+`<instance>/settings/agent-access`; a publish with agent tools warns while it
+is off, and says nothing when it is on. Each person connects their own agent
+with the steps at `<instance>/agents/connect`, from Your agents, which also
+lists the agents they've connected, each with Disconnect.
 
 A tool runs as the person who connected the agent. `ctx.viewer` is that person,
 under the same access rules as their page calls. `ctx.agent` is

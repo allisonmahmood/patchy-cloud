@@ -216,7 +216,7 @@ const signIn = Effect.fn("DevPersonas.signIn")(function* (
       yield* people,
       target,
       keyed,
-      `${as} is deactivated; reactivate them from /company.`
+      `${as} is deactivated; reactivate them from /settings/people.`
     );
   const now = yield* Clock.currentTimeMillis;
   // A new email gets a stable stand-in Clerk id, so accepting an invitation creates its user.

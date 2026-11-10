@@ -53,7 +53,7 @@ const decodeClaims = Schema.decodeUnknownSync(
 
 it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
   it.effect(
-    "admits a Clerk-signed session to /company using JWKS without an authorized party",
+    "admits a Clerk-signed session to /settings/people using JWKS without an authorized party",
     () =>
       Effect.gen(function* () {
         const client = yield* liveClient;
@@ -84,7 +84,7 @@ it.layer(services, { timeout: "60 seconds" })("live Clerk", (it) => {
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             HttpServerRequest.fromWeb(
-              new Request(new URL("/company", settings.publicBaseUrl), {
+              new Request(new URL("/settings/people", settings.publicBaseUrl), {
                 headers: {
                   cookie: `__session=${token.jwt}; __client_uat=${claims.iat}; __clerk_db_jwt=live-test`
                 }

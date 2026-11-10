@@ -240,11 +240,11 @@ const filterHref = (show: Show, query: string) => {
   if (show !== "all") params.set("show", show);
   if (query) params.set("q", query);
   const search = params.toString();
-  return search ? `/company?${search}` : "/company";
+  return search ? `/settings/people?${search}` : "/settings/people";
 };
 
 /**
- * `/company/agent-access`: whether the company's agents can use patches, its latest change, and
+ * `/settings/agent-access`: whether the company's agents can use patches, its latest change, and
  * for an admin the one button that flips it. A member reads the same state and whom to ask.
  */
 const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
@@ -272,13 +272,13 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
     const effect = access.on
       ? `<p class="supporting-text">Turning it off refuses every agent at ${company} until it’s back on. Nobody’s connection ends.</p>`
       : "";
-    control = `${effect}<form class="actions" method="post" action="/company/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
+    control = `${effect}<form class="actions" method="post" action="/settings/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
   } else {
     const admins = (yield* (yield* Users.Users).list(viewer.company.id))
       .filter((user) => user.role === "admin" && user.deactivatedAt === null)
       .map(displayName)
       .sort((a, b) => a.localeCompare(b));
-    control = `<p class="supporting-text">Only an admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/machines">Connect your agent</a></div>' : ""}`;
+    control = `<p class="supporting-text">Only an admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/agents/connect">Connect your agent</a></div>' : ""}`;
   }
   return {
     title: "Agent access",
@@ -288,7 +288,7 @@ const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
 });
 
 /**
- * `/company`, People: everyone in the company, its open invites and its guests, narrowed by a tab
+ * `/settings/people`, People: everyone in the company, its open invites and its guests, narrowed by a tab
  * and a search. Admins invite from the toolbar and manage each row from its menu; a guest's row
  * opens to the patches shared with them, and for admins, removing them from all of them.
  */
@@ -359,7 +359,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
   );
 
   const userRow = (user: Users.User) => {
-    const path = `/company/users/${encodeURIComponent(user.id)}`;
+    const path = `/settings/people/users/${encodeURIComponent(user.id)}`;
     const label = displayName(user);
     const you = user.id === viewer.user.id ? '<span class="tag">You</span>' : "";
     const second = user.name.trim()
@@ -389,7 +389,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
   };
   const inviteRow = (invite: Companies.Invite) => {
-    const path = `/company/invites/${encodeURIComponent(invite.id)}`;
+    const path = `/settings/people/invites/${encodeURIComponent(invite.id)}`;
     const state = inviteState(invite);
     const sent = `Invited ${time(invite.createdAt, ago(invite.createdAt.toISOString(), now))}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
     const status =
@@ -423,7 +423,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
       )
       .join("");
     const remove = admin
-      ? `<a class="btn btn-quiet btn-danger" href="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}">Remove from all patches…</a>`
+      ? `<a class="btn btn-quiet btn-danger" href="${escapeAttribute(`/settings/people/guests/${encodeURIComponent(guest.userId)}/remove`)}">Remove from all patches…</a>`
       : "";
     return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${escapeHtml(guest.companyName)}</td></tr><tr class="table-expand"><td colspan="2"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
   };
@@ -454,7 +454,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     )
     .join("");
   const search = searchField({
-    action: "/company",
+    action: "/settings/people",
     id: "company-search",
     query,
     placeholder: "Search people",
@@ -486,7 +486,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
     ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>`
     : `<p class="field-hint" id="invite-email-note">Up to ${inviteBatch} at once. Invites expire after ${lifetimeDays} days.</p>`;
   const invite = admin
-    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/company/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
+    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/settings/people/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
     : "";
   const admins = active.filter((user) => user.role === "admin");
   return {
@@ -501,7 +501,7 @@ const refuse = (viewer: Viewer, message: string, status: number, draft?: Draft) 
   render(viewer, { notice: { message: escapeHtml(message), status }, draft });
 
 /** People again after a change, with the receipt naming it. */
-const done = (receipt: string, redirect = "/company"): Page => ({
+const done = (receipt: string, redirect = "/settings/people"): Page => ({
   title: "People",
   body: "",
   redirect,
@@ -509,7 +509,7 @@ const done = (receipt: string, redirect = "/company"): Page => ({
 });
 
 /**
- * `/company/guests/<id>/remove`: the patches a guest would lose, for an admin to confirm removing
+ * `/settings/people/guests/<id>/remove`: the patches a guest would lose, for an admin to confirm removing
  * them from all of them.
  */
 const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
@@ -524,7 +524,7 @@ const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
   return {
     title: `Remove ${guest.name}`,
     heading: "",
-    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/company/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
+    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/settings/people/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
   };
 };
 
@@ -560,7 +560,7 @@ const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer
   return {
     title: "Agent access",
     body: "",
-    redirect: "/company/agent-access",
+    redirect: "/settings/agent-access",
     receipt: `Agent access is ${access.on ? "on" : "off"}`
   } satisfies Page;
 });

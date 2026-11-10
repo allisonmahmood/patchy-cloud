@@ -81,7 +81,7 @@ export class ConnectionNotConnected extends Schema.TaggedError<ConnectionNotConn
   readonly code = "access_denied" as const;
   readonly status = 403;
   override get message() {
-    return `The connection ${this.connection} is disconnected. Ask a company administrator to reconnect it at /company/connections.`;
+    return `The connection ${this.connection} is disconnected. Ask a company administrator to reconnect it at /settings/integrations.`;
   }
 }
 

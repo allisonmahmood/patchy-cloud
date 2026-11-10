@@ -622,7 +622,7 @@ instance's release tarball as described above.
 
 `patchy add postgres`, `patchy add posthog`, `patchy add pidgeon`, `patchy add attio` or `patchy add imap` selects that integration's sole connected
 connection; with several it lists copy-ready choices from `list connections` and stops.
-With none, it names `/company/connections`.
+With none, it names `/settings/integrations`.
 The default connection alias camel-cases the handle's hyphens; a shared table or
 store alias defaults to its resource name. `--as` overrides the default.
 
@@ -660,7 +660,7 @@ Use actual connection names from `list connections`; inspect one with
 `list connections <integration>/<handle>`, such as `postgres/warehouse`. Shared-table targets come from the discovery
 chain above, using the response's canonical patch id.
 Connection setup and reconnection belong to an admin's browser at
-`/company/connections`; no CLI command accepts a
+`/settings/integrations`; no CLI command accepts a
 connection string. A shared source must be openable; restore its access with its
 owner or correct the declaration. With no publishing key, non-interactive init
 exits 1 with `Run: patchy login` before laying down files. A company with no
@@ -1015,7 +1015,7 @@ They check the code, company and email, name the machine, and confirm;
 
 The poll mints the publishing key after confirmation; the CLI saves it locally
 and never prints it. It works for 90 days or 30 idle days, whichever comes
-first; revoke it on **Your agents** at `/machines`. Re-login with a saved
+first; revoke it on **Your agents** at `/agents`. Re-login with a saved
 login key for the same user inherits its name and replaces it when the terminal
 completes, without changing ownership of any patches. Keys from `auth set`,
 the environment or the dev seed are not named as predecessors.
@@ -1278,7 +1278,7 @@ publish with agent tools adds a line built from the manifest it sent, such as
 through Patchy's MCP at <instance>/mcp.`; JSON gains no field, since `handlers`
 lists them as `agent.<export>` with their handler `kind`. While the company's
 agent access is off, publish warns that no agent can use them yet and that an
-admin turns it on at `<instance>/company`. When the patch has guests and the
+admin turns it on at `<instance>/settings/agent-access`. When the patch has guests and the
 version would close it to them, such as by declaring a connection an admin set to
 block guests, publish still succeeds, exit 0, and a `warnings` entry says why.
 
@@ -1384,7 +1384,7 @@ File publishing onto a patch with cumulative table or store inventory is still
 those definitions. Publish that patch from its repo, now supported by this CLI.
 For `patch_not_openable`, correct the shared-table declaration or restore source
 access. For `connection_not_connected`, an admin reconnects at
-`/company/connections`; `stale_generated` requires `pnpm patchy refresh`.
+`/settings/integrations`; `stale_generated` requires `pnpm patchy refresh`.
 Connection secrets belong only in the admin's browser connect/rotate form,
 never CLI arguments or an agent transcript.
 

@@ -503,7 +503,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         "Do anything you can’t",
         "Every change it makes is logged as Patchy Dev via Agent.",
         "Your answer goes back to <strong>agent.example</strong>",
-        '<a href="/machines">Your agents</a>',
+        '<a href="/agents">Your agents</a>',
         "Use another account"
       ])
         assert.include(html, says);
@@ -703,7 +703,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
 
       const adminHtml = yield* text(yield* consentPage(query));
       assert.include(adminHtml, "You’re an admin: turn it on, then connect again from Agent.");
-      assert.include(adminHtml, '<a class="btn btn-primary" href="/company/agent-access">');
+      assert.include(adminHtml, '<a class="btn btn-primary" href="/settings/agent-access">');
 
       // Allow from a page shown while it was on is refused; Back to the agent denies.
       const allowed = yield* answer(shownWhileOn, "allow", { cookie: sessionOf() });

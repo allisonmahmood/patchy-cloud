@@ -166,7 +166,7 @@ export const handle = Effect.fn("Join.handle")(function* (
       title: `You are in ${membership.company.name}`,
       body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>`,
       status: request.method === "POST" ? 409 : 200,
-      ...(request.method !== "POST" ? { redirect: door.returnTo ?? "/company" } : {})
+      ...(request.method !== "POST" ? { redirect: door.returnTo ?? "/settings/people" } : {})
     } satisfies JoinPage;
   }
   if (request.method !== "POST")
@@ -224,7 +224,7 @@ export const handle = Effect.fn("Join.handle")(function* (
     return {
       title: "Company joined",
       body: "",
-      redirect: door.returnTo ?? "/company"
+      redirect: door.returnTo ?? "/settings/people"
     } satisfies JoinPage;
   }).pipe(
     Effect.catchTags({

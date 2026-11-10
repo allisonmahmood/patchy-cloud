@@ -147,7 +147,7 @@ it.layer(layer)("connections group", (it) => {
         assert.strictEqual(response.headers["cache-control"], "private, no-store");
         const listed = yield* api.listConnections({ query: {} });
         const { hint, ...disconnected } = listed.connections[0]!;
-        assert.include(hint, "/company/connections");
+        assert.include(hint, "/settings/integrations");
         assert.notInclude(hint, "patchy add");
         assert.deepStrictEqual(disconnected, {
           id: "conn_archive",
@@ -504,7 +504,7 @@ it.layer(layer)("connections group", (it) => {
         const row = listed.connections.find((connection) => connection.id === "conn_paused");
         assert.deepInclude(row, { status: "connected", paused: true });
         assert.include(row?.hint, "Paused: its mail server refused the password");
-        assert.include(row?.hint, "Test it or replace the password at /company/connections");
+        assert.include(row?.hint, "Test it or replace the password at /settings/integrations");
         assert.notInclude(row?.hint, "patchy add");
         const detail = yield* api.getIntegrationConnection({
           params: { integration: "imap", handle: "paused" }

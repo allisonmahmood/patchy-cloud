@@ -165,7 +165,7 @@ const LATER =
 
 export const connectPath = View.connectPath(integration.key);
 /** Find addresses posts the admin key here; a route, so a literal. */
-export const addressesPath = "/company/connections/connect/pidgeon/addresses";
+export const addressesPath = "/settings/integrations/connect/pidgeon/addresses";
 /** Where the connections pages serve `connectScript`; "assets" is a reserved company handle. */
 export const connectScriptPath = "/assets/pidgeon-connect.js";
 

@@ -90,7 +90,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       const defaultLogin = yield* send("/login");
       assert.include(
         yield* Effect.promise(() => defaultLogin.text()),
-        encodeURIComponent(`${origin}/machines`)
+        encodeURIComponent(`${origin}/agents`)
       );
       for (const target of [
         "https://foreign.invalid/",
@@ -104,7 +104,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         assert.strictEqual(response.status, 200);
         assert.include(
           yield* Effect.promise(() => response.text()),
-          encodeURIComponent(`${origin}/machines`)
+          encodeURIComponent(`${origin}/agents`)
         );
       }
     })
@@ -176,7 +176,7 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.deepInclude(identity, { role: "admin" });
       const joined = yield* send("/join", { headers: { cookie: sessionCookie } });
       assert.strictEqual(joined.status, 303);
-      assert.strictEqual(joined.headers.get("location"), "/company");
+      assert.strictEqual(joined.headers.get("location"), "/settings/people");
       const returning = yield* send("/join?return=%2Fprivate%3Fview%3Dmine", {
         headers: { cookie: sessionCookie }
       });
@@ -187,7 +187,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         { headers: { cookie: sessionCookie } }
       );
       assert.strictEqual(unsafeReturn.status, 303);
-      assert.strictEqual(unsafeReturn.headers.get("location"), "/company");
+      assert.strictEqual(unsafeReturn.headers.get("location"), "/settings/people");
       const refused = yield* send(
         "/join",
         post({ action: "create", name: "Other", handle: "other-enroll" }, sessionCookie)
@@ -259,7 +259,7 @@ it.layer(services)("first-party pages in memory", (it) => {
         post({ action: "join", inviteId: second.id }, sessionCookie)
       );
       assert.strictEqual(joined.status, 303);
-      assert.strictEqual(joined.headers.get("location"), "/company");
+      assert.strictEqual(joined.headers.get("location"), "/settings/people");
       const user = yield* (yield* Users.Users).findByClerkId("user_invitee");
       assert.strictEqual(user?.companyId, other.company.id);
       assert.strictEqual(user?.role, "admin");
@@ -299,6 +299,7 @@ it.layer(services)("first-party pages in memory", (it) => {
           `${DEV_SEED.companyHandle} is taken`
         ],
         ['Keep "this"', "admin", 422, "handle", "admin is reserved"],
+        ['Keep "this"', "agents", 422, "handle", "agents is reserved"],
         ['Keep "this"', "-invalid", 422, "handle", "Start and end with a letter or digit"],
         ['Keep "this"', "Acme", 422, "handle", "Handles are lowercase"],
         ["   ", "fine-handle", 422, "name", "Enter a company name"]
@@ -562,10 +563,10 @@ it.layer(
       assert.strictEqual(response.status, 303);
       for (const directive of response.headers.getSetCookie())
         jar.setCookieSync(directive, `${publicUrl}/logout`, { ignoreError: true });
-      for (const path of ["/", "/login/device", "/machines", "/company"])
+      for (const path of ["/", "/login/device", "/agents", "/settings/people"])
         assert.strictEqual(jar.getCookieStringSync(`${publicUrl}${path}`), "preference=keep");
-      const next = yield* send("/company", {
-        headers: { cookie: jar.getCookieStringSync(`${publicUrl}/company`) }
+      const next = yield* send("/settings/people", {
+        headers: { cookie: jar.getCookieStringSync(`${publicUrl}/settings/people`) }
       }).pipe(Effect.provide(sessionLayer));
       assert.strictEqual(next.status, 401);
     })

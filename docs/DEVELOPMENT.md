@@ -746,8 +746,8 @@ can quote it.
   and the notices at the patch's address. A source with a published consumer
   refuses retirement with `has_dependants` until `--force`.
 - **Company management.** Invite, revoke, change roles, deactivate and
-  reactivate from `/company`; deactivation revokes the user's machine tokens and
-  the last active admin cannot be demoted.
+  reactivate from `/settings/people`; deactivation revokes the user's machine
+  tokens and the last active admin cannot be demoted.
 - **Front door and onboarding.** `pnpm test:packed-cli-e2e` runs the
   `/llms.txt` install line on a clean HOME and npm prefix. To watch an agent
   follow the portal's setup line, give it a throwaway machine, never the

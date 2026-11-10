@@ -21,6 +21,7 @@ export const RESERVED_HANDLES: ReadonlyArray<string> = [
   "login",
   "logout",
   "machines",
+  "agents",
   "company",
   "patches",
   "join",

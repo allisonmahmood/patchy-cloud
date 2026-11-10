@@ -1449,7 +1449,7 @@ export const layer: Layer.Layer<
         );
         yield* router.add(
           method,
-          `/company/users/:id/${action}`,
+          `/settings/people/users/:id/${action}`,
           errors(method === "POST" ? RequireSession.sameOrigin(handler) : handler)
         );
       }

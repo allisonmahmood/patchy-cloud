@@ -78,7 +78,7 @@ export class ConnectFailed extends Schema.TaggedError<ConnectFailed>()("ConnectF
   cause: Schema.Redacted(Schema.Unknown, { disallowJsonEncode: true })
 }) {
   override get message() {
-    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /company/connections.`;
+    return `Connecting ${this.connection} through its connect page failed while ${this.step}. If Playwright's browser is missing, run \`pnpm exec playwright install chromium\`; then run \`pnpm dev up\` again, or connect it yourself at /settings/integrations.`;
   }
 }
 
@@ -631,11 +631,11 @@ const connectSource = Effect.fn("connectSource")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return;
         step = "pasting the admin key";
-        await page.goto(`${apiUrl}/company/connections/connect/${connection.integration}`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/${connection.integration}`);
         await page.locator("#pidgeon-key").fill(Redacted.value(adminKey));
         step = "finding addresses";
         await page.getByRole("button", { name: "Find addresses" }).click();
@@ -657,7 +657,7 @@ const connectSource = Effect.fn("connectSource")(function* (
         await page.locator("#connection-description").fill(connection.description);
         step = "connecting";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/),
+          page.waitForURL(/\/settings\/integrations\/conn_/),
           page.getByRole("button", { name: "Connect", exact: true }).click()
         ]);
       } finally {
@@ -689,17 +689,17 @@ const connectAttio = Effect.fn("connectAttio")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
         step = "filling in the connect form";
-        await page.goto(`${apiUrl}/company/connections/connect/attio`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/attio`);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
         await page.locator("#connection-key").fill(Redacted.value(key));
         step = "checking the key and reading the workspace";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 90_000 }),
+          page.waitForURL(/\/settings\/integrations\/conn_/, { timeout: 90_000 }),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
         return true;
@@ -732,11 +732,11 @@ const connectImap = Effect.fn("connectImap")(function* (
         const page = await browser.newPage();
         step = "signing in";
         await page.goto(
-          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/company/connections")}`
+          `${apiUrl}/dev/sign-in?as=${encodeURIComponent(email)}&return=${encodeURIComponent("/settings/integrations")}`
         );
         if ((await page.getByRole("link", { name, exact: true }).count()) > 0) return false;
         step = "filling in the connect form";
-        await page.goto(`${apiUrl}/company/connections/connect/imap`);
+        await page.goto(`${apiUrl}/settings/integrations/connect/imap`);
         await page.locator("#connection-handle").fill(connection.handle);
         await page.locator("#connection-description").fill(connection.description);
         await page.locator("#connection-host").fill(login.host);
@@ -746,7 +746,7 @@ const connectImap = Effect.fn("connectImap")(function* (
         await page.locator("#connection-password").fill(login.password);
         step = "testing the login and listing folders";
         await Promise.all([
-          page.waitForURL(/\/company\/connections\/conn_/, { timeout: 60_000 }),
+          page.waitForURL(/\/settings\/integrations\/conn_/, { timeout: 60_000 }),
           page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
         return true;

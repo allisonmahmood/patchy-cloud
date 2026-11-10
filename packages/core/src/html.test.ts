@@ -26,16 +26,18 @@ describe("htmlPage app body", () => {
     expect(places(body)).toEqual([
       ["/", "Home"],
       ["/patches", "All patches"],
-      ["/machines", "Your agents"],
-      ["/company", "People"],
-      ["/company/connections", "Integrations"],
-      ["/company/agent-access", "Agent access"]
+      ["/agents", "Your agents"],
+      ["/settings/people", "People"],
+      ["/settings/integrations", "Integrations"],
+      ["/settings/agent-access", "Agent access"]
     ]);
     expect(body).toContain(
       'aria-labelledby="app-group-company"><p class="app-group-label" id="app-group-company">Company</p>'
     );
     expect(body.match(/aria-current="page"/g)).toHaveLength(1);
-    expect(body).toContain('<a class="app-place" href="/company/connections" aria-current="page">');
+    expect(body).toContain(
+      '<a class="app-place" href="/settings/integrations" aria-current="page">'
+    );
     expect(body).toContain('id="account-menu" popover');
     expect(body).toContain("sam@northwind.example");
     expect(body).toContain(
@@ -102,7 +104,7 @@ describe("htmlPage app body", () => {
         .replace(switcherRelay, "")
         .replace(/<script defer src="\/~shell\/switcher\.js[^>]*><\/script>/, "")
     ).not.toMatch(/<(img|script|b)\b/);
-    expect(html).toContain('<a class="app-place" href="/company" aria-current="page">');
+    expect(html).toContain('<a class="app-place" href="/settings/people" aria-current="page">');
   });
 
   it("rings the bell for what shipped since the viewer's marker, and loads its script only then", () => {

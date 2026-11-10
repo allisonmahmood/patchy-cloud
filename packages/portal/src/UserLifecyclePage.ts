@@ -48,7 +48,7 @@ const renderPick = (input: {
       return `<li class="list-row"><label class="field-choice"><input class="field-checkbox" type="checkbox" name="patch" value="${escapeAttribute(row.patch.id)}"${eligible ? (selected.has(row.patch.id) ? " checked" : "") : " disabled"}><span>${patchName(row.patch.name)} <span class="pill">${escapeHtml(row.patch.state)}</span></span></label>${badges}</li>`;
     })
     .join("");
-  return `<article class="portal-subpage"><p><a href="/company">Back to Company</a></p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}</h1><p>${consequence(user, action)}</p>${refusal(input.message)}<form method="post" action="/company/users/${encodeURIComponent(user.id)}/${action}"><ul class="list">${items}</ul><div class="actions"><button class="btn btn-quiet" type="submit" name="choice" value="keep">${action === "deactivate" ? "Keep their patches live" : "Keep them retired"}</button><button class="btn btn-primary" type="submit" name="choice" value="selected">${action === "deactivate" ? "Retire selected" : "Restore selected"}</button><button class="btn${action === "deactivate" ? " btn-danger" : ""}" type="submit" name="choice" value="all">${action === "deactivate" ? "Retire all" : "Restore all"}</button><a class="btn btn-quiet" href="/company">Cancel</a></div><p class="supporting-text">${action === "deactivate" ? "Keep their patches live deactivates them now." : "Keep them retired reactivates them now."} The other two go to a confirmation.</p></form></article>`;
+  return `<article class="portal-subpage"><p><a href="/settings/people">Back to Company</a></p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}</h1><p>${consequence(user, action)}</p>${refusal(input.message)}<form method="post" action="/settings/people/users/${encodeURIComponent(user.id)}/${action}"><ul class="list">${items}</ul><div class="actions"><button class="btn btn-quiet" type="submit" name="choice" value="keep">${action === "deactivate" ? "Keep their patches live" : "Keep them retired"}</button><button class="btn btn-primary" type="submit" name="choice" value="selected">${action === "deactivate" ? "Retire selected" : "Restore selected"}</button><button class="btn${action === "deactivate" ? " btn-danger" : ""}" type="submit" name="choice" value="all">${action === "deactivate" ? "Retire all" : "Restore all"}</button><a class="btn btn-quiet" href="/settings/people">Cancel</a></div><p class="supporting-text">${action === "deactivate" ? "Keep their patches live deactivates them now." : "Keep them retired reactivates them now."} The other two go to a confirmation.</p></form></article>`;
 };
 
 type Warning = { readonly name: string; readonly sources: Patches.PortalCard["offSources"] };
@@ -92,9 +92,9 @@ const renderConfirm = (input: {
     : "";
   const back =
     selected.length === 0
-      ? '<a href="/company">Back to Company</a>'
-      : `<a href="/company/users/${encodeURIComponent(user.id)}/${action}">Back to selection</a>`;
-  return `<article class="portal-subpage"><p>${back}</p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}?</h1>${refusal(input.message)}<form class="confirmation-form" method="post" action="/company/users/${encodeURIComponent(user.id)}/${action}"><p class="confirmation-consequence">${consequence(user, action)}</p><p>${summary}</p>${hidden("choice", "confirm")}${selected.map((row) => hidden("patch", row.patch.id)).join("")}${breaks ? `${action === "deactivate" ? "<p>These live patches outside the selection will lose access on their next read, until the sources are restored.</p>" : ""}<ul class="confirmation-list">${damage}</ul>` : '<p class="note note-ok">Nothing breaks</p>'}${acknowledgement}<div class="confirmation-actions"><button class="btn ${action === "deactivate" ? "btn-danger" : "btn-primary"}" type="submit">${verb(action)} ${escapeHtml(user.name)}${selected.length === 0 ? "" : action === "deactivate" ? " and retire selected" : " and restore selected"}</button><a class="btn btn-quiet" href="/company">Cancel</a></div></form></article>`;
+      ? '<a href="/settings/people">Back to Company</a>'
+      : `<a href="/settings/people/users/${encodeURIComponent(user.id)}/${action}">Back to selection</a>`;
+  return `<article class="portal-subpage"><p>${back}</p><h1 class="page-heading">${verb(action)} ${escapeHtml(user.name)}?</h1>${refusal(input.message)}<form class="confirmation-form" method="post" action="/settings/people/users/${encodeURIComponent(user.id)}/${action}"><p class="confirmation-consequence">${consequence(user, action)}</p><p>${summary}</p>${hidden("choice", "confirm")}${selected.map((row) => hidden("patch", row.patch.id)).join("")}${breaks ? `${action === "deactivate" ? "<p>These live patches outside the selection will lose access on their next read, until the sources are restored.</p>" : ""}<ul class="confirmation-list">${damage}</ul>` : '<p class="note note-ok">Nothing breaks</p>'}${acknowledgement}<div class="confirmation-actions"><button class="btn ${action === "deactivate" ? "btn-danger" : "btn-primary"}" type="submit">${verb(action)} ${escapeHtml(user.name)}${selected.length === 0 ? "" : action === "deactivate" ? " and retire selected" : " and restore selected"}</button><a class="btn btn-quiet" href="/settings/people">Cancel</a></div></form></article>`;
 };
 
 /** Previews take no mutation locks; commits change patches before the user in one transaction. */
@@ -123,7 +123,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       session
     );
   const refuse = (message: string, status: number) =>
-    respond(`${refusal(message)}<p><a href="/company">Back to Company</a></p>`, status);
+    respond(`${refusal(message)}<p><a href="/settings/people">Back to Company</a></p>`, status);
   if (viewer.role !== "admin")
     return refuse("Only an admin can manage this company. Nothing was done.", 403);
   const submission =
@@ -231,7 +231,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
       companyId: viewer.company.id,
       properties: { userId: id }
     });
-    return HttpServerResponse.redirect("/company", {
+    return HttpServerResponse.redirect("/settings/people", {
       status: 303,
       headers: { "cache-control": "private, no-store" }
     });

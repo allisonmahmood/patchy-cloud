@@ -55,7 +55,7 @@ export class ConnectionRefused extends Schema.TaggedError<ConnectionRefused>()(
   readonly code = "source_unavailable" as const;
   readonly status = 503;
   override get message() {
-    return "Pidgeon didn't accept this connection's key: it was revoked. Ask a company administrator to replace it at /company/connections.";
+    return "Pidgeon didn't accept this connection's key: it was revoked. Ask a company administrator to replace it at /settings/integrations.";
   }
 }
 /** A reply, send or triage through a connection whose key only reads; nothing reached Pidgeon. */
@@ -63,7 +63,7 @@ export class ReadOnly extends Schema.TaggedError<ReadOnly>()("PidgeonReadOnly", 
   readonly code = "access_denied" as const;
   readonly status = 403;
   override get message() {
-    return "This Pidgeon connection only reads: it can't reply, send or change threads. An administrator can change its access at /company/connections.";
+    return "This Pidgeon connection only reads: it can't reply, send or change threads. An administrator can change its access at /settings/integrations.";
   }
 }
 /**

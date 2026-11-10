@@ -9,7 +9,7 @@ Read `../patchy-loop/SKILL.md` first. A Pidgeon connection is one company email 
 
 ## Declare an address
 
-1. Run `pnpm patchy list connections` and choose a connected `pidgeon/<handle>` by description. `pnpm patchy list connections pidgeon/<handle>` shows the address, whether its key reads or also sends, its send policy, its labels and whether it's a test address. An admin connects addresses at `/company/connections`; ask them there rather than for a key. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
+1. Run `pnpm patchy list connections` and choose a connected `pidgeon/<handle>` by description. `pnpm patchy list connections pidgeon/<handle>` shows the address, whether its key reads or also sends, its send policy, its labels and whether it's a test address. An admin connects addresses at `/settings/integrations`; ask them there rather than for a key. An admin may also set a connection to block guests, which closes patches that declare it to their guests.
 2. Run `pnpm patchy add pidgeon/<handle> --as inbox`. It inserts `inbox: { kind: "pidgeon", handle }` into `uses` and generates the client, the context and this skill.
 3. Read `patchy/_generated/index.json`, then the context for `inbox`: the address, its access, its send policy and its labels with their ids. A `read` connection's client has no reply, send or triage methods, so code using them doesn't typecheck.
 
@@ -84,7 +84,7 @@ The page makes the draft key and passes it to an action, which calls `ctx.connec
 - Pidgeon holds back new messages from the address to someone it has just written to, within a window of 10 minutes unless the address's owner changed it in Pidgeon. Past what it allows, `messages.send` to them fails `source_rate_limited` with `details.limit` `"recipient_cooldown"`, `details.message` naming them and `retryAfter`, and sends to no one. Replies aren't held: a follow-up to someone who wrote in a conversation goes there, as `messages.reply` to their message. Otherwise, wait `retryAfter`.
 - `access_denied` with `details.reason`: `not_permitted` (the send policy, such as reply-only writing to someone who hasn't written first), `blocked` (a rule), `exfiltration_blocked` (the text carries mail read from another conversation, which can only go back as a reply there) or `held`. `details.message` is Pidgeon's explanation, written to be shown to a person. On a `read` connection, every write fails `access_denied`.
 - `not_found` means the thread, message, label or attachment isn't on this address, or doesn't exist. `invalid_request` names Pidgeon's field in `details.field` when it was one.
-- `busy` means Patchy's calls for the address stayed full and nothing was sent. `source_unavailable` covers an unreachable Pidgeon and a key that stopped working, which needs an admin at `/company/connections`.
+- `busy` means Patchy's calls for the address stayed full and nothing was sent. `source_unavailable` covers an unreachable Pidgeon and a key that stopped working, which needs an admin at `/settings/integrations`.
 - Narrow a caught error with `isPatchyError(error, code, "pidgeon")`, imported from the relative generated `client.js`, to type Pidgeon's `details`.
 - Company admins see every call in the connection's recent calls: a send's subject and recipients, a reply's message and CC, a triage's status or label, and the ids each read named. Bodies and search text are never kept.
 

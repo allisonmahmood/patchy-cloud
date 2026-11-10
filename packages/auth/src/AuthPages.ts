@@ -55,7 +55,7 @@ const join = Effect.gen(function* () {
       );
 });
 
-/** People at `/company` and Agent access at `/company/agent-access`, with their forms. */
+/** People at `/settings/people` and Agent access at `/settings/agent-access`, with their forms. */
 const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
@@ -144,7 +144,7 @@ const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, 
             pageResponse(
               {
                 title: "Invalid form",
-                body: `<p>Return to <a href="/company">your company</a> and submit the form again.</p>${signOutForm()}`,
+                body: `<p>Return to <a href="/settings/people">your company</a> and submit the form again.</p>${signOutForm()}`,
                 status: 400
               },
               session
@@ -183,7 +183,7 @@ export const layer: Layer.Layer<
           const request = yield* HttpServerRequest.HttpServerRequest;
           const url = new URL(request.url, session.publicBaseUrl);
           const path =
-            returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/machines";
+            returnPath(url.searchParams.get("return"), session.publicBaseUrl) ?? "/agents";
           return RequireSession.door(session, path, false, 200);
         })
       );
@@ -230,17 +230,17 @@ export const layer: Layer.Layer<
       );
       yield* router.add(
         "GET",
-        "/company",
+        "/settings/people",
         errors(RequireSession.withViewer(company({ kind: "view" })))
       );
       yield* router.add(
         "GET",
-        "/company/agent-access",
+        "/settings/agent-access",
         errors(RequireSession.withViewer(company({ kind: "view-agent-access" })))
       );
       yield* router.add(
         "GET",
-        "/company/guests/:id/remove",
+        "/settings/people/guests/:id/remove",
         errors(
           RequireSession.withViewer(
             Effect.flatMap(HttpRouter.params, (params) =>
@@ -250,8 +250,8 @@ export const layer: Layer.Layer<
         )
       );
       for (const [path, kind] of [
-        ["/company/invites", "invite"],
-        ["/company/agent-access", "agent-access"]
+        ["/settings/people/invites", "invite"],
+        ["/settings/agent-access", "agent-access"]
       ] as const) {
         yield* router.add(
           "POST",
@@ -260,10 +260,10 @@ export const layer: Layer.Layer<
         );
       }
       for (const [path, kind] of [
-        ["/company/invites/:id/revoke", "revoke"],
-        ["/company/invites/:id/resend", "resend"],
-        ["/company/users/:id/role", "role"],
-        ["/company/guests/:id/remove", "remove-guest"]
+        ["/settings/people/invites/:id/revoke", "revoke"],
+        ["/settings/people/invites/:id/resend", "resend"],
+        ["/settings/people/users/:id/role", "role"],
+        ["/settings/people/guests/:id/remove", "remove-guest"]
       ] as const) {
         yield* router.add(
           "POST",
