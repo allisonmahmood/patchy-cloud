@@ -96,6 +96,11 @@ export const Scenario = Schema.Struct({
     Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, handle: Slug }))
   ),
   people: Schema.NonEmptyArray(Person),
+  teams: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ key: Slug, name: Schema.NonEmptyString, members: Schema.Array(Slug) })
+    )
+  ),
   /** The admin the environment's CLI publishes as. */
   publisher: Slug,
   connections: Schema.optionalKey(Schema.Array(ScenarioConnection)),
@@ -150,6 +155,18 @@ export const loadScenario = Effect.fn("loadScenario")(function* (worktree: strin
   const scenario = yield* decodeScenario(yield* fs.readFileString(file)).pipe(
     Effect.mapError((error) => new ScenarioInvalid({ name, problem: error.message }))
   );
+  for (const team of scenario.teams ?? []) {
+    if (
+      team.members.some(
+        (key) =>
+          !scenario.people.some((person) => person.key === key && person.company === undefined)
+      )
+    )
+      return yield* new ScenarioInvalid({
+        name,
+        problem: "team members must be people at the scenario company."
+      });
+  }
   const keys = new Set(scenario.people.map((person) => person.key));
   const emails = new Set(scenario.people.map((person) => person.email.toLowerCase()));
   if (keys.size !== scenario.people.length || emails.size !== scenario.people.length)
@@ -243,6 +260,16 @@ export const seedScenario = Effect.fn("seedScenario")(function* (scenario: Scena
               ${yield* cryptography.sha256(publisherToken(scenario))}, now(), now() + interval '90 days', now())
             ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash,
               expires_at = EXCLUDED.expires_at, last_used_at = EXCLUDED.last_used_at, revoked_at = NULL`;
+      }
+      for (const team of scenario.teams ?? []) {
+        const teamId = `team_env_${scenario.company.handle}_${team.key}`;
+        const companyId = `cmp_env_${scenario.company.handle}`;
+        yield* sql`INSERT INTO company_teams(id, company_id, name) VALUES (${teamId}, ${companyId}, ${team.name}) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`;
+        for (const key of team.members) {
+          const person = scenario.people.find((person) => person.key === key)!;
+          const { userId } = ids(scenario, person);
+          yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id) VALUES (${companyId}, ${teamId}, ${userId}) ON CONFLICT DO NOTHING`;
+        }
       }
       if (scenario.company.agentAccess === true) {
         const publisher = scenario.people.find((person) => person.key === scenario.publisher)!;

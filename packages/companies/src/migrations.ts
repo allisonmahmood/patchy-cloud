@@ -173,7 +173,7 @@ export const migrations: Migrations = {
       actor_id TEXT NOT NULL,
       added BOOLEAN NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (company_id, revision),
+      PRIMARY KEY (company_id, revision, user_id),
       FOREIGN KEY (company_id, team_id) REFERENCES company_teams(company_id, id),
       FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id),
       FOREIGN KEY (company_id, actor_id) REFERENCES users(company_id, id)

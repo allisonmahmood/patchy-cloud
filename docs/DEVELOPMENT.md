@@ -912,3 +912,5 @@ with a closed environment: the plan, `NODE_ENV=development`, a keyring generated
 once per worktree in `.local/dev/dev.env`, and either the personas secret or
 Clerk's keys. Development instances execute tier 2 handlers with the local
 workerd executor; production refuses it.
+
+The Brightline scenario includes Robin as a regular admin and Design and Engineering teams. Scenario `teams` entries name a stable `key`, a `name`, and member persona keys from the primary company.

@@ -1,6 +1,15 @@
 {
-  "company": { "name": "Brightline Studio", "handle": "brightline", "agentAccess": true },
-  "companies": [{ "name": "Cedar Works", "handle": "cedar" }],
+  "company": {
+    "name": "Brightline Studio",
+    "handle": "brightline",
+    "agentAccess": true
+  },
+  "companies": [
+    {
+      "name": "Cedar Works",
+      "handle": "cedar"
+    }
+  ],
   "people": [
     {
       "key": "allison",
@@ -14,7 +23,12 @@
       "email": "jordan@brightline.example",
       "role": "member"
     },
-    { "key": "priya", "name": "Priya Shah", "email": "priya@brightline.example", "role": "member" },
+    {
+      "key": "priya",
+      "name": "Priya Shah",
+      "email": "priya@brightline.example",
+      "role": "member"
+    },
     {
       "key": "marcus",
       "name": "Marcus Chen",
@@ -33,6 +47,12 @@
       "email": "taylor@cedar.example",
       "role": "member",
       "company": "cedar"
+    },
+    {
+      "key": "robin",
+      "name": "Robin Chen",
+      "email": "robin@brightline.test",
+      "role": "admin"
     }
   ],
   "publisher": "allison",
@@ -60,6 +80,18 @@
       "file": "harbor-pine-kickoff.html",
       "name": "harbor-pine-kickoff",
       "description": "Kickoff brief for the Harbor & Pine Coffee rebrand: goals, scope, timeline, team, budget and risks."
+    }
+  ],
+  "teams": [
+    {
+      "key": "design",
+      "name": "Design",
+      "members": ["allison", "robin"]
+    },
+    {
+      "key": "engineering",
+      "name": "Engineering",
+      "members": ["robin"]
     }
   ]
 }

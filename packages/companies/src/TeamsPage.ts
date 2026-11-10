@@ -47,18 +47,15 @@ const render = Effect.fn("TeamsPage.render")(function* (
 ) {
   const users = yield* Users.Users;
   const ref = { companyId: viewer.company.id, actorId: viewer.user.id };
-  const all = yield* Teams.list(ref);
+  const all = yield* (yield* Teams.Teams).list(ref);
   const selected = selectedId ? all.find((team) => team.id === selectedId) : all[0];
   if (selectedId && !selected)
     return { title: "Team not found", body: `<a href="${path}">Back to Teams</a>`, status: 404 };
   const editable = viewer.role !== "member";
-  const people = (yield* users.list(ref.companyId)).filter(
-    (person) => person.deactivatedAt === null
-  );
+  const people = yield* users.list(ref.companyId);
   const ids = selected
-    ? new Set(yield* Teams.members({ ...ref, teamId: selected.id }))
+    ? new Set(yield* (yield* Teams.Teams).members({ ...ref, teamId: selected.id }))
     : new Set<string>();
-  const heading = `<nav class="tabs" aria-label="Company settings"><a class="tab" href="/settings/company">Company</a><a class="tab" href="/company">People</a><a class="tab" href="${path}" aria-current="page">Teams</a></nav>`;
   const create = editable
     ? `<details class="teams-form"${draft?.kind === "create" ? " open" : ""}><summary class="btn">Create team</summary>${nameForm(`${path}/create${selected ? `?team=${encodeURIComponent(selected.id)}` : ""}`, "Create team", draft?.kind === "create" ? draft.name : "", draft?.kind === "create" ? draft.problem : undefined)}</details>`
     : "";
@@ -68,7 +65,9 @@ const render = Effect.fn("TeamsPage.render")(function* (
     const base = `${path}/`;
     const query = `?team=${encodeURIComponent(selected.id)}`;
     const members = people.filter((person) => ids.has(person.id));
-    const candidates = people.filter((person) => !ids.has(person.id));
+    const candidates = people.filter(
+      (person) => !ids.has(person.id) && person.deactivatedAt === null
+    );
     const rename = editable
       ? `<details class="teams-form"${draft?.kind === "rename" ? " open" : ""}><summary class="btn btn-quiet">Rename</summary>${nameForm(`${base}rename${query}`, "Save name", draft?.kind === "rename" ? draft.name : selected.name, draft?.kind === "rename" ? draft.problem : undefined)}</details>`
       : "";
@@ -76,11 +75,11 @@ const render = Effect.fn("TeamsPage.render")(function* (
       editable && candidates.length > 0
         ? `<details class="teams-form"><summary class="btn">Add people</summary><form method="post" action="${escapeAttribute(`${base}add${query}`)}"><div class="teams-picker">${candidates.map((person) => `<label class="field-choice"><input class="field-checkbox" type="checkbox" name="userId" value="${escapeAttribute(person.id)}">${escapeHtml(person.name)}${person.id === viewer.user.id ? ' <span class="tag">You</span>' : ""}</label>`).join("")}</div><button class="btn btn-primary" type="submit">Add selected people</button></form></details>`
         : "";
-    detail = `<section aria-label="${escapeAttribute(selected.name)}"><div class="teams-heading"><h2>${escapeHtml(selected.name)}</h2><span class="supporting-text">${members.length} ${members.length === 1 ? "person" : "people"}</span></div>${rename}${add}<div class="list">${members.length ? members.map((person) => `<div class="list-row teams-person"><div class="teams-person-name">${avatar(person.id, person.name)}<span>${escapeHtml(person.name)}${person.id === viewer.user.id ? ' <span class="tag">You</span>' : ""}</span></div>${editable ? `<form method="post" action="${escapeAttribute(`${base}remove${query}`)}"><input type="hidden" name="userId" value="${escapeAttribute(person.id)}"><button class="btn btn-quiet" type="submit" aria-label="Remove ${escapeAttribute(person.name)} from ${escapeAttribute(selected.name)}">Remove</button></form>` : ""}</div>`).join("") : "<p>No people yet.</p>"}</div></section>`;
+    detail = `<section aria-label="${escapeAttribute(selected.name)}"><div class="teams-heading"><h2 class="section-heading">${escapeHtml(selected.name)}</h2><span class="supporting-text">${members.length} ${members.length === 1 ? "person" : "people"}</span></div>${rename}${add}<div class="list">${members.length ? members.map((person) => `<div class="list-row teams-person"><div class="teams-person-name">${avatar(person.id, person.name)}<span>${escapeHtml(person.name)}${person.id === viewer.user.id ? ' <span class="tag">You</span>' : ""}</span></div>${editable ? `<form method="post" action="${escapeAttribute(`${base}remove${query}`)}"><input type="hidden" name="userId" value="${escapeAttribute(person.id)}"><button class="btn btn-quiet" type="submit" aria-label="Remove ${escapeAttribute(person.name)} from ${escapeAttribute(selected.name)}">Remove</button></form>` : ""}</div>`).join("") : "<p>No people yet.</p>"}</div></section>`;
   }
   return {
     title: "Teams",
-    body: `${heading}${create}<div class="teams-layout">${directory}${detail}</div>`,
+    body: `${create}<div class="teams-layout">${directory}${detail}</div>`,
     status: draft?.status
   };
 });
@@ -101,8 +100,8 @@ export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, a
         return yield* Effect.gen(function* () {
           const team =
             action === "create"
-              ? yield* Teams.create({ ...ref, name })
-              : yield* Teams.rename({ ...target, name });
+              ? yield* (yield* Teams.Teams).create({ ...ref, name })
+              : yield* (yield* Teams.Teams).rename({ ...target, name });
           return {
             title: "Teams",
             body: "",
@@ -130,10 +129,10 @@ export const handle = Effect.fn("TeamsPage.handle")(function* (viewer: Viewer, a
       }
       if (action === "remove") {
         const { userId } = yield* decodePerson(Object.fromEntries(form));
-        yield* Teams.setMemberships({ ...target, userIds: [userId], added: false });
+        yield* (yield* Teams.Teams).setMemberships({ ...target, userIds: [userId], added: false });
       } else {
         const ids = UrlParams.getAll(form, "userId");
-        yield* Teams.setMemberships({ ...target, userIds: ids, added: true });
+        yield* (yield* Teams.Teams).setMemberships({ ...target, userIds: ids, added: true });
       }
       return {
         title: "Teams",

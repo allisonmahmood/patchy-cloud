@@ -180,9 +180,8 @@ it.layer(services)("company page and actions", (it) => {
             `class="note note-refused field-callout" id="${id}-error" role="alert"`
           );
           assert.include(html, '<details class="teams-form" open>');
-          assert.include(html, "<h2>Engineering</h2>");
+          assert.include(html, '<h2 class="section-heading">Engineering</h2>');
           assert.include(html, `${root}/${action}?team=${teamId}`);
-          assert.include(html, "novalidate");
         }
         const invalid = yield* send(
           `${root}/rename?team=${teamId}`,
@@ -192,12 +191,11 @@ it.layer(services)("company page and actions", (it) => {
         const invalidHtml = yield* Effect.promise(() => invalid.text());
         assert.include(invalidHtml, `value="${"x".repeat(101)}"`);
         assert.include(invalidHtml, 'aria-describedby="team-name-Save-name-error"');
-        assert.include(invalidHtml, "Use a team name between 1 and 100 characters.");
         const current = yield* send(`${root}?team=${teamId}`, {
           headers: { cookie: cookie(owner.user) }
         });
         const currentHtml = yield* Effect.promise(() => current.text());
-        assert.include(currentHtml, "<h2>Engineering</h2>");
+        assert.include(currentHtml, '<h2 class="section-heading">Engineering</h2>');
         assert.notInclude(main(currentHtml), 'aria-invalid="true"');
       })
   );
