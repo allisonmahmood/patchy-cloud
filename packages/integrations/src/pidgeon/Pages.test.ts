@@ -29,7 +29,7 @@ const pidgeon = PidgeonTest.canned();
 
 it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
   it.effect(
-    "connects as one page: the key first, the rest dim until it's checked, with its script outside",
+    "connects in the shared frame: the key first, the rest locked until it's checked, with its script outside",
     () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("pidgeon-page");
@@ -37,26 +37,34 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
         assert.strictEqual(page.status, 200);
         const { html } = page;
         for (const part of [
-          "Connect Pidgeon email",
+          '<h1 class="title">Connect Pidgeon email</h1>',
           'data-pidgeon-connect data-addresses="/settings/integrations/connect/pidgeon/addresses"',
           '<input type="hidden" name="attempt"',
-          'id="pidgeon-key" type="password" name="key"',
-          '<span class="form-step-number" aria-hidden="true">1</span>Admin key',
-          '<button class="btn btn-primary" type="submit" disabled data-pidgeon-submit>Connect</button>',
-          '<aside class="side-panel"',
-          "Choose <strong>Admin</strong>, for every address rather than a few",
-          "Your admin key is used once and never stored.",
-          "revoke it only to retire it or after a leak, then replace their keys here",
-          "A key just for Patchy keeps a revocation to Patchy.",
-          "Builders' agents read it while they build; what they send in dev goes nowhere.",
+          '<span class="flow-number">1</span>Make an admin key',
+          "Choose Admin, for every address rather than a few",
+          '<span class="flow-number">2</span>Paste the admin key',
+          'type="password" id="pidgeon-key"',
+          'data-pidgeon-find-wrap hidden><button class="btn" type="button" data-pidgeon-find="">Find addresses</button>',
+          '<span class="flow-number">3</span>Choose an address',
+          '<span class="flow-number">4</span>Patches may',
+          '<span class="flow-number">5</span>Name it',
+          "Once connected",
+          "What builders' agents send while they build goes nowhere",
+          "Revoking your admin key in Pidgeon later disconnects addresses connected with it.",
+          '<button class="btn btn-primary" type="submit">Test and connect</button>',
           '<script defer src="/assets/pidgeon-connect.js"></script>',
           "<noscript>"
         ])
           assert.include(html, part);
+        // One frame: no side panel of its own, and nothing marked done.
+        for (const gone of ['class="side-panel"', "card-split", "step-done"])
+          assert.notInclude(html.slice(html.indexOf("<body>")), gone);
         // Address, Patches may and Name it wait for the key; the key's own part doesn't.
-        assert.strictEqual(
-          html.match(/<fieldset class="form-step" id="[^"]+" disabled data-pidgeon-step>/g)?.length,
-          3
+        assert.strictEqual(html.match(/<fieldset class="flow-section" disabled>/g)?.length, 3);
+        // Test and connect waits with them, shut without script.
+        assert.include(
+          html,
+          '<fieldset class="fieldset" disabled data-ready-gate><button class="btn btn-primary" type="submit">Test and connect</button></fieldset>'
         );
         assert.notMatch(html.replace(switcherRelay, ""), /<script(?![^>]*\bsrc=)/);
         assert.include(page.response.headers.get("content-security-policy")!, "script-src 'self'");
@@ -107,7 +115,14 @@ it.layer(services(pidgeon.layer))("Pidgeon connection pages", (it) => {
       assert.include(html, 'data-kept-local-part="-desk"');
       assert.include(html, 'data-kept-send-policy="open"');
       assert.include(html, 'value="pageattempt1"');
-      assert.include(html, 'id="pidgeon-address-error" role="alert"');
+      // The refusal keeps its place under the address; the address is locked again until the key
+      // is checked, so a summary above the actions takes focus and says how to get back.
+      assert.include(html, '<p class="field-error" id="pidgeon-address-error">');
+      assert.include(html, '<div tabindex="-1" autofocus data-relock>');
+      assert.include(
+        html,
+        "Paste the admin key again and find addresses: your other choices are kept."
+      );
       assert.notInclude(html, typed);
       assert.deepStrictEqual(pidgeon.requests, []);
     })

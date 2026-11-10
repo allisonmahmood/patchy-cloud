@@ -75,7 +75,6 @@ const serve = <R>(
                 body: content.body,
                 heading: "",
                 ...(content.status === undefined ? {} : { status: content.status }),
-                styles: ConnectionPage.styles,
                 app: {
                   viewer,
                   section: "integrations",

@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import { switcherRelay } from "@patchy/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as AttioSource from "../attio/Source.js";
@@ -60,7 +59,7 @@ const fields = (handle: string, over: Record<string, string> = {}) => ({
 it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
   "IMAP connection pages",
   (it) => {
-    it.effect("asks for the login in the shared walkthrough, with one port choice", () =>
+    it.effect("asks for the login in the shared frame, with one port choice", () =>
       Effect.gen(function* () {
         const owner = yield* createCompany("imap-page");
         const page = yield* read(connectPath, owner.user);
@@ -71,41 +70,35 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           return index;
         };
         const order = [
-          '<h1 class="page-heading">Connect Email (IMAP)</h1>',
-          '<ol class="steps">',
-          '<h2 class="step-title">Get a login for the mailbox</h2>',
+          '<h1 class="title">Connect Email (IMAP)</h1>',
+          '<span class="flow-number">1</span>Check the mailbox',
           "IMAP over TLS 1.2 or later, on port 993, or 143 with STARTTLS",
           "A certificate from a public authority naming the host you type",
           "A username and password, or an app password",
           "An address reachable from the internet, with no IP allowlist",
           "Accounts that need Google or Microsoft sign-in can't connect this way.",
-          '<li class="step step-current" aria-current="step">',
-          '<h2 class="step-title">Fill it in</h2>',
-          '<label class="field-prefix" for="connection-handle">imap/</label>',
-          'id="connection-description" name="description"',
+          '<span class="flow-number">2</span>Fill in its login',
           'id="connection-host" name="host"',
-          '<select class="field" id="connection-port" name="port"',
+          '<select class="field field-w-sm" id="connection-port" name="port">',
           '<option value="993" selected>993 (TLS)</option><option value="143">143 (STARTTLS)</option>',
-          'id="connection-username" name="username"',
-          'id="connection-password" type="password" name="password"',
-          '<strong class="note-title">Company-wide access</strong>',
-          "so do its guests unless you block guests on the connection's page",
-          '<button class="btn btn-primary" type="submit">Test and connect</button>',
-          '<h2 class="step-title">Use it in a patch</h2>',
-          "such as imap/invoices"
+          'id="connection-username" aria-describedby="connection-username-hint" name="username"',
+          'type="password" id="connection-password"',
+          '<span class="flow-number">3</span>Name it',
+          '<label class="field-prefix" for="connection-handle">imap/</label>',
+          'id="connection-description"',
+          "Once connected",
+          "Every member reads the whole mailbox through patches that use it",
+          "Guests of those patches too, unless you block guests",
+          "Nothing in the mailbox changes: Patchy only reads",
+          "Use a shared or dedicated mailbox, not a person's own.",
+          '<button class="btn btn-primary" type="submit">Test and connect</button>'
         ].map(at);
         assert.deepStrictEqual(
           order,
           [...order].sort((a, b) => a - b)
         );
-        for (const gone of [
-          'name="security"',
-          "Block guests",
-          "after a disconnect",
-          "refreshes on its own",
-          "<script>"
-        ])
-          assert.notInclude(page.html.replace(switcherRelay, ""), gone);
+        for (const gone of ['name="security"', "step-done", "after a disconnect", "<script>"])
+          assert.notInclude(page.html.slice(page.html.indexOf("<body>")), gone);
         const catalogue = yield* read("/settings/integrations/connect", owner.user);
         assert.include(catalogue.html, `href="${connectPath}"`);
       })
@@ -122,7 +115,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
           );
           assert.strictEqual(response.status, 422);
           const html = yield* Effect.promise(() => response.text());
-          assert.include(html, 'id="connection-host-error" role="alert"');
+          assert.include(html, '<p class="field-error" id="connection-host-error">');
           assert.include(html, "The certificate names another server");
           assert.include(html, "It names imap.provider.test, *.provider.test.");
           assert.include(html, `value="${aliased}"`);
@@ -140,7 +133,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
         );
         assert.strictEqual(response.status, 422);
         const html = yield* Effect.promise(() => response.text());
-        assert.include(html, 'id="connection-port-error" role="alert"');
+        assert.include(html, '<p class="field-error" id="connection-port-error">');
         assert.include(html, "The security follows the port: 993 opens TLS");
         assert.include(html, `value="${host}"`);
         assert.notInclude(html, "the-right-password");
@@ -158,7 +151,7 @@ it.layer(services(PidgeonTest.canned().layer, AttioSource.layer, imap))(
         mailbox.reply = "OK Logged in";
         assert.strictEqual(response.status, 422);
         const html = yield* Effect.promise(() => response.text());
-        assert.include(html, 'id="connection-password-error" role="alert"');
+        assert.include(html, '<p class="field-error" id="connection-password-error">');
         assert.include(html, "The mail server refused the login");
         assert.include(html, `value="${host}"`);
         assert.notInclude(html, "a-wrong-password");

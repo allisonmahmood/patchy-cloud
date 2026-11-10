@@ -10,6 +10,7 @@ import type { RequireSession } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { ContractLimits } from "@patchy/limits";
 import { RuntimeLog } from "@patchy/runtime";
+import * as ConnectFrame from "./ConnectFrame.js";
 import * as ConnectionStore from "./ConnectionStore.js";
 import * as View from "./ConnectionsView.js";
 import * as PostgresPage from "./postgres/Page.js";
@@ -45,9 +46,6 @@ export interface Page {
   readonly redirect?: string;
 }
 
-/** The connect pages' own layout, until the connect frame draws every integration. */
-export const styles = `${View.connectStyles}${PidgeonPage.styles}${AttioPage.styles}`;
-
 type Submitted = Readonly<Record<string, string | undefined>>;
 
 /** An integration's page for new credentials, a new destination or new access. */
@@ -70,13 +68,8 @@ interface IntegrationPage {
   readonly integration: View.Integration;
   readonly offer: View.Offer;
   readonly actions: View.Actions;
-  /** The shared connect frame's intro and fields, unless the integration has its own page. */
-  readonly connectIntro?: string;
-  /** The steps around the connect form, when connecting starts outside Patchy. */
-  readonly walkthrough?: View.Walkthrough;
-  readonly connectFields?: (submitted: Submitted, refusal?: View.Notice) => string;
-  /** The whole connect page, for an integration whose connecting takes more than a form. */
-  readonly renderConnect?: (submitted: Submitted, refusal?: View.Notice) => string;
+  /** What its connect page asks for; the shared frame draws it. */
+  readonly connect: ConnectFrame.ConnectSpec;
   readonly rotate: CredentialsPage;
   /** Absent where a connection can't move to another target. */
   readonly retarget?: CredentialsPage;
@@ -387,17 +380,13 @@ const connectForm = Effect.fn("ConnectionPage.connectForm")(function* (
   const connections = yield* (yield* ConnectionStore.ConnectionStore).list(viewer.company.id);
   return {
     title: `Connect ${page.integration.label}`,
-    body:
-      page.renderConnect !== undefined
-        ? page.renderConnect(submitted, notice)
-        : View.renderConnect({
-            integration: page.integration,
-            intro: page.connectIntro ?? "",
-            fields: page.connectFields?.(submitted, notice) ?? "",
-            ...(page.walkthrough === undefined ? {} : { walkthrough: page.walkthrough }),
-            notice,
-            back: connections.length === 0 ? View.indexPath : View.cataloguePath
-          }),
+    ...ConnectFrame.render({
+      integration: page.integration,
+      spec: page.connect,
+      submitted,
+      ...(notice === undefined ? {} : { notice }),
+      back: connections.length === 0 ? View.indexPath : View.cataloguePath
+    }),
     status: notice?.status
   } satisfies Page;
 });
@@ -729,20 +718,6 @@ const reporter = Effect.fn("ConnectionPage.reporter")(function* (
     });
 });
 
-/** The fields a credentials form can show a refusal at. */
-const credentialFields: ReadonlyArray<View.Field> = [
-  "credentials",
-  "region",
-  "project",
-  "key",
-  "address",
-  "access",
-  "host",
-  "port",
-  "username",
-  "password"
-];
-
 const connect = Effect.fn("ConnectionPage.connect")(function* (
   viewer: RequireSession.Viewer["Service"],
   integration: Integration
@@ -756,7 +731,7 @@ const connect = Effect.fn("ConnectionPage.connect")(function* (
       viewer,
       integration,
       submitted,
-      atField(page, notice, ["handle", "description", ...credentialFields])
+      atField(page, notice, ConnectFrame.shows(page.connect))
     );
   if (form === null) return yield* refused(unreadable);
   return yield* Effect.gen(function* () {

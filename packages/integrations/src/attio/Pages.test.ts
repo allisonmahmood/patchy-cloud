@@ -23,23 +23,24 @@ const fields = (key: string, handle = "crm") => ({
 });
 
 it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pages", (it) => {
-  it.effect("connects in one submit, with the walkthrough and no script of its own", () =>
+  it.effect("connects in one submit, in the shared frame and no script of its own", () =>
     Effect.gen(function* () {
       const owner = yield* createCompany("attio-page");
       const page = yield* read(connectPath, owner.user);
       assert.strictEqual(page.status, 200);
       for (const part of [
-        '<h1 class="page-heading">Connect Attio</h1>',
+        '<h1 class="title">Connect Attio</h1>',
+        '<span class="flow-number">1</span>Make a read-only access token',
+        "Only workspace admins see Developers.",
+        "<td>List configuration</td><td>Read</td>",
+        "<td>Anything else</td><td>Read or off, never Read-write</td>",
         "reads your workspace for up to a minute; nothing is saved until both finish",
-        "Make a read-only access token in Attio",
-        '<table class="table attio-scopes">',
-        "<tr><td>List configuration</td><td><strong>Read</strong></td></tr>",
-        "<tr><td>Anything else</td><td>Read or off</td></tr>",
-        "<p><strong>Never Read-write.</strong></p>",
+        'type="password" id="connection-key"',
         '<label class="field-prefix" for="connection-handle">attio/</label>',
-        'id="connection-key" type="password" name="key"',
+        "Every member reads everything this token reads through patches that use it",
+        "Builders' agents read it while they build, as themselves",
+        "Nothing is written to Attio",
         "Attio's own member permissions don't carry over.",
-        "Agents read your CRM while building",
         '<button class="btn btn-primary" type="submit">Test and connect</button>'
       ])
         assert.include(page.html, part);
@@ -59,7 +60,7 @@ it.layer(services(PidgeonTest.canned().layer, attio.layer))("Attio connection pa
       const response = yield* send(connectPath, post(owner.user, fields(token)));
       assert.strictEqual(response.status, 422);
       const html = yield* Effect.promise(() => response.text());
-      assert.include(html, 'id="connection-key-error" role="alert"');
+      assert.include(html, '<p class="field-error" id="connection-key-error">');
       assert.include(html, "Notes is Read-write");
       assert.include(html, 'value="crm"');
       assert.include(html, 'value="Our sales CRM"');

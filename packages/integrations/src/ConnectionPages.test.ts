@@ -809,16 +809,12 @@ it.layer(services)("company connection pages", (it) => {
         );
         assert.strictEqual(taken.status, 409);
         const takenHtml = yield* Effect.promise(() => taken.text());
-        assert.include(
+        assert.match(
           takenHtml,
-          'value="warehouse" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="connection-handle-error" aria-invalid="true" autofocus'
+          /id="connection-handle" aria-describedby="connection-handle-hint connection-handle-error" aria-invalid="true" name="handle" value="warehouse"[^>]*autofocus/
         );
-        assert.include(
-          takenHtml,
-          '<div class="note note-refused field-callout" id="connection-handle-error" role="alert">'
-        );
-        assert.include(takenHtml, "<code>connection_handle_taken</code>");
-        assert.notInclude(takenHtml, 'id="connection-handle-hint"');
+        assert.include(takenHtml, '<p class="field-error" id="connection-handle-error">');
+        assert.include(takenHtml, "(connection_handle_taken)");
         assert.include(takenHtml, 'value="Again"');
         assert.deepStrictEqual(reported(owner.company.id), [
           ["connection.connected", owner.user.id, connection.id, "postgres"]
@@ -1242,7 +1238,7 @@ it.layer(services)("company connection pages", (it) => {
       })
   );
   it.effect(
-    "connects PostHog through its walkthrough, refusing each field where it's wrong, and replaces the key in place",
+    "connects PostHog through the shared frame, refusing each field where it's wrong, and replaces the key in place",
     () =>
       Effect.gen(function* () {
         events.length = 0;
@@ -1254,13 +1250,12 @@ it.layer(services)("company connection pages", (it) => {
         });
         const form = yield* read(path);
         assert.strictEqual(form.status, 200);
-        assert.include(form.html, '<ol class="steps">');
-        assert.include(form.html, "Create a read-only key in PostHog");
-        assert.include(form.html, 'aria-current="step"');
-        assert.include(
-          form.html,
-          "While someone builds a patch that uses this connection, their agent reads real PostHog data through Patchy, as them. Nothing is written, and every read appears in recent calls."
-        );
+        // The shared frame: numbered sections, nothing marked done, then what it can and can't do.
+        assert.include(form.html, '<span class="flow-number">1</span>Make a personal API key');
+        assert.include(form.html, "<td>Event definitions</td><td>Read</td>");
+        assert.notInclude(form.html.slice(form.html.indexOf("<body>")), "step-done");
+        assert.include(form.html, "Builders' agents read it while they build");
+        assert.include(form.html, "Nothing is written to PostHog");
         assert.include(
           form.html,
           '<label class="field-prefix" for="connection-handle">posthog/</label>'

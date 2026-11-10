@@ -1,14 +1,15 @@
 import type { AttioAttribute, AttioExclusion, AttioObject, AttioSnapshot } from "@patchy/api";
-import { ago, escapeAttribute } from "@patchy/core";
+import { ago } from "@patchy/core";
 import * as Redacted from "effect/Redacted";
 import type * as ConnectionStore from "../ConnectionStore.js";
+import type * as ConnectFrame from "../ConnectFrame.js";
 import * as View from "../ConnectionsView.js";
 import * as Fields from "../Fields.js";
 import * as Source from "./Source.js";
 
 /**
  * What the connections pages say about Attio; the layout around it is every integration's. The
- * connect page is the shared form inside a walkthrough, one submit: the key check refuses within
+ * connect page is the shared frame, one submit: the key check refuses within
  * a second, then discovery reads the workspace. The connection page says what discovery skipped
  * and left out, then lists each object and list as a counted row that opens to its attributes.
  */
@@ -275,9 +276,6 @@ export const reads = (snapshot: AttioSnapshot) => {
 
 // ---------- connecting ----------
 
-export const connectIntro =
-  "About two minutes, by an Attio workspace admin. Connecting checks the key, then reads your workspace for up to a minute; nothing is saved until both finish.";
-
 const required = [
   "Records",
   "Object configuration",
@@ -285,36 +283,8 @@ const required = [
   "List configuration",
   "User management"
 ];
-export const walkthrough: View.Walkthrough = {
-  before: [
-    {
-      title: "Make a read-only access token in Attio",
-      text: "Workspace settings › Developers › New access token. Only workspace admins see Developers.",
-      detail: `<table class="table attio-scopes"><thead><tr><th scope="col">Scope</th><th scope="col">Set to</th></tr></thead><tbody>${required.map((scope) => `<tr><td>${scope}</td><td><strong>Read</strong></td></tr>`).join("")}<tr><td>Anything else</td><td>Read or off</td></tr></tbody></table><p><strong>Never Read-write.</strong></p>`
-    }
-  ],
-  current: "Paste it here",
-  after: [
-    {
-      title: "Use it in a patch",
-      text: "Ask your agent to add it to a patch by its name, such as attio/crm."
-    }
-  ]
-};
-
-const notes = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member reads everything this key reads, through any patch that declares it. Attio's own member permissions don't carry over.</p></div><div class="note note-warn"><strong class="note-title">Agents read your CRM while building</strong><p>While someone builds a patch with this connection, their agent reads the real workspace through Patchy, as them. Nothing is written, and every read appears in recent calls.</p></div>`;
 
 type Submitted = Readonly<Record<string, string | undefined>>;
-
-const keyField = (refusal: View.Notice | undefined) => {
-  const note = View.fieldNote(
-    "connection-key",
-    "key",
-    "Patchy encrypts it and never shows it again.",
-    refusal
-  );
-  return `<label class="field-label" for="connection-key">Access token</label><input class="field" id="connection-key" type="password" name="key" required autocomplete="new-password" spellcheck="false"${note.attributes}>${note.note}`;
-};
 
 /** Refusals about the key, shown under its field rather than atop the page. */
 export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
@@ -327,30 +297,39 @@ export const credentialRefusals: ReadonlyMap<string, View.Field> = new Map([
   ["attio_other_workspace", "key"]
 ]);
 
-/** The connect form's fields; a refused submit keeps everything typed except the key. */
-export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
-  const handle = View.fieldNote(
-    "connection-handle",
-    "handle",
-    "Patches use this name, which can't be changed later.",
-    refusal
-  );
-  const description = View.fieldNote(
-    "connection-description",
-    "description",
-    "One line on what this workspace holds, so builders pick the right one.",
-    refusal
-  );
-  return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">attio/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${keyField(refusal)}${notes}`;
-};
-
 /** The access token, as Replace key asks for it. */
 const tokenSpec: Fields.Spec = {
   kind: "secret",
   name: "key",
   field: "key",
   label: "Access token",
+  hint: "Encrypted, and never shown again. Patchy checks it, then reads your workspace for up to a minute; nothing is saved until both finish.",
   autocomplete: "new-password"
+};
+
+/** What the connect page asks for, in the shared frame, by an Attio workspace admin. */
+export const connect: ConnectFrame.ConnectSpec = {
+  getIt: {
+    title: "Make a read-only access token",
+    steps: [
+      "In Attio, open Workspace settings › Developers › New access token, with these scopes. Only workspace admins see Developers."
+    ],
+    table: {
+      head: ["Scope", "Set to"],
+      rows: [
+        ...required.map((scope) => [scope, "Read"] as const),
+        ["Anything else", "Read or off, never Read-write"]
+      ]
+    }
+  },
+  paste: { title: "Paste the token", fields: [tokenSpec] },
+  name: { example: "crm", describe: "Your CRM: deals, companies and people" },
+  once: {
+    reads: "everything this token reads",
+    devReads: true,
+    cannot: ["Nothing is written to Attio"],
+    caveat: "Attio's own member permissions don't carry over."
+  }
 };
 
 export const rotate = {
@@ -374,8 +353,3 @@ export const credentials = (form: Submitted): Redacted.Redacted<string> | View.N
     };
   return Redacted.make(key);
 };
-
-/** Layout only: the connect walkthrough's scope table stays narrow. */
-export const styles = `
-  .attio-scopes { max-width: 30rem; }
-`;

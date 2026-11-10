@@ -9,6 +9,7 @@ import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
 import { doorParts } from "./door-parts.js";
 import { doors } from "./doors.js";
+import { fieldRows } from "./field-rows.js";
 import { fields } from "./fields.js";
 import { flowParts } from "./flow-parts.js";
 import { marks } from "./marks.js";
@@ -44,6 +45,7 @@ export const chunks = {
   marks,
   buttons,
   fields,
+  fieldRows,
   status,
   notices,
   containers,

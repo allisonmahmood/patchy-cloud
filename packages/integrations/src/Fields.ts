@@ -1,4 +1,4 @@
-import { field, input, secretInput, select } from "@patchy/core";
+import { field, fieldRow, input, secretInput, select } from "@patchy/core";
 import type * as View from "./ConnectionsView.js";
 
 /**
@@ -119,17 +119,28 @@ export const render = (spec: Spec, submitted: Submitted, refusal?: View.Notice, 
   return spec.kind === "select" && error !== undefined ? focused(drawn) : drawn;
 };
 
-/** Several fields in order; with `focus`, the first that can take it does, as `render` says. */
+/** Fields in order, a nested list being fields that share a row, such as a server and its port. */
+export type Layout = ReadonlyArray<Spec | ReadonlyArray<Spec>>;
+
+/** Every field of a layout, in order. */
+export const flat = (layout: Layout): ReadonlyArray<Spec> =>
+  layout.flatMap((item): ReadonlyArray<Spec> => (isRow(item) ? item : [item]));
+const isRow = (item: Spec | ReadonlyArray<Spec>): item is ReadonlyArray<Spec> =>
+  Array.isArray(item);
+
+/**
+ * Several fields in order, rows side by side; with `focus`, the first that can take it does, as
+ * `render` says.
+ */
 export const renderAll = (
-  specs: ReadonlyArray<Spec>,
+  layout: Layout,
   submitted: Submitted,
   refusal?: View.Notice,
   focus = false
 ) => {
   // A native select takes no autofocus, so a dialog starts on its first typed field; a field that
   // starts known, such as PostHog's region, comes before it.
-  const first = specs.findIndex((spec) => spec.kind !== "select");
-  return specs
-    .map((spec, index) => render(spec, submitted, refusal, focus && index === first))
-    .join("");
+  const first = flat(layout).find((spec) => spec.kind !== "select");
+  const one = (spec: Spec) => render(spec, submitted, refusal, focus && spec === first);
+  return layout.map((item) => (isRow(item) ? fieldRow(item.map(one)) : one(item))).join("");
 };

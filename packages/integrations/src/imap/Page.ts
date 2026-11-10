@@ -1,16 +1,17 @@
 import type { ImapSnapshot } from "@patchy/api";
-import { ago, escapeAttribute, escapeHtml } from "@patchy/core";
+import { ago } from "@patchy/core";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as ConnectionStore from "../ConnectionStore.js";
+import type * as ConnectFrame from "../ConnectFrame.js";
 import * as View from "../ConnectionsView.js";
 import * as Fields from "../Fields.js";
 import * as Source from "./Source.js";
 
 /**
  * What the connections pages say about an IMAP mailbox; the layout around it is every
- * integration's. The connect page is the shared form inside a walkthrough: what a mailbox needs,
- * then its login (one choice for port and security, which follows the port), then using it. The
+ * integration's. The connect page is the shared frame: what a mailbox needs,
+ * then its login (one choice for port and security, which follows the port), then its name. The
  * password is typed into this page only and never written back. The connection page names the
  * server and username, counts the folders, and keeps a refused login's way out on top.
  */
@@ -108,65 +109,70 @@ export const consequences = {
 
 // ---------- connecting ----------
 
-export const connectIntro =
-  "Nothing is saved until Patchy has logged in to the mailbox and listed its folders.";
-
 const requirements = [
   "IMAP over TLS 1.2 or later, on port 993, or 143 with STARTTLS",
   "A certificate from a public authority naming the host you type",
   "A username and password, or an app password",
   "An address reachable from the internet, with no IP allowlist"
 ];
-export const walkthrough: View.Walkthrough = {
-  before: [
+
+/** The login, as the connect page asks for it: one choice for the port, whose security follows. */
+const login: Fields.Layout = [
+  [
     {
-      title: "Get a login for the mailbox",
-      text: "Patchy works with a mailbox that has:",
-      detail: `<ul class="list list-compact">${requirements.map((item) => `<li class="list-row">${escapeHtml(item)}</li>`).join("")}</ul><p>Accounts that need Google or Microsoft sign-in can't connect this way.</p>`
+      kind: "text",
+      name: "host",
+      field: "host",
+      label: "Server",
+      placeholder: "imap.example.com",
+      maxlength: 253,
+      mono: true
+    },
+    {
+      kind: "select",
+      name: "port",
+      field: "port",
+      label: "Port",
+      choices: ports.map((item) => ({ value: String(item.port), label: item.label })),
+      initial: "993",
+      width: "sm"
     }
   ],
-  current: "Fill it in",
-  after: [
-    {
-      title: "Use it in a patch",
-      text: "Ask your agent to add it to a patch by its name, such as imap/invoices."
-    }
-  ]
-};
+  {
+    kind: "text",
+    name: "username",
+    field: "username",
+    label: "Username",
+    hint: "Often the whole address.",
+    maxlength: 320
+  },
+  {
+    kind: "secret",
+    name: "password",
+    field: "password",
+    label: "Password",
+    hint: "Or an app password. Encrypted, and never shown again.",
+    autocomplete: "new-password",
+    maxlength: 1024
+  }
+];
 
-const access = `<div class="note"><strong class="note-title">Company-wide access</strong><p>Every member reads the whole mailbox through any patch that declares it, and so do its guests unless you block guests on the connection's page. Patchy only reads, so use a shared or dedicated mailbox, not a person's own.</p></div>`;
-
-const passwordField = (refusal: View.Notice | undefined, label = "Password") => {
-  const note = View.fieldNote(
-    "connection-password",
-    "password",
-    "Or an app password. Patchy encrypts it and never shows it again.",
-    refusal
-  );
-  return `<label class="field-label" for="connection-password">${escapeHtml(label)}</label><input class="field" id="connection-password" type="password" name="password" required maxlength="1024" autocomplete="new-password" spellcheck="false"${note.attributes}>${note.note}`;
-};
-
-const loginFields = (submitted: Submitted, refusal: View.Notice | undefined) => {
-  const host = View.fieldNote(
-    "connection-host",
-    "host",
-    "The IMAP server's name, such as imap.example.com.",
-    refusal
-  );
-  const port = View.fieldNote(
-    "connection-port",
-    "port",
-    "From your mail settings; the security follows the port.",
-    refusal
-  );
-  const username = View.fieldNote(
-    "connection-username",
-    "username",
-    "Often the whole address.",
-    refusal
-  );
-  const chosen = submitted.port === "143" ? 143 : 993;
-  return `<label class="field-label" for="connection-host">Server</label><input class="field" id="connection-host" name="host" value="${escapeAttribute(submitted.host ?? "")}" required maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false"${host.attributes}>${host.note}<label class="field-label" for="connection-port">Port</label><select class="field" id="connection-port" name="port"${port.attributes}>${ports.map((item) => `<option value="${item.port}"${item.port === chosen ? " selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select>${port.note}<label class="field-label" for="connection-username">Username</label><input class="field" id="connection-username" name="username" value="${escapeAttribute(submitted.username ?? "")}" required maxlength="320" autocomplete="off" autocapitalize="none" spellcheck="false"${username.attributes}>${username.note}${passwordField(refusal)}`;
+/** What the connect page asks for, in the shared frame. */
+export const connect: ConnectFrame.ConnectSpec = {
+  getIt: {
+    title: "Check the mailbox",
+    steps: ["Patchy works with a mailbox that has:"],
+    list: requirements,
+    note: "Accounts that need Google or Microsoft sign-in can't connect this way."
+  },
+  paste: { title: "Fill in its login", fields: login },
+  name: { example: "invoices", describe: "Supplier invoices and statements" },
+  once: {
+    reads: "the whole mailbox",
+    devReads: true,
+    cannot: ["Nothing in the mailbox changes: Patchy only reads"],
+    caveat: "Use a shared or dedicated mailbox, not a person's own."
+  }
 };
 
 /** Refusals about the login, shown under the field they're about rather than atop the page. */
@@ -188,23 +194,6 @@ export const refusalTitles: ReadonlyMap<string, string> = new Map([
   ["imap_certificate_mismatch", "The certificate names another server"],
   ["auth_failed", "The mail server refused the login"]
 ]);
-
-/** The connect form's fields; a refused submit keeps everything typed except the password. */
-export const connectFields = (submitted: Submitted, refusal?: View.Notice) => {
-  const handle = View.fieldNote(
-    "connection-handle",
-    "handle",
-    "Patches use this name, which can't be changed later.",
-    refusal
-  );
-  const description = View.fieldNote(
-    "connection-description",
-    "description",
-    "One line on what this mailbox holds, so builders pick the right one.",
-    refusal
-  );
-  return `<label class="field-label" for="connection-handle">Name</label><div class="field field-group"><label class="field-prefix" for="connection-handle">imap/</label><input id="connection-handle" name="handle" value="${escapeAttribute(submitted.handle ?? "")}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocomplete="off" autocapitalize="none" spellcheck="false"${handle.attributes}></div>${handle.note}<label class="field-label" for="connection-description">Description</label><input class="field" id="connection-description" name="description" maxlength="500" value="${escapeAttribute(submitted.description ?? "")}"${description.attributes}>${description.note}${loginFields(submitted, refusal)}${access}`;
-};
 
 /** The password, as Replace password asks for it. */
 const newPassword: Fields.Spec = {
@@ -269,6 +258,3 @@ export const credentials = (
     password
   });
 };
-
-/** Layout only: none of its own. */
-export const styles = "";
