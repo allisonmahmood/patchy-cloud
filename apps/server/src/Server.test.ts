@@ -159,7 +159,8 @@ it.layer(
             handle: DEV_SEED.companyHandle,
             name: DEV_SEED.companyName
           },
-          role: DEV_SEED.role,
+          role: "admin",
+          superAdmin: true,
           machine: { id: DEV_SEED.tokenId, name: DEV_SEED.tokenName }
         }
       });
