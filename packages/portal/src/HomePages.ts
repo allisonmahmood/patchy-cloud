@@ -44,7 +44,6 @@ import {
   prewarm,
   shareOverlay,
   turnedAway,
-  shareStyles,
   type Routes,
   type Sharing,
   withOverlay
@@ -260,8 +259,6 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
       heading: home.heading,
       // Steps over Home follow the agent themselves, so Home watches only without them.
       body: `${home.body}${watch && overlay === undefined ? renderWatch(machine === null ? "waiting" : "connected", viewer.user.id) : ""}`,
-      // The Share dialog still carries its own styles.
-      ...(share === undefined ? {} : { styles: shareStyles }),
       status: sharing?.status ?? 200,
       app: {
         section: "home",

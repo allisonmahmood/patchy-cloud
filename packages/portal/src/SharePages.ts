@@ -29,7 +29,7 @@ import {
   type Sharing,
   staleNotice
 } from "./shared/handlers.js";
-import { manages, styles } from "./shared/presentation.js";
+import { manages } from "./shared/presentation.js";
 
 const decodeScope = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -59,9 +59,7 @@ const leave = Effect.fn("SharePages.leave")(function* (patchId: string, method: 
     return pageResponse(
       {
         title: `Remove ${patchTitle(shared)}?`,
-        heading: "",
-        body: renderLeaveConfirmation(shared),
-        styles,
+        ...renderLeaveConfirmation(shared),
         app: { viewer, section: "home" }
       },
       session
@@ -88,7 +86,8 @@ export const layer = (pages: PagesBehind): Routes => {
   /**
    * A Share dialog form: add a guest, remove one, or change who can open the patch, as its owner or
    * an admin. Done, it lands back on the page the dialog opened over, open, with a receipt; going
-   * public unasked asks in the dialog, and a refusal shows there, with the email kept.
+   * public unasked lands on the dialog asking (`&confirm=public`), and a refusal shows in the
+   * dialog, with the email kept.
    */
   const shareAct = Effect.fn("SharePages.shareAct")(function* (name: string, act: ShareAct) {
     if (name.length > maxNameLength) return yield* overlongName;
@@ -125,10 +124,14 @@ export const layer = (pages: PagesBehind): Routes => {
     const at = behind(form.back, name, session.publicBaseUrl);
     const title = patchTitle(selected.patch);
     const grants = yield* GuestGrants.GuestGrants;
-    /** Back to the page behind with the dialog open, and a receipt for it when something changed. */
-    const reopened = (receipt?: string) => {
+    /**
+     * Back to the page behind with the dialog open, asking about going public when `confirm`, and a
+     * receipt for it when something changed.
+     */
+    const reopened = (receipt?: string, confirm = false) => {
       const response = HttpServerResponse.redirect(
-        pagePath(at) + `${at.search ? "&" : "?"}share=${encodeURIComponent(name)}`,
+        pagePath(at) +
+          `${at.search ? "&" : "?"}share=${encodeURIComponent(name)}${confirm ? "&confirm=public" : ""}`,
         { status: 303, headers: { "cache-control": "private, no-store" } }
       );
       return receipt === undefined
@@ -178,10 +181,11 @@ export const layer = (pages: PagesBehind): Routes => {
         }
         case "scope": {
           const fields = yield* decodeScope(form);
-          // Going public asks first, and only its answer applies it, re-running every check.
+          // Going public asks first, at its own address, and only its answer applies it,
+          // re-running every check.
           if (fields.scope === "public" && form.confirm !== "public") {
             if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
-            return yield* again({ confirmPublic: true });
+            return reopened(undefined, true);
           }
           yield* patches.setScope(selected.patch.id, actor, fields.scope, fields.expectedScope);
           return reopened(

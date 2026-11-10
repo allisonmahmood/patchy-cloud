@@ -21,13 +21,14 @@ import {
   cardPath,
   listed,
   menuItems,
+  shareDialog,
   invoke,
   seedOf,
   publishTier2
 } from "./test/fixtures.js";
 
 it.layer(socket)("all patches on a socket", (it) => {
-  it.effect("lists every patch in tabs, searched within the tab and sorted by visits", () =>
+  it.effect("lists every patch A–Z in filters with URLs, searched by the sidebar's query", () =>
     Effect.gen(function* () {
       const workspace = yield* company();
       const patches = yield* Patches.Patches;
@@ -50,17 +51,30 @@ it.layer(socket)("all patches on a socket", (it) => {
       assert.strictEqual(heading(all), "All patches");
       assert.deepStrictEqual(listed(all), [busy.name, tool.name, page.name]);
       assert.include(text(all), "All 3 Tools 1 Pages 2 Yours 2 Retired and deleted 2");
+      assert.include(
+        all,
+        '<nav class="seg" aria-label="Show"><a href="/patches" aria-current="page">'
+      );
       assert.notInclude(all, "<script>alert(1)</script>");
       assert.include(all, "&lt;script&gt;alert(1)&lt;/script&gt; Shout-outs");
       assert.include(all, `<script defer src="/assets/copy.js"></script>`);
+      // The page has no search of its own; the sidebar's searches it.
+      assert.strictEqual(all.match(/role="search"/g)?.length, 1);
+      assert.include(all, '<form class="app-search" method="get" action="/patches" role="search">');
 
       const tools = yield* (yield* request("/patches?show=tools", workspace.owner)).text;
       assert.deepStrictEqual(listed(tools), [tool.name]);
+      // A search shows as a chip that clears it, keeps its filter, and counts what it finds.
       const pages = yield* (yield* request("/patches?show=pages&q=REVENUE", workspace.owner)).text;
       assert.deepStrictEqual(listed(pages), [page.name]);
-      assert.include(text(pages), "1 match for “REVENUE”");
-      assert.include(pages, 'name="show" value="pages"');
+      assert.include(text(pages), "All 1 Tools 0 Pages 1 Yours 1");
+      assert.isTrue(
+        links(pages).some(
+          (link) => link.href === "/patches?show=pages" && link.text === "Matching REVENUE"
+        )
+      );
       assert.isTrue(links(pages).some((link) => link.href === "/patches?show=tools&amp;q=REVENUE"));
+      assert.include(pages, 'id="app-search" type="search" name="q" value="REVENUE"');
       const byOwner = yield* (yield* request("/patches?q=alex", workspace.owner)).text;
       assert.deepStrictEqual(listed(byOwner), [busy.name]);
       const yours = yield* (yield* request("/patches?show=yours", workspace.owner)).text;
@@ -68,10 +82,80 @@ it.layer(socket)("all patches on a socket", (it) => {
 
       const off = yield* (yield* request("/patches?show=off", workspace.owner)).text;
       assert.deepStrictEqual(listed(off), [deleted.name, retired.name]);
-      assert.include(text(off), "Deleted · gone in 30 days");
+      assert.include(text(off), "Deleted Gone for good in 30 days");
       assert.include(text(off), "Retired by Priya");
-      const nothing = yield* (yield* request("/patches?q=zebra", workspace.owner)).text;
-      assert.include(text(nothing), "No patches match “zebra”.");
+    })
+  );
+
+  it.effect("offers a search that finds nothing the line that has an agent build it", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const sql = yield* SqlClient.SqlClient;
+      yield* publish(workspace.owner, "kudos");
+      const retired = yield* publish(workspace.owner, "zebra-board");
+      yield* (yield* Patches.Patches).retire(retired.patchId, actor(workspace.owner));
+
+      const nothing = yield* (yield* request("/patches?q=%3Cb%3Ezebra", workspace.owner)).text;
+      assert.include(text(nothing), "No patches match “&lt;b&gt;zebra”");
+      assert.include(
+        nothing,
+        '<code aria-label="Request for your agent, select to copy">Build us a Patchy tool for &lt;b&gt;zebra</code>'
+      );
+      assert.notInclude(text(nothing), "Connect your agent");
+      // A retired match is a filter away, and the line still offers to build one.
+      const zebra = yield* (yield* request("/patches?q=zebra", workspace.owner)).text;
+      assert.include(text(zebra), "Retired and deleted 1");
+      assert.include(text(zebra), "Build us a Patchy tool for zebra");
+
+      // Someone without an agent is told how to connect one.
+      yield* sql`DELETE FROM machine_tokens WHERE user_id = ${workspace.member.id}`;
+      const unconnected = yield* (yield* request("/patches?q=zebra", workspace.member)).text;
+      assert.isTrue(
+        links(unconnected).some(
+          (link) => link.href === "/guide" && link.text === "Connect your agent"
+        )
+      );
+      // A search that finds live patches, just not in this filter, offers no line.
+      const elsewhere = yield* (yield* request("/patches?show=tools&q=kudos", workspace.owner))
+        .text;
+      assert.include(text(elsewhere), "No patches match “kudos”");
+      assert.notInclude(elsewhere, "Build us a Patchy tool");
+    })
+  );
+
+  it.effect("pages the table 50 rows at a time, keeping the filter and search", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      for (let index = 0; index < 52; index++)
+        yield* publish(workspace.owner, `board-${String(index).padStart(2, "0")}`);
+
+      const first = yield* (yield* request("/patches?q=board", workspace.owner)).text;
+      assert.strictEqual(listed(first).length, 50);
+      assert.strictEqual(listed(first)[0], "board-00");
+      assert.include(text(first), "1–50 of 52");
+      assert.isTrue(
+        links(first).some(
+          (link) => link.href === "/patches?q=board&amp;page=2" && link.text === "Next"
+        )
+      );
+      assert.isFalse(links(first).some((link) => link.text === "Previous"));
+      const second = yield* (yield* request("/patches?q=board&page=2", workspace.owner)).text;
+      assert.deepStrictEqual(listed(second), ["board-50", "board-51"]);
+      assert.include(text(second), "51–52 of 52");
+      assert.isTrue(
+        links(second).some((link) => link.href === "/patches?q=board" && link.text === "Previous")
+      );
+      // Share and the menu's Share… return to the same page.
+      assert.include(second, 'href="/patches?q=board&amp;page=2&amp;share=board-50"');
+      // A page past the last is the last; one short table has no paging.
+      assert.deepStrictEqual(
+        listed(yield* (yield* request("/patches?q=board&page=9", workspace.owner)).text),
+        ["board-50", "board-51"]
+      );
+      assert.notInclude(
+        yield* (yield* request("/patches?q=board-0", workspace.owner)).text,
+        'aria-label="Pages"'
+      );
     })
   );
 
@@ -110,14 +194,28 @@ it.layer(socket)("all patches on a socket", (it) => {
         assert.include(named, `aria-label="${label}, office-map"`);
       const html = yield* (yield* request("/patches", workspace.admin)).text;
       assert.include(html, `data-copy="${PUBLIC_BASE_URL}/${workspace.handle}/office-map"`);
-      assert.include(html, `<a href="/${workspace.handle}/office-map"><strong>office-map</strong>`);
-      // The viewer's own patches say so in Owner, without a badge.
+      assert.include(
+        html,
+        `<a class="row-link" href="/${workspace.handle}/office-map">office-map</a>`
+      );
+      // The viewer's own patches say so in Owner, without a badge, and carry Share; an admin
+      // shares a colleague's from its menu.
       const mine = yield* (yield* request("/patches", workspace.owner)).text;
-      assert.include(mine, "<span>You</span>");
-      assert.notInclude(mine, '<span class="tag">You</span>');
+      assert.include(mine, `<span title="${workspace.owner.name}">You</span>`);
+      assert.notInclude(mine, '<span class="badge">You</span>');
+      assert.isTrue(
+        links(mine).some(
+          (link) => link.href === "/patches?share=office-map" && link.text === "Share"
+        )
+      );
+      for (const person of [workspace.member, workspace.admin])
+        assert.notInclude(
+          yield* (yield* request("/patches", person)).text,
+          'aria-label="Share office-map"'
+        );
       // An off patch can't be opened, so its name goes to its card.
       const off = yield* (yield* request("/patches?show=off", workspace.owner)).text;
-      assert.include(off, `<a href="${cardPath(shelved.name)}"><strong>old-map</strong>`);
+      assert.include(off, `<a class="row-link" href="${cardPath(shelved.name)}">old-map</a>`);
       assert.strictEqual(
         menuItems(off, shelved.patchId),
         "old-map About this patch Settings Restore Delete…"
@@ -161,6 +259,20 @@ it.layer(socket)("all patches on a socket", (it) => {
           grantedBy: workspace.owner.id
         });
         assert.deepStrictEqual(listed(yield* attention), [payroll.name]);
+        assert.include(
+          text(yield* (yield* request("/patches", workspace.member)).text),
+          "Company + 1 guest"
+        );
+        // Its Share dialog says why, and a tool's general access why it stays in the company.
+        const dialog = shareDialog(
+          yield* (yield* request(`/patches?share=${payroll.name}`, workspace.owner)).text
+        );
+        assert.include(text(dialog), "Guests can't open this");
+        assert.include(
+          text(dialog),
+          "Tools can’t be public. Invite people at other companies above."
+        );
+        assert.notInclude(dialog, 'value="public"');
       })
   );
 
@@ -210,7 +322,7 @@ it.layer(socket)("all patches on a socket", (it) => {
       );
 
       const theirsOnly = yield* (yield* request("/patches?show=attention", outsider.member)).text;
-      assert.include(text(theirsOnly), "Nothing needs your attention.");
+      assert.include(text(theirsOnly), "Nothing needs your attention");
 
       yield* TestClock.adjust(7 * DAY);
       const ended = yield* (yield* request("/patches?show=off", workspace.admin)).text;
@@ -228,21 +340,22 @@ it.layer(socket)("all patches on a socket", (it) => {
       const all = yield* (yield* request("/patches", workspace.member)).text;
       assert.include(
         all,
-        `<a href="/${workspace.handle}/office-map"><strong>Office &lt;map&gt;</strong></a>`
+        `<a class="row-link" href="/${workspace.handle}/office-map">Office &lt;map&gt;</a>`
       );
-      assert.include(all, "<strong>blank-title</strong>");
+      assert.include(all, ">blank-title</a>");
     })
   );
 });
 
 it.layer(socket)("patch health on a socket", (it) => {
   it.effect(
-    "shows owners and admins the last day's failed calls of the tier 2 patches they manage",
+    "shows owners and admins the last 24 hours' failures of the tier 2 patches they manage",
     () =>
       Effect.gen(function* () {
         const workspace = yield* company();
         const failing = yield* publishTier2(workspace.owner, "client-health");
         const fine = yield* publishTier2(workspace.owner, "web-analytics");
+        const idle = yield* publishTier2(workspace.owner, "quiet-tool");
         const page = yield* publish(workspace.owner, "weekly-recap");
         const old = seedOf(workspace.id, failing);
         yield* invoke(old, workspace.member, {
@@ -263,30 +376,48 @@ it.layer(socket)("patch health on a socket", (it) => {
           kind: "action"
         });
 
-        // All patches: failures beside the tier 2 rows the viewer manages, and a reason to look.
-        // None recorded is blank, never OK; a row with no calls to count has a dash.
-        const health = (html: string, name: string) =>
-          html.match(
-            new RegExp(
-              `<tr>(?:(?!</tr>)[\\s\\S])*<strong>${name}</strong>(?:(?!</tr>)[\\s\\S])*<td>((?:(?!</td>)[\\s\\S])*)</td><td class="portal-list-actions">`
-            )
+        // Failures (24 h): a count linked to the log, None, or No calls yet; never "Healthy". A
+        // row with no calls to count has a dash.
+        const failures = (html: string, name: string) => {
+          const row = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((match) =>
+            match[1]!.includes(`>${name}</a>`)
           )?.[1];
+          return [...(row ?? "").matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)][5]?.[1];
+        };
         for (const person of [workspace.owner, workspace.admin]) {
           const all = yield* (yield* request("/patches", person)).text;
-          assert.include(text(all), "Health");
+          assert.include(all, '<th scope="col" class="hide-sm nowrap">Failures (24 h)</th>');
           assert.strictEqual(
-            health(all, failing.name),
-            `<a href="/patches/client-health/log?outcome=failed">3 failed in the last day</a>`
+            failures(all, failing.name),
+            `<a href="/patches/client-health/log?outcome=failed"><span class="badge badge-danger">3 failed</span></a>`
           );
-          assert.strictEqual(health(all, fine.name), "");
-          assert.strictEqual(health(all, page.name), '<span class="supporting-text">—</span>');
-          assert.notInclude(all, '<span class="pill pill-done">OK</span>');
+          // On a phone, where the column is gone, the failing tool says so under its name.
+          assert.include(
+            all,
+            `<span class="show-sm"><a href="/patches/client-health/log?outcome=failed"><span class="badge badge-danger">3 failed</span></a></span>`
+          );
+          assert.strictEqual(failures(all, fine.name), '<span class="muted">None</span>');
+          assert.strictEqual(failures(all, idle.name), '<span class="muted">No calls yet</span>');
+          assert.strictEqual(failures(all, page.name), '<span class="muted">—</span>');
+          assert.notInclude(text(all), "Healthy");
           const attention = yield* (yield* request("/patches?show=attention", person)).text;
           assert.deepStrictEqual(listed(attention), [failing.name]);
           assert.include(text(attention), "3 calls failed in the last day");
+          assert.isTrue(
+            links(attention).some(
+              (link) =>
+                link.href === "/patches/client-health/log?outcome=failed" &&
+                link.text === "View log"
+            )
+          );
         }
+        // Pages have no handlers, so no column.
+        assert.notInclude(
+          yield* (yield* request("/patches?show=pages", workspace.owner)).text,
+          "Failures (24 h)"
+        );
         const member = yield* (yield* request("/patches", workspace.member)).text;
-        assert.notInclude(member, '<th scope="col">Health</th>');
+        assert.notInclude(member, "Failures (24 h)");
         assert.notInclude(text(member), "3 failed");
         assert.notInclude(text(member), "Needs attention");
         assert.include(listed(member), page.name);

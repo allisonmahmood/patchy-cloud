@@ -320,7 +320,7 @@ const toolCall = (token: string, name: string, args: Record<string, unknown>) =>
 const listed = (html: string) =>
   [
     ...(/<tbody>([\s\S]*)<\/tbody>/.exec(html)?.[1] ?? "").matchAll(
-      /<strong>([a-z0-9-]+)<\/strong><\/a>/g
+      /<a class="row-link" href="[^"]*">([a-z0-9-]+)<\/a>/g
     )
   ].map((match) => match[1]!);
 
