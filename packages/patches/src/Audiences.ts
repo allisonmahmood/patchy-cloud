@@ -1,6 +1,5 @@
 /** Patches owns audience authority. Callers consume this decision, never a role-based bypass. */
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -8,18 +7,6 @@ import { PatchAudience } from "@patchy/api";
 import { Teams } from "@patchy/companies";
 import type { Patch } from "./Patches.js";
 
-/** Temporary assembly barrier. Hosting must not enable this until #1287–#1291 are complete. */
-export const Activation = Context.Reference<boolean>("@patchy/patches/AudienceActivation", {
-  defaultValue: () => false
-});
-export class AudienceInactive extends Schema.TaggedError<AudienceInactive>()(
-  "AudienceInactive",
-  {}
-) {
-  override get message() {
-    return "Team and company-guest audiences are unavailable until access enforcement is complete.";
-  }
-}
 export class InvalidAudienceTeams extends Schema.TaggedError<InvalidAudienceTeams>()(
   "InvalidAudienceTeams",
   {}
@@ -53,11 +40,7 @@ export class AudienceScopeMismatch extends Schema.TaggedError<AudienceScopeMisma
   }
 }
 export type InvalidAudience =
-  | AudienceInactive
-  | InvalidAudienceTeams
-  | InvalidAudienceGuests
-  | AudienceExcludesOwner
-  | AudienceScopeMismatch;
+  InvalidAudienceTeams | InvalidAudienceGuests | AudienceExcludesOwner | AudienceScopeMismatch;
 export const company = (scope: "company" | "public" = "company"): PatchAudience => ({
   members: { kind: scope },
   guests: { kind: "specific", userIds: [] }
@@ -65,21 +48,16 @@ export const company = (scope: "company" | "public" = "company"): PatchAudience 
 export const scopeOf = (audience: PatchAudience) =>
   audience.members.kind === "public" ? ("public" as const) : ("company" as const);
 export const encode = Schema.encodeSync(Schema.fromJsonString(PatchAudience));
-const restricted = (audience: PatchAudience) =>
-  audience.members.kind === "teams" || audience.guests.kind === "all";
-
 /** Reuse current authentication; Company/Public need no membership query. */
 export const forAuthenticatedMember = Effect.fn("Audiences.forAuthenticatedMember")(function* (
   companyId: string,
   userId: string,
   audiences: readonly PatchAudience[]
 ) {
-  const enabled = yield* Activation;
-  const needsTeams = enabled && audiences.some((audience) => audience.members.kind === "teams");
+  const needsTeams = audiences.some((audience) => audience.members.kind === "teams");
   const teamIds = new Set(needsTeams ? yield* Teams.memberships(companyId, userId) : []);
   return (audience: PatchAudience) =>
-    (!restricted(audience) || enabled) &&
-    (audience.members.kind !== "teams" || audience.members.teamIds.some((id) => teamIds.has(id)));
+    audience.members.kind !== "teams" || audience.members.teamIds.some((id) => teamIds.has(id));
 });
 
 /** One current-person lookup and at most one membership lookup for the whole result set. */
@@ -127,7 +105,6 @@ export const validate = Effect.fn("Audiences.validate")(
     const { audience, companyId, actorId, ownerId } = input;
     if (input.scope !== undefined && input.scope !== scopeOf(audience))
       return yield* new AudienceScopeMismatch();
-    if (restricted(audience) && !(yield* Activation)) return yield* new AudienceInactive();
     const sql = yield* SqlClient.SqlClient;
     const people = yield* sql`SELECT id, (role IN ('admin', 'super_admin')) AS admin FROM users
       WHERE id = ANY(${[actorId, ownerId]}::text[]) AND company_id = ${companyId} AND deactivated_at IS NULL`.pipe(
@@ -239,9 +216,8 @@ export const changeGuest = Effect.fn("Audiences.changeGuest")(function* (input: 
   readonly actorId: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
-  const assembled = yield* Activation;
   const rows =
-    yield* sql`SELECT id, company_id AS "companyId", audience, patch_guest_allowed(patches, ${input.userId}, ${assembled}, true) AS allowed FROM patches WHERE id = ${input.patchId} FOR UPDATE`.pipe(
+    yield* sql`SELECT id, company_id AS "companyId", audience, patch_guest_allowed(patches, ${input.userId}, true) AS allowed FROM patches WHERE id = ${input.patchId} FOR UPDATE`.pipe(
       Effect.flatMap(decodeLocked),
       Effect.catchTags(schemaErrors)
     );

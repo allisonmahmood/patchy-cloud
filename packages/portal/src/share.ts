@@ -122,7 +122,7 @@ export const renderShareDialog = (input: {
     `<label class="field-choice"><input class="field-radio" type="radio" name="scope" value="${scope}"${scope === picked ? " checked" : ""}${scope === patch.audience.members.kind ? " data-current" : ""}${disabled ? " disabled" : ""}>${escapeHtml(label)}</label>`;
   // Tier 2 can't be public, so for a tool that choice is never one to make.
   const next = isPublic
-    ? '<div class="actions share-change"><button class="btn" type="submit">Save</button></div>'
+    ? ""
     : row.tier >= 2
       ? ""
       : `<div class="note note-warn share-change share-public-confirmation" role="group" aria-labelledby="share-public-title"><strong class="note-title" id="share-public-title">Make ${escapeHtml(title)} public?</strong><p>Anyone with the link can open it without signing in.</p><div class="actions"><button class="btn btn-primary" type="submit" name="confirm" value="public">Make public</button><button class="btn btn-quiet" type="reset">Cancel</button></div></div>`;

@@ -44,6 +44,7 @@ import {
   sharedStoreId
 } from "@patchy/api";
 import { CompanyDatabases, Inventory } from "@patchy/company-database";
+import { Teams } from "@patchy/companies";
 import * as Audiences from "./Audiences.js";
 import { Tables } from "@patchy/primitives";
 import { Wakes } from "@patchy/runtime/core";
@@ -1701,7 +1702,8 @@ export const make = Effect.gen(function* () {
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
       const patch = toPatch(row);
-      sourceStates.set(patch.id, patch.state);
+      if (patch.disabledAt === null && admitted(patch.audience) && options.canOpen(patch))
+        sourceStates.set(patch.id, patch.state);
       if (patch.disabledAt === null && admitted(patch.audience) && options.canOpen(patch))
         openable.set(patch.id, { row, patch });
     }
@@ -2212,7 +2214,10 @@ export const make = Effect.gen(function* () {
         const existing = input.intent === "update" ? yield* publishable(input) : null;
         const audience =
           input.audience ??
-          (existing !== null && (input.scope === undefined || input.scope === existing.scope)
+          (existing !== null &&
+          (input.scope === undefined ||
+            input.scope === existing.scope ||
+            (input.scope === "company" && existing.audience.members.kind === "teams"))
             ? existing.audience
             : existing !== null
               ? { ...existing.audience, members: { kind: input.scope! } }
@@ -2490,7 +2495,30 @@ export const make = Effect.gen(function* () {
       return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
-    const chosen = input.audience ?? { ...row.audience, members: { kind: input.scope } };
+    let chosen =
+      input.audience ??
+      (input.scope === "company" && row.audience.members.kind === "teams"
+        ? row.audience
+        : { ...row.audience, members: { kind: input.scope } });
+    if (!actor.admin && chosen.members.kind === "teams" && row.audience.members.kind === "teams") {
+      const visible = new Set(
+        yield* Teams.memberships(row.companyId, actor.userId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        )
+      );
+      chosen = {
+        ...chosen,
+        members: {
+          kind: "teams",
+          teamIds: [
+            ...new Set([
+              ...chosen.members.teamIds,
+              ...row.audience.members.teamIds.filter((id) => !visible.has(id))
+            ])
+          ]
+        }
+      };
+    }
     const scope = Audiences.scopeOf(chosen);
     if (scope === "public" && row.currentVersionId !== null) {
       const served = yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(

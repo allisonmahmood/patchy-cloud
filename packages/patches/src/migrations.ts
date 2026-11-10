@@ -211,15 +211,15 @@ export const migrations: Migrations = {
     $$`,
     `CREATE TRIGGER company_patch_guests_changed AFTER INSERT OR UPDATE ON company_patch_guests FOR EACH ROW EXECUTE FUNCTION company_patch_guests_changed()`,
     `CREATE INDEX patch_audience_teams_team ON patch_audience_teams(company_id, team_id)`,
-    `CREATE FUNCTION patch_guest_allowed(p patches, person TEXT, assembled BOOLEAN, include_inactive BOOLEAN DEFAULT false) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+    `CREATE FUNCTION patch_guest_allowed(p patches, person TEXT, include_inactive BOOLEAN DEFAULT false) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
       SELECT EXISTS (SELECT 1 FROM company_patch_guests g JOIN users u ON u.id = g.user_id
         WHERE g.company_id = p.company_id AND g.user_id = person AND g.removed_at IS NULL
           AND (include_inactive OR u.deactivated_at IS NULL) AND u.company_id <> p.company_id)
       AND (p.audience->'members'->>'kind' IN ('company', 'public') OR
-        (assembled AND p.audience->'members'->>'kind' = 'teams'))
+        p.audience->'members'->>'kind' = 'teams')
       AND CASE p.audience->'guests'->>'kind'
         WHEN 'specific' THEN p.audience->'guests'->'userIds' ? person
-        WHEN 'all' THEN assembled AND NOT (p.audience->'guests'->'excludedUserIds' ? person)
+        WHEN 'all' THEN NOT (p.audience->'guests'->'excludedUserIds' ? person)
         ELSE false END
     $$`
   )

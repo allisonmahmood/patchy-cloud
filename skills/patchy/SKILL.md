@@ -315,13 +315,11 @@ user's explicitly chosen audience; Public only by explicit choice.
 
 The `patchy` CLI publishes one self-contained HTML document as a page and returns its
 view URL.
-Before the first publish, ask who may open it unless the user already specified: Company,
-Company plus guests, one team or multiple teams. Pass `--share company|public` for the simple
-choices, or `--audience` JSON for teams and guest choices. Discover existing IDs with
-`patchy audiences --json`. Never invent teams or guest IDs. Later publishes retain the
-committed audience; do not ask again. Every publish reports its committed audience.
-The API/CLI keeps Company-only as the default when omitted; asking is the agent workflow,
-not a mandatory publish flag.
+A first publish is Company-wide unless the person specifies another audience.
+Pass `--share company|public` for those choices, or `--audience` JSON for teams.
+Discover existing IDs with `patchy audiences --json`; never invent them.
+Named guests receive access to individual patches with `patchy share --add`.
+Later publishes retain the committed audience. Report the committed audience after every publish.
 
 Audience JSON has `members: { kind: "company" | "public" }` or
 `members: { kind: "teams", teamIds: ["<id>"] }`, plus

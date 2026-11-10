@@ -32,8 +32,7 @@ const team = Effect.fn("test.team")(function* (name: string, userIds: readonly s
 const services = GuestGrants.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Analytics.layerNoop),
-  Layer.provideMerge(Fixtures.database),
-  Layer.provide(Layer.succeed(Audiences.Activation, true))
+  Layer.provideMerge(Fixtures.database)
 );
 it.layer(services)("Patch audiences", (it) => {
   it.effect(
@@ -76,36 +75,17 @@ it.layer(services)("Patch audiences", (it) => {
           assert.lengthOf(queries, 1);
           assert.include(queries[0]!, "FROM users");
           assert.notInclude(queries[0]!, "FROM patches");
-        }).pipe(
-          Effect.provideService(Statement.CurrentTransformer, trace),
-          Effect.provideService(Audiences.Activation, true)
-        );
+        }).pipe(Effect.provideService(Statement.CurrentTransformer, trace));
       })
   );
-  it.effect(
-    "defaults omitted first-publish audiences to Company and still refuses inactive team audiences",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const input = Fixtures.recordInput(uploader, { scope: undefined });
-        yield* patches.preflight(input);
-        const created = yield* Fixtures.record(input);
-        assert.deepStrictEqual(created.audience, Audiences.company());
-        const blocked = Fixtures.recordInput(uploader, { scope: undefined });
-        const t = yield* team("Barrier", [uploader.user.id]);
-        const error = yield* Effect.flip(
-          patches
-            .preflight({ ...blocked, audience: teamAudience([t.id]) })
-            .pipe(Effect.provideService(Audiences.Activation, false))
-        );
-        assert.equal(error._tag, "AudienceInactive");
-        assert.equal(
-          (yield* patches.list(access(uploader.user.id))).some(
-            (row) => row.patch.id === blocked.patchId
-          ),
-          false
-        );
-      })
+  it.effect("defaults omitted first-publish audiences to Company", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const input = Fixtures.recordInput(uploader, { scope: undefined });
+      yield* patches.preflight(input);
+      const created = yield* Fixtures.record(input);
+      assert.deepStrictEqual(created.audience, Audiences.company());
+    })
   );
   it.effect(
     "commits multiple team grants with publication; roles and ownership never bypass current membership",
@@ -180,7 +160,57 @@ it.layer(services)("Patch audiences", (it) => {
           ))._tag,
           "PatchUnavailable"
         );
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
+  );
+  it.effect("member sharing preserves existing teams outside their memberships", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const own = yield* team("Visible owner team", [uploader.user.id, admin.user.id]);
+      const hidden = yield* team("Hidden existing team", [reader.user.id]);
+      const input = Fixtures.recordInput(uploader, { audience: teamAudience([own.id]) });
+      yield* Fixtures.record(input);
+      yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: admin.user.id, admin: true },
+        audience: teamAudience([own.id, hidden.id])
+      });
+      const result = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: uploader.user.id, admin: false },
+        audience: teamAudience([own.id])
+      });
+      assert.deepStrictEqual(result.audience.members, teamAudience([own.id, hidden.id]).members);
+    })
+  );
+  it.effect("legacy Company sharing retains teams; explicit audience widens", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const t = yield* team("Legacy Company", [uploader.user.id]);
+      const audience = teamAudience([t.id]);
+      const input = Fixtures.recordInput(uploader, { audience });
+      yield* Fixtures.record(input);
+      const actor = { userId: uploader.user.id, admin: false };
+      const retained = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor,
+        scope: "company"
+      });
+      assert.deepStrictEqual(retained.audience, audience);
+      const updated = yield* Fixtures.record(
+        Fixtures.recordInput(uploader, {
+          intent: "update",
+          patchId: input.patchId,
+          scope: "company"
+        })
+      );
+      assert.deepStrictEqual(updated.audience, audience);
+      const widened = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor,
+        audience: Audiences.company()
+      });
+      assert.deepStrictEqual(widened.audience, Audiences.company());
+    })
   );
   it.effect(
     "rejects unknown teams and owner-excluding sharing without partially changing the audience",
@@ -211,7 +241,7 @@ it.layer(services)("Patch audiences", (it) => {
         assert.deepStrictEqual(found!.patch.audience, input.audience);
         assert.isTrue(yield* Audiences.references(viewer.companyId, own.id));
         assert.isFalse(yield* Audiences.references(viewer.companyId, other.id));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
   it.effect(
     "retains audience on republish and rollback and rolls back audience authority with its outer transaction",
@@ -248,7 +278,7 @@ it.layer(services)("Patch audiences", (it) => {
         });
         assert.deepStrictEqual(found!.patch.audience, input.audience);
         assert.isTrue(yield* Audiences.references(viewer.companyId, t.id));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
   it.effect("keeps more than 100 guests readable and every company guest selectable", () =>
     Effect.gen(function* () {
@@ -439,6 +469,6 @@ it.layer(services)("Patch audiences", (it) => {
         );
         yield* grants.revokeAll({ companyId: viewer.companyId, userId: gina.user.id });
         assert.isFalse((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
 });

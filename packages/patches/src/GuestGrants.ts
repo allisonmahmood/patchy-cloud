@@ -342,9 +342,8 @@ export const make = Effect.gen(function* () {
   // A patch is in one state: deleted, then retired, else live. Only People's guests mark disabled.
   const state = sql`CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted'
     WHEN p.retired_at IS NOT NULL THEN 'retired' ELSE 'live' END`;
-  const assembled = yield* Audiences.Activation;
   const granted = sql`EXISTS (SELECT 1 FROM company_patch_guests g
-    WHERE g.company_id = p.company_id AND patch_guest_allowed(p, g.user_id, ${assembled}))`;
+    WHERE g.company_id = p.company_id AND patch_guest_allowed(p, g.user_id))`;
 
   const activeGuests = sql`SELECT g.user_id AS "userId", u.name, u.email,
       c.name AS "companyName", COALESCE(named.granted_at, g.added_at) AS "grantedAt"
@@ -353,7 +352,7 @@ export const make = Effect.gen(function* () {
     JOIN companies c ON c.id = u.company_id
     JOIN patches p ON p.company_id = g.company_id
     LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
-    WHERE patch_guest_allowed(p, g.user_id, ${assembled}, true)`;
+    WHERE patch_guest_allowed(p, g.user_id, true)`;
   const patchGuests = SqlSchema.findAll({
     Request: Schema.String,
     Result: Guest,
@@ -410,7 +409,7 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions v ON v.id = p.current_version_id
       LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
       JOIN users s ON s.id = COALESCE(named.granted_by, g.added_by)
-      WHERE g.company_id = ${companyId} AND patch_guest_allowed(p, g.user_id, ${assembled}, true)
+      WHERE g.company_id = ${companyId} AND patch_guest_allowed(p, g.user_id, true)
       ORDER BY u.name, u.email, g.user_id, COALESCE(named.granted_at, g.added_at) DESC, p.name`
   });
   const holderRows = SqlSchema.findAll({
@@ -421,7 +420,7 @@ export const make = Effect.gen(function* () {
     }),
     Result: HolderRow,
     execute: ({ companyId, patchId, userIds }) => sql`
-      SELECT g.user_id AS "userId", patch_guest_allowed(p, g.user_id, ${assembled}) AS active
+      SELECT g.user_id AS "userId", patch_guest_allowed(p, g.user_id) AS active
       FROM company_patch_guests g JOIN patches p ON p.id = ${patchId} AND p.company_id = g.company_id
       WHERE g.company_id = ${companyId} AND ${sql.in("g.user_id", userIds)}`
   });
@@ -437,7 +436,7 @@ export const make = Effect.gen(function* () {
       JOIN patch_versions v ON v.id = p.current_version_id
       JOIN companies c ON c.id = g.company_id
       LEFT JOIN patch_guest_grants named ON named.patch_id = p.id AND named.user_id = g.user_id AND named.revoked_at IS NULL
-      WHERE g.user_id = ${userId} AND patch_guest_allowed(p, g.user_id, ${assembled})
+      WHERE g.user_id = ${userId} AND patch_guest_allowed(p, g.user_id)
         AND p.deleted_at IS NULL AND p.disabled_at IS NULL
       ORDER BY c.name, p.name`
   });
@@ -447,7 +446,7 @@ export const make = Effect.gen(function* () {
     execute: ({ patchId, userId }) => sql`
       SELECT c.id, c.handle, c.name
       FROM patches p JOIN companies c ON c.id = p.company_id
-      WHERE p.id = ${patchId} AND patch_guest_allowed(p, ${userId}, ${assembled})`
+      WHERE p.id = ${patchId} AND patch_guest_allowed(p, ${userId})`
   });
   const sharedPatchRows = SqlSchema.findAll({
     Request: Schema.String,
