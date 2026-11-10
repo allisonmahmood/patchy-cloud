@@ -693,7 +693,7 @@ const connectSource = Effect.fn("connectSource")(function* (
         step = "connecting";
         await Promise.all([
           page.waitForURL(/\/settings\/integrations\/conn_/),
-          page.getByRole("button", { name: "Connect", exact: true }).click()
+          page.getByRole("button", { name: "Test and connect", exact: true }).click()
         ]);
       } finally {
         await browser.close();

@@ -1,7 +1,7 @@
 /**
- * What only doors hold: the code a person compares, who meets whom before consent, the can and
- * can't list, two answers of equal weight, a form's fields set apart from the words above them,
- * a refusal's focus target, and a sign-out form that sits in the foot's line.
+ * What doors hold: the code a person compares, who meets whom before consent, the can and can't
+ * list (which flows draw too), two answers of equal weight, a form's fields set apart from the
+ * words above them, a refusal's focus target, and a sign-out form that sits in the foot's line.
  */
 export const doorParts = `
     .code-display {

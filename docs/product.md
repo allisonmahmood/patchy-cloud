@@ -1159,6 +1159,15 @@ would hold at most one per integration.
 
 ### Connecting Postgres
 
+Every integration connects through one page, the same frame drawn from what the
+integration says: 1 what to make in the other system first, which nothing marks
+done; 2 the credential's fields, secrets masked with Show; any sections a check
+unlocks (Pidgeon's address and what patches may do); Name it, behind the fixed
+`kind/` prefix; Once connected, what it can and can't do, which the frame writes
+the same way for every integration, with at most one caveat; then Test and
+connect and Cancel. A refusal about a field reads under it, any other right above
+Test and connect, and a refused submit keeps everything typed except secrets.
+
 An admin pastes a connection string in the browser-only connect form, with an
 immutable handle (3–32 lowercase letters, digits or hyphens, no leading/trailing
 hyphen) and a description. The description explains the source to builders;
@@ -1194,14 +1203,12 @@ no stored patch version declares it.
 ### Connecting PostHog
 
 PostHog is read-only and company-wide, for PostHog Cloud only: `us.posthog.com`
-or `eu.posthog.com`, with no self-hosted host field. An admin follows the connect
-walkthrough: create a personal API key in PostHog limited to one project, with
-Read on Query, Event definitions and Property definitions, then paste it with the
-region and numeric project id. Before connecting, the walkthrough says that every
-member can read the project's events and people through any patch that declares
-it, including anything events carry, and warns: **While someone builds a patch
-that uses this connection, their agent reads real PostHog data through Patchy, as
-them. Nothing is written, and every read appears in recent calls.**
+or `eu.posthog.com`, with no self-hosted host field. An admin creates a personal
+API key in PostHog limited to one project, with Read on Query, Event definitions
+and Property definitions, then pastes it with the region and numeric project id.
+Before connecting, the page says that every member reads the project's events and
+people through any patch that declares it, that builders' agents read it while
+they build, as themselves, and that events may carry emails or user ids.
 
 Connect runs a test query and discovery before saving anything, and the key is
 encrypted under the same keyring. The test and discovery prove the access exists;
@@ -1262,7 +1269,7 @@ another. The credentialed server makes every call, only to
 `https://pidgeon.ai/api/v1`, never following a redirect, with answers, refusals
 included, read under the 8 MiB cap before they're decoded.
 
-**Connect.** The connect page is one form. An admin pastes a Pidgeon admin key
+**Connect.** The connect page is the shared frame, in one form. An admin pastes a Pidgeon admin key
 over the whole account, live or test, and presses Find addresses: the page's
 script posts the key in the body of that one request, and Patchy answers with the
 addresses it reaches in its own mode. The admin picks one, or creates one on
@@ -1270,10 +1277,12 @@ Pidgeon's shared `pidgeon.email` or a domain the workspace has, with a display
 name and a send policy, then chooses what patches may do, **Read** or **Read and
 send**, and names it. The page needs its script, because the server never writes
 the admin key back into a page; a refused submit keeps everything typed except
-the key. A side panel says where to make the key, that Patchy never stores it,
-what rotating and revoking it in Pidgeon do, that a key just for Patchy keeps a
-revocation to Patchy, who reads the mail, and that builders' agents read it while
-they build.
+the key. The address, what patches may do and the name stay locked until Find
+addresses has checked the key, and a key changed after that locks them again. The
+page says where to make the key, that Patchy never stores it, who reads the mail,
+that builders' agents read it while they build and what they send there goes
+nowhere, and that revoking the admin key in Pidgeon later disconnects the
+addresses connected with it.
 
 Patchy then, in order: reads `/me` and refuses a key that isn't admin or doesn't
 reach the whole account; finds the address, refusing one without an inbox or in
@@ -1393,13 +1402,13 @@ read's ids, never a body or search text.
 Attio is read-only and company-wide: one connection reads one Attio workspace
 through a workspace access token. Nothing in Attio can be changed through
 Patchy; a patch that needs its own state beside the CRM keeps it in its own
-tables. An admin follows the connect walkthrough: Workspace settings ›
-Developers › New access token, with Read on Records, Object configuration, List
-entries, List configuration and User management, anything else Read or off, and
-never Read-write. The walkthrough says that every member reads everything the
-key reads through any patch that declares it, that Attio's own member
-permissions don't carry over, and that builders' agents read the real workspace
-while building.
+tables. An admin makes a token in Workspace settings › Developers › New access
+token, with Read on Records, Object configuration, List entries, List
+configuration and User management, anything else Read or off, and never
+Read-write. The connect page says that every member reads everything the key
+reads through any patch that declares it, that Attio's own member permissions
+don't carry over, and that builders' agents read the real workspace while
+building.
 
 **The key check** calls `GET /v2/self` and fails closed. It refuses unless the
 key is active, a workspace token, holds every scope above and no `:read-write`
@@ -1507,9 +1516,8 @@ requirements are the connect page's first step, and in the context agents get.
 **Who reads it.** As with every integration, every member reads the whole
 mailbox through any patch that declares it, and so do the patch's guests unless
 an admin turns on Block guests; builder agents' live reads while building count
-too. The connect page's access note says so, points to Block guests on the
-connection's page, as for every integration, and suggests a shared or dedicated
-mailbox, not a person's own.
+too. The connect page's Once connected says so, as for every integration, and
+suggests a shared or dedicated mailbox, not a person's own.
 
 **Read-only.** Patchy opens every folder with `EXAMINE` and fetches with
 `BODY.PEEK`, so reading never marks mail as read, and no code path sends
@@ -1519,8 +1527,8 @@ what it needs into its own tables and files, and that copy stays in the patch
 after a pause, as the Pause confirmation says. Nothing refreshes on
 its own.
 
-**Connecting.** The connect page is the shared walkthrough: what a mailbox
-needs, then the login, then using it in a patch. The admin types the host,
+**Connecting.** The connect page is the shared frame: what a mailbox needs, then
+the login, then its name. The admin types the host,
 chooses the port and its security as one choice, 993 (TLS) by default or 143
 (STARTTLS), and types the username (often the whole address) and the password. There's no autodiscovery and no fallback host. The
 password is sealed under the keyring together with the endpoint, and goes only
@@ -1824,7 +1832,7 @@ Each integration chooses its **dev binding**
 ([ADR-0013](adr/ADR-0013-dev-bindings-per-integration.md)). The default is local
 fixtures or a fake, never live source rows or production credentials. An
 integration whose fixtures wouldn't resemble production reads the real connection
-in dev instead, and its connect form says so; writes never run live in dev.
+in dev instead, and its connect page's Once connected says so; writes never run live in dev.
 Postgres keeps fixtures; PostHog, Pidgeon and Attio read live.
 
 **Dev reads.** PostHog, Pidgeon and Attio have no fixture. `patchy dev` sends each

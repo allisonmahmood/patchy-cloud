@@ -41,6 +41,7 @@ export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";
 export { expandingTable } from "./expanding-table.js";
+export { fieldRow } from "./field-row.js";
 export type { ExpandingRow } from "./expanding-table.js";
 export { icon } from "./icons.js";
 export { productMark } from "./product-mark.js";

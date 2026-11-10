@@ -20,6 +20,10 @@ _Avoid_: connection administration
 The integrations Patchy offers a company, each with its mark, a line on what it gives patches and how many connections the company already has, then a row to ask for another. Admins reach it from the Integrations page, which lists the company's connections, through Connect an integration; it is not that list. With nothing connected it is the Integrations page, the same rows at the same width.
 _Avoid_: marketplace, app directory
 
+**Connect frame**:
+The one page every integration connects through, drawn from what the integration says, its connect spec: what to make in the other system first, the credential's fields, any sections a check of the credential unlocks (Pidgeon's address and access), its example name, and what it reads, never does and one caveat. The frame owns the order, the Name section, the access list's platform facts, the actions and where refusals read, so a new integration adds data, never a layout.
+_Avoid_: walkthrough, wizard, connector setup
+
 **Pause / Resume**:
 An admin's reversible stop of a connection, stored as disconnected: patches that declare it are refused until Resume, which tests the stored credentials first, reconnects it and keeps its identity, metadata and every declaration. The pages show it as Paused, a badge; the API and CLI keep `status: disconnected` and `reason: not_connected`.
 _Avoid_: disconnect (what ending a connection is called), suspend, disable

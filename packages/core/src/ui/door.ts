@@ -48,7 +48,8 @@ export const meet = (from: Party, relation: string, to: Party) =>
 /**
  * What something will and won't be able to do, one sentence each: a check for what it can, a
  * cross for what it can't. Each sentence says which on its own, so the mark is never the only
- * sign.
+ * sign. Consent draws it, and so does a connect flow's "Once connected", for an agent or an
+ * integration.
  */
 export const canList = (items: ReadonlyArray<{ readonly can: boolean; readonly text: string }>) =>
   `<ul class="can">${items
