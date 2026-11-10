@@ -595,9 +595,10 @@ and `principal_changed` require the notice's Sign in link and a whole-page reloa
 never replay an unanswered write. Once a patch is company-only again, a page
 opened while it was public can get them with no notice; a whole-page reload
 checks access again, as any company link does. `access_denied` has no reload
-offer: report the access restriction. A needs-rebuild door requires the owner to refresh, rebuild
-and publish. A shell mismatch refreshes once automatically; a terminal mismatch
-is a visible failure to report, not an invitation to keep refreshing.
+offer: report the access restriction. A needs-rebuild door requires the owner
+to refresh, rebuild and publish. A shell mismatch refreshes once automatically;
+a terminal mismatch is a visible failure to report, not an invitation to keep
+refreshing.
 
 When a page refuses access, report the refusal rather than treating its HTML as the patch:
 
