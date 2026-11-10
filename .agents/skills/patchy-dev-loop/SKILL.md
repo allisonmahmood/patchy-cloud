@@ -22,7 +22,11 @@ pnpm dev up [scenario]   # an environment: a scenario's company, people and patc
 Use an environment for anything with more than one person (live sync,
 assignments, admin-only rules, invitations) and for demos. `guests` adds a
 person at a second company and shares both its patches with them, for anything
-a patch's guests see. The instance's server runs on Bun, as production's does;
+a patch's guests see. `dense` is for first-party pages: Brightline Studio with
+13 live patches and their history, retired and deleted ones, guests both ways,
+deactivated and invited people, people with and without agents, an empty
+company, and offline connections for every integration in every state;
+`scenarios/README.md` says who shows what. The instance's server runs on Bun, as production's does;
 the CLI, from source or in an environment, runs on Node, as on people's
 machines. Use the URL each
 start prints; ports can change between starts. A failed start names its log:
@@ -191,7 +195,7 @@ prerequisites; the `pr-evidence` skill says what each shows.
 - "Before" is where `HEAD` left `origin/main`; `--base <ref>` picks another
   commit, and `--pr <number>` the PR's base branch. Both sides run this
   worktree's scenario, or `team`; `--scenario brightline` has patches of every
-  tier.
+  tier, and `--scenario dense` every state of the first-party pages.
 - `--pr <number>` puts the section in the PR body and uploads its files. A
   re-run replaces its own section: compare's is keyed by the person (`--key`
   overrides), film's by the flow's file name. Without `--pr`, the section is

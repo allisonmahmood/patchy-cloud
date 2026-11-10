@@ -1,0 +1,653 @@
+{
+  "company": {
+    "name": "Brightline Studio",
+    "handle": "brightline",
+    "agentAccess": true
+  },
+  "companies": [
+    {
+      "name": "Cedar Works",
+      "handle": "cedar"
+    },
+    {
+      "name": "Harbor & Pine Coffee",
+      "handle": "harbor-pine"
+    },
+    {
+      "name": "Fresh Studio",
+      "handle": "fresh"
+    }
+  ],
+  "people": [
+    {
+      "key": "allison",
+      "name": "Allison Mahmood",
+      "email": "allison@brightline.example",
+      "role": "admin",
+      "computers": [
+        {
+          "name": "Studio Mac mini",
+          "used": "26 days"
+        },
+        {
+          "name": "Allison's old ThinkPad",
+          "used": "40 days"
+        }
+      ],
+      "apps": [
+        {
+          "name": "Claude",
+          "site": "claude.ai",
+          "connected": "5 days",
+          "used": "2 hours"
+        },
+        {
+          "name": "Codex",
+          "site": "chatgpt.com",
+          "connected": "2 days",
+          "used": "28 hours"
+        },
+        {
+          "name": "ChatGPT",
+          "site": "chatgpt.com",
+          "connected": "60 days",
+          "used": "35 days"
+        }
+      ]
+    },
+    {
+      "key": "jordan",
+      "name": "Jordan Lee",
+      "email": "jordan@brightline.example",
+      "role": "member",
+      "computers": [
+        {
+          "name": "Jordan's MacBook Air",
+          "used": "1 day"
+        }
+      ],
+      "apps": [
+        {
+          "name": "Claude",
+          "site": "claude.ai",
+          "connected": "12 days",
+          "used": "40 minutes"
+        }
+      ]
+    },
+    {
+      "key": "priya",
+      "name": "Priya Shah",
+      "email": "priya@brightline.example",
+      "role": "member"
+    },
+    {
+      "key": "marcus",
+      "name": "Marcus Chen",
+      "email": "marcus@brightline.example",
+      "role": "member",
+      "computers": [
+        {
+          "name": "Marcus's iMac",
+          "used": "3 days"
+        }
+      ]
+    },
+    {
+      "key": "sofia",
+      "name": "Sofia Alvarez",
+      "email": "sofia@brightline.example",
+      "role": "member",
+      "computers": [
+        {
+          "name": "Sofia's laptop",
+          "used": "2 hours"
+        }
+      ]
+    },
+    {
+      "key": "rowan",
+      "name": "Rowan Ellis",
+      "email": "rowan@brightline.example",
+      "role": "member",
+      "deactivated": true
+    },
+    {
+      "key": "taylor",
+      "name": "Taylor Morgan",
+      "email": "taylor@cedar.example",
+      "role": "member",
+      "company": "cedar"
+    },
+    {
+      "key": "dana",
+      "name": "Dana Okafor",
+      "email": "dana@harborpine.example",
+      "role": "admin",
+      "company": "harbor-pine"
+    },
+    {
+      "key": "sam",
+      "name": "Sam Rivera",
+      "email": "sam@freshstudio.example",
+      "role": "admin",
+      "company": "fresh"
+    }
+  ],
+  "publisher": "allison",
+  "invitations": [
+    {
+      "email": "noah@brightline.example",
+      "role": "member",
+      "sent": "2 days"
+    },
+    {
+      "email": "lee@brightline.example",
+      "role": "admin",
+      "sent": "34 days"
+    },
+    {
+      "email": "ines@brightline.example",
+      "role": "member",
+      "sent": "1 hour",
+      "unsent": true
+    }
+  ],
+  "connections": [
+    {
+      "integration": "postgres",
+      "handle": "warehouse",
+      "description": "Finance warehouse: invoices, projects and hours.",
+      "state": "connected"
+    },
+    {
+      "integration": "postgres",
+      "handle": "old-warehouse",
+      "description": "The warehouse before the 2026 move, kept for last year's reports.",
+      "state": "paused"
+    },
+    {
+      "integration": "posthog",
+      "handle": "website",
+      "description": "Visits, enquiries and case studies read on brightline.example.",
+      "state": "connected"
+    },
+    {
+      "integration": "posthog",
+      "handle": "client-sites",
+      "description": "Analytics for the client sites the studio hosts.",
+      "state": "paused"
+    },
+    {
+      "integration": "attio",
+      "handle": "crm",
+      "description": "Brightline's CRM: deals, companies and people.",
+      "state": "connected"
+    },
+    {
+      "integration": "attio",
+      "handle": "partners",
+      "description": "Partner agencies and freelancers we refer work to.",
+      "state": "needs-attention"
+    },
+    {
+      "integration": "attio",
+      "handle": "archive",
+      "description": "Clients from before 2024.",
+      "state": "paused"
+    },
+    {
+      "integration": "pidgeon",
+      "handle": "hello",
+      "description": "hello@brightline.example, the studio's front door.",
+      "state": "connected",
+      "blockGuests": true
+    },
+    {
+      "integration": "pidgeon",
+      "handle": "billing",
+      "description": "billing@brightline.example: invoices out, remittances in.",
+      "state": "needs-attention"
+    },
+    {
+      "integration": "pidgeon",
+      "handle": "sandbox",
+      "description": "A test address for trying replies before they go to clients.",
+      "state": "connected",
+      "test": true
+    },
+    {
+      "integration": "pidgeon",
+      "handle": "newsletter",
+      "description": "The monthly studio newsletter's reply-to.",
+      "state": "paused"
+    },
+    {
+      "integration": "imap",
+      "handle": "invoices",
+      "description": "Supplier invoices and statements.",
+      "state": "connected"
+    },
+    {
+      "integration": "imap",
+      "handle": "applications",
+      "description": "Freelancers' applications and portfolios.",
+      "state": "needs-attention"
+    },
+    {
+      "integration": "imap",
+      "handle": "old-inbox",
+      "description": "The shared inbox before Pidgeon.",
+      "state": "paused"
+    }
+  ],
+  "patches": [
+    {
+      "repo": "new-business",
+      "from": "brightline",
+      "tier": 2,
+      "description": "Brightline's new-business pipeline: track every pitch from first lead to signed work, with owners, stage rules and a live board the whole studio shares.",
+      "sampleData": true,
+      "versions": 3,
+      "age": "30 days",
+      "updated": "2 hours",
+      "opens": {
+        "allison": 18,
+        "jordan": 12,
+        "priya": 6,
+        "marcus": 5
+      },
+      "calls": [
+        {
+          "by": "allison",
+          "handler": "deals.importLeads",
+          "kind": "action",
+          "outcome": "running",
+          "ago": "1 minute"
+        },
+        {
+          "by": "jordan",
+          "via": "Claude",
+          "handler": "deals.move",
+          "kind": "mutation",
+          "outcome": "failed",
+          "reason": "deal.stage_rule: a deal moves to Signed only from Proposal",
+          "ago": "40 minutes"
+        },
+        {
+          "by": "jordan",
+          "via": "Claude",
+          "handler": "deals.move",
+          "kind": "mutation",
+          "outcome": "failed",
+          "reason": "deal.stage_rule: a deal moves to Signed only from Proposal",
+          "ago": "55 minutes"
+        },
+        {
+          "by": "priya",
+          "handler": "deals.create",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "71 minutes"
+        },
+        {
+          "by": "allison",
+          "handler": "deals.addNote",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "4 hours"
+        },
+        {
+          "by": "marcus",
+          "handler": "deals.board",
+          "kind": "query",
+          "outcome": "refused",
+          "ago": "26 hours"
+        },
+        {
+          "by": "allison",
+          "via": "Codex",
+          "handler": "deals.create",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "28 hours"
+        },
+        {
+          "by": "sofia",
+          "handler": "deals.move",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "33 hours"
+        },
+        {
+          "by": "sofia",
+          "handler": "deals.update",
+          "kind": "mutation",
+          "outcome": "unknown",
+          "ago": "6 hours"
+        }
+      ]
+    },
+    {
+      "repo": "spend",
+      "from": "brightline",
+      "tier": 2,
+      "description": "Request, approve and track studio and client-project spend, with receipts attached and approval rules that can't be bypassed.",
+      "sampleData": true,
+      "versions": 2,
+      "age": "21 days",
+      "updated": "1 day",
+      "opens": {
+        "allison": 15,
+        "priya": 9,
+        "marcus": 9
+      },
+      "calls": [
+        {
+          "by": "allison",
+          "handler": "requests.approve",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "2 hours"
+        },
+        {
+          "by": "priya",
+          "handler": "requests.submit",
+          "kind": "action",
+          "outcome": "succeeded",
+          "ago": "3 hours"
+        }
+      ]
+    },
+    {
+      "repo": "studio-calendar",
+      "tier": 2,
+      "owner": "marcus",
+      "description": "Who's in, who's out, and what's due this week.",
+      "age": "25 days",
+      "updated": "3 days",
+      "opens": {
+        "allison": 20,
+        "marcus": 20,
+        "jordan": 10,
+        "sofia": 8
+      },
+      "calls": [
+        {
+          "by": "allison",
+          "handler": "notes.list",
+          "kind": "query",
+          "outcome": "succeeded",
+          "ago": "3 hours"
+        },
+        {
+          "by": "marcus",
+          "handler": "notes.create",
+          "kind": "mutation",
+          "outcome": "succeeded",
+          "ago": "26 hours"
+        }
+      ]
+    },
+    {
+      "repo": "timesheets",
+      "tier": 2,
+      "owner": "priya",
+      "connections": ["postgres/warehouse"],
+      "description": "Log hours against client projects and see the week's totals.",
+      "age": "18 days",
+      "updated": "4 days",
+      "opens": {
+        "allison": 12,
+        "priya": 10,
+        "jordan": 7
+      },
+      "calls": [
+        {
+          "by": "priya",
+          "handler": "hours.week",
+          "kind": "query",
+          "outcome": "running",
+          "connection": {
+            "name": "postgres/warehouse",
+            "op": "list",
+            "resource": "hours"
+          },
+          "ago": "2 minutes"
+        },
+        {
+          "by": "priya",
+          "handler": "hours.week",
+          "kind": "query",
+          "outcome": "succeeded",
+          "connection": {
+            "name": "postgres/warehouse",
+            "op": "list",
+            "resource": "hours"
+          },
+          "ago": "50 minutes"
+        },
+        {
+          "by": "jordan",
+          "handler": "hours.week",
+          "kind": "query",
+          "outcome": "succeeded",
+          "connection": {
+            "name": "postgres/warehouse",
+            "op": "list",
+            "resource": "hours"
+          },
+          "ago": "6 hours"
+        }
+      ]
+    },
+    {
+      "repo": "kudos",
+      "from": "brightline",
+      "tier": 2,
+      "description": "Give a colleague a public shout-out for great work; the whole studio sees kudos appear live.",
+      "sampleData": true,
+      "guests": ["taylor"],
+      "versions": 2,
+      "age": "10 days",
+      "updated": "3 days",
+      "opens": {
+        "allison": 6,
+        "jordan": 6,
+        "priya": 5,
+        "sofia": 5,
+        "taylor": 2
+      }
+    },
+    {
+      "file": "harbor-pine-kickoff.html",
+      "from": "brightline",
+      "name": "harbor-pine-kickoff",
+      "description": "Kickoff brief for the Harbor & Pine Coffee rebrand: goals, scope, timeline, team, budget and risks.",
+      "age": "2 days",
+      "updated": "1 hour",
+      "opens": {
+        "allison": 3,
+        "jordan": 2,
+        "sofia": 4
+      }
+    },
+    {
+      "repo": "brand-assets",
+      "tier": 2,
+      "owner": "priya",
+      "description": "Find the right logo file for any client, in any format.",
+      "age": "23 days",
+      "opens": {
+        "priya": 8,
+        "sofia": 6
+      }
+    },
+    {
+      "repo": "pitch-library",
+      "tier": 2,
+      "owner": "jordan",
+      "connections": ["attio/crm"],
+      "description": "Past decks and case studies, searchable by client and sector.",
+      "age": "20 days",
+      "updated": "11 days",
+      "opens": {
+        "jordan": 9,
+        "sofia": 8
+      },
+      "calls": [
+        {
+          "by": "jordan",
+          "via": "Claude",
+          "handler": "decks.search",
+          "kind": "query",
+          "outcome": "succeeded",
+          "connection": {
+            "name": "attio/crm",
+            "op": "listRecords",
+            "resource": "deals"
+          },
+          "ago": "20 minutes"
+        },
+        {
+          "by": "sofia",
+          "handler": "decks.search",
+          "kind": "query",
+          "outcome": "unknown",
+          "connection": {
+            "name": "attio/crm",
+            "op": "listRecords",
+            "resource": "companies"
+          },
+          "ago": "5 hours"
+        }
+      ],
+      "reads": [
+        {
+          "patch": "brand-assets",
+          "table": "logos"
+        }
+      ]
+    },
+    {
+      "file": "rate-card-2027.html",
+      "name": "rate-card-2027",
+      "owner": "sofia",
+      "description": "Day rates by role, with the discount rules for retainers.",
+      "age": "4 hours",
+      "opens": {
+        "sofia": 3
+      }
+    },
+    {
+      "repo": "freelancers",
+      "tier": 2,
+      "owner": "jordan",
+      "connections": ["imap/applications"],
+      "description": "Who we've worked with, their rates and their availability.",
+      "age": "1 day",
+      "opens": {
+        "jordan": 8,
+        "marcus": 4
+      },
+      "calls": [
+        {
+          "by": "jordan",
+          "handler": "applications.list",
+          "kind": "action",
+          "outcome": "failed",
+          "reason": "The mail server refused the password.",
+          "connection": {
+            "name": "imap/applications",
+            "op": "listMessages",
+            "resource": "INBOX"
+          },
+          "ago": "3 hours"
+        }
+      ]
+    },
+    {
+      "repo": "client-onboarding",
+      "tier": 2,
+      "owner": "sofia",
+      "connections": ["pidgeon/hello"],
+      "description": "A checklist for every new client, from contract to kickoff.",
+      "age": "18 days",
+      "opens": {
+        "sofia": 8
+      },
+      "calls": [
+        {
+          "by": "sofia",
+          "handler": "welcome.send",
+          "kind": "action",
+          "outcome": "succeeded",
+          "connection": {
+            "name": "pidgeon/hello",
+            "op": "write",
+            "resource": "messages.send"
+          },
+          "ago": "2 hours"
+        }
+      ],
+      "guests": ["taylor"]
+    },
+    {
+      "file": "wifi-printers.html",
+      "name": "wifi-printers",
+      "owner": "marcus",
+      "description": "Network names, passwords and how to fix the big printer.",
+      "age": "37 days",
+      "opens": {
+        "marcus": 10,
+        "allison": 3,
+        "jordan": 9,
+        "priya": 9
+      }
+    },
+    {
+      "file": "office-playlist.html",
+      "name": "office-playlist",
+      "owner": "rowan",
+      "description": "What the studio speakers play this month, and how to add a song.",
+      "age": "15 days",
+      "opens": {
+        "rowan": 4,
+        "sofia": 2
+      }
+    },
+    {
+      "repo": "holiday-rota",
+      "tier": 2,
+      "connections": ["posthog/client-sites"],
+      "description": "Who covers the studio over the holidays.",
+      "age": "40 days",
+      "retired": "2 days"
+    },
+    {
+      "file": "summer-party.html",
+      "name": "summer-party",
+      "owner": "marcus",
+      "description": "Where, when and who's bringing what to the studio's summer party.",
+      "age": "120 days",
+      "deleted": "26 days"
+    },
+    {
+      "file": "moodboard.html",
+      "name": "moodboard",
+      "owner": "dana",
+      "description": "The looks Harbor & Pine love for the rebrand: colour, type and the feel of the cafés.",
+      "guests": ["allison", "priya"],
+      "age": "6 days"
+    },
+    {
+      "file": "rebrand-review.html",
+      "name": "rebrand-review",
+      "owner": "dana",
+      "description": "Harbor & Pine's notes on Brightline's first rebrand concepts.",
+      "guests": ["allison"],
+      "age": "9 days",
+      "retired": "1 day"
+    }
+  ]
+}
