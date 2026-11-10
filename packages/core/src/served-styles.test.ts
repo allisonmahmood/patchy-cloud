@@ -23,7 +23,7 @@ describe("a first-party page", () => {
     const html = htmlPage({ title: "Sign in", body: "<main>Hello</main>" });
     expect(html).toContain(fontPreload);
     expect(html).toContain(appStyles);
-    expect(appStyles).toMatch(/--font-sans: "Geist", "Geist Fallback"/);
+    expect(appStyles).toMatch(/--font-ui: "Geist", "Geist Fallback"/);
     expect(appStyles).toMatch(/--font-mono: "Geist Mono"/);
     expect(appStyles).toContain('@font-face { font-family: "Geist";');
   });
