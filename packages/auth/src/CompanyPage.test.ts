@@ -321,7 +321,11 @@ it.layer(services)("company page and actions", (it) => {
           invitedBy: owner.user.id,
           email: "revoked-list@example.com"
         });
-        yield* companies.revokeInvite({ companyId: owner.company.id, actorId: owner.user.id, inviteId: revoked.id });
+        yield* companies.revokeInvite({
+          companyId: owner.company.id,
+          actorId: owner.user.id,
+          inviteId: revoked.id
+        });
         const foreign = yield* createCompany("company-hidden");
         for (const viewer of [owner.user, member]) {
           const response = yield* send("/company", { headers: { cookie: cookie(viewer) } });
