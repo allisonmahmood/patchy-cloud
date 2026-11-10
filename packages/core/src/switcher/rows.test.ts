@@ -23,7 +23,8 @@ const list: SwitcherList = {
     {
       id: "sail",
       name: "sailings-today",
-      title: "Sailings Today",
+      // Rows leave out the company a patch's own HTML ends its title with.
+      title: "Sailings Today · Northsound",
       tier: 2,
       mine: false,
       openedAt: ago(4),
@@ -80,7 +81,7 @@ const list: SwitcherList = {
       id: "galley",
       company: { handle: "pine", name: "Pine Studio" },
       name: "galley-orders",
-      title: "Galley Orders",
+      title: "Galley Orders | Pine Studio",
       tier: 2
     }
   ]

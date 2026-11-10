@@ -139,8 +139,13 @@ export interface InputOptions {
   readonly maxlength?: number;
   readonly pattern?: string;
   readonly inputmode?: "text" | "email" | "url" | "numeric";
-  /** For what is typed exactly: handles, keys, URLs. */
+  /** Set in Geist Mono, for what is typed exactly: handles, keys, URLs. */
   readonly mono?: boolean;
+  /**
+   * For what is typed exactly, such as a company's address or a handle: a phone neither
+   * capitalises, corrects nor spell-checks it.
+   */
+  readonly exact?: boolean;
   /** Answer width, for an answer of known length. */
   readonly width?: "xs" | "sm" | "md";
   readonly autofocus?: boolean;
@@ -149,7 +154,7 @@ export interface InputOptions {
 }
 
 const inputAttributes = (options: InputOptions) =>
-  `name="${escapeAttribute(options.name)}"${attribute("value", options.value)}${attribute("placeholder", options.placeholder)}${flag("required", options.required)}${attribute("autocomplete", options.autocomplete)}${attribute("maxlength", options.maxlength)}${attribute("pattern", options.pattern)}${attribute("inputmode", options.inputmode)}${attribute("list", options.list)}${flag("autofocus", options.autofocus)}`;
+  `name="${escapeAttribute(options.name)}"${attribute("value", options.value)}${attribute("placeholder", options.placeholder)}${flag("required", options.required)}${attribute("autocomplete", options.autocomplete)}${attribute("maxlength", options.maxlength)}${attribute("pattern", options.pattern)}${attribute("inputmode", options.inputmode)}${attribute("list", options.list)}${options.exact === true ? ' autocapitalize="none" autocorrect="off" spellcheck="false"' : ""}${flag("autofocus", options.autofocus)}`;
 
 const fieldClass = (options: Pick<InputOptions, "mono" | "width">) =>
   `field${options.mono === true ? " field-mono" : ""}${options.width === undefined ? "" : ` field-w-${options.width}`}`;
@@ -161,7 +166,7 @@ export const input = (aria: FieldControl, options: InputOptions) =>
 /** A multi-line input; `grow` starts one line tall and grows with what is typed. */
 export const textarea = (
   aria: FieldControl,
-  options: Omit<InputOptions, "type" | "pattern" | "inputmode" | "width"> & {
+  options: Omit<InputOptions, "type" | "pattern" | "inputmode" | "width" | "exact"> & {
     readonly rows?: number;
     readonly grow?: boolean;
   }
@@ -202,7 +207,7 @@ export const prefixInput = (
  */
 export const secretInput = (
   aria: FieldControl,
-  options: Omit<InputOptions, "type" | "mono" | "inputmode">
+  options: Omit<InputOptions, "type" | "mono" | "inputmode" | "exact">
 ) =>
   `<div class="secret"><input class="field" type="password" ${controlAttributes(aria)} ${inputAttributes(options)} spellcheck="false"><button class="btn btn-quiet btn-sm" type="button" data-show="${escapeAttribute(aria.id)}" aria-controls="${escapeAttribute(aria.id)}" aria-pressed="false" hidden>Show</button></div>`;
 

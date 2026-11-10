@@ -82,10 +82,10 @@ const refused = (message: string | undefined) =>
 
 /**
  * A patch by its title and, when that differs, its name, which no other patch shares: two
- * patches may have the same title.
+ * patches may have the same title. `company` is the patch's own.
  */
-const named = (patch: Patches.Patch) => {
-  const title = patchTitle(patch);
+const named = (patch: Patches.Patch, company: string) => {
+  const title = patchTitle(patch, company);
   return title === patch.name ? title : `${title} (${patch.name})`;
 };
 
@@ -95,6 +95,8 @@ const named = (patch: Patches.Patch) => {
  */
 const renderPick = (input: {
   user: Users.User;
+  /** The viewer's company, whose patches these are. */
+  company: string;
   action: Action;
   rows: readonly Patches.ReadPatch[];
   selected: ReadonlySet<string>;
@@ -150,7 +152,7 @@ const renderPick = (input: {
       const readers = [...new Map(dependants.map((reader) => [reader.patchId, reader])).values()];
       return {
         value: patch.id,
-        label: named(patch),
+        label: named(patch, input.company),
         description:
           deactivating && eligible
             ? readers.length === 0
@@ -183,6 +185,8 @@ type Warning = { readonly name: string; readonly sources: Patches.PortalCard["of
  */
 const renderConfirm = (input: {
   user: Users.User;
+  /** The viewer's company, whose patches these are. */
+  company: string;
   action: Action;
   selected: readonly Patches.ReadPatch[];
   dependants: readonly Patches.ReadPatch["dependants"][number][];
@@ -193,7 +197,7 @@ const renderConfirm = (input: {
   const { user, action, selected, dependants, warnings } = input;
   const deactivating = action === "deactivate";
   const breaks = dependants.length > 0 || warnings.length > 0;
-  const titles = listed(selected.map((row) => named(row.patch)));
+  const titles = listed(selected.map((row) => named(row.patch, input.company)));
   const change =
     selected.length === 0
       ? "Their patches stay as they are."
@@ -339,7 +343,15 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
     const title = `${verb(action)} ${user.name}`;
     const pick = (refused: { problem?: string; message?: string } = {}, status = 200) =>
       respond(
-        renderPick({ user, action, rows, selected: selectedIds, choice, ...refused }),
+        renderPick({
+          user,
+          company: viewer.company.name,
+          action,
+          rows,
+          selected: selectedIds,
+          choice,
+          ...refused
+        }),
         title,
         status
       );
@@ -387,6 +399,7 @@ const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, acti
       respond(
         renderConfirm({
           user,
+          company: viewer.company.name,
           action,
           selected,
           dependants: [...dependants.values()],

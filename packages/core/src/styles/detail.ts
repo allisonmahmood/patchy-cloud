@@ -1,7 +1,7 @@
 /**
  * The parts `ui/detail.ts` draws for a Detail page's tabs: a chip that opens a menu of links, a
  * table's group headings and expanding rows, the Settings template inside a tab, a Copy button
- * that waits hidden for the copy script, a person beside their mark and a refusal that takes focus.
+ * that waits hidden for the copy script and a person beside their mark.
  */
 export const detail = `
     button.chip { cursor: pointer; }
@@ -22,6 +22,4 @@ export const detail = `
     .btn[data-copy][hidden] { display: none; }
 
     .person { display: inline-flex; align-items: center; gap: var(--space-2); vertical-align: middle; }
-    .refusal:focus { outline: none; }
-    .refusal:focus-visible > .notice { outline: 2px solid var(--ink); outline-offset: 2px; }
 `;

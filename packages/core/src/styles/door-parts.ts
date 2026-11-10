@@ -1,7 +1,7 @@
 /**
  * What doors hold: the code a person compares, who meets whom before consent, the can and can't
  * list (which flows draw too), two answers of equal weight, a form's fields set apart from the
- * words above them, a refusal's focus target, and a sign-out form that sits in the foot's line.
+ * words above them, and a sign-out form that sits in the foot's line.
  */
 export const doorParts = `
     .code-display {
@@ -36,8 +36,6 @@ export const doorParts = `
     .btn-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); width: 100%; }
 
     .door-body > form:has(.fieldset) { margin-top: var(--space-5); }
-    /* refusal: where the page's focus starts, read first and never drawn as a control. */
-    .refusal:focus { outline: none; }
     .door-foot form { display: inline; }
     .door-foot .btn-sm { vertical-align: baseline; }
 `;

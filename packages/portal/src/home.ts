@@ -1,12 +1,11 @@
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { guestReasonText } from "@patchy/api";
-import type { RequireSession } from "@patchy/auth";
+import type { EndedAccess, RequireSession } from "@patchy/auth";
 import {
   ago,
   attentionRow,
   avatar,
-  badge,
   copyButton,
   copyScriptPath,
   dateLabel,
@@ -33,8 +32,12 @@ import type { ConnectionAttention } from "@patchy/integrations";
 import type { GuestGrants, Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
 import {
+  byTitle as titled,
   cardPath,
+  failedBadge,
   failedLog,
+  failuresCell,
+  failuresColumn,
   firstClause,
   isNew,
   manages,
@@ -56,9 +59,6 @@ type Viewer = RequireSession.Viewer["Service"];
 type Row = Patches.ReadPatch;
 const epoch = (iso: string) => Date.parse(iso);
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-const byTitle = (a: Row, b: Row) =>
-  patchTitle(a.patch).localeCompare(patchTitle(b.patch)) ||
-  a.patch.name.localeCompare(b.patch.name);
 const kind = (row: Row) => (isPage(row) ? "Page" : "Tool");
 const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;
 /** When a list says something changed: "2 hours ago" for a week, then the date, its year only if another. */
@@ -73,9 +73,9 @@ const when = (iso: string, now: number) => {
  * page is live", with Open and Copy link. Home shows it for the day after, and the guide's watch
  * puts it in Home's notices when the publication lands while Home is open.
  */
-export const renderPublishedNote = (row: Row, publicBaseUrl: string): string => {
+export const renderPublishedNote = (row: Row, company: string, publicBaseUrl: string): string => {
   const { patch } = row;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, company);
   const url = `${publicBaseUrl.replace(/\/+$/u, "")}${patchAddress(patch)}`;
   return notice({
     tone: "info",
@@ -100,6 +100,8 @@ export interface HomeInput {
   readonly calls?: ReadonlyMap<string, InvocationLog.CallSummary>;
   /** The company's connections that need an admin; empty for anyone else. */
   readonly connections: ReadonlyArray<ConnectionAttention.Attention>;
+  /** The viewer's own apps and computers whose access ended on its own lately. */
+  readonly ended: ReadonlyArray<EndedAccess>;
   /** How many guests each of the viewer's own patches has, by name. */
   readonly guests: ReadonlyMap<string, number>;
   /** The viewer's patches whose guests can't open them now, by id, so Yours never claims they can. */
@@ -115,7 +117,7 @@ export interface HomeInput {
 const sharedSection = (shared: readonly GuestGrants.Shared[]) => {
   if (shared.length === 0) return "";
   const entry = (item: GuestGrants.Shared) => {
-    const title = patchTitle(item);
+    const title = patchTitle(item, item.company.name);
     const address = `/${encodeURIComponent(item.company.handle)}/${encodeURIComponent(item.name)}`;
     const open = Option.isNone(item.unavailable);
     return row({
@@ -145,41 +147,42 @@ const sharedSection = (shared: readonly GuestGrants.Shared[]) => {
 export const renderHome = (input: HomeInput): Template => {
   const { viewer, opens, now, calls } = input;
   const company = viewer.company.name;
+  const title = (entry: Row) => patchTitle(entry.patch, company);
+  const byTitle = titled(company);
   const live = input.rows.filter((entry) => entry.patch.state === "live");
   const mine = (entry: Row) => entry.owner.id === viewer.user.id;
   const owner = (entry: Row) => (mine(entry) ? "You" : firstName(entry.owner.name));
   // Session-free opens of a public page are never recorded, so it can't be new to anyone.
   const fresh = (entry: Row) => entry.patch.scope !== "public" && isNew(entry, viewer, opens, now);
-  const menu = (entry: Row, list: string) => {
-    const title = patchTitle(entry.patch);
-    return rowMenu(`${list}-${entry.patch.id}`, title, [
+  const menu = (entry: Row, list: string) =>
+    rowMenu(`${list}-${entry.patch.id}`, title(entry), [
       ...openItems(entry, viewer, input.publicBaseUrl, "/"),
       ...(manages(entry, viewer)
-        ? [menuLink(cardPath(entry.patch, "settings"), "Settings", false, title)]
+        ? [menuLink(cardPath(entry.patch, "settings"), "Settings", false, title(entry))]
         : [])
     ]);
-  };
   const failed = (entry: Row) => calls?.get(entry.patch.id)?.failures ?? 0;
   // A table row's patch: its mark, its title opening it, a dot while it's new to the viewer, the
   // description's first clause, and, on a phone, what the hidden columns would warn about.
   const patchCell = (entry: Row) => {
-    const failures = mine(entry) ? failed(entry) : 0;
-    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${escapeHtml(patchTitle(entry.patch))}</a>${fresh(entry) ? ' <span class="unseen" role="img" aria-label="New to you"></span>' : ""}</span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures > 0 ? `<span class="show-sm">${badge(`${failures} failed`, "danger")}</span>` : ""}</div></div>`;
+    const failures = mine(entry) ? failedBadge(entry.patch, calls?.get(entry.patch.id)) : "";
+    return `<div class="cell-name">${patchMark(entry.patch.name, entry.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(patchAddress(entry.patch))}">${escapeHtml(title(entry))}</a>${fresh(entry) ? ' <span class="unseen" role="img" aria-label="New to you"></span>' : ""}</span><span class="row-desc">${escapeHtml(firstClause(entry.patch.description) || "No description")}</span>${failures === "" ? "" : `<span class="show-sm">${failures}</span>`}</div></div>`;
   };
 
-  // Needs attention: the viewer's own tools that failed in the last 24 hours, and, for admins, the
-  // company's connections that need one. Each says what broke and has the one action that fixes it.
+  // Needs attention: the viewer's own tools that failed in the last 24 hours, for admins the
+  // company's connections that need one, then the viewer's own apps and computers whose access
+  // ended. Each says what broke and has the one action that fixes it.
   const failing = live.filter((entry) => mine(entry) && failed(entry) > 0).sort(byTitle);
   const attention = [
     ...failing.map((entry) =>
       attentionRow({
         lead: patchMark(entry.patch.name, entry.tier),
-        name: patchTitle(entry.patch),
+        name: title(entry),
         href: patchAddress(entry.patch),
         problem: `${plural(failed(entry), "call", "calls")} failed in the last 24 hours`,
         fix: linkButton("View log", failedLog(entry.patch), {
           size: "sm",
-          ariaLabel: `View the failed calls of ${patchTitle(entry.patch)}`
+          ariaLabel: `View the failed calls of ${title(entry)}`
         })
       })
     ),
@@ -192,6 +195,18 @@ export const renderHome = (input: HomeInput): Template => {
         fix: linkButton(connection.fix.label, connection.fix.href, {
           size: "sm",
           ariaLabel: `${connection.fix.label.replace(/…$/u, "")} ${connection.name}`
+        })
+      })
+    ),
+    ...input.ended.map((access) =>
+      attentionRow({
+        lead: access.mark,
+        name: access.name,
+        href: "/agents",
+        problem: `Access ended ${dateLabel(access.endedAt)}`,
+        fix: linkButton("Reconnect", access.reconnect, {
+          size: "sm",
+          ariaLabel: `Reconnect ${access.name}`
         })
       })
     )
@@ -261,7 +276,7 @@ export const renderHome = (input: HomeInput): Template => {
         body: usualTiles(
           usual.map((entry) => ({
             mark: patchMark(entry.patch.name, entry.tier),
-            name: patchTitle(entry.patch),
+            name: title(entry),
             meta: `${kind(entry)} · ${owner(entry)}`,
             href: patchAddress(entry.patch)
           }))
@@ -283,14 +298,14 @@ export const renderHome = (input: HomeInput): Template => {
             newest.map((entry) =>
               row({
                 lead: patchMark(entry.patch.name, entry.tier),
-                name: patchTitle(entry.patch),
+                name: title(entry),
                 href: patchAddress(entry.patch),
                 description: `${kind(entry)} · ${entry.owner.name} · ${ago(entry.patch.createdAt, now)}`,
                 end: linkButton("Open", patchAddress(entry.patch), {
                   size: "sm",
                   icon: "external",
                   newTab: true,
-                  ariaLabel: `Open ${patchTitle(entry.patch)} in a new tab`
+                  ariaLabel: `Open ${title(entry)} in a new tab`
                 })
               })
             ),
@@ -311,13 +326,6 @@ export const renderHome = (input: HomeInput): Template => {
         ? `Company · ${plural(guests, "guest can’t", "guests can’t")} open it`
         : `Company + ${plural(guests, "guest", "guests")}`;
   };
-  const failures = (entry: Row) => {
-    const summary = calls?.get(entry.patch.id);
-    if (isPage(entry) || summary === undefined) return '<span class="muted">—</span>';
-    return summary.failures > 0
-      ? badge(`${summary.failures} failed`, "danger")
-      : `<span class="muted">${summary.calls === 0 ? "No calls yet" : "None"}</span>`;
-  };
   const yoursSection = yours.length
     ? region({
         id: "yours",
@@ -327,14 +335,14 @@ export const renderHome = (input: HomeInput): Template => {
           columns: [
             { label: "Patch" },
             { label: "Access", hideOnPhone: true },
-            ...(tools ? [{ label: "Failures (24 h)", hideOnPhone: true }] : []),
+            ...(tools ? [failuresColumn] : []),
             { label: "Actions", hidden: true, align: "end" as const }
           ],
           rows: yours.map((entry) => [
             patchCell(entry),
             escapeHtml(access(entry)),
-            ...(tools ? [failures(entry)] : []),
-            `<div class="btn-group btn-group-end"><span class="hide-sm">${linkButton("Share", shareHref("/", entry.patch.name), { kind: "quiet", size: "sm", icon: "share", ariaLabel: `Share ${patchTitle(entry.patch)}` })}</span>${menu(entry, "yours")}</div>`
+            ...(tools ? [failuresCell(entry.patch, calls?.get(entry.patch.id))] : []),
+            `<div class="btn-group btn-group-end"><span class="hide-sm">${linkButton("Share", shareHref("/", entry.patch.name), { kind: "quiet", size: "sm", icon: "share", ariaLabel: `Share ${title(entry)}` })}</span>${menu(entry, "yours")}</div>`
           ])
         })
       })

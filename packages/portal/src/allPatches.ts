@@ -28,8 +28,12 @@ import {
 import type { Patches } from "@patchy/patches";
 import type { InvocationLog } from "@patchy/runtime";
 import {
+  byTitle,
   cardPath,
+  failedBadge,
   failedLog,
+  failuresCell,
+  failuresColumn,
   firstClause,
   hidden,
   isNew,
@@ -89,7 +93,7 @@ const attentionOf = (
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, viewer.company.name);
   // A deletion about to be reclaimed is the more urgent of the two.
   if (patch.state === "deleted" && patch.purgeAt !== null) {
     const deadline = epoch(patch.purgeAt);
@@ -139,7 +143,7 @@ const actions = (
 ) => {
   const { patch } = row;
   const { now } = input;
-  const title = patchTitle(patch);
+  const title = patchTitle(patch, viewer.company.name);
   const items = openItems(row, viewer, input.publicBaseUrl, input.here);
   if (!manages(row, viewer)) return rowMenu(patch.id, title, items);
   const manage = [
@@ -160,23 +164,32 @@ const actions = (
   return rowMenu(patch.id, title, [...items, '<hr class="menu-rule">', ...manage]);
 };
 
-/** All patches at a filter, search and page; the first page and All leave their parameter out. */
-export const listPath = (show: Show, query: string, page = 1) => {
+/** What All patches lists: a filter, the sidebar's search, and one person's patches. */
+export interface Listing {
+  readonly show: Show;
+  readonly query: string;
+  /** Only the patches this person owns, by user id; `""` for everyone's. */
+  readonly owner: string;
+}
+
+/**
+ * All patches at a listing and page; All, no search, everyone's and the first page leave their
+ * parameter out.
+ */
+export const listPath = ({ show, query, owner }: Listing, page = 1) => {
   const params = new URLSearchParams();
   if (show !== "all") params.set("show", show);
+  if (owner) params.set("owner", owner);
   if (query) params.set("q", query);
   if (page > 1) params.set("page", String(page));
   const search = params.toString();
   return search ? `/patches?${search}` : "/patches";
 };
 
-const byTitle = (a: Patches.ReadPatch, b: Patches.ReadPatch) =>
-  patchTitle(a.patch).localeCompare(patchTitle(b.patch)) ||
-  a.patch.name.localeCompare(b.patch.name);
-
 /**
  * All patches at `/patches`: every patch the viewer can open, A–Z, filtered by `?show=`, searched
- * by the sidebar's `?q=`, which shows as a chip, and paged by `?page=`. Its title opens a live
+ * by the sidebar's `?q=` and narrowed to one person's by `?owner=` (People's See their patches),
+ * each of those two shown as a chip that clears it, and paged by `?page=`. Its title opens a live
  * patch; Share sits on the rows the viewer owns, and each row's other acts in its menu.
  */
 export const renderAllPatches = (input: {
@@ -184,6 +197,8 @@ export const renderAllPatches = (input: {
   readonly viewer: Viewer;
   readonly show: Show;
   readonly query: string;
+  /** Only this member's patches, from `?owner=`; absent for everyone's. */
+  readonly owner?: { readonly id: string; readonly name: string };
   /** The page asked for, from 1; past the last it is the last. */
   readonly page: number;
   readonly now: number;
@@ -200,7 +215,8 @@ export const renderAllPatches = (input: {
   /** Why guests can't open each patch with guests that turns them away; absent for a member. */
   readonly turnedAway?: ReadonlyMap<string, GuestReason>;
 }) => {
-  const { viewer, now, show, query, names } = input;
+  const { viewer, now, show, query, names, owner } = input;
+  const listing: Listing = { show, query, owner: owner?.id ?? "" };
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
@@ -217,13 +233,19 @@ export const renderAllPatches = (input: {
     off: input.rows.filter((row) => row.patch.state !== "live")
   };
   const found = (tab: Show) =>
-    (query ? lists[tab].filter((row) => matches(row, query)) : [...lists[tab]]).sort(byTitle);
+    lists[tab]
+      .filter(
+        (row) =>
+          (query === "" || matches(row, query)) &&
+          (owner === undefined || row.owner.id === owner.id)
+      )
+      .sort(byTitle(viewer.company.name));
   const entries = found(show);
 
   const pages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const current = Math.min(Math.max(1, input.page), pages);
   const shown = entries.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-  const here = listPath(show, query, current);
+  const here = listPath(listing, current);
 
   // Needs attention and Retired and deleted show only when they hold something, or are open.
   const filter = segmented({
@@ -235,21 +257,36 @@ export const renderAllPatches = (input: {
       )
       .map((tab) => ({
         label: showLabels[tab],
-        href: listPath(tab, query),
+        href: listPath({ ...listing, show: tab }),
         count: found(tab).length
       }))
   });
-  const searched = query
-    ? `<span class="grow">${chip({ key: "Matching", value: query, href: listPath(show, ""), on: true })}</span>`
-    : "";
+  const chips = [
+    ...(owner === undefined
+      ? []
+      : [
+          chip({
+            key: "Owner",
+            value: owner.name,
+            href: listPath({ ...listing, owner: "" }),
+            on: true
+          })
+        ]),
+    ...(query
+      ? [
+          chip({
+            key: "Matching",
+            value: query,
+            href: listPath({ ...listing, query: "" }),
+            on: true
+          })
+        ]
+      : [])
+  ];
+  const searched = chips.length > 0 ? `<span class="grow cluster">${chips.join("")}</span>` : "";
 
   // On a phone, where Failures is gone, a failing tool says so under its name.
-  const failed = (patch: Patches.Patch) => {
-    const failures = input.calls?.get(patch.id)?.failures ?? 0;
-    return failures === 0
-      ? ""
-      : `<a href="${escapeAttribute(failedLog(patch))}">${badge(`${failures} failed`, "danger")}</a>`;
-  };
+  const failed = (patch: Patches.Patch) => failedBadge(patch, input.calls?.get(patch.id));
   const patchCell = (row: Patches.ReadPatch, phone = "") => {
     const { patch } = row;
     // A live patch's title opens it, as on Home; an off one's leads to its card.
@@ -258,7 +295,7 @@ export const renderAllPatches = (input: {
       ? ' <span class="unseen" role="img" aria-label="New to you"></span>'
       : "";
     const line = firstClause(patch.description);
-    return `<div class="cell-name">${patchMark(patch.name, row.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(href)}">${escapeHtml(patchTitle(patch))}</a>${fresh}</span>${line ? `<span class="row-desc">${escapeHtml(line)}</span>` : ""}${phone ? `<span class="show-sm">${phone}</span>` : ""}</div></div>`;
+    return `<div class="cell-name">${patchMark(patch.name, row.tier)}<div class="row-main"><span class="row-name"><a class="row-link" href="${escapeAttribute(href)}">${escapeHtml(patchTitle(patch, viewer.company.name))}</a>${fresh}</span>${line ? `<span class="row-desc">${escapeHtml(line)}</span>` : ""}${phone ? `<span class="show-sm">${phone}</span>` : ""}</div></div>`;
   };
   // The owner by first name, as the avatar beside it narrows them down, or You; a deactivated one
   // says so under it.
@@ -320,12 +357,6 @@ export const renderAllPatches = (input: {
     const shares = shown.some(
       (row) => row.patch.state === "live" && row.owner.id === viewer.user.id
     );
-    const failuresCell = ({ patch }: Patches.ReadPatch) => {
-      const summary = input.calls?.get(patch.id);
-      if (summary === undefined) return '<span class="muted">—</span>';
-      if (summary.failures > 0) return failed(patch);
-      return `<span class="muted">${summary.calls === 0 ? "No calls yet" : "None"}</span>`;
-    };
     const access = ({ patch }: Patches.ReadPatch) => {
       if (patch.scope === "public") return "Public";
       const count = input.guests.get(patch.name) ?? 0;
@@ -337,7 +368,7 @@ export const renderAllPatches = (input: {
             kind: "quiet",
             size: "sm",
             icon: "share",
-            ariaLabel: `Share ${patchTitle(row.patch)}`
+            ariaLabel: `Share ${patchTitle(row.patch, viewer.company.name)}`
           })
         : "";
     return table({
@@ -348,8 +379,7 @@ export const renderAllPatches = (input: {
         { label: "Updated", hideOnPhone: true, nowrap: true },
         { label: "Visits", align: "end", hideOnPhone: true, nowrap: true },
         { label: "Access", hideOnPhone: true, nowrap: true },
-        // The call summary covers the last 24 hours, which the header says.
-        ...(failures ? [{ label: "Failures (24 h)", hideOnPhone: true, nowrap: true }] : []),
+        ...(failures ? [failuresColumn] : []),
         ...(shares
           ? [
               {
@@ -369,7 +399,7 @@ export const renderAllPatches = (input: {
         `<time class="muted" datetime="${escapeAttribute(row.publishedAt)}">${escapeHtml(ago(row.publishedAt, now))}</time>`,
         escapeHtml(row.visits),
         access(row),
-        ...(failures ? [failuresCell(row)] : []),
+        ...(failures ? [failuresCell(row.patch, input.calls?.get(row.patch.id))] : []),
         ...(shares ? [shareCell(row)] : []),
         menuCell(row)
       ])
@@ -389,7 +419,7 @@ export const renderAllPatches = (input: {
   };
   // A search that finds no live patch at all offers the line that has an agent build one.
   const missing = emptyState(
-    query && found("all").length === 0
+    query && owner === undefined && found("all").length === 0
       ? {
           title: `No patches match “${query}”`,
           body: "Hand this to your agent and it can build one.",
@@ -397,7 +427,9 @@ export const renderAllPatches = (input: {
         }
       : query
         ? { title: `No patches match “${query}”` }
-        : empty[show]
+        : owner !== undefined
+          ? { title: `${owner.name} has no patches here` }
+          : empty[show]
   );
 
   const from = (current - 1) * PAGE_SIZE + 1;
@@ -407,7 +439,7 @@ export const renderAllPatches = (input: {
     content: `${entries.length ? content : `<div class="box">${missing}</div>`}<script defer src="${copyScriptPath}"></script>`,
     ...(pages > 1
       ? {
-          pagination: `<span>${from}–${from + shown.length - 1} of ${entries.length}</span><span class="cluster">${current > 1 ? linkButton("Previous", listPath(show, query, current - 1), { size: "sm" }) : ""}${current < pages ? linkButton("Next", listPath(show, query, current + 1), { size: "sm" }) : ""}</span>`
+          pagination: `<span>${from}–${from + shown.length - 1} of ${entries.length}</span><span class="cluster">${current > 1 ? linkButton("Previous", listPath(listing, current - 1), { size: "sm" }) : ""}${current < pages ? linkButton("Next", listPath(listing, current + 1), { size: "sm" }) : ""}</span>`
         }
       : {})
   });

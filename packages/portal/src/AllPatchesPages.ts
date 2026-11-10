@@ -29,7 +29,9 @@ import { searchQuery } from "./shared/presentation.js";
 
 /**
  * All patches at `/patches`: every patch the viewer can open, in `?show=` filters, searched by the
- * sidebar's `?q=` and paged by `?page=`. A refused Share form draws it again with the dialog open.
+ * sidebar's `?q=`, narrowed to one member's by `?owner=<user id>` and paged by `?page=`. An owner
+ * who isn't a member here narrows nothing. A refused Share form draws it again with the dialog
+ * open.
  */
 export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page")(function* (
   refused?: Sharing
@@ -44,6 +46,7 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
   const opens = new Map((yield* patches.opens(viewer.user.id)).map((open) => [open.patchId, open]));
   yield* prewarm(rows, opens);
   const members = yield* (yield* Users.Users).list(viewer.company.id);
+  const owner = members.find((member) => member.id === params.get("owner"));
   // How many guests each patch has, by name, from the company's guests and what each holds.
   const guests = new Map<string, number>();
   for (const guest of yield* (yield* GuestGrants.GuestGrants).companyGuests(viewer.company.id))
@@ -61,6 +64,9 @@ export const page: (refused?: Sharing) => Page = Effect.fn("AllPatchesPages.page
         viewer,
         show,
         query,
+        ...(owner === undefined
+          ? {}
+          : { owner: { id: owner.id, name: owner.name.trim() || owner.email } }),
         page: Number.parseInt(params.get("page") ?? "", 10) || 1,
         now: yield* Clock.currentTimeMillis,
         publicBaseUrl: session.publicBaseUrl,

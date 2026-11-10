@@ -6,10 +6,3 @@
  */
 export const refusal = (notice: string) =>
   `<div class="refusal" tabindex="-1" autofocus>${notice}</div>`;
-
-/**
- * A control for what is typed exactly, such as a company's address or a handle: a phone neither
- * capitalises, corrects nor spell-checks it. Wraps `input` or `prefixInput` output.
- */
-export const typedExactly = (control: string) =>
-  control.replace(/<input\b/, '<input autocapitalize="none" autocorrect="off" spellcheck="false"');

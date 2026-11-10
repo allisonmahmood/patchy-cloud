@@ -59,8 +59,9 @@ export const pageFindings = (file: string, source: string): Finding[] => {
   add("passes styles to pageResponse", /\bstyles:\s/g);
   add("writes <style>", /<style\b/g);
   add("sets an inline style", /\sstyle="/g);
-  // A <button>, or anything else drawn as one, such as a link with the btn class.
-  add("draws a button", /<button\b|<(?!button\b)[a-z]+\b[^>]*class="btn\b/g);
+  // A <button>, or anything else drawn as one, such as a link with the btn class; `btn-group`,
+  // which only lays buttons out, is not one.
+  add("draws a button", /<button\b|<(?!button\b)[a-z]+\b[^>]*class="btn(?=[\s"])/g);
   add("draws a badge", /class="(pill|tag|badge)\b/g);
   add("draws a notice", /class="(note|notice)\b/g);
   add("draws a field", /<(input(?![^>]*type="hidden")|textarea|select)\b/g);

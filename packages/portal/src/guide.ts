@@ -1,10 +1,11 @@
-import { confirmForm, type RequireSession } from "@patchy/auth";
+import { confirmForm, getAnAgent, type RequireSession } from "@patchy/auth";
 import {
   button,
   copyButton,
   copyLine,
   copyScriptPath,
   dialog,
+  disclosure,
   escapeAttribute,
   escapeHtml,
   flowPage,
@@ -121,7 +122,7 @@ export const renderSetupSteps = (input: {
   const setup = `Set up Patchy using ${base}/llms.txt${input.setupLink === undefined ? "" : `?s=${input.setupLink}`}`;
   const { state, viewer } = input;
   const line = (status: string) =>
-    `${copyLine(setup, "Setup line, select to copy", "the setup line")}<p class="meta">Works in Claude Code, Codex, Cursor or any agent that runs commands on your computer.</p>${status}<details><summary>No agent yet?</summary><p class="meta">An agent is an AI assistant that works on your computer, like Claude Code, Codex or Cursor. Install one, then come back: this step waits for you here.</p></details>`;
+    `${copyLine(setup, "Setup line, select to copy", "the setup line")}<p class="meta">Works in Claude Code, Codex, Cursor or any agent that runs commands on your computer.</p>${status}${disclosure("No agent yet?", getAnAgent)}`;
   const give = (stage: Step["state"], body: string): Step => ({
     title: "Give your agent this line",
     state: stage,

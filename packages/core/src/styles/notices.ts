@@ -1,7 +1,8 @@
 /**
  * Notices and receipts. A notice is info, warning or danger, at most one a page, beside what it
  * is about; there is no success notice. A receipt is one quiet line saying what the last form
- * did, shown once at the top of the page it lands on.
+ * did, shown once at the top of the page it lands on. A refusal holds a notice and takes the
+ * page's focus.
  */
 export const notices = `
     .note, .notice {
@@ -30,6 +31,10 @@ export const notices = `
     .notice-danger > svg { color: var(--danger); }
     .notice-body { grid-column: 2; }
     .notice > .notice-action { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
+    /* refusal: a notice no field owns, where the page's focus starts. It is read first, never
+       drawn as a control; from the keyboard the ring goes round the notice it holds. */
+    .refusal:focus { outline: none; }
+    .refusal:focus-visible > .notice { outline: 2px solid var(--ink); outline-offset: 2px; }
 
     /* note-inline: a note laid out as one row, its text then its actions. */
     .note-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); }

@@ -154,7 +154,10 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(html, " novalidate>");
       assert.include(html, `for="company-handle">${new URL(base).host}/</label>`);
       // A phone neither capitalises nor corrects the address.
-      assert.include(html, '<input autocapitalize="none" autocorrect="off" spellcheck="false"');
+      assert.match(
+        html,
+        /<input [^>]*name="handle"[^>]* autocapitalize="none" autocorrect="off" spellcheck="false"/
+      );
       assert.include(html, 'action="/logout"');
       assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
       // A no-referrer policy nulls a browser form's Origin and breaks the CSRF check.

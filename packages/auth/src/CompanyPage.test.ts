@@ -692,6 +692,11 @@ it.layer(services)("company page and actions", (it) => {
       assert.deepStrictEqual(shown(yield* page("/settings/people?show=deactivated")), [gone.email]);
       const searched = yield* page("/settings/people?q=+QUILL+");
       assert.deepStrictEqual(shown(searched), [member.email]);
+      // See their patches narrows All patches to their own, by id, never by a name search.
+      assert.include(
+        searched,
+        `href="/patches?owner=${member.id}" aria-label="See their patches, Zed Quill"`
+      );
       // Each filter counts what the search leaves in it, and keeps the search.
       assert.include(
         searched,

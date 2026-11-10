@@ -13,6 +13,7 @@ import * as WideEvents from "@patchy/analytics/wide-events";
 import { agentTools, PatchState } from "@patchy/api";
 import { AgentConnections, pageResponse, Receipt, RequireSession } from "@patchy/auth";
 import { Companies, Users } from "@patchy/companies";
+import { patchTitle } from "@patchy/core";
 import { Patches } from "@patchy/patches";
 import { ConnectionStore } from "@patchy/integrations";
 import { InvocationLog } from "@patchy/runtime";
@@ -29,7 +30,6 @@ import {
   renderPatchPage,
   renderSettings,
   renderVersions,
-  shownTitle,
   tabTitle
 } from "./render.js";
 import {
@@ -340,7 +340,7 @@ export const render: (name: string, options?: CardOptions) => Page = Effect.fn("
     const aside = tab === "overview" ? yield* agentAside(card) : "";
     const failures =
       tab === "overview" ? (yield* callSummary([selected]))?.get(patch.id)?.failures : undefined;
-    const title = shownTitle(patch, viewer.company.name);
+    const title = patchTitle(patch, viewer.company.name);
     const confirmation =
       confirm === undefined
         ? undefined
@@ -459,7 +459,7 @@ const logPage = Effect.fn("PatchPages.logPage")(function* (name: string) {
         .list(viewer.company.id)
         .pipe(Effect.orElseSucceed(() => []))
     : [];
-  const title = shownTitle(card.patch, viewer.company.name);
+  const title = patchTitle(card.patch, viewer.company.name);
   return pageResponse(
     {
       title: tabTitle(title, "log"),
@@ -553,7 +553,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
             selectedOwnerId: form.user ?? ""
           })
         });
-  const title = shownTitle(selected.patch, viewer.company.name);
+  const title = patchTitle(selected.patch, viewer.company.name);
   // A done act lands on its tab with a receipt naming what it did, from the patch as read.
   const landed = (receipt: string) =>
     Receipt.set(
@@ -585,7 +585,7 @@ const post = Effect.fn("PatchPages.post")(function* (name: string, action: Patch
         );
         yield* WideEvents.enrich(Patches.eventFields(rolledBack.patch));
         return landed(
-          `${shownTitle(rolledBack.patch, viewer.company.name)} now serves v${rolledBack.currentVersion}`
+          `${patchTitle(rolledBack.patch, viewer.company.name)} now serves v${rolledBack.currentVersion}`
         );
       }
       case "restore": {

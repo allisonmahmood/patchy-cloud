@@ -10,6 +10,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Analytics } from "@patchy/analytics";
 import {
+  endedAccess,
   MachineTokens,
   pageResponse,
   RequireSession,
@@ -238,16 +239,24 @@ export const page: (refused?: Sharing) => Page = Effect.fn("HomePages.page")(fun
     .pipe(Effect.catchTags({ ConnectionStorageFailed: Effect.die }));
   const calls = yield* callSummary(rows);
   const guests = yield* guestCounts(rows);
+  const ended = yield* endedAccess(viewer.user.id);
   const home = renderHome({
     rows,
     viewer,
     opens,
     now,
     publicBaseUrl: session.publicBaseUrl,
-    connect: machine === null && finalStep === undefined,
-    ...(first === undefined ? {} : { note: renderPublishedNote(first, session.publicBaseUrl) }),
+    // A computer whose access ended offers its own Reconnect in Needs attention instead.
+    connect:
+      machine === null &&
+      finalStep === undefined &&
+      !ended.some((access) => access.kind === "computer"),
+    ...(first === undefined
+      ? {}
+      : { note: renderPublishedNote(first, viewer.company.name, session.publicBaseUrl) }),
     ...(calls === undefined ? {} : { calls }),
     connections: yield* connectionsNeedingAttention(),
+    ended,
     guests,
     turnedAway: new Set(guests.size === 0 ? [] : ((yield* turnedAway(rows))?.keys() ?? [])),
     shared
@@ -306,7 +315,7 @@ const guideSteps = Effect.fn("HomePages.guideSteps")(function* () {
   const watching = new URL(request.url, session.publicBaseUrl).searchParams.get("mode") === "watch";
   const { state, setupLink } = yield* setupState();
   const html = watching
-    ? `<div data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${state.kind}">${state.kind === "live" ? renderPublishedNote(state.row, session.publicBaseUrl) : ""}</div>`
+    ? `<div data-guide-steps data-viewer="${escapeAttribute(viewer.user.id)}" data-state="${state.kind}">${state.kind === "live" ? renderPublishedNote(state.row, viewer.company.name, session.publicBaseUrl) : ""}</div>`
     : renderSetupSteps({
         state,
         viewer,

@@ -7,6 +7,7 @@ import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
 import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
+import { disclosures } from "./disclosures.js";
 import { doorParts } from "./door-parts.js";
 import { doors } from "./doors.js";
 import { fieldRows } from "./field-rows.js";
@@ -70,7 +71,8 @@ export const chunks = {
   usual,
   visibility,
   detail,
-  checklist
+  checklist,
+  disclosures
 } as const;
 
 export type ChunkName = keyof typeof chunks;

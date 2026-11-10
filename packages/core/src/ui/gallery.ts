@@ -1,4 +1,13 @@
-import { agentMark, avatar, choiceCards, patchMark, tileOptions } from "../components.js";
+import {
+  agentMark,
+  avatar,
+  choiceCards,
+  menuCopy,
+  menuLink,
+  patchMark,
+  rowMenu,
+  tileOptions
+} from "../components.js";
 import { copyLine, copyScriptPath } from "../copy-line.js";
 import { tokens } from "../styles/tokens.js";
 import { escapeHtml } from "../escape.js";
@@ -22,11 +31,24 @@ import { behindTheScenes, changeEntry } from "./changelog.js";
 import { choiceLinks } from "./choice-links.js";
 import { computerMark } from "./computer-mark.js";
 import { copyButton } from "./copy-button.js";
-import { canList } from "./door.js";
+import { disclosure } from "./disclosure.js";
+import { checklist } from "./checklist.js";
+import {
+  chipMenu,
+  codeRow,
+  groupedTable,
+  menuNewTab,
+  menuRule,
+  person,
+  refusalNotice,
+  settingsPanel
+} from "./detail.js";
+import { answerPair, canList, meet, verificationCode } from "./door.js";
 import { region } from "./region.js";
 import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 import { flowOutcome } from "./flow-outcome.js";
 import { productMark } from "./product-mark.js";
+import { refusal } from "./refusal.js";
 import {
   card,
   chip,
@@ -59,14 +81,25 @@ import { usualTiles } from "./usual.js";
  */
 export const galleryPath = "/~ui";
 
-/** The gallery's pages: the system, each template, and a dialog over the system. */
+/**
+ * The gallery's pages: the system, each template, the states that take the page's focus or end
+ * a door, each on a page of its own, and dialogs over the system.
+ */
 export const galleryPages = [
   "",
   "index",
   "detail",
+  "refused",
   "settings",
   "flow",
+  "checklist-refused",
+  "checklist-none",
   "door",
+  "door-refused",
+  "door-field",
+  "door-outcome",
+  "door-unavailable",
+  "consent",
   "dialog",
   "final"
 ] as const;
@@ -152,7 +185,7 @@ const buttons = demo(
 
 const fields = demo(
   "Fields",
-  `<div class="fields">${field({ id: "g-name", label: "Name", control: (aria) => input(aria, { name: "name", value: "Brightline Studio" }) })}${field({ id: "g-desc", label: "Description", hint: "One line on what this database is for.", optional: true, control: (aria) => input(aria, { name: "description" }) })}${field({ id: "g-handle", label: "Name", hint: "Patches use this name, which can't be changed later.", error: "Lowercase letters, digits and hyphens only.", control: (aria) => prefixInput(aria, { name: "handle", prefix: "attio/", value: "CRM Main" }) })}${field({ id: "g-key", label: "Access token", control: (aria) => secretInput(aria, { name: "key", value: "secret-sample-value", autocomplete: "off" }) })}${field(
+  `<div class="fields">${field({ id: "g-name", label: "Name", control: (aria) => input(aria, { name: "name", value: "Brightline Studio" }) })}${field({ id: "g-desc", label: "Description", hint: "One line on what this database is for.", optional: true, control: (aria) => input(aria, { name: "description" }) })}${field({ id: "g-handle", label: "Name", hint: "Patches use this name, which can't be changed later.", error: "Lowercase letters, digits and hyphens only.", control: (aria) => prefixInput(aria, { name: "handle", prefix: "attio/", value: "CRM Main", exact: true }) })}${field({ id: "g-key", label: "Access token", control: (aria) => secretInput(aria, { name: "key", value: "secret-sample-value", autocomplete: "off" }) })}${field(
     {
       id: "g-role",
       label: "Role",
@@ -182,6 +215,10 @@ const fields = demo(
     ["Focus", "2px ink ring outside and a 1px ink edge inside"],
     ["Refused", "danger edge, aria-invalid, the error under it, linked by aria-describedby"],
     ["Prefix", "the fixed part fused before the input, a label that focuses it"],
+    [
+      "Exact",
+      "what is typed exactly, such as a handle: a phone neither capitalises nor corrects it"
+    ],
     ["Secret", "masked; Show appears with script and toggles the mask"],
     ["Touch", "44px tall with 16px text, so phones don't zoom"]
   ])}${stateTable("Copy line", [
@@ -367,6 +404,8 @@ const lists = demo(
       "a native popover with an ink edge and a hard shadow, under its button where the browser anchors it"
     ],
     ["Item", "a link, or a button in its own form; danger items in red"],
+    ["New tab", "Open in a new tab, named for whose it is"],
+    ["Rule", "a hairline between everyday items and destructive ones"],
     ["Escape", "closes it and focus returns to its button"]
   ])}${stateTable("Facts", [
     ["Rest", "muted labels beside values, one pair a line"],
@@ -460,10 +499,13 @@ const cards = demo(
 
 const disclosures = demo(
   "Disclosures",
-  '<details><summary>Don\'t have an agent yet?</summary><p class="prose" id="g-disclosure-answer">Claude Code, Codex or Cursor each run on your computer and can build patches.</p></details>',
+  disclosure(
+    "No agent yet?",
+    '<p class="prose" id="g-disclosure-answer">Claude Code, Codex or Cursor each run on your computer and can build patches.</p><p class="meta">Install one, then give it the setup line.</p>'
+  ),
   stateTable("Disclosure", [
     ["Closed", "the summary, with the browser's marker"],
-    ["Open", "its content under the summary"],
+    ["Open", "its parts under the summary, on one gap"],
     ["From a link", "a fragment naming something inside opens it, with script"]
   ])
 );
@@ -506,7 +548,7 @@ const homeParts = demo(
         href: "#rows"
       }))
     )
-  })}<div class="cluster">${copyButton("https://example.com/acme/kudos", { label: "Copy link", ariaLabel: "Copy link to Kudos", size: "sm" })}</div></div>`,
+  })}<div class="cluster">${copyButton("https://example.com/acme/kudos", { label: "Copy link", ariaLabel: "Copy link to Kudos", size: "sm" })}<code>acme/kudos</code>${copyButton("acme/kudos", { kind: "quiet", size: "sm", ariaLabel: "Copy the address" })}</div></div>`,
   `${stateTable("Region", [
     ["Rest", "a section whose title names it as a landmark, for a page of several"]
   ])}${stateTable("Attention row", [
@@ -518,7 +560,8 @@ const homeParts = demo(
     ["Narrow", "two a row; on a phone the name alone"]
   ])}${stateTable("Copy button", [
     ["Without script", "not there, so nothing offers a copy that can't happen"],
-    ["With script", "its label, then Copied"]
+    ["With script", "its label, then Copied"],
+    ["Quiet", "no frame, for a line's own Copy, such as an address in a header's meta"]
   ])}`
 );
 
@@ -533,6 +576,268 @@ const changes = demo(
   ])
 );
 
+const detailParts = demo(
+  "Detail parts",
+  `<div class="stack"><div class="cluster">${chipMenu({
+    id: "g-outcome",
+    key: "Outcome",
+    value: "Any",
+    choices: [
+      { label: "Any", href: "#detail-parts", current: true },
+      { label: "Failed", href: "#detail-parts" },
+      { label: "Refused", href: "#detail-parts" }
+    ]
+  })}${chipMenu({
+    id: "g-person",
+    key: "Person",
+    value: "Ada Lovelace",
+    on: true,
+    choices: [
+      { label: "Anyone", href: "#detail-parts" },
+      { label: "Ada Lovelace", href: "#detail-parts", current: true }
+    ]
+  })}${rowMenu("g-header", "New Business", [
+    menuNewTab("https://example.com/acme/new-business", "New Business"),
+    menuCopy("https://example.com/acme/new-business", "Copy link", "New Business"),
+    menuRule,
+    menuLink("#detail-parts", "Retire…", true, "New Business"),
+    menuLink("#detail-parts", "Delete…", true, "New Business")
+  ])}</div>${groupedTable({
+    label: "Log",
+    compact: true,
+    columns: [
+      { label: "Time" },
+      { label: "Person" },
+      { label: "Handler", hideOnPhone: true },
+      { label: "Outcome" }
+    ],
+    groups: [
+      {
+        label: "Today",
+        rows: [
+          {
+            id: "g-entry-failed",
+            cells: [
+              "14:02",
+              person("ada@example.com", "Ada Lovelace"),
+              "<code>deals.move</code>",
+              badge("Failed", "danger")
+            ],
+            expand: {
+              summary: "attio/crm refused the key",
+              body: '<p class="meta">records.update · 401 · 312 ms</p>'
+            }
+          },
+          {
+            id: "g-entry-open",
+            cells: [
+              "13:40",
+              person("grace@example.com", "Grace Hopper"),
+              "<code>deals.list</code>",
+              '<span class="muted">Succeeded</span>'
+            ],
+            expand: {
+              summary: "1 call",
+              body: '<p class="meta">records.query · 200 · 88 ms</p>',
+              open: true
+            }
+          }
+        ]
+      },
+      {
+        label: "Yesterday",
+        rows: [
+          {
+            cells: [
+              "17:15",
+              person("ada@example.com", "Ada Lovelace"),
+              "<code>deals.add</code>",
+              '<span class="muted">Succeeded</span>'
+            ]
+          }
+        ]
+      }
+    ]
+  })}${rows(
+    [
+      codeRow({
+        name: "deals.list",
+        description: "List open deals",
+        end: '<span class="meta">Reads</span>'
+      }),
+      codeRow({
+        name: "deals.move",
+        description: "Move a deal to another stage",
+        end: '<span class="meta">Changes</span>'
+      })
+    ],
+    true
+  )}${settingsPanel({
+    cards: [
+      card({
+        rows: [
+          settingRow({
+            title: "Owner",
+            description: "Ada Lovelace",
+            control: button("Reassign…", { type: "button", size: "sm" })
+          })
+        ]
+      })
+    ],
+    danger: card({
+      title: "Take it down",
+      danger: true,
+      rows: [
+        settingRow({
+          title: "Retire",
+          description: "Off its address until you restore it.",
+          control: button("Retire…", { type: "button", size: "sm" })
+        })
+      ]
+    })
+  })}${rows([row({ name: "A refusal over a Detail page", href: link("refused"), description: "Takes the focus when the page opens" })], true)}</div>`,
+  `${stateTable("Chip menu", [
+    ["Any", "its key and value with a chevron; its menu lists each value as a link"],
+    [
+      "Chosen",
+      "yellow with an ink edge while it narrows the list, the value marked current in its menu"
+    ],
+    ["Without script", "a native popover of links, so the URL holds the filter"]
+  ])}${stateTable("Grouped table", [
+    ["Collapsed", "each row's summary under it, closed"],
+    ["Open", "what the row opens to, in a full-width cell under it"],
+    ["From a permalink", "a fragment naming the row opens it, with script, and keeps it in view"],
+    ["Phone", "cells stay on one line; the table scrolls in its own wrapper"]
+  ])}${stateTable("Person and code row", [
+    ["Person", "a small circle of initials beside the name, as owners and callers appear"],
+    [
+      "Code row",
+      "a name typed exactly, in Geist Mono, its description beside it and what it does at its end"
+    ]
+  ])}${stateTable("Settings panel", [
+    [
+      "Rest",
+      "the Settings template's cards at the settings width inside a tab, the danger zone last"
+    ]
+  ])}${stateTable("Refusal", [
+    ["Focused", "a notice no field owns that takes the page's focus, so it is read first"],
+    ["From the keyboard", "the ring goes round the notice it holds"],
+    ["A field's own", "never this: the field's error under it, and the field takes the focus"]
+  ])}`
+);
+
+const checklistDemo = demo(
+  "Checklist",
+  `<div class="stack">${checklist({
+    id: "g-retire",
+    legend: "Which to retire",
+    name: "patch",
+    items: [
+      { value: "kudos", label: "Kudos", description: "Nothing else reads it", checked: true },
+      {
+        value: "spend",
+        label: "Spend Requests",
+        description: "Read by Timesheets (Grace Hopper)"
+      },
+      { value: "brief", label: "Kickoff brief", description: "Retired", disabled: true }
+    ]
+  })}${rows(
+    [
+      row({
+        name: "Refused, with a box to choose",
+        href: link("checklist-refused"),
+        description: "Focus starts on its first box that can be chosen"
+      }),
+      row({
+        name: "Refused, with none to choose",
+        href: link("checklist-none"),
+        description: "Focus starts on its error"
+      })
+    ],
+    true
+  )}</div>`,
+  stateTable("Checklist", [
+    ["Unchecked", "a row with its box, name and a line about it; a press on the row toggles it"],
+    ["Checked", "the box filled in ink"],
+    ["Not choosable", "the row kept but muted and its box disabled, such as a retired patch"],
+    [
+      "Refused",
+      "the error under the list, each box aria-invalid; focus starts on the first box that can be chosen, or on the error when none can"
+    ],
+    ["Hover (fine pointer)", "a faint tint on a row that can be chosen"]
+  ])
+);
+
+const adaAsParty = {
+  mark: avatar("ada@example.com", "Ada Lovelace"),
+  name: "Ada Lovelace",
+  meta: "ada@example.com"
+};
+
+const doorParts = demo(
+  "Door parts",
+  `<div class="stack">${verificationCode("WXYZ-1234")}${meet(
+    { mark: agentMark, name: "Claude", meta: "claude.ai" },
+    "wants to act as",
+    adaAsParty
+  )}${answerPair(button("Deny", { type: "button", block: true }), button("Allow", { type: "button", kind: "primary", block: true }))}${rows(
+    [
+      row({
+        name: "Device login",
+        href: link("door"),
+        description: "A code to compare, the computer's name, Confirm or Deny"
+      }),
+      row({
+        name: "Consent",
+        href: link("consent"),
+        description: "Who meets whom, what it can and can't do, Deny or Allow"
+      }),
+      row({
+        name: "Refused, no field",
+        href: link("door-refused"),
+        description: "The account changed while it was open; the notice takes the focus"
+      }),
+      row({
+        name: "Refused, a field",
+        href: link("door-field"),
+        description: "The computer's name refused; the field takes the focus"
+      }),
+      row({
+        name: "Outcome",
+        href: link("door-outcome"),
+        description: "Confirmed: go back to the terminal"
+      }),
+      row({ name: "Unavailable", href: link("door-unavailable"), description: "Try again" })
+    ],
+    true
+  )}</div>`,
+  `${stateTable("Door", [
+    [
+      "Rest",
+      "one card on the grid-and-gradient canvas: the brand, a kicker, a title, the body, one primary and a quiet secondary, and a foot such as Not you?"
+    ],
+    [
+      "Outcome",
+      "each ending its own door in the same card, such as confirmed, denied, expired or already used"
+    ],
+    [
+      "Refused, no field",
+      "a notice at the top of the body that takes the focus, such as the account changing while it was open"
+    ],
+    ["Refused, a field", "the field's error under it, and the field takes the focus"],
+    ["Unavailable", "the same card saying to try again soon, never the app's navigation"],
+    ["Phone", "the card closer to the edges, with less padding"]
+  ])}${stateTable("Verification code", [
+    ["Rest", "tabular mono at a title's size, the separator kept, so it matches as one string"],
+    ["Narrow", "its letters closer together below 380px"]
+  ])}${stateTable("Meet", [
+    ["Rest", "the app's mark and name, an arrow, then the person's, each with one line under it"],
+    ["Readers", "the arrow says what it means, such as wants to act as"]
+  ])}${stateTable("Answer pair", [
+    ["Rest", "two answers of equal width side by side; the one to take is primary"]
+  ])}`
+);
+
 const templatesSection = section({
   title: "Five templates",
   body: rows(
@@ -540,9 +845,11 @@ const templatesSection = section({
       [
         ["Index", "index", "Home, All patches, People, Integrations, Your agents, What's new"],
         ["Detail", "detail", "A patch, a connection"],
+        ["Detail with a refusal", "refused", "A stale or refused act, read first"],
         ["Settings", "settings", "Agent access, a patch's Settings, a connection's Settings"],
         ["Flow", "flow", "Connect an integration, connect an app, add a computer"],
-        ["Door", "door", "Sign in, join, device login, consent, notices"],
+        ["Door", "door", "Sign in, join, device login, notices"],
+        ["Consent", "consent", "An app asking to use patches as the person"],
         ["Dialog", "dialog", "Share, Invite, New patch, Delete, over their page"],
         ["Dialog only its actions close", "final", "The Final step"]
       ] satisfies ReadonlyArray<readonly [string, GalleryPage, string]>
@@ -594,7 +901,7 @@ const flowParts = demo(
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${checklistDemo}${status}${feedback}${navigation}${lists}${homeParts}${detailParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}${flowParts}${doorParts}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [
@@ -633,7 +940,7 @@ const indexDemo = indexPage({
   })
 });
 
-const detailDemo = detailPage({
+const detailSpec = {
   parent: { label: "All patches", href: link("index") },
   mark: patchMark("new-business", 2, true),
   title: "New Business",
@@ -657,6 +964,14 @@ const detailDemo = detailPage({
     ]
   )}`,
   aside: `<div class="box box-pad"><h2 class="section-title">Your agent can, as you</h2><p class="meta">List deals, add leads, move deals.</p></div>`
+} satisfies Parameters<typeof detailPage>[0];
+
+const detailDemo = detailPage(detailSpec);
+
+/** The Detail page with an act refused, such as Retire from a tab left open: the refusal leads. */
+const refusedDemo = detailPage({
+  ...detailSpec,
+  main: `${refusalNotice("New Business was retired in another tab. Nothing was done.")}${detailSpec.main}`
 });
 
 const settingsDemo = settingsPage({
@@ -758,12 +1073,87 @@ const flowDemo = flowPage({
   form: { action: link("flow") }
 });
 
-const doorDemo = doorPage({
+/** Device login's door; `refused` draws it again as a refusal no field owns, or the name's. */
+const deviceDoor = (refused?: "account" | "name") =>
+  doorPage({
+    kicker: "Device login",
+    title: "Is this the code in your terminal?",
+    body: `${refused === "account" ? refusal(notice({ tone: "warning", title: "The signed-in account changed since this page loaded.", body: "<p>Check the account and the code, then press again.</p>" })) : ""}${verificationCode("WXYZ-1234")}<p>A terminal ran <code>patchy login</code> and wants to publish at <span class="strong">Acme Co</span> as <span class="strong">Ada Lovelace</span>. If you didn’t run it, deny: nothing happens.</p><form id="g-device" method="post" action="${link("door")}" novalidate>${field(
+      {
+        id: "g-door-name",
+        label: "Name this computer",
+        hint: "You’ll see it on Your agents.",
+        ...(refused === "name" ? { error: "Give the computer a name, up to 64 characters." } : {}),
+        control: (aria) =>
+          input(aria, {
+            name: "name",
+            value: refused === "name" ? "" : "Ada’s MacBook",
+            maxlength: 64,
+            autofocus: refused === "name"
+          })
+      }
+    )}</form>`,
+    actions: `${button("Confirm", { kind: "primary", block: true, form: "g-device" })}${button("Deny", { kind: "quiet", block: true, form: "g-device" })}`,
+    foot: "Signed in as ada@example.com · Not you?"
+  });
+
+const outcomeDoor = doorPage({
   kicker: "Device login",
-  title: "Is this your computer?",
-  body: `<p>Check this code matches the one your agent shows.</p><p class="verification-code">WXYZ-1234</p>`,
-  actions: `${button("Confirm", { kind: "primary" })}${button("Deny", { kind: "quiet" })}`,
-  foot: "Signed in as ada@example.com"
+  title: "Go back to your terminal",
+  body: '<p>Your agent finishes connecting <span class="strong">Ada’s MacBook</span>. It shows up on Your agents as soon as it does.</p>',
+  actions: linkButton("Open Your agents", link(""), { block: true }),
+  foot: "You can close this tab."
+});
+
+const unavailableDoorDemo = doorPage({
+  title: "Patchy is unavailable",
+  body: "<p>Please try again.</p>"
+});
+
+/** A deactivation refused for its checklist: with a box still to choose, or with none. */
+const refusedChecklist = (choosable: boolean) =>
+  flowPage({
+    parent: { label: "People", href: link("index") },
+    title: "Deactivate Grace Hopper",
+    sections: [
+      {
+        title: "Their patches",
+        body: checklist({
+          id: "g-pick",
+          legend: "Which to retire",
+          name: "patch",
+          error: choosable
+            ? "Select at least one, or keep their patches live."
+            : "None of their patches can be retired now.",
+          items: [
+            ...(choosable
+              ? [{ value: "kudos", label: "Kudos", description: "Nothing else reads it" }]
+              : []),
+            { value: "brief", label: "Kickoff brief", description: "Retired", disabled: true },
+            { value: "old", label: "Old intake form", description: "Deleted", disabled: true }
+          ]
+        })
+      }
+    ],
+    submit: `${button("Deactivate Grace Hopper", { kind: "danger-solid" })}${linkButton("Cancel", galleryPath, { kind: "quiet" })}`,
+    form: { action: link(choosable ? "checklist-refused" : "checklist-none") }
+  });
+
+const consentDemo = doorPage({
+  kicker: "Agent access",
+  title: "Let Claude use Acme Co’s patches as you?",
+  body: `${meet({ mark: agentMark, name: "Claude", meta: "claude.ai" }, "wants to act as", adaAsParty)}${canList(
+    [
+      {
+        can: true,
+        text: "It can find the patches you can open and use the agent tools their builders added, as you"
+      },
+      { can: true, text: "Every change it makes is logged as Ada Lovelace via Claude" },
+      { can: false, text: "It can’t do anything you can’t, or publish" }
+    ]
+  )}`,
+  actions: `${answerPair(button("Deny", { type: "button", block: true }), button("Allow", { type: "button", kind: "primary", block: true }))}<p class="meta">Your answer goes back to <strong>claude.ai</strong>.</p>`,
+  foot: "Signed in as ada@example.com · Use another account"
 });
 
 /** The page at `page` and, for the dialog page, the dialog over it. */
@@ -779,12 +1169,28 @@ export const galleryPage = (
       return { title: "Index", ...indexDemo };
     case "detail":
       return { title: "Detail", ...detailDemo };
+    case "refused":
+      return { title: "Detail with a refusal", ...refusedDemo };
     case "settings":
       return { title: "Settings", ...settingsDemo };
     case "flow":
       return { title: "Flow", ...flowDemo };
+    case "checklist-refused":
+      return { title: "Checklist refused", ...refusedChecklist(true) };
+    case "checklist-none":
+      return { title: "Checklist refused, none to choose", ...refusedChecklist(false) };
     case "door":
-      return { title: "Door", door: true, ...doorDemo };
+      return { title: "Door", door: true, ...deviceDoor() };
+    case "door-refused":
+      return { title: "Door refused", door: true, ...deviceDoor("account") };
+    case "door-field":
+      return { title: "Door with a refused field", door: true, ...deviceDoor("name") };
+    case "door-outcome":
+      return { title: "Door outcome", door: true, ...outcomeDoor };
+    case "door-unavailable":
+      return { title: "Door unavailable", door: true, ...unavailableDoorDemo };
+    case "consent":
+      return { title: "Consent", door: true, ...consentDemo };
     case "final":
       return {
         title: "Final step",

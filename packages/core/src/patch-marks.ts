@@ -6,11 +6,25 @@ import { escapeHtml } from "./escape.js";
  */
 
 /**
- * What people see a patch called: its title, else its name. Addresses, and anything typed to
- * confirm, use the name.
+ * What people see a patch called, everywhere Patchy lists or heads it: its title, less the
+ * " · Brightline Studio" its own HTML often ends with, since Patchy already says whose it is; else
+ * its name. `company` is the name of the company the patch belongs to, which for a patch shared
+ * with a guest is the one that shared it. Addresses, and anything typed to confirm, use the name.
  */
-export const patchTitle = (patch: { readonly name: string; readonly title: string }): string =>
-  patch.title.trim() || patch.name;
+export const patchTitle = (
+  patch: { readonly name: string; readonly title: string },
+  company: string
+): string => {
+  const title = patch.title.trim() || patch.name;
+  // The whole company name first, so one with a separator of its own, "Harbor - Pine", still
+  // matches; then the spaced separator before it.
+  const suffix = company.trim();
+  const end = title.slice(title.length - suffix.length);
+  if (suffix === "" || end.toLowerCase() !== suffix.toLowerCase()) return title;
+  return (
+    title.slice(0, title.length - suffix.length).match(/^(.*\S)\s+[·•|–—-]\s+$/u)?.[1] ?? title
+  );
+};
 
 /**
  * A page runs only in the viewer's browser: a tier 1 patch. A tool is tier 2, with code on the

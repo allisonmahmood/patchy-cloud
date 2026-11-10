@@ -163,7 +163,7 @@ export const sections = (
           return {
             key: `patch:${patch.id}`,
             href: path(list.company.handle, patch.name),
-            title: patchTitle(patch),
+            title: patchTitle(patch, list.company.name),
             mark: { patch: { name: patch.name, tier: patch.tier } },
             detail: openedAt === undefined ? undefined : sinceLabel(openedAt, now),
             name: patch.name,
@@ -178,7 +178,7 @@ export const sections = (
         .map((patch) => ({
           key: `patch:${patch.id}`,
           href: path(patch.company.handle, patch.name),
-          title: patchTitle(patch),
+          title: patchTitle(patch, patch.company.name),
           mark: { patch: { name: patch.name, tier: patch.tier } },
           detail: patch.company.name,
           name: patch.name

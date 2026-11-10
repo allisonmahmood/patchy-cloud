@@ -235,7 +235,7 @@ const offBadge = ({ state }: GuestPatch) => (state === "live" ? "" : badge(offLa
  * A disabled patch opens for no one, so its title is no link.
  */
 const patchLink = (viewer: Viewer, patch: GuestPatch) => {
-  const title = escapeHtml(patchTitle(patch));
+  const title = escapeHtml(patchTitle(patch, viewer.company.name));
   const name = encodeURIComponent(patch.name);
   if (patch.state === "disabled") return title;
   const href =
@@ -372,7 +372,7 @@ const guestRemoval = (viewer: Viewer, guest: Guest) => {
       guest.patches.map((patch) =>
         row({
           lead: patchMark(patch.name, patch.tier),
-          name: patchTitle(patch),
+          name: patchTitle(patch, viewer.company.name),
           end: offBadge(patch)
         })
       ),
@@ -475,7 +475,7 @@ const render = Effect.fn("CompanyPage.render")(function* (
       : {
           kind: "link",
           label: "See their patches",
-          href: `/patches?q=${encodeURIComponent(label)}`
+          href: `/patches?owner=${encodeURIComponent(user.id)}`
         };
     const next = user.role === "admin" ? "member" : "admin";
     // The last active admin stays one: their menu offers no way to demote them.

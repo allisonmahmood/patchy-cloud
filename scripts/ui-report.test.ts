@@ -40,5 +40,12 @@ describe("the UI report", () => {
         (finding) => finding.what
       )
     ).toEqual(["draws a button ×1", "draws a field ×1"]);
+    // A group of buttons lays them out; only the link drawn as a button counts.
+    expect(
+      pageFindings(
+        "group.ts",
+        '<div class="btn-group"><a class="btn btn-sm" href="/x">Open</a></div><span class="btn-group-end"></span>'
+      ).map((finding) => finding.what)
+    ).toEqual(["draws a button ×1"]);
   });
 });
