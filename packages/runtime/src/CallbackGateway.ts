@@ -335,15 +335,13 @@ export const make = Effect.fn("CallbackGateway.make")(function* (
         GuestProtocol.CallbackReply,
         Runtime.RuntimeError | InvocationCapabilities.CapabilityRefused
       > {
-        {
-          const identity = yield* capability.binding.reauthorize;
-          if (
-            identity.company.id !== binding.companyId ||
-            identity.user.id !== capability.binding.identity?.user.id
-          )
-            return yield* new Runtime.AccessDenied({});
-          binding = { ...binding, identity };
-        }
+        const identity = yield* capability.binding.reauthorize;
+        if (
+          identity.company.id !== binding.companyId ||
+          identity.user.id !== capability.binding.identity?.user.id
+        )
+          return yield* new Runtime.AccessDenied({});
+        binding = { ...binding, identity };
         // Reauthorization may have waited past return or deadline.
         yield* capabilities.resolve(token, attempt);
         if (handler.transport === "bytes-put") {

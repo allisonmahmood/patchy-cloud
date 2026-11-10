@@ -1030,6 +1030,17 @@ export class Patches extends Context.Service<
      * A patch in service and one of its versions — the current one, or the
      * numbered one asked for. Retired, deleted and disabled patches are absent.
      */
+    /** Targeted current admission, shared by browser and agent callbacks. */
+    readonly admitsMember: (
+      patchId: string,
+      companyId: string,
+      userId: string
+    ) => Effect.Effect<boolean, SqlError>;
+    /** Patch lifecycle and committed company membership authority, for invocation-local reuse. */
+    readonly memberAuthority: (
+      patchId: string,
+      companyId: string
+    ) => Effect.Effect<string, SqlError>;
     readonly find: (
       patchId: string,
       versionNumber?: number,
@@ -1758,6 +1769,34 @@ export const make = Effect.gen(function* () {
     return (yield* findRetained(patchId, versionNumber, versionId)).pipe(
       Option.filter(({ patch }) => patch.state === "live" && patch.disabledAt === null)
     );
+  });
+
+  const admitsMember = Effect.fn("Patches.admitsMember")(function* (
+    patchId: string,
+    companyId: string,
+    userId: string
+  ) {
+    const current = yield* find(patchId);
+    return Option.isSome(current) && (yield* audienceOpen(current.value.patch, companyId, userId));
+  });
+  const authorityRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
+    Result: Schema.Struct({ authority: Schema.String }),
+    execute: ({
+      patchId,
+      companyId
+    }) => sql`SELECT json_build_array(p.lifecycle_revision::text, COALESCE(d.revision, 0)::text)::text AS authority
+      FROM patches p LEFT JOIN companies_directory d ON d.company_id = p.company_id
+      WHERE p.id = ${patchId} AND p.company_id = ${companyId}`
+  });
+  const memberAuthority = Effect.fn("Patches.memberAuthority")(function* (
+    patchId: string,
+    companyId: string
+  ) {
+    const row = yield* authorityRow({ patchId, companyId }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return Option.isSome(row) ? row.value.authority : "absent";
   });
 
   const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
@@ -3241,6 +3280,8 @@ export const make = Effect.gen(function* () {
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,
+    admitsMember,
+    memberAuthority,
     findRetained,
     recordVisit,
     recordOpen,

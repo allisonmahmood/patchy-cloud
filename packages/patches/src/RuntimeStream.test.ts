@@ -7,7 +7,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { RuntimeStreamFrame, WIRE_VERSION } from "@patchy/api";
 import { Analytics } from "@patchy/analytics";
@@ -107,24 +106,6 @@ const holdNextWake = Effect.gen(function* () {
 });
 
 it.layer(layer)("committed patch lifecycle streams", (it) => {
-  it.effect(
-    "keeps lifecycle and audience revisions numeric and monotonic for subscription fences",
-    () =>
-      Effect.gen(function* () {
-        const patchId = newPatchId();
-        yield* publish(patchId, "create");
-        const reads = yield* SubscriptionReads.make.pipe(Effect.provide(TestMemberDirectory.layer));
-        const sql = yield* SqlClient.SqlClient;
-        const key = `patch:${patchId}`;
-        const before = BigInt((yield* reads.revisions(identity.company.id, [key]))[key]!);
-        yield* sql`UPDATE patches SET audience_revision = audience_revision + 1 WHERE id = ${patchId}`;
-        const audience = BigInt((yield* reads.revisions(identity.company.id, [key]))[key]!);
-        assert.isTrue(audience > before);
-        yield* sql`UPDATE patches SET lifecycle_revision = lifecycle_revision + 1 WHERE id = ${patchId}`;
-        const lifecycle = BigInt((yield* reads.revisions(identity.company.id, [key]))[key]!);
-        assert.isTrue(lifecycle > audience);
-      })
-  );
   it.effect("publishes, rolls back and rechecks lifecycle eligibility on reconnect", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;

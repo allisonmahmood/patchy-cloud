@@ -299,7 +299,7 @@ it.layer(services)("Subscription invocation settlement", (it) => {
           id: "query",
           revision: "1",
           result: "recovered",
-          vector: { "patch:settlement-unknown": "0", [`members:${viewer.company.id}`]: "0" }
+          vector: { "patch:settlement-unknown": "0" }
         });
         assert.strictEqual(f.held.size, 0);
         assert.deepStrictEqual(f.peaks, { company: 1, patch: 1 });

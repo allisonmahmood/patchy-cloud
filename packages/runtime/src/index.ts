@@ -1,3 +1,4 @@
+export * as Reauthorization from "./Reauthorization.js";
 export * as Binding from "./Binding.js";
 export * as FileStaging from "./FileStaging.js";
 export * as LoadedVersions from "./LoadedVersions.js";

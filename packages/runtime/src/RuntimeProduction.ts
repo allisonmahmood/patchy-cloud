@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { RequireSession, Session } from "@patchy/auth";
 import type { Limits, OperatingLimits } from "@patchy/limits";
+import * as Reauthorization from "./Reauthorization.js";
 import * as CompanyAdmission from "./CompanyAdmission.js";
 import * as GrantedGuests from "./GrantedGuests.js";
 import * as LoadedVersions from "./LoadedVersions.js";
@@ -30,6 +31,7 @@ export const make = (
 ): Effect.Effect<Runtime.Runtime["Service"], never, Dependencies> =>
   Effect.gen(function* () {
     const log = yield* RuntimeLog.RuntimeLog;
+    const grants = yield* GrantedGuests.GrantedGuests;
     const session = yield* Session.Session;
     // The company's bucket, which Patchy MCP's door spends agents' calls from too.
     const companyAdmission = yield* CompanyAdmission.CompanyAdmission;
@@ -60,34 +62,55 @@ export const make = (
       const person = yield* resolveViewer;
       if (person === null || HttpServerResponse.isHttpServerResponse(person))
         return yield* new Runtime.AccessDenied({});
-      const viewer = yield* GrantedGuests.viewerOf(loaded, person).pipe(
-        Effect.provideContext(guestContext)
-      );
-      if (Option.isNone(viewer)) return yield* new Runtime.AccessDenied({});
       // Admission covers the JWT's remaining lifetime. After expiry, concurrent
       // callbacks share one backend result for this invocation, including failures.
       const activeAfterExpiry = yield* session.isActive(claims).pipe(
         Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause })),
         Effect.cached
       );
+      const authorize = Effect.gen(function* () {
+        const current = yield* resolveViewer;
+        if (
+          current === null ||
+          HttpServerResponse.isHttpServerResponse(current) ||
+          current.user.id !== person.user.id ||
+          current.company.id !== person.company.id
+        )
+          return yield* new Runtime.AccessDenied({});
+        const viewer = yield* GrantedGuests.viewerOf(loaded, current).pipe(
+          Effect.provideContext(guestContext)
+        );
+        if (Option.isNone(viewer)) return yield* new Runtime.AccessDenied({});
+        return viewer.value;
+      });
+      const current =
+        person.company.id === loaded.companyId && grants.memberAuthority !== undefined
+          ? yield* Reauthorization.reuse(authorize, grants.memberAuthority(loaded))
+          : authorize;
+      const viewer = yield* current;
+      const loadedPersonCompanyId = person.company.id;
       return {
-        viewer: viewer.value,
+        viewer,
         reauthorize: Effect.gen(function* () {
           if ((yield* Clock.currentTimeMillis) >= claims.exp * 1_000 && !(yield* activeAfterExpiry))
             return yield* new Runtime.SessionExpired({});
-          const current = yield* resolveViewer;
-          if (
-            current === null ||
-            HttpServerResponse.isHttpServerResponse(current) ||
-            current.user.id !== person.user.id ||
-            current.company.id !== person.company.id
-          )
-            return yield* new Runtime.AccessDenied({});
-          const rechecked = yield* GrantedGuests.recheck(loaded, viewer.value, current).pipe(
-            Effect.provideContext(guestContext)
-          );
-          if (Option.isNone(rechecked)) return yield* new Runtime.AccessDenied({});
-          return rechecked.value;
+          // Guest reach includes current-version and connection restrictions, so it is always fresh.
+          if (viewer.guest === true) {
+            const person = yield* resolveViewer;
+            if (
+              person === null ||
+              HttpServerResponse.isHttpServerResponse(person) ||
+              person.user.id !== viewer.user.id ||
+              person.company.id !== loadedPersonCompanyId
+            )
+              return yield* new Runtime.AccessDenied({});
+            const rechecked = yield* GrantedGuests.recheck(loaded, viewer, person).pipe(
+              Effect.provideContext(guestContext)
+            );
+            if (Option.isNone(rechecked)) return yield* new Runtime.AccessDenied({});
+            return rechecked.value;
+          }
+          return yield* current;
         })
       };
     });

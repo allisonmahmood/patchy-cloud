@@ -17,6 +17,10 @@ export class GrantedGuests extends Context.Service<
       loaded: LoadedVersions.LoadedVersion,
       userId: string
     ) => Effect.Effect<boolean, Runtime.SourceUnavailable>;
+    /** Hosts with durable member authority can reuse an invocation's unchanged admission. */
+    readonly memberAuthority?: (
+      loaded: LoadedVersions.LoadedVersion
+    ) => Effect.Effect<string, Runtime.SourceUnavailable>;
     /**
      * The patch's company, while this person holds an active grant to the patch and its guests
      * can open this version: its current one when `loaded` was read, with nothing it declares
