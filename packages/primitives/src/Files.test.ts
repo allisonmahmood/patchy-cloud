@@ -50,7 +50,12 @@ const withRuntime = <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
   layer.pipe(
     Layer.provideMerge(TestWakes.layer),
     Layer.provideMerge(
-      Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+      Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
+        find: () => Effect.succeed(Option.none())
+      })
     )
   );
 

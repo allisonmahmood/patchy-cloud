@@ -184,7 +184,6 @@ const grantedGuests = Layer.effect(
     const grants = yield* GuestGrants.GuestGrants;
     const patches = yield* Patches.Patches;
     const sql = yield* SqlClient.SqlClient;
-    const enabled = yield* Audiences.Activation;
     return GrantedGuests.GrantedGuests.of({
       member: (loaded, userId) =>
         Effect.gen(function* () {
@@ -195,7 +194,6 @@ const grantedGuests = Layer.effect(
           );
         }).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.provideService(Audiences.Activation, enabled),
           Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
         ),
       host: (loaded, userId) =>

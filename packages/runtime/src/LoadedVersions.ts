@@ -23,13 +23,16 @@ export class LoadedVersions extends Context.Service<
   LoadedVersions,
   {
     /**
-     * Loads the served tier; omit versionId for the current source. Shared reads supply the
-     * initiating viewer so Patches applies its current content decision before returning it.
+     * Protected current-source reads require the initiating viewer.
      */
+    readonly findForViewer: (
+      patchId: string,
+      viewer: { readonly companyId: string; readonly userId: string }
+    ) => Effect.Effect<Option.Option<LoadedVersion & { readonly patchTier: number }>, SqlError>;
+    /** Trusted runtime loading; protected source reads must use findForViewer. */
     readonly find: (
       patchId: string,
-      versionId?: string,
-      viewer?: { readonly companyId: string; readonly userId: string }
+      versionId?: string
     ) => Effect.Effect<Option.Option<LoadedVersion & { readonly patchTier: number }>, SqlError>;
   }
 >()("@patchy/runtime/LoadedVersions") {}

@@ -108,6 +108,14 @@ export class PatchUnavailable extends Schema.TaggedError<PatchUnavailable>()("Pa
   }
 }
 
+export class OwnerAccessLost extends Schema.TaggedError<OwnerAccessLost>()("OwnerAccessLost", {
+  patchId: Schema.String
+}) {
+  override get message() {
+    return "You still own this patch but no longer have access. Ask an admin who can open it to restore your team access or reassign it. Do not create a replacement patch.";
+  }
+}
+
 /** A create landed on an id that already exists. */
 export class PatchConflict extends Schema.TaggedError<PatchConflict>()("PatchConflict", {
   patchId: Schema.String
@@ -146,22 +154,29 @@ export interface Actor {
   readonly userId: string;
   readonly admin: boolean;
 }
+export type SharingMetadata = Pick<
+  Patch,
+  "id" | "name" | "companyId" | "companyHandle" | "state" | "scope" | "currentVersionId"
+>;
 /** Oversight carries management facts only, never version bodies, manifests or resource data. */
 export class ManagementRecord extends Schema.Class<ManagementRecord>("ManagementRecord")({
   id: Schema.String,
   name: Schema.String,
+  companyHandle: Schema.String,
   ownerId: Schema.String,
   ownerName: Schema.String,
   ownerDeactivated: Schema.Boolean,
   scope: SharingScope,
   tier: Schema.Number,
   audience: PatchAudience,
-  audienceRevision: Schema.String,
+  lifecycleRevision: Schema.String,
   retiredAt: Schema.NullOr(Schema.Date),
   deletedAt: Schema.NullOr(Schema.Date),
   currentVersionId: Schema.String
 }) {}
 export interface ManagementView {
+  readonly card: ManagementCard;
+  readonly versions: PortalCard["versions"];
   readonly record: ManagementRecord;
   readonly canOpen: boolean;
   readonly canManage: boolean;
@@ -174,11 +189,12 @@ export interface ManagementCard {
     | "id"
     | "name"
     | "title"
+    | "companyHandle"
     | "ownerUserId"
     | "state"
     | "scope"
     | "audience"
-    | "audienceRevision"
+    | "lifecycleRevision"
     | "currentVersionId"
   >;
   readonly owner: ReadPatch["owner"];
@@ -190,6 +206,7 @@ export interface ManagementCard {
     readonly table?: string;
     readonly store?: string;
   }[];
+  readonly hiddenDependants?: number;
   readonly offSources: PortalCard["offSources"];
 }
 const Owner = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -246,10 +263,11 @@ export class PatchDeleted extends Schema.TaggedError<PatchDeleted>()("PatchDelet
   }
 }
 export class HasDependants extends Schema.TaggedError<HasDependants>()("HasDependants", {
-  dependants: Schema.Array(Dependant)
+  dependants: Schema.Array(Dependant),
+  hiddenCount: Schema.optionalKey(Schema.Number)
 }) {
   override get message() {
-    return "Other live patches read these tables or stores. Ask the person you are working for before forcing.";
+    return `Other live patches read these tables or stores.${this.hiddenCount ? ` ${this.hiddenCount} others are outside your access.` : ""} Ask the person you are working for before forcing.`;
   }
 }
 export class SourcesOff extends Schema.TaggedError<SourcesOff>()("SourcesOff", {
@@ -302,6 +320,7 @@ export class Tier2NotPublic extends Schema.TaggedError<Tier2NotPublic>()("Tier2N
   }
 }
 export type LifecycleError =
+  | OwnerAccessLost
   | PatchUnavailable
   | NotOwner
   | WrongState
@@ -330,7 +349,6 @@ export interface Patch {
   readonly ownerUserId: string;
   readonly scope: typeof SharingScope.Type;
   readonly audience: PatchAudience;
-  readonly audienceRevision: string;
   readonly title: string;
   readonly currentVersionId: string | null;
   readonly repoOrg: string | null;
@@ -357,11 +375,12 @@ export interface Patch {
 
 /** A compatibility scope change retains guests; a full audience derives its scope. */
 export type SharingChange = {
+  readonly expectedDependants?: string;
   readonly patchId: string;
   readonly actor: Actor;
   readonly force?: boolean | undefined;
   readonly expectedScope?: Patch["scope"] | undefined;
-  readonly expectedAudienceRevision?: string | undefined;
+  readonly expectedLifecycleRevision?: string | undefined;
   readonly expectedOwnerUserId?: string | undefined;
 } & (
   | { readonly scope: Patch["scope"]; readonly audience?: never }
@@ -692,7 +711,6 @@ class PatchRow extends Schema.Class<PatchRow>("PatchRow")({
   ownerUserId: Schema.String,
   scope: SharingScope,
   audience: PatchAudience,
-  audienceRevision: Schema.String,
   title: Schema.String,
   currentVersionId: Schema.NullOr(Schema.String),
   repoOrg: Schema.NullOr(Schema.String),
@@ -844,7 +862,13 @@ export class Patches extends Context.Service<
       target: PublishTarget
     ) => Effect.Effect<
       void,
-      PatchUnavailable | PatchConflict | NotOwner | PatchRetired | PatchDeleted | SqlError
+      | OwnerAccessLost
+      | PatchUnavailable
+      | PatchConflict
+      | NotOwner
+      | PatchRetired
+      | PatchDeleted
+      | SqlError
     >;
     readonly replay: (
       ownerUserId: string,
@@ -909,16 +933,26 @@ export class Patches extends Context.Service<
       patchId: string,
       access: ReadAccess
     ) => Effect.Effect<PatchInventory | null, PatchUnavailable | SqlError>;
-    /** Cumulative metadata from live same-company shared inventory. */
+    /** Read-only warning data; losing management access omits the warning. */
+    readonly sharingDependants: (
+      patchId: string,
+      actor: Actor
+    ) => Effect.Effect<
+      { dependants: readonly (typeof Dependant.Type)[]; hiddenCount: number },
+      PatchUnavailable | SqlError
+    >;
+    /** Protected schema metadata requires the initiating viewer. */
     readonly sharedTable: (
       patchId: string,
       table: string,
-      companyId: string
+      companyId: string,
+      viewerId: string
     ) => Effect.Effect<SharedTable, PatchNotOpenable | DatabaseError | SqlError>;
     readonly sharedStore: (
       patchId: string,
       store: string,
-      companyId: string
+      companyId: string,
+      viewerId: string
     ) => Effect.Effect<SharedStore, PatchNotOpenable | DatabaseError | SqlError>;
     /** Durably reserves a fresh object key before any bytes can be written. */
     readonly prepareObject: (objectKey: string) => Effect.Effect<void, SqlError>;
@@ -962,21 +996,8 @@ export class Patches extends Context.Service<
     readonly management: (
       companyId: string,
       userId: string,
-      patchRef?: string
+      patchRef?: { readonly id: string } | { readonly name: string }
     ) => Effect.Effect<readonly ManagementView[], SqlError>;
-    readonly managementCard: (
-      patchId: string,
-      actor: Actor
-    ) => Effect.Effect<ManagementCard, PatchUnavailable | NotOwner | SqlError>;
-    /** Declared dependants visible within the acting manager's authority. */
-    readonly sharingDependants: (
-      patchId: string,
-      actor: Actor
-    ) => Effect.Effect<readonly (typeof Dependant.Type)[], PatchUnavailable | NotOwner | SqlError>;
-    readonly managementVersions: (
-      patchId: string,
-      actor: Actor
-    ) => Effect.Effect<PortalCard["versions"], PatchUnavailable | NotOwner | SqlError>;
     readonly managementHistory: (
       patchId: string,
       userId: string
@@ -989,12 +1010,13 @@ export class Patches extends Context.Service<
       actor: Actor
     ) => Effect.Effect<
       readonly { readonly id: string; readonly name: string }[],
-      PatchUnavailable | NotOwner | SqlError
+      OwnerAccessLost | PatchUnavailable | NotOwner | SqlError
     >;
     readonly manage: (
       patchId: string,
-      actor: Actor
-    ) => Effect.Effect<Patch, PatchUnavailable | NotOwner | SqlError>;
+      actor: Actor,
+      readOnly?: boolean
+    ) => Effect.Effect<SharingMetadata, OwnerAccessLost | PatchUnavailable | NotOwner | SqlError>;
     /** Changes a live patch's audience without creating a version. */
     readonly setSharing: (input: SharingChange) => Effect.Effect<
       Pick<Patch, "id" | "scope" | "name" | "companyHandle" | "currentVersionId" | "audience"> & {
@@ -1022,11 +1044,17 @@ export class Patches extends Context.Service<
      * A patch in service and one of its versions — the current one, or the
      * numbered one asked for. Retired, deleted and disabled patches are absent.
      */
+    readonly findForViewer: (
+      patchId: string,
+      viewer: { readonly companyId: string; readonly userId: string }
+    ) => Effect.Effect<
+      Option.Option<{ patch: Patch; version: PatchVersion; patchTier: number }>,
+      SqlError
+    >;
     readonly find: (
       patchId: string,
       versionNumber?: number,
-      versionId?: string,
-      viewer?: { readonly companyId: string; readonly userId: string }
+      versionId?: string
     ) => Effect.Effect<
       Option.Option<{ patch: Patch; version: PatchVersion; patchTier: number }>,
       SqlError
@@ -1134,7 +1162,6 @@ const toPatch = (row: PatchRow): Patch => ({
   ownerUserId: row.ownerUserId,
   scope: row.scope,
   audience: row.audience,
-  audienceRevision: row.audienceRevision,
   title: row.title,
   currentVersionId: row.currentVersionId,
   repoOrg: row.repoOrg,
@@ -1213,11 +1240,13 @@ const decodeLockedAudience = Schema.decodeUnknownEffect(
   )
 );
 
+const AUDIENCE_COLUMN = `jsonb_build_object('members', CASE WHEN patches.scope = 'teams' THEN jsonb_build_object('kind', 'teams', 'teamIds', COALESCE((SELECT jsonb_agg(t.team_id ORDER BY t.team_id) FROM patch_audience_teams t WHERE t.patch_id = patches.id), '[]'::jsonb)) ELSE jsonb_build_object('kind', patches.scope) END)`;
+
 /** The columns of `patches`, aliased to the record's names. */
 const PATCH_COLUMNS = `
   patches.id, patches.company_id AS "companyId",
   companies.handle AS "companyHandle", patches.name,
-  patches.owner_user_id AS "ownerUserId", patches.scope, patches.audience, patches.audience_revision::text AS "audienceRevision", patches.title,
+  patches.owner_user_id AS "ownerUserId", patches.scope, ${AUDIENCE_COLUMN} AS audience, patches.title,
   patches.current_version_id AS "currentVersionId",
   patches.repo_org AS "repoOrg", patches.repo_name AS "repoName",
   patches.created_at AS "createdAt", patches.updated_at AS "updatedAt",
@@ -1567,34 +1596,57 @@ export const make = Effect.gen(function* () {
       FROM patch_versions WHERE patch_id = ${patchId}`
   });
 
+  const actorCompany = SqlSchema.findOneOption({
+    Request: Schema.String,
+    Result: Schema.Struct({ companyId: Schema.String }),
+    execute: (id) => sql`SELECT company_id AS "companyId" FROM users WHERE id = ${id}`
+  });
+  const actorRole = Effect.fn("Patches.actorRole")(function* (userId: string) {
+    const rows = yield* actorCompany(userId).pipe(Effect.catchTags(dieOnSchemaError));
+    if (Option.isNone(rows)) return Option.none();
+    const people = yield* Teams.people(rows.value.companyId, [userId]).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql)
+    );
+    const person = people[0];
+    return person?.active
+      ? Option.some({ ...person, companyId: rows.value.companyId })
+      : Option.none();
+  });
   // Company/public sharing admits every member of this company in any lifecycle
   // state. Disabled patches remain hidden; serving reads use the stricter gate.
   const lockOpenable = SqlSchema.findOneOption({
     Request: Schema.Struct({
       patchId: Schema.String,
       userId: Schema.String,
-      oversight: Schema.optionalKey(Schema.Boolean)
+      oversight: Schema.optionalKey(Schema.Boolean),
+      readOnly: Schema.optionalKey(Schema.Boolean)
     }),
     Result: ManagedPatchRow,
-    execute: Effect.fn("Patches.lockOpenable")(function* ({ patchId, userId, oversight }) {
+    execute: Effect.fn("Patches.lockOpenable")(function* ({
+      patchId,
+      userId,
+      oversight,
+      readOnly
+    }) {
       // Companies serializes roles and memberships on this same company row.
-      yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${userId}) FOR SHARE`;
-      const actors =
-        yield* sql`SELECT role FROM users WHERE id = ${userId} AND deactivated_at IS NULL`;
-      if (actors.length === 0) return [];
+      if (!readOnly)
+        yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${userId}) FOR SHARE`;
+      const actor = yield* actorRole(userId);
+      if (Option.isNone(actor)) return [];
       // Lock the patch before joining its owner. A join planned before a lock
       // wait can lose the row when PostgreSQL rechecks a concurrent reassignment.
       // Callers keep both statements in one transaction; its patch lock preserves
       // the company and disabled-state checks through the owner lookup.
-      const locked = yield* sql`SELECT company_id AS "companyId", audience FROM patches
+      const locked =
+        yield* sql`SELECT company_id AS "companyId", ${sql.unsafe(AUDIENCE_COLUMN)} AS audience FROM patches
         WHERE id = ${patchId} AND disabled_at IS NULL
           AND company_id = (SELECT company_id FROM users WHERE id = ${userId})
-        FOR UPDATE`;
+        ${sql.unsafe(readOnly ? "" : "FOR UPDATE")}`;
       if (locked.length === 0) return [];
       const facts = yield* decodeLockedAudience(locked).pipe(Effect.catchTags(dieOnSchemaError));
       const current = facts[0]!;
       if (
-        !(oversight && actors[0]!.role === "super_admin") &&
+        !(oversight && actor.value.role === "super_admin") &&
         !(yield* audienceOpen({ ...current, disabledAt: null }, current.companyId, userId))
       )
         return [];
@@ -1619,17 +1671,32 @@ export const make = Effect.gen(function* () {
         return yield* effect;
       })
     );
-  const manageable = Effect.fn("Patches.manageable")(function* (patchId: string, actor: Actor) {
-    const row = yield* lockOpenable({ patchId, userId: actor.userId, oversight: actor.admin });
-    const roles =
-      yield* sql`SELECT role FROM users WHERE id = ${actor.userId} AND deactivated_at IS NULL`;
-    const administrator = actor.admin && roles.length > 0 && roles[0]!.role !== "member";
-    if (Option.isNone(row)) return yield* new PatchUnavailable({ patchId });
+  const manageable = Effect.fn("Patches.manageable")(function* (
+    patchId: string,
+    actor: Actor,
+    access: "management" | "content" = "management",
+    readOnly = false
+  ) {
+    const row = yield* lockOpenable({
+      patchId,
+      userId: actor.userId,
+      oversight: access === "management" && actor.admin,
+      readOnly
+    });
+    const role = yield* actorRole(actor.userId);
+    const administrator = actor.admin && Option.isSome(role) && role.value.role !== "member";
+    if (Option.isNone(row)) {
+      const owned =
+        yield* sql`SELECT p.id FROM patches p JOIN users u ON u.id = p.owner_user_id AND u.company_id = p.company_id
+        WHERE p.id = ${patchId} AND p.owner_user_id = ${actor.userId} AND p.disabled_at IS NULL AND u.deactivated_at IS NULL`;
+      if (owned.length) return yield* new OwnerAccessLost({ patchId });
+      return yield* new PatchUnavailable({ patchId });
+    }
     if (row.value.ownerUserId !== actor.userId && !administrator)
       return yield* new NotOwner({
         owner: { id: row.value.ownerUserId, name: row.value.ownerName }
       });
-    return row.value;
+    return { ...row.value, actorRole: Option.isSome(role) ? role.value.role : ("member" as const) };
   }, Effect.catchTags(dieOnSchemaError));
   const publishable = Effect.fn("Patches.publishable")(function* (target: PublishTarget) {
     const row = yield* manageable(target.patchId, { userId: target.ownerUserId, admin: false });
@@ -1722,6 +1789,10 @@ export const make = Effect.gen(function* () {
     return found;
   });
 
+  const findForViewer = Effect.fn("Patches.findForViewer")(
+    (patchId: string, viewer: { readonly companyId: string; readonly userId: string }) =>
+      find(patchId, undefined, undefined, viewer)
+  );
   const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -1799,16 +1870,13 @@ export const make = Effect.gen(function* () {
       userId: options.userId,
       sharing
     });
-    const admitted = yield* memberAudience(
-      options.companyId,
-      options.userId,
-      rows.map((row) => row.audience)
-    );
+    const admitted = yield* memberAudience(options.companyId, options.userId);
     const sourceStates = new Map<string, PatchState>();
     const openable = new Map<string, { row: ReadPatchRow; patch: Patch }>();
     for (const row of rows) {
       const patch = toPatch(row);
-      sourceStates.set(patch.id, patch.state);
+      if (patch.disabledAt === null && admitted(patch.audience) && options.canOpen(patch))
+        sourceStates.set(patch.id, patch.state);
       if (patch.disabledAt === null && admitted(patch.audience) && options.canOpen(patch))
         openable.set(patch.id, { row, patch });
     }
@@ -1901,10 +1969,11 @@ export const make = Effect.gen(function* () {
   const sharedTable = Effect.fn("Patches.sharedTable")(function* (
     patchId: string,
     table: string,
-    companyId: string
+    companyId: string,
+    viewerId: string
   ) {
     // Never nest platform patch locks: source liveness is read before the company inventory lock.
-    const source = yield* find(patchId);
+    const source = yield* findForViewer(patchId, { companyId, userId: viewerId });
     if (Option.isNone(source) || source.value.patch.companyId !== companyId)
       return yield* new PatchNotOpenable({ patchId, table });
     const snapshot = yield* readInventory(companyId, patchId);
@@ -1942,9 +2011,10 @@ export const make = Effect.gen(function* () {
   const sharedStore = Effect.fn("Patches.sharedStore")(function* (
     patchId: string,
     store: string,
-    companyId: string
+    companyId: string,
+    viewerId: string
   ) {
-    const source = yield* find(patchId);
+    const source = yield* findForViewer(patchId, { companyId, userId: viewerId });
     if (Option.isNone(source) || source.value.patch.companyId !== companyId)
       return yield* new PatchNotOpenable({ patchId, store });
     const snapshot = yield* readInventory(companyId, patchId);
@@ -1990,7 +2060,8 @@ export const make = Effect.gen(function* () {
 
   const resolveDeclarations = Effect.fn("Patches.resolveDeclarations")(function* (
     manifest: typeof Manifest.Type,
-    companyId: string
+    companyId: string,
+    viewerId: string
   ) {
     const warnings: string[] = [];
     // Lock connections in stable order when called inside the publish transaction.
@@ -2019,8 +2090,8 @@ export const make = Effect.gen(function* () {
       if (declaration.id !== id)
         return yield* new PatchNotOpenable({ patchId: declaration.patchId, ...resource });
       const source = yield* declaration.kind === "sharedTable"
-        ? sharedTable(declaration.patchId, declaration.table, companyId)
-        : sharedStore(declaration.patchId, declaration.store, companyId);
+        ? sharedTable(declaration.patchId, declaration.table, companyId, viewerId)
+        : sharedStore(declaration.patchId, declaration.store, companyId, viewerId);
       if (declaration.revision < source.schemaRevision)
         warnings.push(
           `Shared ${declaration.kind === "sharedTable" ? "table" : "store"} \`${source.id}\`: declared schema revision ${declaration.revision} is behind source schema revision ${source.schemaRevision}.`
@@ -2056,10 +2127,11 @@ export const make = Effect.gen(function* () {
       companyId: Schema.String,
       resources: Schema.NullOr(Schema.Array(Schema.String))
     }),
-    Result: Dependant,
+    Result: Schema.Struct({ ...Dependant.fields, audience: PatchAudience }),
     execute: ({ patchId, companyId, resources: affected }) => sql`
       SELECT DISTINCT patches.id AS "patchId", patches.name,
-        jsonb_build_object('id', owner.id, 'name', owner.name) AS owner
+        jsonb_build_object('id', owner.id, 'name', owner.name) AS owner,
+        ${sql.unsafe(AUDIENCE_COLUMN)} AS audience
       FROM patches JOIN users owner ON owner.id = patches.owner_user_id
       JOIN patch_versions ON patch_versions.patch_id = patches.id
       CROSS JOIN LATERAL jsonb_each(patch_versions.manifest->'uses') AS declaration
@@ -2075,12 +2147,14 @@ export const make = Effect.gen(function* () {
     patchId: string,
     companyId: string,
     force: boolean | undefined,
+    userId: string,
     affected: readonly string[] | null = null
   ) {
     if (force || affected?.length === 0) return;
-    const dependants = yield* dependantRows({ patchId, companyId, resources: affected });
-    if (dependants.length > 0) return yield* new HasDependants({ dependants });
-  }, Effect.catchTags(dieOnSchemaError));
+    const summary = yield* visibleDependants(patchId, companyId, userId, affected);
+    if (summary.dependants.length + summary.hiddenCount > 0)
+      return yield* new HasDependants(summary);
+  });
   const offSources = SqlSchema.findAll({
     Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
     Result: Schema.Struct({
@@ -2166,7 +2240,6 @@ export const make = Effect.gen(function* () {
           : Option.none();
       yield* validateAudience({
         audience: input.audience,
-        scope: input.scope,
         companyId: input.companyId,
         actorId: input.ownerUserId,
         ownerId: input.ownerUserId,
@@ -2203,7 +2276,7 @@ export const make = Effect.gen(function* () {
           AND name = ${input.manifest.name} AND NOT ${nameAvailable(input.patchId)}`;
       if (occupied.length > 0) return yield* new NameTaken({ name: input.manifest.name });
     }
-    yield* resolveDeclarations(input.manifest, input.companyId);
+    yield* resolveDeclarations(input.manifest, input.companyId, input.ownerUserId);
     if (hasOwnedDefinitions(input.manifest)) {
       yield* databases.ensureReady(input.companyId);
     }
@@ -2234,6 +2307,7 @@ export const make = Effect.gen(function* () {
       input.patchId,
       companyId,
       input.force,
+      input.ownerUserId,
       plan.sharing.filter(
         (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
       )
@@ -2282,6 +2356,7 @@ export const make = Effect.gen(function* () {
                 input.patchId,
                 input.companyId,
                 input.force,
+                input.ownerUserId,
                 plan.sharing.filter(
                   (name) =>
                     (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
@@ -2354,14 +2429,16 @@ export const make = Effect.gen(function* () {
         const existing = input.intent === "update" ? yield* publishable(input) : null;
         const audience =
           input.audience ??
-          (existing !== null && (input.scope === undefined || input.scope === existing.scope)
+          (existing !== null &&
+          (input.scope === undefined ||
+            input.scope === existing.scope ||
+            (input.scope === "company" && existing.audience.members.kind === "teams"))
             ? existing.audience
             : existing !== null
-              ? { ...existing.audience, members: { kind: input.scope! } }
+              ? Audiences.company(input.scope)
               : Audiences.company(input.scope));
         yield* validateAudience({
           audience,
-          scope: input.scope,
           companyId: input.companyId,
           actorId: input.ownerUserId,
           ownerId: input.ownerUserId,
@@ -2469,8 +2546,12 @@ export const make = Effect.gen(function* () {
           yield* sql`UPDATE patch_names SET current = false
               WHERE patch_id = ${input.patchId} AND current AND name <> ${name}`;
         }
-        yield* saveAudience(input.patchId, companyId, audience, input.ownerUserId);
-        const declarationWarnings = yield* resolveDeclarations(input.manifest, companyId);
+        yield* saveAudience(input.patchId, companyId, audience);
+        const declarationWarnings = yield* resolveDeclarations(
+          input.manifest,
+          companyId,
+          input.ownerUserId
+        );
         const resources = yield* provision({ ...input, companyId });
         const declaringPatches = resources.sharing.some(
           (name) => (input.manifest.tables[name] ?? input.manifest.files[name])!.shared !== true
@@ -2630,39 +2711,33 @@ export const make = Effect.gen(function* () {
   const managementRows = SqlSchema.findAll({
     Request: Schema.Struct({
       companyId: Schema.String,
-      patchRef: Schema.NullOr(Schema.String),
-      patchIds: Schema.NullOr(Schema.Array(Schema.String))
+      patchId: Schema.NullOr(Schema.String),
+      patchName: Schema.NullOr(Schema.String)
     }),
     Result: ManagementRecord,
     execute: ({
       companyId,
-      patchRef,
-      patchIds
-    }) => sql`SELECT p.id, p.name, p.owner_user_id AS "ownerId", u.name AS "ownerName", u.deactivated_at IS NOT NULL AS "ownerDeactivated",
-      p.scope, (v.manifest->>'tier')::int AS tier, p.audience, p.audience_revision::text AS "audienceRevision", p.retired_at AS "retiredAt", p.deleted_at AS "deletedAt",
-      p.current_version_id AS "currentVersionId" FROM patches p JOIN users u ON u.id = p.owner_user_id JOIN patch_versions v ON v.id = p.current_version_id AND v.patch_id = p.id
-      WHERE p.company_id = ${companyId} AND p.disabled_at IS NULL AND (${patchRef}::text IS NULL OR p.id = ${patchRef} OR p.name = ${patchRef}) AND ${patchIds === null ? sql`true` : sql.in("p.id", patchIds)} ORDER BY p.name, p.id`
+      patchId,
+      patchName
+    }) => sql`SELECT p.id, p.name, c.handle AS "companyHandle", p.owner_user_id AS "ownerId", u.name AS "ownerName", u.deactivated_at IS NOT NULL AS "ownerDeactivated",
+      p.scope, (v.manifest->>'tier')::int AS tier, p.lifecycle_revision::text AS "lifecycleRevision", ${sql.unsafe(AUDIENCE_COLUMN.replaceAll("patches.", "p."))} AS audience, p.retired_at AS "retiredAt", p.deleted_at AS "deletedAt",
+      p.current_version_id AS "currentVersionId" FROM patches p JOIN companies c ON c.id = p.company_id JOIN users u ON u.id = p.owner_user_id JOIN patch_versions v ON v.id = p.current_version_id AND v.patch_id = p.id
+      WHERE p.company_id = ${companyId} AND p.disabled_at IS NULL AND (${patchId}::text IS NULL OR p.id = ${patchId}) AND (${patchName}::text IS NULL OR p.name = ${patchName}) ORDER BY p.name, p.id`
   });
   const management = Effect.fn("Patches.management")(function* (
     companyId: string,
     userId: string,
-    patchRef?: string,
-    patchIds?: readonly string[]
+    patchRef?: { readonly id: string } | { readonly name: string }
   ) {
-    const actors =
-      yield* sql`SELECT role FROM users WHERE id = ${userId} AND company_id = ${companyId} AND deactivated_at IS NULL`;
-    if (!actors.length) return [];
-    const role = actors[0]!.role;
+    const actor = yield* actorRole(userId);
+    if (Option.isNone(actor) || actor.value.companyId !== companyId) return [];
+    const role = actor.value.role;
     const rows = yield* managementRows({
       companyId,
-      patchRef: patchRef ?? null,
-      patchIds: patchIds ?? null
+      patchId: patchRef && "id" in patchRef ? patchRef.id : null,
+      patchName: patchRef && "name" in patchRef ? patchRef.name : null
     });
-    const admitted = yield* memberAudience(
-      companyId,
-      userId,
-      rows.map((r) => r.audience)
-    );
+    const admitted = yield* memberAudience(companyId, userId);
     const ownerAdmission = yield* Audiences.forPeople(companyId, [
       ...new Set(rows.map((row) => row.ownerId))
     ]).pipe(Effect.provideService(SqlClient.SqlClient, sql));
@@ -2673,7 +2748,43 @@ export const make = Effect.gen(function* () {
         role === "super_admin" || (canOpen && (role === "admin" || record.ownerId === userId));
       if (!canManage && record.ownerId !== userId) continue;
       const ownerCanOpen = ownerAdmission(record.ownerId, record.audience);
-      result.push({ record, canOpen, canManage, ownerCanOpen });
+      // Readable patches get their details from portalCard; only oversight needs them here.
+      const detail = patchRef !== undefined && canManage && !canOpen;
+      const sources = detail ? yield* offSources({ patchId: record.id, companyId }) : [];
+      const dependencies = detail
+        ? yield* visibleDependants(record.id, companyId, userId)
+        : { dependants: [], hiddenCount: 0 };
+      const card: ManagementCard = {
+        patch: {
+          id: record.id,
+          name: record.name,
+          title: record.name,
+          companyHandle: record.companyHandle,
+          ownerUserId: record.ownerId,
+          state: record.deletedAt ? "deleted" : record.retiredAt ? "retired" : "live",
+          scope: record.scope,
+          audience: record.audience,
+          lifecycleRevision: record.lifecycleRevision,
+          currentVersionId: record.currentVersionId
+        },
+        owner: { id: record.ownerId, name: record.ownerName, deactivated: record.ownerDeactivated },
+        tier: record.tier,
+        hiddenDependants: dependencies.hiddenCount,
+        dependants: dependencies.dependants,
+        offSources: sources.map(({ patchId, name, table, store, state }) => ({
+          patchId,
+          ...(name === null ? {} : { name }),
+          ...(table === null ? { store: store! } : { table }),
+          state
+        }))
+      };
+      const versions = detail
+        ? (yield* portalVersionRows(record.id)).map((version) => ({
+            ...version,
+            createdAt: iso(version.createdAt)
+          }))
+        : [];
+      result.push({ record, card, versions, canOpen, canManage, ownerCanOpen });
     }
     return result;
   }, Effect.catchTags(dieOnSchemaError));
@@ -2681,124 +2792,84 @@ export const make = Effect.gen(function* () {
     patchId: string,
     userId: string
   ) {
-    const rows =
-      yield* sql`SELECT company_id AS "companyId" FROM users WHERE id = ${userId} AND deactivated_at IS NULL`;
-    if (!rows.length) return yield* new PatchUnavailable({ patchId });
-    const companyId = String(rows[0]!.companyId);
-    const view = (yield* management(companyId, userId, patchId)).find(
-      (v) => v.record.id === patchId
-    );
-    if (!view || view.record.ownerId !== userId) return yield* new PatchUnavailable({ patchId });
-    const audience = view.record.audience.members;
+    const person = yield* actorRole(userId);
+    if (Option.isNone(person)) return yield* new PatchUnavailable({ patchId });
+    const companyId = person.value.companyId;
+    const record = (yield* managementRows({ companyId, patchId, patchName: null }).pipe(
+      Effect.catchTags(dieOnSchemaError)
+    ))[0];
+    if (!record || record.ownerId !== userId) return yield* new PatchUnavailable({ patchId });
+    const audience = record.audience.members;
     if (audience.kind !== "teams") return [];
-    return yield* Teams.selfJoins(companyId, audience.teamIds).pipe(
+    const teams = yield* Teams.list({ companyId, actorId: userId }).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.catchTags({ RoleForbidden: Effect.die })
+    );
+    const visible = audience.teamIds.filter(
+      (id) =>
+        teams.some((team) => team.id === id) &&
+        (person.value.role !== "member" || person.value.teamIds.includes(id))
+    );
+    return yield* Teams.selfJoins(companyId, visible).pipe(
       Effect.provideService(SqlClient.SqlClient, sql)
     );
   });
-  const managementVersions = Effect.fn("Patches.managementVersions")(
-    function* (patchId: string, actor: Actor) {
-      yield* manageable(patchId, actor);
-      return (yield* portalVersionRows(patchId)).map((version) => ({
-        ...version,
-        createdAt: iso(version.createdAt)
-      }));
-    },
-    withLifecycleTransaction,
-    Effect.catchTags(dieOnSchemaError)
-  );
   const eligibleOwnerRows = SqlSchema.findAll({
     Request: Schema.String,
     Result: Schema.Struct({ id: Schema.String, name: Schema.String }),
     execute: (companyId) =>
       sql`SELECT id, name FROM users WHERE company_id = ${companyId} AND deactivated_at IS NULL ORDER BY name, id`
   });
-  const managementCard = Effect.fn("Patches.managementCard")(
-    function* (patchId: string, actor: Actor) {
-      const row = yield* manageable(patchId, actor);
-      const patch = toPatch(row);
-      const view = (yield* management(row.companyId, actor.userId, patchId))[0];
-      if (!view?.canManage) return yield* new PatchUnavailable({ patchId });
-      const sources = yield* offSources({ patchId, companyId: row.companyId });
-      return {
-        patch: {
-          id: patch.id,
-          name: patch.name,
-          title: patch.name,
-          ownerUserId: patch.ownerUserId,
-          state: patch.state,
-          scope: patch.scope,
-          audience: patch.audience,
-          audienceRevision: patch.audienceRevision,
-          currentVersionId: patch.currentVersionId
-        },
-        owner: {
-          id: row.ownerUserId,
-          name: row.ownerName,
-          deactivated: view.record.ownerDeactivated
-        },
-        tier: view.record.tier,
-        dependants: yield* dependantRows({ patchId, companyId: row.companyId, resources: null }),
-        offSources: sources.map(({ patchId, name, table, store, state }) => ({
-          patchId,
-          ...(name === null ? {} : { name }),
-          ...(table === null ? { store: store! } : { table }),
-          state
-        }))
-      } satisfies ManagementCard;
-    },
-    withLifecycleTransaction,
-    Effect.catchTags(dieOnSchemaError)
-  );
-  const sharingDependantsFor = Effect.fn("Patches.sharingDependantsFor")(function* (
-    row: Pick<PatchRow, "id" | "companyId">,
-    actor: Actor
+  const visibleDependants = Effect.fn("Patches.visibleDependants")(function* (
+    patchId: string,
+    companyId: string,
+    userId: string,
+    resources: readonly string[] | null = null
   ) {
-    const dependants = yield* dependantRows({
-      patchId: row.id,
-      companyId: row.companyId,
-      resources: null
-    }).pipe(Effect.catchTags(dieOnSchemaError));
-    if (dependants.length === 0) return [];
-    const allowed = new Set(
-      (yield* management(
-        row.companyId,
-        actor.userId,
-        undefined,
-        dependants.map((dependant) => dependant.patchId)
-      ))
-        .filter((view) => view.canManage)
-        .map((view) => view.record.id)
+    const all = yield* dependantRows({ patchId, companyId, resources }).pipe(
+      Effect.catchTags(dieOnSchemaError)
     );
-    return dependants.filter((dependant) => allowed.has(dependant.patchId));
+    if (all.length === 0) return { dependants: [], hiddenCount: 0 };
+    const admitted = yield* memberAudience(companyId, userId);
+    const visible = all
+      .filter((row) => admitted(row.audience))
+      .map(({ patchId, name, owner }) => ({ patchId, name, owner }));
+    return { dependants: visible, hiddenCount: all.length - visible.length };
   });
+  const sharingDependants = Effect.fn("Patches.sharingDependants")(
+    function* (patchId: string, actor: Actor) {
+      const row = yield* manageable(patchId, actor, "management", true);
+      return yield* visibleDependants(patchId, row.companyId, actor.userId);
+    },
+    Effect.catchTags({
+      PatchUnavailable: () => Effect.succeed({ dependants: [], hiddenCount: 0 }),
+      OwnerAccessLost: () => Effect.succeed({ dependants: [], hiddenCount: 0 }),
+      NotOwner: () => Effect.succeed({ dependants: [], hiddenCount: 0 })
+    })
+  );
   const refuseAudienceNarrowing = Effect.fn("Patches.refuseAudienceNarrowing")(function* (
     row: Pick<PatchRow, "id" | "companyId" | "audience">,
     audience: PatchAudience,
     actor: Actor,
     force: boolean | undefined
   ) {
-    // Outside guests cannot read shared resources; only team restrictions narrow readers.
-    const previous = row.audience.members;
-    const members = audience.members;
-    const narrowed =
-      members.kind === "teams" &&
-      (previous.kind !== "teams" || previous.teamIds.some((id) => !members.teamIds.includes(id)));
-    if (narrowed && force !== true) {
-      const dependants = yield* sharingDependantsFor(row, actor);
-      if (dependants.length > 0) return yield* new HasDependants({ dependants });
+    const before = row.audience.members;
+    const after = audience.members;
+    if (
+      !force &&
+      after.kind === "teams" &&
+      (before.kind !== "teams" || before.teamIds.some((id) => !after.teamIds.includes(id)))
+    ) {
+      const summary = yield* visibleDependants(row.id, row.companyId, actor.userId);
+      if (summary.dependants.length + summary.hiddenCount > 0)
+        return yield* new HasDependants(summary);
     }
   });
-  const sharingDependants = Effect.fn("Patches.sharingDependants")(function* (
-    patchId: string,
-    actor: Actor
-  ) {
-    return yield* sharingDependantsFor(yield* manageable(patchId, actor), actor);
-  }, withLifecycleTransaction);
   const eligibleOwners = Effect.fn("Patches.eligibleOwners")(function* (
     patchId: string,
     actor: Actor
   ) {
-    const patch = yield* manageable(patchId, actor);
+    const patch = yield* manageable(patchId, actor, "management", true);
     const people = yield* eligibleOwnerRows(patch.companyId).pipe(
       Effect.catchTags(dieOnSchemaError)
     );
@@ -2808,22 +2879,59 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     return people.filter((person) => admitted(person.id, patch.audience));
   }, withLifecycleTransaction);
-  const manage = Effect.fn("Patches.manage")((patchId: string, actor: Actor) =>
-    manageable(patchId, actor).pipe(Effect.map(toPatch), withLifecycleTransaction)
+  const manage = Effect.fn("Patches.manage")((patchId: string, actor: Actor, readOnly = false) =>
+    manageable(patchId, actor, "management", readOnly).pipe(
+      Effect.map((row): SharingMetadata => ({
+        id: row.id,
+        name: row.name,
+        companyId: row.companyId,
+        companyHandle: row.companyHandle,
+        state: stateOf(row),
+        scope: row.scope,
+        currentVersionId: row.currentVersionId
+      })),
+      withLifecycleTransaction
+    )
   );
   const setSharing = Effect.fn("Patches.setSharing")(function* (input: SharingChange) {
-    const { patchId, actor, expectedScope, expectedAudienceRevision } = input;
+    const { patchId, actor, expectedScope, expectedLifecycleRevision } = input;
     yield* lockDependencies(actor.userId);
     yield* sql`SELECT id FROM companies WHERE id = (SELECT company_id FROM users WHERE id = ${actor.userId}) FOR NO KEY UPDATE`;
     const row = yield* manageable(patchId, actor);
     if (input.expectedOwnerUserId !== undefined && row.ownerUserId !== input.expectedOwnerUserId)
       return yield* new StaleAction({ patchId });
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
-    if (expectedAudienceRevision !== undefined && row.audienceRevision !== expectedAudienceRevision)
+    if (
+      expectedLifecycleRevision !== undefined &&
+      row.lifecycleRevision !== expectedLifecycleRevision
+    )
       return yield* new StaleAction({ patchId });
     if (expectedScope !== undefined && row.scope !== expectedScope)
       return yield* new StaleAction({ patchId });
-    const chosen = input.audience ?? { ...row.audience, members: { kind: input.scope } };
+    let chosen =
+      input.audience ??
+      (input.scope === "company" && row.audience.members.kind === "teams"
+        ? row.audience
+        : Audiences.company(input.scope));
+    if (!actor.admin && chosen.members.kind === "teams" && row.audience.members.kind === "teams") {
+      const visible = new Set(
+        yield* Teams.memberships(row.companyId, actor.userId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql)
+        )
+      );
+      chosen = {
+        ...chosen,
+        members: {
+          kind: "teams",
+          teamIds: [
+            ...new Set([
+              ...chosen.members.teamIds,
+              ...row.audience.members.teamIds.filter((id) => !visible.has(id))
+            ])
+          ]
+        }
+      };
+    }
     const scope = Audiences.scopeOf(chosen);
     if (scope === "public" && row.currentVersionId !== null) {
       const served = yield* findVersionById({ patchId, versionId: row.currentVersionId }).pipe(
@@ -2833,12 +2941,19 @@ export const make = Effect.gen(function* () {
     }
     yield* validateAudience({
       audience: chosen,
-      scope,
       companyId: row.companyId,
       actorId: actor.userId,
       ownerId: row.ownerUserId,
       previous: row.audience
     });
+    if (input.force && input.expectedDependants !== undefined) {
+      const summary = yield* visibleDependants(row.id, row.companyId, actor.userId);
+      if (
+        summary.dependants.map((d) => d.patchId).join(",") + ":" + summary.hiddenCount !==
+        input.expectedDependants
+      )
+        return yield* new HasDependants(summary);
+    }
     yield* refuseAudienceNarrowing(row, chosen, actor, input.force);
     const current =
       row.currentVersionId === null
@@ -2849,7 +2964,7 @@ export const make = Effect.gen(function* () {
     const warnings = Option.isSome(current)
       ? yield* connectionWarnings(current.value.manifest, row.companyId, actor.userId, chosen)
       : [];
-    yield* saveAudience(patchId, row.companyId, chosen, actor.userId);
+    yield* saveAudience(patchId, row.companyId, chosen);
     const at = yield* now;
     yield* sql`UPDATE patches SET scope = ${scope}, updated_at = ${at},
         lifecycle_revision = lifecycle_revision + 1,
@@ -2885,7 +3000,7 @@ export const make = Effect.gen(function* () {
     if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
       return yield* new StaleAction({ patchId });
     if (stateOf(row) !== "live") return yield* new WrongState({ state: stateOf(row) });
-    yield* refuseDependants(patchId, row.companyId, force);
+    yield* refuseDependants(patchId, row.companyId, force, actor.userId);
     const at = yield* now;
     yield* sql`UPDATE patches SET retired_at = ${at}, retired_by = ${actor.userId},
         lifecycle_revision = lifecycle_revision + 1,
@@ -2913,7 +3028,7 @@ export const make = Effect.gen(function* () {
       return yield* new StaleAction({ patchId });
     const state = stateOf(row);
     if (state === "deleted") return yield* new WrongState({ state });
-    if (state === "live") yield* refuseDependants(patchId, row.companyId, force);
+    if (state === "live") yield* refuseDependants(patchId, row.companyId, force, actor.userId);
     const at = yield* now;
     yield* sql`UPDATE patches SET deleted_at = ${at}, deleted_by = ${actor.userId},
         lifecycle_revision = lifecycle_revision + 1,
@@ -3033,9 +3148,7 @@ export const make = Effect.gen(function* () {
     expectedOwnerUserId?: string
   ) {
     const row = yield* manageable(patchId, actor);
-    const administrators =
-      yield* sql`SELECT id FROM users WHERE id = ${actor.userId} AND (role IN ('admin', 'super_admin')) AND deactivated_at IS NULL`;
-    if (!actor.admin || administrators.length === 0)
+    if (!actor.admin || row.actorRole === "member")
       return yield* new AdminRequired({ userId: actor.userId });
     if (expectedOwnerUserId !== undefined && row.ownerUserId !== expectedOwnerUserId)
       return yield* new StaleAction({ patchId });
@@ -3071,7 +3184,7 @@ export const make = Effect.gen(function* () {
     description: string,
     expectedDescriptionUpdatedAt?: string | null
   ) {
-    const row = yield* manageable(patchId, actor);
+    const row = yield* manageable(patchId, actor, "content");
     if (stateOf(row) === "deleted") return yield* new WrongState({ state: "deleted" });
     if (
       expectedDescriptionUpdatedAt !== undefined &&
@@ -3253,8 +3366,6 @@ export const make = Effect.gen(function* () {
   return Patches.of({
     management,
     managementHistory,
-    managementVersions,
-    managementCard,
     sharingDependants,
     eligibleOwners,
     countQuotaPatches,
@@ -3285,6 +3396,7 @@ export const make = Effect.gen(function* () {
     resolveName,
     agentToolSummaries: agentToolSummariesOf,
     find,
+    findForViewer,
     findRetained,
     recordVisit,
     recordOpen,

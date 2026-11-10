@@ -33,6 +33,9 @@ import { NodeCryptography } from "@patchy/core";
 
 const decodePage = Schema.decodeUnknownEffect(TablePage);
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: () => Effect.succeed(Option.none())
 });
 const postgres = Tables.layer.pipe(

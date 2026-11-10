@@ -78,7 +78,12 @@ const open = Effect.fn("test.openQuerySnapshot")(function* (
 const layer = FileFixtures.services.pipe(
   Layer.provideMerge(TestMemberDirectory.layer),
   Layer.provideMerge(
-    Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+    Layer.succeed(LoadedVersions.LoadedVersions, {
+      findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+        return this.find(patchId);
+      },
+      find: () => Effect.succeed(Option.none())
+    })
   )
 );
 
@@ -299,6 +304,9 @@ it.layer(layer)("Invocation query snapshots", (it) => {
       });
       const handlers = yield* TableOperations.make.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
+          findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+            return this.find(patchId);
+          },
           find: () =>
             Effect.succeed(
               Option.some({ ...source.binding, patchTier: source.binding.manifest.tier })
@@ -352,6 +360,9 @@ it.layer(layer)("Invocation query snapshots", (it) => {
       });
       const handlers = yield* Files.makeLocal.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
+          findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+            return this.find(patchId);
+          },
           find: () => Effect.succeed(Option.some({ ...source.binding, patchTier: 2 }))
         })
       );
@@ -507,7 +518,12 @@ const local = Layer.unwrap(
     Layer.provideMerge(TestMemberDirectory.layer),
     Layer.provide(NodeFileSystem.layer),
     Layer.provideMerge(
-      Layer.succeed(LoadedVersions.LoadedVersions, { find: () => Effect.succeed(Option.none()) })
+      Layer.succeed(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
+        find: () => Effect.succeed(Option.none())
+      })
     )
   )
   .pipe(Layer.provideMerge(NodeCrypto.layer), Layer.provideMerge(NodeCryptography.layer));
@@ -535,6 +551,9 @@ it.layer(local)("Invocation query snapshots / PGlite", (it) => {
       });
       const handlers = yield* TableOperations.make.pipe(
         Effect.provideService(LoadedVersions.LoadedVersions, {
+          findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+            return this.find(patchId);
+          },
           find: () =>
             Effect.succeed(
               Option.some({ ...source.binding, patchTier: source.binding.manifest.tier })

@@ -1,14 +1,15 @@
 import { assert, it } from "@effect/vitest";
+import { CompanyDatabases } from "@patchy/company-database";
+import * as LoadedVersions from "./LoadedVersions.js";
+import { sharedTableId } from "@patchy/api";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
-import { CompanyDatabases } from "@patchy/company-database";
+import * as SqlClient from "effect/sql/SqlClient";
 import { Analytics } from "@patchy/analytics";
 import { Companies, Teams, Users } from "@patchy/companies";
-import { sharedTableId, type PatchAudience } from "@patchy/api";
-import * as LoadedVersions from "./LoadedVersions.js";
+import type { PatchAudience } from "@patchy/api";
 import * as Audiences from "./Audiences.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
@@ -23,8 +24,7 @@ const access = (userId: string) => ({
   canOpen: () => true
 });
 const teamAudience = (ids: readonly string[]): PatchAudience => ({
-  members: { kind: "teams", teamIds: ids },
-  guests: { kind: "specific", userIds: [] }
+  members: { kind: "teams", teamIds: ids }
 });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
   const t = yield* Teams.create({ ...viewer, name });
@@ -34,28 +34,54 @@ const team = Effect.fn("test.team")(function* (name: string, userIds: readonly s
 const services = GuestGrants.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Analytics.layerNoop),
-  Layer.provideMerge(Fixtures.database),
-  Layer.provide(Layer.succeed(Audiences.Activation, true))
+  Layer.provideMerge(Fixtures.database)
 );
 it.layer(services)("Patch audiences", (it) => {
   it.effect("rechecks source access and membership restoration through the Runtime port", () =>
     Effect.gen(function* () {
       const selected = yield* team("Shared source design", [uploader.user.id, reader.user.id]);
-      const input = Fixtures.recordInput(uploader, { audience: teamAudience([selected.id]) });
+      yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(viewer.companyId);
+      const input = Fixtures.recordInput(uploader, {
+        audience: teamAudience([selected.id]),
+        manifest: {
+          ...Fixtures.manifest,
+          tier: 1,
+          tables: {
+            notes: { description: "Restricted columns", columns: {}, indexes: {}, shared: true }
+          },
+          files: { assets: { description: "Restricted files", shared: true } },
+          uses: {}
+        }
+      });
       yield* Fixtures.record(input);
       const versions = yield* LoadedVersions.make;
+      const patches = yield* Patches.Patches;
+      yield* patches.sharedTable(input.patchId, "notes", viewer.companyId, reader.user.id);
+      yield* patches.sharedStore(input.patchId, "assets", viewer.companyId, reader.user.id);
       const member = { companyId: viewer.companyId, userId: reader.user.id };
-      assert.isTrue(Option.isSome(yield* versions.find(input.patchId, undefined, member)));
+      assert.isTrue(Option.isSome(yield* versions.findForViewer(input.patchId, member)));
       yield* Teams.setMemberships({
         ...viewer,
         teamId: selected.id,
         userIds: [reader.user.id],
         added: false
       });
-      assert.isTrue(Option.isNone(yield* versions.find(input.patchId, undefined, member)));
+      assert.isTrue(Option.isNone(yield* versions.findForViewer(input.patchId, member)));
+      assert.equal(
+        (yield* patches
+          .sharedTable(input.patchId, "notes", viewer.companyId, reader.user.id)
+          .pipe(Effect.flip))._tag,
+        "PatchNotOpenable"
+      );
+      assert.equal(
+        (yield* patches
+          .sharedStore(input.patchId, "assets", viewer.companyId, reader.user.id)
+          .pipe(Effect.flip))._tag,
+        "PatchNotOpenable"
+      );
       assert.isTrue(
         Option.isSome(
-          yield* versions.find(input.patchId, undefined, { ...member, userId: uploader.user.id })
+          yield* versions.findForViewer(input.patchId, { ...member, userId: uploader.user.id })
         )
       );
       yield* Teams.setMemberships({
@@ -64,11 +90,11 @@ it.layer(services)("Patch audiences", (it) => {
         userIds: [reader.user.id],
         added: true
       });
-      assert.isTrue(Option.isSome(yield* versions.find(input.patchId, undefined, member)));
-    }).pipe(Effect.provideService(Audiences.Activation, true))
+      assert.isTrue(Option.isSome(yield* versions.findForViewer(input.patchId, member)));
+    })
   );
 
-  it.effect("limits source sharing warnings to dependants the actor can manage", () =>
+  it.effect("protects dependency details without weakening guards or locking warning reads", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
       yield* (yield* CompanyDatabases.CompanyDatabases).ensureReady(viewer.companyId);
@@ -98,7 +124,11 @@ it.layer(services)("Patch audiences", (it) => {
         }
       } as const;
       const own = Fixtures.recordInput(uploader, { manifest });
-      const other = Fixtures.recordInput(reader, { manifest });
+      const restricted = yield* team("Private consumer", [reader.user.id]);
+      const other = Fixtures.recordInput(reader, {
+        manifest,
+        audience: teamAudience([restricted.id])
+      });
       yield* Fixtures.record(own);
       yield* Fixtures.record(other);
       const queries: string[] = [];
@@ -112,123 +142,79 @@ it.layer(services)("Patch audiences", (it) => {
           admin: false
         })
         .pipe(Effect.provideService(Statement.CurrentTransformer, trace));
-      const selection = queries.filter((query) => query.includes('AS "ownerId"'));
-      assert.lengthOf(selection, 1);
-      assert.include(selection[0]!.toLowerCase(), '"p"."id" in');
+      assert.isFalse(
+        queries.some((query) => /FOR UPDATE|FOR SHARE|FOR NO KEY UPDATE/i.test(query))
+      );
       assert.isFalse(queries.some((query) => query.includes("LEFT JOIN patches source")));
       assert.deepStrictEqual(
-        visible.map((row) => row.patchId),
+        visible.dependants.map((row) => row.patchId),
         [own.patchId]
       );
+      assert.equal(visible.hiddenCount, 1);
+      const retirementQueries: string[] = [];
+      const retirementTrace: Statement.Transformer = (statement) => {
+        retirementQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const refusal = yield* patches
+        .retire(source.patchId, { userId: uploader.user.id, admin: false })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, retirementTrace), Effect.flip);
+      assert.lengthOf(
+        retirementQueries.filter((query) => query.includes("AS owner")),
+        1
+      );
+      assert.equal(refusal._tag, "HasDependants");
+      if (refusal._tag === "HasDependants") {
+        assert.equal(refusal.hiddenCount, 1);
+        assert.sameMembers(
+          refusal.dependants.map((d) => d.patchId),
+          [own.patchId]
+        );
+      }
+      const previous =
+        visible.dependants.map((d) => d.patchId).join(",") + ":" + visible.hiddenCount;
+      yield* Fixtures.record(Fixtures.recordInput(uploader, { manifest }));
+      const moreQueries: string[] = [];
+      const moreTrace: Statement.Transformer = (statement) => {
+        moreQueries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      yield* patches
+        .sharingDependants(source.patchId, { userId: uploader.user.id, admin: false })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, moreTrace));
+      assert.equal(moreQueries.length, queries.length);
+      assert.lengthOf(
+        queries.filter((query) => query.includes("AS owner") && query.includes("AS audience")),
+        1
+      );
+      const narrowing = yield* team("Source narrowing", [uploader.user.id]);
+      const stale = yield* patches
+        .setSharing({
+          patchId: source.patchId,
+          actor: { userId: uploader.user.id, admin: false },
+          audience: teamAudience([narrowing.id]),
+          force: true,
+          expectedDependants: previous
+        })
+        .pipe(Effect.flip);
+      assert.equal(stale._tag, "HasDependants");
       const oversight = yield* patches.sharingDependants(source.patchId, {
         userId: admin.user.id,
         admin: true
       });
-      assert.sameMembers(
-        oversight.map((row) => row.patchId),
-        [own.patchId, other.patchId]
-      );
+      assert.equal(oversight.hiddenCount, 1);
+      assert.lengthOf(oversight.dependants, 2);
     })
   );
 
-  it.effect(
-    "reuses authenticated patch facts and loads memberships only once for team audiences",
-    () =>
-      Effect.gen(function* () {
-        const t = yield* team("Query budget", [uploader.user.id]);
-        const queries: string[] = [];
-        const trace: Statement.Transformer = (statement) => {
-          queries.push(statement.compile()[0]);
-          return Effect.succeed(statement);
-        };
-        yield* Effect.gen(function* () {
-          const admitted = yield* Audiences.forAuthenticatedMember(
-            viewer.companyId,
-            uploader.user.id,
-            [Audiences.company(), Audiences.company("public")]
-          );
-          assert.isTrue(admitted(Audiences.company()));
-          assert.isTrue(admitted(Audiences.company("public")));
-          assert.lengthOf(queries, 0);
-          const selected = teamAudience([t.id]);
-          const teamGrant = yield* Audiences.forAuthenticatedMember(
-            viewer.companyId,
-            uploader.user.id,
-            [selected, selected]
-          );
-          assert.isTrue(teamGrant(selected));
-          assert.isTrue(teamGrant(selected));
-          assert.lengthOf(queries, 1);
-          assert.include(queries[0]!, "company_team_members");
-          queries.length = 0;
-          assert.isTrue(
-            yield* Audiences.canOpen(
-              { companyId: viewer.companyId, audience: Audiences.company(), disabledAt: null },
-              viewer.companyId,
-              uploader.user.id
-            )
-          );
-          assert.lengthOf(queries, 1);
-          assert.include(queries[0]!, "FROM users");
-          assert.notInclude(queries[0]!, "FROM patches");
-        }).pipe(
-          Effect.provideService(Statement.CurrentTransformer, trace),
-          Effect.provideService(Audiences.Activation, true)
-        );
-      })
-  );
-  it.effect(
-    "rechecks role-derived grants on the next call without changing the patch audience",
-    () =>
-      Effect.gen(function* () {
-        const users = yield* Users.Users;
-        const patches = yield* Patches.Patches;
-        const selected = yield* team("Role entitlement", [uploader.user.id]);
-        const input = Fixtures.recordInput(uploader, { audience: teamAudience([selected.id]) });
-        yield* Fixtures.record(input);
-        const loaded = Option.getOrThrow(yield* patches.find(input.patchId)).patch;
-        const admitted = Audiences.canOpen(loaded, viewer.companyId, reader.user.id);
-        assert.isFalse(yield* admitted);
-        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "super_admin" });
-        assert.isTrue(yield* admitted);
-        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "admin" });
-        assert.isFalse(yield* admitted);
-        yield* Teams.setMemberships({
-          ...viewer,
-          teamId: selected.id,
-          userIds: [reader.user.id],
-          added: true
-        });
-        assert.isTrue(yield* admitted);
-        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "super_admin" });
-        yield* users.setRole({ ...viewer, userId: reader.user.id, role: "member" });
-        assert.isTrue(yield* admitted);
-      }).pipe(Effect.provideService(Audiences.Activation, true))
-  );
-  it.effect(
-    "defaults omitted first-publish audiences to Company and still refuses inactive team audiences",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const input = Fixtures.recordInput(uploader, { scope: undefined });
-        yield* patches.preflight(input);
-        const created = yield* Fixtures.record(input);
-        assert.deepStrictEqual(created.audience, Audiences.company());
-        const blocked = Fixtures.recordInput(uploader, { scope: undefined });
-        const t = yield* team("Barrier", [uploader.user.id]);
-        const error = yield* Effect.flip(
-          patches
-            .preflight({ ...blocked, audience: teamAudience([t.id]) })
-            .pipe(Effect.provideService(Audiences.Activation, false))
-        );
-        assert.equal(error._tag, "AudienceInactive");
-        assert.equal(
-          (yield* patches.list(access(uploader.user.id))).some(
-            (row) => row.patch.id === blocked.patchId
-          ),
-          false
-        );
-      })
+  it.effect("defaults omitted first-publish audiences to Company", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const input = Fixtures.recordInput(uploader, { scope: undefined });
+      yield* patches.preflight(input);
+      const created = yield* Fixtures.record(input);
+      assert.deepStrictEqual(created.audience, Audiences.company());
+    })
   );
   it.effect(
     "commits multiple team grants with publication; roles and ownership never bypass current membership",
@@ -247,10 +233,9 @@ it.layer(services)("Patch audiences", (it) => {
             (row) => row.patch.id === input.patchId
           )
         );
-        assert.isTrue(
+        assert.isFalse(
           (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
-        assert.isTrue(yield* Audiences.references(viewer.companyId, design.id));
         yield* Teams.setMemberships({
           ...viewer,
           teamId: engineering.id,
@@ -278,7 +263,6 @@ it.layer(services)("Patch audiences", (it) => {
           )
         );
         yield* Teams.rename({ ...viewer, teamId: design.id, name: "Renamed design union" });
-        assert.isTrue(yield* Audiences.references(viewer.companyId, design.id));
         for (const t of [design, engineering])
           yield* Teams.setMemberships({
             ...viewer,
@@ -295,16 +279,66 @@ it.layer(services)("Patch audiences", (it) => {
         );
         assert.equal(
           (yield* Effect.flip(patches.authorizePublish({ ...input, intent: "update" })))._tag,
-          "PatchUnavailable"
+          "OwnerAccessLost"
         );
         assert.equal(
           (yield* patches.manage(input.patchId, { userId: admin.user.id, admin: true })).id,
           input.patchId
         );
-        assert.isTrue(
+        assert.isFalse(
           (yield* patches.list(access(admin.user.id))).some((row) => row.patch.id === input.patchId)
         );
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
+  );
+  it.effect("member sharing preserves existing teams outside their memberships", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const own = yield* team("Visible owner team", [uploader.user.id, admin.user.id]);
+      const hidden = yield* team("Hidden existing team", [reader.user.id]);
+      const input = Fixtures.recordInput(uploader, { audience: teamAudience([own.id]) });
+      yield* Fixtures.record(input);
+      yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: admin.user.id, admin: true },
+        audience: teamAudience([own.id, hidden.id])
+      });
+      const result = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: { userId: uploader.user.id, admin: false },
+        audience: teamAudience([own.id])
+      });
+      assert.deepStrictEqual(result.audience.members, teamAudience([own.id, hidden.id]).members);
+    })
+  );
+  it.effect("legacy Company sharing retains teams; explicit audience widens", () =>
+    Effect.gen(function* () {
+      const patches = yield* Patches.Patches;
+      const t = yield* team("Legacy Company", [uploader.user.id]);
+      const audience = teamAudience([t.id]);
+      const input = Fixtures.recordInput(uploader, { audience });
+      yield* Fixtures.record(input);
+      const actor = { userId: uploader.user.id, admin: false };
+      const retained = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor,
+        scope: "company"
+      });
+      assert.deepStrictEqual(retained.audience, audience);
+      const updated = yield* Fixtures.record(
+        Fixtures.recordInput(uploader, {
+          intent: "update",
+          patchId: input.patchId,
+          scope: "company"
+        })
+      );
+      assert.deepStrictEqual(updated.audience, audience);
+      const widened = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor,
+        audience: Audiences.company()
+      });
+      assert.deepStrictEqual(widened.audience, Audiences.company());
+    })
   );
   it.effect(
     "rejects unknown teams and owner-excluding sharing without partially changing the audience",
@@ -333,9 +367,7 @@ it.layer(services)("Patch audiences", (it) => {
           patchRef: input.patchId
         });
         assert.deepStrictEqual(found!.patch.audience, input.audience);
-        assert.isTrue(yield* Audiences.references(viewer.companyId, own.id));
-        assert.isFalse(yield* Audiences.references(viewer.companyId, other.id));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
   it.effect(
     "retains audience on republish and rollback and rolls back audience authority with its outer transaction",
@@ -371,198 +403,61 @@ it.layer(services)("Patch audiences", (it) => {
           patchRef: input.patchId
         });
         assert.deepStrictEqual(found!.patch.audience, input.audience);
-        assert.isTrue(yield* Audiences.references(viewer.companyId, t.id));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
-  it.effect("keeps more than 100 guests readable and every company guest selectable", () =>
+  it.effect("keeps named guests during team edits and permits inactive-owner sharing repair", () =>
     Effect.gen(function* () {
       const patches = yield* Patches.Patches;
       const grants = yield* GuestGrants.GuestGrants;
       const sql = yield* SqlClient.SqlClient;
       const outside = yield* (yield* Companies.Companies).create({
-        handle: "many-guests",
+        handle: "review-guest",
         name: "Outside",
-        clerkUserId: "many-owner",
-        email: "owner@many.example",
-        userName: "Outside"
+        clerkUserId: "review-guest",
+        email: "review@outside.example",
+        userName: "Guest"
       });
-      yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role)
-        SELECT 'many-guest-' || n, 'many-clerk-' || n, ${outside.company.id}, 'guest-' || n || '@many.example', 'Guest ' || n, 'member' FROM generate_series(1, 101) n`;
-      yield* sql`INSERT INTO company_patch_guests(company_id, user_id, added_by)
-        SELECT ${viewer.companyId}, 'many-guest-' || n, ${uploader.user.id} FROM generate_series(1, 100) n`;
-      const selected = Array.from({ length: 100 }, (_, i) => `many-guest-${i + 1}`);
-      const validationQueries: string[] = [];
-      yield* Audiences.validate({
-        companyId: viewer.companyId,
-        actorId: uploader.user.id,
-        ownerId: uploader.user.id,
-        audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: selected } }
-      }).pipe(
-        Effect.provideService(Statement.CurrentTransformer, (statement) => {
-          validationQueries.push(statement.compile()[0]);
-          return Effect.succeed(statement);
-        })
-      );
-      assert.lengthOf(validationQueries, 2, "one actor/owner lookup and one batch of 100 guests");
-
-      const input = Fixtures.recordInput(uploader, {
-        audience: { members: { kind: "company" }, guests: { kind: "specific", userIds: selected } }
-      });
+      const t = yield* team("Guest preservation", [uploader.user.id, admin.user.id]);
+      const input = Fixtures.recordInput(uploader);
       yield* Fixtures.record(input);
-      yield* grants.share({
+      const owner = { userId: uploader.user.id, admin: false };
+      yield* grants.share({ patchId: input.patchId, actor: owner, email: outside.user.email });
+      yield* patches.setSharing({
         patchId: input.patchId,
-        actor: { userId: uploader.user.id, admin: false },
-        email: "guest-101@many.example"
+        actor: owner,
+        audience: teamAudience([t.id])
       });
-      const loaded = Option.getOrThrow(yield* patches.find(input.patchId));
-      assert.equal(loaded.patch.audience.guests.kind, "specific");
-      assert.lengthOf(yield* grants.guests(input.patchId), 101);
-      assert.isTrue(
-        (yield* grants.sharedBefore(viewer.companyId)).some((p) => p.userId === selected[0])
+      assert.deepStrictEqual(
+        (yield* grants.guests(input.patchId)).map((g) => g.userId),
+        [outside.user.id]
       );
-      assert.isAtLeast((yield* grants.sharedBefore(viewer.companyId)).length, 101);
-      assert.isTrue(
-        yield* Audiences.canOpen(
-          Option.getOrThrow(yield* patches.find(input.patchId)).patch,
-          viewer.companyId,
-          uploader.user.id
-        )
-      );
-      yield* grants.remove({
+      const outsiderView = yield* grants.companyGuests(viewer.companyId, {
+        userId: reader.user.id,
+        admin: false
+      });
+      assert.deepStrictEqual(outsiderView.find((g) => g.userId === outside.user.id)?.patches, []);
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
+      yield* patches.setSharing({
         patchId: input.patchId,
-        actor: { userId: uploader.user.id, admin: false },
-        guest: "many-guest-101"
+        actor: owner,
+        audience: teamAudience([t.id])
       });
-      assert.lengthOf(yield* grants.guests(input.patchId), 100);
+      assert.lengthOf(yield* grants.guests(input.patchId), 1);
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${uploader.user.id}`;
+      const adminActor = { userId: admin.user.id, admin: true };
+      const repaired = yield* patches.setSharing({
+        patchId: input.patchId,
+        actor: adminActor,
+        audience: Audiences.company()
+      });
+      assert.equal(repaired.scope, "company");
+      yield* grants.remove({ patchId: input.patchId, actor: adminActor, guest: outside.user.id });
+      assert.deepStrictEqual(
+        yield* sql`SELECT last_changed_by FROM patches WHERE id = ${input.patchId}`,
+        [{ last_changed_by: admin.user.id }]
+      );
+      assert.lengthOf(yield* grants.guests(input.patchId), 0);
+      yield* sql`UPDATE users SET deactivated_at = NULL WHERE id = ${uploader.user.id}`;
     })
-  );
-  it.effect(
-    "retains inactive guest grants through scope changes and keeps each patch's attribution",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const grants = yield* GuestGrants.GuestGrants;
-        const sql = yield* SqlClient.SqlClient;
-        const outside = yield* (yield* Companies.Companies).create({
-          handle: "inactive-guest",
-          name: "Outside",
-          clerkUserId: "inactive-guest",
-          email: "inactive@guests.example",
-          userName: "Inactive"
-        });
-        const first = yield* Fixtures.record(Fixtures.recordInput(uploader));
-        const second = yield* Fixtures.record(Fixtures.recordInput(reader));
-        const actor = { userId: uploader.user.id, admin: false };
-        yield* grants.share({ patchId: first.patchId, actor, email: outside.user.email });
-        yield* grants.share({
-          patchId: second.patchId,
-          actor: { userId: reader.user.id, admin: false },
-          email: outside.user.email
-        });
-        const listed = (yield* grants.companyGuests(viewer.companyId)).find(
-          (g) => g.userId === outside.user.id
-        )!;
-        assert.equal(
-          listed.patches.find((p) => p.name === second.name)?.sharedBy,
-          reader.user.name
-        );
-        yield* sql`UPDATE users SET deactivated_at = now() WHERE id = ${outside.user.id}`;
-        const shared = yield* patches.setSharing({
-          patchId: first.patchId,
-          actor: actor,
-          scope: "public"
-        });
-        assert.deepStrictEqual(shared.audience.guests, {
-          kind: "specific",
-          userIds: [outside.user.id]
-        });
-        yield* patches.setSharing({
-          patchId: first.patchId,
-          actor: actor,
-          audience: {
-            ...shared.audience,
-            members: { kind: "company" }
-          }
-        });
-        yield* Fixtures.record(
-          Fixtures.recordInput(uploader, {
-            intent: "update",
-            patchId: first.patchId,
-            scope: "public"
-          })
-        );
-        assert.lengthOf(yield* grants.guests(first.patchId), 1);
-        assert.isFalse(
-          (yield* grants.sharedWith(outside.user.id)).some((p) => p.patchId === first.patchId)
-        );
-        yield* grants.revokeAll({ companyId: viewer.companyId, userId: outside.user.id });
-      })
-  );
-  it.effect(
-    "all company guests includes future guests, supports exclusions and preserves named grants independently",
-    () =>
-      Effect.gen(function* () {
-        const patches = yield* Patches.Patches;
-        const grants = yield* GuestGrants.GuestGrants;
-        const companies = yield* Companies.Companies;
-        const gina = yield* companies.create({
-          handle: "audience-gina",
-          name: "Gina Co",
-          clerkUserId: "audience-gina",
-          email: "gina@audience.example",
-          userName: "Gina"
-        });
-        const riley = yield* companies.create({
-          handle: "audience-riley",
-          name: "Riley Co",
-          clerkUserId: "audience-riley",
-          email: "riley@audience.example",
-          userName: "Riley"
-        });
-        const actor = { userId: uploader.user.id, admin: false };
-        const { patchId } = yield* Fixtures.record(Fixtures.recordInput(uploader));
-        const all: PatchAudience = {
-          members: { kind: "company" },
-          guests: { kind: "all", excludedUserIds: [] }
-        };
-        yield* patches.setSharing({ patchId: patchId, actor: actor, audience: all });
-        assert.isFalse((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
-        const invitation = yield* Fixtures.record(Fixtures.recordInput(uploader));
-        yield* grants.share({ patchId: invitation.patchId, actor, email: "gina@audience.example" });
-        assert.isTrue((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
-        yield* grants.remove({ patchId, actor, guest: gina.user.id });
-        assert.isFalse((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
-        assert.isTrue(
-          (yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === invitation.patchId)
-        );
-        yield* grants.share({
-          patchId: invitation.patchId,
-          actor,
-          email: "riley@audience.example"
-        });
-        assert.isTrue((yield* grants.sharedWith(riley.user.id)).some((p) => p.patchId === patchId));
-        yield* grants.share({ patchId, actor, email: "gina@audience.example" });
-        const loaded = yield* patches.find(patchId);
-        assert.isTrue(Option.isSome(loaded));
-        const bound = Option.getOrThrow(loaded);
-        assert.isTrue(
-          Option.isSome(
-            yield* grants.host({
-              patchId,
-              userId: gina.user.id,
-              state: "live",
-              current: true,
-              version: bound.version
-            })
-          )
-        );
-        assert.isTrue(
-          (yield* grants.holders({ companyId: viewer.companyId, patchId }, [gina.user.id])).get(
-            gina.user.id
-          )
-        );
-        yield* grants.revokeAll({ companyId: viewer.companyId, userId: gina.user.id });
-        assert.isFalse((yield* grants.sharedWith(gina.user.id)).some((p) => p.patchId === patchId));
-      }).pipe(Effect.provideService(Audiences.Activation, true))
   );
 });

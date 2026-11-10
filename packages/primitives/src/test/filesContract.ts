@@ -522,7 +522,8 @@ const sharedStoreContract = Effect.fn("test.filesContract.sharedStore")(function
   let sourceCompany = companyId;
   const handlers = yield* Files.makeLocal.pipe(
     Effect.provideService(LoadedVersions.LoadedVersions, {
-      find: (patchId, _versionId, viewer) =>
+      find: () => Effect.succeed(Option.none()),
+      findForViewer: (patchId, viewer) =>
         Effect.sync(() =>
           viewer?.companyId === companyId &&
           viewer.userId === identity.user.id &&

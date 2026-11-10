@@ -284,7 +284,7 @@ const makeWithCompanyQuota = Effect.fn("Files.make")(function* (
     )
       return yield* new Runtime.AccessDenied({});
     const source = yield* versions
-      .find(declaration.patchId, undefined, {
+      .findForViewer(declaration.patchId, {
         companyId: binding.identity.company.id,
         userId: binding.identity.user.id
       })

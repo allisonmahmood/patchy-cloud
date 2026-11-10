@@ -41,6 +41,9 @@ it.effect("rechecks current audience for owners and admins on an already loaded 
     const recheck = GrantedGuests.recheck(loaded, admitted.value, person).pipe(
       Effect.provideService(GrantedGuests.GrantedGuests, port),
       Effect.provideService(LoadedVersions.LoadedVersions, {
+        findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+          return this.find(patchId);
+        },
         find: () => Effect.succeed(Option.none())
       })
     );

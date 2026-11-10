@@ -460,7 +460,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       factories[alias] = `./uses/${alias}.js`;
     } else if (declaration.kind === "sharedStore") {
       const source = yield* patches
-        .sharedStore(declaration.patchId, declaration.store, companyId)
+        .sharedStore(declaration.patchId, declaration.store, companyId, viewerId)
         .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
       const fixture = `fixtures/shared-${alias}/README.md`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };
@@ -489,7 +489,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       });
     } else {
       const source = yield* patches
-        .sharedTable(declaration.patchId, declaration.table, companyId)
+        .sharedTable(declaration.patchId, declaration.table, companyId, viewerId)
         .pipe(Effect.catchTags(sharedSourceErrors(declaration)));
       const fixture = `fixtures/shared-${alias}.sql`;
       const resolved = { ...declaration, id: source.id, revision: source.schemaRevision };

@@ -248,7 +248,7 @@ it.layer(services)("company page and actions", (it) => {
       );
       const after = yield* send(location, { headers: { cookie: cookie(admin) } });
       const afterHtml = yield* Effect.promise(() => after.text());
-      assert.include(afterHtml, "All teams");
+      assert.include(afterHtml, 'aria-label="Teams"');
       assert.notInclude(afterHtml, `aria-label="Remove ${member.name} from`);
     })
   );
@@ -278,7 +278,7 @@ it.layer(services)("company page and actions", (it) => {
         assert.strictEqual(response.status, 409);
         const page = yield* send(location, { headers: { cookie: cookie(owner.user) } });
         const pageHtml = yield* Effect.promise(() => page.text());
-        assert.include(pageHtml, "All teams");
+        assert.include(pageHtml, 'aria-label="Teams"');
         assert.notInclude(pageHtml, `aria-label="Remove ${member.name} from`);
         assert.strictEqual(
           (yield* send(`${root}/create`, post(owner.user, { name: " design " }))).status,

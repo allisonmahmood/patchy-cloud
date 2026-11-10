@@ -55,6 +55,9 @@ const manifest = {
   }
 };
 const versions = Layer.succeed(LoadedVersions.LoadedVersions, {
+  findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+    return this.find(patchId);
+  },
   find: (patch, version = versionId) =>
     Effect.succeed(
       ![patchId, "secondpatch1", "otherpatch11"].includes(patch) ||

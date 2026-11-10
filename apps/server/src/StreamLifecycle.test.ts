@@ -110,6 +110,9 @@ it.layer(dependencies)("scoped lifecycle dispatch", (it) => {
           Effect.provideServiceEffect(Subscriptions.Subscriptions, Subscriptions.make),
           Effect.provide(SubscriptionReads.layer),
           Effect.provideService(LoadedVersions.LoadedVersions, {
+            findForViewer(this: LoadedVersions.LoadedVersions["Service"], patchId) {
+              return this.find(patchId);
+            },
             find: (id, versionId) =>
               Effect.gen(function* () {
                 const found = yield* source.find(id, versionId);

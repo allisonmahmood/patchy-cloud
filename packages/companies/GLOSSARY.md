@@ -65,7 +65,7 @@ A named, company-owned set of people, with a stable identity across renames. Peo
 _Avoid_: group, department, role, space
 
 **Team membership**:
-One company person belonging to one team. Removing it leaves their other memberships intact; restoring it joins the same team again. Effective membership combines independent assignments with required membership in every company team for active super admins. Required membership is derived from the current role, so demotion removes it without deleting independent assignments. An inactive person has no effective team membership.
+One company person belonging to one team. Removing it leaves their other memberships intact; restoring it joins the same team again. Membership requires a recorded assignment for every role, including super admins. An inactive person has no effective team membership.
 _Avoid_: team role, ownership
 
 **Membership change**:

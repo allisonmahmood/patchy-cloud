@@ -16,6 +16,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import {
   BadRequest,
+  AudienceRefused,
   AudienceOptions,
   Behind,
   Conflict,
@@ -194,15 +195,23 @@ const lifecycleFailure = <S extends Schema.Top & Schema.Codec<{ readonly code: s
   fields: Omit<S["~type.make.in"], "ok" | "code">
 ) => Effect.succeed(refuse(schema, { ok: false, code, ...fields }));
 const audienceFailure = (error: Audiences.InvalidAudience) =>
-  Effect.succeed(refuse(BadRequest, { ok: false, error: error.message }));
+  Effect.succeed(
+    refuse(AudienceRefused, {
+      ok: false,
+      error: error.message,
+      code:
+        error._tag === "InvalidAudienceTeams" ? "invalid_audience_teams" : "audience_excludes_owner"
+    })
+  );
 const audienceFailures = {
-  AudienceInactive: audienceFailure,
   InvalidAudienceTeams: audienceFailure,
-  InvalidAudienceGuests: audienceFailure,
-  AudienceExcludesOwner: audienceFailure,
-  AudienceScopeMismatch: audienceFailure
+  AudienceExcludesOwner: audienceFailure
 };
 const lifecycleFailures = {
+  OwnerAccessLost: (error: Patches.OwnerAccessLost) =>
+    Effect.succeed(
+      refuse(AudienceRefused, { ok: false, code: "owner_access_lost", error: error.message })
+    ),
   NotOwner: (error: Patches.NotOwner) =>
     lifecycleFailure(NotOwner, "not_owner", { error: error.message, owner: error.owner }),
   WrongState: (error: Patches.WrongState) =>
@@ -217,7 +226,8 @@ const lifecycleFailures = {
   HasDependants: (error: Patches.HasDependants) =>
     lifecycleFailure(HasDependants, "has_dependants", {
       error: error.message,
-      dependants: error.dependants
+      dependants: error.dependants,
+      ...(error.hiddenCount === undefined ? {} : { hiddenCount: error.hiddenCount })
     }),
   SourcesOff: (error: Patches.SourcesOff) =>
     lifecycleFailure(SourcesOff, "sources_off", { error: error.message, sources: error.sources }),
@@ -266,6 +276,7 @@ const patchGuest = (guest: GuestGrants.Guest) =>
   });
 /** Who may manage the patch: the owner check every guest act makes first. */
 const managerFailures = {
+  OwnerAccessLost: lifecycleFailures.OwnerAccessLost,
   NotOwner: lifecycleFailures.NotOwner,
   PatchUnavailable: ownerFailures.PatchUnavailable,
   SqlError: Effect.die
@@ -643,6 +654,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
               })
               .pipe(
                 Effect.catchTags({
+                  OwnerAccessLost: lifecycleFailures.OwnerAccessLost,
                   NotOwner: lifecycleFailures.NotOwner,
                   PatchRetired: lifecycleFailures.PatchRetired,
                   PatchDeleted: lifecycleFailures.PatchDeleted,
@@ -1205,11 +1217,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             Effect.catchTags(bodyFailures)
           );
           if (HttpServerResponse.isHttpServerResponse(payload)) return payload;
-          if (
-            payload.audience !== undefined &&
-            Audiences.scopeOf(payload.audience) !== payload.scope
-          )
-            return yield* audienceFailure(new Audiences.AudienceScopeMismatch());
           const shared = yield* patches
             .setSharing({
               patchId: params.patchId,

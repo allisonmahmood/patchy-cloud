@@ -36,8 +36,11 @@ export const loaded = ({
 export const make = Effect.gen(function* () {
   const patches = yield* Patches.Patches;
   return LoadedVersions.LoadedVersions.of({
-    find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId, viewer) {
-      return Option.map(yield* patches.find(patchId, undefined, versionId, viewer), loaded);
+    findForViewer: Effect.fn("LoadedVersions.findForViewer")(function* (patchId, viewer) {
+      return Option.map(yield* patches.findForViewer(patchId, viewer), loaded);
+    }),
+    find: Effect.fn("LoadedVersions.find")(function* (patchId, versionId) {
+      return Option.map(yield* patches.find(patchId, undefined, versionId), loaded);
     })
   });
 });
