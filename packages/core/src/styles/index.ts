@@ -5,6 +5,7 @@ import { buttons } from "./buttons.js";
 import { containers } from "./containers.js";
 import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
+import { doorParts } from "./door-parts.js";
 import { doors } from "./doors.js";
 import { fields } from "./fields.js";
 import { marks } from "./marks.js";
@@ -47,6 +48,7 @@ export const chunks = {
   tiles,
   appShell,
   doors,
+  doorParts,
   templates,
   whatsNew,
   switcher,

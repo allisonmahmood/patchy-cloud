@@ -15,16 +15,16 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { InviteMail } from "@patchy/companies";
-import { type Cryptography, escapeAttribute, escapeHtml } from "@patchy/core";
+import { button, type Cryptography, escapeHtml, field, input, linkButton } from "@patchy/core";
 import * as BetaLinks from "./BetaLinks.js";
 import * as RequireSession from "./RequireSession.js";
 import * as Session from "./Session.js";
-import { pageResponse } from "./page.js";
+import { doorResponse, unavailableDoor } from "./page.js";
 
 /** An email and an action, with room to spare; anything bigger is no form of this page's. */
 const MAX_FORM_BYTES = 4_096;
 
-const kicker = '<p class="auth-kicker">Private beta</p>';
+const kicker = "Private beta";
 
 /** The reserved address as the page shows it, since anyone holding the link can open it. */
 const masked = (email: string) => {
@@ -36,51 +36,69 @@ const masked = (email: string) => {
 const openPage = (
   link: BetaLinks.BetaLink,
   refused?: { readonly status: number; readonly message: string; readonly email: string }
-) => {
-  const title = `A Patchy Cloud spot for ${link.label}`;
-  const field = refused
-    ? ` value="${escapeAttribute(refused.email)}" aria-describedby="beta-email-error" aria-invalid="true" autofocus`
-    : "";
-  const callout = refused
-    ? `<div class="note note-refused field-callout" id="beta-email-error" role="alert"><strong class="note-title">${escapeHtml(refused.message)}</strong></div>`
-    : "";
-  return pageResponse({
-    title,
-    heading: `${kicker}<h1 class="page-heading">${escapeHtml(title)}</h1>`,
+) =>
+  doorResponse({
+    kicker,
+    title: `A Patchy Cloud spot for ${link.label}`,
     // No action: the form posts to the page's own address, which the markup never repeats.
-    body: `<p>Start with your work email. You'll set up ${escapeHtml(link.label)}'s company next.</p><form method="post" novalidate><input type="hidden" name="action" value="claim"><label class="field-label" for="beta-email">Work email</label><input class="field" id="beta-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false"${field}>${callout}<div class="actions"><button class="btn btn-primary" type="submit">Continue</button></div></form>`,
+    body: `<p>Start with your work email. You’ll set up ${escapeHtml(link.label)}’s company next.</p><form id="beta-claim" method="post" novalidate><input type="hidden" name="action" value="claim">${field(
+      {
+        id: "beta-email",
+        label: "Work email",
+        ...(refused === undefined ? {} : { error: refused.message }),
+        control: (aria) =>
+          input(aria, {
+            name: "email",
+            type: "email",
+            value: refused?.email,
+            required: true,
+            maxlength: 254,
+            autocomplete: "email",
+            inputmode: "email",
+            autofocus: refused !== undefined
+          })
+      }
+    )}</form>`,
+    actions: button("Continue", { kind: "primary", block: true, form: "beta-claim" }),
     status: refused?.status
   });
-};
 
 const statePage = (
   link: BetaLinks.BetaLink,
   state: Exclude<BetaLinks.State, "open">,
   session: Session.Session["Service"]
 ) => {
-  const email = `<span class="auth-email">${escapeHtml(masked(link.email ?? ""))}</span>`;
+  const email = `<span class="strong">${escapeHtml(masked(link.email ?? ""))}</span>`;
   switch (state) {
     case "sent":
-      return pageResponse({
+      return doorResponse({
+        kicker,
         title: "Check your email",
-        heading: `${kicker}<h1 class="page-heading">Check your email</h1>`,
         body: `<p>Your invitation went to ${email}. It can land in spam.</p>`
       });
     case "failed":
-      return pageResponse({
-        title: "We couldn't send your invitation",
-        heading: `${kicker}<h1 class="page-heading">We couldn't send your invitation</h1>`,
-        body: BetaLinks.canRetry(link)
-          ? `<p>It's for ${email}.</p><form method="post"><input type="hidden" name="action" value="retry"><div class="actions"><button class="btn btn-primary" type="submit">Try again</button></div></form>`
-          : `<p>It's for ${email}. Ask the person who sent you this link.</p>`
-      });
+      return BetaLinks.canRetry(link)
+        ? doorResponse({
+            kicker,
+            title: "We couldn’t send your invitation",
+            body: `<p>It’s for ${email}.</p><form id="beta-retry" method="post"><input type="hidden" name="action" value="retry"></form>`,
+            actions: button("Try again", { kind: "primary", block: true, form: "beta-retry" })
+          })
+        : doorResponse({
+            kicker,
+            title: "We couldn’t send your invitation",
+            body: `<p>It’s for ${email}. Ask the person who sent you this link.</p>`
+          });
     case "used":
-      return pageResponse({
+      return doorResponse({
+        kicker,
         title: "This link has been used",
-        body: `<p>If that was you, sign in to continue.</p><div class="actions"><a class="btn btn-primary" href="${escapeAttribute(session.signInUrl("/"))}">Sign in</a></div>`
+        body: "<p>If that was you, sign in to continue.</p>",
+        actions: linkButton("Sign in", session.signInUrl("/"), { kind: "primary", block: true })
       });
     case "ended":
-      return pageResponse({
+      return doorResponse({
+        kicker,
         title: "This link no longer works",
         body: "<p>Ask the person who sent it for a new one.</p>",
         status: 410
@@ -144,17 +162,10 @@ export const routes = (
       const errors = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
         app.pipe(
           Effect.catchTags({
-            SqlError: () =>
-              Effect.succeed(
-                pageResponse({
-                  title: "Patchy is unavailable",
-                  body: "<p>Please try again.</p>",
-                  status: 503
-                })
-              ),
+            SqlError: () => Effect.succeed(unavailableDoor("patchy")),
             HttpServerError: () =>
               Effect.succeed(
-                pageResponse({
+                doorResponse({
                   title: "Invalid form",
                   body: "<p>Go back and submit the form again.</p>",
                   status: 400

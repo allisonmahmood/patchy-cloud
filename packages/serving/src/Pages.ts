@@ -307,8 +307,7 @@ const servePatch = Effect.fn("Pages.servePatch")(function* (
       return withCookies(
         pageResponse(
           {
-            title: `${notice.value.patch.name} is ${notice.value.patch.state}`,
-            body: renderAddressNotice({ ...notice.value, viewer: admission, now }),
+            ...renderAddressNotice({ ...notice.value, viewer: admission, now }),
             app: { viewer: admission, section: "patches" }
           },
           session

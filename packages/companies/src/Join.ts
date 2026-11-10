@@ -3,9 +3,25 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import {
+  button,
+  doorPage,
+  escapeAttribute,
+  escapeHtml,
+  field,
+  idFor,
+  input,
+  linkButton,
+  notice,
+  prefixInput,
+  refusal as pageRefusal,
+  row,
+  rows,
+  typedExactly
+} from "@patchy/core";
 import { withReportedCommit } from "@patchy/sql";
 import * as Companies from "./Companies.js";
+import * as Users from "./Users.js";
 import { displayName, type Claims } from "./Users.js";
 
 const decodeForm = Schema.decodeUnknownEffect(
@@ -22,16 +38,14 @@ const decodeForm = Schema.decodeUnknownEffect(
   ])
 );
 
+/** The door, as `doorPage` draws it, or where to go instead. */
 export interface JoinPage {
   readonly title: string;
+  readonly heading?: string;
   readonly body: string;
   readonly status?: number;
   readonly redirect?: string;
 }
-
-export const styles = `
-    .join-invite { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
-`;
 
 /** Server-side suggestion, for the first render and for a refused handle: plain forms run no client code. */
 const suggestedHandle = (name: string) =>
@@ -44,10 +58,12 @@ const suggestedHandle = (name: string) =>
     .slice(0, 32)
     .replace(/-+$/, "");
 
-/** Where the form posts back to, and the instance whose address the handle opens. */
+/** Where the form posts back to, the instance whose address the handle opens, and the door's foot. */
 export interface Door {
   readonly returnTo: string | null;
   readonly publicBaseUrl: string;
+  /** Trusted HTML: who is signed in and the way out, which Auth draws. */
+  readonly foot: string;
 }
 
 type FieldRefusal = {
@@ -74,9 +90,9 @@ const handleRefusal = Effect.fn("Join.handleRefusal")(function* (handle: string)
       : {};
   const title =
     handle.length === 0
-      ? "Choose a handle"
+      ? "Choose an address"
       : /[A-Z]/.test(handle) && !/[^A-Za-z0-9-]/.test(handle)
-        ? "Handles are lowercase"
+        ? "Addresses are lowercase"
         : /[^a-z0-9-]/.test(handle)
           ? "Use only lowercase letters, digits and hyphens"
           : handle.length < 3
@@ -94,44 +110,81 @@ const nameRefusal = (name: string): FieldRefusal | undefined =>
       ? { status: 422, field: "name", title: "Use at most 200 characters" }
       : undefined;
 
-const callout = (id: string, refusal: FieldRefusal) => {
-  const detail = [
-    refusal.detail === undefined ? "" : escapeHtml(refusal.detail),
-    refusal.suggestion === undefined
-      ? ""
-      : `Try <strong>${escapeHtml(refusal.suggestion)}</strong>.`
-  ].filter(Boolean);
-  return `<div class="note note-refused field-callout" id="${id}" role="alert"><strong class="note-title">${escapeHtml(refusal.title)}</strong>${detail.join(" ")}</div>`;
-};
-
-/** The attributes that mark a field as the one at fault, and land the cursor in it. */
-const faulted = (id: string) => ` aria-describedby="${id}-error" aria-invalid="true" autofocus`;
+/** A field's refusal in one line: what is wrong, why, and a free fix when there is one. */
+const fieldError = (refusal: FieldRefusal) =>
+  [
+    `${refusal.title}.`,
+    refusal.detail,
+    refusal.suggestion === undefined ? undefined : `Try ${refusal.suggestion}.`
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
 
 const render = Effect.fn("Join.render")(function* (
   claims: Claims,
   door: Door,
   fields?: { readonly name: string; readonly handle: string },
   refusal?: Refusal
-): Effect.fn.Return<JoinPage, SqlError, Companies.Companies> {
+): Effect.fn.Return<JoinPage, SqlError, Companies.Companies | Users.Users> {
   const companies = yield* Companies.Companies;
   const invites = yield* companies.findInvitesByEmail(claims.email);
   const action = `/join${door.returnTo ? `?return=${encodeURIComponent(door.returnTo)}` : ""}`;
   const fieldRefusal = refusal !== undefined && "field" in refusal ? refusal : undefined;
-  const notice = refusal
-    ? `<div class="note note-warn" role="alert">${escapeHtml("message" in refusal ? refusal.message : refusal.title)}</div>`
-    : "";
+  // A refusal no field owns sits above the button it refused, and the page's focus starts on it.
+  const refused =
+    refusal === undefined || fieldRefusal !== undefined
+      ? ""
+      : pageRefusal(
+          notice({ tone: "danger", title: "message" in refusal ? refusal.message : refusal.title })
+        );
+  const email = `<span class="strong">${escapeHtml(claims.email)}</span>`;
   if (invites.length > 0) {
-    const rows = yield* Effect.forEach(
+    const inviters = yield* (yield* Users.Users).names(invites.map((invite) => invite.invitedBy));
+    const offers = yield* Effect.forEach(
       invites,
       Effect.fn(function* (invite) {
         const company = yield* companies.findById(invite.companyId);
         if (!company) return yield* Effect.die(new Error("Invited company is missing"));
-        return `<form class="list-row join-invite" method="post" action="${escapeAttribute(action)}"><p><strong>${escapeHtml(company.name)}</strong><br>${escapeHtml(invite.role)}</p><input type="hidden" name="action" value="join"><input type="hidden" name="inviteId" value="${escapeAttribute(invite.id)}"><button class="btn btn-primary" type="submit" aria-label="Join ${escapeAttribute(company.name)}">Join</button></form>`;
+        return { invite, company, inviter: inviters.get(invite.invitedBy) };
+      })
+    );
+    const joinForm = (inviteId: string, id: string) =>
+      `<form id="${escapeAttribute(id)}" method="post" action="${escapeAttribute(action)}"><input type="hidden" name="action" value="join"><input type="hidden" name="inviteId" value="${escapeAttribute(inviteId)}"></form>`;
+    const role = (invite: Companies.Invite) => (invite.role === "admin" ? "an admin" : "a member");
+    const [only] = offers;
+    if (offers.length === 1 && only !== undefined) {
+      const by = only.inviter === undefined ? "" : `${escapeHtml(only.inviter)} invited `;
+      return {
+        title: `Join ${only.company.name}`,
+        ...doorPage({
+          kicker: "Invitation",
+          title: `Join ${only.company.name}`,
+          body: `<p>${by === "" ? `${email} is invited` : `${by}${email}`} as ${role(only.invite)}.</p>${joinForm(only.invite.id, "join-invite")}${refused}`,
+          actions: button(`Join ${only.company.name}`, {
+            kind: "primary",
+            block: true,
+            form: "join-invite"
+          }),
+          foot: door.foot
+        }),
+        status: refusal?.status
+      };
+    }
+    const items = offers.map(({ invite, company, inviter }) =>
+      row({
+        name: company.name,
+        description: `As ${role(invite)}${inviter === undefined ? "" : `, from ${inviter}`}`,
+        end: `${joinForm(invite.id, idFor("join", invite.id))}${button("Join", { size: "sm", form: idFor("join", invite.id), ariaLabel: `Join ${company.name}` })}`
       })
     );
     return {
       title: "Join your company",
-      body: `<p>Invitations for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${notice}<div class="list">${rows.join("")}</div>`,
+      ...doorPage({
+        kicker: "Invitation",
+        title: "Join your company",
+        body: `<p>Invitations for ${email}.</p>${refused}${rows(items, true)}`,
+        foot: door.foot
+      }),
       status: refusal?.status
     };
   }
@@ -139,12 +192,50 @@ const render = Effect.fn("Join.render")(function* (
   const handle = fields?.handle ?? suggestedHandle(name);
   const nameAt = fieldRefusal?.field === "name" ? fieldRefusal : undefined;
   const handleAt = fieldRefusal?.field === "handle" ? fieldRefusal : undefined;
-  // The handle sits under the address it opens. The browser flags a broken rule while it is typed (field-rule);
-  // Patchy names the rule on submit, so the form is novalidate and never blocked by the browser's bubble.
+  // The handle sits under the address it opens. Patchy names a broken rule on submit, so the form
+  // is novalidate and never blocked by the browser's bubble.
   const address = `${new URL(door.publicBaseUrl).host}/`;
+  const nameField = field({
+    id: "company-name",
+    label: "Company name",
+    ...(nameAt === undefined ? {} : { error: fieldError(nameAt) }),
+    control: (aria) =>
+      input(aria, {
+        name: "name",
+        value: name,
+        required: true,
+        maxlength: 200,
+        autocomplete: "organization",
+        autofocus: nameAt !== undefined
+      })
+  });
+  const handleField = field({
+    id: "company-handle",
+    label: "Address",
+    hint: "Lowercase letters, digits and hyphens, 3–32 characters. It can’t change later.",
+    ...(handleAt === undefined ? {} : { error: fieldError(handleAt) }),
+    control: (aria) =>
+      typedExactly(
+        prefixInput(aria, {
+          name: "handle",
+          prefix: address,
+          value: handle,
+          required: true,
+          maxlength: 32,
+          pattern: "[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]",
+          autocomplete: "off",
+          autofocus: handleAt !== undefined
+        })
+      )
+  });
   return {
     title: "Create your company",
-    body: `<p>There is no invite for <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>${fieldRefusal ? "" : notice}<form method="post" action="${escapeAttribute(action)}" novalidate><input type="hidden" name="action" value="create"><label class="field-label" for="company-name">Company name</label><input class="field" id="company-name" name="name" value="${escapeAttribute(name)}" required maxlength="200" autocomplete="organization"${nameAt ? faulted("company-name") : ""}>${nameAt ? callout("company-name-error", nameAt) : ""}<label class="field-label" for="company-handle">Company handle</label><div class="field field-group"><label class="field-prefix" for="company-handle">${escapeHtml(address)}</label><input id="company-handle" name="handle" value="${escapeAttribute(handle)}" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]" autocapitalize="none" autocomplete="off" spellcheck="false"${handleAt ? faulted("company-handle") : ' aria-describedby="company-handle-hint"'}></div>${handleAt ? callout("company-handle-error", handleAt) : `<p id="company-handle-hint" class="field-hint field-rule">Lowercase letters, digits and hyphens, 3–32 characters. Can't be changed later.</p>`}<div class="actions"><button class="btn btn-primary" type="submit">Create company</button></div></form>`,
+    ...doorPage({
+      title: "Create your company",
+      body: `<p>No invitation is waiting for ${email}.</p><form id="create-company" method="post" action="${escapeAttribute(action)}" novalidate><input type="hidden" name="action" value="create"><div class="fields">${nameField}${handleField}</div></form>${refused}`,
+      actions: button("Create company", { kind: "primary", block: true, form: "create-company" }),
+      foot: door.foot
+    }),
     status: refusal?.status
   };
 });
@@ -162,9 +253,18 @@ export const handle = Effect.fn("Join.handle")(function* (
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (membership) {
+    const title = `You are in ${membership.company.name}`;
     return {
-      title: `You are in ${membership.company.name}`,
-      body: `${request.method === "POST" ? '<div class="note note-warn" role="alert">Already in a company.</div>' : ""}<p>Signed in as <span class="auth-email">${escapeHtml(claims.email)}</span>.</p>`,
+      title,
+      ...doorPage({
+        title,
+        body: `${request.method === "POST" ? pageRefusal(notice({ tone: "danger", title: "Already in a company." })) : ""}<p>You can be in one company at a time.</p>`,
+        actions: linkButton(`Go to ${membership.company.name}`, "/", {
+          kind: "primary",
+          block: true
+        }),
+        foot: door.foot
+      }),
       status: request.method === "POST" ? 409 : 200,
       ...(request.method !== "POST" ? { redirect: door.returnTo ?? "/settings/people" } : {})
     } satisfies JoinPage;

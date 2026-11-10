@@ -205,7 +205,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.strictEqual(page.status, 409);
       assert.include(
         yield* Effect.promise(() => page.text()),
-        "That computer is already connected."
+        "That computer is already connected"
       );
     })
   );
@@ -223,7 +223,9 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(page.headers.get("cache-control"), "private, no-store");
         assert.include(page.headers.get("content-security-policy")!, "form-action 'self'");
         const html = yield* Effect.promise(() => page.text());
-        assert.match(html, new RegExp(`<h1\\b[^>]*>${login.userCode}</h1>`));
+        assert.include(html, '<h1 class="page-heading">Is this the code in your terminal?</h1>');
+        assert.include(html, `<p class="code-display">${login.userCode}</p>`);
+        assert.isBelow(html.indexOf("code-display"), html.indexOf(owner.user.email));
         assert.include(html, "Company &lt;confirm&gt;");
         assert.include(html, "Alex &quot;Owner&quot;");
         assert.include(html, owner.user.email);
@@ -242,10 +244,14 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
         assert.strictEqual(confirmed.headers.get("cache-control"), "private, no-store");
         assert.strictEqual(confirmed.headers.get("location"), null);
         const confirmedHtml = yield* Effect.promise(() => confirmed.text());
-        assert.include(confirmedHtml, "Confirmed.");
-        // The person returns to the portal, where the guide picks up at their first patch.
-        assert.include(confirmedHtml, "Your agent finishes setting up on its own.");
-        assert.match(confirmedHtml, /<a href="\/">Back to [^<]+<\/a>/);
+        // Confirmed is not connected: the computer appears once its terminal collects the key.
+        assert.include(confirmedHtml, "Go back to your terminal");
+        assert.include(
+          confirmedHtml,
+          'Your agent finishes connecting <span class="strong">Publishing laptop</span>'
+        );
+        assert.notInclude(confirmedHtml, "is connected");
+        assert.include(confirmedHtml, 'href="/agents">Open Your agents</a>');
         assert.deepStrictEqual(yield* tokens.list(owner.user.id), []);
         const complete = yield* logins.poll(login.deviceCode);
         assert.strictEqual(complete.status, "complete");
@@ -279,7 +285,9 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           assert.strictEqual(response.status, 409);
           assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
           fresh = yield* Effect.promise(() => response.text());
-          assert.include(fresh, 'role="alert">The signed-in account changed');
+          assert.include(fresh, "The signed-in account changed since this page loaded.");
+          // A refusal no field owns is where the page's focus starts.
+          assert.include(fresh, '<div class="refusal" tabindex="-1" autofocus>');
           assert.include(fresh, "Company &lt;switch-bob&gt;");
           assert.include(fresh, bob.user.email);
           assert.notInclude(fresh, alice.user.email);
@@ -334,7 +342,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       const page = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
       const html = yield* Effect.promise(() => page.text());
       assert.include(html, 'value="Old &quot;&lt;laptop&gt;&quot;"');
-      assert.include(html, "Replaces the key named");
+      assert.include(html, "Replaces Old &quot;&lt;laptop&gt;&quot;, which stops working");
       assert.notInclude(html, 'value="hostname"');
     })
   );
@@ -378,10 +386,10 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       assert.strictEqual(response.headers.get("cache-control"), "private, no-store");
       assert.strictEqual(response.headers.get("location"), null);
       const html = yield* Effect.promise(() => response.text());
-      assert.include(html, "Nothing was logged in.");
+      assert.include(html, "Nothing was logged in");
       const actual = yield* send(pathFor(login.userCode), { headers: { cookie: owner.cookie } });
       assert.strictEqual(actual.status, 410);
-      assert.include(yield* Effect.promise(() => actual.text()), "This code was already used.");
+      assert.include(yield* Effect.promise(() => actual.text()), "This code was already used");
       assert.deepStrictEqual(yield* (yield* MachineTokens.MachineTokens).list(owner.user.id), []);
       const result = yield* logins.poll(login.deviceCode).pipe(Effect.flip);
       assert.strictEqual(result._tag, "DeviceLoginDenied");
@@ -415,7 +423,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
                 })
           );
           assert.strictEqual(response.status, 410);
-          assert.include(yield* Effect.promise(() => response.text()), "This code has expired.");
+          assert.include(yield* Effect.promise(() => response.text()), "This code has expired");
         }
         const answered = yield* logins.start({ machineNameHint: "Answered" });
         yield* logins.confirm({
@@ -443,7 +451,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           if (action === "get") {
             assert.include(
               yield* Effect.promise(() => response.text()),
-              "Nothing is waiting for this code."
+              "Nothing is waiting for this code"
             );
           }
         }
@@ -460,7 +468,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           assert.strictEqual(response.status, 410);
           assert.include(
             yield* Effect.promise(() => response.text()),
-            "This code was already used."
+            "This code was already used"
           );
         }
       })
@@ -555,7 +563,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
       const response = yield* send("/login/device", { headers: { cookie: owner.cookie } });
       assert.strictEqual(response.status, 200);
       const html = yield* Effect.promise(() => response.text());
-      assert.include(html, "Open the link your terminal printed.");
+      assert.include(html, "Open the link your terminal printed");
       assert.notInclude(html, "<input");
       assert.notInclude(html, "<form");
     })
@@ -672,7 +680,7 @@ it.layer(services)("device login pages in memory with keypair sessions", (it) =>
           );
         assert.strictEqual(response.status, 429);
         assert.isAbove(Number(response.headers.get("retry-after")), 0);
-        assert.include(yield* Effect.promise(() => response.text()), "Too many code lookups.");
+        assert.include(yield* Effect.promise(() => response.text()), "Too many code lookups");
         assert.strictEqual(
           (yield* send(pathFor("UNKNOWN"), { headers: { cookie: owner.cookie } })).status,
           429

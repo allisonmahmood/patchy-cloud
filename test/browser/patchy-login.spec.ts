@@ -50,13 +50,19 @@ test("patchy-login: browser confirmation logs the packed CLI in; browser revoke 
   const handoff = decodeHandoff(start.stdout);
   expect(new URL(handoff.verificationUrl).origin).toBe(live.origin);
   expect((await page.goto(handoff.verificationUrl))?.status()).toBe(200);
-  await expect(page.getByRole("heading", { name: handoff.userCode, exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Is this the code in your terminal?", exact: true })
+  ).toBeVisible();
+  await expect(page.getByText(handoff.userCode, { exact: true })).toBeVisible();
   await expect(page.getByText(live.settings.browserEmail, { exact: true })).toBeVisible();
   await expect(page.getByText("Patchy Dev", { exact: true })).toBeVisible();
   const machineName = "Browser-confirmed machine";
-  await page.getByLabel("Machine name", { exact: true }).fill(machineName);
+  await page.getByLabel("Name this computer", { exact: true }).fill(machineName);
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Confirmed.", exact: true })).toBeVisible();
+  // Confirmed, not connected: the computer is connected once the CLI collects its key below.
+  await expect(
+    page.getByRole("heading", { name: "Go back to your terminal", exact: true })
+  ).toBeVisible();
   const complete = await live.cli(["login", "--complete", handoff.userCode, "--json"]);
   expect(complete.status).toBe(0);
   const loggedIn = decodeLogin(complete.stdout);

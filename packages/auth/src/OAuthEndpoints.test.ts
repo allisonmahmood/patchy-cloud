@@ -224,7 +224,7 @@ const unescaped = (value: string) =>
 
 /** A page's answer form: where it posts, and the account, client name and time it was shown. */
 const formOf = (html: string) => ({
-  action: unescaped(/<form(?: class="actions")? method="post" action="([^"]*)"/.exec(html)![1]!),
+  action: unescaped(/<form id="answer" method="post" action="([^"]*)"/.exec(html)![1]!),
   userId: unescaped(/name="userId" value="([^"]*)"/.exec(html)![1]!),
   client: unescaped(/name="client" value="([^"]*)"/.exec(html)![1]!),
   shown: /name="shown" value="([^"]*)"/.exec(html)![1]!
@@ -306,13 +306,16 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         assert.strictEqual(response.status, status, says);
         assert.isNull(response.headers.get("location"));
         const body = yield* Effect.promise(() => response.text());
-        assert.include(body, "This agent can't connect");
+        assert.include(body, "This app can’t connect");
         assert.include(body, says);
         assert.include(body, "Nothing was connected.");
       }
       const consent = yield* page({});
       assert.strictEqual(consent.status, 200);
-      assert.include(yield* Effect.promise(() => consent.text()), "Connect Agent to Patchy Dev?");
+      assert.include(
+        yield* Effect.promise(() => consent.text()),
+        "Let Agent use Patchy Dev’s patches as you?"
+      );
     })
   );
 
@@ -491,17 +494,17 @@ it.layer(services)("the authorization server's endpoints", (it) => {
       assert.strictEqual(page.status, 200);
       const html = yield* text(page);
       for (const says of [
-        "Connect an agent",
-        '<strong>Agent</strong><br><span class="supporting-text">agent.example</span>',
-        "wants to act as",
-        '<strong>Patchy Dev</strong><br><span class="supporting-text">dev@patchy.local</span>',
-        "Connect Agent to Patchy Dev?",
-        "Agent will be able to",
-        "Find Patchy Dev’s patches you can open",
-        "Use the agent tools their builders added, as you",
-        "Agent won’t be able to",
-        "Do anything you can’t",
-        "Every change it makes is logged as Patchy Dev via Agent.",
+        "Agent access",
+        '<span class="strong">Agent</span><span class="meta">agent.example</span>',
+        '<span class="sr-only">wants to act as</span>',
+        '<span class="strong">Patchy Dev</span><span class="meta">dev@patchy.local</span>',
+        "Let Agent use Patchy Dev’s patches as you?",
+        "It can find the patches you can open and use the agent tools their builders added, as you",
+        "Every change it makes is logged as Patchy Dev via Agent",
+        '<li class="can-no">',
+        "It can’t do anything you can’t, or publish",
+        'name="action" value="deny" form="answer"',
+        'name="action" value="allow" form="answer"',
         "Your answer goes back to <strong>agent.example</strong>",
         '<a href="/agents">Your agents</a>',
         "Use another account"
@@ -545,6 +548,22 @@ it.layer(services)("the authorization server's endpoints", (it) => {
           `form-action 'self' ${source};`
         );
       }
+      // Asked again with a local answer, the warning joins the refusal: one notice, both said.
+      const query = authorizeQuery(challenge, {
+        client_id: LOCAL,
+        redirect_uri: "http://127.0.0.1:33418/callback"
+      });
+      const form = formOf(yield* text(yield* consentPage(query)));
+      const again = yield* text(
+        yield* answer({ ...form, userId: "usr_someone_else" }, "allow", { cookie: sessionOf() })
+      );
+      assert.lengthOf(again.match(/class="notice /g) ?? [], 1);
+      assert.include(again, '<div class="refusal" tabindex="-1" autofocus>');
+      assert.include(again, "You signed in as someone else while this page was open.");
+      assert.include(
+        again,
+        "Your answer goes to a program on this computer: <code>127.0.0.1:33418</code>. Allow only if you just started connecting it."
+      );
     })
   );
 
@@ -562,7 +581,7 @@ it.layer(services)("the authorization server's endpoints", (it) => {
       assert.notInclude(html, "\u202e");
       assert.include(html, "&lt;img src=x onerror=alert(1)&gt;");
       // Cut to 64 characters, as the agent connection keeps it.
-      assert.include(html, `&lt;img src=x onerror=alert(1)&gt;${"a".repeat(36)}</strong>`);
+      assert.include(html, `&lt;img src=x onerror=alert(1)&gt;${"a".repeat(36)}</span>`);
       assert.notInclude(html, "a".repeat(37));
     })
   );
@@ -698,18 +717,27 @@ it.layer(services)("the authorization server's endpoints", (it) => {
         memberHtml,
         "Agent can’t connect until an admin turns it on. At Patchy Dev that’s Patchy Dev."
       );
-      assert.notInclude(memberHtml, "Turn it on in Settings");
+      assert.notInclude(memberHtml, "Turn it on");
       assert.notInclude(memberHtml, 'value="allow"');
 
       const adminHtml = yield* text(yield* consentPage(query));
       assert.include(adminHtml, "You’re an admin: turn it on, then connect again from Agent.");
-      assert.include(adminHtml, '<a class="btn btn-primary" href="/settings/agent-access">');
+      assert.include(
+        adminHtml,
+        '<a class="btn btn-primary btn-block" href="/settings/agent-access">Turn it on</a>'
+      );
 
       // Allow from a page shown while it was on is refused; Back to the agent denies.
       const allowed = yield* answer(shownWhileOn, "allow", { cookie: sessionOf() });
       assert.strictEqual(allowed.status, 409);
       assert.isNull(allowed.headers.get("location"));
-      assert.include(yield* text(allowed), "Agent access is off at Patchy Dev");
+      const refusedHtml = yield* text(allowed);
+      assert.include(refusedHtml, "Agent access is off at Patchy Dev");
+      // The Allow it refused is where the page's focus starts, in the page's one notice.
+      assert.include(refusedHtml, '<div class="refusal" tabindex="-1" autofocus>');
+      assert.include(refusedHtml, "Agent access was turned off before that went through.");
+      assert.lengthOf(refusedHtml.match(/class="notice /g) ?? [], 1);
+      assert.notInclude(adminHtml, 'class="refusal"');
       const back = yield* answer(formOf(adminHtml), "deny", { cookie: sessionOf() });
       assert.strictEqual(
         new URL(back.headers.get("location")!).searchParams.get("error"),

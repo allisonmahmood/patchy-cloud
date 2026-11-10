@@ -23,7 +23,7 @@ import { Analytics } from "@patchy/analytics";
 import { Users } from "@patchy/companies";
 import { Cryptography } from "@patchy/core";
 import * as Session from "./Session.js";
-import { pageResponse } from "./page.js";
+import { unavailableDoor } from "./page.js";
 
 export class DemoLinkTokenFailed extends Schema.TaggedError<DemoLinkTokenFailed>()(
   "DemoLinkTokenFailed",
@@ -126,22 +126,8 @@ export const routes = (notFound: HttpServerResponse.HttpServerResponse) =>
         "/signin/:secret",
         open.pipe(
           Effect.catchTags({
-            DemoLinkTokenFailed: () =>
-              Effect.succeed(
-                pageResponse({
-                  title: "Sign-in service unavailable",
-                  body: "<p>Please try again.</p>",
-                  status: 502
-                })
-              ),
-            SqlError: () =>
-              Effect.succeed(
-                pageResponse({
-                  title: "Company service unavailable",
-                  body: "<p>Please try again.</p>",
-                  status: 503
-                })
-              )
+            DemoLinkTokenFailed: () => Effect.succeed(unavailableDoor("sign-in")),
+            SqlError: () => Effect.succeed(unavailableDoor("patchy"))
           }),
           // Every answer carries the secret in its URL, so none may pass it on as a referrer.
           Effect.map(HttpServerResponse.setHeader("referrer-policy", "no-referrer"))

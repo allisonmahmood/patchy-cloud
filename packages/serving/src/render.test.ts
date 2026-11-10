@@ -41,13 +41,21 @@ describe("renderNotFound", () => {
     expect(html).toContain('<main class="auth-card"><div class="brand">');
     expect(html).toContain(`<h1 class="page-heading">This page isn't available</h1>`);
     expect(html.match(/<a\b[^>]*>[^<]*<\/a>/g)).toEqual([
-      '<a class="btn btn-primary" href="/">Go to Patchy</a>'
+      '<a class="btn btn-primary btn-block" href="/">Go to Patchy</a>'
     ]);
     expect(withoutRelay(html)).not.toMatch(/<(form|script|iframe)\b|data-notice/);
   });
 });
 
 describe("renderShellNotice", () => {
+  it("is a door marked with its code, apart from a retired or deleted patch's app page", () => {
+    const html = renderShellNotice("revoked", "/");
+    expect(html).toContain('<main class="auth-card" data-notice="revoked"><div class="brand">');
+    expect(html).toContain('<p class="kicker">Version revoked</p>');
+    expect(html).toContain('<h1 class="page-heading">This version has been stopped</h1>');
+    expect(html).not.toContain('class="app');
+  });
+
   it("preserves a deep return address without allowing it to become notice markup", () => {
     const returnTo = '/acme/tool/items/2?filter="><img src=x onerror=alert(1)>&q=ready#last';
     const html = renderShellNotice("principal_changed", returnTo);
@@ -160,7 +168,7 @@ describe("patch pages", () => {
 
   it("keeps address notice names and actor markup inert", () => {
     const markup = '<img src=x onerror="alert(1)">';
-    const html = renderAddressNotice({
+    const { body: html } = renderAddressNotice({
       patch: { ...patch, name: markup, state: "retired", retiredAt: "2026-01-01T00:00:00.000Z" },
       actorName: markup,
       sourcesOff: false,
@@ -175,11 +183,32 @@ describe("patch pages", () => {
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(html).not.toContain("<img");
     expect(html).toContain(`action="/patches/${encodeURIComponent(markup)}/restore"`);
+    // An app page, not a door: the patch's name heads it and View patch leads to its page.
+    expect(html).toContain('<h1 class="title">');
+    expect(html).toContain(`href="/patches/${encodeURIComponent(markup)}">View patch</a>`);
+    expect(html).not.toContain("auth-card");
+  });
+
+  it("says a retired address as a line of code, not in a patch's monogram", () => {
+    const { body: html } = renderAddressNotice({
+      patch: { ...patch, state: "retired", retiredAt: "2026-01-01T00:00:00.000Z" },
+      actorName: null,
+      sourcesOff: false,
+      viewer: {
+        user: { id: DEV_SEED.userId, email: "dev@patchy.local", name: "Owner" },
+        company: { id: DEV_SEED.companyId, handle: DEV_SEED.companyHandle, name: "Company" },
+        role: "member",
+        whatsNewSeen: 0
+      },
+      now: Date.UTC(2026, 0, 1)
+    });
+    expect(html).toContain(`<span class="code">${patch.companyHandle}/${patch.name}</span>`);
+    expect(html).not.toContain('class="mono');
   });
 
   it("formats off-state dates in UTC with stable month labels", () => {
     const retiredAt = "2026-08-31T23:30:00.000-02:00";
-    const html = renderAddressNotice({
+    const { body: html } = renderAddressNotice({
       patch: { ...patch, state: "retired", retiredAt },
       actorName: null,
       sourcesOff: false,
@@ -212,12 +241,12 @@ describe("patch pages", () => {
         whatsNewSeen: 0
       }
     };
-    const before = renderAddressNotice({ ...input, now: Date.parse(purgeAt) - 1 });
+    const before = renderAddressNotice({ ...input, now: Date.parse(purgeAt) - 1 }).body;
     expect(before).toContain('href="/patches/render-fixture/restore"');
     expect(before).toContain("Gone for good in 1 days");
     expect(before).toContain("Review those sources before restoring it.");
 
-    const ended = renderAddressNotice({ ...input, now: Date.parse(purgeAt) });
+    const ended = renderAddressNotice({ ...input, now: Date.parse(purgeAt) }).body;
     expect(ended).not.toContain("/patches/render-fixture/restore");
     expect(ended).not.toContain("Review those sources before restoring it.");
     expect(ended).toContain("Gone for good in 0 days");

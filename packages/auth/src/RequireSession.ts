@@ -4,10 +4,10 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as WideEvents from "@patchy/analytics/wide-events";
 import { Users } from "@patchy/companies";
-import { escapeAttribute, escapeHtml } from "@patchy/core";
+import { copyLine, copyScriptPath, escapeHtml, linkButton } from "@patchy/core";
 import * as Receipt from "./Receipt.js";
 import * as Session from "./Session.js";
-import { pageResponse, RECEIPT_SHOWN, returnPath, signOutForm, withCookies } from "./page.js";
+import { accountFoot, doorResponse, RECEIPT_SHOWN, returnPath, withCookies } from "./page.js";
 
 export class Viewer extends Context.Service<
   Viewer,
@@ -39,8 +39,8 @@ export class Enrollment extends Context.Service<Enrollment, Viewer["Service"] | 
 /**
  * The signed-out door at `/`, `/login`, company pages and private patch addresses. With Clerk,
  * sign-up runs through its waitlist: a new person's account starts from an invitation email's
- * link, and anyone else can join the waitlist. The front page's door also gives the setup line,
- * as plain text: an agent told only the instance's address reads this page first.
+ * link, and anyone else can join the waitlist. The front page's door also gives the setup line
+ * in its foot: an agent told only the instance's address reads this page first.
  */
 export function door(
   session: Session.Session["Service"],
@@ -49,21 +49,31 @@ export function door(
   status = 401
 ) {
   const url = session.signInUrl(path);
-  const signIn = `<a class="btn btn-primary" href="${escapeAttribute(url)}">Sign in</a>`;
+  const signIn = linkButton("Sign in", url, { kind: "primary", block: true });
   const { waitlistUrl } = session;
   const setup =
     !failed && new URL(path, session.publicBaseUrl).pathname === "/"
-      ? `<p class="supporting-text">Setting up with an agent? Tell it: <code>Set up Patchy using ${escapeHtml(new URL("/llms.txt", session.publicBaseUrl).href)}</code></p>`
-      : "";
-  return pageResponse({
-    title: failed ? "Sign-in could not complete" : "Sign in to Patchy",
-    body: failed
-      ? `<p>Try signing in again.</p><div class="actions">${signIn}</div>`
-      : waitlistUrl === undefined
-        ? `<p>Continue to your company.</p>${setup}<div class="actions">${signIn}</div>`
-        : `<p>Patchy Cloud is in private beta. Sign in to continue to your company.</p><p class="supporting-text">Invited, but new here? Start from the link in your invitation email. It creates your account.</p>${setup}<div class="actions">${signIn}<a class="btn btn-quiet" href="${escapeAttribute(waitlistUrl)}">Join the waitlist</a></div>`,
-    status
-  }).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
+      ? `<p>Setting up with an agent? Give it this line:</p>${copyLine(`Set up Patchy using ${new URL("/llms.txt", session.publicBaseUrl).href}`, "Setup line", "the setup line")}<script defer src="${copyScriptPath}"></script>`
+      : undefined;
+  return doorResponse(
+    failed
+      ? {
+          title: "Sign-in could not complete",
+          body: "<p>Try signing in again.</p>",
+          actions: signIn,
+          status
+        }
+      : {
+          title: "Sign in to Patchy",
+          body: `<p>Continue to your company’s patches.</p>${waitlistUrl === undefined ? "" : '<p class="meta">Patchy Cloud is in private beta. Invited, but new here? Start from the link in your invitation email. It creates your account.</p>'}`,
+          actions:
+            waitlistUrl === undefined
+              ? signIn
+              : `${signIn}${linkButton("Join the waitlist", waitlistUrl, { kind: "quiet", block: true })}`,
+          ...(setup === undefined ? {} : { foot: setup }),
+          status
+        }
+  ).pipe(HttpServerResponse.setHeader("x-patchy-sign-in-url", url));
 }
 
 /**
@@ -136,7 +146,7 @@ export const sameOrigin = <E, R>(app: Effect.Effect<HttpServerResponse.HttpServe
         ? request.headers["sec-fetch-site"] !== "same-origin"
         : request.headers.origin !== new URL(session.publicBaseUrl).origin)
     ) {
-      return pageResponse({
+      return doorResponse({
         title: "Request refused",
         body: "<p>Submit this form from this Patchy instance.</p>",
         status: 403
@@ -163,10 +173,11 @@ export const resolveViewer = Effect.gen(function* () {
   const { user, company } = found;
   if (!company) return yield* Effect.die(new Error("User company is missing"));
   if (user.deactivatedAt) {
-    return pageResponse(
+    return doorResponse(
       {
         title: "Your account is deactivated",
-        body: `<p>Your account at ${escapeHtml(company.name)} is deactivated. Ask an admin to reactivate it.</p>${signOutForm()}`,
+        body: `<p>Your account at ${escapeHtml(company.name)} is deactivated. Ask an admin to reactivate it.</p>`,
+        foot: accountFoot(user.email),
         status: 403
       },
       session

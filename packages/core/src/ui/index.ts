@@ -25,12 +25,15 @@ export {
   settingsPanel
 } from "./detail.js";
 export type { ChipChoice, GroupedRow } from "./detail.js";
+export { answerPair, canList, doorCard, meet, verificationCode } from "./door.js";
+export type { Party } from "./door.js";
 export { uiScript, uiScriptPath, uiScriptTag } from "./enhancer.js";
 export { attentionRow } from "./attention.js";
 export { copyButton } from "./copy-button.js";
 export { region } from "./region.js";
 export { usualTiles } from "./usual.js";
 export type { UsualTile } from "./usual.js";
+export { refusal, typedExactly } from "./refusal.js";
 export { badge, dot, emptyState, notice, receipt } from "./feedback.js";
 export { galleryPage, galleryPages, galleryPath } from "./gallery.js";
 export type { GalleryPage } from "./gallery.js";
