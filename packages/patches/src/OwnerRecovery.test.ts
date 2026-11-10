@@ -4,7 +4,6 @@ import * as Layer from "effect/Layer";
 import { Analytics } from "@patchy/analytics";
 import { Companies, Teams, Users } from "@patchy/companies";
 import type { PatchAudience } from "@patchy/api";
-import * as Audiences from "./Audiences.js";
 import * as GuestGrants from "./GuestGrants.js";
 import * as Patches from "./Patches.js";
 import * as Fixtures from "./test/fixtures.js";
@@ -18,8 +17,7 @@ const access = (userId: string) => ({
   canOpen: () => true
 });
 const teamAudience = (ids: readonly string[]): PatchAudience => ({
-  members: { kind: "teams", teamIds: ids },
-  guests: { kind: "specific", userIds: [] }
+  members: { kind: "teams", teamIds: ids }
 });
 const team = Effect.fn("test.team")(function* (name: string, userIds: readonly string[]) {
   const t = yield* Teams.create({ ...viewer, name });
@@ -29,8 +27,7 @@ const team = Effect.fn("test.team")(function* (name: string, userIds: readonly s
 const services = GuestGrants.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(Patches.layer, Users.layer, Companies.layer)),
   Layer.provideMerge(Analytics.layerNoop),
-  Layer.provideMerge(Fixtures.database),
-  Layer.provide(Layer.succeed(Audiences.Activation, true))
+  Layer.provideMerge(Fixtures.database)
 );
 it.layer(services)("Owner recovery", (it) => {
   it.effect(
@@ -57,9 +54,27 @@ it.layer(services)("Owner recovery", (it) => {
         assert.isFalse(ownerView.ownerCanOpen);
         assert.notProperty(ownerView.record, "description");
         assert.notProperty(ownerView.record, "manifest");
+        const sameNameAsId = Fixtures.recordInput(reader, {
+          title: input.patchId,
+          audience: teamAudience([t.id])
+        });
+        yield* Fixtures.record(sameNameAsId);
+        assert.deepEqual(
+          (yield* patches.management(viewer.companyId, admin.user.id, { name: input.patchId })).map(
+            (view) => view.record.id
+          ),
+          [sameNameAsId.patchId]
+        );
+        assert.deepEqual(
+          (yield* patches.management(viewer.companyId, admin.user.id, { id: input.patchId })).map(
+            (view) => view.record.id
+          ),
+          [input.patchId]
+        );
+
         assert.equal(
           (yield* Effect.flip(patches.authorizePublish({ ...input, intent: "update" })))._tag,
-          "PatchUnavailable"
+          "OwnerAccessLost"
         );
         assert.equal(
           (yield* Effect.flip(patches.portalCard(input.patchId, access(uploader.user.id))))._tag,
@@ -102,7 +117,7 @@ it.layer(services)("Owner recovery", (it) => {
         yield* users.setRole({ ...viewer, userId: reader.user.id, role: "admin" });
         const eligible = yield* patches.eligibleOwners(input.patchId, actor);
         assert.lengthOf(
-          yield* patches.management(viewer.companyId, admin.user.id, input.patchId),
+          yield* patches.management(viewer.companyId, admin.user.id, { id: input.patchId }),
           1
         );
         assert.deepEqual(
@@ -121,7 +136,9 @@ it.layer(services)("Owner recovery", (it) => {
           ))._tag,
           "StaleAction"
         );
-        const versions = yield* patches.managementVersions(input.patchId, actor);
+        const versions = (yield* patches.management(viewer.companyId, admin.user.id, {
+          id: input.patchId
+        }))[0]!.versions;
         assert.equal(versions[0]!.publisherName, uploader.user.name);
         yield* patches.retire(input.patchId, actor);
         yield* patches.restore(input.patchId, actor);
@@ -135,10 +152,10 @@ it.layer(services)("Owner recovery", (it) => {
           (yield* Effect.flip(
             patches.manage(input.patchId, { userId: reader.user.id, admin: true })
           ))._tag,
-          "PatchUnavailable"
+          "OwnerAccessLost"
         );
         yield* users.setRole({ ...viewer, userId: reader.user.id, role: "member" });
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
   it.effect(
     "shows only self-joining records for the current owner's selected teams and membership restoration restores publishing",
@@ -171,6 +188,6 @@ it.layer(services)("Owner recovery", (it) => {
         });
         assert.equal((yield* patches.managementHistory(input.patchId, uploader.user.id)).length, 1);
         yield* patches.authorizePublish({ ...input, intent: "update" });
-      }).pipe(Effect.provideService(Audiences.Activation, true))
+      })
   );
 });

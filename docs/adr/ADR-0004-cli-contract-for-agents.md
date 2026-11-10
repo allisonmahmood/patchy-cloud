@@ -918,6 +918,12 @@ identity and login, and the init/dev/publish loop. Real-Postgres concurrency
 checks cover races PGlite cannot demonstrate. [Development](../DEVELOPMENT.md)
 owns the CI commands and their required checks.
 
+### Audience selection
+
+Company is the first-publish default unless the person specifies another audience. Skills describe the available audiences without requiring a question. Updates retain the audience; named guest grants are independent of member-audience changes. `audiences --json` lists existing teams. `publish` and `share --audience` accept `{ "members": { "kind": "teams", "teamIds": ["<id>"] } }`, or Company/Public member audiences.
+
+Successful publish and sharing report the committed audience. Legacy Company flags preserve team restrictions; widening needs an explicit audience. Malformed JSON exits 1. Selection refusals exit 2 with stable `invalid_audience_teams` or `audience_excludes_owner`; `owner_access_lost` directs removed owners to administrator recovery instead of republishing a new patch. Other unauthorized people receive 404. Older replay receipts remain byte-for-byte unchanged.
+
 ## Alternatives considered
 
 - **Effect's default 0/1/130.** Rejected: an agent cannot distinguish its call,
@@ -926,12 +932,3 @@ owns the CI commands and their required checks.
   callers do not branch on the signal number.
 - **Branching on refusal prose or retaining old command aliases.** Rejected:
   stable codes and one publish verb keep the agent contract unambiguous.
-
-### Audience selection
-
-An omitted first-publish scope/audience defaults to Company-only for compatibility.
-Agents offer the audience choice unless already supplied. Updates retain the current audience. `audiences --json` lists existing
-selectable teams and company guests, and `publish`/`share --audience <json>` select them.
-Malformed JSON is local, exit 1. Successful publication and sharing report `audience`;
-private `scope: company` alone no longer describes readership. Persisted older publish
-receipts may omit `audience` and remain replayable without changing their bytes.

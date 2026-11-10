@@ -107,7 +107,8 @@ const attentionOf = (
   names: ReadonlyMap<string, string>,
   now: number,
   failures: ReadonlyMap<string, number> | undefined,
-  turnedAway: ReadonlyMap<string, GuestReason> | undefined
+  turnedAway: ReadonlyMap<string, GuestReason> | undefined,
+  ownersWithoutAccess?: ReadonlySet<string>
 ): Attention | undefined => {
   const { patch } = row;
   if (!manages(row, viewer)) return undefined;
@@ -121,6 +122,12 @@ const attentionOf = (
         act: `<form method="post" action="${escapeAttribute(cardPath(patch, "restore"))}">${restoreForm(patch)}<button class="btn" type="submit">Restore</button></form>`
       };
   }
+  if (!row.owner.deactivated && ownersWithoutAccess?.has(patch.id))
+    return {
+      title: "Its owner cannot open it",
+      detail: "Restore team access or reassign it.",
+      act: `<a class="btn" href="${escapeAttribute(cardPath(patch, "reassign"))}">Reassign…</a>`
+    };
   if (row.owner.deactivated && viewer.role !== "member")
     return {
       title: "Its owner is deactivated",
@@ -236,6 +243,7 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 /** All patches at `/patches`: every patch the viewer can open, in tabs, with search and each row's acts. */
 export const renderAllPatches = (input: {
   readonly rows: readonly Patches.ReadPatch[];
+  readonly ownersWithoutAccess?: ReadonlySet<string>;
   readonly viewer: Viewer;
   readonly show: Show;
   readonly query: string;
@@ -259,7 +267,15 @@ export const renderAllPatches = (input: {
   const live = input.rows.filter((row) => row.patch.state === "live");
   const attention = new Map(
     input.rows.flatMap((row) => {
-      const found = attentionOf(row, viewer, names, now, input.failures, input.turnedAway);
+      const found = attentionOf(
+        row,
+        viewer,
+        names,
+        now,
+        input.failures,
+        input.turnedAway,
+        input.ownersWithoutAccess
+      );
       return found === undefined ? [] : [[row.patch.id, found] as const];
     })
   );
@@ -346,7 +362,7 @@ export const renderAllPatches = (input: {
           : "Recovery ended";
       return `<tr>${patchCell(entry)}${ownerCell(entry)}<td><span class="pill${retired ? "" : " pill-failed"}">${escapeHtml(state)}</span>${at === null ? "" : `<br><span class="supporting-text">${escapeHtml(dateLabel(at))}</span>`}</td>${menuCell(entry)}</tr>`;
     }
-    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : "Company"}</td>${healthy ? health(entry) : ""}${menuCell(entry)}</tr>`;
+    return `<tr>${patchCell(entry)}${ownerCell(entry)}<td>v${escapeHtml(entry.currentVersion)} · ${time(entry.publishedAt)}</td><td>${escapeHtml(entry.visits)}</td><td>${patch.scope === "public" ? "<strong>Public</strong>" : patch.scope === "teams" ? "Selected teams" : "Company"}</td>${healthy ? health(entry) : ""}${menuCell(entry)}</tr>`;
   };
   const empty: Record<Show, string> = {
     all: "No live patches.",

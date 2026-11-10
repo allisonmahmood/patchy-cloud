@@ -459,54 +459,42 @@ it.layer(Testing.emptyLayer(before("0029_tier_zero_is_tier_one")))("the tier 0 f
 });
 
 it.layer(Testing.emptyLayer(before("0038_patch_audiences")))("audience upgrade", (it) => {
-  it.effect(
-    "preserves Company/Public and named guest grants while seeding the company guest pool",
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        for (const id of ["audience_host", "audience_guest"]) {
-          yield* sql`INSERT INTO companies(id, name, handle) VALUES (${id}, ${id}, ${id.replaceAll("_", "-")})`;
-          yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${`user_${id}`}, ${id}, ${id}, ${`${id}@example.test`}, ${id}, 'admin')`;
-        }
-        for (const scope of ["company", "public"] as const) {
-          yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name, scope) VALUES (${`patch_${scope}`}, 'audience_host', 'user_audience_host', ${scope}, ${scope}, ${scope})`;
-        }
-        yield* sql`INSERT INTO patch_guest_grants(patch_id, company_id, user_id, granted_by, granted_at) VALUES ('patch_company', 'audience_host', 'user_audience_guest', 'user_audience_host', '2026-01-01T00:00:00Z')`;
-        yield* migrate(migrations);
-        const rows = yield* sql<{
-          scope: string;
-          audience: unknown;
-        }>`SELECT scope, audience FROM patches ORDER BY scope`;
-        assert.deepStrictEqual(rows, [
-          {
-            scope: "company",
-            audience: {
-              members: { kind: "company" },
-              guests: { kind: "specific", userIds: ["user_audience_guest"] }
-            }
-          },
-          {
-            scope: "public",
-            audience: { members: { kind: "public" }, guests: { kind: "specific", userIds: [] } }
-          }
-        ]);
-        assert.deepStrictEqual(
-          yield* sql`SELECT company_id, user_id, added_by FROM company_patch_guests`,
-          [
-            {
-              company_id: "audience_host",
-              user_id: "user_audience_guest",
-              added_by: "user_audience_host"
-            }
-          ]
-        );
-        assert.deepStrictEqual(yield* sql`SELECT granted_by, revoked_at FROM patch_guest_grants`, [
-          { granted_by: "user_audience_host", revoked_at: null }
-        ]);
-        assert.deepStrictEqual(
-          yield* sql`SELECT patch_guest_allowed(p, 'user_audience_guest', false) AS allowed FROM patches p WHERE id = 'patch_company'`,
-          [{ allowed: true }]
-        );
-      })
+  it.effect("preserves Company/Public and named guest grants without copying their state", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const id of ["audience_host", "audience_guest"]) {
+        yield* sql`INSERT INTO companies(id, name, handle) VALUES (${id}, ${id}, ${id.replaceAll("_", "-")})`;
+        yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES (${`user_${id}`}, ${id}, ${id}, ${`${id}@example.test`}, ${id}, 'admin')`;
+      }
+      for (const scope of ["company", "public"] as const) {
+        yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name, scope) VALUES (${`patch_${scope}`}, 'audience_host', 'user_audience_host', ${scope}, ${scope}, ${scope})`;
+      }
+      yield* sql`INSERT INTO patch_guest_grants(patch_id, company_id, user_id, granted_by, granted_at) VALUES ('patch_company', 'audience_host', 'user_audience_guest', 'user_audience_host', '2026-01-01T00:00:00Z')`;
+      yield* sql`UPDATE users SET deactivated_at = now() WHERE id = 'user_audience_guest'`;
+      for (const [id, state] of [
+        ["patch_retired", "retired"],
+        ["patch_deleted", "deleted"],
+        ["patch_revoked", "live"]
+      ] as const) {
+        yield* sql`INSERT INTO patches(id, company_id, owner_user_id, title, name, scope)
+          VALUES (${id}, 'audience_host', 'user_audience_host', ${id}, ${id.replaceAll("_", "-")}, 'company')`;
+        if (state === "retired") yield* sql`UPDATE patches SET retired_at = now() WHERE id = ${id}`;
+        if (state === "deleted") yield* sql`UPDATE patches SET deleted_at = now() WHERE id = ${id}`;
+        yield* sql`INSERT INTO patch_guest_grants(patch_id, company_id, user_id, granted_by, granted_at, revoked_at)
+          VALUES (${id}, 'audience_host', 'user_audience_guest', 'user_audience_host', '2026-01-01T00:00:00Z',
+            CASE WHEN ${id} = 'patch_revoked' THEN now() ELSE NULL END)`;
+      }
+      const grantsBefore =
+        yield* sql`SELECT patch_id, user_id, granted_by, granted_at, revoked_at FROM patch_guest_grants ORDER BY patch_id`;
+      yield* migrate(migrations);
+      assert.deepStrictEqual(
+        yield* sql`SELECT patch_id, user_id, granted_by, granted_at, revoked_at FROM patch_guest_grants ORDER BY patch_id`,
+        grantsBefore
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT scope FROM patches WHERE id IN ('patch_company', 'patch_public') ORDER BY scope`,
+        [{ scope: "company" }, { scope: "public" }]
+      );
+    })
   );
 });

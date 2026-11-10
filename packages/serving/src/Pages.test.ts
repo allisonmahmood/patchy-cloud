@@ -48,7 +48,7 @@ import { Companies, InviteMail, Teams, Users } from "@patchy/companies";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { ContentStore } from "@patchy/content-store";
 import { contentHash } from "../../../test/crypto.js";
-import { Audiences, Content, GuestGrants, Patches } from "@patchy/patches";
+import { Content, GuestGrants, Patches } from "@patchy/patches";
 import { ConnectionStoreDev } from "@patchy/integrations/dev";
 import { ddl, layerFromUrl } from "@patchy/sql";
 import * as Testing from "@patchy/company-database/testing";
@@ -183,7 +183,6 @@ const services = Layer.mergeAll(Content.layer, DeviceLogins.layer).pipe(
 const layer = HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(services),
-  Layer.provideMerge(Layer.succeed(Audiences.Activation, true)),
   Layer.provideMerge(Layer.succeed(FetchHttpClient.RequestInit)({ redirect: "manual" }))
 );
 
@@ -262,8 +261,7 @@ it.layer(layer)("pages", (it) => {
           patchId: initial.patchId,
           actor: { userId: DEV_SEED.userId, admin: true },
           audience: {
-            members: { kind: "teams", teamIds: [team.id] },
-            guests: { kind: "specific", userIds: [] }
+            members: { kind: "teams", teamIds: [team.id] }
           }
         });
         const latest = yield* publish(

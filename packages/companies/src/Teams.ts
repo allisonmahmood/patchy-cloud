@@ -234,20 +234,6 @@ export const changes = Effect.fn("Teams.changes")((companyId: string, after: str
   changeRows({ companyId, after }).pipe(Effect.catchTags(schemaError))
 );
 
-/** Internal batch authority facts, including active people with no team memberships. */
-const membershipFactRows = SqlSchema.findAll({
-  Request: Schema.Struct({ companyId: Schema.String, userIds: Schema.Array(Schema.String) }),
-  Result: Schema.Struct({ userId: Schema.String, teamIds: Schema.Array(Schema.String) }),
-  execute: ({ companyId, userIds }) =>
-    Effect.flatMap(
-      SqlClient.SqlClient,
-      (sql) => sql`
-    SELECT u.id AS "userId", COALESCE(array_agg(m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
-    FROM users u LEFT JOIN company_team_members m ON m.company_id = u.company_id AND m.user_id = u.id
-    WHERE u.company_id = ${companyId} AND u.id = ANY(${userIds}::text[]) AND u.deactivated_at IS NULL GROUP BY u.id`
-    )
-});
-
 const selfJoinRows = SqlSchema.findAll({
   Request: Schema.Struct({ companyId: Schema.String, teamIds: Schema.Array(Schema.String) }),
   Result: Schema.Struct({ ...MembershipChange.fields, teamName: Schema.String }),
@@ -268,7 +254,26 @@ export const selfJoins = Effect.fn("Teams.selfJoins")(
     selfJoinRows({ companyId, teamIds }).pipe(Effect.catchTags(schemaError))
 );
 
-export const membershipFacts = Effect.fn("Teams.membershipFacts")(
-  (companyId: string, userIds: readonly string[]) =>
-    membershipFactRows({ companyId, userIds }).pipe(Effect.catchTags(schemaError))
+const decodePeople = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      active: Schema.Boolean,
+      role: Schema.Literals(["member", "admin", "super_admin"]),
+      teamIds: Schema.Array(Schema.String)
+    })
+  )
 );
+/** Batched company-owned authority facts. Inactive owners retain their team selections for repairs. */
+export const people = Effect.fn("Teams.people")(function* (
+  companyId: string,
+  userIds: readonly string[]
+) {
+  const sql = yield* SqlClient.SqlClient;
+  if (!userIds.length) return [];
+  return yield* sql`SELECT u.id, u.deactivated_at IS NULL AS active, u.role,
+    COALESCE(array_agg(m.team_id ORDER BY m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
+    FROM users u LEFT JOIN company_team_members m ON m.company_id = u.company_id AND m.user_id = u.id
+    WHERE u.company_id = ${companyId} AND u.id = ANY(${[...new Set(userIds)]}::text[])
+    GROUP BY u.id`.pipe(Effect.flatMap(decodePeople), Effect.catchTags(schemaError));
+});

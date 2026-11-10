@@ -259,6 +259,7 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
         Effect.succeed(refuse(`${error.message} Nothing was done.`, 422)),
       WrongState: () => Effect.succeed(refuse("A selected patch changed. Nothing was done.", 409)),
       StaleAction: () => Effect.succeed(refuse("A selected patch changed. Nothing was done.", 409)),
+      OwnerAccessLost: (error) => Effect.succeed(refuse(error.message, 403)),
       PatchUnavailable: () =>
         Effect.succeed(refuse("A selected patch is unavailable. Nothing was done.", 404)),
       NotOwner: () =>

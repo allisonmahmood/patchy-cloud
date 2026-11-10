@@ -92,7 +92,7 @@ export const publishInput = (
 ): Content.PublishInput => ({
   ...publishRecord(),
   ...noProvenance,
-  scope: overrides.patchId ? undefined : "company",
+  scope: undefined,
   patchId: null,
   companyId: identity.company.id,
   ownerUserId: identity.user.id,
@@ -115,7 +115,7 @@ export const recordInput = (
   return {
     ...publishRecord(),
     ...noProvenance,
-    scope: overrides.intent === "update" ? undefined : "company",
+    scope: undefined,
     intent: "create",
     patchId,
     versionId,
