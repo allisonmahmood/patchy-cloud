@@ -14,7 +14,7 @@ describe("a running patch's shell styles", () => {
   });
 
   it("load no font of the app's: a patch's shell keeps its system fonts", () => {
-    expect(servedStyles).not.toMatch(/@font-face|Geist|\/assets\/fonts\//);
+    expect(servedStyles).not.toMatch(/@font-face|Geist|Cabinet|\/assets\/fonts\//);
   });
 });
 

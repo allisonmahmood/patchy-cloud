@@ -293,6 +293,25 @@ that the gallery doesn't draw, and `pnpm lint` fails a page module that styles
 itself or draws a button, badge, notice or field by hand. `pnpm ui:report`
 lists the stylesheet's values off the tokens, by chunk, while you fix them.
 
+### Titles' typeface
+
+Production sets titles in Cabinet Grotesk, which isn't in the repository: its
+file comes from a private bucket ([Operations](OPERATIONS.md#the-display-font)).
+Without it, as in CI, evidence instances and most checkouts, titles are Geist
+and pages declare no face for it, so nothing is fetched and nothing fails.
+Someone with read access to the bucket, as Patchy's administrators have, can
+put the file where the server looks, beside the committed fonts, and restart:
+
+```sh
+aws s3 cp "s3://patchy-fonts-$(aws sts get-caller-identity --query Account --output text)/$(jq -r .sha256 packages/core/fonts/display-font.json)/CabinetGrotesk-Extrabold.woff2" packages/core/fonts/
+pnpm dev stop && pnpm dev
+```
+
+The file is ignored by git; keep it out of commits and anywhere else that is
+shared. The server refuses to start if its bytes aren't the pinned ones, and
+the `/~ui` gallery names the face titles are drawn in. Tests don't depend on
+it.
+
 ### Environments: `pnpm dev up`
 
 An environment is this instance plus what a multi-person check or demo needs:

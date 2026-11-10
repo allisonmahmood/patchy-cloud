@@ -10,6 +10,7 @@ import {
   tileOptions
 } from "../components.js";
 import { copyLine, copyScriptPath } from "../copy-line.js";
+import { displayFont, hasDisplayFont } from "../fonts.js";
 import { tokens } from "../styles/tokens.js";
 import { escapeHtml } from "../escape.js";
 import {
@@ -130,6 +131,9 @@ const demo = (title: string, body: string, states?: string) =>
 
 const patch = (name: string, tier = 2) => patchMark(name, tier);
 
+/** The face titles draw in on this instance: the display font where it has the file. */
+const titleFace = hasDisplayFont ? displayFont.family : "Geist";
+
 const type = demo(
   "Type",
   table({
@@ -137,8 +141,11 @@ const type = demo(
     columns: [{ label: "Role" }, { label: "Sample" }],
     rows: (
       [
-        ["Page title · 28/34 · 800", '<span class="title">New Business</span>'],
-        ["Dialog and door title · 22/28 · 800", '<span class="title-sm">Invite people</span>'],
+        [`Page title · ${titleFace} 28/34 · 800`, '<span class="title">New Business</span>'],
+        [
+          `Dialog and door title · ${titleFace} 22/28 · 800`,
+          '<span class="title-sm">Invite people</span>'
+        ],
         ["Section title · 16/24 · 600", '<span class="section-title">Recent activity</span>'],
         [
           "Prose · 15/24 · at most 34em",
