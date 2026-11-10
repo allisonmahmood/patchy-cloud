@@ -51,14 +51,18 @@ capability's `src/migrations.ts`, the handler descriptor schemas
 (`packages/api/src/handlers.ts`) or the CLI code that writes descriptors, it
 deploys the PR onto data the live release seeded, rolls back to the live
 release and forward again, and fails naming the step that broke; otherwise it
-passes at once.
+passes at once. A PR explicitly labelled `one-way` still rehearses the live
+release seeding data and the PR upgrading and exercising it, but does not start
+the old release on the upgraded data. Its job summary says **Upgrade rehearsal**;
+this is not a rollback pass. Other PRs retain all four steps.
 Once the PR's CLI writes read-only actions, the PR publishes a tier 2 patch with
 one and an agent tool, and the live release must serve it and enforce both. The
 live release also ends credentials, by deactivation and Disconnect everything,
 and back at the PR the agent connections it ended must stay ended.
 [Rolling back](OPERATIONS.md#rolling-back) says what it covers. `pnpm verify`
 leaves it out, because it rehearses commits against the commit production runs. `pnpm test:rollback-rehearsal` runs it on HEAD, reading
-the Deploy runs with `gh`; `--live <sha>` rehearses against another commit.
+the Deploy runs with `gh`; `--live <sha>` rehearses against another commit. `--upgrade-only` runs just the
+initial release and upgrade steps for an explicitly irreversible change.
 
 CI pins every job to a runner image, `ubuntu-24.04` except `install`'s
 `macos-15` and `windows-2025`, and every job that runs the repository's code
