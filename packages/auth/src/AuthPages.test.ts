@@ -431,7 +431,9 @@ it.layer(services)("first-party pages in memory", (it) => {
       assert.include(html, "We’ve updated our terms");
       assert.include(html, `href="${Terms.url("terms", Terms.current.terms)}"`);
       assert.include(html, `href="${Terms.url("privacy", Terms.current.privacy)}"`);
-      assert.include(html, 'action="/auth/terms"');
+      // Accept sits in the door's actions and names the form it submits.
+      assert.include(html, '<form id="terms-accept" method="post" action="/auth/terms">');
+      assert.match(html, /<button [^>]*type="submit"[^>]*form="terms-accept"[^>]*>/);
       assert.include(html, 'name="return" value="/private?view=mine"');
       assert.include(html, 'action="/logout"');
       const answer = (fields: Record<string, string> = {}) =>

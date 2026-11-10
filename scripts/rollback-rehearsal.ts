@@ -1055,9 +1055,9 @@ const exercisePages = async (
       };
     }
     // A build whose terms are newer than the seed's asks once, as it asks everyone on release.
-    const prompt = 'form[action="/auth/terms"]';
-    if ((await signIn.locator(prompt).count()) > 0)
-      await press(signIn, `${prompt} button[type="submit"]`, "Accepting the terms");
+    // Accept sits in the door's actions, outside its form, which it names.
+    if ((await signIn.locator('form#terms-accept[action="/auth/terms"]').count()) > 0)
+      await press(signIn, 'button[type="submit"][form="terms-accept"]', "Accepting the terms");
     await signIn.close();
     for (const [url, expect] of targets) {
       const page = await context.newPage();
