@@ -1,24 +1,47 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as UrlParams from "effect/http/UrlParams";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics } from "@patchy/analytics";
 import type { PatchState } from "@patchy/api";
 import {
   ago,
   avatar,
+  badge,
+  button,
+  card,
+  choiceGroup,
+  type Column,
   dateLabel,
+  dialog,
+  emptyState,
   escapeAttribute,
   escapeHtml,
-  menuLink,
-  menuPost,
+  field,
+  idFor,
+  indexPage,
+  linkButton,
+  menu,
+  type MenuItem,
+  notice,
   patchMark,
   patchTitle,
-  rowMenu,
+  radio,
+  refusal,
+  row,
+  rows,
   searchField,
-  sentenceList
+  segmented,
+  sentenceList,
+  settingRow,
+  settingsPage,
+  switchForm,
+  table,
+  textarea
 } from "@patchy/core";
 import { registry } from "@patchy/limits/registry";
 import { withReportedCommit } from "@patchy/sql";
@@ -45,11 +68,14 @@ export type Action =
       readonly id: string;
     };
 
+/** A page drawn on core's templates, which carry their own header, or where a form went. */
 export interface Page {
   readonly title: string;
-  /** Replaces the heading drawn from the title; a confirmation draws its own under its back link. */
+  /** The template's heading slot: empty, as app templates draw their header in the body. */
   readonly heading?: string;
   readonly body: string;
+  /** A dialog over the page, such as Invite people; the page behind it goes inert. */
+  readonly overlay?: string;
   readonly status?: number;
   readonly redirect?: string;
   /** With a redirect, one line naming what the form did, read from server state; Auth shows it once. */
@@ -105,50 +131,14 @@ export const Guests = Context.Reference<
   | undefined
 >("@patchy/companies/CompanyPage/Guests", { defaultValue: () => undefined });
 
-/** The pages' layout; components come from the shell. */
-export const styles = `
-    .company-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
-    .company-search { width: min(100%, 300px); }
-    /* An open invite takes its own line under the search and tabs, its button kept at the right. */
-    .company-invite { margin-left: auto; }
-    .company-invite[open] { flex-basis: 100%; text-align: right; }
-    .company-invite > summary { list-style: none; }
-    .company-invite > summary::-webkit-details-marker { display: none; }
-    .company-invite-form { max-width: 560px; margin: 12px 0 0 auto; text-align: left; }
-    .company-invite-form > :first-child { margin-top: 0; }
-    .company-invite-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
-    .company-invite-row > select { width: 10rem; }
-    .company-matches { margin-top: 12px; }
-    .company-table { overflow-x: auto; }
-    /* Cells keep words whole, so on a phone the table scrolls here rather than splitting "Member". */
-    .company-table .table { min-width: 760px; overflow-wrap: break-word; }
-    .company-table :is(th, td) { vertical-align: middle; }
-    .company-table .company-row-actions { text-align: right; white-space: nowrap; }
-    .company-person { display: flex; align-items: center; gap: 12px; }
-    .company-actions { display: inline-flex; align-items: center; gap: 6px; }
-    .agent-access-state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    /* Guests have two columns, which fit a phone without scrolling. */
-    .company-table .company-guests { min-width: 0; }
-    /* A guest's patches and Remove sit under their name, past the avatar. */
-    .company-guest > :not(summary) { margin-left: 48px; }
-    .company-guest-patches { margin-top: 0; }
-    .company-patch { display: flex; align-items: center; gap: 12px; }
-    .company-subpage { max-width: 760px; margin-inline: auto; }
-    @media (max-width: 640px) {
-      .company-invite { margin-left: 0; }
-      .company-invite[open] { text-align: left; }
-      .company-invite-form { margin-left: 0; }
-    }
-`;
-
-const shows = ["all", "admins", "invited", "deactivated", "guests"] as const;
+const shows = ["all", "admins", "invited", "guests", "deactivated"] as const;
 type Show = (typeof shows)[number];
 const showLabels: Record<Show, string> = {
   all: "All",
   admins: "Admins",
   invited: "Invited",
-  deactivated: "Deactivated",
-  guests: "Guests"
+  guests: "Guests",
+  deactivated: "Deactivated"
 };
 
 /** What a GET of the page narrows its list to. */
@@ -157,26 +147,33 @@ interface Filter {
   readonly query: string;
 }
 
-/** The invite field as submitted, kept after a refusal so a pasted list is not lost. */
-interface Draft {
-  readonly text: string;
-  readonly role: Users.Role;
-  /** Why the addresses were refused, shown under the field. */
-  readonly problem?: string;
-}
-
-/** A refusal or a partial result above a page. The message is HTML: whoever builds it escapes what it interpolates. */
+/** A refusal or a partial result, in plain words; the notice escapes it. */
 interface Notice {
   readonly message: string;
   readonly status: number;
+  /** A refusal or failure is danger, the default; a list sent in part is a warning. */
+  readonly tone?: "warning" | "danger";
+}
+
+/** The invite form as submitted, kept after a refusal so a pasted list is not lost. */
+interface Draft {
+  readonly text: string;
+  readonly role: Users.Role;
+  /** Why the addresses were refused, under the field. */
+  readonly problem?: string;
+  /** What became of a list sent in part, or a refusal of the whole form, above its buttons. */
+  readonly outcome?: Notice;
 }
 
 interface View {
   readonly filter?: Filter;
+  /** A refusal about the page, above its list. */
   readonly notice?: Notice;
-  /** Opens the invite form, which a draft also opens. */
+  /** Opens Invite people over the page; a draft opens it too. */
   readonly inviting?: boolean;
   readonly draft?: Draft;
+  /** The guest an admin is about to remove, confirmed in a dialog over Guests. */
+  readonly removing?: Guest;
 }
 
 const inviteBatch = registry["invites.batch"].default;
@@ -207,18 +204,31 @@ interface Delivery {
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+/** "a, b and c" in plain words, for a notice, which escapes its own text. */
+const listed = (items: readonly string[]) =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 const displayName = (user: Users.User) => user.name.trim() || user.email;
+const roleLabel = (role: Users.Role) => (role === "admin" ? "Admin" : "Member");
 
 const time = (date: Date, label = dateLabel(date.toISOString())) =>
   `<time datetime="${date.toISOString()}">${escapeHtml(label)}</time>`;
 
-const noticeHtml = (notice: Notice | undefined) =>
-  notice ? `<div class="note note-warn" role="alert">${notice.message}</div>` : "";
+/** A refusal no field owns, where the page's focus starts, or inside a dialog, the dialog's. */
+const noticeHtml = (value: Notice | undefined) =>
+  value === undefined
+    ? ""
+    : refusal(notice({ tone: value.tone ?? "danger", title: value.message }));
+
+/** The active admins' names, A–Z, for whoever needs to ask one. */
+const adminNames = (users: readonly Users.User[]) =>
+  users
+    .filter((user) => user.role === "admin" && user.deactivatedAt === null)
+    .map(displayName)
+    .sort((a, b) => a.localeCompare(b));
 
 const offLabels = { retired: "Retired", deleted: "Deleted", disabled: "Unavailable" } as const;
-/** The pill naming the state a guest's patch is in once it's off. */
-const statePill = ({ state }: GuestPatch) =>
-  state === "live" ? "" : ` <span class="pill">${offLabels[state]}</span>`;
+/** The word for a guest's patch once it's off. */
+const offBadge = ({ state }: GuestPatch) => (state === "live" ? "" : badge(offLabels[state]));
 
 /**
  * A patch's title, opening the patch, or its card once it's off, as everywhere patches are listed.
@@ -227,70 +237,155 @@ const statePill = ({ state }: GuestPatch) =>
 const patchLink = (viewer: Viewer, patch: GuestPatch) => {
   const title = escapeHtml(patchTitle(patch));
   const name = encodeURIComponent(patch.name);
-  if (patch.state === "disabled") return `${title}${statePill(patch)}`;
+  if (patch.state === "disabled") return title;
   const href =
     patch.state === "live"
       ? `/${encodeURIComponent(viewer.company.handle)}/${name}`
       : `/patches/${name}`;
-  return `<a href="${escapeAttribute(href)}">${title}</a>${statePill(patch)}`;
+  return `<a href="${escapeAttribute(href)}">${title}</a>`;
 };
 
-const filterHref = (show: Show, query: string) => {
+/** People narrowed to `show` and `query`; `invite` opens Invite people over it. */
+const peopleHref = (show: Show, query: string, invite = false) => {
   const params = new URLSearchParams();
   if (show !== "all") params.set("show", show);
   if (query) params.set("q", query);
+  if (invite) params.set("invite", "1");
   const search = params.toString();
   return search ? `/settings/people?${search}` : "/settings/people";
 };
 
+/** A filter as a GET or the invite form gives it: an unknown `show` is All, `q` trimmed and cut. */
+const filterOf = (show: string | null | undefined, query: string | null | undefined): Filter => ({
+  show: shows.find((candidate) => candidate === show) ?? "all",
+  query: (query ?? "").trim().slice(0, 200)
+});
+
 /**
- * `/settings/agent-access`: whether the company's agents can use patches, its latest change, and
- * for an admin the one button that flips it. A member reads the same state and whom to ask.
+ * `/settings/agent-access`: whether the company's agents can use patches, as one setting row, and
+ * who changed it last. An admin's row holds the switch; a member's holds the value, and the
+ * header names who can change it.
  */
 const renderAgentAccess = Effect.fn("CompanyPage.renderAgentAccess")(function* (
   viewer: Viewer,
-  notice?: Notice
+  refused?: Notice
 ): Effect.fn.Return<Page, SqlError, Users.Users | Companies.Companies> {
   // The viewer's own company: it exists for as long as they can open this page.
   const access = yield* (yield* Companies.Companies)
     .agentAccess(viewer.company.id)
     .pipe(Effect.catchTags({ CompanyNotFound: Effect.die }));
-  const company = escapeHtml(viewer.company.name);
-  const state = access.on
-    ? '<span class="pill pill-done">On</span>'
-    : '<span class="pill">Off</span>';
+  const admin = viewer.role === "admin";
+  const admins = admin ? [] : adminNames(yield* (yield* Users.Users).list(viewer.company.id));
+  const title = "Agents use patches";
   const latest = access.latest
-    ? `<span class="supporting-text">Turned ${access.on ? "on" : "off"} by ${escapeHtml(access.latest.by.name)} on ${time(access.latest.at)}</span>`
+    ? `<span class="meta">Turned ${access.on ? "on" : "off"} by ${escapeHtml(access.latest.by.name)} on ${time(access.latest.at)}</span>`
     : "";
-  const consequence = access.on
-    ? `Anyone at ${company} can connect their own agent to use patches’ agent tools as themselves.`
-    : "Agents can’t use any patch; connections stay and work again when it’s on.";
-  let control: string;
-  if (viewer.role === "admin") {
-    const next = access.on ? "off" : "on";
-    // What the button does, before it is pressed: turning off refuses every agent but keeps connections.
-    const effect = access.on
-      ? `<p class="supporting-text">Turning it off refuses every agent at ${company} until it’s back on. Nobody’s connection ends.</p>`
-      : "";
-    control = `${effect}<form class="actions" method="post" action="/settings/agent-access"><input type="hidden" name="state" value="${next}"><button class="btn${access.on ? "" : " btn-primary"}" type="submit">Turn ${next} agent access</button></form>`;
-  } else {
-    const admins = (yield* (yield* Users.Users).list(viewer.company.id))
-      .filter((user) => user.role === "admin" && user.deactivatedAt === null)
-      .map(displayName)
-      .sort((a, b) => a.localeCompare(b));
-    control = `<p class="supporting-text">Only an admin can change this. At ${company} that’s ${sentenceList(admins)}.</p>${access.on ? '<div class="actions"><a class="btn" href="/agents/connect">Connect your agent</a></div>' : ""}`;
-  }
-  return {
+  // What a member can do while it's on: connect their own app.
+  const connect =
+    !admin && access.on ? linkButton("Connect your app", "/agents/connect", { size: "sm" }) : "";
+  const page = settingsPage({
     title: "Agent access",
-    body: `${noticeHtml(notice)}<p class="agent-access-state">${state}${latest}</p><p>${consequence}</p>${control}`,
-    status: notice?.status
-  };
+    ...(admin ? {} : { meta: [`Only admins can change this. Admins: ${sentenceList(admins)}.`] }),
+    cards: [
+      noticeHtml(refused),
+      card({
+        rows: [
+          settingRow({
+            title,
+            description:
+              "People’s own agents (Claude, ChatGPT, Codex…) can use the agent tools in patches they can open, as themselves. Turning it off refuses every agent until it’s back on; nobody’s connection ends.",
+            control: admin
+              ? switchForm({
+                  action: "/settings/agent-access",
+                  label: title,
+                  checked: access.on,
+                  fields: `<input type="hidden" name="state" value="${access.on ? "off" : "on"}">`
+                })
+              : `<strong>${access.on ? "On" : "Off"}</strong>`
+          })
+        ],
+        ...(latest || connect ? { foot: `${latest}${connect}` } : {})
+      })
+    ]
+  });
+  return { title: "Agent access", ...page, ...(refused ? { status: refused.status } : {}) };
 });
 
 /**
- * `/settings/people`, People: everyone in the company, its open invites and its guests, narrowed by a tab
- * and a search. Admins invite from the toolbar and manage each row from its menu; a guest's row
- * opens to the patches shared with them, and for admins, removing them from all of them.
+ * Invite people, over People narrowed by `filter`, which the form carries so a refusal draws the
+ * same list behind it: the emails, the role, and Send invites. A refusal draws it again with what
+ * was typed, its problem under the field, which takes the focus, or its outcome above the
+ * buttons, which does.
+ */
+const inviteDialog = (draft: Draft | undefined, filter: Filter) =>
+  dialog({
+    id: "invite",
+    title: "Invite people",
+    size: "lg",
+    closeHref: peopleHref(filter.show, filter.query),
+    form: {
+      action: "/settings/people/invites",
+      fields: `<input type="hidden" name="show" value="${filter.show}"><input type="hidden" name="q" value="${escapeAttribute(filter.query)}">`
+    },
+    body: `${field({
+      id: "invite-email",
+      label: "Emails",
+      hint: `Separate them with commas or new lines. Up to ${inviteBatch} at once.`,
+      ...(draft?.problem === undefined ? {} : { error: draft.problem }),
+      control: (aria) =>
+        textarea(aria, {
+          name: "email",
+          rows: 3,
+          autocomplete: "off",
+          autofocus: draft?.outcome === undefined,
+          ...(draft === undefined ? {} : { value: draft.text })
+        })
+    })}${choiceGroup({
+      id: "invite-role",
+      legend: "Role",
+      hint: "Admins also invite people and change settings.",
+      choices: (aria) =>
+        Users.Role.literals
+          .map((role) =>
+            radio({
+              name: "role",
+              value: role,
+              label: roleLabel(role),
+              checked: (draft?.role ?? "member") === role,
+              aria
+            })
+          )
+          .join("")
+    })}${noticeHtml(draft?.outcome)}`,
+    foot: `<span class="meta dialog-foot-start">Invites expire after ${lifetimeDays} days</span>${linkButton("Cancel", peopleHref(filter.show, filter.query), { kind: "quiet" })}${button("Send invites", { kind: "primary" })}`
+  });
+
+/** Removing a guest from every patch here, confirmed over Guests, naming each patch they lose. */
+const guestRemoval = (viewer: Viewer, guest: Guest) => {
+  const close = peopleHref("guests", "");
+  return dialog({
+    id: "remove-guest",
+    title: `Remove ${guest.name} from all ${viewer.company.name} patches?`,
+    closeHref: close,
+    form: { action: `/settings/people/guests/${encodeURIComponent(guest.userId)}/remove` },
+    body: `<p class="prose">${escapeHtml(guest.name)}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p>${rows(
+      guest.patches.map((patch) =>
+        row({
+          lead: patchMark(patch.name, patch.tier),
+          name: patchTitle(patch),
+          end: offBadge(patch)
+        })
+      ),
+      true
+    )}`,
+    foot: `${linkButton("Cancel", close, { kind: "quiet", autofocus: true })}${button(`Remove from ${plural(guest.patches.length, "patch", "patches")}`, { kind: "danger-solid" })}`
+  });
+};
+
+/**
+ * `/settings/people`, People: everyone in the company, its open invitations and its guests,
+ * narrowed by a segmented filter and a search. Admins invite from the header and manage each row
+ * from its menu; members read the same list.
  */
 const render = Effect.fn("CompanyPage.render")(function* (
   viewer: Viewer,
@@ -314,13 +409,15 @@ const render = Effect.fn("CompanyPage.render")(function* (
     a.name.localeCompare(b.name) || a.email.localeCompare(b.email);
   const active = users.filter((user) => user.deactivatedAt === null).sort(byName);
   const deactivated = users.filter((user) => user.deactivatedAt !== null).sort(byName);
+  const admins = active.filter((user) => user.role === "admin");
+  const names = new Map(users.map((user) => [user.id, displayName(user)]));
   const inviteState = (invite: Companies.Invite) =>
     invite.expiresAt.getTime() <= now
       ? "expired"
       : invite.clerkInvitationId === null
         ? "unsent"
         : "waiting";
-  // Invites that need an admin come first: their email never went out, or they ran out.
+  // Invitations that need an admin come first: their email never went out, or they ran out.
   const openInvites = [...invites].sort(
     (a, b) => Number(inviteState(a) === "waiting") - Number(inviteState(b) === "waiting")
   );
@@ -330,16 +427,13 @@ const render = Effect.fn("CompanyPage.render")(function* (
     | { readonly kind: "guest"; readonly guest: Guest };
   const people = (list: readonly Users.User[]) =>
     list.map((user): Entry => ({ kind: "user", user }));
+  const invited = openInvites.map((invite): Entry => ({ kind: "invite", invite }));
   const lists: Record<Show, readonly Entry[]> = {
-    all: [
-      ...openInvites.map((invite): Entry => ({ kind: "invite", invite })),
-      ...people(active),
-      ...people(deactivated)
-    ],
-    admins: people(active.filter((user) => user.role === "admin")),
-    invited: openInvites.map((invite): Entry => ({ kind: "invite", invite })),
-    deactivated: people(deactivated),
-    guests: guests.map((guest): Entry => ({ kind: "guest", guest }))
+    all: [...people(active), ...invited, ...people(deactivated)],
+    admins: people(admins),
+    invited,
+    guests: guests.map((guest): Entry => ({ kind: "guest", guest })),
+    deactivated: people(deactivated)
   };
   const needle = query.toLowerCase();
   const searched = (entry: Entry) => {
@@ -352,153 +446,260 @@ const render = Effect.fn("CompanyPage.render")(function* (
         return `${entry.guest.name}\n${entry.guest.email}\n${entry.guest.companyName}`;
     }
   };
-  const entries = lists[show].filter((entry) => searched(entry).toLowerCase().includes(needle));
-  // While every row is someone who joined, the column holds only dates and is named for them.
-  const joinedOnly = entries.every(
-    (entry) => entry.kind === "user" && entry.user.deactivatedAt === null
-  );
+  const found = (tab: Show) =>
+    lists[tab].filter((entry) => searched(entry).toLowerCase().includes(needle));
+  const entries = found(show);
+
+  /**
+   * A person's circle, their name and one line under it, which hold all a phone shows of the row:
+   * there `role`, whose column is gone, follows on its own line. `after` follows the name, such
+   * as an invite's state; it and `line` are trusted HTML.
+   */
+  const personCell = (spec: {
+    readonly mark: string;
+    readonly name: string;
+    readonly line: string;
+    readonly after?: string;
+    readonly role?: Users.Role;
+  }) =>
+    `<div class="cell-name">${spec.mark}<div class="row-main"><span class="row-name">${escapeHtml(spec.name)}${spec.after === undefined ? "" : ` ${spec.after}`}</span>${spec.line === "" ? "" : `<span class="row-desc">${spec.line}</span>`}${spec.role === undefined ? "" : `<span class="row-desc show-sm">${roleLabel(spec.role)}</span>`}</div></div>`;
+  const none = '<span class="muted">—</span>';
 
   const userRow = (user: Users.User) => {
     const path = `/settings/people/users/${encodeURIComponent(user.id)}`;
     const label = displayName(user);
-    const you = user.id === viewer.user.id ? '<span class="tag">You</span>' : "";
-    const second = user.name.trim()
-      ? `<br><span class="supporting-text">${escapeHtml(user.email)}</span>`
-      : "";
-    const status = user.deactivatedAt
-      ? `<span class="pill">Deactivated ${escapeHtml(dateLabel(user.deactivatedAt.toISOString()))}</span>`
-      : joinedOnly
-        ? time(user.createdAt)
-        : `<span class="supporting-text">Joined ${time(user.createdAt)}</span>`;
-    const role = user.role === "admin" ? "member" : "admin";
-    const lifecycle = user.deactivatedAt
-      ? menuLink(`${path}/reactivate`, "Reactivate…")
-      : user.id === viewer.user.id
-        ? ""
-        : menuLink(`${path}/deactivate`, "Deactivate…", true);
-    const actions = admin
-      ? `<td class="company-row-actions">${rowMenu(user.id, label, [
-          menuPost(
-            `${path}/role`,
-            role === "admin" ? "Make admin" : "Make member",
-            `<input type="hidden" name="role" value="${role}">`
-          ),
-          ...(lifecycle ? ['<hr class="menu-rule">', lifecycle] : [])
-        ])}</td>`
-      : "";
-    return `<tr><td><div class="company-person">${avatar(user.id, label, user.deactivatedAt ? "off" : undefined)}<div><strong>${escapeHtml(label)}</strong>${you}${second}</div></div></td><td>${user.role === "admin" ? "Admin" : "Member"}</td>${owned ? `<td>${owned.get(user.id) ?? 0}</td>` : ""}<td>${status}</td>${actions}</tr>`;
+    const self = user.id === viewer.user.id;
+    const off = user.deactivatedAt !== null;
+    const theirs: MenuItem = self
+      ? { kind: "link", label: "See your patches", href: "/patches?show=yours" }
+      : {
+          kind: "link",
+          label: "See their patches",
+          href: `/patches?q=${encodeURIComponent(label)}`
+        };
+    const next = user.role === "admin" ? "member" : "admin";
+    // The last active admin stays one: their menu offers no way to demote them.
+    const role: MenuItem[] =
+      user.role === "admin" && admins.length === 1
+        ? []
+        : [
+            {
+              kind: "post",
+              label: next === "admin" ? "Make admin" : "Make member",
+              action: `${path}/role`,
+              fields: `<input type="hidden" name="role" value="${next}">`
+            }
+          ];
+    const items: MenuItem[] = off
+      ? [
+          theirs,
+          { kind: "rule" },
+          { kind: "link", label: "Reactivate…", href: `${path}/reactivate` }
+        ]
+      : [
+          ...role,
+          theirs,
+          ...(self
+            ? []
+            : ([
+                { kind: "rule" },
+                { kind: "link", label: "Deactivate…", href: `${path}/deactivate`, danger: true }
+              ] satisfies MenuItem[]))
+        ];
+    return [
+      personCell({
+        mark: avatar(user.id, label, off ? "off" : undefined),
+        name: label,
+        line: [
+          ...(user.name.trim() ? [escapeHtml(user.email)] : []),
+          ...(user.deactivatedAt === null ? [] : [`Deactivated ${time(user.deactivatedAt)}`])
+        ].join(" · "),
+        role: user.role,
+        ...(self ? { after: '<span class="you">(you)</span>' } : {})
+      }),
+      roleLabel(user.role),
+      ...(owned ? [String(owned.get(user.id) ?? 0)] : []),
+      `<span class="muted">${time(user.createdAt)}</span>`,
+      ...(admin ? [menu({ id: idFor("person", user.id), label, items })] : [])
+    ];
   };
+
   const inviteRow = (invite: Companies.Invite) => {
     const path = `/settings/people/invites/${encodeURIComponent(invite.id)}`;
     const state = inviteState(invite);
-    const sent = `Invited ${time(invite.createdAt, ago(invite.createdAt.toISOString(), now))}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
+    const by = names.get(invite.invitedBy);
+    const line = `Invited${by === undefined ? "" : ` by ${escapeHtml(by)}`} ${time(invite.createdAt, ago(invite.createdAt.toISOString(), now))}${state === "waiting" ? ` · expires ${time(invite.expiresAt)}` : ""}`;
     const status =
       state === "expired"
-        ? '<span class="pill">Expired</span>'
+        ? badge("Expired", "warning")
         : state === "unsent"
-          ? '<span class="pill pill-failed">Email didn’t send</span>'
-          : '<span class="pill pill-progress">Invited</span>';
-    const stuck = state !== "waiting";
-    const actions = admin
-      ? `<td class="company-row-actions"><div class="company-actions">${stuck ? `<form method="post" action="${escapeAttribute(`${path}/resend`)}"><button class="btn" type="submit" aria-label="${escapeAttribute(`Resend the invite to ${invite.email}`)}">Resend</button></form>` : ""}${rowMenu(
-          invite.id,
-          invite.email,
-          [
-            ...(stuck
-              ? []
-              : [menuPost(`${path}/resend`, "Resend invite"), '<hr class="menu-rule">']),
-            menuPost(`${path}/revoke`, "Revoke invite", "", true)
+          ? badge("Email didn’t send", "danger")
+          : badge("Invited");
+    // Resend hands back the expiry it showed, so a second press of the same form sends nothing.
+    const shown = `<input type="hidden" name="expires" value="${invite.expiresAt.getTime()}">`;
+    return [
+      personCell({
+        mark: avatar(invite.id, invite.email, "waiting"),
+        name: invite.email,
+        line,
+        after: status,
+        role: invite.role
+      }),
+      roleLabel(invite.role),
+      ...(owned ? [none] : []),
+      none,
+      ...(admin
+        ? [
+            menu({
+              id: idFor("invite", invite.id),
+              label: invite.email,
+              items: [
+                { kind: "post", label: "Resend", action: `${path}/resend`, fields: shown },
+                { kind: "rule" },
+                { kind: "post", label: "Revoke", action: `${path}/revoke`, danger: true }
+              ]
+            })
           ]
-        )}</div></td>`
-      : "";
-    return `<tr><td><div class="company-person">${avatar(invite.id, invite.email, "waiting")}<div><strong>${escapeHtml(invite.email)}</strong><br><span class="supporting-text">${sent}</span></div></div></td><td>${invite.role === "admin" ? "Admin" : "Member"}</td>${owned ? "<td></td>" : ""}<td>${status}</td>${actions}</tr>`;
+        : [])
+    ];
   };
 
-  // `#guest-<id>` opens a guest's row: browsers expand a closed details to show a fragment's target.
-  const guestRow = (guest: Guest) => {
-    const patches = guest.patches
+  const guestRow = (guest: Guest) => [
+    personCell({
+      mark: avatar(guest.userId, guest.name),
+      name: guest.name,
+      line: `${escapeHtml(guest.email)} · ${escapeHtml(guest.companyName)}`
+    }),
+    guest.patches
       .map(
         (patch) =>
-          `<li class="list-row company-patch">${patchMark(patch.name, patch.tier)}<div>${patchLink(viewer, patch)}<br><span class="supporting-text">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></li>`
+          `<div class="cell-name">${patchMark(patch.name, patch.tier)}<div class="row-main"><span>${patchLink(viewer, patch)} ${offBadge(patch)}</span><span class="row-desc">Shared by ${escapeHtml(patch.sharedBy)} · ${time(patch.sharedAt)}</span></div></div>`
       )
-      .join("");
-    const remove = admin
-      ? `<a class="btn btn-quiet btn-danger" href="${escapeAttribute(`/settings/people/guests/${encodeURIComponent(guest.userId)}/remove`)}">Remove from all patches…</a>`
-      : "";
-    return `<tr><td><div class="company-person">${avatar(guest.userId, guest.name)}<div><strong>${escapeHtml(guest.name)}</strong><br><span class="supporting-text">${escapeHtml(guest.email)}</span></div></div></td><td>${escapeHtml(guest.companyName)}</td></tr><tr class="table-expand"><td colspan="2"><details class="company-guest"><summary>${plural(guest.patches.length, "patch", "patches")}</summary><ul class="list list-compact company-guest-patches" id="${escapeAttribute(`guest-${guest.userId}`)}">${patches}</ul>${remove}</details></td></tr>`;
-  };
-  const row = (entry: Entry) => {
-    switch (entry.kind) {
-      case "invite":
-        return inviteRow(entry.invite);
-      case "user":
-        return userRow(entry.user);
-      case "guest":
-        return guestRow(entry.guest);
-    }
-  };
+      .join(""),
+    ...(admin
+      ? [
+          menu({
+            id: idFor("guest", guest.userId),
+            label: guest.name,
+            items: [
+              {
+                kind: "link",
+                label: "Remove from all patches…",
+                href: `/settings/people/guests/${encodeURIComponent(guest.userId)}/remove`,
+                danger: true
+              }
+            ]
+          })
+        ]
+      : [])
+  ];
 
-  const counts: Record<Show, number> = {
-    all: invites.length + users.length,
-    admins: lists.admins.length,
-    invited: invites.length,
-    deactivated: deactivated.length,
-    guests: guests.length
-  };
-  // Invited, Deactivated and Guests appear once there is something in them.
-  const tabs = shows
-    .filter((tab) => tab === "all" || tab === "admins" || counts[tab] > 0 || tab === show)
-    .map(
-      (tab) =>
-        `<a href="${escapeAttribute(filterHref(tab, query))}"${tab === show ? ' aria-current="page"' : ""}>${showLabels[tab]} <span class="count">${counts[tab]}</span></a>`
-    )
-    .join("");
+  const actions: Column[] = admin ? [{ label: "Actions", hidden: true, align: "end" }] : [];
+  const content =
+    show === "guests"
+      ? table({
+          label: "Guests",
+          columns: [{ label: "Guest" }, { label: "Can open" }, ...actions],
+          rows: entries.flatMap((entry) => (entry.kind === "guest" ? [guestRow(entry.guest)] : []))
+        })
+      : table({
+          label: "People",
+          columns: [
+            { label: "Person" },
+            { label: "Role", hideOnPhone: true },
+            ...(owned ? [{ label: "Patches", align: "end", hideOnPhone: true } as const] : []),
+            { label: "Joined", hideOnPhone: true },
+            ...actions
+          ],
+          rows: entries.flatMap((entry) =>
+            entry.kind === "user"
+              ? [userRow(entry.user)]
+              : entry.kind === "invite"
+                ? [inviteRow(entry.invite)]
+                : []
+          )
+        });
+  const empty = emptyState(
+    query
+      ? {
+          title: `No one matches “${query}”`,
+          action: linkButton("Clear filter", peopleHref(show, ""), { size: "sm" })
+        }
+      : show === "invited"
+        ? {
+            title: "No open invitations",
+            ...(admin
+              ? {
+                  action: linkButton("Invite people…", peopleHref(show, "", true), { size: "sm" })
+                }
+              : {})
+          }
+        : show === "guests"
+          ? { title: "No guests" }
+          : { title: "No one is deactivated" }
+  );
+
+  // Deactivated appears once someone is.
+  const filter = segmented({
+    label: "Show",
+    current: showLabels[show],
+    items: shows
+      .filter((tab) => tab !== "deactivated" || deactivated.length > 0 || tab === show)
+      .map((tab) => ({
+        label: showLabels[tab],
+        href: peopleHref(tab, query),
+        count: found(tab).length
+      }))
+  });
   const search = searchField({
     action: "/settings/people",
-    id: "company-search",
+    id: "people-filter",
     query,
-    placeholder: "Search people",
-    label: "Search people",
+    placeholder: "Filter people",
+    label: "Filter people",
     keep: show === "all" ? {} : { show },
-    className: "company-search"
+    className: "grow"
   });
-  const matches = query
-    ? `<p class="supporting-text company-matches">${plural(entries.length, "match", "matches")} for “${escapeHtml(query)}” · <a href="${escapeAttribute(filterHref(show, ""))}">Clear search</a></p>`
-    : "";
-  const empty = query
-    ? `<p>No one matches “${escapeHtml(query)}”.</p>`
-    : show === "invited"
-      ? "<p>No open invites.</p>"
-      : show === "guests"
-        ? "<p>No guests.</p>"
-        : "<p>No one is deactivated.</p>";
-  // Guests have their own company in place of a role, and nothing beside it.
-  const columns =
-    show === "guests"
-      ? '<th scope="col">Person</th><th scope="col">Company</th>'
-      : `<th scope="col">Person</th><th scope="col">Role</th>${owned ? '<th scope="col">Patches</th>' : ""}<th scope="col">${joinedOnly ? "Joined" : "Status"}</th>${admin ? '<th class="company-row-actions" scope="col" aria-label="Actions"></th>' : ""}`;
-  const table = entries.length
-    ? `<div class="company-table"><table class="table${show === "guests" ? " company-guests" : ""}"><thead><tr>${columns}</tr></thead><tbody>${entries.map(row).join("")}</tbody></table></div>`
-    : empty;
 
   const draft = view.draft;
-  const inviteNote = draft?.problem
-    ? `<div class="note note-refused field-callout" id="invite-email-note" role="alert">${escapeHtml(draft.problem)}</div>`
-    : `<p class="field-hint" id="invite-email-note">Up to ${inviteBatch} at once. Invites expire after ${lifetimeDays} days.</p>`;
-  const invite = admin
-    ? `<details class="company-invite"${view.inviting || draft ? " open" : ""}><summary class="btn btn-primary">Invite people</summary><form class="side-panel company-invite-form" method="post" action="/settings/people/invites" novalidate><label class="field-label" for="invite-email">Emails</label><textarea class="field field-grow" id="invite-email" name="email" rows="1" required aria-describedby="invite-email-note"${draft?.problem ? ' aria-invalid="true" autofocus' : ""}>${escapeHtml(draft?.text ?? "")}</textarea>${inviteNote}<label class="field-label" for="invite-role">Role</label><div class="company-invite-row"><select class="field" id="invite-role" name="role"><option value="member">Member</option><option value="admin"${draft?.role === "admin" ? " selected" : ""}>Admin</option></select><button class="btn btn-primary" type="submit">Send invites</button></div></form></details>`
-    : "";
-  const admins = active.filter((user) => user.role === "admin");
+  const overlay =
+    view.removing !== undefined
+      ? guestRemoval(viewer, view.removing)
+      : admin && (view.inviting === true || draft !== undefined)
+        ? inviteDialog(draft, { show, query })
+        : undefined;
+  const status =
+    view.notice?.status ?? draft?.outcome?.status ?? (draft?.problem ? 422 : undefined);
   return {
     title: "People",
-    body: `<p class="supporting-text">${plural(active.length, "person", "people")} · ${plural(admins.length, "admin", "admins")}</p>${noticeHtml(view.notice)}<div class="company-tools">${search}<nav class="tabs" aria-label="Show">${tabs}</nav>${invite}</div>${matches}${table}`,
-    status: view.notice?.status ?? (draft?.problem ? 422 : undefined)
+    ...indexPage({
+      title: "People",
+      meta: [
+        plural(active.length, "person", "people"),
+        plural(admins.length, "admin", "admins"),
+        ...(admin
+          ? []
+          : [`Only admins can invite or change roles. Admins: ${sentenceList(adminNames(users))}.`])
+      ],
+      ...(admin
+        ? {
+            actions: linkButton("Invite people…", peopleHref(show, query, true), {
+              kind: "primary",
+              icon: "plus"
+            })
+          }
+        : {}),
+      toolbar: `${filter}${search}`,
+      content: `${noticeHtml(view.notice)}${entries.length ? content : `<div class="box">${empty}</div>`}`
+    }),
+    ...(overlay === undefined ? {} : { overlay }),
+    ...(status === undefined ? {} : { status })
   };
 });
 
-/** Re-renders People with a plain-text refusal above it. */
-const refuse = (viewer: Viewer, message: string, status: number, draft?: Draft) =>
-  render(viewer, { notice: { message: escapeHtml(message), status }, draft });
+/** Re-renders People with a refusal above its list. */
+const refuse = (viewer: Viewer, message: string, status: number) =>
+  render(viewer, { notice: { message, status } });
 
 /** People again after a change, with the receipt naming it. */
 const done = (receipt: string, redirect = "/settings/people"): Page => ({
@@ -508,30 +709,10 @@ const done = (receipt: string, redirect = "/settings/people"): Page => ({
   receipt
 });
 
-/**
- * `/settings/people/guests/<id>/remove`: the patches a guest would lose, for an admin to confirm removing
- * them from all of them.
- */
-const renderGuestRemoval = (viewer: Viewer, guest: Guest): Page => {
-  const name = escapeHtml(guest.name);
-  const back = escapeAttribute(filterHref("guests", ""));
-  const patches = guest.patches
-    .map(
-      (patch) =>
-        `<li class="company-patch">${patchMark(patch.name, patch.tier)}<span><strong>${escapeHtml(patchTitle(patch))}</strong>${statePill(patch)}</span></li>`
-    )
-    .join("");
-  return {
-    title: `Remove ${guest.name}`,
-    heading: "",
-    body: `<article class="company-subpage"><p><a href="${back}">Back to Guests</a></p><h1 class="page-heading">Remove ${name} from all ${escapeHtml(viewer.company.name)} patches?</h1><form class="confirmation-form" method="post" action="${escapeAttribute(`/settings/people/guests/${encodeURIComponent(guest.userId)}/remove`)}"><p class="confirmation-consequence">${name}’s guest access to these ends. Public ones stay open to anyone with the link. Their ${escapeHtml(guest.companyName)} account stays as it is.</p><ul class="confirmation-list">${patches}</ul><div class="confirmation-actions"><button class="btn btn-danger" type="submit">Remove from ${plural(guest.patches.length, "patch", "patches")}</button><a class="btn btn-quiet" href="${back}">Cancel</a></div></form></article>`
-  };
-};
-
 /** Turns agent access on or off; a refusal re-renders Agent access, which the form sat on. */
 const setAgentAccess = Effect.fn("CompanyPage.setAgentAccess")(function* (viewer: Viewer) {
   const refused = (message: string, status: number) =>
-    renderAgentAccess(viewer, { message: escapeHtml(message), status });
+    renderAgentAccess(viewer, { message, status });
   if (viewer.role !== "admin")
     return yield* refused("Only an admin can turn agent access on or off.", 403);
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -571,9 +752,8 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
   if (action.kind === "view") {
     // Only the query matters here; the base never reaches a link.
     const params = new URL(request.url, "http://company.invalid").searchParams;
-    const show = shows.find((candidate) => candidate === params.get("show")) ?? "all";
     return yield* render(viewer, {
-      filter: { show, query: (params.get("q") ?? "").trim().slice(0, 200) },
+      filter: filterOf(params.get("show"), params.get("q")),
       inviting: params.get("invite") === "1"
     });
   }
@@ -592,12 +772,21 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
     if (act.kind === "invite") {
       const fields = Object.fromEntries(new URLSearchParams(yield* request.text));
       const text = fields.email ?? "";
+      // The list the dialog was opened over, drawn behind it again and landed on after.
+      const filter = filterOf(fields.show, fields.q);
       const role = yield* decodeRole(fields).pipe(
         Effect.map(({ role }) => role),
         Effect.catchTags({ SchemaError: () => Effect.succeed(null) })
       );
       if (role === null)
-        return yield* refuse(viewer, "Choose Member or Admin.", 422, { text, role: "member" });
+        return yield* render(viewer, {
+          filter,
+          draft: {
+            text,
+            role: "member",
+            outcome: { message: "Choose Member or Admin.", status: 422 }
+          }
+        });
       const list = addresses(text);
       const invalid = list.filter((entry) => !isEmail(entry));
       const problem =
@@ -608,8 +797,9 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
             : list.length > inviteBatch
               ? `That is ${list.length} addresses. Send up to ${inviteBatch} at a time.`
               : undefined;
-      if (problem) return yield* render(viewer, { draft: { text, role, problem } });
+      if (problem) return yield* render(viewer, { filter, draft: { text, role, problem } });
       // Each address is its own invitation: a refusal or a failed save stops that address only.
+      // A repeat of the same list sends nothing twice: a live invitation refuses its address.
       const outcomes = yield* Effect.forEach(list, (email) =>
         Invitations.create({
           email,
@@ -644,30 +834,39 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       const invited = emails("invited");
       const failed = emails("failed");
       if (sent.length === outcomes.length)
-        return done(sent.length === 1 ? `Invited ${sent[0]}` : `Invited ${sent.length} people`);
+        return done(
+          sent.length === 1 ? `Invited ${sent[0]}` : `Invited ${sent.length} people`,
+          peopleHref(filter.show, filter.query)
+        );
       // Anything short of every address sent is explained per address, not receipted.
       const lines = [
-        sent.length ? `Invited ${sentenceList(sent)}.` : "",
+        sent.length ? `Invited ${listed(sent)}.` : "",
         unsent.length
-          ? `Saved the invite for ${sentenceList(unsent)}, but the email did not go out. Resend it from the list.`
+          ? `Saved the invite for ${listed(unsent)}, but the email did not go out. Resend it from the list.`
           : "",
         members.length
-          ? `${sentenceList(members)} ${members.length === 1 ? "is" : "are"} already in a company.`
+          ? `${listed(members)} ${members.length === 1 ? "is" : "are"} already in a company.`
           : "",
         invited.length
-          ? `${sentenceList(invited)} already ${invited.length === 1 ? "has an invite" : "have invites"}. Resend from the list instead.`
+          ? `${listed(invited)} already ${invited.length === 1 ? "has an invite" : "have invites"}. Resend from the list instead.`
           : "",
         failed.length
-          ? `Could not save the invite for ${sentenceList(failed)}. ${failed.length === 1 ? "It is" : "They are"} still in the box; send again.`
+          ? `Could not save the invite for ${listed(failed)}. ${failed.length === 1 ? "It is" : "They are"} still in the box; send again.`
           : ""
       ];
+      // The dialog stays open with the chosen role; only addresses that can be sent again stay in it.
       return yield* render(viewer, {
-        notice: {
-          message: lines.filter(Boolean).join(" "),
-          status: failed.length ? 503 : unsent.length ? 502 : 409
-        },
-        // The form stays open with the chosen role; only addresses that can be sent again stay in it.
-        draft: { text: failed.join("\n"), role }
+        filter,
+        draft: {
+          text: failed.join("\n"),
+          role,
+          outcome: {
+            message: lines.filter(Boolean).join(" "),
+            status: failed.length ? 503 : unsent.length ? 502 : 409,
+            // Some sent and the rest only skipped is a warning; anything lost or none sent, danger.
+            tone: sent.length > 0 && !failed.length && !unsent.length ? "warning" : "danger"
+          }
+        }
       });
     }
     if (act.kind === "revoke") {
@@ -690,19 +889,27 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       return done(`Revoked the invite to ${result.invite.email}`);
     }
     if (act.kind === "resend") {
+      const shown = Number.parseInt(
+        Option.getOrElse(UrlParams.getFirst(yield* request.urlParamsBody, "expires"), () => ""),
+        10
+      );
       const result = yield* Invitations.resend({
         companyId: viewer.company.id,
-        inviteId: act.id
+        inviteId: act.id,
+        ...(Number.isSafeInteger(shown) ? { shownExpiry: shown } : {})
       }).pipe(
-        Effect.tap(({ invite, mailFailed }) =>
-          analytics.track({
-            name: "invite.resent",
-            ...admin,
-            properties: { inviteId: invite.id, emailed: !mailFailed }
-          })
+        Effect.tap(({ invite, mailFailed, repeated }) =>
+          repeated
+            ? Effect.void
+            : analytics.track({
+                name: "invite.resent",
+                ...admin,
+                properties: { inviteId: invite.id, emailed: !mailFailed }
+              })
         ),
         Effect.uninterruptible
       );
+      if (result.repeated) return done(`A new invite already went to ${result.invite.email}`);
       if (result.mailFailed)
         return yield* refuse(
           viewer,
@@ -720,15 +927,13 @@ export const handle = Effect.fn("CompanyPage.handle")(function* (viewer: Viewer,
       if (guests === undefined || guest === undefined)
         return yield* render(viewer, {
           filter: { show: "guests", query: "" },
-          notice: {
-            message: "No patch here is shared with them now.",
-            status: 404
-          }
+          notice: { message: "No patch here is shared with them now.", status: 404 }
         });
-      if (act.kind === "view-guest-removal") return renderGuestRemoval(viewer, guest);
+      if (act.kind === "view-guest-removal")
+        return yield* render(viewer, { filter: { show: "guests", query: "" }, removing: guest });
       // Ends whatever they hold now, so a patch shared since the confirmation goes too.
       yield* guests.removeAll({ companyId: viewer.company.id, userId: guest.userId });
-      return done(`Removed ${guest.name} from all patches`, filterHref("guests", ""));
+      return done(`Removed ${guest.name} from all patches`, peopleHref("guests", ""));
     }
     const { role } = yield* decodeRole(Object.fromEntries(yield* request.urlParamsBody));
     const change = users.setRole({ companyId: viewer.company.id, userId: act.id, role });

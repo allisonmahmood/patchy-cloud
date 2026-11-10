@@ -8,6 +8,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
+import type { AppShell } from "@patchy/core";
 import { CompanyPage, Join, type Companies, type InviteMail, type Users } from "@patchy/companies";
 import { linkButton } from "@patchy/core";
 import type * as AgentConnections from "./AgentConnections.js";
@@ -78,11 +79,16 @@ const company = Effect.fn("AuthPages.company")(function* (action: CompanyPage.Ac
           publicBaseUrl: session.publicBaseUrl
         });
   }
-  const section =
+  const section: AppShell["section"] =
     action.kind === "view-agent-access" || action.kind === "agent-access"
       ? "agent-access"
       : "people";
-  return pageResponse({ ...page, styles: CompanyPage.styles, app: { viewer, section } }, session);
+  // A receipt waits under a dialog until a page shows it.
+  const app =
+    page.overlay === undefined
+      ? { viewer, section }
+      : { viewer: { ...viewer, receipt: undefined }, section, overlay: page.overlay };
+  return pageResponse({ ...page, app }, session);
 });
 
 /**

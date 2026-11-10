@@ -2,6 +2,7 @@ import { fontFaces } from "../fonts.js";
 import { appShell } from "./app-shell.js";
 import { base } from "./base.js";
 import { buttons } from "./buttons.js";
+import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
 import { detail } from "./detail.js";
 import { dialogs } from "./dialogs.js";
@@ -60,7 +61,8 @@ export const chunks = {
   switcher,
   usual,
   visibility,
-  detail
+  detail,
+  checklist
 } as const;
 
 export type ChunkName = keyof typeof chunks;

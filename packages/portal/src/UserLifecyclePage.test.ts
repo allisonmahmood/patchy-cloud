@@ -37,8 +37,26 @@ import {
   inputValues,
   userPath,
   readUser,
-  cardPath
+  cardPath,
+  type FormFields,
+  type Person
 } from "./test/fixtures.js";
+
+/**
+ * Chooses Retire or Restore some or all: the choice redirects to the confirmation's own address,
+ * which a GET draws, as a reload, Back or a new tab would.
+ */
+const choose = Effect.fn("UserLifecyclePage.choose")(function* (
+  path: string,
+  person: Person,
+  fields: FormFields
+) {
+  const chosen = yield* post(path, person, fields);
+  assert.strictEqual(chosen.status, 303);
+  const location = chosen.headers.location!;
+  assert.isTrue(location.startsWith(`${path}?choice=`));
+  return yield* request(location, person);
+});
 
 it.layer(socket)("user lifecycle pages on a socket", (it) => {
   for (const action of ["deactivate", "reactivate"] as const) {
@@ -195,7 +213,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
             const pick = yield* request(path, workspace.admin);
             assert.strictEqual(pick.status, 200);
             assert.sameMembers(inputValues(yield* pick.text, "patch", "checkbox"), [patch.patchId]);
-            const preview = yield* post(path, workspace.admin, { choice: "all" });
+            const preview = yield* choose(path, workspace.admin, { choice: "all" });
             assert.strictEqual(preview.status, 200);
             assert.sameMembers(inputValues(yield* preview.text, "patch", "hidden"), [
               patch.patchId
@@ -242,10 +260,30 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         assert.notInclude(text(html), offReader.name);
         assert.include(text(html), retired.name);
         assert.include(text(html), deleted.name);
-        for (const label of ["Keep their patches live", "Retire selected", "Retire all"])
+        for (const label of ["Keep them live", "Retire some", "Retire all"])
           assert.include(text(html), label);
+        // Keep is the choice already made; the others go to a confirmation.
+        assert.match(html, /name="choice" value="keep"[^>]* checked/);
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
       })
+  );
+
+  it.effect("tells apart patches with the same title by their names, picking and confirming", () =>
+    Effect.gen(function* () {
+      const workspace = yield* company();
+      const first = yield* publish(workspace.owner, "same-title-first", { title: "Report" });
+      const second = yield* publish(workspace.owner, "same-title-second", { title: "Report" });
+      const path = userPath(workspace.owner, "deactivate");
+      const pick = text(yield* (yield* request(path, workspace.admin)).text);
+      for (const name of [first.name, second.name]) assert.include(pick, `Report (${name})`);
+      const preview = yield* choose(path, workspace.admin, {
+        choice: "selected",
+        patch: [second.patchId]
+      });
+      const confirmation = text(yield* preview.text);
+      assert.include(confirmation, `Retire Report (${second.name}).`);
+      assert.notInclude(confirmation, first.name);
+    })
   );
 
   it.effect(
@@ -281,6 +319,102 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         ]);
       })
   );
+
+  for (const action of ["deactivate", "reactivate"] as const)
+    it.effect(
+      `draws ${action}'s confirmation again at its own address, where only its button acts`,
+      () =>
+        Effect.gen(function* () {
+          const workspace = yield* company();
+          const patches = yield* Patches.Patches;
+          const first = yield* publish(workspace.owner, `${action}-address-first`);
+          const second = yield* publish(workspace.owner, `${action}-address-second`);
+          if (action === "reactivate") {
+            yield* patches.retire(first.patchId, actor(workspace.admin));
+            yield* patches.retire(second.patchId, actor(workspace.admin));
+            yield* (yield* Users.Users).deactivate({
+              companyId: workspace.id,
+              userId: workspace.owner.id
+            });
+          }
+          const before = yield* readUser(workspace.owner);
+          const path = userPath(workspace.owner, action);
+          const question = `${action === "deactivate" ? "Deactivate" : "Reactivate"} ${workspace.owner.name}?`;
+          const chosen = yield* post(path, workspace.admin, {
+            choice: "selected",
+            patch: [second.patchId]
+          });
+          assert.strictEqual(chosen.status, 303);
+          const address = new URL(chosen.headers.location!, PUBLIC_BASE_URL);
+          assert.strictEqual(address.pathname, path);
+          assert.deepStrictEqual(
+            [...address.searchParams],
+            [
+              ["choice", "selected"],
+              ["patch", second.patchId]
+            ]
+          );
+          // Reloaded, or opened in another tab, the address draws the same confirmation.
+          const drawn = Effect.gen(function* () {
+            const page = yield* request(chosen.headers.location!, workspace.admin);
+            assert.strictEqual(page.status, 200);
+            const html = yield* page.text;
+            assert.include(text(html), question);
+            assert.strictEqual(hidden(html, "choice"), "confirm");
+            assert.deepStrictEqual(inputValues(html, "patch", "hidden"), [second.patchId]);
+          });
+          yield* drawn;
+          yield* drawn;
+          // All's address is its choice; what it covers is read when it is drawn.
+          const all = yield* post(path, workspace.admin, { choice: "all" });
+          assert.strictEqual(all.headers.location, `${path}?choice=all`);
+          const allPage = yield* (yield* request(`${path}?choice=all`, workspace.admin)).text;
+          assert.include(text(allPage), question);
+          assert.sameMembers(inputValues(allPage, "patch", "hidden"), [
+            first.patchId,
+            second.patchId
+          ]);
+          // A GET never acts, whatever its query says: the pick starts on Keep.
+          for (const query of ["choice=keep", `choice=confirm&patch=${second.patchId}`]) {
+            const page = yield* request(`${path}?${query}`, workspace.admin);
+            assert.strictEqual(page.status, 200);
+            assert.match(yield* page.text, /name="choice" value="keep"[^>]* checked/);
+          }
+          // An address naming a patch that isn't theirs to choose is refused on the pick.
+          const foreign = yield* company();
+          const other = yield* publish(foreign.owner, `${action}-address-foreign`);
+          const stale = yield* request(
+            `${path}?choice=selected&patch=${other.patchId}`,
+            workspace.admin
+          );
+          assert.strictEqual(stale.status, 409);
+          assert.include(text(yield* stale.text), "The selected patches changed.");
+          assert.deepStrictEqual(yield* readUser(workspace.owner), before);
+          // A member gets no confirmation from the address either.
+          assert.strictEqual(
+            (yield* request(chosen.headers.location!, workspace.member)).status,
+            403
+          );
+
+          // The confirmation's button still acts, on what it named.
+          const committed = yield* post(path, workspace.admin, {
+            choice: "confirm",
+            patch: [second.patchId]
+          });
+          assert.strictEqual(committed.status, 303);
+          assert.strictEqual(committed.headers.location, "/settings/people");
+          assert.strictEqual(
+            (yield* readUser(workspace.owner)).deactivatedAt === null,
+            action === "reactivate"
+          );
+          const [acted, kept] = action === "deactivate" ? ["retired", "live"] : ["live", "retired"];
+          assert.strictEqual(
+            (yield* readPatch(workspace.admin, second.patchId)).patch.state,
+            acted
+          );
+          assert.strictEqual((yield* readPatch(workspace.admin, first.patchId)).patch.state, kept);
+        })
+    );
 
   it.effect(
     "rejects an empty selection and retires an entirely selected chain without breakage",
@@ -325,7 +459,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
             Effect.orDie
           )
         );
-        const preview = yield* post(path, workspace.admin, {
+        const preview = yield* choose(path, workspace.admin, {
           choice: "selected",
           patch: selection
         });
@@ -381,7 +515,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         const source = yield* publishSource(workspace.owner, "outside-source");
         const own = yield* publishDependant(workspace.owner, "outside-own-reader", source.patchId);
         const path = userPath(workspace.owner, "deactivate");
-        const preview = yield* post(path, workspace.admin, {
+        const preview = yield* choose(path, workspace.admin, {
           choice: "selected",
           patch: [source.patchId]
         });
@@ -449,9 +583,15 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         const html = yield* page.text;
         assert.strictEqual(hidden(html, "choice"), "confirm");
         assert.deepStrictEqual(inputs(html, "patch", "checkbox"), []);
+        // With nothing selected there is no selection to choose again; People is the way back.
         assert.deepStrictEqual(
-          links(html).filter((link) => link.text.startsWith("Back to")),
-          [{ href: "/settings/people", text: "Back to People" }]
+          links(html.slice(html.indexOf("<main"))).filter((link) =>
+            link.href.startsWith("/settings/people")
+          ),
+          [
+            { href: "/settings/people", text: "People" },
+            { href: "/settings/people", text: "Cancel" }
+          ]
         );
         assert.include(text(html), "Nothing breaks");
         assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
@@ -484,7 +624,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
       const first = yield* publish(workspace.owner, "stale-selection-first");
       const second = yield* publish(workspace.owner, "stale-selection-second");
       const path = userPath(workspace.owner, "deactivate");
-      const preview = yield* post(path, workspace.admin, { choice: "all" });
+      const preview = yield* choose(path, workspace.admin, { choice: "all" });
       assert.strictEqual(preview.status, 200);
       assert.sameMembers(inputValues(yield* preview.text, "patch", "hidden"), [
         first.patchId,
@@ -504,6 +644,18 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
       yield* service.reassign(second.patchId, actor(workspace.admin), workspace.member.id);
       const reassigned = yield* post(path, workspace.admin, fields);
       assert.strictEqual(reassigned.status, 409);
+      // The pick comes back on the choice that was being confirmed, with what's still theirs
+      // checked, and its refusal is where focus starts; it never falls back to Keep.
+      const again = yield* reassigned.text;
+      assert.match(again, /name="choice" value="selected"[^>]* checked/);
+      assert.notMatch(again, /name="choice" value="keep"[^>]* checked/);
+      assert.sameMembers(
+        inputs(again, "patch", "checkbox")
+          .filter((input) => / checked/.test(input))
+          .map((input) => input.match(/value="([^"]*)"/)?.[1]),
+        [first.patchId]
+      );
+      assert.include(again, '<div class="refusal" tabindex="-1" autofocus>');
       assert.isNull((yield* readUser(workspace.owner)).deactivatedAt);
       assert.strictEqual((yield* readPatch(workspace.admin, first.patchId)).patch.state, "live");
       const moved = yield* readPatch(workspace.admin, second.patchId);
@@ -546,13 +698,13 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         const html = yield* page.text;
         assert.sameMembers(inputValues(html, "patch", "checkbox"), [own.patchId, admin.patchId]);
         assert.notInclude(text(html), moved.name);
-        for (const label of ["Keep them retired", "Restore selected", "Restore all"])
+        for (const label of ["Keep them retired", "Restore some", "Restore all"])
           assert.include(text(html), label);
         const empty = yield* post(path, workspace.admin, { choice: "selected" });
         assert.strictEqual(empty.status, 422);
         assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
 
-        const preview = yield* post(path, workspace.admin, { choice: "all" });
+        const preview = yield* choose(path, workspace.admin, { choice: "all" });
         assert.strictEqual(preview.status, 200);
         const confirmation = yield* preview.text;
         assert.sameMembers(inputValues(confirmation, "patch", "hidden"), [
@@ -635,7 +787,10 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
       });
       const path = userPath(workspace.owner, "reactivate");
       const selection = [reader.patchId, source.patchId];
-      const preview = yield* post(path, workspace.admin, { choice: "selected", patch: selection });
+      const preview = yield* choose(path, workspace.admin, {
+        choice: "selected",
+        patch: selection
+      });
       assert.strictEqual(preview.status, 200);
       const html = yield* preview.text;
       assert.deepStrictEqual(inputs(html, "ack", "checkbox"), []);
@@ -667,7 +822,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
         userId: workspace.owner.id
       });
       const path = userPath(workspace.owner, "reactivate");
-      const preview = yield* post(path, workspace.admin, {
+      const preview = yield* choose(path, workspace.admin, {
         choice: "selected",
         patch: [reader.patchId]
       });
@@ -681,7 +836,7 @@ it.layer(socket)("user lifecycle pages on a socket", (it) => {
       });
       assert.strictEqual(refused.status, 409);
       const refusedHtml = yield* refused.text;
-      assert.include(text(refusedHtml), `${source.name} / notes : retired`);
+      assert.include(text(refusedHtml), `${source.name} / notes: retired`);
       assert.strictEqual(inputs(refusedHtml, "ack", "checkbox").length, 1);
       assert.isNotNull((yield* readUser(workspace.owner)).deactivatedAt);
       assert.strictEqual(

@@ -81,7 +81,7 @@ The actor's explicit acceptance, in a confirmation, of the breakage to listed de
 _Avoid_: consent, override, warning (what precedes it)
 
 **Pick page**:
-The deactivation or reactivation step that lists a user's patches for the admin to leave alone, act on a selection, or act on all. Deactivation shows each live patch's dependants; confirmation excludes dependants or restored sources inside the selection.
+The deactivation or reactivation Flow page where the admin chooses to leave a user's patches alone, act on some, or act on all, over the list of them. Deactivation shows each live patch's dependants; confirmation excludes dependants or restored sources inside the selection.
 _Avoid_: bulk action, checklist, wizard
 
 **Stale action**:
