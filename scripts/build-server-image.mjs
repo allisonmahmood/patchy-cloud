@@ -39,6 +39,8 @@ Exports a Docker-loadable image tar and FILE.json without a daemon or registry p
 The default output is .local/server-image.tar; --stage only assembles the runtime.
 SOURCE_DATE_EPOCH and REVISION default to the current git commit's time and hash.
 VERSION defaults to the server package version. No credentials enter the image.
+The display font goes in only when packages/core/fonts holds it with the digest
+packages/core/fonts/display-font.json pins, as a production deploy puts it there.
 The server runs on the Bun the root package.json pins ("bun": "runtime:<version>").
 Host: bun dist/start.js (default, user bun, uid 1000). Exec: bun dist/exec.js.
 Fleet operations, such as a deploy's promote: bun dist/fleet.js.`);
@@ -102,6 +104,21 @@ const metadata = {
   user: "bun"
 };
 const buildEnv = { ...process.env, SOURCE_DATE_EPOCH: String(epoch), TZ: "UTC", LC_ALL: "C" };
+// The display font isn't in the repo (docs/OPERATIONS.md › The display font). A production deploy
+// puts it in core's fonts/ before building; elsewhere, as in CI, it is absent and so is the face.
+// Present, it must be the pinned bytes, and pnpm's package files carry it into the image beside the
+// committed fonts.
+const displayFont = JSON.parse(
+  await readFile(path.join(root, "packages/core/fonts/display-font.json"), "utf8")
+);
+const displayFontBytes = await readFile(
+  path.join(root, "packages/core/fonts", displayFont.file)
+).catch((error) => {
+  if (error.code === "ENOENT") return undefined;
+  throw error;
+});
+if (displayFontBytes !== undefined && digest(displayFontBytes) !== displayFont.sha256)
+  throw new Error(`packages/core/fonts/${displayFont.file} is not the pinned display font.`);
 const temporary = await mkdtemp(path.join(tmpdir(), "patchy-image-"));
 
 // pnpm's package files allowlists retain SDK archives/skills and native platform
@@ -179,6 +196,13 @@ async function stageRuntime(destination) {
   // The Patchy look stands in for a company with none; it never ships Patchy's logo.
   for (const file of ["look.css", "LOOK.md"])
     await access(path.join(app, "node_modules/@patchy/companies/looks/patchy", file));
+  if (displayFontBytes !== undefined) {
+    const staged = await readFile(
+      path.join(app, "node_modules/@patchy/core/fonts", displayFont.file)
+    );
+    if (digest(staged) !== displayFont.sha256)
+      throw new Error("The staged runtime lacks the display font the checkout holds.");
+  }
 }
 
 try {

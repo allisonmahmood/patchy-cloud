@@ -26,7 +26,7 @@ export {
 export type { Recovery } from "./patch-presentation.js";
 export type { ChoiceCard, TileOption } from "./components.js";
 export { copyLine, copyScript, copyScriptPath } from "./copy-line.js";
-export { fontFile, fontUrl, fonts } from "./fonts.js";
+export { displayFont, fontFile, fontUrl, fonts, hasDisplayFont, servedFonts } from "./fonts.js";
 export type { Font } from "./fonts.js";
 export {
   agentMark,

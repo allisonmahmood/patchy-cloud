@@ -93,7 +93,27 @@ jobs:
           done
           (( ${#tasks[@]} == 0 )) || aws ecs wait tasks-stopped --cluster patchy-production --tasks "${tasks[@]}"
 
-      # 3. Until this release is promoted, the fleet still replenishes the
+      # 3. The display font isn't in the repository: a private bucket in this
+      #    account holds it (docs/OPERATIONS.md › The display font), and the
+      #    image is the only place a release copies it to, so this workflow
+      #    uploads no artifact. A commit that uses the font pins its file and
+      #    digest in packages/core/fonts/display-font.json, and the run stops
+      #    here, before it records or deploys anything, unless the bucket has
+      #    exactly those bytes. An earlier commit pins none and builds as it did.
+      - name: Fetch the display font
+        run: |
+          pin=packages/core/fonts/display-font.json
+          [[ -f "$pin" ]] || { echo "This commit uses no display font."; exit 0; }
+          file=$(jq -r .file "$pin")
+          sha256=$(jq -r .sha256 "$pin")
+          aws s3api get-object --bucket "patchy-fonts-$AWS_ACCOUNT_ID" --key "$sha256/$file" \
+            "packages/core/fonts/$file" > /dev/null ||
+            { echo "::error::The display font isn't in its bucket, or this run can't read it. docs/OPERATIONS.md › The display font says how to put it there."; exit 1; }
+          echo "$sha256  packages/core/fonts/$file" | sha256sum --check --quiet ||
+            { echo "::error::The display font in the bucket isn't the file this commit pins."; exit 1; }
+          echo "Fetched $file."
+
+      # 4. Until this release is promoted, the fleet still replenishes the
       #    promoted revision's spares, so the new hosts must be able to launch
       #    them. The record, written only by this workflow, holds the promoted
       #    release and any release whose promotion has not finished, each with
@@ -157,11 +177,13 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: package.json
+      # No dependency cache: one saved from main can be restored by any pull
+      # request's workflow, and this job's files hold the display font.
       - uses: actions/setup-node@v7
         with:
           # Builds the image, as the Dockerfile's node:24-slim builder and the local recipe do.
           node-version: 24.20.0
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - name: Install pinned crane
         env:
@@ -176,13 +198,14 @@ jobs:
           tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP/crane-bin" crane
           echo "$RUNNER_TEMP/crane-bin" >> "$GITHUB_PATH"
 
-      # 4. The reproducible server image, as server-image.yml builds it.
+      # 5. The reproducible server image, as server-image.yml builds it, and
+      #    with the display font when step 3 fetched it.
       - name: Build the server image
         run: |
           node scripts/build-server-image.mjs --tag "patchy-server:$COMMIT"
           echo "IMAGE_DIGEST=$(crane digest --tarball .local/server-image.tar)" >> "$GITHUB_ENV"
 
-      # 5. The registry, deploy identity, budget and secrets. CDK prints stack
+      # 6. The registry, deploy identity, budget and secrets. CDK prints stack
       #    outputs, resource ids among them; the public log leaves them out.
       - name: Deploy the base stack
         working-directory: apps/infra
@@ -195,7 +218,7 @@ jobs:
             --outputs-file "$RUNNER_TEMP/base.json" 2>&1 |
             sed -u -E '/^patchy-production-[a-z]+\.[A-Za-z]+ = /d; /^arn:aws:cloudformation:/d'
 
-      # 6. Tagged with the commit. Tags are immutable, so a rollback finds its
+      # 7. Tagged with the commit. Tags are immutable, so a rollback finds its
       #    image already there, and the reproducible build must match it exactly.
       - name: Push the image
         run: |
@@ -213,7 +236,7 @@ jobs:
           crane push .local/server-image.tar "$repository:$COMMIT"
           [[ "$(crane digest "$repository:$COMMIT")" == "$IMAGE_DIGEST" ]]
 
-      # 7. Pinned to the digest. CloudFormation waits for ECS to settle; a host
+      # 8. Pinned to the digest. CloudFormation waits for ECS to settle; a host
       #    that cannot start trips the circuit breaker and the update rolls back.
       - name: Deploy the app stack
         working-directory: apps/infra
@@ -245,7 +268,7 @@ jobs:
           aws ssm put-parameter --name /patchy/production/promoted-release --type String \
             --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
 
-      # 8. Only now that the new hosts serve: promoting earlier would leave a
+      # 9. Only now that the new hosts serve: promoting earlier would leave a
       #    staged revision with no hosts if the rollout had failed. The command
       #    is the one the image was built with, so a rollback to an image on
       #    another runtime (Node before Bun) promotes with its own.
@@ -270,7 +293,7 @@ jobs:
           aws ssm put-parameter --name /patchy/production/promoted-release --type String \
             --overwrite --value "$(cat "$RUNNER_TEMP/record.json")" > /dev/null
 
-      # 9. The service's primary deployment is this release's task definition.
+      # 10. The service's primary deployment is this release's task definition.
       - name: Confirm the release is live
         run: |
           read -r definition state < <(aws ecs describe-services --cluster "$APP_ClusterName" \

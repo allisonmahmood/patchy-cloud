@@ -833,6 +833,80 @@ outside the deploy workflow:
    introduced verification keep receiving alerts unchanged. Check each budget's
    recipients in the Budgets console after a deploy adds one. The uptime alarm
    fires until the CNAME resolves.
+8. Make the display font's bucket and put the file in it, as
+   [The display font](#the-display-font) says. This came later, before the
+   first release whose commit pins the font.
+
+### The display font
+
+Titles on Patchy's own pages are set in Cabinet Grotesk Extrabold: the official
+`CabinetGrotesk-Extrabold.woff2` from Fontshare's Cabinet Grotesk package
+(`Fonts/WEB/fonts/`), served byte for byte. The file isn't in the repository.
+`packages/core/fonts/display-font.json` pins its name and SHA-256, and a private
+bucket in the account, `patchy-fonts-<account id>`, holds it under that digest,
+as `<sha256>/<file>`. A production release copies it into the server image, and
+`cloud.patchyhq.com` serves it from its own origin at its digest URL, as it
+serves Geist. Nothing else gets it: pull request images and CI never fetch it,
+and the deploy job saves no artifact and no dependency cache. A build without
+it, such as CI's or a local one, draws titles in Geist and declares no face.
+
+A deploy fetches the file before it records or deploys anything, and checks its
+bytes against the pin. A missing object, a run that can't read it or other bytes
+stop the run there, so no release quietly draws titles in Geist. The image build
+checks the bytes again, and the server refuses to start with a font file whose
+bytes aren't the ones its URL names. A commit from before the font pins none, so
+a rollback to one builds as it always did; a rollback to a later one fetches the
+bytes its commit pins, so its image matches the one in ECR. Never delete or
+replace an object: a rollback needs those bytes. A new version of the font goes
+in beside the old one, under its own digest.
+
+The bucket is made by hand, not by a stack. The image is built before the base
+stack deploys, and the base stack deploys from each release's own commit, so a
+bucket it made wouldn't exist for the first release that needs the font, and a
+rollback past it would take the bucket out of the stack. No stack owns it, so no
+stack update or deletion touches it. It blocks all public access, keeps every
+version of an object and refuses requests without TLS. Only the deploy role is
+granted anything, and only reading objects; administrators reach it through
+their own access.
+
+Set it up once, with administrator credentials, from a checkout whose commit
+pins the font, before deploying such a commit:
+
+```sh
+digest=$(jq -r .sha256 packages/core/fonts/display-font.json)
+account=$(aws sts get-caller-identity --query Account --output text)
+bucket=patchy-fonts-$account
+aws s3api create-bucket --bucket "$bucket" --region us-east-1
+aws s3api put-public-access-block --bucket "$bucket" --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket "$bucket" --versioning-configuration Status=Enabled
+aws s3api put-bucket-policy --bucket "$bucket" --policy "$(jq -n --arg bucket "$bucket" \
+  --arg role "arn:aws:iam::$account:role/patchy-production-deploy" '{
+    Version: "2012-10-17",
+    Statement: [
+      {Sid: "DeployReads", Effect: "Allow", Principal: {AWS: $role},
+       Action: "s3:GetObject", Resource: "arn:aws:s3:::\($bucket)/*"},
+      {Sid: "TlsOnly", Effect: "Deny", Principal: "*", Action: "s3:*",
+       Resource: ["arn:aws:s3:::\($bucket)", "arn:aws:s3:::\($bucket)/*"],
+       Condition: {Bool: {"aws:SecureTransport": "false"}}}
+    ]}')"
+```
+
+Then put the file in, from a scratch directory outside the checkout, uploading
+only when its bytes are the pinned ones:
+
+```sh
+cd "$(mktemp -d)"
+curl -fsSL -o cabinet-grotesk.zip https://api.fontshare.com/v2/fonts/download/cabinet-grotesk
+unzip -jq cabinet-grotesk.zip '*/Fonts/WEB/fonts/CabinetGrotesk-Extrabold.woff2'
+echo "$digest  CabinetGrotesk-Extrabold.woff2" | sha256sum --check &&
+  aws s3 cp CabinetGrotesk-Extrabold.woff2 "s3://$bucket/$digest/CabinetGrotesk-Extrabold.woff2"
+```
+
+A failed check means Fontshare's package has moved on: the pinned bytes are the
+ones already in the bucket, and a new version is a change to the pin with its
+own upload. [Development](DEVELOPMENT.md#titles-typeface) says how an administrator
+puts the file in a local checkout.
 
 ### Deploying
 
@@ -847,21 +921,24 @@ One run goes at a time; a second waits. A run:
 
 1. assumes the deploy role through GitHub's OIDC provider;
 2. stops any promote task a cancelled run left behind;
-3. decides, from the release record below, the secret slot the release reads and
+3. fetches the [display font](#the-display-font) the commit pins and checks its
+   bytes, stopping the run before it records or deploys anything otherwise;
+4. decides, from the release record below, the secret slot the release reads and
    the release it rolls out beside, and records it as pending;
-4. builds the reproducible server image from the commit, as `server-image.yml` does;
-5. deploys the base stack;
-6. pushes the image to ECR with `crane`, tagged with the commit;
-7. deploys the app stack, pinned to the image digest, with the promoted release
+5. builds the reproducible server image from the commit, as `server-image.yml` does,
+   with the display font beside the committed fonts;
+6. deploys the base stack;
+7. pushes the image to ECR with `crane`, tagged with the commit;
+8. deploys the app stack, pinned to the image digest, with the promoted release
    as its previous revision. CloudFormation waits for ECS to settle. A host that
    cannot start trips the circuit breaker: the service rolls back and the stack
    update fails and rolls back, before any promotion;
-8. promotes the fleet with `bun dist/fleet.js promote <revision>`, run once as a
+9. promotes the fleet with `bun dist/fleet.js promote <revision>`, run once as a
    task from the host task definition, and records the release as promoted. The
    command is the `fleetCommand` the image build recorded, so a release from
    before the move to Bun promotes with its own `node`. The promotion waits up to
    five minutes for the new hosts to warm their spares;
-9. confirms the service's primary deployment is on the new task definition.
+10. confirms the service's primary deployment is on the new task definition.
 
 A release's deployment revision is its commit, and `/healthz/deep` names it.
 Promotion waits for ECS on purpose: promoting first would leave a staged revision

@@ -1,7 +1,10 @@
+import { displayStack } from "../fonts.js";
+
 /**
  * The design tokens every chunk draws from: colour, type, size, shape and elevation. A visual
  * value outside this block is a finding; layout geometry (a grid's columns, a gap between two
- * particular things) is not.
+ * particular things) is not. `--font-display`, the titles' stack, comes from `fonts.ts`: Cabinet
+ * Grotesk over Geist where the release carries it, and Geist's stack otherwise.
  */
 export const tokens = `
     :root {
@@ -48,7 +51,7 @@ export const tokens = `
       --canvas-grid: rgba(18, 17, 15, .035);
 
       --font-ui: "Geist", "Geist Fallback", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      --font-display: var(--font-ui);
+      --font-display: ${displayStack};
       --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
       /* Seven sizes, four weights. */
