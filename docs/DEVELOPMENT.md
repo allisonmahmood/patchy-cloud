@@ -373,7 +373,10 @@ An environment is this instance plus what a multi-person check or demo needs:
 [`scenarios/`](../scenarios/README.md) lists the scenarios: `team` (the default)
 is three people and no patches; `brightline` is a five-person agency with tier 2
 patches and a single-file tier 1 page, agent areas on two of its tier 2 ones and agent access on, and takes
-about a minute; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
+about a minute; `dense` is Brightline Studio at full size, for first-party pages in every state:
+patches owned across the studio with their history, retired and deleted ones, guests both ways,
+deactivated and invited people, and every integration's connections written offline in each state,
+in about three and a half minutes; `pidgeon` is Lumen Bikes with `pidgeon/support` connected to a
 new Pidgeon test address holding customer mail, and a tier 2 Support desk whose
 actions answer it; `patchy dev` in its workspace reads that address's mail through
 this instance and simulates its sends; `attio` is Northwind Sales with

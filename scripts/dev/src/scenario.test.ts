@@ -11,7 +11,14 @@ import { Users } from "@patchy/companies";
 import * as Testing from "@patchy/sql/testing";
 import * as Mailbox from "./mailbox.js";
 import { decodeMail } from "./pidgeon.js";
-import { ids, loadScenario, publisherToken, seedScenario } from "./scenario.js";
+import {
+  ids,
+  liveConnections,
+  loadScenario,
+  publisherToken,
+  seedScenario,
+  sourceOf
+} from "./scenario.js";
 import { NodeCryptography } from "@patchy/core";
 
 const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
@@ -22,16 +29,25 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      for (const name of ["team", "brightline", "pidgeon", "attio", "imap", "guests", "kit-room"]) {
+      for (const name of [
+        "team",
+        "brightline",
+        "dense",
+        "pidgeon",
+        "attio",
+        "imap",
+        "guests",
+        "kit-room"
+      ]) {
         const { dir, scenario } = yield* loadScenario(repo, name);
         for (const patch of scenario.patches) {
           const source =
             "repo" in patch
-              ? path.join(dir, "patches", patch.repo, "patchy.config.ts")
-              : path.join(dir, "files", patch.file);
+              ? path.join(sourceOf(path, dir, patch), "patchy.config.ts")
+              : sourceOf(path, dir, patch);
           expect(yield* fs.exists(source), source).toBe(true);
         }
-        for (const connection of scenario.connections ?? [])
+        for (const connection of liveConnections(scenario))
           if (connection.integration === "pidgeon" && connection.mail !== undefined) {
             const mail = yield* decodeMail(
               yield* fs.readFileString(path.join(dir, connection.mail))
@@ -55,7 +71,7 @@ it.layer(Platform)("scenarios", (it) => {
     Effect.gen(function* () {
       const error = yield* Effect.flip(loadScenario(repo, "nope"));
       expect(error._tag).toBe("ScenarioNotFound");
-      expect(error.message).toContain("brightline, guests, imap, kit-room, pidgeon, team");
+      expect(error.message).toContain("brightline, dense, guests, imap, kit-room, pidgeon, team");
     })
   );
 
@@ -90,6 +106,26 @@ it.layer(Platform)("scenarios", (it) => {
       const error = yield* Effect.flip(loadScenario(root, "loose"));
       expect(error.message).toContain("desk names pidgeon/support");
     }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "refuses a Postgres connection that needs attention, which Postgres has no reason for",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(root, "scenarios", "worried"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "scenarios", "worried", "scenario.json"),
+          `{"company":{"name":"Worried","handle":"worried"},"publisher":"a","patches":[],
+          "people":[{"key":"a","name":"A","email":"a@worried.example","role":"admin"}],
+          "connections":[{"integration":"postgres","handle":"warehouse","description":"Data",
+            "state":"needs-attention"}]}`
+        );
+        const error = yield* Effect.flip(loadScenario(root, "worried"));
+        expect(error.message).toContain("postgres/warehouse has no reason");
+      }).pipe(Effect.scoped)
   );
 
   it.effect("refuses a guest from the scenario's own company", () =>
@@ -132,7 +168,7 @@ it.layer(
       expect(seeded.on).toBe(true);
       expect(seeded.latest?.by.id).toBe(publisher.userId);
 
-      // Every start seeds again; an admin's switch at Company stays.
+      // Every start seeds again; an admin's switch in Settings stays.
       yield* companies.setAgentAccess({ companyId, on: false, by: publisher.userId });
       yield* seedScenario(scenario);
       expect((yield* companies.agentAccess(companyId)).on).toBe(false);
