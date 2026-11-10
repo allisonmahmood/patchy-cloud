@@ -18,6 +18,7 @@ import {
   textarea
 } from "./controls.js";
 import { attentionRow } from "./attention.js";
+import { behindTheScenes, changeEntry } from "./changelog.js";
 import { copyButton } from "./copy-button.js";
 import { region } from "./region.js";
 import { badge, dot, emptyState, notice, receipt } from "./feedback.js";
@@ -516,6 +517,17 @@ const homeParts = demo(
   ])}`
 );
 
+const changes = demo(
+  "What's new changes",
+  `${changeEntry({ id: "g-change-new", href: "#g-change-new", kind: "New", title: "Jump anywhere with ⌘⇧K", detail: "Press ⌘⇧K on any Patchy page to open Go to….", unseen: true })}${changeEntry({ id: "g-change-seen", href: "#g-change-seen", kind: "Fixed", title: "Shared links open for guests again", detail: "A guest opening a shared patch no longer lands on sign-in.", unseen: false })}${behindTheScenes(["Patchy now records how long each page takes to draw."])}`,
+  stateTable("Change", [
+    ["Seen", "kind and title on one line, closed"],
+    ["New to you", "open, with the blue dot after its title"],
+    ["From its permalink", "the fragment opens it, with script"],
+    ["Behind the scenes", "a quiet line with no kind, the day's lines inside"]
+  ])
+);
+
 const templatesSection = section({
   title: "Five templates",
   body: rows(
@@ -537,7 +549,7 @@ const templatesSection = section({
 const system = indexPage({
   title: "The system",
   meta: ["Every first-party page composes these parts and one of five templates"],
-  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${marks}${setupSteps}<script defer src="${copyScriptPath}"></script>`
+  content: `${templatesSection}${type}${colours}${buttons}${fields}${choices}${status}${feedback}${navigation}${lists}${homeParts}${headers}${cards}${disclosures}${changes}${marks}${setupSteps}<script defer src="${copyScriptPath}"></script>`
 });
 
 const sampleRows = ["kudos", "new-business", "spend"].map((name) => [

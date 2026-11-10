@@ -14,6 +14,7 @@ export {
   textarea
 } from "./controls.js";
 export type { ButtonLook, ChoiceAria, FieldControl, InputOptions } from "./controls.js";
+export { behindTheScenes, changeEntry } from "./changelog.js";
 export { checklist } from "./checklist.js";
 export type { CheckItem } from "./checklist.js";
 export {

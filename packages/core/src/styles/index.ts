@@ -2,6 +2,7 @@ import { fontFaces } from "../fonts.js";
 import { appShell } from "./app-shell.js";
 import { base } from "./base.js";
 import { buttons } from "./buttons.js";
+import { changelog } from "./changelog.js";
 import { checklist } from "./checklist.js";
 import { containers } from "./containers.js";
 import { detail } from "./detail.js";
@@ -58,6 +59,7 @@ export const chunks = {
   doorParts,
   templates,
   whatsNew,
+  changelog,
   switcher,
   usual,
   visibility,

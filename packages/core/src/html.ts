@@ -5,8 +5,9 @@ import { linkButton } from "./ui/controls.js";
 import { uiScriptTag } from "./ui/enhancer.js";
 import { icon, type IconName } from "./ui/icons.js";
 import { escapeAttribute, escapeHtml } from "./escape.js";
-import { pagePlaces, type Place, places, whatsNewPath } from "./places.js";
-import { changesSince, type ChangeKind, latestRelease } from "./whatsNew.js";
+import { pagePlaces, type Place, places } from "./places.js";
+import { type ChangeKind, latestRelease } from "./whatsNew.js";
+import { entriesSince, monthHref, permalink } from "./whatsNewLinks.js";
 import { relayScript, relayScriptHash } from "./generated/relay-script.js";
 import { switcherDigest } from "./generated/switcher-script.js";
 
@@ -87,21 +88,24 @@ const HEADLINES = 5;
 
 /**
  * What's new, at the foot of the sidebar, opens a panel of headlines: what shipped since the
- * viewer's last visit, or the latest once they are caught up, then See all changes. Opening it
- * clears the dot through `/whats-new/seen`, which `/whats-new/bell.js` posts from the panel's
- * `data-through`; the page loads that script only while there is a dot to clear.
+ * viewer's last visit, or the latest once they are caught up, then See all changes. Each headline
+ * is its change's permalink. Opening it clears the dot through `/whats-new/seen`, which
+ * `/whats-new/bell.js` posts from the panel's `data-through`; the page loads that script only
+ * while there is a dot to clear. Until then its links carry the marker it was drawn with, so the
+ * page they open still marks what is new.
  */
 function whatsNew(seen: number, current: boolean): string {
-  const unseen = changesSince(seen);
-  const shown = (unseen.length > 0 ? unseen : changesSince(0)).slice(0, HEADLINES);
+  const unseen = entriesSince(seen);
+  const shown = (unseen.length > 0 ? unseen : entriesSince(0)).slice(0, HEADLINES);
+  const since = unseen.length > 0 ? seen : undefined;
   const label =
     unseen.length > 0 ? `What’s new: ${plural(unseen.length)} since your last visit` : "What’s new";
   const summary =
     unseen.length > 0 ? `${plural(unseen.length)} since your last visit` : "You’re all caught up";
   const list = shown.length
-    ? `<ul class="app-headlines">${shown.map((change) => `<li><span class="app-headline-kind">${change.kind}</span><span>${escapeHtml(change.title)}</span></li>`).join("")}</ul>`
+    ? `<ul class="app-headlines">${shown.map(({ release, n, change }) => `<li><a class="app-headline" href="${escapeAttribute(permalink(release, n, since))}"><span class="app-headline-kind">${change.kind}</span><span>${escapeHtml(change.title)}</span></a></li>`).join("")}</ul>`
     : "";
-  return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>${icon("bell")}What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="menu app-foot-menu app-whats-new" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><p class="menu-head"><strong id="whats-new-heading">What’s new</strong>${summary}</p>${list}<hr class="menu-rule"><a class="menu-item" href="${whatsNewPath}">See all changes${icon("chevronRight")}</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
+  return `<button type="button" class="app-place whats-new-bell" popovertarget="whats-new" aria-label="${label}"${current ? ' aria-current="page"' : ""}>${icon("bell")}What’s new${unseen.length > 0 ? '<span class="whats-new-dot"></span>' : ""}</button><div id="whats-new" class="menu app-foot-menu app-whats-new" popover role="dialog" aria-labelledby="whats-new-heading" data-through="${latestRelease}"><p class="menu-head"><strong id="whats-new-heading">What’s new</strong>${summary}</p>${list}<hr class="menu-rule"><a class="menu-item" href="${escapeAttribute(monthHref(undefined, since))}">See all changes${icon("chevronRight")}</a></div>${unseen.length > 0 ? '<script defer src="/whats-new/bell.js"></script>' : ""}`;
 }
 
 /** The signed-in person: their name opens a menu with who they are, Your agents and Sign out. */

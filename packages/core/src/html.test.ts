@@ -9,6 +9,7 @@ import {
   switcherTag
 } from "./html.js";
 import { changesSince, latestRelease } from "./whatsNew.js";
+import { entriesSince, permalink } from "./whatsNewLinks.js";
 
 describe("htmlPage app body", () => {
   const viewer = {
@@ -159,26 +160,44 @@ describe("htmlPage app body", () => {
         body: "<p>Patches</p>"
       });
     const headlines = (html: string) =>
-      [...html.matchAll(/<li><span class="app-headline-kind">([^<]+)<\/span><span>([^<]*)/g)].map(
-        ([, kind, title]) => [kind, title]
-      );
+      [
+        ...html.matchAll(
+          /<li><a class="app-headline" href="([^"]+)"><span class="app-headline-kind">([^<]+)<\/span><span>([^<]*)/g
+        )
+      ].map(([, href, kind, title]) => [kind, title, href]);
     const unseen = changesSince(0);
     const behind = page(0);
     expect(behind).toContain('class="whats-new-dot"');
     expect(behind).toContain(
       `${unseen.length} ${unseen.length === 1 ? "change" : "changes"} since your last visit`
     );
-    // Five headlines at most, the newest first; See all changes has the rest.
+    // Five headlines at most, the newest first, each its change's permalink; See all changes has
+    // the rest. Opening the panel raises the marker, so its links carry the one it was drawn with.
     expect(headlines(behind)).toEqual(
-      unseen.slice(0, 5).map((change) => [change.kind, escapeHtml(change.title)])
+      entriesSince(0)
+        .slice(0, 5)
+        .map(({ release, n, change }) => [
+          change.kind,
+          escapeHtml(change.title),
+          permalink(release, n, 0)
+        ])
     );
+    expect(behind).toMatch(/<a class="menu-item" href="\/whats-new\?since=0">See all changes<svg/);
     expect(behind).toContain(`data-through="${latestRelease}"`);
     expect(behind).toContain('<script defer src="/whats-new/bell.js"></script>');
 
     const caughtUp = page(latestRelease);
     expect(caughtUp).not.toContain('class="whats-new-dot"');
     expect(caughtUp).toContain("You’re all caught up");
-    expect(headlines(caughtUp)).toEqual(headlines(behind));
+    expect(headlines(caughtUp)).toEqual(
+      entriesSince(0)
+        .slice(0, 5)
+        .map(({ release, n, change }) => [
+          change.kind,
+          escapeHtml(change.title),
+          permalink(release, n)
+        ])
+    );
     expect(caughtUp).toMatch(/<a class="menu-item" href="\/whats-new">See all changes<svg/);
     expect(
       [...caughtUp.replace(switcherRelay, "").matchAll(/<script\b[^>]*>/g)].map(([tag]) => tag)

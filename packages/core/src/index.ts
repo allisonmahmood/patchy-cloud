@@ -47,5 +47,6 @@ export {
 export * as Cryptography from "./Cryptography.js";
 export * as NodeCryptography from "./NodeCryptography.js";
 export * as WhatsNew from "./whatsNew.js";
+export * as WhatsNewLinks from "./whatsNewLinks.js";
 export { isPublicAddress } from "./addresses.js";
 export * from "./ui/index.js";

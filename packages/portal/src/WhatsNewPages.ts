@@ -1,25 +1,63 @@
-// Owns What's new: the changelog at `/whats-new`, the bell's seen marker and script, and the
-// public feed at `/whats-new.json`. What other surfaces need is in `shared/`.
+// Owns What's new: a page per month at `/whats-new/YYYY-MM`, the newest at `/whats-new`, the bell's
+// seen marker and script, and the public feed at `/whats-new.json`. What other surfaces need is in
+// `shared/`.
 import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
-import { escapeHtml, WhatsNew, whatsNewKind } from "@patchy/core";
+import {
+  behindTheScenes,
+  changeEntry,
+  emptyState,
+  indexPage,
+  linkButton,
+  section,
+  WhatsNew,
+  WhatsNewLinks
+} from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
 import { errors } from "./shared/handlers.js";
 
-/** Page layout only; the rows, tags, tint and rule are the shell's What's new components. */
-const styles = `
-  .whats-new { max-width: 880px; margin-inline: auto; }
-  .whats-new-day { margin-top: 36px; }
-  .whats-new-day > .list { margin: 0; }
-`;
+const monthNames = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+] as const;
+const weekdays = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday"
+] as const;
+
+/** "November 2026", for a month's `YYYY-MM`. */
+export const monthLabel = (month: string) =>
+  `${monthNames[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
+
+/** "Saturday, 7 November": the month page names its year. */
+const dayLabel = (date: string) => {
+  const parts = DateTime.toPartsUtc(DateTime.makeUnsafe(`${date}T00:00:00Z`));
+  return `${weekdays[parts.weekDay]}, ${parts.day} ${monthNames[parts.month - 1]}`;
+};
 
 /** Consecutive releases written the same day read as one day. */
 const byDay = (releases: ReadonlyArray<WhatsNew.Release>) =>
@@ -30,53 +68,62 @@ const byDay = (releases: ReadonlyArray<WhatsNew.Release>) =>
     return grouped;
   }, []);
 
-/** "Tuesday, October 6", with the year once it differs from `year`, the newest release's. */
-const dayLabel = (date: string, year: string | undefined) =>
-  DateTime.formatUtc(DateTime.makeUnsafe(`${date}T00:00:00Z`), {
-    locale: "en-US",
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: date.slice(0, 4) === year ? undefined : "numeric"
+/** One day: its changes, newest first, then the work nobody would notice. */
+const day = (releases: ReadonlyArray<WhatsNew.Release>, seen: number) => {
+  const changes = releases.flatMap((release) => release.changes);
+  const behind = releases.flatMap((release) => release.behindTheScenes);
+  const tally = WhatsNew.tally(changes);
+  return section({
+    title: dayLabel(releases[0]?.date ?? ""),
+    ...(tally === "" ? {} : { action: `<span class="meta">${tally}</span>` }),
+    body: `${releases
+      .flatMap((release) =>
+        release.changes.map((change, n) =>
+          changeEntry({
+            id: WhatsNewLinks.changeId(release, n),
+            href: WhatsNewLinks.permalink(release, n),
+            kind: change.kind,
+            title: change.title,
+            detail: change.detail,
+            unseen: release.id > seen
+          })
+        )
+      )
+      .join("")}${behind.length > 0 ? behindTheScenes(behind) : ""}`
   });
-
-const rule = (tag: "p" | "li") =>
-  `<${tag} class="whats-new-seen supporting-text">You’ve seen everything below</${tag}>`;
+};
 
 /**
- * The changelog newest first, tinting changes released after `seen`. A rule marks where the
- * changes they have seen begin: before a day they saw whole, or between two releases of one day.
+ * The month `month` of `releases` (newest first), or nothing when no release shipped in it: its
+ * days newest first, each change open and marked when it shipped after `seen`, and links to the
+ * months either side. While anything is newer than `seen`, those links carry it, so the month
+ * they open marks what is new to the viewer after this page has raised their marker.
  */
-export const render = (releases: ReadonlyArray<WhatsNew.Release>, seen: number): string => {
-  const days = byDay(releases);
-  const rowsByDay = days.map((day) =>
-    day.flatMap((release) =>
-      release.changes.map((change) => ({ change, unseen: release.id > seen }))
-    )
-  );
-  const missed = rowsByDay.some((rows) => rows.some(({ unseen }) => unseen));
-  const seenWhole = (day: ReadonlyArray<WhatsNew.Release>) =>
-    day.every((release) => release.id <= seen);
-  const ruleDay = missed
-    ? days.findIndex(
-        (day, index) => seenWhole(day) || (rowsByDay[index] ?? []).some(({ unseen }) => !unseen)
-      )
-    : -1;
-  const sections = days.map((day, index) => {
-    const rows = rowsByDay[index] ?? [];
-    const ruleRow =
-      index === ruleDay && !seenWhole(day) ? rows.findIndex(({ unseen }) => !unseen) : -1;
-    const items = rows.map(
-      ({ change, unseen }, row) =>
-        `${row === ruleRow ? rule("li") : ""}<li class="list-row whats-new-change${unseen ? " whats-new-unseen" : ""}">${whatsNewKind(change.kind)}<div><p><strong>${escapeHtml(change.title)}</strong></p><p>${escapeHtml(change.detail)}</p></div></li>`
-    );
-    const behind = day.flatMap((release) => release.behindTheScenes);
-    const behindRow = behind.length
-      ? `<li class="list-row"><details><summary class="supporting-text">Behind the scenes · ${behind.length} ${behind.length === 1 ? "change" : "changes"}</summary><ul class="list list-compact">${behind.map((line) => `<li class="list-row supporting-text">${escapeHtml(line)}</li>`).join("")}</ul></details></li>`
-      : "";
-    return `${index === ruleDay && seenWhole(day) ? rule("p") : ""}<section class="whats-new-day"><div class="whats-new-day-head"><h2 class="section-heading">${dayLabel(day[0]?.date ?? "", releases[0]?.date.slice(0, 4))}</h2><span class="supporting-text">${WhatsNew.tally(rows.map(({ change }) => change))}</span></div><ul class="list">${items.join("")}${behindRow}</ul></section>`;
+export const render = (releases: ReadonlyArray<WhatsNew.Release>, month: string, seen: number) => {
+  const months = [...new Set(releases.map(WhatsNewLinks.monthOf))];
+  const at = months.indexOf(month);
+  if (at === -1) return undefined;
+  const since = seen < (releases[0]?.id ?? 0) ? seen : undefined;
+  const shown = releases.filter((release) => WhatsNewLinks.monthOf(release) === month);
+  const unseen = shown
+    .filter((release) => release.id > seen)
+    .flatMap((release) => release.changes).length;
+  const neighbour = (other: string | undefined, earlier: boolean) =>
+    other === undefined
+      ? ""
+      : linkButton(monthLabel(other), WhatsNewLinks.monthHref(other, since), {
+          size: "sm",
+          ...(earlier ? { icon: "back" as const } : {})
+        });
+  const nav = `${neighbour(months[at + 1], true)}${neighbour(months[at - 1], false)}`;
+  return indexPage({
+    title: "What’s new",
+    meta: [monthLabel(month), ...(unseen > 0 ? [`${unseen} new to you`] : [])],
+    ...(nav === "" ? {} : { actions: nav, pagination: nav }),
+    content: byDay(shown)
+      .map((releases) => day(releases, seen))
+      .join("")
   });
-  return `<article class="whats-new"><h1 class="page-heading">What’s new in Patchy</h1><p class="supporting-text">Everything we’ve shipped, newest first.${missed ? " What’s new since your last visit is highlighted." : ""}</p>${sections.join("")}</article>`;
 };
 
 /**
@@ -111,6 +158,12 @@ const bellScript = `(() => {
 const decodeSeen = Schema.decodeUnknownEffect(
   Schema.Struct({ through: Schema.NumberFromString.check(Schema.isInt()) })
 );
+/** `?since=`, written in digits; anything else, an empty value included, is as if it were absent. */
+const decodeSince = Schema.decodeUnknownOption(
+  Schema.String.check(Schema.isPattern(/^\d+$/u)).pipe(
+    Schema.decodeTo(Schema.NumberFromString.check(Schema.isInt()))
+  )
+);
 
 /** A failed marker write only leaves the dot for next time; the page still answers. */
 const markSeen = (userId: string, through: number) =>
@@ -118,25 +171,55 @@ const markSeen = (userId: string, through: number) =>
     users.markWhatsNewSeen({ userId, through: Math.min(through, WhatsNew.latestRelease) })
   ).pipe(Effect.catchTags({ SqlError: () => Effect.void }));
 
-const page = Effect.gen(function* () {
-  const viewer = yield* RequireSession.Viewer;
-  const session = yield* Session.Session;
-  const body = render(WhatsNew.releases, viewer.whatsNewSeen);
-  yield* markSeen(viewer.user.id, WhatsNew.latestRelease);
-  return pageResponse(
-    {
-      title: "What’s new in Patchy",
-      heading: "",
-      body,
-      styles,
-      app: {
-        viewer: { ...viewer, whatsNewSeen: WhatsNew.latestRelease },
-        section: "whats-new"
-      }
-    },
-    session
-  );
-});
+const newestMonth =
+  WhatsNew.releases[0] === undefined ? "" : WhatsNewLinks.monthOf(WhatsNew.releases[0]);
+
+/**
+ * A month's page, the newest when `month` is missing. It marks what shipped after the viewer's
+ * marker, or after `?since=` when that is lower, as a link out of a panel or page drawn before
+ * the marker moved says. Opening the newest month raises the marker; an older one leaves it.
+ */
+const page = (month: string | undefined) =>
+  Effect.gen(function* () {
+    const viewer = yield* RequireSession.Viewer;
+    const session = yield* Session.Session;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const since = decodeSince(
+      new URL(request.url, session.publicBaseUrl).searchParams.get("since") ?? undefined
+    ).pipe(Option.getOrElse(() => viewer.whatsNewSeen));
+    const shown = month ?? newestMonth;
+    // `since` can only mark more, never hide what the viewer hasn't seen.
+    const content = render(WhatsNew.releases, shown, Math.min(since, viewer.whatsNewSeen));
+    if (content === undefined)
+      return pageResponse(
+        {
+          title: "What’s new",
+          status: 404,
+          ...indexPage({
+            title: "What’s new",
+            content: emptyState({
+              title: "Nothing shipped that month",
+              action: linkButton("See what’s new", WhatsNewLinks.monthHref())
+            })
+          }),
+          app: { viewer, section: "whats-new" }
+        },
+        session
+      );
+    const newest = shown === newestMonth;
+    if (newest) yield* markSeen(viewer.user.id, WhatsNew.latestRelease);
+    return pageResponse(
+      {
+        title: `${monthLabel(shown)} – What’s new`,
+        ...content,
+        app: {
+          viewer: newest ? { ...viewer, whatsNewSeen: WhatsNew.latestRelease } : viewer,
+          section: "whats-new"
+        }
+      },
+      session
+    );
+  });
 
 const seen = Effect.gen(function* () {
   const viewer = yield* RequireSession.Viewer;
@@ -166,7 +249,16 @@ export const layer: Layer.Layer<
     >
 > = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    yield* router.add("GET", "/whats-new", errors(RequireSession.withViewer(page)));
+    yield* router.add("GET", "/whats-new", errors(RequireSession.withViewer(page(undefined))));
+    yield* router.add(
+      "GET",
+      "/whats-new/:month",
+      errors(
+        RequireSession.withViewer(
+          Effect.flatMap(HttpRouter.params, (params) => page(params.month ?? ""))
+        )
+      )
+    );
     yield* router.add(
       "POST",
       "/whats-new/seen",
