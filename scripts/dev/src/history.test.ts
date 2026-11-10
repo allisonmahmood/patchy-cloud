@@ -245,7 +245,11 @@ it.layer(
         "Studio Mac mini"
       ]);
       const apps = yield* (yield* AgentConnections.AgentConnections).list(allison.userId);
-      expect(apps.map((app) => app.clientName).sort()).toEqual(["Claude", "Codex"]);
+      expect(apps.map((app) => app.clientName).sort()).toEqual([
+        "Claude",
+        "Claude Code (patchy)",
+        "Codex"
+      ]);
       expect(yield* (yield* MachineTokens.MachineTokens).list(person("priya").userId)).toEqual([]);
 
       const invites = yield* (yield* Companies.Companies).listInvites(allison.companyId);

@@ -22,6 +22,7 @@ import {
   type MenuItem,
   notice as noticeBox,
   productMark,
+  type ProductMark,
   receipt,
   row,
   rows,
@@ -54,8 +55,11 @@ export interface Integration {
   /** The name agents type before the handle: `postgres` in `postgres/warehouse`. */
   readonly key: string;
   readonly label: string;
-  /** The letters of its mark: `Pg` for Postgres. */
-  readonly mark: string;
+  /**
+   * Its mark: its logo where Patchy knows it, else an icon or letters. A connection's can be the
+   * provider it reaches, such as Gmail's for a mailbox on Gmail's server.
+   */
+  readonly mark: ProductMark;
 }
 
 /** An integration Patchy offers, as the catalogue lists it. */

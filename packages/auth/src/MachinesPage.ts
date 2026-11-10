@@ -50,6 +50,7 @@ import {
   menu,
   notice,
   productMark,
+  type ProductMark,
   row,
   rows,
   section,
@@ -70,30 +71,44 @@ const WEEK_MS = 7 * DAY_MS;
 /** Disconnect everything's form carries one id. */
 const MAX_FORM_BYTES = 1_024;
 
-/** The apps Connect an app offers, in its order; `?app=` names one, and Claude's opens by default. */
+/**
+ * The apps Connect an app offers, in its order, each in its maker's logo; `?app=` names one, and
+ * Claude's opens by default.
+ */
 const apps = {
-  claude: { label: "Claude", letters: "C" },
-  chatgpt: { label: "ChatGPT", letters: "G" },
-  "claude-code": { label: "Claude Code", letters: "CC" },
-  codex: { label: "Codex", letters: "Cx" },
-  cursor: { label: "Cursor", letters: "Cu" },
-  another: { label: "Another agent", letters: "+" }
-} as const;
+  claude: { label: "Claude", mark: { logo: "claude" } },
+  chatgpt: { label: "ChatGPT", mark: { logo: "openai" } },
+  "claude-code": { label: "Claude Code", mark: { logo: "claude" } },
+  codex: { label: "Codex", mark: { logo: "openai" } },
+  cursor: { label: "Cursor", mark: { logo: "cursor" } },
+  another: { label: "Another agent", mark: "+" }
+} as const satisfies Record<string, { readonly label: string; readonly mark: ProductMark }>;
 type App = keyof typeof apps;
 const isApp = (value: string): value is App => Object.hasOwn(apps, value);
 
-/** The app a connection's client calls itself, or `another` for one Connect an app doesn't name. */
-const appNamed = (name: string): App =>
-  Object.keys(apps)
-    .filter(isApp)
-    .find((key) => key !== "another" && apps[key].label.toLowerCase() === name.toLowerCase()) ??
-  "another";
+/** A name as `appNamed` compares it: lowercase letters and digits, so "Claude-Code" is "claudecode". */
+const squashed = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+/** The apps a client's name can match, the longest name first, so Claude Code's wins over Claude's. */
+const named = Object.keys(apps)
+  .filter(isApp)
+  .filter((key) => key !== "another")
+  .sort((a, b) => squashed(apps[b].label).length - squashed(apps[a].label).length);
 
-/** A connection's mark: its app's letters, or its own initial for an app Patchy doesn't name. */
+/**
+ * The app a connection's client calls itself, or `another` for one Connect an app doesn't name.
+ * Clients name themselves loosely, so a name holding an app's, whatever its case, spaces and
+ * punctuation, is that app: "Claude Desktop" is Claude, "cursor-vscode" Cursor, "OpenAI Codex" Codex.
+ */
+export const appNamed = (name: string): App => {
+  const said = squashed(name);
+  return named.find((key) => said.includes(squashed(apps[key].label))) ?? "another";
+};
+
+/** A connection's mark: its app's, or its own initial for an app Patchy doesn't name. */
 const appMark = (name: string) => {
   const app = appNamed(name);
   return productMark(
-    app === "another" ? (Array.from(name.trim())[0]?.toUpperCase() ?? "?") : apps[app].letters
+    app === "another" ? (Array.from(name.trim())[0]?.toUpperCase() ?? "?") : apps[app].mark
   );
 };
 
@@ -660,7 +675,7 @@ const connectApp = Effect.gen(function* () {
                     .map((key) => ({
                       label: apps[key].label,
                       href: `/agents/connect?app=${key}`,
-                      mark: productMark(apps[key].letters, { dashed: key === "another" }),
+                      mark: productMark(apps[key].mark, { dashed: key === "another" }),
                       dashed: key === "another"
                     }))
                 })

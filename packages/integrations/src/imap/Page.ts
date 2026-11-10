@@ -1,5 +1,5 @@
 import type { ImapSnapshot } from "@patchy/api";
-import { ago } from "@patchy/core";
+import { ago, type ProductMark } from "@patchy/core";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as ConnectionStore from "../ConnectionStore.js";
@@ -19,7 +19,10 @@ import * as Source from "./Source.js";
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "imap" }>;
 type Submitted = Readonly<Record<string, string | undefined>>;
 
-export const integration = { key: "imap", label: "Email (IMAP)", mark: "@" } as const;
+export const integration = { key: "imap", label: "Email (IMAP)", mark: { icon: "mail" } } as const;
+/** A mailbox's mark: Gmail's logo on Gmail's server, which Google Workspace mailboxes share, else the envelope. */
+export const mark = (connection: Connection): ProductMark =>
+  connection.display.host === "imap.gmail.com" ? { logo: "gmail" } : integration.mark;
 export const offer = { integration, line: "A mailbox's messages and attachments" };
 export const actions: View.Actions = { refresh: "Refresh folders", rotate: "Replace password" };
 export const results = {

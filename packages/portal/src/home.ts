@@ -21,6 +21,7 @@ import {
   notice,
   patchMark,
   patchTitle,
+  productMark,
   region,
   row,
   rowMenu,
@@ -200,6 +201,7 @@ export const renderHome = (input: HomeInput): Template => {
     ),
     ...input.connections.map((connection) =>
       attentionRow({
+        lead: productMark(connection.mark),
         name: connection.name,
         href: connection.fix.href,
         problem: connection.problem,

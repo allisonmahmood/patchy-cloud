@@ -845,6 +845,8 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
       const home = yield* (yield* request("/", workspace.owner)).text;
       const attention = sectionOf(home, "attention");
       assert.match(text(attention), /ChatGPT Access ended \d+ \w+.* Reconnect/);
+      // Each leads with its mark, as Your agents draws it: ChatGPT's is OpenAI's logo.
+      assert.match(attention, /<span class="im im-logo" aria-hidden="true"><svg [^]*?>ChatGPT</);
       assert.match(text(attention), /Old ThinkPad Access ended \d+ \w+.* Reconnect/);
       assert.includeDeepMembers(
         links(attention).filter((link) => link.text === "Reconnect"),
@@ -867,6 +869,11 @@ it.layer(socket)("Home and the guide on a socket", (it) => {
     Effect.gen(function* () {
       const workspace = yield* company("cmp_portal_home");
       const admin = yield* (yield* request("/", workspace.admin)).text;
+      // It leads with its integration's mark, as Integrations draws it: a mailbox's envelope.
+      assert.match(
+        sectionOf(admin, "attention"),
+        /<span class="im" aria-hidden="true"><svg viewBox="0 0 24 24"[^]*?>imap\/support</
+      );
       assert.include(
         text(sectionOf(admin, "attention")),
         "imap/support Paused: the mail server refused the password Replace password…"

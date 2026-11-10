@@ -46,6 +46,8 @@ export { fieldRow } from "./field-row.js";
 export type { ExpandingRow } from "./expanding-table.js";
 export { icon } from "./icons.js";
 export { productMark } from "./product-mark.js";
+export type { ProductMark } from "./product-mark.js";
+export type { ProductLogo } from "./logos.js";
 export type { IconName } from "./icons.js";
 export {
   card,

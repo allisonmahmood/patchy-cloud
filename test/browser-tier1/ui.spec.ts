@@ -293,3 +293,17 @@ test("on a phone, a dialog breaks a long unbroken name and keeps Close on screen
     await context.close();
   }
 });
+
+test("in forced colours, a logo keeps its white square, so a dark theme can't hide it", async ({
+  page,
+  instance
+}) => {
+  await page.goto(`${instance.origin}/~ui`);
+  const logo = page.locator(".im-logo").first();
+  const letters = page.locator(".im:not(.im-logo)").first();
+  const surface = await logo.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await page.emulateMedia({ forcedColors: "active", colorScheme: "dark" });
+  // Letters take the theme's colours, which shows forced colours are on.
+  await expect(letters).not.toHaveCSS("background-color", surface);
+  await expect(logo).toHaveCSS("background-color", surface);
+});

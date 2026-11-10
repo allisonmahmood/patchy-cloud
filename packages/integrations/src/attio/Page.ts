@@ -16,7 +16,7 @@ import * as Source from "./Source.js";
 
 type Connection = Extract<ConnectionStore.Connection, { readonly integration: "attio" }>;
 
-export const integration = { key: "attio", label: "Attio", mark: "At" } as const;
+export const integration = { key: "attio", label: "Attio", mark: { logo: "attio" } } as const;
 export const offer = { integration, line: "CRM records, lists and members" };
 /** What recent calls keep of an Attio call. */
 export const logged =
