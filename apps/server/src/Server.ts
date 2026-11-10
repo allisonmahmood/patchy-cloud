@@ -20,7 +20,6 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import { Analytics, WideEventsPostHog } from "@patchy/analytics";
 import { PatchyApi } from "@patchy/api";
@@ -74,7 +73,6 @@ import {
 import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
 import {
-  Audiences,
   ConnectionVisibility,
   Content,
   LoadedVersions,
@@ -183,19 +181,15 @@ const grantedGuests = Layer.effect(
   Effect.gen(function* () {
     const grants = yield* GuestGrants.GuestGrants;
     const patches = yield* Patches.Patches;
-    const sql = yield* SqlClient.SqlClient;
     return GrantedGuests.GrantedGuests.of({
       member: (loaded, userId) =>
-        Effect.gen(function* () {
-          const current = yield* patches.find(loaded.patchId);
-          return (
-            Option.isSome(current) &&
-            (yield* Audiences.canOpen(current.value.patch, loaded.companyId, userId))
-          );
-        }).pipe(
-          Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))
-        ),
+        patches
+          .admitsMember(loaded.patchId, loaded.companyId, userId)
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
+      memberAuthority: (loaded) =>
+        patches
+          .memberAuthority(loaded.patchId, loaded.companyId)
+          .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))),
       host: (loaded, userId) =>
         grants
           .host({

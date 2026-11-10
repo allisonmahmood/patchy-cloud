@@ -177,10 +177,10 @@ it.effect("discards unrelated resume keys before reading revisions and repairs t
       id: "query",
       revision: "8",
       result: "current",
-      vector: { "patch:consumer": "0", [memberDirectory]: "7", [ownTable]: "1" }
+      vector: { "patch:consumer": "0", [ownTable]: "1" }
     });
     assert.strictEqual(f.state.calls, 1);
-    assert.deepStrictEqual(f.revisionReads[0], ["patch:consumer", memberDirectory, ownTable]);
+    assert.deepStrictEqual(f.revisionReads[0], ["patch:consumer", ownTable]);
     const allowed = new Set([
       "patch:consumer",
       ownTable,
@@ -224,7 +224,6 @@ it.effect("resumes equal owned and canonical shared revisions without invoking t
       result: "current",
       vector: {
         "patch:consumer": "0",
-        [memberDirectory]: "7",
         [sharedStore]: "7",
         [storeSource]: "6"
       }
@@ -253,7 +252,7 @@ for (const [resource, source] of [
           assert.isFalse(refused.permanent);
           assert.strictEqual(refused.error.code, "access_denied");
         }
-        assert.deepStrictEqual(f.revisionReads[0], ["patch:consumer", memberDirectory]);
+        assert.deepStrictEqual(f.revisionReads[0], ["patch:consumer"]);
         assert.strictEqual(f.state.calls, 1);
         f.state.failure = undefined;
         yield* f.document.reconcile("invalidation", [source]);
@@ -264,7 +263,6 @@ for (const [resource, source] of [
           result: "current",
           vector: {
             "patch:consumer": "0",
-            [memberDirectory]: "7",
             [resource]: f.state.revisions[resource]!,
             [source]: f.state.revisions[source]!
           }
@@ -277,42 +275,43 @@ for (const [resource, source] of [
       }).pipe(Effect.scoped, Effect.provide(NodeCryptography.layer))
   );
 
-it.effect(
-  "fences membership changes even when the query declares and reads no member directory",
-  () =>
-    Effect.gen(function* () {
-      let revision = 1;
-      let changeDuringQuery = true;
-      const readers = yield* QuerySubscriptions.make.pipe(
-        Effect.provideService(SubscriptionReads.SubscriptionReads, {
-          admit: () => Effect.die("Unexpected direct admission"),
-          read: () => Effect.die("Unexpected direct read"),
-          revisions: (_companyId, keys) =>
-            Effect.succeed(
-              Object.fromEntries(
-                keys.map((key) => [key, key === memberDirectory ? String(revision) : "0"])
-              )
+it.effect("ignores unrelated membership changes for queries without a directory dependency", () =>
+  Effect.gen(function* () {
+    let revision = 1;
+    let changeDuringQuery = true;
+    const readers = yield* QuerySubscriptions.make.pipe(
+      Effect.provideService(SubscriptionReads.SubscriptionReads, {
+        admit: () => Effect.die("Unexpected direct admission"),
+        read: () => Effect.die("Unexpected direct read"),
+        revisions: (_companyId, keys) =>
+          Effect.succeed(
+            Object.fromEntries(
+              keys.map((key) => [key, key === memberDirectory ? String(revision) : "0"])
             )
-        }),
-        Effect.provideService(Invocation.Invocation, {
-          call: (_args, _binding, observation) =>
-            Effect.sync(() => {
-              observation?.onSnapshot({});
-              if (changeDuringQuery) revision++;
-              return { ok: true as const, value: "members" };
-            })
-        })
-      );
-      const input = {
-        binding: { ...binding, manifest: { ...binding.manifest, uses: {} } },
-        op: "server.call",
-        args: { handler: "demo.read", args: {} }
-      };
-      assert.include(yield* readers.read(input).pipe(Effect.flip), { code: "source_unavailable" });
-      changeDuringQuery = false;
-      assert.deepStrictEqual(yield* readers.read(input), {
-        result: "members",
-        vector: { "patch:consumer": "0", [memberDirectory]: "2" }
-      });
-    }).pipe(Effect.provide(NodeCryptography.layer))
+          )
+      }),
+      Effect.provideService(Invocation.Invocation, {
+        call: (_args, _binding, observation) =>
+          Effect.sync(() => {
+            observation?.onSnapshot({});
+            if (changeDuringQuery) revision++;
+            return { ok: true as const, value: "members" };
+          })
+      })
+    );
+    const input = {
+      binding: { ...binding, manifest: { ...binding.manifest, uses: {} } },
+      op: "server.call",
+      args: { handler: "demo.read", args: {} }
+    };
+    assert.deepStrictEqual(yield* readers.read(input), {
+      result: "members",
+      vector: { "patch:consumer": "0" }
+    });
+    changeDuringQuery = false;
+    assert.deepStrictEqual(yield* readers.read(input), {
+      result: "members",
+      vector: { "patch:consumer": "0" }
+    });
+  }).pipe(Effect.provide(NodeCryptography.layer))
 );

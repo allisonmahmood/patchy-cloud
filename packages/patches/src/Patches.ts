@@ -1051,6 +1051,17 @@ export class Patches extends Context.Service<
       Option.Option<{ patch: Patch; version: PatchVersion; patchTier: number }>,
       SqlError
     >;
+    /** Targeted current admission, shared by browser and agent callbacks. */
+    readonly admitsMember: (
+      patchId: string,
+      companyId: string,
+      userId: string
+    ) => Effect.Effect<boolean, SqlError>;
+    /** Patch lifecycle and committed company membership authority, for invocation-local reuse. */
+    readonly memberAuthority: (
+      patchId: string,
+      companyId: string
+    ) => Effect.Effect<string, SqlError>;
     readonly find: (
       patchId: string,
       versionNumber?: number,
@@ -1793,6 +1804,34 @@ export const make = Effect.gen(function* () {
     (patchId: string, viewer: { readonly companyId: string; readonly userId: string }) =>
       find(patchId, undefined, undefined, viewer)
   );
+  const admitsMember = Effect.fn("Patches.admitsMember")(function* (
+    patchId: string,
+    companyId: string,
+    userId: string
+  ) {
+    const current = yield* find(patchId);
+    return Option.isSome(current) && (yield* audienceOpen(current.value.patch, companyId, userId));
+  });
+  const authorityRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ patchId: Schema.String, companyId: Schema.String }),
+    Result: Schema.Struct({ authority: Schema.String }),
+    execute: ({
+      patchId,
+      companyId
+    }) => sql`SELECT json_build_array(p.lifecycle_revision::text, COALESCE(d.revision, 0)::text)::text AS authority
+      FROM patches p LEFT JOIN companies_directory d ON d.company_id = p.company_id
+      WHERE p.id = ${patchId} AND p.company_id = ${companyId}`
+  });
+  const memberAuthority = Effect.fn("Patches.memberAuthority")(function* (
+    patchId: string,
+    companyId: string
+  ) {
+    const row = yield* authorityRow({ patchId, companyId }).pipe(
+      Effect.catchTags({ SchemaError: Effect.die })
+    );
+    return Option.isSome(row) ? row.value.authority : "absent";
+  });
+
   const authorizePublish = Effect.fn("Patches.authorizePublish")((target: PublishTarget) =>
     sql.withTransaction(
       Effect.gen(function* () {
@@ -3367,6 +3406,8 @@ export const make = Effect.gen(function* () {
     agentToolSummaries: agentToolSummariesOf,
     find,
     findForViewer,
+    admitsMember,
+    memberAuthority,
     findRetained,
     recordVisit,
     recordOpen,

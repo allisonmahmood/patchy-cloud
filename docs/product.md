@@ -2072,17 +2072,11 @@ Scope and team-grant rows are the member audience authority; named guest grants 
 
 Shared-table and shared-store reads, including SDK schema generation, check the initiating viewer against the source’s current audience. The source must remain live, same-company and shared; outside guests cannot use shared resources. Declarations grant no viewer access. Source and membership authority use the existing live revision fences, including recovery after a refused first read. Data copied into another patch follows that destination’s permissions; revocation does not retract prior copies.
 
-Live reads include the destination patch lifecycle/audience revision and Companies' committed
-member-directory revision even without a declared directory dependency. They use the existing
-wakes, periodic durable reconciliation and snapshot fences; shared-resource and connection
-authority can extend that same dependency vector. A changed authority during a snapshot
-discards the result, and the next admission checks current eligibility. Failed authority reads
-refuse delivery rather than reuse a previous admission. Reconnects reauthorize.
+### Runtime audience revocation
 
-A protected request/callback admitted before a removal commits may finish, including an atomic
-mutation. Removal does not cancel or undo such a transaction, retract copied data or erase bytes
-already delivered. Subsequent admission refuses the removed viewer, and subscription results
-are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
+Role and ownership alone do not confer content access. Admission, nested calls and protected callbacks check current eligibility. Live results are rechecked before delivery, and changes during a resource snapshot discard that result. Membership wakes close streams whose viewers lost access. Queries that read the member directory also depend on its revision.
+
+Work admitted before a removal commits may finish, including an atomic mutation. Removal does not retract delivered bytes or undo committed work. Subsequent admission refuses the removed viewer; restoration permits fresh admission. Failed authority reads refuse protected delivery.
 
 ### Connection audiences
 

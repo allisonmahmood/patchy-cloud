@@ -70,8 +70,8 @@ export const make = Effect.gen(function* () {
     );
     if (Option.isNone(invocation)) return yield* new Runtime.InvocationUnavailable();
     if (input.dependencies === undefined || input.dependencies.length === 0)
-      return [`patch:${binding.patchId}`, `members:${binding.companyId}`];
-    const authority = [`patch:${binding.patchId}`, `members:${binding.companyId}`];
+      return [`patch:${binding.patchId}`];
+    const authority = [`patch:${binding.patchId}`];
     const allowed = new Set([
       ...authority,
       ...Object.keys(binding.manifest.tables).map((name) => `table:${binding.patchId}:${name}`),
@@ -96,13 +96,13 @@ export const make = Effect.gen(function* () {
     const { binding } = input;
     // Platform authority is outside the company snapshot. Fence every possible source
     // before invocation, then keep only the sources actually attempted by the guest.
-    const sources = new Set<string>([`patch:${binding.patchId}`, `members:${binding.companyId}`]);
+    const sources = new Set<string>([`patch:${binding.patchId}`]);
     for (const declaration of Object.values(binding.manifest.uses))
       if (declaration.kind === "sharedTable" || declaration.kind === "sharedStore")
         sources.add(`patch:${declaration.patchId}`);
       else if (declaration.kind === "members") sources.add(`members:${binding.companyId}`);
     const before = yield* reads.revisions(binding.companyId, [...sources]);
-    const attempted = new Set<string>([`patch:${binding.patchId}`, `members:${binding.companyId}`]);
+    const attempted = new Set<string>([`patch:${binding.patchId}`]);
     for (const key of attempted) input.onDependency?.(key);
     let watermark: Readonly<Record<string, string>> = {};
     const reply = yield* invocation.value.call(
