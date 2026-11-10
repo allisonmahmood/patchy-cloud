@@ -60,6 +60,118 @@ export interface Release {
 /** Newest first. */
 export const releases: ReadonlyArray<Release> = [
   {
+    id: 41,
+    date: "2026-11-11",
+    through: "a25a9c53dfc767851a4e5e560299d9d33bff5291",
+    changes: [
+      {
+        kind: "Improved",
+        title: "Patchy has a new look",
+        detail:
+          "Every Patchy page has been redesigned to read as one: one typeface with bold titles, buttons and dialogs that look and behave the same everywhere, and the squared paper from sign-in behind the whole app. Signing in, logging in a computer and approving an app match the rest of Patchy too. Your patches look exactly as they did.",
+        prs: [1332, 1336, 1338, 1343, 1353, 1354, 1369, 1372]
+      },
+      {
+        kind: "New",
+        title: "Accept updated terms once",
+        detail:
+          "When Patchy's terms or privacy notice change, you're asked once, on your next page in a browser, to accept them or sign out. Agents, the CLI and connected apps are never interrupted.",
+        prs: [1204]
+      },
+      {
+        kind: "Improved",
+        title: "Settings holds People, Integrations and Agent access",
+        detail:
+          "The sidebar is now Home, All patches, Your agents and Settings, with New patch under the search. Settings opens on People, with Integrations and Agent access beside it. Old links and bookmarks still take you to the right page. On a phone, the sidebar folds into a bar at the top with a Menu.",
+        prs: [1334, 1341]
+      },
+      {
+        kind: "Improved",
+        title: "Home starts with what needs you",
+        detail:
+          "When something is wrong, Home now says so first: your tools that failed in the last day, an app or computer whose access ended, with Reconnect, and for admins a connection that needs fixing, with the button that fixes it. Below that come the patches you use most, your own with Share on each, and your colleagues'.",
+        prs: [1344, 1353]
+      },
+      {
+        kind: "New",
+        title: "A blue dot marks patches you haven't opened",
+        detail:
+          "Like unread mail, a blue dot after a patch's name marks a colleague's patch you've never opened, and a patch shared with you that you haven't opened yet. Opening it clears the dot.",
+        prs: [1370]
+      },
+      {
+        kind: "Improved",
+        title: "A patch's page has one header and tabs",
+        detail:
+          "A patch's page keeps the same header on every tab, with Share and Open at the top. Its log groups calls by day and filters by what happened, and Retire, Delete, Restore, Reassign and going back to an earlier version each ask in a dialog first.",
+        prs: [1345]
+      },
+      {
+        kind: "Improved",
+        title: "Search lands on All patches",
+        detail:
+          "Searching from the sidebar now shows its results on All patches, which filters by kind, shows each tool's failures in the last day (or that nobody called it) and has Share on the patches you own. The Share dialog is clearer, and See their patches on People lists exactly that person's patches.",
+        prs: [1346, 1353]
+      },
+      {
+        kind: "Improved",
+        title: "Inviting and deactivating people is clearer",
+        detail:
+          "Invite people opens over the list, and People filters by admins, invites and guests. Deactivating someone walks you through what happens to their patches: keep them live, retire some or retire them all. Agent access is a single switch that says who turned it on.",
+        prs: [1349]
+      },
+      {
+        kind: "Improved",
+        title: "Your agents shows what's connected",
+        detail:
+          "Your agents now says whether agent access is on, lists your apps and computers with when each was last used, and warns when one is about to expire. Connecting an app or adding a computer is a few numbered steps, and Disconnect replaces Revoke.",
+        prs: [1352]
+      },
+      {
+        kind: "Improved",
+        title: "Integrations use plain words",
+        detail:
+          "Each connection has its own page with tabs, like a patch. Pause and Resume keep its credentials, Disconnect forgets them and says which patch still uses it, and Replace key swaps them. Connecting any integration now follows the same steps.",
+        prs: [1347, 1351]
+      },
+      {
+        kind: "Improved",
+        title: "Agents and integrations show their own logos",
+        detail:
+          "Claude, ChatGPT, Codex, Cursor, Postgres, PostHog, Attio and Pidgeon now show their own logos instead of letters, and a Gmail mailbox shows Gmail's.",
+        prs: [1371]
+      },
+      {
+        kind: "Improved",
+        title: "What's new goes by month",
+        detail:
+          "What's new has a page for each month, with each change on one line that opens to its detail and a link you can share. Changes you haven't seen yet start open.",
+        prs: [1350]
+      },
+      {
+        kind: "Fixed",
+        title: "⌘⇧K works on your company's public patches",
+        detail:
+          "Signed in, you can now leave one of your company's public patches with ⌘⇧K, as you can any other patch.",
+        prs: [1339]
+      },
+      {
+        kind: "Fixed",
+        title: "Saving works after a patch stops being public",
+        detail:
+          "If a patch was made public and then switched back to your company, a copy of the public page your browser kept could open with every save failing. Your browser no longer keeps a public page for you, and a kept copy now reloads into the company page.",
+        prs: [1339, 1375]
+      }
+    ],
+    behindTheScenes: [
+      "Every Patchy page is now built from one shared set of parts, and a check stops a new page from styling itself.",
+      "Agents building a patch now know that a page opened while it was public needs a reload once it's company-only again, and that retries should wait and then stop."
+    ],
+    patchChanges: [
+      "A public page that starts after its patch went back to company-only now reloads itself into the company page, instead of running with every data call refused `principal_changed`. Check that the patch's retries of a failed call wait before each try and stop when the same refusal comes back, as the project loop skill now says."
+    ]
+  },
+  {
     id: 40,
     date: "2026-11-08",
     through: "08e1fd9e2dc8d1786f5f9d4fee3c009add22d564",
