@@ -132,7 +132,7 @@ export class Directory extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const dieOnSchemaError = { SchemaError: Effect.die } as const;
-  const columns = sql`id, name, email, company_id AS "companyId", (role = 'admin' OR is_regular_admin) AS admin,
+  const columns = sql`id, name, email, company_id AS "companyId", (role IN ('admin', 'super_admin')) AS admin,
     deactivated_at IS NULL AS "accountActive"`;
   const people = Schema.Struct({
     companyId: Schema.String,

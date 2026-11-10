@@ -181,12 +181,21 @@ export const PatchQuotaExceeded = failure(403, {
 
 // --- auth -----------------------------------------------------------------
 
-/** `GET /api/me`: who the bearer token is. */
-export class Identity extends Schema.Class<Identity>("Identity")({
+/** The current bearer, with its full company role for server authorization. */
+export class AuthenticatedIdentity extends Schema.Class<AuthenticatedIdentity>(
+  "AuthenticatedIdentity"
+)({
   user: Schema.Struct({ id: Schema.String, email: Schema.String, name: Schema.String }),
   company: Schema.Struct({ id: Schema.String, handle: Schema.String, name: Schema.String }),
   role: Schema.Literals(["member", "admin", "super_admin"]),
   machine: Schema.Struct({ id: Schema.String, name: Schema.String })
+}) {}
+
+/** `GET /api/me`: retain the two-role contract understood by installed CLIs. */
+export class Identity extends Schema.Class<Identity>("Identity")({
+  ...AuthenticatedIdentity.fields,
+  role: Schema.Literals(["member", "admin"]),
+  superAdmin: Schema.optionalKey(Schema.Boolean)
 }) {}
 
 /** The bearer revoked itself; a racing logout may have revoked it first. */
