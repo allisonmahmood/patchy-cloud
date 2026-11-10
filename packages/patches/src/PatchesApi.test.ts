@@ -2827,6 +2827,41 @@ const sourceConnection = Effect.fn("test.sourceConnection")(function* (handle: s
 });
 
 it.layer(Layer.fresh(publishLayer))("Postgres declaration publishing", (it) => {
+  it.effect("publish requires the owner's current connection build access", () =>
+    Effect.gen(function* () {
+      const { connections, identity, declaration } = yield* sourceConnection("owner-build-access");
+      const team = yield* Teams.create({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        name: "Connection builders"
+      });
+      yield* connections.setAudience({
+        ...identity,
+        audience: { kind: "teams", teamIds: [team.id] }
+      });
+      const api = yield* client.pipe(Effect.provide(Fixtures.as(uploader)));
+      const request = yield* consumingRequest({
+        html: html("Owner connection access"),
+        manifest: { ...Fixtures.manifest, name: "owner-build-access", uses: { sales: declaration } }
+      });
+      const denied = yield* api.publish({ payload: request, responseMode: "response-only" });
+      assert.equal(denied.status, 422);
+      assert.include(yield* denied.json, { code: "connection_access_denied" });
+      yield* Teams.setMemberships({
+        companyId: admin.company.id,
+        actorId: admin.user.id,
+        teamId: team.id,
+        userIds: [uploader.user.id],
+        added: true
+      });
+      const published = yield* api.publish({
+        payload: new PublishRequest({ ...request, publishKey: crypto.randomUUID() }),
+        responseMode: "response-only"
+      });
+      assert.equal(published.status, 201);
+    })
+  );
+
   it.effect("publishes a version its guests can't open, and says why only when it has guests", () =>
     Effect.gen(function* () {
       const { connections, identity, declaration } = yield* sourceConnection("guest-warehouse");

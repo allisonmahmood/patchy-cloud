@@ -313,7 +313,7 @@ export const generate = Effect.fn("Generation.generate")(function* (
       entry.kind === "attio" ||
       entry.kind === "imap"
   )
-    ? yield* connections.listFor(companyId, viewerId).pipe(
+    ? yield* connections.list(companyId, viewerId).pipe(
         Effect.mapError(
           (cause) =>
             new GenerationUnavailable({

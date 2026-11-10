@@ -84,7 +84,7 @@ Responses:
 - `404` { ok: false, error: string }
 - `409` { ok: false, error: string, code: "publish_key_conflict" } | { ok: false, error: string, code: "name_taken" } | { ok: false, error: string, code: "behind", baseVersion: integer, latestVersion: integer, publishedBy: { id: string, name: string }, publishedAt: string } | { ok: false, error: string, code: "patch_retired" } | { ok: false, error: string, code: "patch_deleted", purgeAt: string } | { ok: false, error: string, code: "has_dependants", hiddenCount?: number, dependants: { patchId: string, name: string, owner: { id: string, name: string } }[] } | { ok: false, error: string }
 - `413` { ok: false, error: string }
-- `422` { ok: false, error: string, code: "reserved_name" } | { ok: false, error: string, code: "invalid_description" } | { ok: false, error: string, code: "tier2_not_public" } | { ok: false, error: string, code: "not_additive", changes: { object: string, change: string, fix: string }[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
+- `422` { ok: false, error: string, code: "reserved_name" } | { ok: false, error: string, code: "invalid_description" } | { ok: false, error: string, code: "tier2_not_public" } | { ok: false, error: string, code: "not_additive", changes: { object: string, change: string, fix: string }[] } | { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "connection_access_denied" | "stale_generated" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
@@ -480,7 +480,7 @@ Responses:
 - `401` { ok: false, error: "Missing or invalid API token." }
 - `404` { ok: false, error: string }
 - `413` { ok: false, error: string }
-- `422` { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "stale_generated" }
+- `422` { ok: false, error: string, code: "release_mismatch" | "invalid_manifest" | "tier_mismatch" | "has_primitives" | "patch_not_openable" | "connection_not_connected" | "connection_access_denied" | "stale_generated" }
 - `429` { ok: false, error: string, code: "rate_limited", retryAfterSeconds: integer }
 - `503` { ok: false, error: string, code: "busy" | "source_unavailable" }
 
@@ -1180,7 +1180,6 @@ RuntimeSuccess | HandlerFailure
 
 ```
 {
-  warnings?: string[],
   ok: true,
   patchId: string,
   scope: "company" | "public" | "teams",

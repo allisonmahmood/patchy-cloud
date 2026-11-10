@@ -229,6 +229,8 @@ let made = 0;
  */
 const setup = (answers: (address: Address) => ReadonlyArray<PidgeonTest.Recorded> = () => []) =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('deskpatch001', ${who.companyId}, ${who.userId}, 'Integration operations', 'deskpatch001') ON CONFLICT (id) DO NOTHING`;
     made++;
     const address = (id: string, handle: string): Address => ({
       id,
@@ -634,13 +636,14 @@ it.layer(fixture)("Pidgeon operations, offline", (it) => {
             body: { data: sentRow }
           }
         ]);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name) VALUES ('otherpatch01', ${who.companyId}, ${who.userId}, 'Other patch', 'otherpatch01')`;
         const reply = { id: "msg_1", text: "Thanks!", idempotencyKey: "draft-shared-01" };
         yield* call("pidgeon.write", "messages.reply", reply);
         yield* call("pidgeon.write", "messages.reply", reply, {
           binding: binding(send, { patchId: "otherpatch01" })
         });
         // Replace key gives the connection a new key; Pidgeon, not Patchy, says the draft was used.
-        const sql = yield* SqlClient.SqlClient;
         const keys = yield* CredentialKeys.CredentialKeys;
         const replaced = yield* keys.encrypt(
           { companyId: who.companyId, id: send.id, integration: "pidgeon" },

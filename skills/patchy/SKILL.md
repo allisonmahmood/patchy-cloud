@@ -569,7 +569,7 @@ browser sign-out is a separate control, **Sign out** in the account menu.
   (`patchId`, `name`, `address`, `publicUrl`, `scope`, `tier`, `versionNumber`, `schemaRevision`,
   `provisioned`, `unused`, `warnings`, …).
   When a team-audience change returns `has_dependants`, show the affected tools to the person before retrying `patchy share` with `--force`. The refused call changes nothing.
-  `share --json` prints `{ "ok": true, "patchId", "scope", "publicUrl" }`.
+  `share --json` prints `{ "ok": true, "patchId", "scope", "audience", "publicUrl" }`.
   Stderr carries failures only.
   `delete --json` prints `{ "ok": true, "patchId", "state": "deleted", "deletedAt", "purgeAt" }`.
   Prefer JSON when an address, id or recovery deadline is going into a script.
@@ -717,7 +717,7 @@ patch](#reading-a-patch) lists the rest.
 3. Run `validate` until it passes.
 4. Publish with `--json` so the response gives the actual scope; set `--share` only for
    an explicit sharing choice. With no key, finish the login handoff above before retrying.
-5. Return `publicUrl` and announce who can open it from the returned `scope`, as above.
+5. Return `publicUrl` and announce who can open it from the returned `audience`.
 
 ## Pitfalls
 

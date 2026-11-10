@@ -46,25 +46,19 @@ export const viewerRecheck = (binding: Binding.Binding["Service"]) =>
     )
   );
 
-/** Recheck the real viewer and current connection audience at admission and after queueing. */
+/** Recheck the viewer and current patch owner’s connection access at admission and after queueing. */
 export const connectionRecheck: (
   binding: Binding.Binding["Service"],
   id: string
 ) => Effect.Effect<void, typeof ViewerRefusal.Type, ConnectionStore.ConnectionStore> = Effect.fn(
   "Integrations.connectionRecheck"
-)(function* (
-  binding: Binding.Binding["Service"],
-  id: string
-): Effect.fn.Return<void, typeof ViewerRefusal.Type, ConnectionStore.ConnectionStore> {
+)(function* (binding: Binding.Binding["Service"], id: string) {
   yield* viewerRecheck(binding);
   const store = yield* ConnectionStore.ConnectionStore;
   if (
     !binding.identity ||
     !(yield* store
-      .canUse(binding.companyId, id, {
-        userId: binding.identity.user.id,
-        guest: binding.identity.guest === true
-      })
+      .ownerCanUse(binding.companyId, binding.patchId, id)
       .pipe(Effect.mapError((cause) => new Runtime.SourceUnavailable({ cause }))))
   )
     return yield* new Runtime.AccessDenied({});

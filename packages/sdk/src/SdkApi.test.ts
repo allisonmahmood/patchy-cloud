@@ -1,4 +1,3 @@
-import { AudienceActivation } from "@patchy/core";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
@@ -496,7 +495,7 @@ it.layer(layer)("SDK company generation", (it) => {
           added: false
         });
         assert.instanceOf(yield* generate.pipe(Effect.flip), Generation.ConnectionNotConnected);
-      }).pipe(Effect.provideService(AudienceActivation, true))
+      })
   );
   it.effect("refuses module paths and invalid stems before generating imports", () =>
     Effect.gen(function* () {
@@ -1417,7 +1416,7 @@ it.layer(layer)("SDK company generation", (it) => {
         },
         {
           payload: postgresSource,
-          connections: { ...connections, listFor: () => Effect.fail(listFailure) },
+          connections: { ...connections, list: () => Effect.fail(listFailure) },
           cause: listFailure,
           unavailable: { stage: "connection-list", resource: identity.company.id }
         },

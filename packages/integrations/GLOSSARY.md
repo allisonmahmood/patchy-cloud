@@ -1,6 +1,6 @@
 # Integrations
 
-The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) uses the initiating viewer as the effective principal for connection calls.
+The company capability for connecting outside systems without handing credentials to patches. Postgres, PostHog, Pidgeon, Attio and Email (IMAP) connections and their discovered metadata are managed here; the `connections` API group exposes their safe metadata to active members. [Companies](../companies/GLOSSARY.md) owns membership, and [Runtime](../runtime/GLOSSARY.md) checks the current patch owner’s access for connection calls.
 
 ## Language
 
@@ -214,20 +214,8 @@ _Avoid_: Sample of production, mock response
 
 **Connection audience**:
 Company or a union of selected company teams, configured only by a super admin.
-It restricts members' connection calls independently of the consuming patch's audience.
-Outside guests retain their existing handler/resource restrictions and the separate
-Block guests control; team grants never turn them into company members. Stable team
-references survive rename and credential replacement/reconnection.
-
-**Connection authority revision**:
-A durable counter committed with connection-audience, guest-control and availability
-changes. Existing runtime wakes and reconciliation fence traced connection dependencies
-alongside membership revisions before protected live delivery. Failed/no-op audience
-changes do not advance it. Integrations supplies team-reference knowledge for Hosting's
-later guarded team lifecycle assembly.
-
-Ordinary discovery uses Integrations' batched current-viewer admission; privileged
-inventory remains separate. Hosting composes Integrations' connection-revision adapter
-over the existing Runtime subscription reader. Primitives owns no connection SQL.
-The local runtime composes the same adapter over fixed fixture revisions; cloud-backed
-reads still authorize at the cloud door on every call.
+It controls who can build with a connection. Publish and connection calls require
+access by the current patch owner. Anyone who can open the patch can use its
+permitted handlers. Block guests remains separate. Connection pages and SDK
+metadata show only connections the person can build with. Stable team references
+survive rename and credential replacement/reconnection.

@@ -1,3 +1,4 @@
+import * as ConnectionVisibility from "../../../patches/src/ConnectionVisibility.js";
 import { assert, it } from "@effect/vitest";
 import { DEV_SEED } from "@patchy/auth/seed";
 import { RuntimeLog } from "@patchy/runtime";
@@ -44,7 +45,11 @@ const fixture = Layer.mergeAll(
   PostHogSource.layer,
   PidgeonSource.layer,
   ImapTest.offline
-).pipe(Layer.provideMerge(Testing.layer()), Layer.provideMerge(NodeCryptography.layer));
+).pipe(
+  Layer.provideMerge(ConnectionVisibility.layer),
+  Layer.provideMerge(Testing.layer()),
+  Layer.provideMerge(NodeCryptography.layer)
+);
 
 const { readKey } = AttioDouble;
 const write = [...readKey.scopes, "note:read-write"];

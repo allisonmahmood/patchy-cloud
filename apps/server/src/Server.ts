@@ -53,7 +53,6 @@ import {
 import { FilesystemContentStore, S3ContentStore } from "@patchy/content-store";
 import {
   ConnectionPages,
-  ConnectionRevisions,
   ConnectionsApi,
   DevReads,
   SqlConnectionStore,
@@ -76,6 +75,7 @@ import { Limits, OperatingLimits } from "@patchy/limits";
 import { ChangeKeys, Door } from "@patchy/mcp";
 import {
   Audiences,
+  ConnectionVisibility,
   Content,
   LoadedVersions,
   DeletionSweep,
@@ -276,10 +276,7 @@ const services = Layer.mergeAll(
         Layer.provideMerge(
           RuntimeStream.layer.pipe(
             Layer.provide(Subscriptions.layer),
-            Layer.provide([
-              ConnectionRevisions.layer.pipe(Layer.provide(SubscriptionReads.layer)),
-              StreamLimits.layer
-            ])
+            Layer.provide([SubscriptionReads.layer, StreamLimits.layer])
           )
         ),
         Layer.provide(StreamAdmission.layer)
@@ -343,6 +340,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(InvocationLog.layer),
   Layer.provideMerge(resourceChanges),
   Layer.provideMerge(WakesPostgres.layer),
+  Layer.provideMerge(ConnectionVisibility.layer),
   Layer.provide(migrated)
 );
 

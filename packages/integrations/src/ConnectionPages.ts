@@ -4,6 +4,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { Analytics } from "@patchy/analytics";
 import { type Companies, type Users } from "@patchy/companies";
 import type * as ConnectionStore from "./ConnectionStore.js";
+import type * as PatchVisibility from "./PatchVisibility.js";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -133,6 +134,7 @@ export const layer: Layer.Layer<
       | Users.Users
       | SqlClient.SqlClient
       | ConnectionStore.ConnectionStore
+      | PatchVisibility.PatchVisibility
       | RuntimeLog.RuntimeLog
       | Analytics.Analytics
       | PidgeonSource.Source

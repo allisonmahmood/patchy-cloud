@@ -10,7 +10,7 @@ import {
 } from "@patchy/api";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
 import * as Companies from "@patchy/companies/Companies";
-import { AudienceActivation, Cryptography } from "@patchy/core";
+import { Cryptography } from "@patchy/core";
 import { Teams, Users } from "@patchy/companies";
 import { RuntimeLog } from "@patchy/runtime";
 import { registry } from "@patchy/limits/registry";
@@ -28,6 +28,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as ConnectionStore from "./ConnectionStore.js";
+import * as PatchVisibility from "./PatchVisibility.js";
 import {
   AttioConnection,
   Connection,
@@ -300,8 +301,16 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     WHERE p.company_id = ${companyId} AND declaration.value->>'kind' IN ${sql.in(known)}`;
     // A patch is in one state: deleted, then disabled, then retired, else live.
     const live = sql`p.deleted_at IS NULL AND p.disabled_at IS NULL AND p.retired_at IS NULL`;
-    const usageRows = SqlSchema.findAll({
+    const declaringPatchIds = SqlSchema.findAll({
       Request: Schema.String,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (companyId) => sql`SELECT DISTINCT p.id FROM ${declarations(companyId)}`
+    });
+    const usageRows = SqlSchema.findAll({
+      Request: Schema.Struct({
+        companyId: Schema.String,
+        patchIds: Schema.optionalKey(Schema.Array(Schema.String))
+      }),
       Result: Schema.Struct({
         connectionId: Schema.String,
         usedBy: Schema.Array(Schema.String),
@@ -310,7 +319,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
         deleted: Schema.Int,
         disabled: Schema.Int
       }),
-      execute: (companyId) => sql`SELECT declaration.value->>'id' AS "connectionId",
+      execute: ({ companyId, patchIds }) => sql`SELECT declaration.value->>'id' AS "connectionId",
       COALESCE(array_agg(DISTINCT p.name ORDER BY p.name)
         FILTER (WHERE ${live} AND v.id = p.current_version_id), '{}') AS "usedBy",
       (count(DISTINCT v.id)
@@ -321,18 +330,43 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       (count(DISTINCT p.id) FILTER (WHERE p.deleted_at IS NULL
         AND p.disabled_at IS NOT NULL))::int AS disabled
       FROM ${declarations(companyId)}
+      ${patchIds === undefined ? sql`` : sql`AND ${sql.in("p.id", patchIds)}`}
       GROUP BY 1`
     });
     const versionRows = SqlSchema.findAll({
-      Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
-      Result: Schema.Struct({ id: Schema.String, patch: Schema.String, number: Schema.Int }),
-      execute: ({ companyId, ids }) => sql`SELECT v.id, p.name AS patch, v.version_number AS number
+      Request: Schema.Struct({
+        companyId: Schema.String,
+        ids: Schema.Array(Schema.String)
+      }),
+      Result: Schema.Struct({
+        id: Schema.String,
+        patchId: Schema.String,
+        patch: Schema.String,
+        number: Schema.Int
+      }),
+      execute: ({
+        companyId,
+        ids
+      }) => sql`SELECT v.id, p.id AS "patchId", p.name AS patch, v.version_number AS number
       FROM patch_versions v JOIN patches p ON p.id = v.patch_id
       WHERE p.company_id = ${companyId} AND ${sql.in("v.id", ids)}`
     });
     const usage = Effect.fn("ConnectionStore.usage")(
-      function* (companyId: string) {
-        const rows = yield* usageRows(companyId);
+      function* (companyId: string, userId?: string) {
+        const patchIds =
+          userId === undefined
+            ? undefined
+            : [
+                ...(yield* (yield* PatchVisibility.PatchVisibility).visibleIds(
+                  companyId,
+                  userId,
+                  (yield* declaringPatchIds(companyId)).map((row) => row.id)
+                ))
+              ];
+        const rows = yield* usageRows({
+          companyId,
+          ...(patchIds === undefined ? {} : { patchIds })
+        });
         return new Map(
           rows.map(
             ({ connectionId, ...usage }) => [connectionId, { ...usage, declared: true }] as const
@@ -342,15 +376,36 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("usage"))
     );
     const versions = Effect.fn("ConnectionStore.versions")(
-      function* (companyId: string, ids: ReadonlyArray<string>) {
+      function* (companyId: string, ids: ReadonlyArray<string>, userId?: string) {
         const rows = ids.length === 0 ? [] : yield* versionRows({ companyId, ids });
-        return new Map(rows.map((row) => [row.id, { patch: row.patch, number: row.number }]));
+        const visible =
+          userId === undefined
+            ? undefined
+            : yield* (yield* PatchVisibility.PatchVisibility).visibleIds(
+                companyId,
+                userId,
+                rows.map((row) => row.patchId)
+              );
+        return new Map(
+          rows
+            .filter((row) => visible === undefined || visible.has(row.patchId))
+            .map((row) => [row.id, { patch: row.patch, number: row.number }])
+        );
       },
       Effect.catchTags(safe("versions"))
     );
     // The current revision's immutable row supplies both metadata and its timestamp.
     const detail = Effect.fn("ConnectionStore.detail")(
-      function* (companyId: string, integration: Integration, handle: string) {
+      function* (companyId: string, integration: Integration, handle: string, userId?: string) {
+        if (
+          userId !== undefined &&
+          !(yield* accessible(
+            companyId,
+            yield* accessRows({ companyId, integration, handle }),
+            userId
+          )).size
+        )
+          return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
         const found = yield* detailRow({ companyId, integration, handle });
         if (Option.isNone(found))
           return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
@@ -523,7 +578,16 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     });
 
     const list = Effect.fn("ConnectionStore.list")(
-      (companyId: string) => connectionRows(companyId),
+      function* (companyId: string, userId?: string) {
+        const rows = yield* connectionRows(companyId);
+        if (userId === undefined || rows.length === 0) return rows;
+        const admitted = yield* accessible(
+          companyId,
+          yield* accessRows({ companyId, ids: rows.map((row) => row.id) }),
+          userId
+        );
+        return rows.filter((row) => admitted.has(row.id));
+      },
       Effect.catchTags(safe("list"))
     );
     const snapshot = Effect.fn("ConnectionStore.snapshot")(
@@ -1549,7 +1613,6 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const AccessRow = Schema.Struct({
       id: Schema.String,
       kind: Schema.Literals(["company", "teams"]),
-      blockGuests: Schema.Boolean,
       teamIds: Schema.Array(Schema.String)
     });
     const accessRows = SqlSchema.findAll({
@@ -1561,7 +1624,7 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       }),
       Result: AccessRow,
       execute: ({ companyId, ids, integration, handle }) => sql`
-        SELECT c.id, c.audience_kind AS kind, c.block_guests AS "blockGuests",
+        SELECT c.id, c.audience_kind AS kind,
           ARRAY(SELECT team_id FROM connection_team_grants WHERE connection_id = c.id ORDER BY team_id) AS "teamIds"
         FROM connections c WHERE c.company_id = ${companyId} AND ${isKnown}
           ${ids === undefined ? sql`` : sql`AND ${sql.in("c.id", ids)}`}
@@ -1573,26 +1636,19 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     const accessible = Effect.fn("ConnectionStore.accessible")(function* (
       companyId: string,
       rows: readonly (typeof AccessRow.Type)[],
-      viewer: { readonly userId: string; readonly guest: boolean }
+      userId: string
     ) {
-      const enabled = yield* AudienceActivation;
-      const needsTeams = enabled && !viewer.guest && rows.some((row) => row.kind === "teams");
+      const needsTeams = rows.some((row) => row.kind === "teams");
       const teams = new Set(
         needsTeams
-          ? yield* Teams.memberships(companyId, viewer.userId).pipe(
+          ? yield* Teams.memberships(companyId, userId).pipe(
               Effect.provideService(SqlClient.SqlClient, sql)
             )
           : []
       );
       return new Set(
         rows
-          .filter(
-            (row) =>
-              (row.kind !== "teams" || enabled) &&
-              (viewer.guest
-                ? !row.blockGuests
-                : row.kind === "company" || row.teamIds.some((id) => teams.has(id)))
-          )
+          .filter((row) => row.kind === "company" || row.teamIds.some((id) => teams.has(id)))
           .map((row) => row.id)
       );
     });
@@ -1613,49 +1669,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
       Effect.catchTags(safe("audience"))
     );
     const canUse = Effect.fn("ConnectionStore.canUse")(
-      function* (
-        companyId: string,
-        id: string,
-        viewer: { readonly userId: string; readonly guest: boolean }
-      ) {
+      function* (companyId: string, id: string, userId: string) {
         const rows = yield* accessRows({ companyId, ids: [id] });
         if (!rows.length) return yield* new ConnectionNotFound({ companyId, lookup: { id } });
-        return (yield* accessible(companyId, rows, viewer)).has(id);
-      },
-      Effect.catchTags(safe("audience"))
-    );
-    const listFor = Effect.fn("ConnectionStore.listFor")(
-      function* (companyId: string, userId: string) {
-        const rows = yield* connectionRows(companyId);
-        if (!rows.length) return rows;
-        const admitted = yield* accessible(
-          companyId,
-          yield* accessRows({ companyId, ids: rows.map((row) => row.id) }),
-          { userId, guest: false }
-        );
-        return rows.filter((row) => admitted.has(row.id));
-      },
-      Effect.catchTags(safe("list"))
-    );
-    const detailFor = Effect.fn("ConnectionStore.detailFor")(
-      function* (companyId: string, integration: Integration, handle: string, userId: string) {
-        const rows = yield* accessRows({ companyId, integration, handle });
-        if (!(yield* accessible(companyId, rows, { userId, guest: false })).size)
-          return yield* new ConnectionNotFound({ companyId, lookup: { integration, handle } });
-        return yield* detail(companyId, integration, handle);
-      },
-      Effect.catchTags(safe("detail"))
-    );
-    const revisionRows = SqlSchema.findAll({
-      Request: Schema.Struct({ companyId: Schema.String, ids: Schema.Array(Schema.String) }),
-      Result: Schema.Struct({ id: Schema.String, revision: Schema.String }),
-      execute: ({ companyId, ids }) =>
-        sql`SELECT id, authority_revision::text AS revision FROM connections WHERE company_id = ${companyId} AND ${sql.in("id", ids)} AND ${isKnown}`
-    });
-    const authorityRevisions = Effect.fn("ConnectionStore.authorityRevisions")(
-      function* (companyId: string, ids: readonly string[]) {
-        const rows = ids.length ? yield* revisionRows({ companyId, ids }) : [];
-        return new Map(rows.map((row) => [row.id, row.revision]));
+        return (yield* accessible(companyId, rows, userId)).has(id);
       },
       Effect.catchTags(safe("audience"))
     );
@@ -1668,22 +1685,24 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               actorId: input.userId
             }).pipe(
               Effect.catchTags({
-                RoleForbidden: () => Effect.fail(new ConnectionStore.InvalidConnectionAudience())
+                RoleForbidden: () =>
+                  Effect.fail(new ConnectionStore.ConnectionAdministrationDenied())
               })
             );
             if (role !== "super_admin")
-              return yield* new ConnectionStore.InvalidConnectionAudience();
+              return yield* new ConnectionStore.ConnectionAdministrationDenied();
             yield* lock(input);
             const selected = input.audience;
             if (selected.kind === "teams") {
-              if (!(yield* AudienceActivation) || selected.teamIds.length === 0)
+              if (selected.teamIds.length === 0)
                 return yield* new ConnectionStore.InvalidConnectionAudience();
               const teams = yield* Teams.list({
                 companyId: input.companyId,
                 actorId: input.userId
               }).pipe(
                 Effect.catchTags({
-                  RoleForbidden: () => Effect.fail(new ConnectionStore.InvalidConnectionAudience())
+                  RoleForbidden: () =>
+                    Effect.fail(new ConnectionStore.ConnectionAdministrationDenied())
                 })
               );
               if (selected.teamIds.some((id) => !teams.some((team) => team.id === id)))
@@ -1701,23 +1720,23 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
             yield* sql`DELETE FROM connection_team_grants WHERE connection_id = ${input.id}`;
             for (const teamId of ids)
               yield* sql`INSERT INTO connection_team_grants(connection_id, company_id, team_id) VALUES (${input.id}, ${input.companyId}, ${teamId})`;
-            yield* sql`UPDATE connections SET audience_kind = ${selected.kind}, authority_revision = authority_revision + 1 WHERE id = ${input.id} AND company_id = ${input.companyId}`;
+            yield* sql`UPDATE connections SET audience_kind = ${selected.kind} WHERE id = ${input.id} AND company_id = ${input.companyId}`;
           })
         );
       },
       Effect.provideService(SqlClient.SqlClient, sql),
       Effect.catchTags(safe("audience"))
     );
-    const decodeTeamReferences = Schema.decodeUnknownEffect(
-      Schema.Array(Schema.Struct({ id: Schema.String }))
-    );
-    const teamReferences = Effect.fn("ConnectionStore.teamReferences")(
-      function* (companyId: string, teamId: string) {
-        const rows =
-          yield* sql`SELECT connection_id AS id FROM connection_team_grants WHERE company_id = ${companyId} AND team_id = ${teamId}`.pipe(
-            Effect.flatMap(decodeTeamReferences)
-          );
-        return rows.map((row) => row.id);
+    const ownerRows = SqlSchema.findAll({
+      Request: Schema.Struct({ companyId: Schema.String, patchId: Schema.String }),
+      Result: Schema.Struct({ userId: Schema.String }),
+      execute: ({ companyId, patchId }) =>
+        sql`SELECT p.owner_user_id AS "userId" FROM patches p JOIN users u ON u.id = p.owner_user_id AND u.company_id = p.company_id WHERE p.company_id = ${companyId} AND p.id = ${patchId} AND u.deactivated_at IS NULL`
+    });
+    const ownerCanUse = Effect.fn("ConnectionStore.ownerCanUse")(
+      function* (companyId: string, patchId: string, id: string) {
+        const owner = (yield* ownerRows({ companyId, patchId }))[0];
+        return owner !== undefined && (yield* canUse(companyId, id, owner.userId));
       },
       Effect.catchTags(safe("audience"))
     );
@@ -1888,13 +1907,10 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
     );
 
     return ConnectionStore.ConnectionStore.of({
-      listFor,
-      detailFor,
-      authorityRevisions,
       audience,
       setAudience,
       canUse,
-      teamReferences,
+      ownerCanUse,
       list,
       get,
       usage,

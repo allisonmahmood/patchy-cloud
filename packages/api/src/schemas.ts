@@ -157,6 +157,7 @@ export const PublishRefused = failure(422, {
     "has_primitives",
     "patch_not_openable",
     "connection_not_connected",
+    "connection_access_denied",
     "stale_generated"
   ])
 });
@@ -1118,7 +1119,6 @@ export class ShareRequest extends Schema.Class<ShareRequest>("ShareRequest")({
 }) {}
 
 export class Shared extends Schema.Class<Shared>("Shared")({
-  warnings: Schema.optionalKey(Schema.Array(Schema.String)),
   ok: Schema.Literal(true),
   patchId: PatchId,
   scope: SharingScope,

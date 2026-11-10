@@ -20,6 +20,7 @@ import {
   ServerBundles
 } from "@patchy/runtime";
 import * as Clock from "effect/Clock";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,14 @@ import { generate } from "../pidgeon/Generate.js";
 
 const patchy = new URL("../../../patchy", import.meta.url).pathname;
 const decodeCallback = Schema.decodeUnknownSync(GuestProtocol.Callback);
+
+/** Store the synthetic patch's current owner, as connection admission requires. */
+export const seedPatch = Effect.fn("RuntimeTest.seedPatch")(function* (patchId: string) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO patches (id, company_id, owner_user_id, title, name)
+    VALUES (${patchId}, ${DEV_SEED.companyId}, ${DEV_SEED.userId}, 'Integration journey', ${patchId})
+    ON CONFLICT (id) DO NOTHING`;
+});
 
 /** How a generated client reaches the runtime. */
 export type Call = (op: string, args: unknown) => Promise<unknown>;
@@ -98,6 +107,7 @@ export const page = Effect.fn("RuntimeTest.page")(function* (
   patchId: string,
   versionId: string
 ) {
+  yield* seedPatch(patchId);
   const loaded = yield* (yield* LoadedVersions.LoadedVersions).find(patchId, versionId);
   if (Option.isNone(loaded)) return yield* Effect.die("The journey's version is not loaded.");
   const viewer = {
@@ -181,6 +191,7 @@ export const invoker = Effect.fn("RuntimeTest.invoker")(function* (
   binding: Binding.Binding["Service"],
   source: string
 ) {
+  yield* seedPatch(binding.patchId);
   const gateway = yield* CallbackGateway.make(handlers);
   const listener = yield* CallbackGatewayApi.listen().pipe(
     Effect.provideService(CallbackGateway.CallbackGateway, gateway)

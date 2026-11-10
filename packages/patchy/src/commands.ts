@@ -1049,8 +1049,7 @@ const share = Command.make(
                     "Changed patch sharing",
                     `URL: ${shared.publicUrl}`,
                     audienceLine(shared.audience, shared.scope),
-                    `Patch ID: ${shared.patchId}`,
-                    ...(shared.warnings ?? []).map((warning) => `Warning: ${warning}`)
+                    `Patch ID: ${shared.patchId}`
                   ])
                 )
               ),

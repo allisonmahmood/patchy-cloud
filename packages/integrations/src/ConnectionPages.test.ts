@@ -1,3 +1,4 @@
+import * as ConnectionVisibility from "../../patches/src/ConnectionVisibility.js";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
@@ -32,7 +33,7 @@ import * as PidgeonSource from "./pidgeon/Source.js";
 import * as AttioSource from "./attio/Source.js";
 import * as ImapTest from "./test/imap.js";
 import { Snapshot } from "@patchy/api/postgres-snapshot";
-import { AudienceActivation, NodeCryptography } from "@patchy/core";
+import { NodeCryptography } from "@patchy/core";
 
 const env = clerkEnv();
 const base = env.PATCHY_PUBLIC_BASE_URL!;
@@ -138,6 +139,7 @@ const services = Layer.mergeAll(
   Layer.provideMerge(
     CredentialKeys.layerFromKeys(Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="))
   ),
+  Layer.provideMerge(ConnectionVisibility.layer),
   Layer.provideMerge(Testing.layer()),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
   Layer.provideMerge(NodeCryptography.layer)
@@ -327,7 +329,7 @@ it.layer(services)("company connection pages", (it) => {
         303
       );
       assert.deepEqual(yield* store.audience(owner.company.id, connection.id), { kind: "company" });
-    }).pipe(Effect.provideService(AudienceActivation, true))
+    })
   );
   it.effect("refuses regular-admin connection setup and every direct management request", () =>
     Effect.gen(function* () {
@@ -1065,6 +1067,22 @@ it.layer(services)("company connection pages", (it) => {
         assert.include(disconnecting, "These patches lose access on their next call:");
         assert.include(disconnecting, '<li><a href="/patches/revenue">revenue</a></li>');
         assert.notInclude(disconnecting, "old-board");
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE patches SET scope = 'teams' WHERE name = 'revenue' AND company_id = ${owner.company.id}`;
+        const restricted = yield* read(warehouse.path);
+        assert.notInclude(restricted, 'href="/patches/revenue"');
+        assert.include(restricted, 'href="/patches/reports"');
+        const names = yield* (yield* ConnectionStore.ConnectionStore).versions(
+          owner.company.id,
+          [`${owner.company.handle}-revenue-v1`, `${owner.company.handle}-reports-v2`],
+          owner.user.id
+        );
+        assert.deepEqual(
+          [...names.values()].map((version) => version.patch),
+          ["reports"]
+        );
+        // Management still sees the complete dependency guard, without exposing restricted names.
+        assert.notInclude(restricted, `href="${warehouse.path}/delete"`);
       })
   );
 

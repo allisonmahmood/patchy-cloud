@@ -849,6 +849,8 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
                   replayOrRespond(rejected("has_primitives", error.message)),
                 PatchNotOpenable: (error) =>
                   replayOrRespond(rejected("patch_not_openable", error.message)),
+                ConnectionAccessDenied: (error) =>
+                  replayOrRespond(rejected("connection_access_denied", error.message)),
                 ConnectionNotConnected: (error) =>
                   replayOrRespond(rejected("connection_not_connected", error.message)),
                 StaleGenerated: (error) =>
@@ -1164,7 +1166,7 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             entry.tree.some((step) => step.connectionId !== null)
           )
             ? yield* connectionStore
-                .listFor(identity.company.id, identity.user.id)
+                .list(identity.company.id, identity.user.id)
                 .pipe(Effect.orElseSucceed(() => []))
             : [];
           const names: LogNames = {
@@ -1241,7 +1243,6 @@ export const layer = HttpApiBuilder.group(PatchyApi, "patches", (handlers) =>
             patchId: params.patchId,
             scope: shared.scope,
             audience: shared.audience,
-            ...(shared.warnings.length ? { warnings: shared.warnings } : {}),
             publicUrl: Patches.address(publicBaseUrl, shared.companyHandle, shared.name)
           });
         })

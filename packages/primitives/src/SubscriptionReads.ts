@@ -170,7 +170,7 @@ export const make: Effect.Effect<
   Dependencies | SqlClient.SqlClient
 > = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  // Sharing and lifecycle changes advance the same committed patch authority.
+  // Audience and lifecycle changes advance the same patch revision.
   const find = SqlSchema.findAll({
     Request: Schema.Struct({ companyId: Schema.String, patchIds: Schema.Array(Schema.String) }),
     Result: ResourceRevisions.RevisionRow,

@@ -1880,7 +1880,7 @@ against real Postgres in CI, not promised by the local dev loop.
 
 ### The edges
 
-A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, shared stores, company connections and members. The latter require live viewer reauthorization; patch identity does not grant shared-connection access. Patch-owned shared tables and stores provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.
+A tier 2 invocation acts as the patch for its own tables and files, and as the initiating viewer for shared tables, shared stores and members. The latter require live viewer reauthorization; company connection calls separately check the current patch owner’s access. Patch-owned shared tables and stores provide read-only access across declaring patches; company-owned tables and broader composition remain undesigned.
 
 ## Patchy MCP
 
@@ -2083,7 +2083,7 @@ A protected request/callback admitted before a removal commits may finish, inclu
 mutation. Removal does not cancel or undo such a transaction, retract copied data or erase bytes
 already delivered. Subsequent admission refuses the removed viewer, and subscription results
 are rechecked and fenced before protected delivery. Restoring a valid grant restores eligibility.
-The internal audience assembly barrier stays disabled pending the complete access stack.
+
 
 ### Connection audiences
 

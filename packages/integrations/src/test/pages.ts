@@ -1,3 +1,4 @@
+import * as ConnectionVisibility from "../../../patches/src/ConnectionVisibility.js";
 import { assert } from "@effect/vitest";
 import { Analytics } from "@patchy/analytics";
 import { Session } from "@patchy/auth";
@@ -72,6 +73,7 @@ export const services = (
         Redacted.make("test:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
       )
     ),
+    Layer.provideMerge(ConnectionVisibility.layer),
     Layer.provideMerge(Testing.layer()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
     Layer.provideMerge(NodeCryptography.layer)

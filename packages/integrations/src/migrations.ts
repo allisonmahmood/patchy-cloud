@@ -82,7 +82,7 @@ export const migrations: Migrations = {
     `ALTER TABLE connections ADD COLUMN block_guests BOOLEAN NOT NULL DEFAULT false`
   ),
   "0039_connection_audiences": ddl(
-    `ALTER TABLE connections ADD COLUMN audience_kind TEXT NOT NULL DEFAULT 'company' CHECK (audience_kind IN ('company', 'teams')), ADD COLUMN authority_revision BIGINT NOT NULL DEFAULT 0`,
+    `ALTER TABLE connections ADD COLUMN audience_kind TEXT NOT NULL DEFAULT 'company' CHECK (audience_kind IN ('company', 'teams'))`,
     `CREATE TABLE connection_team_grants (
       connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
       company_id TEXT NOT NULL,
@@ -90,15 +90,6 @@ export const migrations: Migrations = {
       PRIMARY KEY(connection_id, team_id),
       FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id)
     )`,
-    `CREATE INDEX connection_team_references ON connection_team_grants(company_id, team_id)`,
-    `CREATE FUNCTION connection_authority_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.audience_kind IS DISTINCT FROM OLD.audience_kind OR NEW.authority_revision IS DISTINCT FROM OLD.authority_revision OR NEW.block_guests IS DISTINCT FROM OLD.block_guests OR NEW.status IS DISTINCT FROM OLD.status THEN
-        NEW.authority_revision := OLD.authority_revision + 1;
-        PERFORM pg_notify('patchy_runtime_wakes', json_build_object('keys', ARRAY['connection:' || NEW.id])::text);
-      END IF;
-      RETURN NEW;
-    END $$`,
-    `CREATE TRIGGER connection_authority_change BEFORE UPDATE ON connections FOR EACH ROW EXECUTE FUNCTION connection_authority_changed()`
+    `CREATE INDEX connection_team_references ON connection_team_grants(company_id, team_id)`
   )
 };

@@ -3,6 +3,7 @@ import { Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as Testing from "@patchy/sql/testing";
+import { Runtime } from "@patchy/runtime/core";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -205,6 +206,22 @@ const sleeping = Effect.fn("test.awaitSleeping")(function* (count: number) {
 });
 
 it.layer(Testing.emptyLayer({}))("native PostgreSQL execution", (it) => {
+  it.effect("preserves session and authority failures from slot admission", () =>
+    Effect.gen(function* () {
+      const { execution, clients } = yield* setup();
+      for (const refusal of [
+        new Runtime.SessionExpired({}),
+        new Runtime.SourceUnavailable({ cause: new Error("authority unavailable") })
+      ]) {
+        const error = yield* execution
+          .query({ ...input("SELECT 1"), recheck: Effect.fail(refusal) })
+          .pipe(Effect.flip);
+        assert.strictEqual(error, refusal);
+      }
+      assert.equal(clients.length, 0);
+    })
+  );
+
   it.effect(
     "denies INSERT, a side-effect function and multiple statements in native read-only transactions",
     () =>

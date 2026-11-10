@@ -973,7 +973,7 @@ const logPage = Effect.fn("PortalPages.logPage")(function* (name: string) {
     entry.tree.some((item) => item.connectionId !== null)
   )
     ? yield* (yield* ConnectionStore.ConnectionStore)
-        .list(viewer.company.id)
+        .list(viewer.company.id, viewer.user.id)
         .pipe(Effect.orElseSucceed(() => []))
     : [];
   return pageResponse(
@@ -1329,7 +1329,7 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           if (selected.tier >= 2) return yield* new Patches.Tier2NotPublic();
           return yield* again({ confirmPublic: true });
         }
-        const shared = yield* patches.setSharing({
+        yield* patches.setSharing({
           patchId: selected.patch.id,
           actor: actor,
           audience: audience,
@@ -1340,10 +1340,9 @@ const shareAct = Effect.fn("PortalPages.shareAct")(function* (name: string, act:
           expectedOwnerUserId: form.expectedOwnerUserId
         });
         return reopened(
-          (audience.members.kind === "teams"
+          audience.members.kind === "teams"
             ? `Shared ${title} with selected teams`
-            : `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`) +
-            (shared.warnings.length ? ` ${shared.warnings.join(" ")}` : "")
+            : `${title} is open to ${fields.scope === "public" ? "anyone on the internet" : `people at ${viewer.company.name}`}`
         );
       }
     }

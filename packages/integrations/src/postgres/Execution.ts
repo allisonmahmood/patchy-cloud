@@ -11,6 +11,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Pg from "pg";
 import * as ConnectionStore from "../ConnectionStore.js";
+import type { ViewerRefusal } from "../definition.js";
 import * as Source from "./Source.js";
 import * as SourceClient from "./SourceClient.js";
 import * as SourceNetwork from "./SourceNetwork.js";
@@ -91,7 +92,7 @@ export const Errors = Schema.Union([
   AccessDenied,
   SourceUnavailable
 ]);
-export type ExecutionError = typeof Errors.Type;
+export type ExecutionError = typeof Errors.Type | typeof ViewerRefusal.Type;
 export interface QueryInput {
   readonly recheck?: Effect.Effect<void, ExecutionError>;
   readonly companyId: string;

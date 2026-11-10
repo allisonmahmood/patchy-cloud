@@ -7,3 +7,4 @@ export * as PatchesApi from "./PatchesApi.js";
 export * as PatchesConfig from "./PatchesConfig.js";
 export * as LoadedVersions from "./LoadedVersions.js";
 export { migrations } from "./migrations.js";
+export * as ConnectionVisibility from "./ConnectionVisibility.js";
