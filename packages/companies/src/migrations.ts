@@ -138,43 +138,14 @@ export const migrations: Migrations = {
         (agent_access_changed_by IS NULL) = (agent_access_changed_at IS NULL)
       )`
   ),
-  // Old servers continue to read and write member/admin. Their administrators retain full
-  // authority on return; only the new server distinguishes explicitly appointed regular admins.
   "0036_company_roles": ddl(
-    `ALTER TABLE users ADD COLUMN is_regular_admin BOOLEAN NOT NULL DEFAULT false`,
-    `ALTER TABLE invites ADD COLUMN is_regular_admin BOOLEAN NOT NULL DEFAULT false`,
-    // Legacy invite acceptance copies only role; retain the appointed regular-admin grant.
-    `CREATE FUNCTION companies_role_compatibility() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF TG_OP = 'INSERT' AND NEW.role = 'member' AND NOT NEW.is_regular_admin THEN
-        NEW.is_regular_admin := EXISTS (
-          SELECT 1 FROM invites WHERE company_id = NEW.company_id AND email = NEW.email
-            AND is_regular_admin AND revoked_at IS NULL AND consumed_at IS NULL
-        );
-      ELSIF TG_OP = 'UPDATE' AND NEW.role IS DISTINCT FROM OLD.role
-        AND NEW.is_regular_admin IS NOT DISTINCT FROM OLD.is_regular_admin THEN
-        NEW.is_regular_admin := false;
-      END IF;
-      RETURN NEW;
-    END;
-    $$`,
-    `CREATE TRIGGER companies_role_compatibility BEFORE INSERT OR UPDATE OF role ON users
-      FOR EACH ROW EXECUTE FUNCTION companies_role_compatibility()`,
-    `CREATE FUNCTION companies_admin_role_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.role = OLD.role AND NEW.is_regular_admin IS DISTINCT FROM OLD.is_regular_admin THEN
-        INSERT INTO companies_directory (company_id, revision) VALUES (NEW.company_id, 1)
-        ON CONFLICT (company_id) DO UPDATE SET revision = companies_directory.revision + 1;
-        PERFORM pg_notify('patchy_runtime_wakes',
-          json_build_object('keys', ARRAY['members:' || NEW.company_id])::text);
-      END IF;
-      RETURN NULL;
-    END;
-    $$`,
-    `CREATE TRIGGER companies_admin_role_changed AFTER UPDATE OF is_regular_admin ON users
-      FOR EACH ROW EXECUTE FUNCTION companies_admin_role_changed()`
+    `ALTER TABLE users DROP CONSTRAINT users_role_check`,
+    `ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
+    `ALTER TABLE invites DROP CONSTRAINT invites_role_check`,
+    `ALTER TABLE invites ADD CONSTRAINT invites_role_check CHECK (role IN ('member', 'admin', 'super_admin'))`,
+    `UPDATE users SET role = 'super_admin' WHERE role = 'admin'`,
+    `UPDATE invites SET role = 'super_admin' WHERE role = 'admin'`
   ),
-  // Core teams are additive. Audiences and guarded team deletion land later in the stack.
   "0037_company_teams": ddl(
     `CREATE TABLE company_teams (
       id TEXT PRIMARY KEY,

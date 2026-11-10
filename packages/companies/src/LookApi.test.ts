@@ -14,7 +14,7 @@ import {
   Authorization,
   authorizationClient,
   CurrentIdentity,
-  Identity,
+  AuthenticatedIdentity,
   LookPublishRequest,
   LookRestoreRequest,
   PatchyApi,
@@ -54,7 +54,7 @@ const bearer = Layer.effect(
           return yield* Effect.provideService(
             httpEffect,
             CurrentIdentity,
-            new Identity({
+            new AuthenticatedIdentity({
               user: { id: user.id, email: user.email, name: user.name },
               company: { id: company.id, handle: company.handle, name: company.name },
               role: user.role,
