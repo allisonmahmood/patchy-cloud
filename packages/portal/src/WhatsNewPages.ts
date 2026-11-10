@@ -1,3 +1,5 @@
+// Owns What's new: the changelog at `/whats-new`, the bell's seen marker and script, and the
+// public feed at `/whats-new.json`. What other surfaces need is in `shared/`.
 import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -10,7 +12,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { escapeHtml, WhatsNew, whatsNewKind } from "@patchy/core";
 import { type Companies, Users } from "@patchy/companies";
-import { errors } from "./PortalPages.js";
+import { errors } from "./shared/handlers.js";
 
 /** Page layout only; the rows, tags, tint and rule are the shell's What's new components. */
 const styles = `

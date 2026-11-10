@@ -15,60 +15,16 @@ import {
   sentenceList
 } from "@patchy/core";
 import { Patches } from "@patchy/patches";
+import {
+  cardPath,
+  confirmationAcknowledgement,
+  hidden,
+  refusal,
+  turnedAwayTitle
+} from "./shared/presentation.js";
 
-export const styles = `
-  .portal-card { min-width: 0; max-width: 920px; }
-  .portal-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
-  .portal-card-head > div:nth-child(2) { flex: 1; min-width: min(100%, 240px); }
-  .portal-card-head .page-heading { margin: 0; }
-  .portal-card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
-  .portal-card-tags .tag { margin: 0; }
-  .portal-card-act { display: flex; align-items: center; gap: 6px; }
-  .portal-card-act form { margin: 0; }
-  .portal-card-tabs { margin: 18px 0 20px; }
-  .portal-stop-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .portal-stop-actions > div { display: grid; align-content: start; }
-  .portal-address { align-items: center; }
-  .portal-subpage { max-width: 760px; margin-inline: auto; }
-  .portal-table { overflow-x: auto; }
-  .log-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 0 12px; align-items: end; margin: 8px 0 20px; }
-  .log-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .log-outcome { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  /* Log cells keep words whole, so on a phone the table scrolls in portal-table rather than splitting "Version". */
-  .log-table { min-width: 880px; overflow-wrap: break-word; }
-  .log-table time { white-space: nowrap; }
-  @media (max-width: 760px) {
-    .log-filters { grid-template-columns: minmax(0, 1fr); }
-    .log-filters > :last-child { margin-top: 16px; }
-  }
-  @media (max-width: 480px) {
-    .portal-stop-actions { grid-template-columns: minmax(0, 1fr); }
-  }
-`;
-
-// The index line: text up to the first sentence-ending period or ellipsis, semicolon or spaced
-// en dash, bounded to 80 code points. A period inside a token (".NET", "1.2") is not a boundary.
-export const firstClause = (description: string): string => {
-  const text = description.trim();
-  const boundary = text.search(/\.+(?=\s|$)|;| – /u);
-  const clause = boundary === -1 ? text : text.slice(0, boundary).trimEnd();
-  const points = Array.from(clause);
-  return points.length > 80 ? `${points.slice(0, 79).join("").trimEnd()}…` : clause;
-};
-
-/** What lists, tiles, search results, menus and headings call a patch: core's `patchTitle`. */
-export { patchTitle };
-
-const cardPath = (patch: Patches.Patch, action = "") =>
-  `/patches/${encodeURIComponent(patch.name)}${action ? `/${action}` : ""}`;
 const canManage = (card: Patches.ReadPatch, viewer: RequireSession.Viewer["Service"]) =>
   card.owner.id === viewer.user.id || viewer.role === "admin";
-export const hidden = (name: string, value: string | number | null) =>
-  `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value ?? "")}">`;
-export const refusal = (notice: string | undefined) =>
-  notice === undefined
-    ? ""
-    : `<div class="note note-refused" role="alert">${escapeHtml(notice)}</div>`;
 
 export type ConfirmationAction = "retire" | "delete" | "restore" | "reassign";
 export type PatchAction = "description" | "rollback" | ConfirmationAction;
@@ -267,9 +223,6 @@ export const renderAgentPanel = (input: {
   return `<aside class="side-panel" aria-labelledby="agent-tools-heading"><h2 class="section-heading" id="agent-tools-heading">What agents can do</h2><p class="supporting-text">As the person who connected them.</p>${off}<ul class="list list-compact">${tools}</ul>${connect}</aside>`;
 };
 
-/** What the card and Needs attention call a patch its guests can't open. */
-export const turnedAwayTitle = "Guests can't open this";
-
 /**
  * The card's Overview: the description, why its guests can't open it, its facts, an off patch's
  * note and the recent log.
@@ -367,9 +320,6 @@ const confirmationDependants = (groups: readonly DependantGroup[]): string =>
             `<li><code>${escapeHtml(group.name)}</code> (${escapeHtml(group.ownerName)}) reads ${group.resources.map((resource) => `<code>${escapeHtml(resource)}</code>`).join(", ")}</li>`
         )
         .join("")}</ul>`;
-
-export const confirmationAcknowledgement = (text: string, checked: boolean): string =>
-  `<label class="confirmation-acknowledgement"><input class="field-checkbox" type="checkbox" name="ack" value="1" required${checked ? " checked" : ""}><span>${escapeHtml(text)}</span></label>`;
 
 export const renderConfirmation = (input: {
   readonly card: Patches.PortalCard;

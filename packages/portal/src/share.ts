@@ -2,8 +2,7 @@ import { guestReasonText } from "@patchy/api";
 import type { RequireSession } from "@patchy/auth";
 import { avatar, escapeAttribute, escapeHtml, patchMark, patchTitle } from "@patchy/core";
 import type { GuestGrants, Patches } from "@patchy/patches";
-import { patchAddress } from "./allPatches.js";
-import { hidden, refusal, turnedAwayTitle } from "./render.js";
+import { hidden, patchAddress, refusal, turnedAwayTitle } from "./shared/presentation.js";
 
 type Viewer = RequireSession.Viewer["Service"];
 

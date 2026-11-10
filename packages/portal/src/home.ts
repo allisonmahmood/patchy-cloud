@@ -10,12 +10,21 @@ import {
   isWelcomePage,
   menuLink,
   patchMark,
+  patchTitle,
   rowMenu,
   searchField
 } from "@patchy/core";
 import type { GuestGrants, Patches } from "@patchy/patches";
-import { failedLog, isNew, manages, matches, openItems, patchAddress } from "./allPatches.js";
-import { firstClause, patchTitle } from "./render.js";
+import type { InvocationLog } from "@patchy/runtime";
+import {
+  failedLog,
+  firstClause,
+  isNew,
+  manages,
+  matches,
+  openItems,
+  patchAddress
+} from "./shared/presentation.js";
 
 /** Home's layout; components come from the shell. */
 export const homeStyles = `
@@ -99,8 +108,8 @@ export interface HomeInput {
   readonly note?: string;
   /** Whether the viewer has a live machine token; without one Home offers Connect your agent. */
   readonly connected: boolean;
-  /** The last day's failed calls for each live tier 2 patch the viewer manages; absent with none. */
-  readonly failures?: ReadonlyMap<string, number>;
+  /** The call summary of each live tier 2 patch the viewer manages; absent when they manage none. */
+  readonly calls?: ReadonlyMap<string, InvocationLog.CallSummary>;
   /** Other companies' patches shared with the viewer. */
   readonly shared: readonly GuestGrants.Shared[];
 }
@@ -224,7 +233,7 @@ export const renderHome = (input: HomeInput): string => {
       : "";
   // An owner hears about their own tools' failures here; admins see everyone's in All patches.
   const failing = live.flatMap((row) => {
-    const failed = input.failures?.get(row.patch.id) ?? 0;
+    const failed = input.calls?.get(row.patch.id)?.failures ?? 0;
     return row.owner.id === viewer.user.id && failed > 0 ? [{ row, failed }] : [];
   });
   const warning = failing.length

@@ -1,8 +1,11 @@
+// Owns deactivating and reactivating a person at `/settings/people/users/<id>/<action>`: the pick
+// of their patches and the confirmation. What other surfaces need is in `shared/`.
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as UrlParams from "effect/http/UrlParams";
@@ -10,7 +13,8 @@ import { pageResponse, RequireSession, Session } from "@patchy/auth";
 import { Users } from "@patchy/companies";
 import { escapeAttribute, escapeHtml } from "@patchy/core";
 import { Patches } from "@patchy/patches";
-import { confirmationAcknowledgement, hidden, refusal, styles } from "./render.js";
+import { errors, type Routes } from "./shared/handlers.js";
+import { confirmationAcknowledgement, hidden, refusal, styles } from "./shared/presentation.js";
 
 type Action = "deactivate" | "reactivate";
 const decodeChoice = Schema.decodeUnknownEffect(
@@ -98,7 +102,7 @@ const renderConfirm = (input: {
 };
 
 /** Previews take no mutation locks; commits change patches before the user in one transaction. */
-export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, action: Action) {
+const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: string, action: Action) {
   const viewer = yield* RequireSession.Viewer;
   const session = yield* Session.Session;
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -266,3 +270,20 @@ export const handle = Effect.fn("UserLifecyclePage.handle")(function* (id: strin
     })
   );
 });
+
+export const layer: Routes = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    for (const action of ["deactivate", "reactivate"] as const) {
+      for (const method of ["GET", "POST"] as const) {
+        const handler = RequireSession.withViewer(
+          Effect.flatMap(HttpRouter.params, (params) => handle(params.id ?? "", action))
+        );
+        yield* router.add(
+          method,
+          `/settings/people/users/:id/${action}`,
+          errors(method === "POST" ? RequireSession.sameOrigin(handler) : handler)
+        );
+      }
+    }
+  })
+);
