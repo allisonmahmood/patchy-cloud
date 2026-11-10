@@ -5,6 +5,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import {
   BadRequest,
   CurrentIdentity,
+  Identity,
   decodeBody,
   DeviceLoginComplete,
   DeviceLoginGone,
@@ -86,7 +87,17 @@ export const layer = HttpApiBuilder.group(PatchyApi, "auth", (handlers) =>
           })
         )
       )
-      .handle("me", () => CurrentIdentity)
+      .handle("me", () =>
+        Effect.map(
+          CurrentIdentity,
+          (identity) =>
+            new Identity({
+              ...identity,
+              role: identity.role === "member" ? ("member" as const) : ("admin" as const),
+              superAdmin: identity.role === "super_admin"
+            })
+        )
+      )
       .handle("logout", () =>
         Effect.gen(function* () {
           const identity = yield* CurrentIdentity;

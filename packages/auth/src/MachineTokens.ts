@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
-import { Identity } from "@patchy/api";
+import { AuthenticatedIdentity } from "@patchy/api";
 import { Cryptography } from "@patchy/core";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -41,7 +41,7 @@ export class MachineTokenNotFound extends Schema.TaggedError<MachineTokenNotFoun
 }
 
 const AuthenticationRow = Schema.Struct({
-  identity: Identity,
+  identity: AuthenticatedIdentity,
   lastUsedAt: Schema.Date
 });
 const RevocationRow = Schema.Struct({ alreadyRevoked: Schema.Boolean });
@@ -57,7 +57,7 @@ const MachineRow = Schema.Struct({
 export class MachineTokens extends Context.Service<
   MachineTokens,
   {
-    readonly authenticate: (token: string) => Effect.Effect<Identity | null, SqlError>;
+    readonly authenticate: (token: string) => Effect.Effect<AuthenticatedIdentity | null, SqlError>;
     readonly mint: (input: { readonly userId: string; readonly name: string }) => Effect.Effect<
       {
         readonly token: string;
@@ -105,14 +105,14 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // One join decides every bearer refusal; no credential state is cached.
-  const findIdentity = SqlSchema.findOneOption({
+  const findAuthenticatedIdentity = SqlSchema.findOneOption({
     Request: Schema.Struct({ tokenHash: Schema.String, now: Schema.Number }),
     Result: AuthenticationRow,
     execute: ({ tokenHash, now }) => sql`
       SELECT json_build_object(
         'user', json_build_object('id', u.id, 'email', u.email, 'name', u.name),
         'company', json_build_object('id', c.id, 'handle', c.handle, 'name', c.name),
-        'role', CASE WHEN u.role = 'admin' THEN 'super_admin' WHEN u.is_regular_admin THEN 'admin' ELSE 'member' END,
+        'role', u.role,
         'machine', json_build_object('id', t.id, 'name', t.name)
       ) AS identity, t.last_used_at AS "lastUsedAt"
       FROM machine_tokens t
@@ -158,9 +158,10 @@ export const make = Effect.gen(function* () {
 
   const authenticate = Effect.fn("MachineTokens.authenticate")(function* (token: string) {
     const now = yield* Clock.currentTimeMillis;
-    const found = yield* findIdentity({ tokenHash: yield* cryptography.sha256(token), now }).pipe(
-      Effect.catchTags({ SchemaError: Effect.die })
-    );
+    const found = yield* findAuthenticatedIdentity({
+      tokenHash: yield* cryptography.sha256(token),
+      now
+    }).pipe(Effect.catchTags({ SchemaError: Effect.die }));
     if (Option.isNone(found)) return null;
     const { identity, lastUsedAt } = found.value;
     if (lastUsedAt.getTime() <= now - HOUR_MS) {
