@@ -46,6 +46,47 @@ const services = Layer.mergeAll(Companies.layer, Users.layer, Directory.layer).p
   Layer.provideMerge(NodeCryptography.layer)
 );
 it.layer(services)("Teams", (it) => {
+  it.effect(
+    "deletes and restores stable identity and recorded memberships without reviving removed memberships",
+    () =>
+      Effect.gen(function* () {
+        const { ref, member, admin } = yield* setup("teams-recovery");
+        const team = yield* Teams.create({ ...ref, name: "Research" });
+        const target = { ...ref, teamId: team.id };
+        yield* Teams.setMemberships({ ...target, userIds: [member.id, admin.id], added: true });
+        yield* Teams.setMemberships({ ...target, userIds: [admin.id], added: false });
+        assert.equal(
+          (yield* Teams.setDeleted({ ...target, deleted: true }).pipe(Effect.flip))._tag,
+          "TeamInUse"
+        );
+        yield* Teams.setDeleted({ ...target, deleted: true }).pipe(
+          Effect.provideService(Teams.References, () => Effect.succeed(false))
+        );
+        assert.deepEqual(yield* Teams.memberships(ref.companyId, member.id), []);
+        assert.deepEqual(
+          (yield* Teams.deleted(ref)).map((t) => t.id),
+          [team.id]
+        );
+        assert.equal(
+          (yield* Teams.setMemberships({ ...target, userIds: [member.id], added: true }).pipe(
+            Effect.flip
+          ))._tag,
+          "TeamNotFound"
+        );
+        assert.equal(
+          (yield* Teams.setDeleted({ ...target, actorId: member.id, deleted: false }).pipe(
+            Effect.flip
+          ))._tag,
+          "RoleForbidden"
+        );
+        yield* Teams.setDeleted({ ...target, deleted: false });
+        assert.deepEqual(yield* Teams.memberships(ref.companyId, member.id), [team.id]);
+        assert.deepEqual(yield* Teams.memberships(ref.companyId, admin.id), []);
+        assert.deepEqual(yield* Teams.deleted(ref), []);
+        assert.equal((yield* Teams.list(ref)).find((t) => t.id === team.id)?.name, "Research");
+      })
+  );
+
   it.effect("protects admins atomically while allowing self-leave and super-admin management", () =>
     Effect.gen(function* () {
       const { ref, admin, member } = yield* setup("teams-protection");

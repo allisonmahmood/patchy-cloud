@@ -117,9 +117,26 @@ export const save = Effect.fn("Audiences.save")(function* (
   audience: PatchAudience
 ) {
   const sql = yield* SqlClient.SqlClient;
+  if (
+    audience.members.kind === "teams" &&
+    !(yield* Teams.lockActive(companyId, audience.members.teamIds))
+  )
+    return yield* new InvalidAudienceTeams();
   yield* sql`UPDATE patches SET scope = ${scopeOf(audience)} WHERE id = ${patchId}`;
   yield* sql`DELETE FROM patch_audience_teams WHERE patch_id = ${patchId}`;
   if (audience.members.kind === "teams")
     yield* sql`INSERT INTO patch_audience_teams(patch_id, company_id, team_id)
       SELECT ${patchId}, ${companyId}, id FROM unnest(${[...new Set(audience.members.teamIds)]}::text[]) id`;
+});
+
+/** Includes retired/deleted patches: their audience survives restoration and version changes. */
+export const referencesTeam = Effect.fn("Audiences.referencesTeam")(function* (
+  companyId: string,
+  teamId: string
+) {
+  const sql = yield* SqlClient.SqlClient;
+  return (
+    (yield* sql`SELECT 1 FROM patch_audience_teams WHERE company_id = ${companyId} AND team_id = ${teamId} LIMIT 1`)
+      .length > 0
+  );
 });

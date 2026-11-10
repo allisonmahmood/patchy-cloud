@@ -42,7 +42,15 @@ import {
   RequireSession,
   Session
 } from "@patchy/auth";
-import { Companies, CompanyPage, InviteMail, LookApi, Looks, Users } from "@patchy/companies";
+import {
+  Companies,
+  CompanyPage,
+  Teams,
+  InviteMail,
+  LookApi,
+  Looks,
+  Users
+} from "@patchy/companies";
 import {
   Inventory,
   PgCompanyDatabases,
@@ -79,7 +87,8 @@ import {
   DeletionSweep,
   GuestGrants,
   Patches,
-  PatchesApi
+  PatchesApi,
+  Audiences
 } from "@patchy/patches";
 import { PortalPages, SwitcherList, WhatsNewPages } from "@patchy/portal";
 import { Tables, TableOperations, Files, Members, SubscriptionReads } from "@patchy/primitives";
@@ -231,6 +240,16 @@ const companyGuests = Layer.effect(
     list: grants.companyGuests,
     removeAll: grants.revokeAll
   }))
+);
+
+const teamReferences = Layer.succeed(
+  Teams.References,
+  Effect.fn("Hosting.teamReferences")(function* (companyId: string, teamId: string) {
+    return (
+      (yield* Audiences.referencesTeam(companyId, teamId)) ||
+      (yield* SqlConnectionStore.referencesTeam(companyId, teamId))
+    );
+  })
 );
 
 /** The services over a migrated database, with stdout events and optional PostHog delivery. */
@@ -451,7 +470,7 @@ const app = Layer.mergeAll(
  */
 export const layer = Layer.mergeAll(
   HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provide([ownedPatches, companyGuests])
+    Layer.provide([ownedPatches, companyGuests, teamReferences])
   ),
   sweeper,
   Layer.effectContext(

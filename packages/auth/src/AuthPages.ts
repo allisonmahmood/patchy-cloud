@@ -308,7 +308,15 @@ export const layer: Layer.Layer<
           )
         )
       );
-      for (const action of ["view", "create", "rename", "add", "remove"] as const) {
+      for (const action of [
+        "view",
+        "create",
+        "rename",
+        "add",
+        "remove",
+        "delete",
+        "restore"
+      ] as const) {
         const show = Effect.gen(function* () {
           const viewer = yield* RequireSession.Viewer;
           const session = yield* Session.Session;

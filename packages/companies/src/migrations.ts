@@ -178,5 +178,15 @@ export const migrations: Migrations = {
       FOREIGN KEY (company_id, user_id) REFERENCES users(company_id, id),
       FOREIGN KEY (company_id, actor_id) REFERENCES users(company_id, id)
     )`
+  ),
+  "0040_team_lifecycle": ddl(
+    `ALTER TABLE company_teams ADD COLUMN deleted_at TIMESTAMPTZ`,
+    `CREATE TABLE company_team_lifecycle (
+      company_id TEXT NOT NULL, team_id TEXT NOT NULL, revision BIGINT NOT NULL,
+      actor_id TEXT NOT NULL, deleted BOOLEAN NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(company_id, revision),
+      FOREIGN KEY(company_id, team_id) REFERENCES company_teams(company_id, id),
+      FOREIGN KEY(company_id, actor_id) REFERENCES users(company_id, id)
+    )`
   )
 };

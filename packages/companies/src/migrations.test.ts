@@ -82,3 +82,24 @@ it.layer(Testing.emptyLayer(before("0036_company_roles")))("the company roles up
       })
   );
 });
+
+it.layer(Testing.emptyLayer(before("0040_team_lifecycle")))("team lifecycle upgrade", (it) => {
+  it.effect("preserves team identities, memberships and historical attribution", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO companies(id, handle, name) VALUES ('cmp_team_upgrade', 'team-upgrade', 'Upgrade')`;
+      yield* sql`INSERT INTO users(id, clerk_user_id, company_id, email, name, role) VALUES ('usr_team_upgrade', 'clerk_team_upgrade', 'cmp_team_upgrade', 'upgrade@example.test', 'Owner', 'super_admin')`;
+      yield* sql`INSERT INTO company_teams(id, company_id, name) VALUES ('team_upgrade', 'cmp_team_upgrade', 'Design')`;
+      yield* sql`INSERT INTO company_team_members(company_id, team_id, user_id) VALUES ('cmp_team_upgrade', 'team_upgrade', 'usr_team_upgrade')`;
+      yield* sql`INSERT INTO company_team_changes(company_id, team_id, revision, actor_id, user_id, added) VALUES ('cmp_team_upgrade', 'team_upgrade', 1, 'usr_team_upgrade', 'usr_team_upgrade', true)`;
+      const members = yield* sql`SELECT * FROM company_team_members`;
+      const history = yield* sql`SELECT * FROM company_team_changes`;
+      yield* migrate(migrations);
+      assert.deepEqual(yield* sql`SELECT * FROM company_team_members`, members);
+      assert.deepEqual(yield* sql`SELECT * FROM company_team_changes`, history);
+      assert.deepEqual(yield* sql`SELECT id, name, deleted_at FROM company_teams`, [
+        { id: "team_upgrade", name: "Design", deleted_at: null }
+      ]);
+    })
+  );
+});

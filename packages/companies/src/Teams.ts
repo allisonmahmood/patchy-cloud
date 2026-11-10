@@ -1,3 +1,5 @@
+import * as Context from "effect/Context";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -10,7 +12,8 @@ export class Team extends Schema.Class<Team>("Team")({
   id: Schema.String,
   companyId: Schema.String,
   name: Schema.String,
-  createdAt: Schema.Date
+  createdAt: Schema.Date,
+  deletedAt: Schema.NullOr(Schema.Date)
 }) {}
 export class MembershipChange extends Schema.Class<MembershipChange>("MembershipChange")({
   revision: Schema.String,
@@ -41,6 +44,17 @@ export class TeamNotFound extends Schema.TaggedError<TeamNotFound>()("TeamNotFou
     return "Team not found.";
   }
 }
+/** Hosting supplies cross-capability reference knowledge. Missing assembly refuses deletion. */
+export const References = Context.Reference<
+  (companyId: string, teamId: string) => Effect.Effect<boolean, SqlError, SqlClient.SqlClient>
+>("@patchy/companies/Teams/References", { defaultValue: () => () => Effect.succeed(true) });
+export class TeamInUse extends Schema.TaggedError<TeamInUse>()("TeamInUse", {
+  teamId: Schema.String
+}) {
+  override get message() {
+    return "This team is used by patches or connections. Change their audiences before deleting it.";
+  }
+}
 export interface Viewer {
   readonly companyId: string;
   readonly actorId: string;
@@ -48,6 +62,7 @@ export interface Viewer {
 export interface TeamRef extends Viewer {
   readonly teamId: string;
 }
+const decodeTeams = Schema.decodeUnknownEffect(Schema.Array(Team));
 const schemaError = { SchemaError: Effect.die } as const;
 const ref = Schema.Struct({ companyId: Schema.String, teamId: Schema.String });
 const find = SqlSchema.findOneOption({
@@ -57,7 +72,7 @@ const find = SqlSchema.findOneOption({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt" FROM company_teams WHERE company_id = ${companyId} AND id = ${teamId}`
+        sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt", deleted_at AS "deletedAt" FROM company_teams WHERE company_id = ${companyId} AND id = ${teamId}`
     )
 });
 // Active, recorded memberships are the sole source of team admission.
@@ -68,6 +83,7 @@ const effectiveMemberships = (
 ) => sql`
   SELECT m.company_id, m.team_id, m.user_id FROM company_team_members m
   JOIN users u ON u.company_id = m.company_id AND u.id = m.user_id
+  JOIN company_teams t ON t.company_id = m.company_id AND t.id = m.team_id AND t.deleted_at IS NULL
   WHERE m.company_id = ${companyId} AND u.deactivated_at IS NULL
     ${selection.userIds ? sql`AND m.user_id = ANY(${selection.userIds}::text[])` : sql``}
     ${selection.teamId ? sql`AND m.team_id = ${selection.teamId}` : sql``}
@@ -75,9 +91,9 @@ const effectiveMemberships = (
 
 // Both directory and roster queries apply this decision in their own SQL snapshot.
 const visibleTeams = (sql: SqlClient.SqlClient, viewer: Viewer) => sql`
-  SELECT t.id, t.company_id, t.name, t.created_at FROM company_teams t
+  SELECT t.id, t.company_id, t.name, t.created_at, t.deleted_at FROM company_teams t
   JOIN users u ON u.company_id = t.company_id AND u.id = ${viewer.actorId}
-  WHERE t.company_id = ${viewer.companyId} AND u.deactivated_at IS NULL
+  WHERE t.company_id = ${viewer.companyId} AND u.deactivated_at IS NULL AND t.deleted_at IS NULL
   AND (u.role IN ('admin', 'super_admin') OR EXISTS (
     SELECT 1 FROM (${effectiveMemberships(sql, viewer.companyId, { userIds: [viewer.actorId] })}) m WHERE m.team_id = t.id
   ))`;
@@ -88,7 +104,7 @@ const listRows = SqlSchema.findAll({
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt" FROM (${visibleTeams(sql, viewer)}) visible ORDER BY lower(name), id`
+        sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt", deleted_at AS "deletedAt" FROM (${visibleTeams(sql, viewer)}) visible ORDER BY lower(name), id`
     )
 });
 const active = SqlSchema.findAll({
@@ -143,7 +159,8 @@ const requireViewer = Effect.fn("Teams.requireViewer")(function* (viewer: Viewer
 });
 const requireTeam = Effect.fn("Teams.requireTeam")(function* (input: TeamRef) {
   const team = yield* find(input).pipe(Effect.catchTags(schemaError));
-  if (Option.isNone(team)) return yield* new TeamNotFound({ teamId: input.teamId });
+  if (Option.isNone(team) || team.value.deletedAt !== null)
+    return yield* new TeamNotFound({ teamId: input.teamId });
   return team.value;
 });
 // NOTIFY is transactional in PostgreSQL: even an enclosing transaction/savepoint must commit.
@@ -313,7 +330,56 @@ export const people = Effect.fn("Teams.people")(function* (
   if (!userIds.length) return [];
   return yield* sql`SELECT u.id, u.deactivated_at IS NULL AS active, u.role,
     COALESCE(array_agg(m.team_id ORDER BY m.team_id) FILTER (WHERE m.team_id IS NOT NULL), ARRAY[]::text[]) AS "teamIds"
-    FROM users u LEFT JOIN company_team_members m ON m.company_id = u.company_id AND m.user_id = u.id
+    FROM users u LEFT JOIN (company_team_members m JOIN company_teams t ON t.company_id = m.company_id AND t.id = m.team_id AND t.deleted_at IS NULL) ON m.company_id = u.company_id AND m.user_id = u.id
     WHERE u.company_id = ${companyId} AND u.id = ANY(${[...new Set(userIds)]}::text[])
     GROUP BY u.id`.pipe(Effect.flatMap(decodePeople), Effect.catchTags(schemaError));
+});
+
+/** Audience writers take shared team locks, in identity order, until their transaction commits. */
+export const lockActive = Effect.fn("Teams.lockActive")(function* (
+  companyId: string,
+  teamIds: readonly string[]
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{
+    id: string;
+  }>`SELECT id FROM company_teams WHERE company_id = ${companyId}
+    AND id = ANY(${[...new Set(teamIds)].sort()}::text[]) AND deleted_at IS NULL ORDER BY id FOR SHARE`;
+  return rows.length === new Set(teamIds).size;
+});
+export const deleted = Effect.fn("Teams.deleted")(function* (viewer: Viewer) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* requireViewer(viewer);
+  const actor = yield* active({ companyId: viewer.companyId, userId: viewer.actorId }).pipe(
+    Effect.catchTags(schemaError)
+  );
+  if (actor[0]?.role === "member") return yield* new RoleForbidden(viewer);
+  return yield* sql`SELECT id, company_id AS "companyId", name, created_at AS "createdAt", deleted_at AS "deletedAt"
+    FROM company_teams WHERE company_id = ${viewer.companyId} AND deleted_at IS NOT NULL ORDER BY lower(name), id`.pipe(
+    Effect.flatMap(decodeTeams),
+    Effect.catchTags(schemaError)
+  );
+});
+/** Keep memberships and identity. Reference checks run under the exclusive team lock. */
+export const setDeleted = Effect.fn("Teams.setDeleted")(function* (
+  input: TeamRef & { readonly deleted: boolean }
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const referenced = yield* References;
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* lockAdministrator(input);
+      yield* sql`SELECT id FROM company_teams WHERE company_id = ${input.companyId} AND id = ${input.teamId} FOR UPDATE`;
+      const found = yield* find(input).pipe(Effect.catchTags(schemaError));
+      if (Option.isNone(found)) return yield* new TeamNotFound({ teamId: input.teamId });
+      if ((found.value.deletedAt !== null) === input.deleted) return;
+      if (input.deleted && (yield* referenced(input.companyId, input.teamId)))
+        return yield* new TeamInUse({ teamId: input.teamId });
+      yield* sql`UPDATE company_teams SET deleted_at = ${input.deleted ? sql`now()` : sql`NULL`}
+      WHERE company_id = ${input.companyId} AND id = ${input.teamId}`;
+      const revision = yield* changed(input.companyId);
+      yield* sql`INSERT INTO company_team_lifecycle(company_id, team_id, revision, actor_id, deleted)
+      VALUES (${input.companyId}, ${input.teamId}, ${revision}::bigint, ${input.actorId}, ${input.deleted})`;
+    })
+  );
 });

@@ -2094,8 +2094,13 @@ audience; warnings grant nothing and conceal restricted metadata from other view
 
 Connection audiences and team references commit atomically under the company
 administration lock and connection lock. Credential replacement, retargeting and
-reconnection preserve the audience. Integrations exposes team references for #1291's
-lifecycle assembly; it does not choose the still-unsettled team deletion policy.
+reconnection preserve the audience. A team cannot be deleted while any patch or connection refers to it, including retained
+patches that can be restored. Change those audiences first. Administrators can reversibly
+delete an unreferenced team and restore it from Deleted teams. Identity and recorded
+memberships survive deletion; explicitly removed memberships do not return. Deleted teams
+are unavailable for discovery, membership edits and new audience grants. Access never
+widens to Company as a consequence of team deletion. Team lifecycle changes record the
+actor and advance the existing membership authority.
 Connection authority revisions feed the existing live dependency traces, wakes and
 delivery fences. Integrations owns their lookup; Hosting composes its adapter at
 Runtime's subscription-reader seam, keeping connection SQL out of Primitives.

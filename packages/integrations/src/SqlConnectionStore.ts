@@ -1708,6 +1708,11 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
               if (selected.teamIds.some((id) => !teams.some((team) => team.id === id)))
                 return yield* new ConnectionStore.InvalidConnectionAudience();
             }
+            if (
+              selected.kind === "teams" &&
+              !(yield* Teams.lockActive(input.companyId, selected.teamIds))
+            )
+              return yield* new ConnectionStore.InvalidConnectionAudience();
             const previous = yield* audience(input.companyId, input.id);
             const ids = selected.kind === "teams" ? [...new Set(selected.teamIds)].sort() : [];
             if (
@@ -1937,3 +1942,15 @@ export const knowing = (known: ReadonlyArray<Integration>) =>
   });
 
 export const layer = Layer.effect(ConnectionStore.ConnectionStore, make);
+
+/** Lifecycle guards use complete references, independently of presentation visibility. */
+export const referencesTeam = Effect.fn("ConnectionStore.referencesTeam")(function* (
+  companyId: string,
+  teamId: string
+) {
+  const sql = yield* SqlClient.SqlClient;
+  return (
+    (yield* sql`SELECT 1 FROM connection_team_grants WHERE company_id = ${companyId} AND team_id = ${teamId} LIMIT 1`)
+      .length > 0
+  );
+});
